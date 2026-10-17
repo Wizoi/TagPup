@@ -19,7 +19,6 @@ from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
 from tagpup.files.exiftool_session import ExifToolSession
-from tagpup.store import taxonomy as store_taxonomy
 
 TREE = [
     (1, "People", "People", None, 1),
@@ -70,17 +69,6 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
     def call(self, path, body):
         return self.lib.post(path, body)
 
-    def test_a_person_renamed_is_not_written_back_under_the_old_path(self):
-        photo = self.add_photo("regatta.jpg", ["People/Rowan Thackeray", "Rowan Thackeray"])
-        # A running server has the people cache warm.
-        store_taxonomy.people_paths(self.lib.db_path)
-
-        self.call("/api/taxonomy/rename", {"tag_id": 2, "new_name": "Rowan Thackeray-Vale"})
-
-        written = self.hierarchical(photo)
-        self.assertIn("People/Rowan Thackeray-Vale", written)
-        self.assertNotIn("People/Rowan Thackeray", written)
-
     def test_a_rename_reports_the_photos_it_could_not_rewrite(self):
         self.add_photo("boathouse.jpg", ["Activity/Rowing"])
         self.add_photo("broken.jpg", ["Activity/Rowing"], writable=False)
@@ -88,9 +76,11 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
         status, reply = self.call("/api/taxonomy/rename", {"tag_id": 4, "new_name": "Sculling"})
 
         self.assertEqual(200, status, reply)
+        self.assertEqual((False, False), (reply["success"], reply["renamed"]), "not renamed: the tree keeps the old name")
         self.assertEqual(2, reply["photos_affected"])
         self.assertEqual(1, reply["photos_rewritten"])
-        self.assertIn("warning", reply)
+        self.assertEqual(["broken.jpg"], [os.path.basename(each["path"]) for each in reply["failed"]])
+        self.assertNotIn("Activity/Sculling", self.tree())
 
     def test_a_delete_that_cannot_rewrite_every_photo_keeps_the_tag(self):
         good = self.add_photo("boathouse.jpg", ["Activity/Rowing"])

@@ -37,12 +37,9 @@ def read(db_path):
 
 
 def read_only(db_path):
-    """read(), without writing anything to the library: {} for one whose schema has no
-    settings table yet (a library not opened since migration 10)."""
+    """read(), without writing anything to the library."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone() is None:
-            return {}
         return _rows(conn)
     finally:
         conn.close()

@@ -3,12 +3,12 @@ import json
 import logging
 import os
 
-from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
+from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
-from tagpup.files import images, metadata, names, recycle_bin
-from tagpup.services import file_changes, file_only, libraries, thumbnails
+from tagpup.files import images, metadata, names, recycle_bin, shares
+from tagpup.services import file_changes, file_only, libraries, rotation, thumbnails
 from tagpup.services import roots as roots_service
-from tagpup.store import db, embeddings, faces, photos, taxonomy
+from tagpup.store import db, faces, generations, photos, taxonomy
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,7 @@ def page_record(path, meta, mtime=0.0, size=0):
     raw_meta = meta.get("raw_metadata", {})
     captions = meta.get("captions", [])
     year = meta["year"] if "year" in meta else dates.photo_year(raw_meta, path)
+    gear = photo_meta.gear(raw_meta)
     record = {
         "path": path,
         "filename": os.path.basename(path),
@@ -43,6 +44,10 @@ def page_record(path, meta, mtime=0.0, size=0):
         "year": dates.shown_year(None if year is None else str(year)),
         "taken": dates.date_taken(raw_meta),
         "raw_metadata": raw_meta,
+        # The camera and lens it was taken with, named as a search finds them (photo_meta.gear): "" for what the
+        # metadata does not say, which the panel shows as nothing.
+        "camera": gear.camera or "",
+        "lens": gear.lens or "",
     }
     if meta.get("read_error"):
         # ExifTool could not read it: it shows as holding nothing, which a save must not take for what the file holds.
@@ -80,6 +85,24 @@ def taken_order(record):
 
 
 @roots_service.canonical_args("folder")
+def scan_stamp(library):
+    """What the library's photos and tag tree were at this moment, to be taken BEFORE a scan and kept with it
+    (tagpup.web.tagpup_routes.FolderCache): the photos and taxonomy counters that the triggers move for a write from any
+    process -- this server, an index, a CLI `sync --apply`, an MCP undo, a snapshot restore, a tree edit (a file read
+    from disk is told the tree's people) -- and that a move of a root moves (generations' salt), so a scan kept past one
+    is read again. None when the library cannot be read just now: a scan is then kept as it was, and a scan of an
+    unreadable library fails by itself."""
+    try:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            return generations.values(conn, ("photos", "taxonomy"))
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("Could not read the library's generations for a folder scan: %s", e)
+        return None
+
+
 def scan_folder(library, folder, exiftool_path):
     """The photos under `folder`, at any depth, as page records keyed by paths.key:
     opening a folder in TagPup.
@@ -155,15 +178,15 @@ def _read(library, files, exiftool_path):
         batch = files[start:start + READ_BATCH]
         for (file, mtime, size), meta in zip(batch, reader.batch_read([f for f, _, _ in batch], people=people)):
             found[paths.key(file)] = page_record(
-                file, meta, meta.get("mtime", 0.0) if mtime is None else mtime,
-                meta.get("size", 0) if size is None else size)
+                file, meta, meta["mtime"] if mtime is None else mtime,
+                meta["size"] if size is None else size)
     return found
 
 
-def people_of(library, raw_meta, tags, photo_path):
-    """Everyone in a photo, by its metadata and its named faces
+def people_of(library, tags, photo_path):
+    """Everyone in a photo, by its keywords and its named faces
     (tagpup.core.vocabulary.people_in_photo), for a page record just written."""
-    return vocabulary.people_in_photo(raw_meta, tags, faces.face_names(photo_path, db_path=library.path),
+    return vocabulary.people_in_photo(tags, faces.face_refs(photo_path, db_path=library.path),
                                       taxonomy.people_vocabulary(library.path))
 
 
@@ -176,7 +199,7 @@ def record_written(library, record, path, tags, flat, hierarchical):
     """
     raw_meta = fields.record_keyword_fields(record.setdefault("raw_metadata", {}), flat, hierarchical)
     record["tags"] = list(tags)
-    record["people"] = people_of(library, raw_meta, tags, path)
+    record["people"] = people_of(library, tags, path)
     return raw_meta
 
 
@@ -198,6 +221,42 @@ def page_copy(photo_path, max_size=None, upright=True):
             logger.warning("Could not make a smaller copy of %s: %s", photo_path, e)
     with open(photo_path, "rb") as f:
         return f.read(), images.content_type(photo_path)
+
+
+#: How long a look at a photo's header waits on a network share, and how long a share that did not
+#: answer is taken as away (tagpup.files.shares.bounded).
+SHAPE_WAIT = 1.0
+SHAPE_AWAY = 30.0
+
+
+def box_shape(photo_path):
+    """What a page needs to draw a face's box over the photo: {"size": [width, height] of the
+    pixels the boxes are in (the file as stored; images.shown_size), or None when the file
+    cannot be read -- no size, no box, rather than a box on the wrong face (#787) --, "turned":
+    does the file declare an Orientation (2 to 8) that the picture is shown by, so that a box
+    drawn over it in the stored pixels is not where the face is. Only the header is read, once (a
+    TIFF is decoded, and its boxes turn with it: never "turned"). On a network share or drive the look is
+    bounded (tagpup.files.shares.bounded): a share that does not answer in a second gives no size
+    and no box, and is not asked again for a while, never a request stalled for as long as Windows
+    waits (#836)."""
+    none = {"size": None, "turned": False}
+    if shares.on_a_network_drive(photo_path):
+        state, shape = shares.bounded(photo_path, lambda: images.shown_shape(photo_path), SHAPE_WAIT, SHAPE_AWAY)
+    else:
+        # A local disk is not a share that can stop answering: a slow look (a decoded TIFF, a disk
+        # spinning up) must not mark the drive away for every photo on it (#842).
+        try:
+            state, shape = "ok", images.shown_shape(photo_path)
+        except Exception as error:
+            state, shape = "error", error
+    if state != "ok":
+        if state == "error":
+            logger.info("No size for %s: %s", photo_path, shape)
+        return none
+    width, height, oriented, orientation = shape
+    if width <= 0 or height <= 0:
+        return none
+    return {"size": [width, height], "turned": orientation != 1 and not oriented}
 
 
 def face_crop(library, face_id):
@@ -232,10 +291,12 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
     none -- the name it had before Smart Rename first renamed it, which later renames
     leave alone, and which relink_photos finds a renamed photo by -- as one change of
     photo files, `smart rename: original names` (tagpup.services.file_changes), which
-    can be undone. A photo holding one already is skipped; one that cannot be read is
-    skipped too, as the rename leaves it be. A Result, as write_fields'. A photo of a folder
+    can be undone. A photo holding one already is skipped; a held one that cannot be read is
+    skipped too, as its row keeps its record. A Result, as write_fields'. A photo of a folder
     the library does not hold has the name written to its file only (tagpup.services.
-    file_only): no journal change, no row. `split` is (held, loose) as the caller decided it
+    file_only): no journal change, no row; one ExifTool cannot read or write is an error, so
+    Smart Rename renames none: its PreservedFileName is the only record of the name it had,
+    and a photo left out keeps a name the numbering may give another (#523). `split` is (held, loose) as the caller decided it
     (libraries.split): Smart Rename decides once and hands it on, so the folder added in between
     cannot send the names one way and the renames the other (#524).
 
@@ -256,8 +317,7 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
     journaled = file_changes.write_fields(
         library, "smart rename: original names", exiftool_path, held, [names.PRESERVED_NAME], plan_one,
         summary={"photos": len(held)}, unreadable="skip") if held else None
-    files = file_only.write_fields(exiftool_path, loose, [names.PRESERVED_NAME], plan_one,
-                                   unreadable="skip") if loose else None
+    files = file_only.write_fields(exiftool_path, loose, [names.PRESERVED_NAME], plan_one) if loose else None
     return file_only.combined(journaled, files)
 
 
@@ -289,30 +349,28 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     the first part renamed, and says so. `file_only` and `with_rows` count the photos
     renamed each way.
 
-    Refused, and nothing renamed, for a grouping that may not be used
-    (tagpup.core.validation). The grouping is used trimmed as the rules trim it
+    Refused, and nothing read or renamed, for more photos than a write may name (file_changes.too_many) and
+    for a grouping that may not be used (tagpup.core.validation). The grouping is used trimmed as the rules trim it
     (validation.trim): the rules allow blanks at its ends, and a trailing space -- from
     a caller that does not strip, or before a U+FEFF, which strip() leaves -- put a
     double space before every photo's number.
     """
     result = Result(attempted=len(photo_paths))
-    problem = validation.problem("grouping", grouping)
+    # The cap of a write of photo files, asked before a caption is read (file_changes.too_many).
+    problem = validation.problem("grouping", grouping) or file_changes.too_many(len(photo_paths))
     if problem:
         result.refuse(problem)
         return result
-    # A photo found damaged refuses the whole rename, nothing moved: skipped, it kept a name
-    # the numbering gave another photo, which moved it aside and lost its record.
     held, loose = libraries.split(library, photo_paths)
-    if held and libraries.refuse_writes(result, library, held):
-        return result
-    if loose and file_only.refuse_unwritable(result, loose):
-        return result
     held_keys = {paths.key(p) for p in held}
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
     present = [p for p in photo_paths if os.path.exists(p)]
     captions = names.read_for_renaming(exiftool_path, present)
-    kept = preserve_names(library, [p for p in present if p in captions], exiftool_path, split=(held, loose))
+    kept = preserve_names(library, present, exiftool_path, split=(held, loose))
+    if kept.refused:
+        result.refuse(kept.refused)
+        return result
     if kept.errors:
         # Nothing is renamed, as when this write raised: a photo renamed without the
         # name it had is found again only by its identity.
@@ -380,19 +438,16 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     return result
 
 
-def date_shift_plan(minutes, strict=False):
+def date_shift_plan(minutes):
     """The `plan_one` of a Date Taken shift by `minutes` (tagpup.services.file_changes.write_fields): each date the photo
-    holds is moved by the same minutes; one it does not hold is not made, and a photo holding none is skipped. The one plan
-    of Camera Time Shift (shift_date_taken) and of the bulk job (tagpup.services.bulk_edit). `strict` (the job): a date the
-    shift would move out of range (dates.ShiftOutOfRange) is raised, and so the photo's error with a sentence; Camera Time
-    Shift leaves such a photo alone, as it always did."""
-    shift = dates.shifted_strictly if strict else dates.shifted
+    holds is moved by the same minutes; one it does not hold is not made, and a photo holding none is skipped. The plan
+    of Camera Time Shift (shift_date_taken); a date the shift would move out of range is left alone."""
 
     def plan_one(_path, held):
         after = {}
         for field in dates.SHIFTED_FIELDS:
             values = held.get(field) or []
-            moved = shift(values[0], minutes) if len(values) == 1 else None
+            moved = dates.shifted(values[0], minutes) if len(values) == 1 else None
             if moved is not None:
                 after[field] = [moved]
         return file_changes.Plan(after=after) if after else file_changes.skip("holds no Date Taken to move")
@@ -421,14 +476,8 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result.refuse(problem)
         return result
     refused = Result(attempted=len(photo_paths))
-    # A photo found damaged refuses the whole shift, nothing written, as it refuses a rename.
-    # Photos of folders the library does not hold are shifted in their files only
-    # (tagpup.services.file_only), and are asked for what they decode as, not for records.
+    # Photos of folders the library does not hold are shifted in their files only (tagpup.services.file_only).
     held, loose = libraries.split(library, photo_paths)
-    if held and libraries.refuse_writes(refused, library, held):
-        return refused
-    if loose and file_only.refuse_unwritable(refused, loose):
-        return refused
 
     plan_one = date_shift_plan(minutes)
 
@@ -484,9 +533,6 @@ def delete(library, photo_path):
         result = file_only.delete(photo_path)
         result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
         return result
-    # A damaged photo may be deleted: nothing is written into it.
-    if libraries.refuse_writes(result, library, [photo_path], damaged_ok=True):
-        return result
     try:
         went = recycle_bin.delete_file(photo_path)
     except Exception as e:
@@ -502,55 +548,72 @@ def delete(library, photo_path):
     return result
 
 
-@file_changes.exclusively()
-@roots_service.canonical_args("photo_path")
-def rotate(library, photo_path, direction, exiftool_path):
-    """Turn a photo a quarter left or right. Clicking Rotate Left or Rotate Right.
+def rotate_plan(direction):
+    """The `plan_one` of a quarter turn (tagpup.services.file_changes.write_fields): the Orientation the photo holds, turned,
+    composed with the one already there (a phone photo stored sideways, 6, turned left is 1, not 8); one it holds none of
+    is taken for 1. `detail` is what a turn reports of the photo."""
 
-    Only the file's Orientation changes; its pixels do not (tagpup.files.metadata.
-    rotate_image_file). Face boxes are in the coordinates Pillow shows the photo in:
-    for most formats the stored pixels, which do not move, so the boxes stay where they
-    are. Pillow applies a TIFF's Orientation as it loads it, so a TIFF's boxes turn with
-    the photo. The index row gets the file's new mtime and size, or the folder scan
-    would distrust it and read the photo again.
+    def plan_one(_path, held):
+        new = rotation.next_orientation(direction, held.get(rotation.FIELD))
+        return file_changes.Plan(after={rotation.FIELD: [str(new)]}, detail={"orientation": new, "faces_turned": 0})
+    return plan_one
 
-    details: `mtime` and `size` of the file now (the pages version image URLs by mtime,
-    because thumbnails are cached for a day), its `orientation`, and `faces_turned`.
-    Refused, touching nothing, for a direction that is not a "rotate direction".
+
+@roots_service.canonical_args("photo_paths")
+def rotate_photos(library, photo_paths, direction, exiftool_path):
+    """Turn photos a quarter left or right, as ONE journaled change "rotate" (tagpup.services.file_changes.write_fields):
+    each photo's Orientation planned from what the file holds, written, and its row recorded as it is marked done -- with
+    the face boxes the turn moves and the vectors it makes stale (tagpup.services.rotation), in the same transaction. A crash
+    between the file and its rows is settled forward at the next start; History's Undo turns the files and the boxes back.
+    More than batches.CHUNK photos are a batch like any other (claim, chunks, Cancel, progress), over batches.MAX_BATCH refused.
+
+    Only the file's Orientation changes; its pixels do not (tagpup.services.rotation.FIELD). Face boxes are in
+    the coordinates Pillow shows the photo in: for most formats the stored pixels, which do not move, so the boxes stay where
+    they are. Pillow applies a TIFF's Orientation as it loads it, so a TIFF's boxes turn with the photo. The index row gets
+    the file's new mtime and size (only when it described the file just before, #249), or the folder scan would distrust it.
+
+    A photo of a folder the library does not hold (Just look) is turned by the same plan in its file only, unjournaled
+    (file_only.write_fields). A file
+    ExifTool cannot write is that photo's error (DECISIONS 2026-10-15). details: `written`
+    {path: {"orientation", "faces_turned"}} and `change`, as write_fields gives them, `file_only` and `with_rows`. Refused,
+    touching nothing, for a direction that is not a "rotate direction".
     """
-    result = Result(attempted=1)
+    result = Result(attempted=len(photo_paths))
     refused = validation.problem("rotate direction", direction)
     if refused:
         result.refuse(refused)
         return result
-    _held, loose = libraries.split(library, [photo_path])
-    if loose:
-        # A photo of a folder the library does not hold: its file only, but only if it decodes.
-        if file_only.refuse_unwritable(result, [photo_path], full=True):
-            return result
-        turned = file_only.rotate(photo_path, direction, exiftool_path)
-        turned.details.update({file_only.FILE_ONLY: turned.changed, file_only.WITH_ROWS: 0})
-        return turned
-    if libraries.refuse_writes(result, library, [photo_path]):
-        return result
-    # The row is stamped only if it described the file just before the turn (#249).
-    before = embeddings.stamp_of(photo_path)
+    held, loose = libraries.split(library, photo_paths)
     try:
-        width, height, oriented = images.shown_size(photo_path)
-        orientation = metadata.rotate_image_file(photo_path, direction, exiftool_path)
+        journaled = file_changes.write_fields(
+            library, "rotate", exiftool_path, held, [rotation.FIELD], rotate_plan(direction),
+            summary={"photos": len(held), "direction": direction}) if held else None
+        files = file_only.write_fields(exiftool_path, loose, [rotation.FIELD], rotate_plan(direction)) if loose else None
+        return file_only.combined(journaled, files)
     except Exception as e:
-        result.fail(photo_path, e)
+        result = Result(attempted=len(photo_paths))
+        result.fail("rotate", e)
         return result
-    result.changed = 1
-    result.details["orientation"] = orientation
-    result.details["faces_turned"] = (
-        faces.turn_boxes(library.path, photo_path, direction, width, height) if oriented else 0)
-    # The embedder applies the Orientation, so the photo's vectors describe the turn
-    # before; they go, and are computed again.
-    photos.record_file_stat(library.path, photo_path, looks_different=True, before=before)
+
+
+def rotate(library, photo_path, direction, exiftool_path):
+    """Turn a photo a quarter left or right. Clicking Rotate Left or Rotate Right: rotate_photos of one photo.
+
+    details: `mtime` and `size` of the file now (the pages version image URLs by mtime, because thumbnails are cached for a
+    day), its `orientation`, `faces_turned`, and `change` (History's id of the turn; None for a photo of a folder the library
+    does not hold). A photo left alone is an error here, not a quiet nothing.
+    """
+    result = rotate_photos(library, [photo_path], direction, exiftool_path)
+    if result.refused or result.errors:
+        return result
+    turned = next((detail for key, detail in result.details.get("written", {}).items()
+                   if paths.same(key, photo_path)), None) if result.changed else None
+    if turned is None:
+        result.fail(photo_path, "; ".join(why for _what, why in result.skipped) or "it was not turned")
+        return result
     stat = os.stat(photo_path)
+    result.details.update(turned)
     result.details.update(mtime=stat.st_mtime, size=stat.st_size)
-    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1})
     return result
 
 

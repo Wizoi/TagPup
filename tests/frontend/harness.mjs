@@ -258,7 +258,7 @@ export class FakeServer {
   }
 
   /**
-   * Reply with `body` (JSON-encoded) for any URL containing `match`.
+   * Reply with `body` (JSON-encoded) for any URL containing `match` (a string), or that `match` (a RegExp) matches.
    *
    * `body` may be a function of the URL returning the body or a promise of it, for a
    * reply that has to arrive later -- a scan still running while someone types.
@@ -307,8 +307,9 @@ export class FakeServer {
       // Match on the path regardless of a leading slash: the apps issue both
       // absolute ("/api/x") and relative ("api/x") URLs, and a relative one would
       // otherwise fall through to the default empty reply.
-      const route = self.routes.find(
-        (r) => url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
+      const route = self.routes.find((r) => (typeof r.match === "string"
+        ? url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
+        : r.match.test(url))
       ) || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
       const status = route ? route.status : 200;
       const headers = (route && route.headers) || {};
@@ -335,6 +336,92 @@ export class FakeServer {
       });
     };
     return this;
+  }
+}
+
+/** The real servers when tests/page_server.py started them ({tagpup: url, tuner: url}); none under a plain `node --test`. */
+export const REAL = process.env.TAGPUP_PAGE_SERVERS ? JSON.parse(process.env.TAGPUP_PAGE_SERVERS) : null;
+
+/**
+ * The real app in a FakeServer's place (contract table, rows 12 and 22): the page's `fetch` goes to the server at `base`; a
+ * reply is read whole before the page sees it, status and headers kept (a 4xx keeps its JSON, a 503 its X-TagPup-Updating).
+ */
+export class RealServer extends FakeServer {
+  constructor(base) {
+    super();
+    this.base = base;
+    this.waiting = [];
+    this.replied = [];   // the URLs answered whole
+  }
+
+  nextReply() {
+    return new Promise((resolve) => this.waiting.push(resolve));
+  }
+
+  install(window) {
+    window.fetch = async (input, init = {}) => {
+      const url = typeof input === "string" ? input : String(input.url);
+      const body = typeof init.body === "string" && /^[\[{]/.test(init.body) ? JSON.parse(init.body) : init.body;
+      this.calls.push({ url, method: init.method || "GET", body });
+      const target = new URL(url, "http://page/");
+      const abort = new AbortController();
+      if (init.signal) init.signal.addEventListener("abort", () => abort.abort(), { once: true });
+      try {
+        const sent = await fetch(this.base + target.pathname + target.search, { ...init, signal: abort.signal });
+        this.replied.push(url);
+        return new Response([204, 304].includes(sent.status) ? null : await sent.arrayBuffer(), { status: sent.status, headers: sent.headers });
+      } catch (error) {
+        if (init.signal && init.signal.aborted) throw new window.DOMException("The operation was aborted.", "AbortError");
+        throw error;
+      } finally {
+        this.waiting.splice(0).forEach((resolve) => resolve());
+      }
+    };
+    return this;
+  }
+}
+
+/**
+ * The match of the people reads alone -- /api/people and /api/people?include_hidden=1 -- not of /api/people-with-counts,
+ * /api/people-faces and the rest, which the text "/api/people" is the start of.
+ */
+export const PEOPLE_ROUTE = /\/api\/people(\?|$)/;
+
+/**
+ * The people /api/people?include_hidden=1 answers for the tree `nodes` (as /api/taxonomy/tree sends it), as
+ * tagpup.store.person_ids.People.read makes them: each node marked as holding faces with no node under it, but an
+ * empty People (where a new library files people), as {id, name, tag}. A page told of a tree with people and of no
+ * records holds a shape no server sends (docs/findings.md, #1358).
+ */
+export function peopleRecordsOf(nodes) {
+  const parents = new Set(nodes.map((node) => node.parent_id));
+  return nodes
+    .filter((node) => node.has_face === 1 && !parents.has(node.id) && node.tag.toLowerCase() !== "people")
+    .map((node) => ({ id: node.id, name: node.name, tag: node.tag }));
+}
+
+/** A library of the test's own, made by the Python seed `seed`: `{library, server, url, ...what the seed says}` to load a page on. */
+export async function realLibrary(seed, appName = "tagpup") {
+  const kind = appName === "tagtuner" ? "tuner" : "tagpup";
+  const facts = await (await fetch(`${REAL[kind]}/__seed/${seed}`)).json();
+  return { ...facts, server: new RealServer(REAL[kind]), url: `http://localhost:8090/${facts.library}/` };
+}
+
+/** Wait on replies, not on time, until `done()` holds; after `seconds` it fails saying what it waited for (`what`, or a function of it). */
+export async function until(ctx, done, what, seconds = 30) {
+  let timer;
+  const gaveUp = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`gave up waiting for ${typeof what === "function" ? what() : what}`)), seconds * 1000);
+  });
+  gaveUp.catch(() => {});
+  try {
+    for (;;) {
+      await flush(ctx.window, 2);
+      if (done()) return;
+      await Promise.race([ctx.server.nextReply(), gaveUp]);
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
 

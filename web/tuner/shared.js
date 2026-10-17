@@ -1,7 +1,9 @@
 // What every feature uses: the address bar, the names the library knows.
 import { api } from './common/api.js';
-import { sortedTags } from './common/vocabulary.js';
+import { choosePerson } from './common/person-choice.js';
+import { PeopleDirectory, personTitle, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
+import { upper } from './hooks.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
 
 // ------------------------------------------------------------------ paths --
@@ -22,6 +24,11 @@ export function updateURLParams() {
         } else {
             params.delete('person');
         }
+        if (state.activePersonName && state.activePersonId !== null) {
+            params.set('person_id', String(state.activePersonId));
+        } else {
+            params.delete('person_id');
+        }
         params.delete('photo');
         params.delete('show_matched');
     } else {
@@ -40,37 +47,88 @@ export function updateURLParams() {
     window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
 }
 
-// Fetch all unique known people for autocomplete
+// The people with a tag, by id: everyone, hidden from autocomplete or not -- who a typed name is and the label of each
+// (identity by id) -- and, read apart, those not hidden: what is offered while typing.
 export function fetchKnownPeople() {
-    api.fetch('/api/people')
-        .then(res => {
-            if (!res.ok) throw new Error('Failed to fetch people list');
-            return res.json();
-        })
+    const read = (url) => api.fetch(url).then(res => (res.ok ? res.json() : []));
+    read('/api/people?include_hidden=1')
+        .then(data => { state.people = new PeopleDirectory(data); })
+        .catch(err => console.error('Error fetching the people:', err));
+    read('/api/people')
         .then(data => {
-            state.allKnownPeople = data;
+            state.offeredPeople = new PeopleDirectory(data);
             updatePeopleDatalist();
         })
-        .catch(err => console.error('Error fetching people list:', err));
-    api.fetch('/api/people?include_hidden=1')
-        .then(res => res.ok ? res.json() : [])
-        .then(data => { state.everyKnownPerson = Array.isArray(data) ? data : []; })
-        .catch(err => console.error('Error fetching people list:', err));
+        .catch(err => console.error('Error fetching the people offered:', err));
 }
 
-/** Is this somebody the library already knows, hidden from autocomplete or not? */
-export function personExists(name) {
-    return state.everyKnownPerson.includes(name) || state.allKnownPeople.includes(name);
+/**
+ * Who typed text means: the person (their id with them), after asking which when two people have the name, or a name no tag has.
+ * Resolves to {person}, or {name} -- a new person: every person has a tag, the hidden ones too -- or null when nothing was typed
+ * or the question was declined.
+ */
+export function resolveTyped(text, title = 'Which person?') {
+    const found = state.people.match(text);
+    if (found.kind === 'person') return Promise.resolve({ person: found.person });
+    if (found.kind === 'new') {
+        return Promise.resolve({ name: found.name });
+    }
+    if (found.kind === 'choose') {
+        return choosePerson(found.people, {
+            title, about: `${found.people.length} people are called ${found.people[0].name}.`,
+        }).then(person => (person ? { person } : null));
+    }
+    return Promise.resolve(null);
 }
 
-// Update global datalist elements with known people names
+/**
+ * A write refused with 404 says the person it named is gone (merged or deleted in another window; identity by id never makes
+ * anyone of a stale id): what this page holds of the people is out of date, so it reads the lists again. The refusal's own words
+ * are the caller's to show.
+ */
+export function personGone(status) {
+    if (status !== 404) return;
+    fetchKnownPeople();
+    if (upper.fetchPeopleWithCounts) upper.fetchPeopleWithCounts(true, true);
+}
+
+/** The name of the person a list row names (its nested `person`, else the id looked up, else the name). */
+export function labelOfPerson(name, personId = null, person = null) {
+    const found = person || (personId !== null && personId !== undefined ? state.people.ofId(personId) : null);
+    return found ? found.name : String(name ?? '');
+}
+
+/** The person a face's suggestion names, as a request names them: {id, name} (the id when the server sent it). */
+export function suggestedWho(face) {
+    const id = face.suggested_person_id !== undefined ? face.suggested_person_id : null;
+    const known = id !== null ? state.people.ofId(id) : null;
+    return known || { id, name: face.suggested_name };
+}
+
+/** What shows for a face's suggested person: their name. */
+export function suggestedLabel(face) {
+    return labelOfPerson(face.suggested_name, face.suggested_person_id !== undefined ? face.suggested_person_id : null);
+}
+
+/** The hover text for the same: the full tag. */
+export function titleOfPerson(name, personId = null, person = null) {
+    const found = person || (personId !== null && personId !== undefined ? state.people.ofId(personId) : null);
+    return found ? personTitle(found) : String(name ?? '');
+}
+
+// Update global datalist elements with known people: a name (two people who share it are one entry: typing it asks which).
 function updatePeopleDatalist() {
     const datalist = document.getElementById('people-datalist');
     if (!datalist) return;
     datalist.innerHTML = '';
-    sortedTags(state.allKnownPeople).forEach(person => {
+    const offered = new Map();
+    // A person is offered by their name, with their tag as the hover; one hidden from autocomplete is not offered.
+    for (const person of state.offeredPeople.all()) offered.set(person.name, person);
+    sortedTags(offered.keys()).forEach(text => {
         const option = document.createElement('option');
-        option.value = person;
+        option.value = text;
+        const person = offered.get(text);
+        if (person) option.title = personTitle(person);
         datalist.appendChild(option);
     });
 }

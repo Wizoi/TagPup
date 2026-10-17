@@ -60,7 +60,7 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
             for _ in range(2):
                 reply = self.requests.get("/api/photo-details?path=" + urllib.parse.quote(PHOTO))
 
-        named_reads = [s for s in statements if "embedding" in s and "name IS NOT NULL" in s]
+        named_reads = [s for s in statements if "embedding" in s and "tag_id IS NOT NULL" in s]
         self.assertEqual(1, len(named_reads), "every click re-read the named faces:\n" + "\n".join(named_reads))
         similarities = sorted(f["max_similarity"] for f in reply["faces"])
         self.assertAlmostEqual(0.8, similarities[0], places=4)

@@ -12,12 +12,12 @@ import logging
 import os
 import sqlite3
 import threading
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from tagpup.core.library import Library
-from tagpup.files.identity import read_document_id
+from tagpup.core import paths
+from tagpup.core.fields import read_document_id
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
 from tagpup.store import derived as store_derived
@@ -27,19 +27,6 @@ from tagpup.store import taxonomy as store_taxonomy
 
 logger = logging.getLogger("tagpup_cli.embedder")
 index_log = logging.getLogger("tagpup_cli.index")
-
-
-def stored_mismatch(photo_index, model_name):
-    """(stored, made) when the vectors `photo_index` holds for these settings are not the
-    length `model_name` makes; None when they are, or when either is not known."""
-    # Here, not at the top: open_clip takes seconds to import, and the index needs none of it.
-    from tagpup.ml.clip import output_dim
-
-    stored = photo_index.index.d if photo_index.index is not None else None
-    made = output_dim(model_name)
-    if stored is None or made is None or stored == made:
-        return None
-    return (stored, made)
 
 
 class PhotoEmbeddings:
@@ -75,7 +62,7 @@ class PhotoEmbeddings:
             try:
                 stat = os.stat(file_path)
                 row = store_embeddings.get(self.photo_index.conn, file_path, self.model_key)
-                if row and row.mtime == stat.st_mtime and row.size == stat.st_size:
+                if row and store_photos.describes(row.mtime, row.size, (stat.st_mtime, stat.st_size)):
                     return np.frombuffer(row.vector, dtype=np.float32).tolist()
             except Exception as e:
                 logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
@@ -134,17 +121,18 @@ class PhotoEmbeddings:
         return embedding
 
 
-def _record(row):
+def _record(row, people="people"):
     """A photo's record as the index answers it, from store.photos.records' row: the shape
     every caller reads -- "path", "mtime", "size", "tags", "people", "captions",
-    "raw_metadata", "year", "has_embedding" -- and its "id"."""
+    "raw_metadata", "year", "has_embedding" -- and its "id". The people are under `people`
+    ("people_ids" for the ids of their nodes: PhotoIndex.records)."""
     photo_id, path, mtime, size, tags_json, people_json, captions_json, raw_json, year, vectored = row
     try:
-        tags, people = json.loads(tags_json), json.loads(people_json)
+        tags, listed = json.loads(tags_json), json.loads(people_json)
         captions, raw_meta = json.loads(captions_json), json.loads(raw_json)
     except Exception:
-        tags, people, captions, raw_meta = [], [], [], {}
-    return {"id": photo_id, "path": path, "mtime": mtime, "size": size, "tags": tags, "people": people,
+        tags, listed, captions, raw_meta = [], [], [], {}
+    return {"id": photo_id, "path": path, "mtime": mtime, "size": size, "tags": tags, people: listed,
             "captions": captions, "raw_metadata": raw_meta, "year": year, "has_embedding": bool(vectored)}
 
 
@@ -165,13 +153,8 @@ class PhotoIndex:
     tagpup.services.faces': it held a wrapper for each.
     """
 
-    def __init__(self, db_path: str, model: Optional[str] = None, read_only: bool = False):
+    def __init__(self, db_path: str, model: Optional[str] = None):
         self.db_path = db_path
-        #: A look only (the CLI's stats, list-index and search): the library is opened
-        #: read-only and never migrated or created. `behind` names the migrations it
-        #: has not had, for the caller to say so (docs/findings.md, #243).
-        self.read_only = read_only
-        self.behind: List[str] = []
         #: Whose vectors are searched and written: a tagpup.store.embeddings.model_key,
         #: the model's the runtime runs (tagpup.runtime.Runtime.model_key). Vectors from
         #: other settings cannot be compared with a query embedded under these. None
@@ -195,42 +178,57 @@ class PhotoIndex:
         with self._load_lock:
             return self._load_unlocked()
 
-    def _load_unlocked(self) -> bool:
+    def open(self) -> bool:
+        """Connect, as load does, but read none of the vectors: for a command that needs only
+        the connection and the stamps (the indexer, which read 267 MB of vectors to learn
+        their length). `index` stays None."""
+        with self._load_lock:
+            return self._load_unlocked(vectors=False)
+
+    def stamps(self):
+        """(id, path, mtime, size, holds a vector) of every photo, read now (store.photos.stamps):
+        what the indexer compares with the files. [] when not connected."""
+        if self.conn is None:
+            return []
+        with self._read_lock:
+            return store_photos.stamps(self.conn, with_vectors=self.model)
+
+    def current(self, on_disk):
+        """The paths.key of each photo of `on_disk` ({key: (path, mtime, size)}: the files as they are) whose row
+        holds a vector and describes its file (store.photos.describes: the one answer sync gives too)."""
+        return {key for _id, path, mtime, size, vectored in self.stamps()
+                if vectored and (key := paths.key(path)) in on_disk
+                and store_photos.describes(mtime, size, on_disk[key][1:])}
+
+    def _load_unlocked(self, vectors=True) -> bool:
         try:
-            if self.read_only:
-                if not os.path.exists(self.db_path):
-                    return False
-                self.behind = [m.name for m in schema.pending(self.db_path)]
-                if self.conn is None:
-                    self.conn = db.connect(db.readonly_uri(self.db_path), uri=True, timeout=30.0,
-                                           check_same_thread=False)
-                return self._read_rows()
             db_dir = os.path.dirname(self.db_path)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
             schema.ensure(self.db_path)
-            # Reloads (after remove_paths, build_or_update) reuse the connection. Each
+            # Reloads (after build_or_update) reuse the connection. Each
             # used to open a new one and drop the old one unclosed, and on Windows an
             # unclosed handle keeps the database file locked. Foreign keys on: deleting
             # a photo's row takes its faces with it.
             if self.conn is None:
                 self.conn = db.connect(self.db_path, timeout=30.0, check_same_thread=False,
                                               foreign_keys=True)
-            return self._read_rows()
+            return self._read_rows(vectors)
         except Exception as e:
             index_log.error(f"Error loading SQLite database: {e}", exc_info=True)
             self.index = None
             self.count = self.indexed = 0
             return False
 
-    def _read_rows(self) -> bool:
-        """Read the photos' vectors on self.conn into memory, by photo id."""
+    def _read_rows(self, vectors=True) -> bool:
+        """Read the photos' vectors on self.conn into memory, by photo id; with `vectors` False,
+        none of them (open)."""
         # Taken before the rows: a write landing in between costs one reload
         # later, never a missed one. See reload_if_changed.
         self._signature = self._photos_signature()
         with self._read_lock:
             self.count, _vectored = store_photos.counts(self.conn, self.model)
-            rows = store_photos.vectors(self.conn, self.model) if self.model is not None else []
+            rows = store_photos.vectors(self.conn, self.model) if vectors and self.model is not None else []
         ids, embeddings = [], []
         for photo_id, emb_bytes in rows:
             if emb_bytes:
@@ -246,33 +244,40 @@ class PhotoIndex:
             self.index = None
         return True
 
-    def records(self, photo_ids=None) -> List[Dict[str, Any]]:
+    def records(self, photo_ids=None, people_ids=False) -> List[Dict[str, Any]]:
         """What each photo holds (see _record), read from the library now: of `photo_ids`,
-        in their order and leaving out any with no row, or of every photo. Not kept."""
+        in their order and leaving out any with no row, or of every photo. Not kept. With
+        `people_ids`, each photo's people are the ids of their nodes, under "people_ids"
+        (no names are built), read in the one statement that reads the rest."""
         if self.conn is None:
             return []
         with self._read_lock:
-            rows = store_photos.records(self.conn, self.model, photo_ids)
-        found = [_record(row) for row in rows]
+            rows = store_photos.records(self.conn, self.model, photo_ids, people_ids=people_ids)
+        found = [_record(row, "people_ids" if people_ids else "people") for row in rows]
         if photo_ids is None:
             return found
         by_id = {record["id"]: record for record in found}
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
-    def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512, reload: bool = True):
+    def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512):
         """Batch insert/update photos inside the SQLite database (transaction-safe)."""
         if not embeddings or self.conn is None:
             return
-
+        # A row is stamped with the read it records: MetadataExtractor gives every record its mtime and size.
         try:
             # Who each photo's keywords name depends on this library's tree, read once;
             # the store rebuilds each photo's people from it and the photo's faces.
             known = store_taxonomy.read_people_vocabulary(self.conn)
             batch = store_derived.Batch(self.conn)   # the tree and the folders, once for the batch
+            # The nodes of the keywords the batch's files hold and the tree lacks, made together (one scan of the library for
+            # the batch, not one for each node); the people they make are in the vocabulary read after.
+            if store_derived.make_nodes(self.conn, [meta.get("tags", []) for meta in metas], batch):
+                known = store_taxonomy.read_people_vocabulary(self.conn)
+            batch.prepared = True
             for meta, emb in zip(metas, embeddings):
                 store_photos.record_indexed(self.conn, meta["path"], {
-                    "mtime": meta.get("mtime", 0.0),
-                    "size": meta.get("size", 0),
+                    "mtime": meta["mtime"],
+                    "size": meta["size"],
                     "tags": meta.get("tags", []),
                     "captions": meta.get("captions", []),
                     "raw_metadata": meta.get("raw_metadata", {}),
@@ -284,10 +289,6 @@ class PhotoIndex:
                                     or read_document_id(meta.get("raw_metadata", {}))),
                 }, model=self.model, known=known, batch=batch)
             self.conn.commit()
-
-            if reload:
-                # Reload to rebuild the in-memory FAISS index to reflect the updates
-                self.load()
         except Exception as e:
             index_log.error(f"Error saving batch to SQLite: {e}")
             self.conn.rollback()
@@ -302,44 +303,6 @@ class PhotoIndex:
         nearest = self.index.search(query_vector, k)
         found = {record["id"]: record for record in self.records([photo_id for _sim, photo_id in nearest])}
         return [(sim, found[photo_id]) for sim, photo_id in nearest if photo_id in found]
-
-    def remove_paths(self, paths_to_remove: Set[str]):
-        """Remove specific paths from the SQLite database and reload."""
-        if self.conn is None or not paths_to_remove:
-            return
-        try:
-            store_photos.remove(self.conn, paths_to_remove)
-            self.conn.commit()
-            self._forget_thumbnails()
-            self.load()
-        except Exception as e:
-            index_log.error(f"Error deleting paths from SQLite: {e}")
-            self.conn.rollback()
-            raise e
-
-    def _forget_thumbnails(self):
-        """The photos just removed leave nothing in the thumbnail cache (tagpup.services.thumbnails.sweep).
-        The rows are gone and committed; a cache that cannot be swept holds files nothing will serve."""
-        try:
-            from tagpup.services import thumbnails   # thumbnails reaches damaged_photos, which reaches this module
-            thumbnails.sweep(Library(self.db_path))
-        except Exception as why:
-            index_log.warning("Could not clear the thumbnails of the photos removed: %s", why)
-
-    def clear_clip_embeddings(self):
-        """Set all embedding values in photos table to NULL and commit, then clear in-memory FAISS index."""
-        if self.conn is None:
-            return
-        try:
-            store_photos.clear_embeddings(self.conn)
-            self.conn.commit()
-            self.index = None
-            # Reload metadata (has_embedding will be updated to False)
-            self.load()
-        except Exception as e:
-            index_log.error(f"Error clearing clip embeddings from SQLite: {e}")
-            self.conn.rollback()
-            raise e
 
     def _photos_signature(self):
         """Something that moves whenever a photo row is added, removed or rewritten: the

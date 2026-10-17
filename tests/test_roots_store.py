@@ -24,7 +24,7 @@ import roots_library as rl  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import machine, paths  # noqa: E402
 from tagpup.store import db, faces, folders, inspection, journal  # noqa: E402
-from tagpup.store import added_folders, damaged_files, embeddings, file_journal, people  # noqa: E402
+from tagpup.store import added_folders, embeddings, file_journal  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 from tagpup.store import settings as store_settings  # noqa: E402
@@ -79,8 +79,6 @@ class WhatTheLibraryHolds(TwoLibraries):
         self.assertEqual([], self.plain.library_roots())
 
     def test_every_other_table_with_a_path_is_converted(self):
-        self.assertEqual({"@pictures/2024 Harbour/Cut short.jpg", "@pictures/2024 Regatta/Cut short.jpg"},
-                         set(self.rooted.raw_paths("damaged_files")))
         self.assertEqual(["@pictures/Added later"], self.rooted.raw_paths("added_folders"))
         if rl.EXIFTOOL:
             self.assertEqual(["@pictures/2024 Regatta/IMG_1001.jpg", "@pictures/2024 Regatta/IMG_1002.jpg"],
@@ -89,7 +87,7 @@ class WhatTheLibraryHolds(TwoLibraries):
                              ["<BASE>\\Pictures\\2024 Regatta\\IMG_1001.jpg", "<BASE>\\Pictures\\2024 Regatta\\IMG_1002.jpg"])
 
     def test_the_folder_settings_are_held_as_rows_and_read_native(self):
-        held = dict(self.rooted.rows("SELECT key, value FROM settings WHERE key LIKE 'library.%'"))
+        held = dict(self.rooted.rows("SELECT key, value FROM settings WHERE key IN ('library.roots', 'library.ignored')"))
         self.assertEqual({"library.roots": "@pictures", "library.ignored": "@pictures/Not these"}, held)
         read = store_settings.read(self.rooted.db_path)
         self.assertEqual(self.rooted.pictures, read["library.roots"])
@@ -118,11 +116,10 @@ class EveryReadAnswersNative(TwoLibraries):
         found = self.same(lambda conn, side: sorted(folders.of(conn).listed()))
         self.assertEqual(5, len(found))
 
-    def test_stamps_and_rows_to_check_and_the_index_rows(self):
+    def test_stamps_and_rows_to_check_and_the_records(self):
         self.same(lambda conn, side: sorted(store_photos.stamps(conn)))
         self.same(lambda conn, side: sorted(store_photos.stamps(conn, os.path.join(side.pictures, "2024 Harbour"))))
         self.same(lambda conn, side: sorted(store_photos.rows_to_check(conn)))
-        self.same(lambda conn, side: sorted(store_photos.index_rows(conn, "a model"), key=lambda r: r[0]))
         self.same(lambda conn, side: sorted(store_photos.records(conn, "a model")))
 
     def test_a_rows_raw_metadata_is_what_its_file_would_say(self):
@@ -144,7 +141,7 @@ class EveryReadAnswersNative(TwoLibraries):
                     store_photos.stored_spelling(conn, path), store_photos.row_as_recorded(conn, path) is not None,
                     faces.count_for_photo(conn, side.real[0]), faces.counts_on(conn, side.real[0]),
                     inspection.ids_of_stored(conn, [path]), inspection.ids_of_files(conn, [path, side.real[0]]),
-                    people.of_photo(conn, side.real[0]), folders.holds(conn, os.path.dirname(path)),
+                    folders.holds(conn, os.path.dirname(path)),
                     embeddings.stamps_by_path(conn, [path]), store_photos.count_under(conn, side.pictures))
         self.same(ask)
 
@@ -159,9 +156,7 @@ class EveryReadAnswersNative(TwoLibraries):
 
     def test_faces(self):
         def ask(conn, side):
-            return (sorted(faces.for_clustering(conn)), sorted(faces.photos_with_faces(conn)),
-                    sorted(faces.names_by_photo(conn).items(), key=lambda kv: kv[0]),
-                    sorted(faces.names_by_photo_key(conn).items(), key=lambda kv: kv[0]),
+            return (sorted(faces.for_clustering(conn)), sorted(faces.names_by_photo(conn).items(), key=lambda kv: kv[0]),
                     sorted(faces.decisions(conn)), faces.unnamed(conn, folder=side.pictures),
                     sorted(faces.unnamed_counts(conn, side.pictures).items()),
                     sorted(faces.identify_candidates(conn)), faces.busiest_photo(conn) is not None,
@@ -176,14 +171,6 @@ class EveryReadAnswersNative(TwoLibraries):
                     folders.ignored(conn))
         self.same(ask)
 
-    def test_damaged_files_come_in_the_order_they_always_did(self):
-        def ask(conn, side):
-            return ([r.path for r in damaged_files.every(conn)],
-                    [r.path for r in damaged_files.under(conn, side.pictures)],
-                    [r.path for r in damaged_files.under(conn, os.path.join(side.pictures, "2024 Harbour"))])
-        listed = self.same(ask)
-        self.assertEqual(sorted(listed[0], key=str.lower), listed[0])
-
     def test_suggestions_in_a_folder_carry_native_paths(self):
         found = self.same(lambda conn, side: suggestions.in_folder(conn, side.pictures))
         (path, entry), = found.items()
@@ -191,12 +178,11 @@ class EveryReadAnswersNative(TwoLibraries):
         self.assertTrue(entry["raw_suggestions"]["nearest_neighbors"][0]["path"].startswith("<BASE>"))
 
     def test_the_whole_library_read_row_by_row(self):
-        self.same(lambda conn, side: sorted(store_photos.all_paths(conn)))
         self.same(lambda conn, side: sorted(store_photos.identities(conn).items()))
         self.same(lambda conn, side: sorted(store_photos.tags_by_photo(conn)))
         self.same(lambda conn, side: store_photos.with_tag(conn, "Activity/Sailing"))
         self.same(lambda conn, side: sorted(inspection.ids_and_paths(conn), key=lambda r: r[0]))
-        self.same(lambda conn, side: sorted(inspection.whose_file_is_gone(conn)))
+        self.same(lambda conn, side: sorted(inspection.photo_files(conn)))
 
     def test_the_order_of_a_listing_is_the_order_the_owner_has_always_seen(self):
         for side in (self.plain, self.rooted):
@@ -261,16 +247,16 @@ class EveryWriteConverts(unittest.TestCase):
     def test_renaming_a_row_moves_it_by_its_converted_path(self):
         old = self.side.real[0]
         new = os.path.join(self.side.pictures, "2024 Regatta", "Renamed.jpg")
-        moved, skipped = store_photos.move_rows(self.side.db_path, {old: new})
+        moved, skipped = photo_rows.move(self.side.db_path, {old: new})
         self.assertEqual((1, []), (moved, skipped))
         self.assertIn("@pictures/2024 Regatta/Renamed.jpg", self.held())
         self.assertNotIn("@pictures/2024 Regatta/IMG_1001.jpg", self.held())
 
     def test_a_row_moved_out_of_the_root_becomes_native_and_back(self):
         old = self.side.real[0]
-        store_photos.move_rows(self.side.db_path, {old: self.elsewhere})
+        photo_rows.move(self.side.db_path, {old: self.elsewhere})
         self.assertIn(self.elsewhere, self.held())
-        store_photos.move_rows(self.side.db_path, {self.elsewhere: old})
+        photo_rows.move(self.side.db_path, {self.elsewhere: old})
         self.assertIn("@pictures/2024 Regatta/IMG_1001.jpg", self.held())
 
     def test_forgetting_a_photo_finds_its_row_and_its_faces(self):
@@ -278,19 +264,11 @@ class EveryWriteConverts(unittest.TestCase):
         self.assertEqual(1, removed["photos"])
         self.assertEqual(1, removed["faces"])
 
-    def test_removing_a_folder_takes_its_rows_its_added_record_and_its_damaged_ones(self):
+    def test_removing_a_folder_takes_its_rows_and_its_added_record(self):
         folder = os.path.join(self.side.pictures, "2024 Regatta")
         removed = self.write(lambda conn: store_photos.remove_under(conn, folder))
         self.assertEqual(4, removed["photos_removed"])
         self.assertEqual([], [p for p in self.held() if p.startswith("@pictures/2024 Regatta")])
-        self.assertEqual(["@pictures/2024 Harbour/Cut short.jpg"], self.side.raw_paths("damaged_files"))
-
-    def test_a_damaged_file_is_recorded_as_its_row(self):
-        path = os.path.join(self.side.pictures, "2025", "Cut.jpg")
-        new = self.write(lambda conn: damaged_files.record(conn, path, (1.0, 5), "empty", "no bytes"))
-        self.assertTrue(new)
-        self.assertIn("@pictures/2025/Cut.jpg", self.side.raw_paths("damaged_files"))
-        self.assertFalse(self.write(lambda conn: damaged_files.record(conn, path, (1.0, 5), "empty", "no bytes")))
 
     def test_an_added_folder_is_recorded_as_its_row(self):
         self.write(lambda conn: added_folders.record(conn, os.path.join(self.side.pictures, "More", "Deeper")))
@@ -315,7 +293,8 @@ class EveryWriteConverts(unittest.TestCase):
     def test_a_save_stamps_the_row_and_keeps_its_raw_metadata_source_file(self):
         path = self.side.real[0]
         raw = {"SourceFile": path.replace(os.sep, "/"), "XMP:Subject": ["A"], "Subject": ["A"]}
-        store_photos.record_saved(self.side.db_path, path, ["A"], [], raw)
+        db.write_with_connection(self.side.db_path, lambda conn: store_photos.follow_fields(
+            conn, path, {"XMP:Subject": ["A"]}, os.stat(path), whole=raw))
         held = json.loads(self.side.rows("SELECT raw_metadata FROM photos WHERE path = ?",
                                          ("@pictures/2024 Regatta/IMG_1001.jpg",))[0][0])
         self.assertEqual("@pictures/2024 Regatta/IMG_1001.jpg", held["SourceFile"])
@@ -467,31 +446,6 @@ class HowAConnectionHoldsItsRoots(unittest.TestCase):
         self.assertEqual(len(ids), applied.changed)
         self.assertEqual(1, len(self.asked), "a change holds one Roots for its whole length")
 
-    def test_an_index_open_while_the_library_is_adopted_writes_rows_afterwards(self):
-        """The always-on process holds its index's connection open while the CLI adopts the
-        library: the next batch it writes is converted by the roots the library has then."""
-        from tagpup.services.search import PhotoIndex
-        index = PhotoIndex(self.side.db_path, model="m")
-        try:
-            index.load()
-
-            def batch(name):
-                path = os.path.join(self.side.pictures, "2024 Regatta", name)
-                index.build_or_update([[0.0] * 4], [{"path": path, "mtime": 1.0, "size": 2, "tags": [], "captions": [],
-                                                      "raw_metadata": {"SourceFile": path.replace(os.sep, "/")}}],
-                                      dim=4, reload=False)
-
-            batch("Before.jpg")
-            self.assertIn(os.path.join(self.side.pictures, "2024 Regatta", "Before.jpg"), self.side.raw_paths())
-            self.assertTrue(self.side.adopt().ok)
-            batch("After.jpg")
-        finally:
-            index.close()
-        held = self.side.raw_paths()
-        self.assertIn("@pictures/2024 Regatta/Before.jpg", held, "the adoption converted what was there")
-        self.assertIn("@pictures/2024 Regatta/After.jpg", held, "and the open index wrote its next batch as a row")
-        self.assertEqual([], [p for p in held if p.lower().startswith(self.side.pictures.lower() + os.sep)])
-
     def test_a_map_that_moves_moves_the_generations_every_cache_of_paths_is_keyed_by(self):
         """The Identify Faces grids, the folders the watcher watches and the index hold native
         paths, built while a generation stood: moving the root in the map moves no row, so it
@@ -536,36 +490,6 @@ class HowAConnectionHoldsItsRoots(unittest.TestCase):
                 self.assertEqual(moved, store_roots.from_row(conn, "@pictures"))
         finally:
             conn.close()
-
-    def test_a_pinned_run_stops_when_the_librarys_own_roots_change(self):
-        with store_roots.pinned(self.side.db_path):
-            conn = db.connect(self.side.db_path)
-            try:
-                self.assertTrue(store_roots.roots_for(conn).identity)
-                self.side.adopt()
-                with self.assertRaises(store_roots.RootsChanged):
-                    store_roots.roots_for(conn)
-            finally:
-                conn.close()
-
-    def test_a_write_prepared_before_an_adoption_is_run_again_after_it(self):
-        path = os.path.join(self.side.pictures, "2024 Regatta", "Caught between.jpg")
-        calls = []
-
-        def operation(conn):
-            calls.append(1)
-            row = store_roots.to_row(conn, path)
-            if len(calls) == 1:
-                # Another process adopts the library after this write has converted its path
-                # and before it writes it.
-                self.assertTrue(self.side.adopt().ok)
-            conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')",
-                         (row,))
-
-        db.write_with_connection(self.side.db_path, operation)
-        self.assertEqual(2, len(calls))
-        self.assertIn("@pictures/2024 Regatta/Caught between.jpg", self.side.raw_paths())
-        self.assertNotIn(path, self.side.raw_paths())
 
     def test_a_write_on_a_long_lived_connection_begins_at_the_lock(self):
         self.side.adopt()
@@ -626,7 +550,7 @@ class TheMapProviderIsNeverForgotten(unittest.TestCase):
         "before = 'tagpup.config' in sys.modules\n"
         "from tagpup.store import db, photos\n"
         "conn = db.connect(db.readonly_uri(library), uri=True)\n"
-        "print(before, len(photos.all_paths(conn)))\n")
+        "print(before, len(photos.tags_by_photo(conn)))\n")
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="roots_provider_")
@@ -647,12 +571,6 @@ class TheMapProviderIsNeverForgotten(unittest.TestCase):
         before, count = self.read_in_a_fresh_interpreter()
         self.assertEqual("False", before, "config was not imported first: the store asked for it")
         self.assertEqual("10", count)
-
-    def test_each_script_that_opens_a_library_reads_a_rooted_one(self):
-        for script in ("relink_renamed_photos", "dedupe_faces", "merge_duplicate_person_tags", "backfill_document_ids"):
-            with self.subTest(script=script):
-                _before, count = self.read_in_a_fresh_interpreter(script)
-                self.assertEqual("10", count)
 
 
 class TheDynamicImportIsInOnePlace(unittest.TestCase):
@@ -854,15 +772,6 @@ class TheHotLookupsUseTheirIndexes(unittest.TestCase):
         self.assertNotIn("SCAN faces", plan)
         self.assertNotIn("SCAN photos", plan)
         self.assertIn("SEARCH", plan)
-
-    def test_the_damaged_files_of_a_folder(self):
-        conn = self.conn()
-        try:
-            where, params = store_roots.sql_under(conn, "path", os.path.join(self.side.pictures, "2024 Harbour"))
-        finally:
-            conn.close()
-        self.assertNotIn("SCAN damaged_files", self.plan("SELECT path FROM damaged_files WHERE " + where, params))
-
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class OneBoundaryAndNoOther(unittest.TestCase):

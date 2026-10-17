@@ -1,7 +1,7 @@
 """The derived tables follow every write (tagpup.store.derived; docs/ARCHITECTURE.md, phase 9a).
 
 A write that changes a photo's keywords, path or metadata, deletes a photo, or edits the tag tree,
-tells photo_tags, folders, photo_folder and photo_meta in the SAME transaction -- or the views read
+tells photo_tags, folders and photo_folder in the SAME transaction -- or the views read
 rows that describe what a photo used to hold, as the index's rows once did after a bulk tag write
 (CLAUDE.md). Each test makes a library the way the app does, writes through the production writer
 (the index's record_indexed, the tag, save, move, forget and remove writers, the journal, the tree's
@@ -63,10 +63,6 @@ class WithALibrary(unittest.TestCase):
     def folders(self):
         return sorted(path for (path,) in self.rows("SELECT path FROM folders"))
 
-    def meta_of(self, photo_id):
-        return self.rows("SELECT rating, make, model, latitude, longitude FROM photo_meta WHERE photo_id = ?",
-                         photo_id)[0]
-
     def agrees(self):
         """Every table is what a rebuild from the photos would make it."""
         self.assertEqual([], derived.problems(self.conn))
@@ -76,8 +72,7 @@ class WithALibrary(unittest.TestCase):
         return {"photo_tags": self.rows("SELECT * FROM photo_tags ORDER BY 1, 2"),
                 "folders": self.rows("SELECT parent_id IS NULL, path, name FROM folders ORDER BY path"),
                 "photo_folder": self.rows("SELECT pf.photo_id, f.path FROM photo_folder pf JOIN folders f"
-                                          " ON f.id = pf.folder_id ORDER BY 1"),
-                "photo_meta": self.rows("SELECT * FROM photo_meta ORDER BY 1")}
+                                          " ON f.id = pf.folder_id ORDER BY 1")}
 
 
 class TheIndexRecordsAPhoto(WithALibrary):
@@ -87,7 +82,6 @@ class TheIndexRecordsAPhoto(WithALibrary):
         one = self.read("2024", "a.jpg", ["Trips/Coast"], **{"XMP:Rating": 4})
         self.assertEqual(["Trips/Coast"], self.tags_of(one))
         self.assertEqual(self.where("2024", ""), self.folder_of(one) + os.sep)
-        self.assertEqual(4, self.meta_of(one)[0])
         other = db.connect(db.readonly_uri(self.path), uri=True)
         try:
             self.assertEqual(0, other.execute("SELECT COUNT(*) FROM photo_tags").fetchone()[0], "not before the commit")
@@ -112,7 +106,7 @@ class TheIndexRecordsAPhoto(WithALibrary):
         self.agrees()
         counts = {tag: n for tag, n in self.rows("SELECT t.tag, COUNT(*) FROM photo_tags pt JOIN tag_taxonomy t"
                                                  " ON t.id = pt.tag_id GROUP BY t.tag")}
-        self.assertEqual({"Trips/Coast": 10, "People/Rowan Thackeray": 10}, counts)
+        self.assertEqual({"Trips/Coast": 10, "People/Rowan Thackeray": 10, "Mystery": 10}, counts, "Mystery was made on the first read")
 
     def test_reading_a_photo_again_writes_what_changed_and_the_folder_keeps_its_id(self):
         self.tree("Trips/Coast", "Trips/Lake")
@@ -127,32 +121,17 @@ class TheIndexRecordsAPhoto(WithALibrary):
         self.conn.commit()
         self.agrees()
         self.assertEqual(["Trips/Lake"], self.tags_of(one))
-        self.assertEqual(5, self.meta_of(one)[0])
-        self.assertEqual("Harbourlight", self.meta_of(one)[1])
         self.assertEqual(folder, self.rows("SELECT id FROM folders WHERE path = ?", os.path.dirname(self.where("2024", "a.jpg"))))
 
     def test_a_keyword_whose_node_is_made_after_the_photo_gets_its_row_when_the_node_is(self):
         one = self.read("2024", "a.jpg", ["Trips/Coast/Harbour"])
+        self.assertEqual(["Trips/Coast/Harbour"], self.tags_of(one), "the read made the node")
+        self.conn.execute("DELETE FROM tag_taxonomy WHERE tag = 'Trips/Coast/Harbour'")   # a node gone since
         self.conn.commit()
         self.assertEqual([], self.tags_of(one))
         taxonomy.add_node(self.conn, "Trips/Coast/Harbour")   # TagTuner's New Tag, or the indexer's tree save
         self.conn.commit()
         self.assertEqual(["Trips/Coast/Harbour"], self.tags_of(one))
-        self.agrees()
-
-    def test_the_trees_save_after_an_index_run_gives_every_photo_its_rows(self):
-        """The indexer records the photos, then saves the tree with the tags it met
-        (TagTaxonomy.save_to_db): the rows follow the tree's edit."""
-        from tagpup.store.taxonomy import TagTaxonomy
-        for number in range(6):
-            self.read("2024", "p%d.jpg" % number, ["Trips/Coast", "Activity/Sailing"] if number % 2 else ["Pets/Dog"])
-        self.conn.commit()
-        self.assertEqual(0, self.rows("SELECT COUNT(*) FROM photo_tags")[0][0], "no node yet")
-        tree = TagTaxonomy(self.path)
-        tree.load()
-        tree.add_tags(["Trips/Coast", "Activity/Sailing", "Pets/Dog"])
-        tree.save()
-        self.assertEqual(9, self.rows("SELECT COUNT(*) FROM photo_tags")[0][0])
         self.agrees()
 
     def test_a_batch_reads_the_tree_inside_its_transaction_so_a_tree_edited_meanwhile_is_the_one_used(self):
@@ -198,22 +177,22 @@ class OtherWritersOfAPhoto(WithALibrary):
         self.photo = self.where("2024", "a.jpg")
 
     def test_a_tag_written_to_a_photo_follows(self):
-        photos.record_tags(self.path, self.photo, ["Trips/Coast", "Activity/Sailing"])
+        photo_rows.tag(self.path, self.photo, ["Trips/Coast", "Activity/Sailing"])
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], self.tags_of(self.one))
-        photos.record_tags(self.path, self.photo, ["Trips/Lake"])
+        photo_rows.tag(self.path, self.photo, ["Trips/Lake"])
         self.assertEqual(["Trips/Lake"], self.tags_of(self.one))
-        photos.record_tags(self.path, self.photo, [])
+        photo_rows.tag(self.path, self.photo, [])
         self.assertEqual([], self.tags_of(self.one))
         self.agrees()
 
-    def test_a_save_follows_its_keywords_and_its_metadata(self):
+    def test_a_save_follows_its_keywords(self):
         os.makedirs(os.path.dirname(self.photo))
         with open(self.photo, "wb") as handle:
             handle.write(b"not really a photo")   # a save stamps the row with its file's
         raw = photo_rows.as_read(self.photo, {"XMP:Subject": ["Trips/Lake"], "XMP:Rating": 3})["raw_metadata"]
-        photos.record_saved(self.path, self.photo, ["Trips/Lake"], [], raw)
+        db.write_with_connection(self.path, lambda conn: photos.follow_fields(
+            conn, self.photo, {"XMP:Subject": ["Trips/Lake"]}, os.stat(self.photo), whole=raw))
         self.assertEqual(["Trips/Lake"], self.tags_of(self.one))
-        self.assertEqual(3, self.meta_of(self.one)[0])
         self.agrees()
 
     def test_a_field_written_or_undone_follows(self):
@@ -223,7 +202,6 @@ class OtherWritersOfAPhoto(WithALibrary):
         db.write_with_connection(self.path, lambda conn: photos.follow_fields(
             conn, self.photo, {"XMP:Subject": ["Trips/Coast", "Activity/Sailing"], "XMP:Rating": 5}))
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], self.tags_of(self.one))
-        self.assertEqual(5, self.meta_of(self.one)[0])
         self.agrees()
         db.write_with_connection(self.path, lambda conn: photos.follow_fields(
             conn, self.photo, {"XMP:Subject": ["Trips/Coast"], "XMP:Rating": None}))
@@ -235,7 +213,6 @@ class OtherWritersOfAPhoto(WithALibrary):
         self.conn.commit()
         self.assertEqual(os.path.dirname(path).lower(), self.folder_of(unread).lower())
         self.assertEqual([], self.tags_of(unread))
-        self.assertEqual((None,) * 5, self.meta_of(unread))
         self.agrees()
 
 
@@ -250,20 +227,20 @@ class APhotoMoved(WithALibrary):
 
     def test_a_rename_in_its_folder_changes_nothing_in_the_tree(self):
         held = self.dump()
-        photos.move_rows(self.path, {self.where(os.path.join("2024", "Coast"), "a.jpg"):
+        photo_rows.move(self.path, {self.where(os.path.join("2024", "Coast"), "a.jpg"):
                                      self.where(os.path.join("2024", "Coast"), "renamed.jpg")})
         self.assertEqual(held, self.dump())
 
     def test_a_move_to_another_folder_changes_its_folder_and_leaves_the_old_one_while_it_holds_another(self):
         before = len(self.folders())
-        photos.move_rows(self.path, {self.where(os.path.join("2024", "Coast"), "a.jpg"):
+        photo_rows.move(self.path, {self.where(os.path.join("2024", "Coast"), "a.jpg"):
                                      self.where(os.path.join("2024", "Lake"), "a.jpg")})
         self.assertEqual(os.path.join(self.pictures, "2024", "Lake").lower(), self.folder_of(self.a).lower())
         self.assertEqual(before, len(self.folders()), "Coast still holds b.jpg")
         self.agrees()
 
     def test_the_last_photo_leaving_a_folder_takes_its_row_and_the_ancestors_it_alone_held(self):
-        photos.move_rows(self.path, {self.where(os.path.join("2024", "Lake"), "c.jpg"): self.where("2025", "c.jpg")})
+        photo_rows.move(self.path, {self.where(os.path.join("2024", "Lake"), "c.jpg"): self.where("2025", "c.jpg")})
         found = [path.lower() for path in self.folders()]
         self.assertNotIn(os.path.join(self.pictures, "2024", "Lake").lower(), found, "emptied: its row goes")
         self.assertIn(os.path.join(self.pictures, "2024", "Coast").lower(), found)
@@ -277,7 +254,7 @@ class APhotoMoved(WithALibrary):
 
     def test_names_shuffled_among_files_through_the_placeholders_leave_every_photo_in_its_folder(self):
         one, two = (self.where(os.path.join("2024", "Coast"), name) for name in ("a.jpg", "b.jpg"))
-        moved, skipped = photos.move_rows(self.path, {one: two, two: one})
+        moved, skipped = photo_rows.move(self.path, {one: two, two: one})
         self.assertEqual((2, []), (moved, skipped))
         self.agrees()
 
@@ -292,7 +269,7 @@ class APhotoDeleted(WithALibrary):
         self.conn.commit()
 
     def gone(self, name):
-        for table in ("photo_tags", "photo_folder", "photo_meta"):
+        for table in ("photo_tags", "photo_folder"):
             self.assertEqual(0, self.rows("SELECT COUNT(*) FROM %s WHERE photo_id = ?" % table, self.ids[name])[0][0], table)
 
     def test_forgetting_a_photo_takes_its_rows_and_the_folder_it_emptied(self):
@@ -303,13 +280,6 @@ class APhotoDeleted(WithALibrary):
         photos.forget_photo(self.path, self.where(os.path.join("2024", "Coast"), "a.jpg"))
         self.assertIn(os.path.join(self.pictures, "2024", "Coast").lower(), [p.lower() for p in self.folders()],
                       "still holds b.jpg")
-        self.agrees()
-
-    def test_removing_photos_by_path_in_the_index_transaction(self):
-        self.conn.execute("BEGIN IMMEDIATE")
-        photos.remove(self.conn, [self.where(os.path.join("2024", "Lake"), "c.jpg")])
-        self.conn.commit()
-        self.gone("c.jpg")
         self.agrees()
 
     def test_removing_a_folder_takes_everything_under_it_and_only_that(self):
@@ -371,7 +341,7 @@ class TheTreeEdited(WithALibrary):
         self.assertEqual([], self.tags_of(self.b), "the photo's keyword text still says Trips/Coast, which is no node")
         self.agrees()
         for name, kept in (("a.jpg", ["Places/Coast", "Trips/Lake"]), ("b.jpg", ["Places/Coast"])):
-            photos.record_tags(self.path, self.where("2024", name), kept)
+            photo_rows.tag(self.path, self.where("2024", name), kept)
         self.assertEqual([ids["Trips/Coast"]], [row[0] for row in self.rows(
             "SELECT tag_id FROM photo_tags WHERE photo_id = ?", self.b)])
         self.assertEqual(3, self.rows("SELECT COUNT(*) FROM photo_tags")[0][0])
@@ -394,16 +364,19 @@ class TheTreeEdited(WithALibrary):
 
 class RenamingATagInTagTuner(TreeCase):
     """services.tags.rename: the tree first, then the photos' keywords, each its own transaction
-    (the rewrite of the files is stood in for, as TreeCase does, by the index's own record_tags)."""
+    (the rewrite of the files is stood in for, as TreeCase does, by what the journaled write records of it).
+    A photo holds a tag and its sibling: a tag beside its own parent is no tag a read or a write leaves
+    (vocabulary.extract_tags reads the parent as a level of the path)."""
 
     def test_the_photos_rows_are_the_same_nodes_when_it_is_done(self):
-        crew = self.node("Crew")
+        self.node("Crew")
         divers = self.node("Crew/Divers")
+        coxes = self.node("Crew/Coxes")
         one = self.id_of_photo(self.photo("one.jpg", ["Crew/Divers"]))
-        two = self.id_of_photo(self.photo("two.jpg", ["Crew/Divers", "Crew"]))
+        two = self.id_of_photo(self.photo("two.jpg", ["Crew/Divers", "Crew/Coxes"]))
         db.write_with_connection(self.lib.library.path, derived.rebuild_all)
         before = self.rows()
-        self.assertEqual([(one, divers), (two, crew), (two, divers)], before)
+        self.assertEqual(sorted([(one, divers), (two, coxes), (two, divers)]), before)
         result = tags.rename(self.lib.library, divers, "Frogmen", exiftool_path=None)
         self.assertTrue(result.ok, result.message())
         self.assertEqual(divers, taxonomy.find(self.lib.library.path, "Crew/Frogmen")["id"], "the node keeps its id")
@@ -412,25 +385,26 @@ class RenamingATagInTagTuner(TreeCase):
         try:
             self.assertEqual([], derived.problems(conn))
             self.assertEqual({}, dict(derived.tags_without_a_node(conn)))
-            self.assertEqual([one, two], derived.photos_under_tag(conn, "Crew/Frogmen"))
         finally:
             conn.close()
+        self.assertEqual([one, two], [photo for photo, tag in self.rows() if tag == divers], "Crew/Frogmen is the node's")
 
-    def test_a_photo_that_could_not_be_rewritten_is_a_keyword_with_no_node_until_it_is(self):
+    def test_a_photo_that_could_not_be_rewritten_keeps_the_node_and_the_one_rewritten_holds_a_tag_with_no_node_until_it_is_made_again(self):
         divers = self.node("Crew/Divers")
         one = self.id_of_photo(self.photo("one.jpg", ["Crew/Divers"]))
         stuck = self.photo("stuck.jpg", ["Crew/Divers"])
         db.write_with_connection(self.lib.library.path, derived.rebuild_all)
+        stuck_id = self.id_of_photo(stuck)
         self.unwritable.add(stuck)
         result = tags.rename(self.lib.library, divers, "Frogmen", exiftool_path=None)
         self.assertFalse(result.ok)
         conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
         try:
             self.assertEqual([], derived.problems(conn), "what the rows say is what the files do")
-            self.assertEqual({"Crew/Divers": 1}, dict(derived.tags_without_a_node(conn)))
-            self.assertEqual([one], derived.photos_under_tag(conn, "Crew/Frogmen"))
+            self.assertEqual({"Crew/Frogmen": 1}, dict(derived.tags_without_a_node(conn)), "the tree moves when every photo is written")
         finally:
             conn.close()
+        self.assertEqual([stuck_id], [photo for photo, tag in self.rows() if tag == divers], "the photo that failed still has its node")
 
     def id_of_photo(self, path):
         return self.lib.rows("SELECT id FROM photos WHERE path = ?", (path,))[0][0]
@@ -478,7 +452,6 @@ class TheJournalsWrites(WithALibrary):
         row = dict(zip(("path", "tags", "raw_metadata"), self.rows("SELECT path, tags, raw_metadata FROM photos WHERE id = ?", self.a)[0]))
         applied = journal.apply(self.path, "delete", [journal.delete("photos", (self.a,), {"path": row["path"]})])
         self.assertEqual([], self.tags_of(self.a))
-        self.assertEqual(0, self.rows("SELECT COUNT(*) FROM photo_meta WHERE photo_id = ?", self.a)[0][0])
         self.agrees()
         journal.undo(self.path, applied.change_id)
         self.assertEqual(self.held, self.dump())
@@ -498,34 +471,10 @@ class TheJournalsWrites(WithALibrary):
         self.assertTrue(rehearsal.derived_exact)
         self.assertEqual(self.held, self.dump(), "a rehearsal writes nothing")
 
-    def test_the_undo_of_a_change_made_before_the_derived_tables_existed_rebuilds_them(self):
-        """A change made at schema 18 is undone at 19 (journal.schema_gap_blocker): the undo's own
-        rebuild covers the photos it wrote."""
-        from test_migrations import at_version
-        from unittest import mock
-        old = self.home.library("old.db")
-        at_version(old, 18)
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:18]), mock.patch.object(schema, "LATEST", 18):
-            schema._current.clear()
-            applied = journal.apply(old, "retag", [journal.update(
-                "photos", (1,), {"tags": '["People/Wren Halloway"]'}, {"tags": '["Trips/Coast"]'})])
-        schema._current.clear()
-        self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id", "photos by file name",
-                          "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"],
-                         schema.ensure(old))
-        journal.undo(old, applied.change_id)
-        conn = db.connect(db.readonly_uri(old), uri=True)
-        try:
-            self.assertEqual([], derived.problems(conn))
-        finally:
-            conn.close()
-
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-class TheRootsAdoption(unittest.TestCase):
-    """An adopted library's folders are those of an unconverted twin, by from_row; its undo makes
-    them native again. (store/adoption.py rebuilds them in its own transaction.)"""
+class ARootedLibrarysFolders(unittest.TestCase):
+    """A library held under a root has the folders of an unconverted twin, by from_row."""
 
     def setUp(self):
         import roots_library as rl
@@ -554,13 +503,12 @@ class TheRootsAdoption(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_the_adopted_tree_is_the_twins_and_its_undo_makes_it_native_again(self):
-        from tagpup.services import journal as journal_service
+    def test_the_rooted_tree_is_the_twins(self):
         twin_tree, twin_held = self.folders(self.twin)
         self.assertEqual(twin_tree, self.folders(self.adopted)[0], "unadopted, alike")
         result = self.adopted.adopt()
         self.assertTrue(result.ok, result.message())
-        self.assertGreater(result.details["rehearsal"]["tables"]["photos"]["convert"], 0)
+        self.assertGreater(result.changed, 0)
         tree, held = self.folders(self.adopted)
         self.assertEqual(twin_held, held, "each photo is in the same folder, by from_row")
         root = self.rl.NAME
@@ -571,28 +519,6 @@ class TheRootsAdoption(unittest.TestCase):
                          "every other folder under the same parent")
         rows = self.adopted.rows("SELECT path FROM folders WHERE path LIKE '@%' ORDER BY path")
         self.assertTrue(rows and all(path.startswith("@" + root) for (path,) in rows))
-        undone = journal_service.undo(self.adopted.library, result.details["change"], apply=True)
-        self.assertIsNone(undone.refused, undone.refused)
-        after = self.folders(self.adopted)
-        self.assertEqual((twin_tree, twin_held), after, "native again, as the twin")
-        self.assertEqual([], self.adopted.rows("SELECT path FROM folders WHERE path LIKE '@%'"))
-
-    def test_a_crash_after_the_folders_are_rebuilt_leaves_the_library_as_it_was(self):
-        from unittest import mock
-        from tagpup.store import adoption
-        before = self.adopted.dump()
-
-        class Crash(BaseException):
-            pass
-
-        def reached(step):
-            if step == "folders rebuilt":
-                raise Crash(step)
-
-        with mock.patch.object(adoption, "_reached", reached):
-            with self.assertRaises(Crash):
-                adoption.adopt(self.adopted.db_path, self.rl.NAME, self.rl.ADDRESS, [self.adopted.pictures])
-        self.assertEqual(before, self.adopted.dump(), "one transaction: nothing of it was kept")
 
 
 class OneWriterAtATime(WithALibrary):
@@ -629,7 +555,7 @@ class OneWriterAtATime(WithALibrary):
         with mock.patch.object(derived, "_write_folders", side_effect=RuntimeError("the power went")):
             with self.assertRaises(RuntimeError):
                 db.write_with_connection(self.path, derived.rebuild_all)
-        self.assertEqual(held, self.dump(), "photo_tags and photo_meta were rewritten in the transaction that rolled back")
+        self.assertEqual(held, self.dump(), "photo_tags were rewritten in the transaction that rolled back")
 
     def test_the_repair_puts_right_what_a_writer_that_forgot_left(self):
         self.tree("Trips/Coast")

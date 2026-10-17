@@ -26,7 +26,6 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-import photo_rows  # noqa: E402
 from face_rows import add_face, photo_id  # noqa: E402
 
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
@@ -162,23 +161,12 @@ class WriteTools(unittest.TestCase):
                          (os.path.join(self.photos, "regatta_004.jpg"), json.dumps(["Rowan Thackeray"])))
         self.seed(tree)
 
-    def seed_captions(self, caption):
-        """A row listing its caption twice, its file's stamp its own; and a row whose file
-        has moved on. Returns their ids."""
-        stamped = self.file("regatta_002.jpg")
+    def seed_moved_on(self):
+        """A row whose file has moved on (its stamp is not the file's). Returns its id."""
         moved_on = self.file("regatta_003.jpg")
-        stat = os.stat(stamped)
-        # As a read records it; the caption listed twice is the old extractor's.
-        raw = photo_rows.as_read(stamped, {"XMP:Description": caption})["raw_metadata"]
-
-        def rows(conn):
-            conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-                         " VALUES (?, ?, ?, '[]', ?, ?)",
-                         (stamped, stat.st_mtime, stat.st_size, json.dumps([caption, caption]), json.dumps(raw)))
-            conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-                         " VALUES (?, 0, 0, '[]', '[]', '{}')", (moved_on,))
-            return photo_id(conn, stamped), photo_id(conn, moved_on)
-        return self.seed(rows)
+        return self.seed(lambda conn: (conn.execute(
+            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, 0, 0, '[]', '[]', '{}')",
+            (moved_on,)), photo_id(conn, moved_on))[1])
 
     def test_dedupe_faces(self):
         ids = self.seed_faces()
@@ -204,37 +192,30 @@ class WriteTools(unittest.TestCase):
         self.assertEqual(tags(), photo_tags, "photos are counted, not rewritten")
         self.assertEqual(applied["remaining"], {"duplicates": 0})
 
-    def test_a_refused_merge_is_an_answer(self):
-        """No tag tree: refused, nothing written, and the refusal names the library, not
-        where it is."""
-        bare = self.home.library("bare.db")
-        conn = db.connect(bare)
-        conn.execute("CREATE TABLE photos (id INTEGER PRIMARY KEY, path TEXT, tags TEXT)")
-        conn.commit()
-        conn.close()
+    def test_a_refused_write_is_an_answer(self):
+        """A write its plan refuses -- a sync of a folder the library holds nothing under and that is under none of its roots --
+        is an answer: refused, nothing written, and the refusal does not say where the library is."""
+        elsewhere = os.path.join(os.path.dirname(self.home.root), "Elsewhere")
         for apply in (False, True):
-            answer = self.call("merge_duplicate_person_tags", library="bare", apply=apply)
-            self.assertIn("no tag_taxonomy", answer["refused"])
-            self.assertIn("bare", answer["refused"])
+            answer = self.call("sync", library=LIBRARY, folder=elsewhere, apply=apply)
+            self.assertIn("under none of the library's root folders", answer["refused"])
             self.assertNotIn(self.home.root, answer["refused"])
             self.assertEqual((answer["ok"], answer["changed"], answer["change"]), (False, 0, None))
         self.assertEqual(self.backups(), [])
 
     def test_refresh_rows(self):
-        """A row that lists its caption twice is fixed from the row; one whose file has
-        moved on is read with ExifTool, which is not there, and is left as it was."""
-        caption = "Sunset over Harbourview"
-        twice, unread = self.seed_captions(caption)
-        count = lambda: self.read("SELECT id, captions, mtime FROM photos ORDER BY id")  # noqa: E731
-        planned, applied, before, after = self.dry_run_then_apply("refresh_rows", count)
-        self.assertEqual((planned["attempted"], planned["counts"]["captions_only"], planned["counts"]["stale"],
-                          planned["counts"]["unreadable"]), (1, 1, 1, 1))
-        self.assertEqual((planned["ids"]["captions_only"], planned["ids"]["unreadable"]), ([twice], [unread]))
-        changed_rows = [a for a, b in zip(before, after) if a != b]
-        self.assertEqual(applied["changed"], len(changed_rows))
-        self.assertEqual(applied["changed_by_kind"], {"from_files": 0, "captions": 1})
-        self.assertEqual(dict((i, json.loads(c)) for i, c, _m in after)[twice], [caption])
-        self.assertEqual(after[1], before[1], "a file ExifTool could not read leaves its row alone")
+        """A row whose file has moved on is read with ExifTool, which is not there, and is left as it was."""
+        unread = self.seed_moved_on()
+        before = self.read("SELECT id, captions, mtime FROM photos ORDER BY id")
+        planned = self.call("refresh_rows")
+        self.assertEqual((planned["dry_run"], planned["attempted"], planned["counts"]["stale"],
+                          planned["counts"]["unreadable"]), (True, 0, 1, 1))
+        self.assertEqual(planned["ids"]["unreadable"], [unread])
+        self.assertEqual(planned["counts"]["reasons"], {"mtime/size": 1})
+        applied = self.call("refresh_rows", apply=True)
+        self.assertEqual((applied["changed"], applied["change"]), (0, None))
+        self.assertEqual(self.read("SELECT id, captions, mtime FROM photos ORDER BY id"), before,
+                         "a file ExifTool could not read leaves its row alone")
 
     def test_refresh_is_limited_to_a_folder(self):
         elsewhere = os.path.join(self.home.root, "Elsewhere")
@@ -242,21 +223,19 @@ class WriteTools(unittest.TestCase):
         path = os.path.join(elsewhere, "x.jpg")
         with open(path, "wb") as handle:
             handle.write(b"x")
-        stat = os.stat(path)
-        raw = photo_rows.as_read(path, {"XMP:Description": "a"})["raw_metadata"]
         self.seed(lambda conn: conn.execute(
-            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, '[]', ?, ?)",
-            (path, stat.st_mtime, stat.st_size, json.dumps(["a", "a"]), json.dumps(raw))))
-        self.assertEqual(self.call("refresh_rows", folder=self.photos)["attempted"], 0)
-        self.assertEqual(self.call("refresh_rows", folder=elsewhere)["attempted"], 1)
+            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, 0, 0, '[]', '[]', '{}')",
+            (path,)))
+        self.assertEqual(self.call("refresh_rows", folder=self.photos)["counts"]["stale"], 0)
+        self.assertEqual(self.call("refresh_rows", folder=elsewhere)["counts"]["stale"], 1)
 
     # ---- Privacy -------------------------------------------------------------------------
 
     def test_no_write_answer_names_anyone_or_any_file_without_reveal(self):
         """Every write tool's dry run and apply, over rows naming people and files."""
+        self.seed_tree()   # first: the faces below are named by the people it files
         self.seed_faces()
-        self.seed_tree()
-        self.seed_captions("Sunset over Harbourview")
+        self.seed_moved_on()
         tools = ("dedupe_faces", "merge_duplicate_person_tags", "refresh_rows")
         for tool in tools:
             self.call(tool)

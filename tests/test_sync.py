@@ -22,13 +22,16 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
+import numpy as np  # noqa: E402
+from face_rows import add_vector  # noqa: E402
+
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, faces_detected, taxonomy  # noqa: E402
 
 #: When every file was last written, before the test changes any.
 THEN = 1_700_000_000
@@ -45,7 +48,7 @@ class Reads:
     def batch_read(self, extractor, file_paths, people=None):
         self.read.extend(file_paths)
         return [MetadataExtractor._structure(extractor, path, dict(self.truth.get(os.path.basename(path), {})),
-                                             people) for path in file_paths]
+                                             people, MetadataExtractor._stamp(path)) for path in file_paths]
 
     def session(self, *args, **kwargs):
         reads = self
@@ -58,7 +61,7 @@ class Reads:
             def __exit__(self, *exc):
                 return False
 
-            def get_tags(self, batch, tags=None):
+            def get_tags(self, batch, tags=None, params=None):
                 reads.read.extend(batch)
                 return [{"SourceFile": path.replace(os.sep, "/"), **reads.truth.get(os.path.basename(path), {})}
                         for path in batch]
@@ -99,13 +102,13 @@ class SyncTestCase(unittest.TestCase):
             conn.close()
         return ids
 
-    def run_sync(self, apply=False, folder=None, queue=None, roots=(), ignored=()):
+    def run_sync(self, apply=False, folder=None, queue=None, roots=(), ignored=(), **more):
         self.reads = Reads(self.truth)
         with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
                         side_effect=self.reads.batch_read), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=self.reads.session):
             return sync.sync(self.library, folder=folder, apply=apply, exiftool_path="exiftool", queue=queue,
-                             roots=roots, ignored=ignored)
+                             roots=roots, ignored=ignored, **more)
 
     def rows(self):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
@@ -167,11 +170,12 @@ class ALibraryThatIsBehind(SyncTestCase):
     until an app opens it, and the dry run says so."""
 
     def test_a_dry_run_on_a_library_behind_leaves_its_file_as_it_was(self):
-        from test_migrations import at_version
+        import migration_names
         from tagpup.store import schema
 
         older = self.home.library("older.db")
-        at_version(older, len(schema.MIGRATIONS) - 1)
+        schema.ensure(older)
+        self.enterContext(migration_names.ahead())   # the code knows a step the library has not had
         path = self.photo(self.meet, "IMG_0001.jpg", **{"XMP:Subject": ["Events/Invitational"]})
         self.db_path = older
         self.indexed(path)
@@ -216,7 +220,7 @@ class TheRecord(SyncTestCase):
 
     def test_a_record_that_cannot_be_written_is_a_warning(self):
         path = self.changed_file()
-        with mock.patch("tagpup.store.sync_runs.record", side_effect=OSError("locked")):
+        with mock.patch("tagpup.store.job_runs.record_sync", side_effect=OSError("locked")):
             result = self.run_sync(apply=True)
         self.assertTrue(result.ok, result.message())
         self.assertEqual(1, result.changed)
@@ -258,9 +262,10 @@ class NewFiles(SyncTestCase):
         self.assertIsNone(found["last_in_step"])
         self.assertEqual(1, found["last_run"]["changed"]["queued_folders"])
 
-    def test_with_no_roots_a_new_subfolder_of_a_held_folder_is_queued_and_nothing_reviewed(self):
+    def test_with_no_roots_a_new_subfolder_of_a_held_folder_is_listed_to_review_never_queued(self):
         """A library whose roots are not set yet keeps its held folders in step as indexing
-        walked them: a new subfolder too."""
+        walked them: new files in a held folder are queued; a new subfolder is a folder to review, as it is
+        under a root, and is never queued unasked (#395, the owner 2026-10-08)."""
         self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
         sub = os.path.join(self.trip, "day 2")
         os.makedirs(sub)
@@ -274,9 +279,31 @@ class NewFiles(SyncTestCase):
 
         result = self.run_sync(apply=True, queue=queue)
         counts = result.details["counts"]
-        self.assertEqual((2, 0), (counts["new"], counts["review_folders"]))
-        self.assertEqual(sorted([self.trip, sub]), sorted(asked))
-        self.assertEqual([], sync.review(self.library, [])["folders"])
+        self.assertEqual((1, 1, 1), (counts["new"], counts["review_folders"], counts["review_photos"]))
+        self.assertEqual([self.trip], asked, "the subfolder was queued unasked")
+        self.assertEqual([{"path": sub, "photos": 1}], result.details["reveal"]["review"])
+        self.assertEqual({"folders": [{"path": sub, "photos": 1}], "photos": 1}, sync.review(self.library, []))
+
+    def test_with_no_roots_a_subfolder_to_review_can_be_included(self):
+        self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
+        sub = os.path.join(self.trip, "day 2")
+        os.makedirs(sub)
+        self.photo(sub, "IMG_0101.jpg")
+        asked = []
+
+        def queue(folders):
+            asked.extend(folders)
+            return Result(attempted=1, changed=1)
+
+        self.assertEqual(1, sync.include(self.library, sub, [], queue).changed)
+        self.assertEqual([sub], asked)
+        elsewhere = os.path.join(self.home.root, "Elsewhere")
+        os.makedirs(elsewhere)
+        self.assertTrue(sync.include(self.library, elsewhere, [], queue).refused, "a folder beside none the library holds")
+        # One the library ignores is not offered, nor taken by hand (#906: include passes the ignored list as look does).
+        self.assertTrue(sync.include(self.library, sub, [], queue, ignored=[sub]).refused)
+        asked.clear()
+        self.assertTrue(sync.include(self.library, sub, [], queue, ignored=[self.home.root + "-elsewhere"]).changed)
 
     def test_without_a_queue_new_files_are_reported(self):
         self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
@@ -406,6 +433,33 @@ class MovedWithoutAnIdentity(SyncTestCase):
         self.assertEqual([self.meet], asked, "a folder holding a possible copy of a missing photo was queued")
         self.assertFalse(result.details["in_step"])
 
+    def test_a_file_renamed_by_tagpup_is_followed_inside_its_own_folder_only(self):
+        """Lifted from test_relink_stays_in_its_folder: camera names repeat across a library, and a dead IMG_0421 in
+        one folder was re-pointed -- with its named faces -- at another folder's IMG_0421 renamed. Break:
+        relink_photos keys the lookup by stem alone (_by_original and pair)."""
+        dead_here = self.photo(self.meet, "IMG_0421.jpg", body=b"a")
+        dead_there = self.photo(self.trip, "IMG_0002.jpg", body=b"b")
+        self.indexed(dead_here, dead_there)
+        conn = db.connect(self.db_path)
+        add_face(conn, dead_here, name="Rowan Thackeray", name_source="manual")
+        conn.commit()
+        conn.close()
+        os.remove(dead_here)
+        os.remove(dead_there)
+        preserved = "XMP:PreservedFileName"
+        self.photo(self.meet, "Invitational - 01.jpg", body=b"cc", **{preserved: "IMG_0001.CR3"})
+        self.photo(self.trip, "Classic - 01.jpg", body=b"ddd", **{preserved: "IMG_0421.CR3"})
+        beside = self.photo(self.trip, "Classic - 02.jpg", body=b"eeee", **{preserved: "IMG_0002.CR3"})
+        result = self.run_sync(apply=True, queue=lambda folders: Result(attempted=len(folders), changed=len(folders)))
+        self.assertTrue(result.ok, result.message())
+        rows = self.rows()
+        self.assertIn(dead_here, rows, "a row was re-pointed at another folder's file of the same camera name")
+        self.assertNotIn(dead_there, rows)
+        self.assertIn(beside, rows, "a row is still followed to the file renamed beside it")
+        self.assertEqual((1, 1), (result.details["counts"]["moved"], result.details["counts"]["missing"]))
+        self.assertEqual([("Rowan Thackeray",)], self.query(
+            "SELECT f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE p.path = ?", (dead_here,)))
+
     def test_identities_are_read_only_for_what_the_stamps_did_not_settle(self):
         plain = self.photo(self.meet, "IMG_0001.jpg")
         renamed = self.photo(self.meet, "IMG_0002.jpg", **{"XMP:DocumentID": "uuid:7a2e-renamed"})
@@ -417,6 +471,70 @@ class MovedWithoutAnIdentity(SyncTestCase):
         result = self.run_sync()
         self.assertEqual([new_name], self.reads.read, "only the file the stamps did not settle is read")
         self.assertEqual(2, result.details["counts"]["moved"])
+
+
+class ASizeChange(SyncTestCase):
+    """Lifted from test_sync_counts_a_size_change (#336, #903, #904). A keyword write changes a file's size too, so sync
+    only COUNTS the photos whose size changed and the owner fixes a real picture edit by hand: the row is read again like
+    any changed row and keeps its CLIP vector, face boxes and decided names. Breaks: `resized.add` gone; `resized -=
+    unreadable` gone; the size test made `True`."""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.photo(self.meet, "IMG_0001.jpg", body=b"the picture as it was",
+                               **{"XMP:Subject": ["Events/Invitational"]})
+        self.other = self.photo(self.trip, "IMG_0002.jpg", body=b"another picture", **{"XMP:Subject": ["Weather/Rain"]})
+        self.indexed(self.path, self.other)
+        conn = db.connect(self.db_path)
+        try:
+            for path in (self.path, self.other):
+                add_vector(conn, path, np.array([1.0, 0.0], dtype=np.float32).tobytes())
+                add_face(conn, path, [0, 0, 10, 10])
+                faces_detected.record(conn, path, faces_detected.detector({"min_face_size": 20}), None, 1)
+            rowan = taxonomy.add_path(conn, "People/Rowan Thackeray", root_has_face=1)   # a face is named with its node's id
+            conn.execute("UPDATE faces SET name = 'Rowan Thackeray', tag_id = ?, name_source = 'manual' WHERE photo_id ="
+                         " (SELECT id FROM photos WHERE path = ?)", (rowan, self.path))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def edit(self, path, body):
+        """The file written elsewhere: more (or as many) bytes, a later time."""
+        with open(path, "wb") as handle:
+            handle.write(body)
+        os.utime(path, (THEN + 100, THEN + 100))
+
+    def held(self, path):
+        """(faces, vectors, detection records, face names) the library holds of the photo."""
+        return self.query(
+            "SELECT (SELECT COUNT(*) FROM faces WHERE photo_id = p.id), (SELECT COUNT(*) FROM embeddings WHERE photo_id = p.id),"
+            " (SELECT COUNT(*) FROM faces_detected WHERE photo_id = p.id),"
+            " (SELECT GROUP_CONCAT(name) FROM faces WHERE photo_id = p.id) FROM photos p WHERE p.path = ?", (path,))[0]
+
+    def test_a_file_that_grew_is_counted_read_again_and_its_picture_and_decided_faces_are_left(self):
+        self.truth["IMG_0001.jpg"] = {"XMP:Subject": ["Events/Classic"]}
+        self.edit(self.path, b"the picture, edited elsewhere and longer")
+        queued = []
+        before = self.held(self.path)
+        rehearsal = self.run_sync()
+        self.assertEqual((1, before), (rehearsal.details["counts"]["size_changed"], self.held(self.path)))
+        result = self.run_sync(apply=True, queue=lambda folders: queued.append(folders))
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual((1, 1), (result.details["counts"]["size_changed"], result.details["changed"]["from_files"]))
+        tags = json.loads(self.query("SELECT tags FROM photos WHERE path = ?", (self.path,))[0][0])
+        self.assertEqual((True, False), ("Events/Classic" in tags, "Events/Invitational" in tags))
+        self.assertEqual("Rowan Thackeray", self.held(self.path)[3])
+        self.assertEqual((1, 1, 1), self.held(self.path)[:3], "its faces, vector and the record of them stay")
+        self.assertEqual((1, 1, 1), self.held(self.other)[:3])
+        self.assertEqual([], queued)
+
+    def test_a_write_that_kept_the_size_or_could_not_be_read_is_not_a_size_change(self):
+        self.edit(self.path, b"the picture as it was")       # the same length, a later time
+        self.edit(self.other, b"another picture, longer")
+        self.truth["IMG_0002.jpg"] = {}                      # ExifTool answers nothing for it
+        counts = self.run_sync(apply=True, queue=lambda folders: Result(attempted=0, changed=0)).details["counts"]
+        self.assertEqual((2, 0, 1), (counts["changed"], counts["size_changed"], counts["unreadable"]))
+        self.assertEqual([(1, 1, 1)] * 2, [self.held(self.path)[:3], self.held(self.other)[:3]])
 
 
 class MissingFiles(SyncTestCase):
@@ -446,6 +564,27 @@ class MissingFiles(SyncTestCase):
         self.assertEqual([{"folder": self.trip, "rows": 2, "gone": True}], result.details["reveal"]["missing_folders"])
         self.assertIn(first, self.rows())
         self.assertIn(second, self.rows())
+
+    def test_a_folder_renamed_and_saved_again_is_flagged_missing_and_its_rows_are_left(self):
+        # The owner renames it back by hand: no marker file in the folder is read, and one a library once wrote is
+        # only a file (owner, 2026-10-10).
+        first, second = self.photo(self.trip, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg")
+        self.indexed(first, second, self.photo(self.meet, "IMG_0003.jpg"))
+        with open(os.path.join(self.trip, ".tagpup"), "w", encoding="utf-8") as handle:
+            handle.write("not read by anything\n")
+        before = self.rows()
+        renamed = os.path.join(self.pictures, "2025-11 Harbour Day")
+        os.rename(self.trip, renamed)
+        for name in ("IMG_0001.jpg", "IMG_0002.jpg"):
+            os.utime(os.path.join(renamed, name), (THEN + 5, THEN + 5))     # saved again: no stamp pairs them
+        result = self.run_sync(apply=True)
+        self.assertTrue(result.ok, result.message())
+        counts = result.details["counts"]
+        self.assertEqual((2, 1, 1), (counts["missing"], counts["missing_folders"], counts["folders_gone"]))
+        self.assertEqual([{"folder": self.trip, "rows": 2, "gone": True}], result.details["reveal"]["missing_folders"])
+        self.assertEqual(before, self.rows(), "the rows are left as they were")
+        self.assertNotIn("folder_markers", result.details)
+        self.assertEqual(0, self.query("SELECT COUNT(*) FROM changes WHERE operation = 'follow_folder_markers'")[0][0])
 
     def test_a_root_that_is_not_there_is_reported_like_an_unplugged_drive(self):
         here = self.photo(self.meet, "IMG_0001.jpg")
@@ -594,10 +733,8 @@ class Folders(SyncTestCase):
         self.addCleanup(os.rmdir, loop)   # the junction alone, never what it points at
         self.assertEqual([path], images.photos_under(self.meet))
         self.assertEqual([path], [stored for stored, _m, _s in images.stamps_under(self.meet).values()])
-        # Relink's walk and the folder picker's count too.
+        # The folder picker's count too.
         from tagpup.services import photos as photo_actions
-        from tagpup.services import relink_photos
-        self.assertEqual([path], relink_photos._photos_under(self.meet))
         self.assertEqual((1, False), photo_actions.count_photos(self.meet))
 
     def test_a_folder_alone_is_indexed_without_its_subfolders(self):

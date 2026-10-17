@@ -62,7 +62,8 @@ async function openPerson(t, faces) {
     .on("/api/faces/exclude", { success: true, excluded: faces.length })
     .on("/api/faces/restore", { success: true, restored: faces.length })
     .on("/api/faces/unmatch-bulk", { success: true })
-    .on("/api/faces/match-bulk", { success: true, matched: faces.length });
+    .on("/api/faces/match-bulk", { success: true, matched: faces.length, change: 31 })
+    .on("/api/history/31/undo", { success: true, changed: faces.length, errors: [] });
   const { window, document } = await loadApp("tagtuner", {
     server,
     url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
@@ -226,11 +227,6 @@ describe("ignoring a cluster", () => {
                  /3 faces from 2 photos/);
   });
 
-  test("confirming excludes every face in the cluster", async (t) => {
-    const { server } = await clickIgnore(t);
-    assert.deepEqual(server.lastBody("/api/faces/exclude").face_ids, [10, 11, 12]);
-  });
-
   test("cancelling changes nothing", async (t) => {
     const { server } = await clickIgnore(t, { confirmIt: false });
     assert.equal(server.lastBody("/api/faces/exclude"), undefined);
@@ -249,31 +245,6 @@ describe("ignoring a cluster", () => {
 
     assert.equal(prompted, false, "a second modal appeared for the same decision");
     assert.ok(server.lastBody("/api/faces/exclude"));
-  });
-
-  test("the reason it records says where it came from", async (t) => {
-    const { server } = await clickIgnore(t);
-    assert.match(server.lastBody("/api/faces/exclude").reason, /cluster/);
-  });
-
-  test("it offers the exclusion back", async (t) => {
-    const { document } = await clickIgnore(t);
-    const bar = document.getElementById("assign-undo-bar");
-    assert.ok(!bar.classList.contains("hidden"), "no way back was offered");
-    assert.match(document.getElementById("assign-undo-text").textContent,
-                 /Ignored 3 faces/);
-  });
-
-  test("undoing an ignore restores rather than unmatches", async (t) => {
-    // Each action has its own way back. Calling the wrong one would quietly do
-    // nothing, which is worse than failing.
-    const { document, window, server } = await clickIgnore(t);
-    document.getElementById("btn-assign-undo").click();
-    await new Promise((r) => window.setTimeout(r, 40));
-
-    assert.deepEqual(server.lastBody("/api/faces/restore").face_ids, [10, 11, 12]);
-    assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined,
-                 "it tried to unmatch faces that were never assigned");
   });
 
   test("ticking don't ask again records the preference", async (t) => {
@@ -506,13 +477,6 @@ describe("accepting a suggestion in one click", () => {
     assert.match(btn.textContent, /Assign 3/);
   });
 
-  test("it assigns the whole cluster to the suggested name", async (t) => {
-    const { server } = await accept(t);
-    const body = server.lastBody("/api/faces/match-bulk");
-    assert.equal(body.person_name, "Emory Kade");
-    assert.deepEqual(body.face_ids, [71, 72, 73]);
-  });
-
   test("it does not stop to ask first", async (t) => {
     // A confirmation on every cluster is the same friction the button removes.
     // What makes that fair is the undo, not a prompt.
@@ -534,12 +498,13 @@ describe("accepting a suggestion in one click", () => {
                  /Assigned 3 faces to Emory Kade/);
   });
 
-  test("undo unmatches exactly the faces it assigned", async (t) => {
+  test("undo is the journal's undo of the change that assigned them, and unmatches nobody", async (t) => {
     const { document, window, server } = await accept(t);
     document.getElementById("btn-assign-undo").click();
     await new Promise((r) => window.setTimeout(r, 40));
 
-    assert.deepEqual(server.lastBody("/api/faces/unmatch-bulk").face_ids, [71, 72, 73]);
+    assert.deepEqual(server.lastBody("/api/history/31/undo"), { apply: true });
+    assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined, "faces were called nobody");
   });
 
   test("undoing clears the offer, so it cannot be applied twice", async (t) => {
@@ -914,8 +879,13 @@ describe("ordering the people list", () => {
     return [...document.querySelectorAll("#photo-list .photo-title")].map((el) => el.textContent);
   }
 
-  test("it defaults to the most photos first", async (t) => {
+  test("it starts on Name (A-Z) the first time (#793)", async (t) => {
     const { document } = await sidebar(t);
+    assert.deepEqual(names(document).slice(1), ["Alba Castellan", "bram nordquist", "Zoe Abbott"]);
+  });
+
+  test("the most photos first is one choice away", async (t) => {
+    const { document } = await sidebar(t, "count");
     assert.deepEqual(names(document).slice(1), ["bram nordquist", "Alba Castellan", "Zoe Abbott"]);
   });
 

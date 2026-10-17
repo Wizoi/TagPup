@@ -3,7 +3,7 @@
 Measured on photo_index's 68,387 vectors: the first flat search grew the process's
 private bytes by 2.3 GB -- about 128 MB for each of the machine's 16 OpenMP threads,
 kept until the process ended -- and a search on one thread took 10 ms against 12.5 ms on
-sixteen. The always-on process would hold those 2 GB from its first Suggest on. Suggest's
+sixteen. The server would hold those 2 GB from its first Suggest on. Suggest's
 own four workers each search on their own thread.
 """
 import unittest

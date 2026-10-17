@@ -11,7 +11,7 @@ its other photos were indexed, and their Family/Work tags grew kr-track's tag tr
 Now ensure_row makes a row only in a folder the library holds, or when the folder is
 being added (tagpup.services.libraries.add, and the indexer). Every entry point that
 could make one is asked here: the Suggest route (409, naming the folder and the
-library), the CLI's suggest, the MCP server's write tools, and the adding routes of
+library), the MCP server's write tools, and the adding routes of
 both apps, which make the rows at once and queue the index.
 """
 import asyncio
@@ -25,7 +25,6 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
-from click.testing import CliRunner  # noqa: E402
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
@@ -34,15 +33,15 @@ from tagpup.core.result import Conflict, Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import suggestions as saved_suggestions  # noqa: E402
+from tagpup.services import suggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import suggestions as store_suggestions  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
-from tagpup_cli import cli  # noqa: E402
 
 
 def make_photos(folder, *names):
@@ -129,7 +128,7 @@ class TheStore(Folders, unittest.TestCase):
 
     def test_what_suggest_keeps_is_refused_there_too(self):
         with self.assertRaises(Conflict):
-            saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
+            suggester.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
         self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
 
     def test_a_folder_added_gets_no_rows_until_one_is_used(self):
@@ -137,13 +136,13 @@ class TheStore(Folders, unittest.TestCase):
         self.assertEqual(0, library_actions.record_added(Library(self.db_path), [self.lighthouse]), "added twice")
         self.assertEqual(0, rows_under(self.db_path, self.lighthouse), "the add made rows")
         # Then Suggest may keep what it found there: that photo's row, and no other.
-        saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
+        suggester.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
         self.assertEqual(1, rows_under(self.db_path, self.lighthouse))
 
     def test_a_folder_added_with_its_subfolders_covers_them(self):
         below = make_photos(os.path.join(self.lighthouse, "Keepers"), "IMG_0100.jpg")[0]
         library_actions.record_added(Library(self.db_path), [self.lighthouse])
-        saved_suggestions.keep(self.db_path, below, {"tags": ["Family/Work"]})
+        suggester.keep(self.db_path, below, {"tags": ["Family/Work"]})
         self.assertEqual(1, rows_under(self.db_path, self.lighthouse))
 
     def test_removing_the_folder_forgets_the_add(self):
@@ -151,7 +150,7 @@ class TheStore(Folders, unittest.TestCase):
         library_actions.record_added(Library(self.db_path), [self.lighthouse])
         face_actions.remove_folder(Library(self.db_path), self.lighthouse)
         with self.assertRaises(Conflict):
-            saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
+            suggester.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
 
 
 class FakeIndex:
@@ -182,7 +181,7 @@ class TheSuggestRoute(Folders, unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.indexed = FakeIndex()
-        patcher = mock.patch.object(tagpup_routes.indexing, "index_folder", self.indexed)
+        patcher = mock.patch.object(indexing, "index_folder", self.indexed)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -245,31 +244,8 @@ class TagTunersAddFolder(Folders, unittest.TestCase):
             indexing_jobs.queue_for(library).wait()
         self.assertEqual(([self.lighthouse], 1), (reply.get_json()["queued"], reply.get_json()["added"]))
         self.assertEqual(0, rows_under(library.path, self.lighthouse))
-        self.assertIsNone(library_actions.not_in(library, self.lighthouse))
+        self.assertEqual((None, False), library_actions.suggest_how(library, self.lighthouse))
         self.assertEqual([self.lighthouse], indexed.folders)
-
-
-class TheCli(Folders, unittest.TestCase):
-    def setUp(self):
-        self.home = own_home.for_test(self)
-        self.db_path = self.home.library("harbour.db")
-        library_actions.create(self.db_path)
-        self.make(self.home.root, self.db_path)
-
-    def test_suggest_refuses_a_folder_the_library_does_not_hold(self):
-        result = CliRunner().invoke(cli, ["--db", self.db_path, "suggest", self.lighthouse])
-        self.assertEqual(1, result.exit_code, result.output)
-        self.assertIn("is not in harbour", " ".join(result.output.split()))
-        self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
-
-    def test_suggest_adds_the_folder_when_asked(self):
-        # Stopped where the models would load: what is under test is the adding.
-        with mock.patch("tagpup_cli.library_index", side_effect=SystemExit(0)):
-            result = CliRunner().invoke(cli, ["--db", self.db_path, "suggest", self.lighthouse, "--add"])
-        self.assertEqual(0, result.exit_code, result.output)
-        self.assertIn("Added the folder to harbour", " ".join(result.output.split()))
-        self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
-        self.assertIsNone(library_actions.not_in(Library(self.db_path), self.lighthouse))
 
 
 class TheMcpWriteTools(Folders, unittest.TestCase):

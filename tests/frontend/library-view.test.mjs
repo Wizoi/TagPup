@@ -9,7 +9,7 @@
  * back, so a request that is still out when the view moves on is a thing a test can look at. The library
  * is 68,000 photos of invented ids; no name is a real one.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports,
@@ -26,7 +26,7 @@ const FOLDER = "D:\\Library\\2020";
 
 const cardOf = (id) => ({
   id, name: `IMG_${id}.jpg`, path: `D:\\Library\\Photos\\IMG_${id}.jpg`, taken: "2020:01:01 10:00:00",
-  damaged: false, damage: null, thumb: `/api/photo-thumb?id=${id}&v=1600000000.0`,
+  thumb: `/api/photo-thumb?id=${id}&v=1600000000.0`,
 });
 const recordOf = (id) => photoRecord({
   id, filename: `IMG_${id}.jpg`, path: `D:\\Library\\Photos\\IMG_${id}.jpg`, tags: ["Trips/Coast"], people: [],
@@ -36,7 +36,7 @@ const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve,
 const frame = (window) => new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 
 /** The page on a library, a view named by its address, a layout for the grid, and a server that holds what it is told. */
-async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards, onPhoto, scan, layout = true, rootsProblem } = {}) {
+async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards, onPhoto, scan, layout = true, rootsProblem, migrating } = {}) {
   const server = new FakeServer();
   const ctx = { held: [], idsAsked: [], cardsAsked: [], photosAsked: [], server };
   ctx.hold = false;
@@ -53,7 +53,6 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/membership", { photos_not_held: 0 })
-    .on("/api/folder/damaged", { photos: [] })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/photo/delete", { success: true })
@@ -62,6 +61,16 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
   if (rootsProblem) {
     server.first("/api/library/", { error: "This computer does not know where this library keeps its photos." },
       { status: 409, headers: { "X-TagPup-Roots-Problem": "1" } });
+  }
+  if (migrating) {
+    // The library is being migrated: its first request is answered as tagpup/web/libraries.py answers it, then the
+    // migration is done.
+    const updating = { success: false, updating: true, error: "TagPup is updating; this page will continue in a moment." };
+    server.first("/api/library/ids", () => {
+      server.routes.splice(server.routes.findIndex((r) => r.status === 503), 1);
+      ctx.idsAsked.push("503");
+      return updating;
+    }, { status: 503, headers: { "X-TagPup-Updating": "1", "Retry-After": "0" } });
   }
   server.on("/api/library/ids", answer((url) => {
     ctx.idsAsked.push(url);
@@ -227,21 +236,22 @@ describe("an address, or a library, that gives no view", () => {
     assert.match(ctx.stripText(), /0 photos/);
   });
 
-  test("a library behind (the route's 409 sentence) is shown, not a trace", async (t) => {
-    const ctx = await load(t);
-    ctx.server.first("/api/library/ids", { error: "kr-track has not been brought up to date for browsing." }, { status: 409 });
-    ctx.window.history.replaceState({}, "", "/photo_index/?view=year&value=2021");
-    ctx.window.dispatchEvent(new ctx.window.PopStateEvent("popstate", { state: {} }));
-    await ctx.settle();
-    assert.match(ctx.document.getElementById("thumbnails-grid").textContent, /has not been brought up to date/);
-    assert.match(ctx.stripText(), /has not been brought up to date/);
-  });
-
   test("a root this computer does not place: the banner, and the view says why it is empty", async (t) => {
     const ctx = await load(t, { rootsProblem: true });
     const banner = ctx.document.getElementById("roots-banner");
     assert.ok(!banner.classList.contains("hidden"), "the existing banner is shown");
     assert.match(ctx.document.getElementById("thumbnails-grid").textContent, /does not know where this library keeps/);
+  });
+
+  test("a library being migrated as the view opens: the page waits it out and shows the view, no error", async (t) => {
+    const ctx = await load(t, { migrating: true });
+    assert.equal(ctx.idsAsked.length, 2, "the order was not asked for again after the 503");
+    assert.equal(ctx.idsAsked[0], "503");
+    assert.match(ctx.stripText(), /68,?000 photos/);
+    assert.equal(ctx.state.library.ids.length, N);
+    assert.ok(ctx.real().length > 0, "no card once the library answered");
+    assert.doesNotMatch(ctx.document.getElementById("thumbnails-grid").textContent, /updating|could not|error/i);
+    assert.deepEqual(ctx.consoleErrors, []);
   });
 
   test("a source of 0 photos and a source of 1", async (t) => {
@@ -273,10 +283,29 @@ describe("the order and the cards, scrolled", () => {
   test("a fast scroll through the middle asks for nothing it has left behind", async (t) => {
     const ctx = await load(t);
     ctx.cardsAsked.length = 0;
-    for (let i = 1; i <= 30; i++) await ctx.scrollToIndex(2000 * i);   // thirty windows, no pause long enough
-    await ctx.settle();
+    // Thirty windows, a frame (17 ms) apiece, on the test's clock (node:test's mock timers: the page's setTimeout and
+    // jsdom's frames). On the real one a frame took as long as the machine was busy, and under load the scroll paused
+    // long enough to be answered (#721).
+    mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    try {
+      const turn = () => new Promise((resolve) => setImmediate(resolve));
+      for (let i = 1; i <= 30; i++) {
+        ctx.here.scrollTop = GRID_TOP + Math.floor((2000 * i) / COLUMNS) * STRIDE;
+        ctx.scroller.dispatchEvent(new ctx.window.Event("scroll"));
+        mock.timers.tick(17);
+        await turn();
+      }
+      for (let n = 0; n < 40; n++) {   // then it stands still
+        mock.timers.tick(20);
+        await turn();
+      }
+    } finally {
+      mock.timers.reset();
+    }
+    await flush(ctx.window, 6);
     const asked = ctx.cardsAsked.flat();
     assert.ok(ctx.cardsAsked.length <= 3, `${ctx.cardsAsked.length} requests for thirty windows`);
+    assert.ok(asked.every((id) => IDS.indexOf(id) >= 59000), "none for a window it flew past");
     const last = IDS.indexOf(Math.max(...asked));
     assert.ok(last >= 59000 && last <= 61000, "and for the one it stopped at");
     assert.ok(ctx.cardById(IDS[60000]), "which is drawn");
@@ -368,22 +397,6 @@ describe("the order and the cards, scrolled", () => {
     await ctx.release();
   });
 
-  test("damaged and incomplete photos are marked from the card, with no folder list", async (t) => {
-    const ctx = await load(t, {
-      onCards: (asked) => ({ cards: asked.map((id) => ({
-        ...cardOf(id), damaged: id === IDS[0] || id === IDS[1], damage: id === IDS[0] ? "truncated" : id === IDS[1] ? "incomplete" : null,
-      })) }),
-    });
-    const broken = ctx.cardById(IDS[0]);
-    assert.ok(broken.classList.contains("damaged"));
-    assert.equal(broken.querySelector("img"), null, "nothing to ask for");
-    assert.match(broken.textContent, /Can't be read/);
-    const incomplete = ctx.cardById(IDS[1]);
-    assert.ok(incomplete.classList.contains("damaged"));
-    assert.ok(incomplete.querySelector("img"), "an incomplete copy still has its picture");
-    assert.match(incomplete.textContent, /Incomplete/);
-    assert.equal(ctx.cardById(IDS[2]).classList.contains("damaged"), false);
-  });
 });
 
 describe("selecting in a view", () => {
@@ -564,7 +577,7 @@ describe("a view that changes under the page", () => {
 
   test("a refresh that cannot read the order leaves the view as it was and says so", async (t) => {
     const ctx = await load(t);
-    ctx.server.first("/api/library/ids", { error: "the library is busy" }, { status: 503 });
+    ctx.server.first("/api/library/ids", { error: "the library is busy" }, { status: 500 });
     click(ctx.window, ctx.document.getElementById("btn-library-refresh"));
     await ctx.settle();
     assert.equal(ctx.state.library.ids.length, N);

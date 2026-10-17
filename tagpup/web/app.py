@@ -16,7 +16,7 @@ may be set, the library's settings, its history of changes, when its recurring j
 where each app is, which version answers, and the Activity page over every library
 (tagpup.web.activity_routes) -- is a blueprint each registers. Every
 request passes the process's gate (tagpup.web.lifecycle), which counts it while in
-flight and turns it away while the always-on process moves onto a new version.
+flight and turns it away while the server moves onto a new version.
 """
 import errno
 import gzip
@@ -31,8 +31,8 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import (activity_routes, history_routes, jobs_routes, libraries, lifecycle as lifecycles,
-                        roots_gate, roots_ingress, rules_routes, security, settings_routes, sync_routes, tagpup_routes,
+from tagpup.web import (activity_routes, face_routes, history_routes, photo_face_routes, libraries, lifecycle as lifecycles,
+                        name_faces_routes, roots_gate, roots_ingress, rules_routes, security, settings_routes, sync_routes, tagpup_routes,
                         taxonomy_routes, tuner_routes)
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.config["APP_KIND"] = kind
     app.config["STARTUP_LIBRARY"] = startup
     app.config["RUNTIME"] = runtime
-    if runtime is not None and getattr(runtime, "idle", None) is not None:
+    if runtime is not None:
         # What the pages keep only while used, let go on the runtime's idle timer.
         tagpup_routes.idle_caches(runtime.idle)
         tuner_routes.idle_caches(runtime.idle)
@@ -96,6 +96,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
 
     app.before_request(security.guard)
     app.before_request(libraries.attach_library)
+    app.before_request(name_faces_routes.refuse_writes_while_naming)
     app.before_request(roots_gate.guard)
     app.before_request(roots_ingress.guard)
     app.after_request(roots_ingress.mark)
@@ -110,11 +111,14 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.register_blueprint(settings_routes.routes)
     app.register_blueprint(history_routes.routes)
     app.register_blueprint(sync_routes.routes)
-    app.register_blueprint(jobs_routes.routes)
     app.register_blueprint(lifecycles.routes)
     app.register_blueprint(activity_routes.routes)
+    app.register_blueprint(face_routes.routes)
+    app.register_blueprint(name_faces_routes.routes)
     app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])
+    if kind == "tagpup":
+        app.register_blueprint(photo_face_routes.routes)
     _page_routes(app)
     # The gate outside the library's middleware: a request turned away while the server
     # drains opens no library.

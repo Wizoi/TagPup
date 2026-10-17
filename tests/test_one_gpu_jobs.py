@@ -10,6 +10,11 @@ its own ViT-H-14; both sat at 0 of 165 for over half an hour. Now:
   naming who has it and since when; Cancel stops it at once, and nothing is kept.
 - The indexer waits for its turn before its first photo, saying so on the progress line;
   the queue's Cancel stops it while it waits (a file it watches), having indexed nothing.
+- Suggest in a library naming another CLIP model than a run under way in this process holds is refused, naming that run
+  and both models, and runs once it has ended: one process holds one set of models (#761). Once it has ended, the
+  other library's Suggest lets go of the models kept from it before it builds its own, and keeps those it shares.
+  The startup warm-up is such a run while it loads (#1423), and a Suggest whose models cannot be made lets go of
+  nothing it found kept (#1424).
 
 Fictional names; stand-in models that say they are on "cuda", on a lock folder of the
 test's own home. No real model is loaded.
@@ -24,6 +29,7 @@ from unittest import mock
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
 import own_home  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -106,7 +112,7 @@ class SuggestWaitsForTheFoldersIndex(_Library):
         self.addCleanup(self.release.set)
         self.indexed_at = []
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             report("Generating embeddings: 33% (1/3)", 30)
             self.release.wait(DEADLINE)
             self.indexed_at.append(time.monotonic())
@@ -162,10 +168,10 @@ class _CudaClip:
         pass
 
 
-class _CudaFaces:
+class _CudaFaces(stand_in_models.Faces):
     device = "cuda"
 
-    def detect_and_embed_faces(self, path):
+    def detect_and_embed_faces(self, path, *, max_side):
         return []
 
 
@@ -204,6 +210,9 @@ class _Suggester:
     def _precompute_candidates(self):
         pass
 
+    def knows_named_faces(self):
+        return False
+
     def suggest_for_photo(self, path, emb, k=15, min_sim=0.35, target_metadata=None):
         return {"path": path, "suggested_tags": [{"tag": "Activity/Sailing", "score": 0.7}]}
 
@@ -223,7 +232,8 @@ class SuggestWaitsForTheCard(_Library):
             self.addCleanup(patched.stop)
         self.clip = _CudaClip()
         self.card = gpu.Card(poll=0.05)
-        self.runtime = Runtime(clip=self.clip, faces=_CudaFaces(), card=self.card)
+        faces = _CudaFaces()
+        self.runtime = Runtime(build_clip=lambda settings: self.clip, build_faces=lambda settings: faces, card=self.card)
         other = gpu.Card(poll=0.05)
         # Every turn ends before the home is deleted: an open card.lock cannot be (#775).
         self.addCleanup(self.card.close)
@@ -282,7 +292,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
             handle.write(FAKE_INDEXER)
         queue = indexing_jobs.queue_for(self.library)
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             return indexing_service.index_folder(self.library, folder, code, report=report)
         queue.start([self.folder], index)
         self.assertTrue(until(lambda: gpu_turns.is_waiting(queue.status(self.folder).get("message"))),
@@ -301,7 +311,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
         release = threading.Event()
         self.addCleanup(release.set)
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             report("Generating embeddings: 33% (1/3)", 30)
             report.stop_file = os.path.join(self.home.root, "stop")
             release.wait(DEADLINE)
@@ -336,7 +346,7 @@ class TheIndexerWaitsBeforeItsFirstPhoto(_Library):
         runtime.gpu_turn.side_effect = gpu_turn
         extractor = mock.Mock()
         extractor.return_value.batch_read.side_effect = lambda batch, people=None: [
-            {"path": path, "tags": [], "people": [], "captions": []} for path in batch]
+            {"path": path, "mtime": 1.0, "size": 1, "tags": [], "people": [], "captions": []} for path in batch]
         writer = mock.Mock()
         with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime), \
                 mock.patch.object(tagpup_cli, "MetadataExtractor", extractor), \
@@ -349,6 +359,170 @@ class TheIndexerWaitsBeforeItsFirstPhoto(_Library):
         self.assertIn(indexing_service.CANCELLED_WAITING, result.output)
         writer.return_value.give.assert_not_called()
         runtime.embeddings.return_value.of.assert_not_called()
+
+
+class _CpuModel:
+    """A model a runtime builds from a library's settings, off the card: it takes no turn."""
+    device = "cpu"
+
+    def __init__(self, settings):
+        self.settings = dict(settings)
+        self.unloads = 0
+
+    def load(self):
+        pass
+
+    def embed_text(self, text):
+        return [0.0]
+
+    def unload(self):
+        self.unloads += 1
+
+
+class TwoLibrariesNamingTwoModels(_Library):
+    """harbour names the default CLIP model, cove another; Suggest in both at once in one server (#761)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cove = Library(self.home.library("cove.db"))
+        library_actions.create(self.cove.path)
+        self.jetty = paths.stored(os.path.join(self.home.root, "Jetty"))
+        os.makedirs(self.jetty)
+        library_actions.record_added(self.cove, [self.jetty])
+        changed = library_settings.change(self.cove, {"model.name": "ViT-L-14"}, acknowledged=["clip"])
+        self.assertEqual(1, changed.changed, changed.refused)
+        self.built = []
+        #: The CLIP models that cannot be made (a download refused, say), by name.
+        self.unmakeable = ()
+
+        #: The CLIP models not let go each time a run begins to use its own: never two (#761).
+        self.loaded_when_used = []
+
+        def build(settings):
+            if settings.get("model_name") in self.unmakeable:
+                raise RuntimeError("%s cannot be made" % settings["model_name"])
+            self.built.append(_CpuModel(settings))
+            return self.built[-1]
+        self.runtime = Runtime(build_clip=build, build_faces=build)
+        self.addCleanup(self.runtime.forget, self.library)
+        self.addCleanup(self.runtime.forget, self.cove)
+        self.cove_runs = suggestion_jobs.runs_for(self.cove)
+        self.addCleanup(suggestion_jobs.forget, self.cove)
+        self.cove_photos = {paths.key(os.path.join(self.jetty, "bollard.jpg")):
+                            {"path": paths.stored(os.path.join(self.jetty, "bollard.jpg"))}}
+
+    def clips(self):
+        return [model for model in self.built if "model_name" in model.settings]
+
+    def model_for_run(self, *args, **kwargs):
+        self.loaded_when_used.append([model.settings["model_name"] for model in self.clips() if not model.unloads])
+        return _FakeModel()
+
+    def suggest_in(self, runs, folder, library, photos):
+        with mock.patch.object(suggester_service, "model_for_run", self.model_for_run):
+            runs.run(folder, suggestion_jobs.work_for(library, lambda: photos, self.runtime))
+        return runs.status(folder)
+
+    def suggest_in_cove(self):
+        return self.suggest_in(self.cove_runs, self.jetty, self.cove, self.cove_photos)
+
+    def test_the_second_waits_for_the_first_and_is_told_why(self):
+        with mock.patch.object(suggester_service, "model_for_run", lambda *args, **kwargs: _FakeModel()):
+            harbours = self.runtime.begin(self.library, what="Suggest Regatta (harbour)")
+        clips = [model for model in self.built if "model_name" in model.settings]
+        self.assertEqual(1, len(clips))
+        harbour_clip = clips[0].settings["model_name"]
+        self.assertNotEqual("ViT-L-14", harbour_clip)
+
+        refused = self.suggest_in_cove()
+        self.assertEqual("error", refused["status"], refused)
+        self.assertIn("Suggest Regatta (harbour) is using the CLIP model %s" % harbour_clip, refused["message"])
+        self.assertIn("cove names ViT-L-14", refused["message"])
+        self.assertIn("Nothing was suggested", refused["message"])
+        self.assertEqual(1, len([model for model in self.built if "model_name" in model.settings]),
+                         "cove's model was built beside harbour's")
+        with self.assertRaises(gpu_turns.OtherModelsInUse):
+            self.runtime.begin(self.cove)
+
+        # A second run on harbour's models is no second set.
+        with mock.patch.object(suggester_service, "model_for_run", lambda *args, **kwargs: _FakeModel()):
+            self.runtime.begin(self.library, what="Suggest Breakwater (harbour)").end()
+
+        harbours.end()
+        self.assertEqual("completed", self.suggest_in_cove()["status"])
+        self.assertEqual(["Activity/Sailing"], [each["tag"] for entry in self.cove_runs.status(self.jetty)["suggestions"].values()
+                                                for each in entry["tags"]])
+
+    def test_a_library_differing_only_in_an_image_setting_is_told_which(self):
+        changed = library_settings.change(self.cove, {"model.name": self.runtime.settings(self.library).embedder["model_name"],
+                                                      "model.force_image_size": "336"}, acknowledged=["clip"])
+        self.assertEqual(2, changed.changed, changed.refused)
+        with mock.patch.object(suggester_service, "model_for_run", lambda *args, **kwargs: _FakeModel()):
+            harbours = self.runtime.begin(self.library, what="Suggest Regatta (harbour)")
+        self.addCleanup(harbours.end)
+        with self.assertLogs("tagpup.jobs.suggestions", "INFO") as logged:
+            refused = self.suggest_in_cove()
+        self.assertEqual("error", refused["status"], refused)
+        size = self.runtime.settings(self.library).embedder["force_image_size"]
+        self.assertNotEqual(336, size)
+        self.assertIn("with force_image_size %s; cove names it with force_image_size 336" % size, refused["message"])
+        self.assertFalse([line for line in logged.output if not line.startswith("INFO")], "the refusal was logged as a failure")
+        self.assertFalse([record for record in logged.records if record.exc_info], "the refusal was logged with a traceback")
+
+    def test_one_after_the_other_never_two_sets_at_once(self):
+        # Suggest in harbour, to its end; its models are kept for the next Suggest on them.
+        self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
+        self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
+        [harbours] = self.clips()
+        self.assertEqual(0, harbours.unloads, "a model was let go between two runs on it")
+        self.assertEqual(2, len(self.built), "harbour's second run built its models again")
+
+        # Then in cove, which names ViT-L-14: harbour's CLIP model is let go before cove's is used.
+        self.assertEqual("completed", self.suggest_in_cove()["status"])
+        harbour_clip = harbours.settings["model_name"]
+        self.assertEqual([[harbour_clip], [harbour_clip], ["ViT-L-14"]], self.loaded_when_used,
+                         "two CLIP models were loaded at once")
+        self.assertEqual(1, harbours.unloads)
+        faces = [model for model in self.built if "model_name" not in model.settings]
+        self.assertEqual(1, len(faces), "the face models the two share were built again")
+        self.assertEqual(0, faces[0].unloads, "the face models the two share were let go")
+
+    def test_a_suggest_on_other_models_waits_for_the_startup_warm_up(self):
+        """The server starts and warms harbour's models; the owner clicks Suggest in cove, naming ViT-L-14, while they load.
+        The warm-up held no run's place, so cove's run began, dropped harbour's models and loaded its own while the warm-up
+        went on with harbour's: two sets at once (#1423). Now the warm-up is a run of its own while it loads."""
+        started, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def slow_load(model):
+            started.set()
+            release.wait(DEADLINE)
+        with mock.patch.object(_CpuModel, "load", slow_load):
+            warming = self.runtime.warm_up_in_background([self.library])
+            self.assertTrue(started.wait(DEADLINE))
+            refused = self.suggest_in_cove()
+            self.assertEqual("error", refused["status"], refused)
+            self.assertIn("the warm-up of Suggest's models (TagPup server) is using", refused["message"])
+            [harbours] = self.clips()
+            self.assertEqual(0, harbours.unloads, "the warm-up's models were let go under it")
+            release.set()
+            warming.join(DEADLINE)
+        self.assertEqual("completed", self.suggest_in_cove()["status"])
+        self.assertEqual([["ViT-L-14"]], self.loaded_when_used, "two CLIP models were loaded at once")
+
+    def test_a_suggest_whose_models_cannot_be_made_loses_none_of_those_kept(self):
+        """cove's CLIP model cannot be made. The run is refused, and harbour's models, kept between its runs, are still
+        kept: they were taken off the runtime before cove's were made and never let go (#1424), and the next harbour run
+        made them again beside them."""
+        self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
+        [harbours] = self.clips()
+        self.unmakeable = ("ViT-L-14",)
+        refused = self.suggest_in_cove()
+        self.assertEqual("error", refused["status"], refused)
+        self.assertIn("ViT-L-14 cannot be made", refused["message"])
+        self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
+        self.assertEqual([harbours], self.clips(), "harbour's CLIP model was made a second time")
+        self.assertEqual(0, harbours.unloads)
 
 
 if __name__ == "__main__":

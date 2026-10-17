@@ -7,10 +7,10 @@ from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREAD
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names
-from tagpup.services import damaged_photos, file_changes, file_only, libraries
+from tagpup.services import file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
-from tagpup.store import photos, taxonomy
+from tagpup.store import db, person_ids, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 #: `base` not given: no check of the file's tags and caption (the CLI, the MCP). None is a page's record of a photo
 #: ExifTool could not read; a dict is what the page read.
 NO_BASE = object()
+
+
+def refuse_under_people(library, tags):
+    """Rule (a), the owner's own writes *(owner, 2026-10-09)*: the sentence that refuses `tags` when one of them would be a new
+    tag under a person that faces or photos carry ("Sam is a person (12 faces, 40 photos); a person cannot have tags under
+    them. Choose another group."), else None. A tag the tree has already is not new, and a keyword read from a file is never
+    refused (the indexer does not come here). The one keyword writer asks it for every write the owner makes: a photo's save,
+    Add to all selected, Apply All, the bulk Tags edit."""
+    tags = [vocabulary.normalize(tag) for tag in dict.fromkeys(tags) if vocabulary.SEPARATOR in vocabulary.normalize(tag)]
+    if not tags or not os.path.exists(library.path):
+        return None
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        for tag in tags:
+            taxonomy.refuse_child_of_person(conn, tag)
+    except person_ids.PersonHasNoChildren as why:
+        return str(why)
+    finally:
+        conn.close()
+    return None
 
 
 def _held_title(now):
@@ -49,11 +69,12 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     undone: the photo's keyword, caption and date fields, before and after, committed
     first, and the row told what the file holds as it is marked done. It was written
     with ExifTool of its own and recorded nowhere (docs/findings.md, #266). A file
-    holding it all already is not written: `changed` is 0. A write that fails raises,
-    as it did, for the page to say so.
+    holding it all already is not written: `changed` is 0. A write that fails is in the Result's
+    errors (the route answers 500 from them); nothing is renamed.
 
-    A rename moves the photo's index row -- embedding, faces and all -- rather than
-    leaving them behind; then the row gets what the file holds now. A failure recording
+    A rename is a change of its own in the library's journal (file_changes.rename: in History, undoable), which
+    moves the photo's index row -- embedding, faces and all -- rather than leaving them behind; then the row gets
+    what the file holds now. A rename that fails leaves the file as it was: `renamed` False, `rename_failed` says why. A failure recording
     it is logged, not raised: the file is written either way. The read, the write and the
     rename hold the lock of changes of photo files (file_changes.exclusively): a write
     between the read and the write was overwritten.
@@ -82,15 +103,9 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     result = Result(attempted=1)
     _held, loose = libraries.split(library, [photo_path])
     files_only = bool(loose)
-    if files_only:
-        if file_only.refuse_unwritable(result, [photo_path]):
-            return result
-    elif libraries.refuse_writes(result, library, [photo_path]):
-        return result
     wanted = fields.caption_fields(title or "")
     if date_taken:
         wanted.update(fields.date_taken_fields(date_taken))
-    people = taxonomy.people_paths(library.path)
     photo_path = paths.stored(photo_path)
     if stamp is not None and photo_actions.changed_on_disk(photo_path, stamp):
         result.refuse(CHANGED_ON_DISK_SENTENCE)
@@ -111,59 +126,98 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             return result
         held = set(_tags_held(now))
         problem = (validation.first_problem("tag", (t for t in tags if t not in held))
+                   or (None if files_only else refuse_under_people(library, [t for t in tags if t not in held]))
                    or _caption_problem(et, photo_path, title))
         if problem:
             result.refuse(problem)
             return result
         tags = [t if t in held else vocabulary.normalize(t) for t in tags]
-        flat, hierarchical = fields.expand_tag_fields(vocabulary.resolve_people(tags, people))
+        flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
         after.update(wanted)
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:
             written = file_only.write_fields(exiftool_path, [photo_path], list(after), plan, et=et,
-                                             held={paths.key(photo_path): now}, read_back_also=fields.METADATA_FIELDS)
+                                             held={paths.key(photo_path): now})
         else:
+            # Read back whole and recorded so, stamped, as the file is marked done: the save's row, once.
             written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path], list(after),
                                                 plan, summary={"photos": 1}, et=et,
-                                                held={paths.key(photo_path): now},
-                                                read_back_also=fields.METADATA_FIELDS)
+                                                held={paths.key(photo_path): now}, whole=True)
         if not written.ok:
-            raise RuntimeError(written.message())
+            result.errors.extend(written.errors)
+            result.changed = written.changed
+            return result
         result.changed = written.changed
         kept = now.get(names.PRESERVED_NAME) or [""]
-        new_path = paths.stored(metadata.sync_title_to_filename(photo_path, title, exiftool_path, rename_format,
-                                                                kept[0]))
+        new_path, skipped, rename_failed = _rename_after_caption(
+            library, photo_path, paths.stored(metadata.title_filename(photo_path, title, rename_format, kept[0])),
+            files_only)
         renamed = not paths.same(new_path, photo_path)
+        if rename_failed:
+            result.details["rename_failed"] = rename_failed
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"],
                               base={"tags": _tags_held(after), "title": vocabulary.trimmed(title or "")})
         touched = 1 if (written.changed or renamed) else 0
         result.details.update({file_only.FILE_ONLY: touched if files_only else 0,
                                file_only.WITH_ROWS: 0 if files_only else touched})
-        try:
-            # What the write's read back found; where nothing was written, or the file
-            # was renamed since (its SourceFile is its old name), a read now.
-            record = None if renamed else written.details["read_back"].get(paths.key(photo_path))
-            raw_meta = metadata.raw_metadata(et, new_path, record)
-        except Exception as e:
-            logger.warning("Could not read back %s: %s", new_path, e)
-            return result
     if files_only:
         return result   # no row to tell: the index reads the file when the folder is added
-    try:
-        recorded_tags = vocabulary.extract_tags(raw_meta)
-        skipped = photos.move_rows(library.path, {photo_path: new_path})[1] if renamed else []
-        if skipped:
-            result.details["index_warning"] = (
-                "Renamed, but the index already has a photo at %s; its rows were left as they were."
-                % new_path)
-        else:
-            # The journaled write carried its vectors over the write already.
-            photos.record_saved(library.path, new_path, recorded_tags, [title] if title else [], raw_meta)
-    except Exception as e:
-        logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
+    if skipped:
+        result.details["index_warning"] = (
+            "Renamed, but the index already has a photo at %s; its rows were left as they were." % new_path)
+    elif written.changed:
+        # A person really taken off the photo is off its faces, one really put back is on its face again (#908), now that
+        # the index says what the file holds (the write recorded its row, the rename moved it).
+        follow_people(library, result, moved={photo_path: new_path})
     return result
+
+
+def follow_people(library, result, moved=None):
+    """What the change of photo files `result` made (details["change"]) did to the people on its photos is done to their faces
+    (tagpup.services.face_people.follow_change: the one place that decides it, from the change's own files, so a photo that
+    never held the tag, or whose file was not written, is not touched). Said in `result`'s details: `unnamed_faces` and
+    `renamed_faces` ([{"id", "name"}], for a page that reads its faces again), `faces_changes` (the journal's ids), and
+    `faces_problem` when the faces could not be followed -- the files are written all the same. Never raises."""
+    change = result.details.get("change")
+    if change is None:
+        return
+    from tagpup.services import face_people   # face_people writes through this module
+    try:
+        done = face_people.follow_change(library, change, moved=moved)
+    except Exception as e:
+        logger.warning("Could not follow the people of change %s with their faces: %s", change, e)
+        result.details["faces_problem"] = "The faces of the people taken off or put back could not be followed: %s" % type(e).__name__
+        return
+    if done.errors:
+        logger.warning("Could not follow the people of change %s with their faces: %s", change, done.message())
+        result.details["faces_problem"] = "The faces of the people taken off or put back could not be followed."
+    if done.details.get("unnamed"):
+        result.details["unnamed_faces"] = list(done.details["unnamed"])
+    if done.details.get("renamed"):
+        result.details["renamed_faces"] = list(done.details["renamed"])
+    if done.details.get("faces_changes"):
+        result.details["faces_changes"] = list(done.details["faces_changes"])
+
+
+def _rename_after_caption(library, photo_path, wanted, files_only):
+    """(the photo's path now, the (old, new) pairs whose new name the index already had, why the rename failed
+    or None). The rename of a photo of the library is a change in its journal (file_changes.rename: in
+    History, undoable, its row moving with it); a photo of a folder it does not hold is renamed alone, as Smart
+    Rename does it. A rename that fails leaves the file as it was and is reported, not raised: the fields were
+    written."""
+    if wanted == photo_path:
+        return photo_path, [], None
+    try:
+        if files_only:
+            done = file_only.rename({photo_path: wanted}, {})
+        else:
+            done = file_changes.rename(library, "rename after caption", {photo_path: wanted}, {}, summary={"photos": 1})
+    except Exception as e:
+        logger.warning("Could not rename %s after its caption: %s", photo_path, e)
+        return photo_path, [], e.message() if isinstance(e, names.RenameFailed) else str(e)
+    return paths.stored(done.done.get(photo_path, wanted)), done.skipped or [], None
 
 
 def _caption_problem(et, photo_path, caption):
@@ -187,14 +241,14 @@ SKIPPED_MISSING = "skipped_missing"
 
 
 def leave_out_missing(photo_paths):
-    """(`photo_paths` but those whose file is gone, [(path, why)] of those left out). A bulk write skips them and writes
-    the rest, as it does a damaged photo: the library still holds the row of a missing photo and a view shows it
+    """(`photo_paths` but those whose file is gone, [(path, why)] of those left out) (file_changes.file_states). A bulk write
+    skips them and writes the rest: the library still holds the row of a missing photo and a view shows it
     (phase 9c), so a selection can name one. A file that cannot be read, or on a share that does not answer, is NOT
-    missing: the write meets it itself, and stops at it as for any read or write error of a present file."""
-    present, gone = [], []
-    for path in photo_paths:
-        (gone if damaged_photos.stamp_of(path) is None else present).append(path)
-    return present, [(path, MISSING_WHY) for path in gone]
+    missing: the write meets it (file_changes.write_fields makes a photo on a share asleep its error at once), and stops at
+    it as for any read or write error of a present file."""
+    states = file_changes.file_states(photo_paths)
+    return ([path for path, state in states if state != file_changes.GONE],
+            [(path, MISSING_WHY) for path, state in states if state == file_changes.GONE])
 
 
 #: What the journal calls a change that adds and removes tags on a selection (History's `operation`).
@@ -207,10 +261,10 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     """Add the same tags to many photos and take the same tags off them. Adding or
     removing tags on a selection of photos. See _change_each.
 
-    `operation` names the change in the journal. A bulk JOB (tagpup.jobs.bulk_edits) passes its own and
+    `operation` names the change in the journal. A bulk edit of a selection (tagpup.services.bulk_edit) passes its own and
     `stop_at_first_error=False`: a photo that cannot be read or written is an error and the others are written all the
-    same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names by their
-    leaf is not added again (_change_each). `et`: an ExifTool session the caller opened (a bulk job's chunk gets its own,
+    same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names is not
+    added again (_change_each). `et`: an ExifTool session the caller opened (a bulk edit gets its own,
     with a deadline of its own), used instead of one per write.
 
     A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
@@ -220,126 +274,144 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     What is added is checked (tagpup.core.validation) and written in its one spelling;
     what is taken off is not: taking a bad tag off must stay possible. One that may not
     be set refuses the whole change, and nothing is written."""
-    problem = validation.first_problem("tag", add)
+    problem = validation.first_problem("tag", add) or refuse_under_people(library, add)
     if problem:
         return _refused(len(photo_paths), problem)
     present, gone = leave_out_missing(photo_paths)
-    result = (_change_present(library, present, add, remove, exiftool_path, operation, stop_at_first_error, persons, et)
+    add = [vocabulary.normalize(tag) for tag in add]
+    result = (change_each(library, {path: (add, remove) for path in present}, exiftool_path, operation, persons=persons,
+                          et=et, stop_at_first_error=stop_at_first_error)
               if present else _refused(0, None))
     if not result.refused:
         result.attempted += len(gone)
         for path, why in gone:
             result.skip(path, why)
     result.details[SKIPPED_MISSING] = len(gone)
+    if not result.refused:
+        follow_people(library, result)
     return result
-
-
-def _change_present(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
-                    persons=None, et=None):
-    """change_tags for photos whose files are there."""
-    refused = _refused(len(photo_paths), None)
-    held, loose = libraries.split(library, photo_paths)
-    if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
-        return refused
-    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
-    if kept is None:
-        return refused
-    add = [vocabulary.normalize(tag) for tag in add]
-    done = None
-    if held or not loose:
-        done = libraries.with_skipped(_change_each(library, [(path, add, remove) for path in kept],
-                                                   exiftool_path, operation, persons=persons,
-                                                   stop_at_first_error=stop_at_first_error, et=et), left)
-    if not loose:
-        return file_only.combined(done, None)
-    # The photos of folders the library does not hold: their files only, in the same request
-    # (tagpup.services.file_only). After the others: a failure stops the run, as always.
-    if stop_at_first_error and done is not None and not done.ok:
-        done.attempted += len(loose)
-        for path in loose:
-            done.skip(path, "not written: an earlier photo failed")
-        return file_only.combined(done, None)
-    writable, skipped = file_only.leave_out_unwritable(loose)
-    files = libraries.with_skipped(
-        _change_each(library, [(path, add, remove) for path in writable], exiftool_path, operation,
-                     files_only=True, persons=persons, stop_at_first_error=stop_at_first_error, et=et)
-        if writable else _refused(0, None), skipped)
-    return file_only.combined(done, files)
 
 
 @roots_service.canonical_args("additions")
 def add_tags(library, additions, exiftool_path, persons=None):
     """Add each photo in `additions` (path -> tags) its own tags. Apply All on a folder's
     suggestions: suggestions deal in people's bare names, which are written as the tags
-    they are filed under. A photo with nothing to add is left alone. See _change_each.
+    they are filed under. A photo with nothing to add is left alone. See change_each.
     A tag that may not be set refuses the whole of it, and nothing is written.
 
-    A photo in a folder the library does not hold (Just look: what Suggest offered it was
-    analysed in memory) is written to its file only, as change_tags does
-    (tagpup.services.file_only): no row, no journal change, and the tag tree is only read, so a
-    person or tag the tree does not hold is written as it is offered. The library's own answer
-    decides, per photo, now.
-
     `persons` ({paths.key(path): the tags of `additions` that are people}): a person the file already
-    names by their leaf is not added again (_change_each)."""
-    problem = validation.first_problem("tag", dict.fromkeys(t for tags in additions.values() for t in tags))
+    names is not added again (_change_each)."""
+    return change_each(library, {path: (tags, ()) for path, tags in additions.items()}, exiftool_path,
+                       "apply all suggestions", persons=persons)
+
+
+@roots_service.canonical_args("changes")
+def change_each(library, changes, exiftool_path, operation, persons=None, et=None, stop_at_first_error=True):
+    """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own, as ONE change of
+    photo files named `operation` in the journal. A photo with nothing to add or take off is left alone.
+    Held photos are written with their rows and journaled; a photo in a folder
+    the library does not hold (Just look: what Suggest offered it was analysed in memory) is written to
+    its file only (tagpup.services.file_only): no row, no journal change, and the tag tree is only read,
+    so a person or tag the tree does not hold is written as it is offered. The library's own answer
+    decides, per photo, now. What is added is checked (tagpup.core.validation); what is taken off is not.
+
+    `persons`: as add_tags'. `et`: an ExifTool session the caller opened (with a deadline of its own), as
+    change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
+    written, as a bulk edit does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
+    off a person per photo."""
+    adds = dict.fromkeys(t for add, _remove in changes.values() for t in add)
+    problem = validation.first_problem("tag", adds) or refuse_under_people(library, adds)
     if problem:
-        return _refused(len(additions), problem)
-    refused = _refused(len(additions), None)
-    held, loose = libraries.split(library, [path for path, tags in additions.items() if tags])
-    if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
-        return refused
-    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
-    if kept is None:
-        return refused
+        return _refused(len(changes), problem)
+    refused = _refused(len(changes), None)
+    held, loose = libraries.split(library, [path for path, (add, remove) in changes.items() if add or remove])
+
+    def plan_of(chosen):
+        return [(path, list(changes[path][0]), changes[path][1]) for path in chosen]
     done = None
     if held or not loose:
-        done = libraries.with_skipped(_change_each(library, [(path, additions[path], ()) for path in kept],
-                                                   exiftool_path, "apply all suggestions", persons=persons), left)
+        done = _change_each(library, plan_of(held), exiftool_path, operation, persons=persons, et=et,
+                            stop_at_first_error=stop_at_first_error)
     if not loose:
         return file_only.combined(done, None)
-    if done is not None and not done.ok:
+    if stop_at_first_error and done is not None and not done.ok:
         done.attempted += len(loose)
         for path in loose:
             done.skip(path, "not written: an earlier photo failed")
         return file_only.combined(done, None)
-    writable, skipped = file_only.leave_out_unwritable(loose)
-    files = libraries.with_skipped(
-        _change_each(library, [(path, additions[path], ()) for path in writable], exiftool_path,
-                     "apply all suggestions", files_only=True, persons=persons) if writable
-        else _refused(0, None), skipped)
+    files = _change_each(library, plan_of(loose), exiftool_path, operation, files_only=True, persons=persons,
+                         et=et, stop_at_first_error=stop_at_first_error)
     return file_only.combined(done, files)
 
 
-def person_filer(library):
+class PersonFiler:
     """name -> the tag a suggested person is written as, the rule a click on the suggestion's chip
     follows (the page's resolveTagOrPerson): a name the tree files once is that path; a name it does
-    not hold is filed under the library's one people root (People/<name>); a name it files twice,
-    or a tree with several people roots, is left as it is -- the page asks, and a bare name is the
-    form resolve_people still files when the person is added. The tree is read once, here, and only
-    read: no node is made. The people the suggester names bare were written bare by Apply All."""
-    filed, roots = taxonomy.people_filing(library.path)
+    not hold is filed under the library's one people root (People/<name>). A name it files twice, or
+    one it files nowhere in a tree with several people roots, is None: the page asks, and Apply All,
+    with nobody to ask, refuses (`why_not`). It wrote the bare name, a keyword that names nobody. The
+    tree is read once, here, and only read: no node is made."""
 
-    def file_person(name):
+    def __init__(self, library):
+        self.filed, self.roots = taxonomy.people_filing(library.path)
+
+    def __call__(self, name):
         name = (name or "").strip()
-        return vocabulary.person_tag(name, filed.get(vocabulary.key(name), []), roots) or name
-    return file_person
+        return vocabulary.person_tag(name, self.filed.get(vocabulary.key(name), []), self.roots)
+
+    def names_already(self, tags, name, known):
+        """Do the keywords `tags` name one of the people `name` is filed as (by the id of their node)? Such a photo has
+        them, whichever: nothing is asked of it."""
+        return any(vocabulary.names_same_person(known, tag, path)
+                   for path in self.filed.get(vocabulary.key(name), []) for tag in tags)
+
+    def why_not(self, names):
+        """The sentence refusing a run that names `names`, people this cannot file."""
+        said = []
+        for name in names:
+            paths_ = self.filed.get(vocabulary.key(name), [])
+            if len(paths_) > 1:
+                said.append("%s is filed under %s" % (name, " and ".join(paths_)))
+            else:
+                said.append("%s is not filed, and the library has several people roots (%s)" % (name, ", ".join(self.roots)))
+        return ("Nothing was written: %s. Add them on a photo, choosing which, then Apply All again."
+                % "; ".join(said))
 
 
-def apply_suggestions(library, suggestions, exiftool_path, threshold=0.0):
+def person_filer(library):
+    """The PersonFiler of `library`'s tree as it stands."""
+    return PersonFiler(library)
+
+
+def apply_suggestions(library, suggestions, exiftool_path):
     """Apply All: write each photo of `suggestions` ({path: its entry}, what Suggest offered) the tags and
-    people the panel showed, scoring at least `threshold` (tagpup.core.suggesting.offered_tags), and nothing
-    else. A person is filed as a click on their chip files them (person_filer) and is left out when the file
-    already names them by their leaf, whatever the spelling or the path -- the page's photoAlreadyHas -- read
-    from the file as it is under the write's lock. Held or not held (add_tags)."""
+    people the panel showed (tagpup.core.suggesting.offered_tags), and nothing else. A person is filed as a click on
+    their chip files them (person_filer) and is left out when the file already names them by the id of their node
+    (vocabulary.names_same_person; a keyword spelled like their leaf is nobody, #1394), read from the file as it is under
+    the write's lock. A person it cannot file (a name filed twice, or nowhere among several people roots) refuses the
+    run before anything is written, unless the photo's file already names one of the people filed as that name (read
+    here, of those photos alone): that photo has them. A file that cannot be read names nobody, and the run is refused.
+    Held or not held (add_tags)."""
     file_person = person_filer(library)
+    asked = {path: [name for name in ((person.get("name") or "").strip() for person in entry["people"])
+                    if name and file_person(name) is None]
+             for path, entry in suggestions.items()}
+    unfiled = set()
+    if any(asked.values()):
+        known = taxonomy.people_vocabulary(library.path)
+        with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+            read = field_values.read(et, [path for path, names in asked.items() if names], KEYWORD_READ)
+        held = {key: ([] if isinstance(fields_, Exception) else list(_tags_held(fields_))) for key, fields_ in read.items()}
+        unfiled = {name for path, names in asked.items() for name in names
+                   if not file_person.names_already(held.get(paths.key(path), []), name, known)}
+    if unfiled:
+        return _refused(len(suggestions), file_person.why_not(sorted(unfiled, key=vocabulary.tag_sort_key)))
     additions, persons = {}, {}
     for path, entry in suggestions.items():
-        additions[path] = suggesting.offered_tags(entry, threshold, file_person)
-        offered = {file_person(person["name"]) for person in entry.get("people") or []
-                   if person.get("score", 0.0) >= threshold and (person.get("name") or "").strip()}
+        # A person the photo already has, whom the tree files twice, is no tag to add (None).
+        additions[path] = [tag for tag in suggesting.offered_tags(entry, file_person) if tag is not None]
+        offered = {file_person(person["name"]) for person in entry["people"]
+                   if (person.get("name") or "").strip()} - {None}
         persons[paths.key(path)] = offered
     return add_tags(library, additions, exiftool_path, persons=persons)
 
@@ -375,6 +447,19 @@ def _tags_held(held):
     return vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
 
 
+def keywords_planner(library, edit):
+    """The `plan_one` of a write of keywords (file_changes.write_fields) whose photos each get their own change: `edit(path, held)`
+    gives the (tags to add, tags to take off) for a photo that holds the tags `held`. Each write replaces the photo's whole keyword
+    set, in the file's order with what is added after (a set's order changed from run to run, and a file holding every tag already
+    was written again for its order)."""
+    def plan_one(path, held):
+        held_tags = list(_tags_held(held))
+        add, remove = edit(path, held_tags)
+        tags = [tag for tag in dict.fromkeys(held_tags + list(add)) if tag not in set(remove)]
+        return _keywords_plan(tags)
+    return plan_one
+
+
 def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None, stop_at_first_error=True,
                  et=None):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
@@ -396,22 +481,19 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
     else is: no journal change (`change` is None), no row.
 
     `persons` ({paths.key(path): tags that are people}): of what is added, a person the file already names
-    by their leaf is left out -- read from the file here, under the lock, as the page leaves out one the
-    photo already has.
+    is left out -- by the id of their node (two people called alike are two: vocabulary.names_same_person) --
+    read from the file here, under the lock, as the page leaves out one the photo already has.
     """
-    people = taxonomy.people_paths(library.path)
+    known = taxonomy.people_vocabulary(library.path) if persons else None
     wanted = {paths.key(path): (add, remove) for path, add, remove in plan}
 
-    def plan_one(path, held):
+    def edit(path, held_tags):
         add, remove = wanted[paths.key(path)]
-        held_tags = list(_tags_held(held))
         mine = (persons or {}).get(paths.key(path), ())
-        add = [tag for tag in add
-               if not (tag in mine and any(vocabulary.same_person(tag, there) for there in held_tags))]
-        # In the file's order, what is added after: a set's order changed from run to
-        # run, and a file holding every tag already was written again for its order.
-        tags = [tag for tag in dict.fromkeys(held_tags + list(add)) if tag not in set(remove)]
-        return _keywords_plan(vocabulary.resolve_people(tags, people))
+        return [tag for tag in add
+                if not (tag in mine and any(vocabulary.names_same_person(known, tag, there) for there in held_tags))], remove
+
+    plan_one = keywords_planner(library, edit)
 
     if files_only:
         return file_only.write_fields(exiftool_path, [path for path, _a, _r in plan], KEYWORD_READ, plan_one,
@@ -428,7 +510,7 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
 
     Renaming or deleting a node of the tag tree, merging one tag into another and
     renaming a person all come here. Each photo is written through the one keyword
-    writer, people resolved to their tags first, and recorded through the one recorder,
+    writer and recorded through the one recorder,
     as a bulk edit is: this used to write its own rows, recording two of the keyword
     fields and not the file's new mtime, so a renamed tag's photos were re-read on every
     scan and a stale IPTC:Keywords was re-derived straight back into the tags.
@@ -445,104 +527,19 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
     outside between the plan and its write, is an error.
     """
     rows = photos.read_tags(library.path, photo_paths)
-    people = taxonomy.people_paths(library.path)
-
     def plan_one(path, held):
         new_tags, changed = vocabulary.retag(_tags_held(held), old, new)
         if not changed:
             # Its row is made to say what the file holds (file_changes.write_fields).
             return file_changes.skip("does not carry the tag")
-        return _keywords_plan(vocabulary.resolve_people(new_tags, people))
+        return _keywords_plan(new_tags)
 
     operation = "rename tag" if new else "remove tag"
-    return file_changes.write_fields(library, operation, exiftool_path, [path for path, _t, _r in rows],
-                                     KEYWORD_READ, plan_one, summary={"photos": len(rows)})
-
-
-def suggestion_writes(library, suggestions, min_score=suggesting.OFFER_A_TAG):
-    """What the CLI's `write` writes from the entries of a suggestions file: (path, tags,
-    caption) for each photo with a tag scoring at least `min_score`
-    (tagpup.core.suggesting.written_tags), or a caption made from them; and the paths
-    left out because there is no file there.
-
-    The library's face roots, which the caption files people under, are read once for
-    the run; scripts/writer.py read them again for every photo.
-    """
-    face_roots = taxonomy.people_vocabulary(library.path).roots
-    writes, missing = [], []
-    for entry in suggestions:
-        path = entry.get("path")
-        if not path or not os.path.exists(path):
-            missing.append(path)
-            continue
-        tags = suggesting.written_tags(entry.get("suggested_tags", []), min_score)
-        caption = suggesting.caption_from_tags(tags, face_roots)
-        if tags or caption:
-            writes.append((path, tags, caption))
-    return writes, missing
-
-
-#: What the CLI's `write` reads of each file: the keyword fields, and every field a
-#: caption is written to (tagpup.core.fields.caption_fields).
-SUGGESTION_READ = tuple(dict.fromkeys(KEYWORD_READ + tuple(fields.caption_fields(""))))
-
-
-@roots_service.canonical_args("writes")
-def write_suggestions(library, writes, exiftool_path, nobackup=False):
-    """Write each (path, tags, caption) of `writes` (suggestion_writes') as one change of
-    photo files (tagpup.services.file_changes), which can be undone, each file's row told
-    what it holds as it is marked done.
-
-    The tags are added to what the file holds, in the file's order, as Add to all
-    selected adds them: whole paths only, people filed where the library's tree files
-    them. The caption, when there is one, is written to every caption field. A file
-    already holding both is left alone. The writer had its own ExifTool code that also
-    wrote every path's parts as loose keywords, wrote people bare, and never told the
-    index; then its writes were recorded nowhere, and undone only from the _original
-    copies ExifTool left beside each file (docs/findings.md, #266). Those are not made
-    any more: the journal is the way back, and `nobackup` is kept for callers that pass
-    it.
-
-    A photo that cannot be read or written is an error, and the next is tried; ExifTool
-    that cannot be started raises. changed: the files written. details: `change`.
-
-    A tag or a caption that may not be set refuses the whole run before anything is
-    written (tagpup.core.validation).
-    """
-    result = Result(attempted=len(writes))
-    problem = (validation.first_problem("tag", dict.fromkeys(t for _, tags, _ in writes for t in tags))
-               or validation.first_problem("caption", (caption for _, _, caption in writes if caption)))
-    if problem:
-        result.refuse(problem)
-        return result
-    if libraries.refuse_writes(result, library, [path for path, _tags, _caption in writes], damaged_ok=True):
-        return result
-    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(result, library, [path for path, _tags, _caption in writes])
-    if kept is None:
-        return result
-    if left:
-        kept = {paths.key(path) for path in kept}
-        writes = [write for write in writes if paths.key(write[0]) in kept]
-    # Who a bare name means, read once for the run, not once per photo.
-    people = taxonomy.people_paths(library.path)
-    # A photo named twice in the file is written once, with the tags of both.
-    wanted = {}
-    for path, tags, caption in writes:
-        _path, held_tags, held_caption = wanted.get(paths.key(path), (path, [], ""))
-        wanted[paths.key(path)] = (_path, list(dict.fromkeys(held_tags + list(tags))), caption or held_caption)
-
-    def plan_one(path, held):
-        _path, tags, caption = wanted[paths.key(path)]
-        after = {}
-        if tags:
-            merged = list(dict.fromkeys(list(_tags_held(held)) + tags))
-            after.update(_keywords_plan(vocabulary.resolve_people(merged, people)).after)
-        if caption:
-            after.update(fields.caption_fields(caption))
-        return file_changes.Plan(after=after, detail=(tags, caption))
-
-    # What was skipped as damaged is in the Result returned: its skips, and skipped_damaged.
-    return libraries.with_skipped(file_changes.write_fields(
-        library, "write suggestions", exiftool_path, [path for path, _tags, _caption in wanted.values()],
-        SUGGESTION_READ, plan_one, summary={"photos": len(wanted)}), left)
+    # A photo whose file is gone (or whose root is not there) carries nothing to rewrite: skipped, so it does not hold the tree
+    # back. One that is there and cannot be written (a share that does not answer, a locked file) is an error that does.
+    present, gone = leave_out_missing([path for path, _t, _r in rows])
+    # The tag tree's rewrite has no cap (owner, 2026-10-11): it has progress, and Cancel, as every batch.
+    result = file_changes.write_fields(library, operation, exiftool_path, present, KEYWORD_READ, plan_one,
+                                       summary={"photos": len(present)}, uncapped=True)
+    result.skipped.extend(gone)
+    return result

@@ -7,9 +7,8 @@ objects.
 
 A library's settings are its own (tagpup.services.settings; docs/ARCHITECTURE.md, phase
 7.6), and `library_settings` is where an entry point reads them: the first time a
-library holding none is opened, it is stamped from what the home's config.ini says, if
-it has one, else with the defaults. That is the one read of config.ini left
-(tests/test_config_single_owner.py).
+library holding none is opened, it is stamped with the defaults. Nothing reads
+config.ini (tests/test_config_single_owner.py).
 
 A Runtime builds each CLIP model and each set of face models once per set of settings,
 the first time a library with those settings asks: two libraries on one model share it,
@@ -31,10 +30,10 @@ revisited").
 
 It replaces scripts/suggest_models.py, which the web launcher used to fill a module-level
 slot in tagpup.jobs.suggestions with (docs/findings.md, #112), and the class attribute
-every ClipEmbedder shared its model through. `tests/test_models_single_owner.py` fails a
+every ClipEmbedder shared its model through. `tests/test_gpu_single_owner.py` fails a
 module that builds a model anywhere else.
 
-`background(runtime)` is what the web server -- the always-on process -- runs beside its
+`background(runtime)` is what the web server runs beside its
 requests (docs/ARCHITECTURE.md, phase 8): the recurring jobs, the release of idle caches,
 and the folder watcher (tagpup.jobs.watching). Each is registered once, in BACKGROUND.
 """
@@ -45,16 +44,18 @@ import threading
 import time
 
 from tagpup import config as tagpup_config
+from tagpup.core import gpu_turns
 from tagpup.core import library as libraries
 from tagpup.core.idle import IdleCaches
 from tagpup.core.library import Library
 from tagpup.files import images
 from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
-from tagpup.services import damaged_photos, file_changes, indexing, search
+from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
-from tagpup.services import suggester as suggestions
+from tagpup.services import suggester
 from tagpup.services import sync as sync_service
 from tagpup.store import embeddings as store_embeddings
 
@@ -63,14 +64,13 @@ logger = logging.getLogger(__name__)
 
 def library_settings(library):
     """The library's settings (tagpup.services.settings.LibrarySettings), a library
-    holding none stamped first: from the home's config.ini if it has one, else with the
-    defaults.
+    holding none stamped first, with the defaults.
 
     The first time this process reads them, a change of photo files a crash left half
     done is settled, with the ExifTool they name (tagpup.services.file_changes.settle_once):
     the changes of rows are settled when the library is first opened (schema.ensure), but
     files need ExifTool, which only the library's settings say where to find."""
-    settings = library_settings_service.of(library, tagpup_config.config_ini)
+    settings = library_settings_service.of(library)
     file_changes.settle_once(library, tagpup_config.exiftool_path(settings.exiftool))
     return settings
 
@@ -78,7 +78,7 @@ def library_settings(library):
 def peek_settings(library):
     """The library's settings, writing nothing: for a read-only look (the MCP server's
     inspections, tools/doctor.py). A library never stamped reads as stamping would make it."""
-    return library_settings_service.read(library, tagpup_config.config_ini)
+    return library_settings_service.read(library)
 
 
 #: Set, a process a test started runs the recurring jobs, which it otherwise never does;
@@ -90,7 +90,7 @@ NO_JOBS = "TAGPUP_NO_JOBS"
 
 def runs_recurring_jobs():
     """Does this web server run the recurring jobs (tagpup.jobs.recurring)? Only the web
-    server asks: the always-on process runs them, nothing else (owner, 2026-09-26). Not
+    server asks: the server runs them, nothing else (owner, 2026-09-26). Not
     when NO_JOBS is set, nor in a test run (tagpup.ml.under_test) unless RUN_JOBS is: a
     server a test starts would snapshot its library in the background."""
     if os.environ.get(NO_JOBS):
@@ -120,14 +120,18 @@ def recurring_jobs(runtime=None, libraries=None, clock=None):
 
 #: How long the models, the vectors and the other caches may go unused before the web
 #: server lets them go (minutes): a ViT-H-14 keeps a few GB of GPU memory, photo_index's
-#: vectors 270 MB, and the always-on process would hold them all day.
-RELEASE_MODELS_AFTER_MINUTES = 30
+#: vectors 270 MB, and the server would hold them all day.
+RELEASE_MODELS_AFTER_MINUTES = 5
+
+#: What the startup warm-up is called while it holds the models (Runtime.warm_up): to a Suggest refused beside it, on the
+#: Activity page, and to another process waiting for the graphics card.
+WARM_UP = "the warm-up of Suggest's models (TagPup server)"
 
 #: The runtime's own entries in its idle registry (Runtime.idle).
 MODELS, PHOTO_INDEXES = "models", "photo indexes"
 
 
-# ---- What the always-on process runs beside its requests ---------------------------------
+# ---- What the server runs beside its requests ---------------------------------------------
 
 class Every:
     """`call()` every `seconds` on a daemon thread of its own, until stop(): a background
@@ -174,6 +178,9 @@ class Every:
 #: version (tagpup.web.lifecycle). One place, so sync's watcher (phase 8c) is one entry.
 BACKGROUND = {}
 
+#: The names of the background tasks others ask for by name (Background.task): the Activity page, the drain.
+RECURRING_JOBS, FOLDER_WATCHER = "recurring jobs", "folder watcher"
+
 
 def background_task(name):
     """Register the function it decorates as the background task `name`: make(runtime)."""
@@ -185,7 +192,7 @@ def background_task(name):
     return register
 
 
-@background_task("recurring jobs")
+@background_task(RECURRING_JOBS)
 def _recurring_jobs_task(runtime):
     """The recurring jobs of every library in the data folder (tagpup.jobs.recurring), in
     the process that runs them (runs_recurring_jobs)."""
@@ -201,7 +208,7 @@ def _idle_caches_task(runtime):
     return Every("ReleaseIdleCachesThread", runtime.release_idle, max(1.0, min(60.0, runtime.idle_after / 4)))
 
 
-@background_task("folder watcher")
+@background_task(FOLDER_WATCHER)
 def _folder_watcher_task(runtime):
     """Each library's folders watched, and a folder synced when its notifications settle
     (tagpup.jobs.watching); the whole library at start. In the process that runs the
@@ -211,8 +218,7 @@ def _folder_watcher_task(runtime):
         return None
     return watching.Watcher(home_libraries, watch_folders,
                             lambda library, folder: sync(library, folder=folder, apply=True), images.is_photo,
-                            recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP),
-                            written=check_damaged)
+                            recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP))
 
 
 def watch_folders(library):
@@ -277,11 +283,17 @@ def exiftool(library, settings=None):
 def index_folder(library, subfolders=True):
     """How this process adds a folder to `library` from its index queue: the CLI's `index`
     in a process of its own, from this code (tagpup.services.indexing.index_folder); with
-    its subfolders unless not `subfolders`."""
-    def index(folder, cluster, report):
-        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
-                                     subfolders=subfolders)
+    its subfolders unless not `subfolders`. The CLI clusters the library's faces after an index that recorded a photo,
+    and the library's writes of faces are refused meanwhile (tagpup.services.indexing.while_clustering): the same for
+    both apps' index routes, TagPup's Add and sync's. Runs on the queue's thread, with the library it was handed. The
+    rows it writes move the photos counter, which lets TagPup's cached scan of the folder go (FolderCache; #341)."""
+    def index(folder, report):
+        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, report=report, subfolders=subfolders)
     return index
+
+
+#: Why an applied sync did not run (see sync).
+NAMING_SAYS = "Names are being given from tags; a sync waits until it finishes."
 
 
 def sync(library, folder=None, apply=False, index_new=True):
@@ -292,7 +304,15 @@ def sync(library, folder=None, apply=False, index_new=True):
     unless not `index_new`; they are indexed one at a time, after the sync returns.
 
     What the entry points call -- the CLI's `sync`, the MCP server's tool, the route --
-    and what a recurring job calls as sync(library, apply=True)."""
+    and what a recurring job calls as sync(library, apply=True), and the folder watcher.
+
+    An applied sync is refused, nothing read or written, while "Name faces from tags" writes names in THIS process
+    (naming_faces.writing): a sync that deletes, re-points or
+    adds photos beside it changes what it read. Here, not in a route, so the run-now, the scheduled job and the watcher are
+    closed alike whatever library the request named. The watcher's folder is brought in by its next notification or the daily
+    catch-up. Another process's apply (the CLI, the MCP server) cannot see this process's job."""
+    if apply and naming_faces.writing(library):
+        return sync_service.not_run(NAMING_SAYS, apply)
     settings = library_settings(library) if apply else peek_settings(library)
     queue = None
     if index_new:
@@ -304,20 +324,6 @@ def sync(library, folder=None, apply=False, index_new=True):
                                                           together=True)
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
                              roots=settings.roots, ignored=settings.ignored)
-
-
-def check_damaged(library, photo_paths=None):
-    """Read `library`'s photos recorded damaged -- those of `photo_paths`, or every one --
-    again now (tagpup.services.damaged_photos.check_again), and index again, on this
-    process's index queue, the folders of those that read whole. check_again's answer, with
-    `queued`, the folders queued."""
-    done = damaged_photos.check_again(library, photo_paths)
-    done["queued"] = 0
-    if done["folders"]:
-        outcome = indexing_jobs.queue_for(library).start(done["folders"], index_folder(library, subfolders=False),
-                                                        together=True)
-        done["queued"] = outcome.changed
-    return done
 
 
 def review(library):
@@ -334,7 +340,7 @@ def include(library, folder):
 
     def queue(folders):
         return indexing_jobs.queue_for(library).start(folders, index_folder(library))
-    return sync_service.include(library, folder, settings.roots, queue)
+    return sync_service.include(library, folder, settings.roots, queue, settings.ignored)
 
 
 def _frozen(settings):
@@ -354,13 +360,15 @@ def _build_faces(settings):
     return FaceModel(**settings)
 
 
-def _part(settings, part):
-    """_frozen(settings.<part>), or None for a part holding a value it cannot read: a
-    command that runs no face model is not failed by a face setting (the 5.5 review)."""
-    try:
-        return _frozen(getattr(settings, part))
-    except (ValueError, TypeError):
-        return None
+#: The two parts of a library's settings that name a model, in the order of a model set.
+PARTS = ("embedder", "faces")
+
+
+def _set_of(settings):
+    """The models a library's settings name, as one key: (its CLIP model's, its face models'), each _frozen. What a
+    library uses, a run holds and a run is refused for are each this one key. A value a part cannot read is refused
+    where it is set (tagpup.services.settings.change): none of the three libraries holds one."""
+    return tuple(_frozen(getattr(settings, part)) for part in PARTS)
 
 
 class RunModel:
@@ -458,11 +466,28 @@ class _OnTheCard:
 
 
 class _Lease:
-    """One run's hold on a photo index and a pair of models."""
+    """One run's hold on a photo index and a set of models: `what` the run is ("Suggest Regatta (harbour)"), `models`
+    the set it holds (_set_of) and `settings` its {part: settings} (PARTS), to name them to a run refused beside it.
+    The startup warm-up holds one with no index (Runtime.warm_up).
+    The runs under way are the runtime's leases, and nothing else: what is held is read from them."""
 
-    def __init__(self, index, clip_key, faces_key):
-        self.index, self.clip_key, self.faces_key = index, clip_key, faces_key
+    def __init__(self, index, what, settings):
+        self.index, self.what = index, what
+        self.models, self.settings = _set_of(settings), {part: getattr(settings, part) for part in PARTS}
         self.ended = False
+
+
+def _clip_name(embedder):
+    """A CLIP model as the owner chose it: "ViT-H-14 (laion2b_s32b_b79k)"."""
+    embedder = embedder or {}
+    return "%s (%s)" % (embedder.get("model_name"), embedder.get("pretrained"))
+
+
+def _differing(theirs, ours):
+    """The settings two parts differ in, each as the run under way has it: "force_image_size 224"."""
+    keys = sorted(set(theirs or {}) | set(ours or {}))
+    return ", ".join("%s %s" % (key, (theirs or {}).get(key)) for key in keys
+                     if (theirs or {}).get(key) != (ours or {}).get(key))
 
 
 def _unload(models):
@@ -480,10 +505,9 @@ class Runtime:
     """What lives as long as the process: the models, one per set of settings a library
     it serves names, and each library's photo index for Suggest.
 
-    `clip` and `faces` stand in for every library's models: a test's fakes, which are
-    then never built. `build_clip` and `build_faces` make a model from its settings
-    (tagpup.ml.clip.ClipModel's and tagpup.ml.faces.FaceModel's keyword arguments): a
-    test's, to see which settings each library's model was made from. `read_only` reads
+    `build_clip` and `build_faces` make a model from its settings (tagpup.ml.clip.ClipModel's
+    and tagpup.ml.faces.FaceModel's keyword arguments): a test's stand-ins are built so, one
+    way, and are then held, kept and let go as a real model is. `read_only` reads
     each library's settings without stamping one that holds none (peek_settings): for a
     command that only looks.
 
@@ -503,10 +527,8 @@ class Runtime:
     life (the CLI's, which is short). `clock` is time.monotonic, or a test's.
     """
 
-    def __init__(self, clip=None, faces=None, build_clip=None, build_faces=None, read_only=False,
+    def __init__(self, build_clip=None, build_faces=None, read_only=False,
                  idle_after=None, clock=None, card=None, keep_models=False):
-        self._clip = clip
-        self._faces = faces
         #: The process's turn on the graphics card (tagpup.ml.gpu), or a test's: each model
         #: built is handed it. With `keep_models` -- the web server, which keeps its models
         #: between runs, for `idle_after` or, without one, for good (--release-models-after
@@ -524,21 +546,20 @@ class Runtime:
         self.idle_after = idle_after
         #: What the process keeps only while it is used, and the one timer's registry.
         self.idle = IdleCaches(idle_after, clock=clock or time.monotonic)
-        self.idle.register(MODELS, self._release_models, in_use=lambda: bool(self._held))
+        self.idle.register(MODELS, self._release_models, in_use=lambda: bool(self._leases))
         self.idle.register(PHOTO_INDEXES, self._release_indexes)
         self._clips = {}
         self._face_models = {}
         #: Guards the models, what each library uses, the indexes and the runs' leases.
         self._lock = threading.RLock()
-        #: library.key -> (its CLIP settings, its face settings), as last asked.
+        #: library.key -> the models it names (_set_of), as last asked.
         self._uses = {}
-        #: ("clip" or "faces", settings) -> how many runs hold that model.
-        self._held = collections.Counter()
         #: library.key -> its photo index now.
         self._indexes = {}
-        #: id(index) -> how many runs hold it; and the indexes replaced while one did.
-        self._index_runs = collections.Counter()
+        #: id(index) -> an index replaced while a run held it, closed when the last such run ends.
         self._retired = {}
+        #: The runs under way: each its _Lease, until it ends. The models and the indexes held are theirs.
+        self._leases = []
 
     # ---- A library's settings --------------------------------------------------------
 
@@ -585,8 +606,6 @@ class Runtime:
     def clip(self, library, settings=None):
         """The CLIP model the library's settings name, built the first time any library
         on those settings asks for it. Its weights load on first use, or in warm_up."""
-        if self._clip is not None:
-            return self._clip
         settings = settings or self.settings(library)
         self.idle.used(MODELS)
         with self._lock:
@@ -598,8 +617,6 @@ class Runtime:
     def faces(self, library, settings=None):
         """The face models the library's settings name, built the first time any library
         on those settings asks for them. Their weights load on first use, or in warm_up."""
-        if self._faces is not None:
-            return self._faces
         settings = settings or self.settings(library)
         self.idle.used(MODELS)
         with self._lock:
@@ -612,10 +629,7 @@ class Runtime:
         key = _frozen(settings)
         if key not in built:
             model = built[key] = build(settings)
-            try:
-                model.gpu = self.card
-            except AttributeError:
-                pass
+            model.gpu = self.card
         return built[key]
 
     def _unload_every_model(self):
@@ -624,9 +638,6 @@ class Runtime:
         this process has a turn again."""
         with self._lock:
             models = list(self._clips.values()) + list(self._face_models.values())
-        for given in (self._clip, self._faces):
-            if given is not None:
-                models.append(given)
         _unload(models)
 
     def gpu_turn(self, what, models, cancelled=None, report=None):
@@ -643,7 +654,7 @@ class Runtime:
         """Record which models `library` uses now. True when that changed from before."""
         if library is None:
             return False
-        uses = (_part(settings, "embedder"), _part(settings, "faces"))
+        uses = _set_of(settings)
         before = self._uses.get(library.key)
         self._uses[library.key] = uses
         return before is not None and before != uses
@@ -652,18 +663,36 @@ class Runtime:
         """Drop each model no library uses and no run holds; returns them, to unload
         outside the lock. Under the lock."""
         dropped = []
-        for kind, built, position in (("clip", self._clips, 0), ("faces", self._face_models, 1)):
-            used = {uses[position] for uses in self._uses.values()}
+        for position, built in enumerate((self._clips, self._face_models)):
+            kept = {uses[position] for uses in self._uses.values()} | {lease.models[position] for lease in self._leases}
             for key in list(built):
-                if key not in used and not self._held[(kind, key)]:
+                if key not in kept:
                     dropped.append(built.pop(key))
         if dropped:
             logger.info("Letting go of %d model(s) no library uses any more.", len(dropped))
         return dropped
 
+    def _drop_other_sets(self, models):
+        """Drop each model built of another set than `models`, whichever library names it: what a run beginning on
+        `models` does once no run holds another set (_refuse_another_set), so the process never has two sets on the
+        graphics card, one after the other (#761). Those of `models` stay, kept for the next run. Returns them, to
+        unload outside the lock. Under the lock."""
+        dropped = []
+        for position, built in enumerate((self._clips, self._face_models)):
+            for key in list(built):
+                if key != models[position]:
+                    dropped.append(built.pop(key))
+        if dropped:
+            logger.info("Letting go of %d model(s) of another library's settings before a run on others.", len(dropped))
+        return dropped
+
+    def _holds(self, index):
+        """Does a run under way hold `index`? Under the lock."""
+        return any(lease.index is index for lease in self._leases)
+
     def release_idle(self):
         """Let go of what has not been used for `idle_after` seconds and nothing holds (the
-        `idle` registry): the always-on process otherwise keeps a few GB of GPU memory and
+        `idle` registry): the server otherwise keeps a few GB of GPU memory and
         each opened library's vectors all day for a Suggest that may not come. The names
         let go."""
         released = self.idle.release_idle()
@@ -672,10 +701,36 @@ class Runtime:
                         ", ".join(released), round(self.idle_after / 60))
         return released
 
+    def models_state(self):
+        """What the process has loaded: {"loaded": ["CLIP", "faces"] (those in memory), "in_use":
+        a run holds one, "held_by": what each run holding them is (a Suggest, or the startup warm-up: WARM_UP), once each,
+        "last_used": seconds since a model was last asked for, or None
+        when none has been since they were let go, "release_after": the idle period in
+        seconds, or None}. What the Activity page shows."""
+        with self._lock:
+            clips = list(self._clips.values())
+            faces = list(self._face_models.values())
+            held_by = list(dict.fromkeys(lease.what for lease in self._leases))
+
+        def loaded(models):
+            return any(callable(getattr(m, "loaded", None)) and m.loaded() for m in models)
+        names = [name for name, models in (("CLIP", clips), ("faces", faces)) if loaded(models)]
+        return {"loaded": names, "in_use": bool(held_by), "held_by": held_by,
+                "last_used": self.idle.idle_for(MODELS) if names else None, "release_after": self.idle_after}
+
+    def unload_models_now(self):
+        """The owner's Unload models now: every model let go and the turn on the graphics
+        card given up at once -- unless a run holds one, when nothing is touched.
+        Returns {"unloaded": [names that were loaded], "busy": bool, "held_by": what holds them (models_state)}."""
+        before = self.models_state()
+        if not self.idle.release_now(MODELS):
+            return {"unloaded": [], "busy": True, "held_by": self.models_state()["held_by"] or before["held_by"]}
+        return {"unloaded": before["loaded"], "busy": False, "held_by": []}
+
     def _release_models(self):
         """Every model, when no run holds one (the registry asks in_use first). How many."""
         with self._lock:
-            if self._held:
+            if self._leases:
                 return 0
             dropped = list(self._clips.values()) + list(self._face_models.values())
             self._clips.clear()
@@ -689,7 +744,7 @@ class Runtime:
         """Each library's photo index no run holds: closed, its vectors let go; the next
         ask makes and loads it again. How many."""
         with self._lock:
-            idle = [(key, index) for key, index in self._indexes.items() if not self._index_runs[id(index)]]
+            idle = [(key, index) for key, index in self._indexes.items() if not self._holds(index)]
             for key, _index in idle:
                 del self._indexes[key]
             for _key, index in idle:
@@ -712,27 +767,38 @@ class Runtime:
         Only when no one has to wait for the graphics card (tagpup.ml.gpu.Card.try_hold):
         with an index or a Suggest holding it or waiting for it, the warm-up is skipped and
         the first Suggest loads the models (#750).
+
+        While it loads it is a run under way, holding its set (a _Lease, ended in a finally): a Suggest in a library naming
+        another set is refused until it ends, as beside any run (#1423); with a run of another set under way, it warms
+        nothing.
         """
-        wanted = None
-        if self._clip is not None or self._faces is not None:
-            wanted = (None, None)
-        else:
-            counts, first = collections.Counter(), {}
-            for library in libraries:
-                try:
-                    settings = peek_settings(library)
-                    key = (_frozen(settings.embedder), _frozen(settings.faces))
-                except Exception as e:
-                    logger.error("Could not read the settings of %s to warm its models: %s", library.name, e)
-                    continue
-                counts[key] += 1
-                first.setdefault(key, (library, settings))
-            if counts:
-                # most_common keeps the first seen of equal counts first.
-                wanted = first[counts.most_common(1)[0][0]]
-        if wanted is None:
+        counts, first = collections.Counter(), {}
+        for library in libraries:
+            try:
+                settings = peek_settings(library)
+                key = _set_of(settings)
+            except Exception as e:
+                logger.error("Could not read the settings of %s to warm its models: %s", library.name, e)
+                continue
+            counts[key] += 1
+            first.setdefault(key, (library, settings))
+        if not counts:
             return
-        library, settings = wanted
+        # most_common keeps the first seen of equal counts first.
+        library, settings = first[counts.most_common(1)[0][0]]
+        lease = _Lease(None, WARM_UP, settings)
+        with self._lock:
+            if self._another_set(lease.models) is not None:
+                logger.info("Not warming the models: a Suggest on other models is under way.")
+                return
+            self._leases.append(lease)
+        try:
+            self._warm(library, settings, WARM_UP)
+        finally:
+            self._end(lease)
+
+    def _warm(self, library, settings, what):
+        """warm_up's loading, under its lease."""
         try:
             models = (self.clip(library, settings), self.faces(library, settings))
         except Exception as e:
@@ -740,7 +806,7 @@ class Runtime:
             return
         hold = gpu.NoHold()
         if any(gpu.on_the_card(getattr(model, "device", None)) for model in models):
-            hold = self.card.try_hold("warming Suggest's models (TagPup server)")
+            hold = self.card.try_hold(what)
             if hold is None:
                 holder = gpu.read_holder(self.card.where)
                 logger.info("Not warming the models: the graphics card is in use by %s, or a process waits "
@@ -792,10 +858,9 @@ class Runtime:
     def _retire(self, index):
         """An index no longer the library's: closed now, or, while a run holds it, when
         the last such run ends. A run's connection was closed under it. Under the lock."""
-        if self._index_runs[id(index)]:
+        if self._holds(index):
             self._retired[id(index)] = index
         else:
-            self._index_runs.pop(id(index), None)
             index.close()
 
     def photo_index(self, library, settings=None):
@@ -838,17 +903,26 @@ class Runtime:
         The models it is given take the process's turn on the graphics card the first
         time the run uses one (_RunTurn), as `what` ("Suggest Regatta (harbour)"), and
         hold it until the run ends: `report(line)` hears the waiting line meanwhile, and
-        None once the turn is had; `cancelled()` true stops the wait (gpu_turns.Cancelled)."""
+        None once the turn is had; `cancelled()` true stops the wait (gpu_turns.Cancelled).
+
+        Refused, gpu_turns.OtherModelsInUse and nothing begun, while another run holds models of other settings: a
+        library naming another CLIP model (or face settings) waits for the run before it to end (#761). Begun, the models
+        of any other set, kept after the runs that used them, are let go before this run uses its own: one set on the
+        card, at once or one after the other; those of its own set are kept, for the idle period. They are let go only
+        once this run's are made and its lease held: a run whose models cannot be made lets go of nothing (#1424)."""
         settings = self.settings(library)
         model_key = self.model_key(library, settings)
+        what = what or "Suggest in %s" % library.name
         with self._lock:
+            self._refuse_another_set(library, settings)
             photo_index = self._index(library, model_key)
             clip, faces = self.clip(library, settings), self.faces(library, settings)
-            lease = _Lease(photo_index, _frozen(settings.embedder), _frozen(settings.faces))
-            self._index_runs[id(photo_index)] += 1
-            self._held[("clip", lease.clip_key)] += 1
-            self._held[("faces", lease.faces_key)] += 1
-        turn = _RunTurn(self.card, what or "Suggest in %s" % library.name, (clip, faces), cancelled, report)
+            lease = _Lease(photo_index, what, settings)
+            self._leases.append(lease)
+            dropped = self._drop_other_sets(lease.models)
+        # Before the run's first use loads its own (a model built loads nothing until it is used).
+        _unload(dropped)
+        turn = _RunTurn(self.card, what, (clip, faces), cancelled, report)
         clip, faces = _OnTheCard(clip, turn), _OnTheCard(faces, turn)
 
         def end():
@@ -856,15 +930,37 @@ class Runtime:
             self._end(lease)
         try:
             photo_index.reload_if_changed()
-            if remember:
-                model = suggestions.model_for_run(photo_index, clip, faces, settings.candidate_words)
-            else:
-                model = suggestions.model_for_run(photo_index, clip, faces, settings.candidate_words,
-                                                  remember=False)
+            model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words,
+                                            detect_max_side=settings.detect_max_side, remember=remember)
         except BaseException:
             end()
             raise
         return RunModel(model, end)
+
+    def _another_set(self, models):
+        """The run under way (its _Lease) holding other models than `models`, or None: this process holds one set at a
+        time, whichever libraries name them (#761). Under the lock."""
+        return next((other for other in self._leases if other.models != models), None)
+
+    def _refuse_another_set(self, library, settings):
+        """Raise gpu_turns.OtherModelsInUse when a run under way holds other models than `settings` name
+        (_another_set). The sentence names the setting that differs. Under the lock."""
+        models = _set_of(settings)
+        other = self._another_set(models)
+        if other is not None:
+            clip = other.settings["embedder"]
+            if other.models[0] == models[0]:
+                theirs = "face models with %s; %s names other face settings" % (
+                    _differing(other.settings["faces"], settings.faces), library.name)
+            elif _clip_name(clip) != _clip_name(settings.embedder):
+                theirs = "the CLIP model %s; %s names %s" % (_clip_name(clip), library.name, _clip_name(settings.embedder))
+            else:
+                theirs = "the CLIP model %s with %s; %s names it with %s" % (
+                    _clip_name(clip), _differing(clip, settings.embedder), library.name,
+                    _differing(settings.embedder, clip))
+            raise gpu_turns.OtherModelsInUse(
+                "%s is using %s, and TagPup holds one set of models at a time. Nothing was suggested: "
+                "Suggest again once it has ended." % (other.what, theirs))
 
     def _end(self, lease):
         """A run is done: what it held, and nothing else uses, is let go."""
@@ -872,17 +968,11 @@ class Runtime:
             if lease.ended:
                 return
             lease.ended = True
+            self._leases.remove(lease)
             self.idle.used(MODELS)
             self.idle.used(PHOTO_INDEXES)
-            for kind, key in (("clip", lease.clip_key), ("faces", lease.faces_key)):
-                self._held[(kind, key)] -= 1
-                if self._held[(kind, key)] <= 0:
-                    del self._held[(kind, key)]
-            index_id = id(lease.index)
-            self._index_runs[index_id] -= 1
-            if self._index_runs[index_id] <= 0:
-                del self._index_runs[index_id]
-                retired = self._retired.pop(index_id, None)
+            if not self._holds(lease.index):
+                retired = self._retired.pop(id(lease.index), None)
                 if retired is not None:
                     retired.close()
             dropped = self._release()

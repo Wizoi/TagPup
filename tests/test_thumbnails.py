@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -22,11 +23,11 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core.result import NotFound  # noqa: E402
-from tagpup.files import images, thumbs  # noqa: E402
-from tagpup.services import damaged_photos, thumbnails  # noqa: E402
+from tagpup.files import images, shares, thumbs  # noqa: E402
+from tagpup.services import thumbnails  # noqa: E402
 from tagpup.services import faces as face_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
-from tagpup.store import db, photos  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 
 def entries_of(library):
@@ -163,7 +164,7 @@ class AFileThatChanges(Cache):
         before = entries_of(self.library)
         new_path = os.path.join(os.path.dirname(self.path), "renamed.jpg")
         os.rename(self.path, new_path)
-        moved, skipped = photos.move_rows(self.library.path, {self.path: new_path})
+        moved, skipped = photo_rows.move(self.library.path, {self.path: new_path})
         self.assertEqual((1, []), (moved, skipped))
         with self.renders() as render:
             self.serve()
@@ -180,7 +181,7 @@ class AFileThatChanges(Cache):
         self.serve()
         folded = os.path.join(os.path.dirname(self.path), "BOAT.JPG")
         os.rename(self.path, folded)
-        photos.move_rows(self.library.path, {self.path: folded})
+        photo_rows.move(self.library.path, {self.path: folded})
         with self.renders() as render:
             self.serve()
         self.assertEqual(0, render.call_count)
@@ -200,33 +201,25 @@ class AFileThatChanges(Cache):
 
 
 class ADamagedPhoto(Cache):
-    def damaged_record(self):
-        stat = os.stat(self.path)
-        damaged_photos.remember(self.library, [(self.path, (stat.st_mtime, stat.st_size), "truncated", "ends early", 0)])
-
-    def test_a_photo_recorded_damaged_is_a_placeholder_and_its_file_is_never_decoded(self):
-        self.damaged_record()
-        with self.renders() as render:
-            answer = self.serve()
-        self.assertEqual(0, render.call_count)
+    def test_a_photo_that_does_not_decode_is_a_placeholder(self):
+        with open(self.path, "wb") as handle:
+            handle.write(b"this is not a picture at all")
+        os.utime(self.path, (1_700_000_100, 1_700_000_100))
+        answer = self.serve()
         self.assertEqual((thumbnails.DAMAGED, False, None), (answer.kind, answer.kept, answer.etag))
         self.assertEqual([], entries_of(self.library))
         self.assertEqual("JPEG", picture(answer.content).format)
 
     def test_it_is_decoded_again_when_its_stamp_changes(self):
-        self.damaged_record()
-        self.serve()
+        with open(self.path, "wb") as handle:
+            handle.write(b"this is not a picture at all")
+        os.utime(self.path, (1_700_000_100, 1_700_000_100))
+        self.assertEqual(thumbnails.DAMAGED, self.serve().kind)
         make_jpeg(self.path, (1, 2, 3), (400, 400))
         os.utime(self.path, (1_700_000_000, 1_700_000_000))
         answer = self.serve()
         self.assertEqual(thumbnails.OK, answer.kind)
         self.assertEqual(1, len(entries_of(self.library)))
-
-    def test_a_possibly_incomplete_copy_decodes_and_is_kept(self):
-        stat = os.stat(self.path)
-        damaged_photos.remember(self.library, [(self.path, (stat.st_mtime, stat.st_size), damaged_photos.INCOMPLETE,
-                                                "ends in zeros", 70000)])
-        self.assertEqual(thumbnails.OK, self.serve().kind)
 
     def test_a_file_that_does_not_decode_is_a_placeholder_not_kept_and_not_decoded_again(self):
         with open(self.path, "wb") as handle:
@@ -238,8 +231,6 @@ class ADamagedPhoto(Cache):
         self.assertEqual(1, render.call_count)
         self.assertEqual((thumbnails.DAMAGED, thumbnails.DAMAGED), (first.kind, second.kind))
         self.assertEqual([], entries_of(self.library))
-        # Nothing was written to the library for it
-        self.assertEqual([], damaged_photos.records(self.library))
 
     def test_a_file_that_cannot_be_read_is_unavailable_and_nothing_is_made_of_it(self):
         with mock.patch.object(images, "smaller_copy", side_effect=PermissionError(13, "Permission denied")):
@@ -247,7 +238,6 @@ class ADamagedPhoto(Cache):
                 self.serve()
         self.assertIn("could not be read just now", str(caught.exception))
         self.assertEqual([], entries_of(self.library))
-        self.assertEqual([], damaged_photos.records(self.library))
         self.assertEqual(thumbnails.OK, self.serve().kind, "a moment later it is a photo again")
 
 
@@ -312,19 +302,6 @@ class TakingOne(Cache):
         left = entries_of(self.library)
         self.assertEqual(1, len(left))
         self.assertTrue(left[0].startswith("%d_" % elsewhere))
-
-    def test_the_indexer_removing_photos_sweeps_the_cache(self):
-        from tagpup.services.search import PhotoIndex
-        gone = self.vl.photo("Regatta", "going.jpg", real=True)
-        self.serve()
-        self.serve(gone)
-        index = PhotoIndex.__new__(PhotoIndex)
-        index.db_path, index.conn = self.library.path, self.vl.conn
-        with mock.patch.object(PhotoIndex, "load"):
-            index.remove_paths({self.vl.path_of(gone)})
-        left = entries_of(self.library)
-        self.assertEqual(1, len(left))
-        self.assertTrue(left[0].startswith("%d_" % self.id))
 
     def test_sweeping_takes_what_no_photo_owns_and_keeps_the_rest(self):
         self.serve()
@@ -415,7 +392,6 @@ class AShareThatIsAway(Cache):
 
     def setUp(self):
         super().setUp()
-        from tagpup.files import shares
         shares.forget()
         self.addCleanup(shares.forget)
         self.release = threading.Event()
@@ -429,10 +405,10 @@ class AShareThatIsAway(Cache):
                 raise OSError(53, "The network path was not found")
             return real(path, *args, **kwargs)
 
-        patcher = mock.patch.object(damaged_photos.os, "stat", stat)
+        patcher = mock.patch.object(shares.os, "stat", stat)
         patcher.start()
         self.addCleanup(patcher.stop)
-        wait = mock.patch.object(damaged_photos, "SHARE_WAIT", 0.3)
+        wait = mock.patch.object(shares, "SHARE_WAIT", 0.3)
         wait.start()
         self.addCleanup(wait.stop)
 
@@ -465,7 +441,7 @@ class AFileThatCannotBeRead(Cache):
                 raise PermissionError(13, "Access is denied")
             return real(path, *args, **kwargs)
 
-        with mock.patch.object(damaged_photos.os, "stat", stat):
+        with mock.patch.object(shares.os, "stat", stat):
             with self.assertRaises(thumbnails.Unavailable) as caught:
                 self.serve()
         self.assertIn("cannot be read", str(caught.exception))
@@ -535,15 +511,6 @@ class Warming(Cache):
         counts = thumbnails.warm(self.library, folder=os.path.join(self.vl.pictures, "Harbour"), apply=True)
         self.assertEqual(1, counts["made"])
         self.assertEqual(2, counts["photos"])
-
-    def test_a_damaged_photo_is_counted_and_not_decoded(self):
-        stat = os.stat(self.vl.path_of(self.third))
-        damaged_photos.remember(self.library, [(self.vl.path_of(self.third), (stat.st_mtime, stat.st_size),
-                                                "truncated", "x", 0)])
-        with mock.patch.object(thumbs, "render", wraps=thumbs.render) as render:
-            counts = thumbnails.warm(self.library, apply=True)
-        self.assertEqual(2, render.call_count)
-        self.assertEqual((2, 1), (counts["made"], counts["damaged"]))
 
     def test_a_file_that_does_not_decode_is_counted_damaged_and_the_run_goes_on(self):
         with open(self.vl.path_of(self.third), "wb") as handle:

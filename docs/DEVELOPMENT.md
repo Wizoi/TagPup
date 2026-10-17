@@ -30,13 +30,13 @@ through the CLI where no reloader can reach them.
 
 **Run the apps from an installed copy** to stop that. `scripts/install_app.py` (a dry
 run; `--apply` to install) copies the code into `%LOCALAPPDATA%\TagPup\versions\<when>-<commit>`
-and writes `TagPup.cmd`, `TagTuner.cmd`, `TagPup Runner.cmd` and `TagPup CLI.cmd` beside
+and writes `TagPup.cmd`, `TagTuner.cmd` and `TagPup CLI.cmd` beside
 it. They run that copy with `TAGPUP_HOME` set to the checkout, so `data/` -- the
 libraries, which hold their own settings -- stays where it is. Saving a file in the repository changes nothing they are
 running. To update, install again; the two versions before stay, and `current.txt`
 names the one the launchers start.
 
-**Logs are in `data/logs/`**: `tagpup.log`, `tagtuner.log` and `runner.log`, one per
+**Logs are in `data/logs/`**: `tagpup.log` and `tagtuner.log`, one per
 program, rotating at 5 MB and keeping five old files. They hold everything the console
 shows, plus every request slower than a second (`slow: GET /api/... took 2.31s`) and
 every request that failed, with its traceback. Look there before reproducing a report.
@@ -48,16 +48,80 @@ on it as its own process with the sandbox as `TAGPUP_HOME` on a free port, drive
 Identify grid in headless Chromium, and deletes the sandbox afterwards, saying so if it
 cannot. It times Ignore Cluster by default and New Person with `--action new-person`,
 each from the click until the page is usable again. Take the baseline with it before a
-change and the result with it after (CLAUDE.md, "Performance work").
+change and the result with it after ("Performance work", below).
+
+**The suite's tiers.** `tools/run_tests.py --fast` runs only the fast tier (`tests/tiers.py`): scenario tests, which run
+a whole job, a crash or two writers at once, and slow ones, the hand-over and the 68,000-photo library, are left out.
+The default is every tier, and that is the commit gate: about 3,600 tests, about 5 minutes (350-700 s under load). A
+file that fails is run once more alone: if it passes, the report says "flaky: passed alone" and keeps the first output;
+if it fails twice it fails. The main session runs the whole suite once on the merged trunk and never beside another
+suite run (two or three at once on one machine tripped load-sensitive tests); a break it finds goes back to the worker
+with the file names, and a change made after a review runs only the files it touched.
+
+**An install hands over to the running server.** Each launcher installs a newer clean commit, then replaces a server
+of another version still running once it has finished its work; `scripts/install_app.py --apply` does the same itself:
+it waits for the running server's work, ends it and starts the new version on the same ports with no window, so an
+open page shows the "updated" banner (`tagpup.launcher.hand_over`). `--no-restart` only installs; it refuses a `--home`
+with no library.
+
+## Performance work
+
+Read this before claiming anything got faster. Every line of it was paid for by
+shipping a "43s → 0.19s" result for a screen that was exactly as slow as before.
+
+**A performance claim is a claim about a user action.** The unit is the thing the
+person described — "ignoring a cluster is slow" means click Ignore Cluster, wait until
+the app is usable. Not an endpoint, not a query, not a function. If the report names a
+click, the result names the same click or there is no result.
+
+**Measure the scenario, not your hypothesis.** The failure was measuring
+`POST /exclude` then `GET /person-matches` — a pair of calls the app never makes,
+invented because the suspect was the server. It made the hypothesis look right while
+the real cost, a full DOM rebuild in the browser, was never in the number at all. Ask
+what the app actually does on that click, in order, and time exactly that.
+
+**Baseline first, with the harness that will report the result.** Reproduce the
+reported slowness before changing a line. A harness that cannot reproduce it is not
+measuring the reported thing, and every conclusion drawn from it afterwards is about
+something else. If the baseline comes out fast, the harness is wrong — not the report.
+
+**The browser is half the system.** Server timings are a diagnosis, never a result.
+Rendering tens of thousands of cards, clearing tens of thousands of `img.src`, and
+rebuilding the DOM cost seconds, and no server timing can see any of it.
+`scripts/measure_identify_faces.py` drives the real app in a real browser; use it, or
+write its equivalent for the screen in question.
+
+**Usable, not merely returned.** A page that removes the cards and *then* blocks for
+ten seconds rebuilding passes a "are the cards gone" check. Wait for the main thread
+as well.
+
+**Validate in a sandbox; never in the app somebody is using.** Copy the library, copy
+the code, give it its own `TAGPUP_HOME` and a free port, and run it as a separate
+process. All four, not some of them — a copy on a different port that still lives in
+`data/` shows up in the database picker of the app they have open, and code run from
+the repo shares the reloader with their server. `scripts/measure_identify_faces.py`
+builds that sandbox and deletes it afterwards; measurement runs should leave nothing
+behind and nothing changed.
+
+**Delete what you created, and say so if you cannot.** The first version of that script
+used `rmtree(..., ignore_errors=True)` and quietly left 2.7 GB in the temp directory on
+every run, because Windows had not released the server's file handles yet. Retry, then
+report.
+
+**Don't edit `.py` while somebody is testing from the repository.** The reloader
+restarts the server and wipes every in-memory cache, so their run and yours are both
+measuring a cold start. Say when you are about to, or wait. (The installed apps are not
+affected.)
+
 
 ## Tests
 
 | suite | command | count |
 | --- | --- | --- |
-| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | ~1,300 |
+| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | 3,603 (the loader's count, 2026-10-16) |
 | Python, across the cores | `.venv/Scripts/python.exe tools/run_tests.py` | the same |
 | Python, what a change affects | `.venv/Scripts/python.exe tools/affected_tests.py --run` | a subset |
-| Frontend | `node --test tests/frontend/*.test.mjs` | ~500 |
+| Frontend | `node --test tests/frontend/*.test.mjs` | 1,586 (2026-10-16) |
 | Lint | `.venv/Scripts/python.exe -m ruff check .` | runs inside the Python suite |
 
 `tools/affected_tests.py` picks the test files that import what changed since the last
@@ -119,7 +183,7 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
 - `tests/frontend/dom-contract.test.mjs` fails when a script looks up an element id the
   markup does not define, and when a retired concept (`Unmatched`) returns.
 - `tests/test_path_locker.py` covers locks left behind by a killed process.
-- `tests/test_person_tag_duplication.py` covers a tag being written whole rather than
+- `tests/test_keyword_fields.py` covers a tag being written whole rather than
   scattered into its segments.
 - `tests/frontend/person-tag-form.test.mjs` covers a person being written as the tag
   they are filed under. Face recognition and the suggester both speak in leaf names, so
@@ -133,8 +197,8 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
   copy of a helper `web/common/` exports, which would quietly shadow the import.
 - `tests/frontend/database-routing.test.mjs` fails on a `fetch(` or an `/api/` image
   `src` in a page that does not go through `web/common/api.js`.
-- The single-owner guards (`test_db_access`, `test_exiftool_single_owner`,
-  `test_paths_single_owner`, `test_config_single_owner`) all check one list of files,
+- The single-owner guards (`test_db_access`, `test_rules_have_one_owner`,
+  `test_config_single_owner`) all check one list of files,
   `tests/shipped_sources.py`: the launchers, `scripts/` and `tagpup/`. When each kept
   its own list, the database guard skipped `runner.py`, which opened its own connection.
 - `tests/test_layers.py` fails package code whose imports go up a layer
@@ -149,8 +213,8 @@ A test that makes a library, or needs settings, logs or anything else a library 
 beside it, takes a home of its own from `tests/own_home.py`: `own_home.for_class(cls)`
 in `setUpClass`, `own_home.for_test(self)` in a test, then `home.library("x.db")`.
 Without one, the servers create libraries in the checkout's `data/`, where the owner's
-are, and stamp them from the checkout's `config.ini`. A test that needs an old
-`config.ini` to stamp from writes it with `home.write_old_config({...})`. A server a test starts holds its library
+are, and read the checkout's `data/`. A test that shows an old `config.ini` is ignored
+writes it with `home.write_old_config({...})`. A server a test starts holds its library
 until the process ends, so a home it still holds is deleted once the process has gone.
 
 ## Traps
@@ -174,8 +238,8 @@ shapes and they are not interchangeable: their identity is a leaf (`Hazel Brookm
 which is what the faces table, the suggester and `photo.people` speak in, and their tag
 is a path (`People/Hazel Brookmire`), which is what the keywords must hold and what the
 server matches on, exactly. Use `leafOf`, `rootOf`, `samePerson` and `photoAlreadyHas`
-in `web/common/vocabulary.js`, `ancestorsOf` and `preferPathed` in `web/tagpup/main.js`,
-and `taxonomy.find_person_path()` in Python.
+in `web/common/vocabulary.js`, `preferPathed` in `web/tagpup/tags.js`,
+and `taxonomy.person_paths()` in Python.
 
 Every bug in this area was a site doing the conversion itself, and none of them looked
 related: clicking a recognised face added the person a second time in the bare form;
@@ -241,25 +305,19 @@ copying the library: applied only where every row is still what the plan read, e
 refused whole, naming the rows. It returns a `Result` whose `changed` is what the write
 changed, read from the database, not what was planned, and whose `details["change"]`
 is the change's id. `tagpup_cli.py history` lists the changes, `undo <id>` rehearses
-taking one back and `undo <id> --apply` does, and `prune-journal` lets changes older than
-90 days go. The MCP server (`tagpup.mcp`) calls the same services as write tools, and
-has `history`, `undo` and `prune_journal` too, each a dry run unless called with
+taking one back and `undo <id> --apply` does. The MCP server (`tagpup.mcp`) calls the same
+services as write tools, and has `history` and `undo` too, each a dry run unless called with
 `apply=true`, showing paths and names only with `reveal=true`.
 
 The two scripts not on the scaffold still back the database up first through
 `db.backup()`: SQLite's backup API, into `backups/` beside the library
 (`data/backups/` for the libraries in `data/`). Each library keeps its newest five
-(`db.KEEP_BACKUPS`); making a sixth deletes the oldest. `tests/test_bulk_scripts_back_up.py`
+(`db.KEEP_BACKUPS`), none expires by age; making a sixth deletes the oldest. `tests/test_bulk_scripts_back_up.py`
 lists every place that may still copy a whole library, and why.
 
 | script | what it does |
 | --- | --- |
 | `scripts/verify_workflow.py` | End-to-end pass over both apps against a throwaway copy of a database. |
-| `scripts/refresh_rows_from_files.py` | Re-reads the photos whose rows no longer describe their files, and fixes rows that list a caption twice. `tagpup.services.refresh_rows`; MCP tool `refresh_rows`. Planning reads the files, so a dry run is slow. |
-| `scripts/merge_duplicate_person_tags.py` | Removes a bare person tag where a `People/<name>` already names them. `tagpup.services.person_tags`; MCP tool `merge_duplicate_person_tags`. |
-| `scripts/dedupe_faces.py` | Removes face rows that copy another face of the same photo and know no more than it; disputed copies are left for a person. `tagpup.services.duplicate_faces`; MCP tool `dedupe_faces`. |
-| `scripts/backfill_document_ids.py` | Gives already-indexed photos the identity new ones get. Resumable. |
-| `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, by identity then `PreservedFileName`. |
 
 Retired on 2026-09-24 with nothing left to do on either library, and in git's history: `canonicalize_paths.py`, `repair_bare_person_tags.py`, `tidy_exclusion_reasons.py`, `restore_face_names.py` and `cache_all_crops.py` (findings.md, #54).
 
@@ -273,3 +331,21 @@ Retired on 2026-09-24 with nothing left to do on either library, and in git's hi
   everybody who meets it, including the person who built it.
 - **Unknown Faces is mostly photos with no people keywords at all.** Of 6,393 unnamed
   faces with no name to file them under, 5,464 were in photos naming nobody.
+
+## The incidents behind CLAUDE.md's working rules
+
+CLAUDE.md keeps each rule as a line; the story of a rule whose incident is not told elsewhere (docs/INVARIANTS.md, the
+closed findings in docs/history/, docs/retros/) is here.
+
+- **Find the existing owner before briefing a new tool.** A worker asked for a new repair script had half of it built
+  before `refresh_rows` turned out to own the job.
+- **Test the scenario the owner works in.** Both bugs that reached the owner on 2026-09-28 lived between features each
+  tested alone.
+- **A one-way choice is asked first.** Two were built, reviewed and thrown away in one day (automatic roots; a row for
+  every photo of an added folder).
+- **The review loop ends at the second round.** The 9d-1 resume ran six rounds, each finding a deeper way to shift a
+  photo twice; the fix that ended it (the journal keeps every change a job may still need) was the owner-of-the-rule fix
+  nobody asked for until round six. Wording and polish are batched, not re-reviewed.
+- **Commit before launching background agents.** Two restarts on 2026-10-03/04 killed five agents; the uncommitted work
+  survived only because it sat in a worktree.
+- **One session per phase.** Most of the cost was context re-read, not work (docs/retros/2026-10-16-freeze.md).

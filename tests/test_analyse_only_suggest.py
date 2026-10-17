@@ -25,8 +25,10 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
 
 import damaged_photos  # noqa: E402
+import face_rows  # noqa: E402
 import library_dump  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
@@ -82,13 +84,13 @@ class FakeClip:
         return [0.0, 0.0, 0.0, 1.0]
 
 
-class FakeFaces:
+class FakeFaces(stand_in_models.Faces):
     """The face model: a face of Rowan in a photo whose name ends 01 or 02, one of Wren in 03."""
 
     def __init__(self):
         self.detected = []
 
-    def detect_and_embed_faces(self, path):
+    def detect_and_embed_faces(self, path, *, max_side):
         self.detected.append(path)
         name = os.path.splitext(os.path.basename(path))[0]
         if name.endswith(("01", "02")):
@@ -171,11 +173,11 @@ class Base(unittest.TestCase):
     def app_home(self):
         self.clip = None
         self.faces = FakeFaces()
-        self.runtime = Runtime(clip=None, faces=self.faces)
+        # Built as the runtime builds a library's models, from its settings: every library here gets these two.
+        self.runtime = Runtime(build_clip=lambda settings: self.clip, build_faces=lambda settings: self.faces)
         self.app, self.home = web_client.app_for(self, "tagpup", runtime=self.runtime)
         self.library = Library(self.home.library("library.db"))
         self.clip = FakeClip(library_settings.of(self.library).embedder)
-        self.runtime._clip = self.clip
         self.client = self.app.test_client()
         self.addCleanup(self.runtime.forget, self.library)
         self.addCleanup(suggestion_jobs.forget, self.library)
@@ -195,9 +197,9 @@ class Base(unittest.TestCase):
                 stamp = store_embeddings.stamp_of(path)
                 store_embeddings.put(conn, path, model, stamp[0], stamp[1],
                                      np.array(vector_of(path), dtype=np.float32).tobytes())
-            store_faces.insert(conn, self.held[0], [0, 0, 100, 100], ROWAN.tobytes(), name="Rowan Thackeray", prob=0.99)
             store_taxonomy.add_node(conn, "Trips/Regatta")
             store_taxonomy.add_node(conn, "People/Rowan Thackeray")
+            store_faces.insert(conn, self.held[0], [0, 0, 100, 100], ROWAN.tobytes(), name="Rowan Thackeray", prob=0.99)
             conn.commit()
         finally:
             conn.close()
@@ -256,7 +258,7 @@ class ARunInAFolderNotHeldAddsNothing(Base):
         self.assertEqual(["cup_01.jpg", "cup_02.jpg", "cup_03.jpg"], sorted(os.path.basename(p) for p in self.faces.detected))
         self.assert_library_unchanged()
 
-        reply = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
+        reply = self.post("/folder/auto-apply", {"folder_path": self.cup})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual((3, 0), (reply.get_json()["file_only"], reply.get_json()["with_rows"]))
         self.assertEqual(["Trips/Regatta", "People/Rowan Thackeray"], tags_in(self.loose[0]))
@@ -421,6 +423,47 @@ class AFailureIsSaidAndLeavesNothingHalfRun(Base):
         self.assertEqual({}, found["suggestions"])
         self.assert_library_unchanged()
 
+    def test_a_read_of_the_named_faces_that_fails_fails_the_run_with_its_sentence(self):
+        """The suggester read who is known inside a catch-all and, when the read failed, knew nobody: every photo was
+        offered no person and the run said "The library has no named faces yet". A read that fails fails the run."""
+        import sqlite3
+        with mock.patch("tagpup.services.faces.known_faces", side_effect=sqlite3.OperationalError("database is locked")):
+            self.start(self.cup)
+        found = self.status(self.cup)
+        self.assertEqual("error", found["status"], found)
+        self.assertIn("database is locked", found["message"])
+        self.assertIn("nothing was changed", found["message"])
+        self.assertEqual({}, found["suggestions"])
+        self.assert_library_unchanged()
+
+    def test_a_read_of_a_photos_faces_that_fails_leaves_the_photo_unread_not_faceless(self):
+        """A failed read of a photo's faces was "no face on file": the photo was detected again and offered what the
+        detection found. Now the photo is not suggested for, said, and tried again by the next run."""
+        import sqlite3
+        with mock.patch("tagpup.store.faces.in_photo", side_effect=sqlite3.OperationalError("disk I/O error")):
+            self.start(self.cup)
+        found = self.status(self.cup)
+        self.assertEqual(("completed", 4), (found["status"], found["unread"]), found)
+        self.assertEqual(["disk I/O error"] * 3, [self.suggested(self.cup)["cup_0%d.jpg" % n].get("error") for n in (1, 2, 3)])
+        self.assertEqual([], self.faces.detected, "a photo whose faces could not be read was detected again")
+        self.assert_library_unchanged()
+
+    def test_a_run_that_remembers_names_the_photos_it_could_not_read_as_a_run_that_looks_does(self):
+        """The same failed read through the folder the library holds: the finished run says how many were not
+        suggested for and why, in the looking run's words, instead of 'completed' with a gap."""
+        import sqlite3
+        with mock.patch("tagpup.store.faces.in_photo", side_effect=sqlite3.OperationalError("disk I/O error")):
+            self.start(self.regatta)
+        found = self.status(self.regatta)
+        self.assertNotIn("in_memory", found)
+        self.assertEqual(("completed", 3), (found["status"], found["unread"]), found)
+        self.assertEqual(["3 photo(s) could not be analysed, nothing was recorded of them (disk I/O error)."],
+                         found["notes"])
+        # Tried again, and said no more once every photo is read.
+        self.start(self.regatta)
+        again = self.status(self.regatta)
+        self.assertEqual((0, []), (again["unread"], again["notes"]), again)
+
     def test_a_model_that_fails_on_every_photo_says_so_and_records_nothing(self):
         self.clip.fail = "CUDA out of memory"
         self.start(self.cup)
@@ -429,7 +472,6 @@ class AFailureIsSaidAndLeavesNothingHalfRun(Base):
         self.assertEqual(4, found["unread"])
         self.assertTrue(any("CUDA out of memory" in note for note in found["notes"]), found["notes"])
         self.assert_library_unchanged()
-        self.assertEqual([], self.rows("SELECT * FROM damaged_files"))
         # Tried again by the next start, not skipped for good.
         self.clip.fail = None
         self.start(self.cup)
@@ -498,8 +540,8 @@ class SuggestedTwice(Base):
         seen = list(self.clip.images)
         self.start(self.cup)
         self.assertEqual(seen, self.clip.images, "no photo was analysed again")
-        first = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
-        again = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
+        first = self.post("/folder/auto-apply", {"folder_path": self.cup})
+        again = self.post("/folder/auto-apply", {"folder_path": self.cup})
         self.assertEqual((200, 200), (first.status_code, again.status_code))
         self.assertEqual((3, 0), (first.get_json()["file_only"], again.get_json()["file_only"]))
         self.assertEqual(["Trips/Regatta", "People/Rowan Thackeray"], tags_in(self.loose[0]))
@@ -510,14 +552,15 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
     def test_a_tag_another_program_added_meanwhile_stays(self):
         self.start(self.cup)
         write_into(self.loose[1], **{"XMP:Subject": ["From Elsewhere"]})
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup}).status_code)
         self.assertEqual(["From Elsewhere", "Trips/Regatta", "People/Rowan Thackeray"], tags_in(self.loose[1]))
         self.assert_library_unchanged()
 
-    def test_a_person_the_tree_does_not_hold_is_filed_under_the_people_root_and_the_tree_is_untouched(self):
+    def test_a_person_named_at_the_top_of_the_tree_is_filed_by_that_node_and_the_tree_is_untouched(self):
         conn = db.connect(self.library.path)
         try:
-            store_faces.insert(conn, self.held[1], [0, 0, 100, 100], WREN.tobytes(), name="Wren Okafor", prob=0.99)
+            store_faces.insert(conn, self.held[1], [0, 0, 100, 100], WREN.tobytes(),
+                               name=face_rows.person_of(conn, "Wren Okafor"), prob=0.99)
             conn.commit()
         finally:
             conn.close()
@@ -526,16 +569,16 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
         self.start(self.cup)
         offer = self.suggested(self.cup)["cup_03.jpg"]
         self.assertEqual(["Wren Okafor"], [p["name"] for p in offer["people"]])
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
-        # As a click on the chip files her (#546): under the one people root, never bare.
-        self.assertEqual(["Trips/Regatta", "People/Wren Okafor"], tags_in(self.loose[2]))
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup}).status_code)
+        # As a click on the chip files her: by her node, which naming her face made at the top of the tree (2026-10-10).
+        self.assertEqual(["Trips/Regatta", "Wren Okafor"], tags_in(self.loose[2]))
         self.assertEqual(tree, tree_of(self.library.path))
         self.assert_library_unchanged()
 
     def test_a_folder_added_after_the_run_is_applied_with_its_rows_as_a_held_folder_is(self):
         self.start(self.cup)
         library_actions.record_added(self.library, [self.cup])
-        reply = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
+        reply = self.post("/folder/auto-apply", {"folder_path": self.cup})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual((0, 3), (reply.get_json()["file_only"], reply.get_json()["with_rows"]))
 

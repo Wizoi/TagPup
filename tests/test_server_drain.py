@@ -1,34 +1,49 @@
-"""The server lets the work under way finish before the always-on process moves it onto a
+"""The server lets the work under way finish before a launch or an install moves it onto a
 new version (docs/ARCHITECTURE.md, phase 8, "Updating itself"; tagpup.web.lifecycle).
 
 Owner, 2026-09-26: it "auto updates at next available request, completing current calls
 and actions first". So a drain turns new requests away (503, which the pages wait out),
 lets the ones in flight finish -- a write among them -- and is refused outright while a
 Suggest run, an index or a recurring job is under way. A deadline that passes gives the
-server back its work; an update never interrupts a write.
+server back its work; an update never interrupts a write. Only a launcher on this machine
+drains (the token of the server's record), always with a lease: a launcher whose window
+closes between its drain and the end it would have made does not leave the server turning
+requests away. Every response says which version answers.
+
+Lifted: test_launcher_hands_over's WhoMayDrain (#747 the lease, #664 the startup migrations) and
+TheVersionOnEveryResponse, and the resume route's test (the route is deleted, DECISIONS 2026-10-15). Breaks that fail
+the kept tests, each applied to a copy of the code: `self._lease = lease` read as LEFT_DRAINED fails
+test_a_drain_left_undone_by_a_launcher_that_went_away_ends_at_its_lease; security.from_this_pc always True fails
+test_only_this_machine_may_drain; `bringing` dropped from lifecycle.long_work fails
+test_is_refused_while_the_startup_migrations_run; the version label dropped from the gate's start_response fails
+test_each_response_names_the_version_answering_also_when_turned_away; the lease check dropped from the drain route
+fails test_a_deadline_and_a_lease_must_be_numbers_of_seconds.
 """
 import os
 import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 from flask import jsonify
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
-from tagpup import supervisor  # noqa: E402
+from tagpup import launcher  # noqa: E402
+from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
-TOKEN = "a-token-of-the-supervisors"
-HEADERS = {supervisor.TOKEN_HEADER: TOKEN}
+TOKEN = "a-token-of-the-launchers"
+HEADERS = {launcher.HEADER: TOKEN}
+#: What the launcher asks for (launcher.LEASE): the drain requires one.
+LEASE = 20
 
 
 class FakeBackground:
@@ -66,10 +81,11 @@ class Base(unittest.TestCase):
         self.long = []
         self.background = FakeBackground()
         self.clock = Clock()
-        self.lifecycle = Lifecycle(version="20260926-101500-abc1234", token=TOKEN, background=self.background,
+        self.lifecycle = Lifecycle(version="20260926-101500-abc1234", launcher_token=TOKEN, background=self.background,
                                    work=lambda: list(self.long))
         self.app = web.create_app("tagpup", startup=self.library, lifecycle=self.lifecycle)
         self.app.testing = True
+        self.addCleanup(self.lifecycle.resume)      # a drain asks the batches to stop, and keeps asking until it resumes
         # A write that takes a while: what is in flight when the drain begins.
         self.entered, self.release, self.written = threading.Event(), threading.Event(), []
 
@@ -95,7 +111,7 @@ class Base(unittest.TestCase):
         return thread, found
 
     def drain(self, seconds=30):
-        return self.client().post("/api/server/drain", json={"seconds": seconds}, headers=HEADERS)
+        return self.client().post("/api/server/drain", json={"seconds": seconds, "lease": LEASE}, headers=HEADERS)
 
     def wait_until(self, check, seconds=10):
         deadline = time.time() + seconds
@@ -134,7 +150,7 @@ class ADrain(Base):
                          "a drained server took new work before it was stopped")
 
     def test_is_refused_at_once_while_a_long_run_is_under_way(self):
-        self.long.append("1 Suggest run(s)")
+        self.long.append(lifecycles.Work(lifecycles.SUGGEST, None, "1 Suggest run(s)"))
         answer = self.drain().get_json()
         self.assertEqual({"drained": False, "waiting_for": ["1 Suggest run(s)"], "success": True}, answer)
         self.assertEqual(200, self.client().get("/harbour/api/tags").status_code, "work was turned away")
@@ -154,18 +170,27 @@ class ADrain(Base):
         writing.join(10)
         self.assertEqual(["row"], self.written)
 
-    def test_left_undone_by_a_supervisor_that_went_away_ends_by_itself(self):
+    def test_a_drain_left_undone_by_a_launcher_that_went_away_ends_at_its_lease(self):
+        """#747: a launcher's window closed between its drain and the end left the server turning every request away
+        for LEFT_DRAINED (180 s), past the pages' two minutes; the launcher asks for LEASE."""
         self.lifecycle._clock = self.clock
         self.assertTrue(self.drain().get_json()["drained"])
         self.assertEqual(503, self.client().get("/harbour/api/tags").status_code)
-        self.clock.now += lifecycles.LEFT_DRAINED + 1
-        self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
+        self.clock.now += LEASE - 1
+        self.assertEqual(503, self.client().get("/harbour/api/tags").status_code, "taken back before its lease")
+        self.clock.now += 2
+        self.assertEqual(200, self.client().get("/harbour/api/tags").status_code, "still drained past its lease")
         self.assertEqual(["stop", "start"], self.background.calls)
 
-    def test_can_be_resumed_by_the_supervisor(self):
-        self.assertTrue(self.drain().get_json()["drained"])
-        self.assertTrue(self.client().post("/api/server/resume", headers=HEADERS).get_json()["resumed"])
-        self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
+    def test_is_refused_while_the_startup_migrations_run(self):
+        """#664: the startup migration thread is long work."""
+        lifecycle = Lifecycle(version="v", launcher_token=TOKEN)
+        app = web.create_app("tagpup", lifecycle=lifecycle)
+        with mock.patch.object(lifecycles.library_actions, "bringing_up_to_date", return_value=1):
+            reply = app.test_client().post("/api/server/drain", json={"seconds": 5, "lease": LEASE}, headers=HEADERS)
+        self.assertEqual({"drained": False, "success": True,
+                          "waiting_for": ["bringing 1 library(ies) up to date"]}, reply.get_json())
+        self.assertTrue(lifecycle.status()["taking_work"])
 
 
 class ThroughALibrarysAddress(Base):
@@ -185,14 +210,11 @@ class ThroughALibrarysAddress(Base):
         self.assertEqual("1", refused.headers[lifecycles.UPDATING_HEADER])
         self.assertEqual(200, self.client().get("/api/server").status_code)
 
-    def test_a_drain_and_a_resume_through_it_do_not_wait_for_themselves(self):
+    def test_a_drain_through_it_does_not_wait_for_itself(self):
         started = time.monotonic()
-        answer = self.client().post("/harbour/api/server/drain", json={"seconds": 3}, headers=HEADERS)
+        answer = self.client().post("/harbour/api/server/drain", json={"seconds": 3, "lease": LEASE}, headers=HEADERS)
         self.assertTrue(answer.get_json()["drained"], answer.get_json())
         self.assertLess(time.monotonic() - started, 2, "the drain waited for itself")
-        resumed = self.client().post("/harbour/api/server/resume", headers=HEADERS)
-        self.assertEqual(200, resumed.status_code)
-        self.assertTrue(resumed.get_json()["resumed"])
 
 
 class OneDrainAtATime(Base):
@@ -216,7 +238,7 @@ class OneDrainAtATime(Base):
         draining, answer = self.in_thread(lambda: self.drain(seconds=30))
         self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
         started = time.monotonic()
-        self.lifecycle.resume()
+        self.lifecycle.resume()      # the server's own: a lease ended
         draining.join(10)
         self.assertLess(time.monotonic() - started, 2, "the drain went on waiting after it was taken back")
         self.assertFalse(answer[0].get_json()["drained"])
@@ -227,11 +249,12 @@ class OneDrainAtATime(Base):
 class AQuietMoment(Base):
     """The owner (2026-09-26): an update moves "at next available request" -- not in the
     middle of someone's session. A drain asked to wait for quiet is refused while a
-    request came within that many seconds; the supervisor stops asking for quiet once an
+    request came within that many seconds; the launcher stops asking for quiet once an
     update has waited an hour."""
 
     def drain_quietly(self, quiet):
-        return self.client().post("/api/server/drain", json={"seconds": 5, "quiet": quiet}, headers=HEADERS)
+        return self.client().post("/api/server/drain", json={"seconds": 5, "quiet": quiet, "lease": LEASE},
+                                  headers=HEADERS)
 
     def test_is_refused_while_someone_is_using_the_app(self):
         self.lifecycle._clock = self.clock
@@ -255,23 +278,36 @@ class AQuietMoment(Base):
         self.assertTrue(self.drain_quietly(120).get_json()["drained"])
 
 
-class OnlyTheSupervisor(Base):
-    def test_may_drain_or_resume_the_server(self):
-        for headers in ({}, {supervisor.TOKEN_HEADER: "a guess"}):
+class OnlyTheLauncher(Base):
+    def test_may_drain_the_server(self):
+        for headers in ({}, {launcher.HEADER: "a guess"}):
             self.assertEqual(403, self.client().post("/api/server/drain", json={}, headers=headers).status_code)
-            self.assertEqual(403, self.client().post("/api/server/resume", headers=headers).status_code)
         self.assertTrue(self.lifecycle.status()["taking_work"])
+
+    def test_only_this_machine_may_drain(self):
+        """Another machine is refused whatever it sends; over IPv6 loopback it is this one."""
+        elsewhere = self.client().post("/api/server/drain", json={"seconds": 5, "lease": LEASE}, headers=HEADERS,
+                                       environ_base={"REMOTE_ADDR": "192.168.1.20"})
+        self.assertEqual(403, elsewhere.status_code)
+        self.assertTrue(self.lifecycle.status()["taking_work"])
+        here = self.client().post("/api/server/drain", json={"seconds": 5, "lease": LEASE}, headers=HEADERS,
+                                  environ_base={"REMOTE_ADDR": "::1"})
+        self.assertTrue(here.get_json()["drained"])
 
     def test_and_a_server_it_did_not_start_is_drained_by_nobody(self):
         app = web.create_app("tagpup", startup=self.library)
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={}, headers=HEADERS).status_code)
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={},
-                                                     headers={supervisor.TOKEN_HEADER: ""}).status_code)
+                                                     headers={launcher.HEADER: ""}).status_code)
 
-    def test_a_deadline_must_be_a_number_of_seconds(self):
+    def test_a_deadline_and_a_lease_must_be_numbers_of_seconds(self):
         for seconds in (0, -1, "60", True, lifecycles.MAX_DRAIN_SECONDS + 1):
-            answer = self.client().post("/api/server/drain", json={"seconds": seconds}, headers=HEADERS)
+            answer = self.client().post("/api/server/drain", json={"seconds": seconds, "lease": LEASE}, headers=HEADERS)
             self.assertEqual(400, answer.status_code, seconds)
+        for lease in (0, -1, lifecycles.LEFT_DRAINED + 1, "20", True, None):     # None: a drain with no lease
+            answer = self.client().post("/api/server/drain", json={"seconds": 5, "lease": lease}, headers=HEADERS)
+            self.assertEqual(400, answer.status_code, lease)
+        self.assertEqual(400, self.client().post("/api/server/drain", json={"seconds": 5}, headers=HEADERS).status_code)
         self.assertTrue(self.lifecycle.status()["taking_work"])
 
 
@@ -282,13 +318,69 @@ class WhichVersionAnswers(Base):
             for url in ("/api/server", "/harbour/api/server"):
                 status = app.test_client().get(url).get_json()
                 self.assertEqual("20260926-101500-abc1234", status["version"])
-                self.assertEqual((True, True), (status["supervised"], status["taking_work"]))
+                self.assertTrue(status["taking_work"])
+
+    def test_each_response_names_the_version_answering_also_when_turned_away(self):
+        for path in ("/api/server", "/harbour/api/tags", "/"):
+            self.assertEqual(self.lifecycle.version, self.client().get(path).headers.get(launcher.VERSION_HEADER), path)
+        self.assertTrue(self.drain().get_json()["drained"])
+        refused = self.client().get("/harbour/api/tags")
+        self.assertEqual(503, refused.status_code)
+        self.assertEqual(self.lifecycle.version, refused.headers.get(launcher.VERSION_HEADER))
+
+    def test_one_run_from_a_checkout_says_so(self):
+        client = web.create_app("tuner", lifecycle=Lifecycle(version=None)).test_client()
+        self.assertEqual(launcher.FROM_A_CHECKOUT, client.get("/api/server").headers.get(launcher.VERSION_HEADER))
 
     def test_an_app_made_without_a_lifecycle_says_its_code_folders(self):
         from tagpup import config as tagpup_config
         app = web.create_app("tagpup", startup=self.library)
         self.assertEqual(tagpup_config.code_version(), app.test_client().get("/api/server").get_json()["version"])
-        self.assertFalse(app.test_client().get("/api/server").get_json()["supervised"])
+
+
+class WhatARealDrainRefusesBeside(unittest.TestCase):
+    """#1450: each kind of work `lifecycle.under_way` lists refuses a real Lifecycle's drain naming it (the default `work`,
+    not a test's list); a batch alone does not, it is stopped at its chunk. Changing `busy(but=(BATCH,))` in Lifecycle.drain
+    to also leave out INDEX, NAMING, MIGRATING or SUGGEST fails it."""
+
+    def drain_beside(self, source, value):
+        self.addCleanup(self.lifecycle.resume)
+        with mock.patch.object(source[0], source[1], return_value=value):
+            return self.lifecycle.drain(5, 0, lease=LEASE)
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="drain_kinds_")
+        self.background = FakeBackground()
+        self.lifecycle = Lifecycle(version="v", launcher_token=TOKEN, background=self.background)
+
+    def test_an_index_a_naming_a_migration_and_a_suggest_run_each_refuse_it(self):
+        class Busy:
+            def busy(self):
+                return True
+        every = (lifecycles.indexing_jobs, "every_queue")
+        runs = (lifecycles.suggestion_jobs, "under_way")
+        naming = (lifecycles.naming_faces_jobs, "running")
+        migrating = (lifecycles.library_actions, "bringing_up_to_date")
+        for kind, source, value in ((lifecycles.INDEX, every, [("harbour", Busy())]),
+                                    (lifecycles.SUGGEST, runs, [{"library": "harbour"}]),
+                                    (lifecycles.NAMING, naming, 1), (lifecycles.MIGRATING, migrating, 1)):
+            with self.subTest(kind):
+                answer = self.drain_beside(source, value)
+                self.assertFalse(answer["drained"], kind)
+                self.assertTrue(answer["waiting_for"], kind)
+                self.assertTrue(self.lifecycle.status()["taking_work"], kind)
+                self.assertEqual([], self.background.calls, "%s: refused only after the server closed and stopped its jobs" % kind)
+
+    def test_a_running_batch_alone_does_not(self):
+        stopped = []
+
+        def sentences():
+            return [] if stopped else ["1 photo batch"]
+        with mock.patch.object(lifecycles.batches, "sentences", sentences), \
+                mock.patch.object(lifecycles.batches, "stop_all", lambda: stopped.append(1) or True):
+            self.assertTrue(self.lifecycle.drain(5, 0, lease=LEASE)["drained"], "asked to stop, not waited for")
+        self.assertEqual([1], stopped)
+        self.lifecycle.resume()
 
 
 class WhatALongRunIs(unittest.TestCase):
@@ -305,13 +397,13 @@ class WhatALongRunIs(unittest.TestCase):
         self.addCleanup(self.go.set)
 
     def test_an_index_under_way(self):
-        def index(folder, cluster, report):
+        def index(folder, report):
             self.go.wait(30)
             from tagpup.core.result import Result
             return Result()
         self.assertEqual([], lifecycles.long_work())
         indexing_jobs.queue_for(self.library).start([self.home.root], index)
-        self.assertEqual(["indexing in 1 library(ies)"], lifecycles.long_work())
+        self.assertEqual(["indexing in 1 library(ies)"], [work.sentence for work in lifecycles.long_work()])
         self.go.set()
         deadline = time.time() + 10
         while lifecycles.long_work() and time.time() < deadline:
@@ -329,7 +421,7 @@ class WhatALongRunIs(unittest.TestCase):
             def begin(self):
                 raise AssertionError("no photos, no model")
         suggestion_jobs.runs_for(self.library).start(self.home.root, Work())
-        self.assertEqual(["1 Suggest run(s)"], lifecycles.long_work())
+        self.assertEqual(["1 Suggest run(s)"], [work.sentence for work in lifecycles.long_work()])
         self.go.set()
         deadline = time.time() + 10
         while lifecycles.long_work() and time.time() < deadline:

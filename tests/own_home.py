@@ -18,7 +18,7 @@ then, and a thread it started late can make the library again after the home has
 So every home is also handed to a process of its own that waits for this one to end
 and deletes whatever is left (_reap).
 
-A test that starts servers or supervisors ends them with `end_processes(home.root)`,
+A test that starts servers ends them with `end_processes(home.root)`,
 registered before it starts any: each it started, and each they started, ending those
 too. A test that failed part-way left four running for hours (docs/findings.md, #727):
 its cleanup ended only the processes the records named at that moment, and a supervisor
@@ -50,17 +50,11 @@ class OwnHome:
         _reap_after_exit(self.root)
         self.data = os.path.join(self.root, "data")
         os.makedirs(self.data)
-        # The Downloads folder a delete from a share is copied through is the home's too (tagpup.files.recycle_bin, #694):
-        # a test never writes the owner's Downloads; and the Recycle Bin's size and settings are a large empty Bin's (#703),
-        # so no test reads the owner's (asking Windows took 11.8 s here).
-        # The records a server writes of where it answers (tagpup.launcher) are the home's too,
-        # not the user's folder the owner's servers write theirs in; and so is the turn on the
-        # graphics card (tagpup.ml.gpu): a test never waits for the owner's index, nor holds it up.
-        self._environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": self.root,
-                                                     "TAGPUP_SERVERS": os.path.join(self.root, "servers"),
-                                                     "TAGPUP_GPU_LOCK": os.path.join(self.root, "gpu"),
-                                                     "TAGPUP_DOWNLOADS": os.path.join(self.root, "Downloads"),
-                                                     "TAGPUP_RECYCLE_BIN": "1000000,0,0"})
+        # The folders of the user's own beside the home are the home's too (tagpup.config.own_home_environment, which
+        # the measurements' sandboxes use as well): the Downloads folder a delete from a share is copied through (#694),
+        # the Recycle Bin's size and settings, a large empty Bin's (#703: asking Windows took 11.8 s here), the records
+        # a server writes of where it answers (tagpup.launcher), and the turns on the graphics card (tagpup.ml.gpu).
+        self._environ = mock.patch.dict(os.environ, tagpup_config.own_home_environment(self.root))
         self._environ.start()
         self._open = True
 
@@ -128,15 +122,19 @@ def _reap_after_exit(folder):
         os.close(handle)
         # In a group of its own, so it outlives this process; with a hidden console,
         # not none, or the venv launcher's child gets a visible one (tagpup.core.processes).
-        (_START or processes.start)([sys.executable, os.path.abspath(__file__), "--reap", str(os.getpid()), _reap_list],
+        reaper = (_START or processes.start)([sys.executable, os.path.abspath(__file__), "--reap", str(os.getpid()), _reap_list],
                                     own_group=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, close_fds=True)
+        # Never waited for: it is meant to outlive this process. Left as running, Python warned "subprocess ... is
+        # still running" when the handle was collected -- in whichever test was running then, and again at exit (#743).
+        if hasattr(reaper, "returncode"):
+            reaper.returncode = 0
     with open(_reap_list, "a", encoding="utf-8") as handle:
         handle.write(folder + os.linesep)
 
 
-#: The records the processes of a home keep of themselves (tagpup.supervisor, tagpup.launcher).
-_RECORDS = (("data", "supervisor.json"), ("data", "server.json"), ("data", "supervisor.handover.json"))
+#: The records the processes of a home keep of themselves (tagpup.launcher keeps them in servers/, below).
+_RECORDS = ()
 
 #: Lists the processes whose command line names the folder in TAGPUP_END_UNDER (Windows).
 _UNDER = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "

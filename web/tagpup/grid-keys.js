@@ -44,11 +44,10 @@ export function gridKeyTarget(key, current, count, columns, pageRows) {
 }
 
 /** What a screen reader hears of a card: its file name, its date, whether it is selected, and what is wrong with it. */
-export function cardLabel({ name, date, selected, damaged, stale }) {
+export function cardLabel({ name, date, selected, stale }) {
     const parts = [name || 'Photo'];
     if (date) parts.push(date);
     parts.push(selected ? 'selected' : 'not selected');
-    if (damaged) parts.push('damaged');
     if (stale === 'missing') parts.push('file missing');
     else if (stale === 'changed') parts.push('changed on disk');
     return parts.join(', ');

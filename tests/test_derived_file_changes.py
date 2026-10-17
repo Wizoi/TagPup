@@ -3,7 +3,7 @@ the real ExifTool (tests/test_file_journal.py's FilesCase), the rows seeded as t
 
 A bulk tag write is journaled file by file (tagpup.services.file_changes) and tells each photo's row what its file
 now holds in the transaction that marks the file done (store.photos.follow_fields); the undo does the same
-backwards. photo_tags, photo_folder and photo_meta (tagpup.store.derived) are what the views read, so they must be
+backwards. photo_tags and photo_folder (tagpup.store.derived) are what the views read, so they must be
 what a rebuild from the rows would make them after each of those, or the views show what a photo used to hold.
 Smart Rename moves the rows of the photos it renames.
 """

@@ -3,8 +3,23 @@ dailies, one weekly and one monthly, the weekly and monthly from the daily's one
 taken with the library's writers held back, checked before they are renamed into place,
 and an old one removed only after its replacement passed; listed with the journal's
 changes since, and restored -- a dry run first, the library as it was snapshotted before
-a restore is applied.
+a restore is applied. A copy of a library -- a snapshot, a backup before a bulk write -- is a file of its own,
+written without a WAL (the backup then wrote the library into the -wal and checkpointed it, 2.5 GB twice for
+photo_index: review of phase 8a, 2). The recurring job takes them and records what it took; `snapshots list` and
+`snapshots restore` are its commands.
+
+A snapshot below the baseline (schema 32) is listed as too old and its restore is refused before anything is copied
+(owner, 2026-10-15: the snapshots and backups below 32 can no longer be restored).
+
+Lifted: test_snapshot_commands, test_a_copy_is_not_written_through_a_wal and the roots tests of "adopted while open /
+prepared / pinned" (test_roots_store): nothing in the program adopts a library any more, and the real action that
+changes a library's roots under a running process is a restore of a snapshot from before roots, here a monthly at the
+baseline taken before the library had any, restored into a library that a later step has migrated. Break that fails
+the kept test: tagpup.store.snapshots.restore not moving the generations past where they stood
+(`if before and` -> `if False and`) fails test_the_monthly_from_before_roots_is_restored_under_a_running_index.
+Findings: review of phase 8a (1, 2, 3, 4, 8), none numbered in findings.md.
 """
+import hashlib
 import os
 import sys
 import threading
@@ -12,16 +27,23 @@ import time
 import unittest
 from unittest import mock
 
+from click.testing import CliRunner
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import migration_names  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import roots_library as rl  # noqa: E402
+import tagpup_cli  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import NotFound  # noqa: E402
+from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import snapshots as snapshot_service  # noqa: E402
-from tagpup.store import db, journal, snapshots  # noqa: E402
+from tagpup.store import checks, db, derived, job_runs, journal, schema, snapshots  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 #: Noon on a day without a change of clocks near it.
 NOON = time.mktime((2026, 9, 1, 12, 0, 0, 0, 0, -1))
@@ -308,6 +330,283 @@ class Restoring(Base):
         result = snapshot_service.restore(self.library, daily.name, apply=True)
         self.assertTrue(result.refused)
         self.assertEqual((0, self.now), (result.changed, self.tags()))
+
+
+class TheJobAndTheCommands(Base):
+    def cli(self, *args):
+        with mock.patch.object(tagpup_cli, "console", tagpup_cli.Console(width=200)):
+            return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path] + list(args))
+
+    def test_the_job_takes_a_snapshot_and_records_its_size(self):
+        runner = recurring.Runner(lambda: [self.library], clock=lambda: NOON)
+        ran = {o.job: o for o in runner.run_due() if o.ran}
+        # Sync runs too, and fails here: this runner was given no Runtime.
+        self.assertEqual({"snapshots", "sync"}, set(ran))
+        self.assertEqual(3, ran["snapshots"].result.changed)
+        run = [r for r in job_runs.runs(self.library.path) if r.job == "snapshots"][0]
+        self.assertEqual(("done", 3, snapshots.disk(self.library.path)),
+                         (run.outcome, run.changed["changed"], run.changed["bytes"]))
+
+    def test_no_snapshot_holds_a_run_still_running_and_a_restore_leaves_none(self):
+        # The snapshots job's own run is `running` while it copies the library, and was in the copy: restored, the job
+        # was held "running" by it until the process ended (review of phase 8a, 1). A snapshot copied by hand can still hold one.
+        runner = recurring.Runner(lambda: [self.library], clock=lambda: NOON)
+        self.assertTrue(runner.run("snapshots", self.library, force=True)[0].ran)
+        for snapshot in snapshots.listed(self.library.path):
+            self.assertEqual([], self.query("SELECT id FROM job_runs WHERE outcome = 'running'", path=snapshot.path),
+                             snapshot.name)
+        daily = snapshots.listed(self.library.path, "daily")[0]
+        conn = db.connect(daily.path)
+        try:
+            conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES"
+                         " ('snapshots', 'harbour', '2026-09-01 12:00:00', 'running', ?)", (job_runs.file_journal.owner(),))
+            conn.commit()
+            conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            conn.close()
+        restored = snapshot_service.restore(self.library, daily.name, apply=True, now=NOON + 60)
+        self.assertEqual(1, restored.changed)
+        self.assertEqual([], self.query("SELECT id FROM job_runs WHERE outcome = 'running'"))
+        self.assertIn(("abandoned",), self.query("SELECT outcome FROM job_runs"))
+        again = runner.run("snapshots", self.library, force=True)[0]
+        self.assertEqual((True, None), (again.ran, again.why))
+
+    def test_the_commands_list_and_restore(self):
+        snapshots.take(self.library.path, now=NOON)
+        self.change_tags('["Beach", "Harbour"]')
+        name = snapshots.listed(self.library.path, "daily")[0].name
+        shown = self.cli("snapshots", "list")
+        self.assertEqual(0, shown.exit_code, shown.output)
+        self.assertIn(name, shown.output)
+        dry = self.cli("snapshots", "restore", name)
+        self.assertEqual(0, dry.exit_code, dry.output)
+        self.assertIn("would lose 1 change(s)", dry.output)
+        # What it costs: the disk it needs, and what the disk has.
+        self.assertIn("needs about", dry.output)
+        self.assertIn("MB free", dry.output)
+        self.assertIn("Nothing changed", dry.output)
+        applied = self.cli("snapshots", "restore", name, "--apply")
+        self.assertEqual(0, applied.exit_code, applied.output)
+        self.assertIn("before-restore/", applied.output)
+        self.assertNotIn("Harbour", self.tags())
+
+
+class ACopyIsAFileOfItsOwn(unittest.TestCase):
+    def test_a_backup_and_a_snapshot_are_made_by_one_helper_out_of_wal_before_the_copy_is_written(self):
+        home = own_home.for_test(self, prefix="copy_")
+        path = home.library("harbour.db")
+        library_actions.create(path)
+        modes, real = [], db.sqlite3.Connection
+
+        class Watched:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def backup(self, destination, *args, **kwargs):
+                modes.append(destination.execute("PRAGMA journal_mode").fetchone()[0])
+                return self.conn.backup(destination, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+
+        connect = db.connect
+
+        def watched(target, *args, **kwargs):
+            conn = connect(target, *args, **kwargs)
+            return Watched(conn) if isinstance(conn, real) and kwargs.get("uri") else conn
+
+        copy = os.path.join(home.root, "copy.db")
+        with mock.patch.object(db, "copy_database", wraps=db.copy_database) as copied, \
+                mock.patch.object(db, "connect", side_effect=watched):
+            backup = db.backup(path, "test")
+            snapshots.copy_library(path, copy)
+        self.assertEqual((["delete", "delete"], 2), (modes, copied.call_count))
+        for each in (backup, copy):
+            conn = db.connect(db.readonly_uri(each), uri=True)
+            try:
+                self.assertEqual("delete", conn.execute("PRAGMA journal_mode").fetchone()[0])
+            finally:
+                conn.close()
+        self.assertEqual([os.path.basename(backup)], [name for name in os.listdir(os.path.dirname(backup))
+                                                       if name.startswith(os.path.basename(backup))], "no -wal beside it")
+
+
+@unittest.skipUnless(os.name == "nt", "the roots below are Windows paths")
+class TheMonthlyFromBeforeRoots(unittest.TestCase):
+    """The library took its roots after the monthly was taken (at the baseline, with a later step still to come): the owner
+    restores it while the index is running and a run holds the library's roots."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="snapshots_old_")
+        self.library = Library(self.home.library("harbour.db"))
+        schema.ensure(self.library.path)
+        conn = db.connect(self.library.path)
+        try:
+            for name in ("a.jpg", "b.jpg"):
+                photo_rows.add_read(conn, "D:\\Harbour\\" + name, {})
+            conn.commit()
+        finally:
+            conn.close()
+        snapshots.take(self.library.path, now=NOON)
+        self.monthly = snapshots.listed(self.library.path, "monthly")[0]
+        self.assertEqual(schema.BASELINE, schema.version_of(self.monthly.path))
+        self.enterContext(migration_names.ahead())   # a later step, run on opening the library
+        schema.ensure(self.library.path)
+        rl.convert_to_root(self.library.path, "D:\\Harbour")   # the owner's roots, arrived since
+
+    def held(self):
+        return [row[0] for row in self.query("SELECT path FROM photos ORDER BY id")]
+
+    def query(self, sql):
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            return conn.execute(sql).fetchall()
+        finally:
+            conn.close()
+
+    def restore(self, name, **kwargs):
+        result = snapshot_service.restore(self.library, name, apply=True, **kwargs)
+        self.assertEqual(1, result.changed, result.refused)
+        return result
+
+    def test_the_monthly_from_before_roots_is_restored_under_a_running_index(self):
+        from tagpup.services.search import PhotoIndex
+        index = PhotoIndex(self.library.path, model="m")
+        self.addCleanup(index.close)
+        index.load()
+
+        def batch(name):
+            path = "D:\\Harbour\\" + name
+            index.build_or_update([[0.0] * 4], [{"path": path, "mtime": 1.0, "size": 2, "tags": [], "captions": [],
+                                                  "raw_metadata": {"SourceFile": path.replace(os.sep, "/")}}], dim=4)
+
+        batch("Before.jpg")
+        rooted = self.held()
+        self.assertTrue(all(path.startswith("@pictures/") for path in rooted), rooted)
+        generations = dict(self.query("SELECT name, value FROM generations"))
+        with store_roots.pinned(self.library.path):
+            conn = db.connect(self.library.path)
+            try:
+                self.assertFalse(store_roots.roots_for(conn).identity, "the library holds roots")
+                restored = self.restore(self.monthly.name, now=NOON + DAY)
+                with self.assertRaises(store_roots.RootsChanged):
+                    store_roots.roots_for(conn)    # the pinned run stops: its roots are not the library's now
+            finally:
+                conn.close()
+        # Migrated on open, to the schema of the code (the later step), and the library holds the monthly's rows with no roots.
+        conn = db.connect(self.library.path)
+        self.addCleanup(conn.close)
+        self.assertEqual(schema.LATEST, schema.version(conn))
+        self.assertEqual({}, store_roots.logical(conn))
+        self.assertEqual(["D:/Harbour/a.jpg", "D:/Harbour/b.jpg"], sorted(p.replace("\\", "/") for p in self.held()))
+        # The derived rows are what a rebuild makes of the photos, and the doctor finds nothing wrong.
+        ids = [row[0] for row in conn.execute("SELECT id FROM photos")]
+        nodes = [row[0] for row in conn.execute("SELECT id FROM tag_taxonomy")]
+        was = derived.listing(conn, ids, nodes)
+        derived.rebuild_all(conn)
+        self.assertEqual(was, derived.listing(conn, ids, nodes))
+        conn.rollback()
+        self.assertEqual({}, {check.name: check.count for check in checks.run(conn) if check.count})
+        # Every cache of paths keyed by the generations is told: each moved past where it stood.
+        after = dict(self.query("SELECT name, value FROM generations"))
+        self.assertTrue(all(after[name] > value for name, value in generations.items()), (generations, after))
+        # The index, still running, writes its next batch with the roots the library has now.
+        batch("After.jpg")
+        self.assertIn("D:\\Harbour\\After.jpg", self.held())
+        # The restore, undone from the copy it made of the library as it stood.
+        self.restore(restored.details["before_restore"], now=NOON + DAY + 60)
+        self.assertEqual(rooted, self.held())
+        batch("Later.jpg")
+        self.assertEqual("@pictures/Later.jpg", self.held()[-1])
+
+    def test_a_write_prepared_before_the_restore_is_run_again_after_it(self):
+        path = "D:\\Harbour\\Caught between.jpg"
+        calls = []
+
+        def operation(conn):
+            calls.append(1)
+            row = store_roots.to_row(conn, path)
+            if len(calls) == 1:
+                # The owner restores the library after this write converted its path and before it writes it.
+                self.restore(self.monthly.name, now=NOON + DAY)
+            conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')", (row,))
+
+        db.write_with_connection(self.library.path, operation)
+        self.assertEqual(2, len(calls))
+        self.assertIn(path, self.held())
+        self.assertNotIn("@pictures/Caught between.jpg", self.held())
+
+
+class ASnapshotBelowTheBaseline(Base):
+    """A snapshot made before schema 32 is still a file in the library's folder: it is listed, as too old, and restoring it is
+    refused with a sentence before the library is touched or snapshotted (owner, 2026-10-15: nothing could bring it forward)."""
+
+    def setUp(self):
+        super().setUp()
+        snapshots.take(self.library.path, now=NOON)
+        self.daily = snapshots.listed(self.library.path, "daily")[0]
+        conn = db.connect(self.daily.path)
+        try:
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version VALUES (31, 'an old step', '2026-09-01 00:00:00')")
+            conn.commit()
+            conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            conn.close()
+
+    def cli(self, *args):
+        with mock.patch.object(tagpup_cli, "console", tagpup_cli.Console(width=200)):
+            return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path] + list(args))
+
+    def digest(self):
+        schema.forget()
+        conn = db.connect(self.library.path)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+        with open(self.library.path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+
+    def test_it_is_listed_as_too_old_and_listing_does_not_fail(self):
+        [described] = [s for s in snapshot_service.listing(self.library)["snapshots"] if s["name"] == self.daily.name]
+        self.assertEqual((31, True), (described["schema"], described["too_old"]))
+        shown = self.cli("snapshots", "list")
+        self.assertEqual(0, shown.exit_code, shown.output)
+        self.assertIn("31 (too old to restore)", shown.output)
+        self.assertIn("32", shown.output, "the weekly and monthly are copies of the same file, so also marked")
+
+    def test_the_cli_refuses_a_snapshot_from_a_newer_tagpup_in_a_sentence_too(self):
+        # The refusal comes before the disk is asked, so the command has no "needs" to print: it was a KeyError (a traceback).
+        conn = db.connect(self.daily.path)
+        try:
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version VALUES (99, 'a later step', '2026-10-09 00:00:00')")
+            conn.commit()
+            conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            conn.close()
+        said = self.cli("snapshots", "restore", self.daily.name, "--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        self.assertIn("made by a newer version of TagPup", " ".join(said.output.split()))
+        self.assertNotIn("Traceback", said.output)
+        self.assertIsNone(said.exception if isinstance(said.exception, KeyError) else None)
+
+    def test_a_restore_of_it_is_refused_with_a_sentence_and_the_library_is_untouched(self):
+        before, kept = self.digest(), self.names()
+        for apply in (False, True):
+            result = snapshot_service.restore(self.library, self.daily.name, apply=apply, now=NOON + 60)
+            self.assertIn("older than TagPup can bring forward", result.refused)
+            self.assertIn("restore a newer snapshot", result.refused)
+            self.assertIn("The snapshot " + self.daily.name, result.refused)
+            self.assertEqual(0, result.changed)
+            self.assertNotIn("before_restore", result.details)
+        self.assertEqual((before, kept), (self.digest(), self.names()), "nothing copied over it, and no snapshot of it taken")
+        said = self.cli("snapshots", "restore", self.daily.name, "--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        self.assertIn("Refused", said.output)
+        self.assertNotIn("Traceback", said.output)
+        self.assertEqual((before, kept), (self.digest(), self.names()))
 
 
 if __name__ == "__main__":

@@ -67,7 +67,7 @@ def compact(stamp):
 
 
 def sync_tag(library, started):
-    """A sync of `library` that started at `started` (as `sync_runs` records it)."""
+    """A sync of `library` that started at `started` (as its run in `job_runs` records it)."""
     return tag("sync", library, compact(started))
 
 

@@ -20,7 +20,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_face, add_vector  # noqa: E402
+from face_rows import add_face, add_vector, person_of  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -75,7 +75,7 @@ class IndexReloadsWhenChanged(unittest.TestCase):
         self.index.reload_if_changed()
         conn = tagpup_db.connect(self.db_path)
         try:
-            faces.name(conn, [face_id], "Wren Halloway")
+            faces.name(conn, [face_id], person_of(conn, "Wren Halloway"))
             conn.commit()
         finally:
             conn.close()
@@ -93,7 +93,7 @@ class OneIndexPerLibrary(unittest.TestCase):
         add_photo(self.db_path, "a.jpg")
         self.library = Library(self.db_path)
         # No model is built: the index is all this asks for.
-        self.runtime = Runtime(clip=object(), faces=object())
+        self.runtime = Runtime()
 
     def tearDown(self):
         self.runtime.photo_index(self.library).close()

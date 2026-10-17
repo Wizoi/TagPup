@@ -8,6 +8,7 @@ import { openSettings } from './common/settings-dialog.js';
 import { wireTagEditor } from './common/tag-editor.js';
 import { fetchKnownPeople } from './shared.js';
 import { refreshSidebarQuietly } from './sidebar.js';
+import { startNamingFaces } from './name-faces.js';
 import { openReview } from './review.js';
 import { openRoots } from './roots.js';
 
@@ -28,6 +29,7 @@ export function wireTunerGear() {
         'tag-editor': editor.open,
         'library-settings': openSettings,
         'folders-review': openReview,
+        'name-faces': startNamingFaces,
         'library-roots': openRoots,
         // An undo may have put back names and tags: the list beside the photo is read again.
         'library-history': () => openHistory({

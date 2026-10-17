@@ -1,0 +1,166 @@
+{
+ "what": "The rules a page copies from the server before it asks (web/tagpup/library-source.js): the caps of a union and of a search's words (tagpup.services.library_view.MAX_MEMBERS, MAX_WORDS), the kinds a view and a union's member are (tagpup.store.library_view.KINDS, MEMBER_KINDS), the orders and the default one (ORDERS, order_of), a search's parts (SEARCH_PARTS), and which typed terms say something (tagpup.store.search_index.terms); and the selection's caps, the most photos one bulk write names (tagpup.services.batches.MAX_BATCH) and the most ids a request lists (tagpup.services.selection.MAX_LISTED), which web/tagpup/selected.js copies as BULK_LIMIT and LIST_LIMIT. Every value is the server's: tests/test_view_rules_follow_the_server.py fails when one is not, and tests/frontend/search-page.test.mjs and library-selection.test.mjs hold the page's copies to this table.",
+ "max_members": 1000,
+ "max_words": 500,
+ "max_batch": 5000,
+ "max_listed": 20000,
+ "kinds": [
+  "all",
+  "folder",
+  "keyword",
+  "person",
+  "year",
+  "month",
+  "keyword_only",
+  "year_other",
+  "any_of",
+  "search"
+ ],
+ "member_kinds": [
+  "all",
+  "folder",
+  "keyword",
+  "person",
+  "year",
+  "month",
+  "keyword_only",
+  "year_other"
+ ],
+ "orders": [
+  "taken",
+  "taken-desc",
+  "name",
+  "name-desc",
+  "caption",
+  "caption-desc"
+ ],
+ "default_order": "taken",
+ "search_parts": [
+  "all_of",
+  "any_of",
+  "none_of",
+  "words"
+ ],
+ "terms": [
+  {
+   "term": "beach",
+   "says_something": true
+  },
+  {
+   "term": "r6",
+   "says_something": true
+  },
+  {
+   "term": "24-70",
+   "says_something": true
+  },
+  {
+   "term": "7",
+   "says_something": true
+  },
+  {
+   "term": "a",
+   "says_something": true
+  },
+  {
+   "term": "-",
+   "says_something": false
+  },
+  {
+   "term": "--",
+   "says_something": false
+  },
+  {
+   "term": "---",
+   "says_something": true
+  },
+  {
+   "term": ".",
+   "says_something": false
+  },
+  {
+   "term": "...",
+   "says_something": true
+  },
+  {
+   "term": "..",
+   "says_something": false
+  },
+  {
+   "term": "\u00e9t\u00e9",
+   "says_something": true
+  },
+  {
+   "term": "\u00b2",
+   "says_something": true
+  },
+  {
+   "term": "\u2013",
+   "says_something": false
+  },
+  {
+   "term": "\u2013\u2013\u2013",
+   "says_something": true
+  },
+  {
+   "term": "\ud83d\ude42",
+   "says_something": false
+  },
+  {
+   "term": "\ud83d\ude42\ud83d\ude42",
+   "says_something": false
+  },
+  {
+   "term": "\ud83d\ude42\ud83d\ude42\ud83d\ude42",
+   "says_something": true
+  },
+  {
+   "term": "#",
+   "says_something": false
+  },
+  {
+   "term": "#1",
+   "says_something": true
+  },
+  {
+   "term": "___",
+   "says_something": true
+  },
+  {
+   "term": "\"",
+   "says_something": false
+  },
+  {
+   "term": "a\"b",
+   "says_something": true
+  },
+  {
+   "term": "*",
+   "says_something": false
+  },
+  {
+   "term": "OR",
+   "says_something": true
+  },
+  {
+   "term": "NOT",
+   "says_something": true
+  },
+  {
+   "term": ":",
+   "says_something": false
+  },
+  {
+   "term": "(",
+   "says_something": false
+  },
+  {
+   "term": "\\\\",
+   "says_something": false
+  },
+  {
+   "term": "\u00a7\u00a7",
+   "says_something": false
+  }
+ ]
+}

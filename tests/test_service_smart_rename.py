@@ -2,7 +2,7 @@
 
 What each photo's caption is is stood in for (tagpup.files.names.read_for_renaming), and
 so is the write of the name each had before its first rename (photos.preserve_names,
-journaled; tests/test_single_save_and_smart_rename_are_journaled.py runs it); the renames
+journaled; tests/test_tag_a_photo_read_it_back_and_undo.py runs it); the renames
 on disk and the index rows are real.
 """
 import os

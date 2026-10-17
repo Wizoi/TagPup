@@ -1,0 +1,88 @@
+"""Put on a photo the people its faces name and its keywords do not (#861): `tagpup_cli.py tags-from-faces`.
+
+A face named and the photo's person tag are one decision (tagpup.services.face_people). Faces named before that rule
+-- by TagTuner's strip, Match, AutoMatch All, Identify Faces, clustering -- left photos listing a person from a face
+alone (`photo_people` source 'face'): the owner's "a green box and No people tags". This is the same rule applied once
+to what is there already, as `faces-from-tags` (tagpup.services.faces_from_tags) is the other way round.
+
+**It changes PHOTO FILES**, not only the library: each photo gets the person's keyword written into its file by
+ExifTool, as every other keyword write does (tagpup.services.tagging.change_each). A dry run (the default) only counts.
+`apply` writes them as one journaled change of photo files (operation `OPERATION`; a batch, written a chunk at a time,
+face_people.write_tags), which records every file's fields before and after: `undo` takes it back, and a file that was
+changed outside since is a conflict and is never overwritten. That journal is the way back; no copy of the library is taken (a photo's keywords
+are not in the library alone, and the journal holds what a copy of the library could not). A keyword that only shares the
+person's leaf (`Parkrunner/<name>` under a root that holds no people) is no person, so the person is written beside it (#1394).
+And a person only a GUESS backs -- no face of that name named by hand -- is left unless `--guesses`: the
+keyword would make the guess a decided reference (#640).
+
+Interrupted part-way (a crash, a closed window): the files written are written, journaled and recorded in their rows;
+the file under way is settled at the next start by what it holds and the rest of the change is written then
+(tagpup.services.file_changes); running it again does whatever is left -- a photo that lists the person from a keyword is no longer in the plan. Two at once (the CLI and
+the server): the lock of changes of photo files is the process's, so a CLI run is not held by it; each file is
+read again just before it is written, and a file another process changed meanwhile is a conflict, reported, not
+overwritten -- run it again. A photo whose file cannot be read (a share that is away, a file gone) is an error counted
+and the others are written.
+
+With `folder` (tagpup.services.folder_scope) the plan counts and `apply` writes only the photos under that folder, at any depth;
+a folder the library holds no photo under is refused. The rule for each photo is the same, so the folder's plan is the
+whole-library plan restricted to the folder's photos.
+"""
+from tagpup.core.result import Result
+from tagpup.services import face_people, folder_scope
+from tagpup.store import db, people
+from tagpup.store import roots as store_roots
+
+#: What the journal calls the changes made here (History's `operation`).
+OPERATION = "person tags from faces"
+
+
+def plan(library, guesses=False, folder=None):
+    """What `apply` would write, counted: a Result whose details are `counts` (safe to show anyone) and `work`, the
+    (photo path, person) of each person to put on a photo -- a Ref, the node's id and the name (never reported). Reads only.
+
+    One rule for each row: a person only a guess of clustering or automatch backs (no face of that name named by hand) is
+    skipped unless `guesses`, since the keyword would make the guess a decided reference (#640), and counted, so the count to
+    write is what `apply` writes and a second run finds none. A photo whose keywords name the person already is not in
+    `on_faces_alone`: its keyword is the person by the id of their node, as the writer's own rule (face_people.already_names)
+    reads it; a keyword that only shares their leaf names nobody (#1394).
+
+    With `folder`, only the photos under it: the Result is refused (`refused` says why) when the library holds none there."""
+    spelled = None
+    if folder is not None:
+        try:
+            spelled = folder_scope.resolve(library, folder).folder
+        except folder_scope.NoPhotosThere as why:
+            refused = Result(attempted=0)
+            refused.details.update(dry_run=True, work=[], counts={})
+            refused.refuse(str(why))
+            return refused
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        found = store_roots.natives(conn, people.on_faces_alone(conn, spelled), 0)
+    finally:
+        conn.close()
+    work, photo_set = [], set()
+    guessed = 0
+    for photo_path, person, decided in found:
+        photo_set.add(photo_path)
+        if not decided and not guesses:
+            guessed += 1
+        else:
+            work.append((photo_path, person.id))
+    result = Result(attempted=len(photo_set))
+    result.details.update(
+        dry_run=True, work=work,
+        counts={"photos_with_a_person_on_a_face_alone": len(photo_set), "people": len(found),
+                "photos_to_write": len({photo_path for photo_path, _person in work}), "people_to_write": len(work),
+                "people_from_a_guess_only": guessed, "guesses_included": bool(guesses)})
+    return result
+
+
+def apply(library, planned, exiftool_path):
+    """Write what `plan` counted, as one change of photo files (face_people.write_tags): a Result as add_people's -- `changed`
+    the photo files written, `errors` the photos that could not be (counted by the caller, never named), details `changes`
+    the journal's ids. Its progress is the batch's, on the Activity page (batches.listing reads another process's change)."""
+    writer = face_people.Writer(exiftool_path)
+    result = face_people.add_people(library, planned.details["work"], writer, operation=OPERATION, stop_at_first_error=False)
+    result.details["dry_run"] = False
+    return result

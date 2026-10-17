@@ -1,10 +1,11 @@
-"""Adopting a root is seconds, not minutes, on a library the size of photo_index (68,466 photos,
-225,000 faces), and the lookups a click makes still use their indexes once it has.
+"""A library held under a root, photo_index's size on 2026-10-02 (68,466 photos, 225,000 faces; 59,519 and 187,784
+on 2026-10-15, so the test is the larger), is read in
+seconds, and the lookups a click makes use their indexes.
 
 The library is synthetic and made here, in a home of the test's own: rows shaped as the
 indexer's are -- paths in the owner's folder shape, raw_metadata of ExifTool's fields with its
 forward-slash SourceFile, tags, faces with a vector -- written in bulk through SQL, as nothing
-is under test in how they are made. What is under test is `roots adopt` and the reads after it.
+is under test in how they are made. What is under test is the reads of a library held under a root (converted by tests/roots_library.py).
 TAGPUP_ROOTS_SCALE (a fraction, default 1) makes it smaller where the full size is not wanted;
 the timings are printed to stderr.
 """
@@ -21,10 +22,8 @@ import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import roots as roots_service  # noqa: E402
-from tagpup.store import adoption, db, faces, folders, inspection  # noqa: E402
+from tagpup.store import db, faces, folders, inspection, roots_check  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -106,47 +105,25 @@ class TheSizeOfPhotoIndex(unittest.TestCase):
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
             started = time.time()
-            rows = store_photos.index_rows(conn, "m")
+            rows = store_photos.records(conn, "m")
             return time.time() - started, len(rows)
         finally:
             conn.close()
 
-    def test_adopting_it_takes_seconds_and_undoing_it_takes_seconds(self):
-        machine = rl.machine()
+    def test_a_rooted_library_is_read_and_looked_up_as_fast_as_a_plain_one(self):
         started = time.time()
         plain_read, rows = self.read_all()
         note("reading every row of the unconverted library: %.1f s (%d rows)" % (plain_read, rows))
 
         started = time.time()
-        report = roots_service.adopt(self.library, "pictures", rl.ADDRESS, self.pictures, machine)
-        dry = time.time() - started
-        self.assertIsNone(report.refused, report.refused)
-        photos = report.details["rehearsal"]["tables"]["photos"]
-        self.assertEqual(self.photos, photos["rows"])
-        self.assertEqual(self.under_the_root, photos["convert"])
-        note("dry run: %.1f s" % dry)
-
-        started = time.time()
-        converted = roots_service.adopt(self.library, "pictures", rl.ADDRESS, self.pictures, machine, apply=True)
-        total = time.time() - started
-        self.assertTrue(converted.ok and not converted.refused, converted.message())
-        self.assertEqual(self.under_the_root, converted.details["adopted"]["tables"]["photos"]["convert"])
-        note("adopt --apply (new backup, conversion, verification, journal): %.1f s" % total)
-        self.assertLess(total, 90, "adopting took minutes")
-        from tagpup.store import adoption as adopting
-        size = os.path.getsize(self.library.path)
-        started = time.time()
-        copy = adopting.backup(self.library.path)
-        took = time.time() - started
-        note("a backup copy alone: %.1f s for %.0f MB (%.0f MB/s), the write lock held for all of it" % (
-            took, size / 1e6, size / 1e6 / took))
-        note("its estimate for this library now: %s" % adopting.backup_estimate(self.library.path))
-        os.remove(copy)
+        converted = rl.convert_to_root(self.library.path, self.pictures)
+        note("converting it (the fixture, not the program): %.1f s" % (time.time() - started))
+        self.assertTrue(converted.ok, converted.message())
 
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
             started = time.time()
-            problems = adoption.verify(conn, store_roots.roots_for(conn))
+            problems = roots_check.verify(conn, store_roots.roots_for(conn))
             note("the doctor's check of every rooted row: %.2f s" % (time.time() - started))
             self.assertEqual([], problems)
             self.assertEqual(self.photos, conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0])
@@ -161,17 +138,6 @@ class TheSizeOfPhotoIndex(unittest.TestCase):
         note("reading every row of the converted library: %.1f s" % rooted_read)
 
         self.lookups_use_their_indexes()
-
-        started = time.time()
-        undone = journal_service.undo(self.library, converted.details["change"], apply=True)
-        note("undo (rehearsal, then the conversion back): %.1f s" % (time.time() - started))
-        self.assertIsNone(undone.refused, undone.refused)
-        self.assertEqual([], store_roots.listing(self.library.path))
-        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
-        try:
-            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM photos WHERE substr(path, 1, 1) = '@'").fetchone()[0])
-        finally:
-            conn.close()
 
     def lookups_use_their_indexes(self):
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)

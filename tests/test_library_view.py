@@ -1,6 +1,5 @@
 """The library as the views see it (tagpup.services.library_view over tagpup.store.library_view; docs/ARCHITECTURE.md,
-phase 9a): which photos a source holds, in what order, a keyset page at a time, the cards of a page, and the
-navigator's counts.
+phase 9a): which photos a source holds, in what order, the cards of a list of ids, and the navigator's counts.
 
 Photos are rows as the indexer records them (tests/view_library.py: photo_rows.add_read, then record_indexed, which
 keeps photo_people and the derived tables as it does for real), tags are nodes made by taxonomy.add_path. Fictional
@@ -9,38 +8,20 @@ names only: the libraries are photographs of real people, many of them minors.
 import os
 import re
 import sys
-import threading
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import face_rows  # noqa: E402
 import own_home  # noqa: E402
-import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.services import damaged_photos, library_view  # noqa: E402
-from tagpup.store import db, derived, schema  # noqa: E402
-from tagpup.store import library_view as store  # noqa: E402
-
-
-def walk(vl, kind, value=None, recursive=False, limit=3):
-    """(every id in the order the pages gave them, the pages' sizes, the totals they said)."""
-    token, ids, sizes, totals = None, [], [], set()
-    while True:
-        found = library_view.view(vl.library, kind, value, recursive, token, limit)
-        ids += found["ids"]
-        sizes.append(len(found["ids"]))
-        totals.add(found["total"])
-        token = found["next"]
-        if token is None:
-            return ids, sizes, totals
+from tagpup.services import library_view  # noqa: E402
+from tagpup.store import db, derived  # noqa: E402
 
 
 class Library(unittest.TestCase):
@@ -48,18 +29,12 @@ class Library(unittest.TestCase):
         self.vl = ViewLibrary(self)
 
     def ids(self, kind, value=None, recursive=False):
-        return walk(self.vl, kind, value, recursive, limit=500)[0]
+        return library_view.ids(self.vl.library, kind, value, recursive)["ids"]
 
 
 class TheOrder(Library):
-    def test_by_date_taken_then_id_and_photos_with_no_date_at_the_end(self):
-        late = self.vl.photo("A", "late.jpg", taken="2024:06:03 10:00:00")
-        undated_first = self.vl.photo("A", "undated1.jpg")
-        early = self.vl.photo("A", "early.jpg", taken="2023:01:01 08:00:00")
-        undated_second = self.vl.photo("A", "undated2.jpg")
-        tied_a = self.vl.photo("A", "tied_a.jpg", taken="2024:01:01 00:00:00")
-        tied_b = self.vl.photo("A", "tied_b.jpg", taken="2024:01:01 00:00:00")
-        self.assertEqual([early, tied_a, tied_b, late, undated_first, undated_second], self.ids("all"))
+    """Dated by Date Taken then id, the undated after by id, in either direction, for every kind of source, across page
+    boundaries: scenario V1 (test_library_views_scenarios). Here the rules of what is a date."""
 
     def test_the_file_time_does_not_order_it(self):
         first = self.vl.photo("A", "z.jpg", taken="2020:01:01 00:00:00", real=True)
@@ -81,212 +56,26 @@ class TheOrder(Library):
         card = library_view.cards(self.vl.library, [unread])[0]
         self.assertIsNone(card["taken"])
 
-    def test_an_empty_library_is_an_empty_page(self):
-        found = library_view.view(self.vl.library, "all")
-        self.assertEqual(([], 0, None), (found["ids"], found["total"], found["next"]))
+    def test_an_empty_library_is_an_empty_list(self):
+        found = library_view.ids(self.vl.library, "all")
+        self.assertEqual(([], 0), (found["ids"], found["total"]))
 
 
-class TheKeyset(Library):
-    def setUp(self):
-        super().setUp()
-        self.made = [self.vl.photo("A", "p%d.jpg" % n, taken="2024:01:%02d 10:00:00" % (n + 1)) for n in range(7)]
-        self.made += [self.vl.photo("A", "u%d.jpg" % n) for n in range(2)]
-
-    def test_pages_cover_the_source_once_each_with_the_same_total(self):
-        ids, sizes, totals = walk(self.vl, "all", limit=3)
-        self.assertEqual(self.made, ids)
-        self.assertEqual([3, 3, 3], sizes)
-        self.assertEqual({9}, totals)
-
-    def test_the_last_page_has_no_next_and_a_page_ending_exactly_has_none_either(self):
-        found = library_view.view(self.vl.library, "all", limit=9)
-        self.assertIsNone(found["next"])
-        found = library_view.view(self.vl.library, "all", limit=8)
-        self.assertIsNotNone(found["next"])
-        self.assertEqual([self.made[8]], library_view.view(self.vl.library, "all", after=found["next"], limit=8)["ids"])
-
-    def test_the_page_after_the_dated_ones_goes_on_into_the_undated(self):
-        found = library_view.view(self.vl.library, "all", limit=6)
-        second = library_view.view(self.vl.library, "all", after=found["next"], limit=6)
-        self.assertEqual(self.made[6:], second["ids"])
-
-    def test_a_photo_added_between_pages_is_never_repeated_and_none_is_skipped(self):
-        first = library_view.view(self.vl.library, "all", limit=3)
-        before_the_cursor = self.vl.photo("A", "early.jpg", taken="2000:01:01 00:00:00")
-        after_the_cursor = self.vl.photo("A", "mid.jpg", taken="2024:01:05 12:00:00")
-        rest, token = [], first["next"]
-        while token:
-            page = library_view.view(self.vl.library, "all", after=token, limit=3)
-            rest += page["ids"]
-            token = page["next"]
-        seen = first["ids"] + rest
-        self.assertEqual(len(seen), len(set(seen)))
-        self.assertEqual(set(self.made), set(seen) - {after_the_cursor})
-        self.assertNotIn(before_the_cursor, seen, "it sorts before the page already read")
-        self.assertIn(after_the_cursor, seen)
-
-    def test_a_photo_deleted_between_pages_skips_no_other(self):
-        first = library_view.view(self.vl.library, "all", limit=3)
-        self.vl.conn.execute("DELETE FROM photos WHERE id = ?", (self.made[1],))   # one already shown
-        self.vl.conn.execute("DELETE FROM photos WHERE id = ?", (self.made[4],))   # one still to come
-        self.vl.conn.commit()
-        rest, token = [], first["next"]
-        while token:
-            page = library_view.view(self.vl.library, "all", after=token, limit=3)
-            rest += page["ids"]
-            token = page["next"]
-        self.assertEqual([each for each in self.made if each not in (self.made[1], self.made[4])],
-                         [each for each in first["ids"] + rest if each != self.made[1]])
-
-    def test_a_photo_redated_between_pages_appears_where_its_new_date_puts_it(self):
-        first = library_view.view(self.vl.library, "all", limit=3)
-        # an unread photo ahead of the cursor given a date before it, and a read one given a date after
-        behind, ahead = self.made[5], self.made[0]
-        self.vl.conn.execute("UPDATE photos SET taken = '2000:01:01 00:00:00' WHERE id = ?", (behind,))
-        self.vl.conn.execute("UPDATE photos SET taken = '2030:01:01 00:00:00' WHERE id = ?", (ahead,))
-        self.vl.conn.commit()
-        rest, token = [], first["next"]
-        while token:
-            page = library_view.view(self.vl.library, "all", after=token, limit=3)
-            rest += page["ids"]
-            token = page["next"]
-        untouched = [each for each in self.made if each not in (behind, ahead)]
-        seen = first["ids"] + rest
-        self.assertEqual(untouched, [each for each in seen if each in untouched], "no other photo repeated or skipped")
-        self.assertNotIn(behind, seen, "its new date is before the page already read: the change explains it")
-        self.assertEqual(2, seen.count(ahead), "shown where it was, and again where it is now")
-
-    def test_writes_during_a_walk_do_not_break_it(self):
-        errors = []
-
-        def write():
-            conn = db.connect(self.vl.path)   # a connection of the thread's own
-            try:
-                for number in range(30):
-                    path = os.path.join(self.vl.pictures, "B", "w%d.jpg" % number)
-                    photo_rows.add_read(conn, path, {"EXIF:DateTimeOriginal": "2025:03:%02d 00:00:00" % (number % 28 + 1)})
-                    conn.commit()
-            except Exception as why:   # the test's own writer: a failure is the test's
-                errors.append(why)
-            finally:
-                conn.close()
-
-        thread = threading.Thread(target=write)
-        thread.start()
-        seen, token = [], None
-        while True:
-            page = library_view.view(self.vl.library, "all", after=token, limit=4)
-            seen += page["ids"]
-            token = page["next"]
-            if not token:
-                break
-        thread.join(30)
-        self.assertEqual([], errors)
-        self.assertEqual(len(seen), len(set(seen)), "no photo twice")
-        self.assertTrue(set(self.made) <= set(seen), "no photo that was there at the start was skipped")
-
-
-class EqualDates(Library):
-    """A run of photos with one Date Taken across a page boundary: the keyset's second part, the id, decides."""
-
-    def setUp(self):
-        super().setUp()
-        self.vl.tree("Trips/Coast", "People/Wren Halloway", face_root="People")
-        self.same = [self.vl.photo("Run", "r%d.jpg" % n, taken="2024:06:15 12:00:00", tags=["Trips/Coast", "People/Wren Halloway"])
-                     for n in range(7)]
-        self.vl.photo("Run", "before.jpg", taken="2024:06:14 12:00:00", tags=["Trips/Coast"])
-        self.vl.photo("Run", "after.jpg", taken="2024:06:16 12:00:00", tags=["Trips/Coast"])
-        self.folder = os.path.join(self.vl.pictures, "Run")
-        self.sources = {"all": ("all", None, False), "folder": ("folder", self.folder, False),
-                        "folder+": ("folder", self.folder, True), "keyword": ("keyword", "Trips/Coast", False),
-                        "person": ("person", "Wren Halloway", False), "year": ("year", "2024", False),
-                        "month": ("month", "2024-06", False)}
-
-    def test_pages_of_three_through_a_run_of_seven_equal_dates_lose_and_repeat_none(self):
-        for name, (kind, value, recursive) in self.sources.items():
-            with self.subTest(source=name):
-                ids, sizes, totals = walk(self.vl, kind, value, recursive, limit=3)
-                self.assertEqual(len(ids), len(set(ids)), "no photo twice")
-                self.assertEqual(self.same, [each for each in ids if each in self.same], "equal dates in id order")
-                self.assertEqual({len(ids)}, totals)
-                self.assertTrue(set(self.same) <= set(ids), "none of the run skipped")
-
-    def test_a_page_beginning_at_every_position_of_the_run_is_what_follows_it(self):
-        for name, (kind, value, recursive) in self.sources.items():
-            with self.subTest(source=name):
-                source = library_view.source_of(self.vl.library, kind, value, recursive)
-                conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
-                try:
-                    everything, _more = store.page(conn, source, None, 100)
-                    for position in range(len(everything)):
-                        cursor = store.next_cursor(everything[position])
-                        rest, _more = store.page(conn, source, cursor, 100)
-                        self.assertEqual(everything[position + 1:], rest, "after position %d" % position)
-                finally:
-                    conn.close()
-
-
-class TheTokenAndTheLimit(Library):
-    def setUp(self):
-        super().setUp()
-        for n in range(4):
-            self.vl.photo("A", "p%d.jpg" % n, taken="2024:01:%02d 10:00:00" % (n + 1))
-
-    def refuses(self, **asked):
-        with self.assertRaises(Refused) as caught:
-            library_view.view(self.vl.library, "all", **asked)
-        return str(caught.exception)
-
-    def test_a_token_that_is_not_one_this_server_made_is_refused_in_a_sentence(self):
-        for token in ("garbage!", "e30", "W10", "A" * 5000, "%00", "Wzk5LCJ4IiwxXQ",
-                      library_view.encode(store.Cursor(0, "2024", 1)) + "!"):
-            with self.subTest(token=token[:30]):
-                self.assertIn("not one this server made", self.refuses(after=token))
-
-    def test_forged_tokens_of_the_right_shape_are_refused_when_their_parts_are_wrong(self):
-        import base64
-        import json
-        for found in ([0, 5, 1], [2, "x", 1], [0, "x", -1], [0, "x", 2 ** 70], [1, "x", 1], [0, "x" * 100, 1], [0, "x", 1.5],
-                      [True, "x", 1], [0, None, 1], "nope", {"a": 1}):
-            token = base64.urlsafe_b64encode(json.dumps(found).encode()).decode().rstrip("=")
-            with self.subTest(found=found):
-                self.assertIn("not one this server made", self.refuses(after=token))
-
-    def test_a_forged_token_of_a_good_shape_is_just_a_place_to_start_from(self):
-        token = library_view.encode(store.Cursor(0, "2024:01:02 10:00:00", 0))
-        found = library_view.view(self.vl.library, "all", after=token)
-        self.assertEqual(3, len(found["ids"]))
-
-    def test_a_token_survives_a_round_trip(self):
-        cursor = store.Cursor(0, "2024:01:02 10:00:00+02:00", 41)
-        self.assertEqual(cursor, library_view.decode(library_view.encode(cursor)))
-        self.assertEqual(store.Cursor(1, None, 7), library_view.decode(library_view.encode(store.Cursor(1, None, 7))))
-        self.assertIsNone(library_view.decode(None))
-        self.assertIsNone(library_view.decode(""))
-
-    def test_a_limit_below_one_or_not_a_number_is_refused_and_a_huge_one_is_capped(self):
-        for limit in (0, -5, "0", "-1", "ten", "1.5", [1]):
-            with self.subTest(limit=limit):
-                self.assertIn("limit must be", self.refuses(limit=limit))
-        self.assertEqual(library_view.MAX_LIMIT, library_view.view(self.vl.library, "all", limit=10 ** 9)["limit"])
-        self.assertEqual(library_view.MAX_LIMIT, library_view.view(self.vl.library, "all", limit="99999")["limit"])
-        self.assertEqual(library_view.DEFAULT_LIMIT, library_view.view(self.vl.library, "all")["limit"])
-        self.assertEqual(2, len(library_view.view(self.vl.library, "all", limit="2")["ids"]))
-
+class WhatIsRefused(Library):
     def test_a_kind_that_is_none_is_refused(self):
         with self.assertRaises(Refused):
-            library_view.view(self.vl.library, "everything")
+            library_view.ids(self.vl.library, "everything")
         with self.assertRaises(Refused):
-            library_view.view(self.vl.library, None)
+            library_view.ids(self.vl.library, None)
         for kind in ("folder", "keyword", "person", "year", "month"):
             with self.subTest(kind=kind), self.assertRaises(Refused):
-                library_view.view(self.vl.library, kind, None)
+                library_view.ids(self.vl.library, kind, None)
             with self.subTest(kind=kind, value="blank"), self.assertRaises(Refused):
-                library_view.view(self.vl.library, kind, "  ")
+                library_view.ids(self.vl.library, kind, "  ")
         for kind, value in (("year", "20x4"), ("year", "-5"), ("year", "20245"), ("month", "2024-13"), ("month", "2024-6"),
                             ("month", "2024:06"), ("month", "June")):
             with self.subTest(kind=kind, value=value), self.assertRaises(Refused):
-                library_view.view(self.vl.library, kind, value)
+                library_view.ids(self.vl.library, kind, value)
 
 
 class AFolder(Library):
@@ -304,10 +93,6 @@ class AFolder(Library):
     def test_with_its_subfolders_it_holds_what_is_under_it_and_not_a_folder_that_starts_alike(self):
         self.assertEqual([self.top, self.sub, self.deep], self.ids("folder", self.folder, recursive=True))
 
-    def test_the_total_is_the_whole_folders_and_not_the_pages(self):
-        found = library_view.view(self.vl.library, "folder", self.folder, True, limit=2)
-        self.assertEqual((3, 2), (found["total"], len(found["ids"])))
-
     def test_a_folder_typed_in_another_case_or_spelling_is_the_same_folder(self):
         if os.name != "nt":
             self.skipTest("a filesystem with case")
@@ -317,10 +102,10 @@ class AFolder(Library):
                 self.assertEqual([self.top], self.ids("folder", typed))
                 self.assertEqual(3, len(self.ids("folder", typed, recursive=True)))
 
-    def test_a_folder_with_no_photo_is_an_empty_page_not_an_error(self):
+    def test_a_folder_with_no_photo_is_an_empty_list_not_an_error(self):
         for recursive in (False, True):
-            found = library_view.view(self.vl.library, "folder", os.path.join(self.vl.pictures, "Nothing here"), recursive)
-            self.assertEqual(([], 0, None), (found["ids"], found["total"], found["next"]))
+            found = library_view.ids(self.vl.library, "folder", os.path.join(self.vl.pictures, "Nothing here"), recursive)
+            self.assertEqual(([], 0), (found["ids"], found["total"]))
 
     def test_a_folder_whose_name_holds_a_percent_an_underscore_or_a_quote_is_matched_exactly(self):
         odd = self.vl.photo("100% a_b O'Neil", "x.jpg", taken="2024:02:01 00:00:00")
@@ -329,14 +114,6 @@ class AFolder(Library):
         self.assertEqual([odd], self.ids("folder", folder))
         self.assertEqual([odd], self.ids("folder", folder, True))
         self.assertNotIn(lookalike, self.ids("folder", folder, True))
-
-    def test_a_folder_of_hundreds_pages_through(self):
-        made = [self.vl.photo("Big", "p%03d.jpg" % n, taken="2022:05:%02d 00:%02d:00" % (n % 28 + 1, n % 60))
-                for n in range(250)]
-        ids, sizes, totals = walk(self.vl, "folder", os.path.join(self.vl.pictures, "Big"), False, limit=100)
-        self.assertEqual(([100, 100, 50], {250}), (sizes, totals))
-        self.assertEqual(sorted(made), sorted(ids))
-
 
 class AKeyword(Library):
     def setUp(self):
@@ -358,7 +135,7 @@ class AKeyword(Library):
 
     def test_a_keyword_holds_the_photos_under_it_and_a_photo_with_two_tags_under_it_once(self):
         self.assertEqual([self.harbour, self.cliffs, self.both], self.ids("keyword", "Trips/Coast"))
-        found = library_view.view(self.vl.library, "keyword", "Trips/Coast")
+        found = library_view.ids(self.vl.library, "keyword", "Trips/Coast")
         self.assertEqual(3, found["total"], "counted once too")
 
     def test_the_whole_branch_and_not_a_branch_whose_name_starts_alike(self):
@@ -378,13 +155,13 @@ class AKeyword(Library):
     def test_a_keyword_the_tree_has_no_node_for_holds_nothing_and_is_not_an_error(self):
         for tag in ("Trips/Nowhere", "Nothing", "Trips/Coas", "Trips/%", "Trips/a%b", "'; DROP TABLE photos; --"):
             with self.subTest(tag=tag):
-                found = library_view.view(self.vl.library, "keyword", tag)
+                found = library_view.ids(self.vl.library, "keyword", tag)
                 self.assertEqual(([], 0), (found["ids"], found["total"]))
 
     def test_a_tag_typed_in_other_case_names_the_node_it_is_without_case(self):
         self.assertEqual([self.harbour, self.cliffs, self.both], self.ids("keyword", "trips/coast"))
         self.assertEqual(9, len(self.ids("keyword", "TRIPS")))
-        self.assertEqual(9, library_view.view(self.vl.library, "keyword", "trips")["total"])
+        self.assertEqual(9, library_view.ids(self.vl.library, "keyword", "trips")["total"])
 
     def test_an_exact_match_wins_over_the_node_that_differs_only_in_case(self):
         self.vl.tree("Zed/Alpha", "zed/alpha")
@@ -400,6 +177,7 @@ class AKeyword(Library):
 
     def test_a_node_added_after_a_photo_was_indexed_finds_it(self):
         late = self.vl.photo("A", "late.jpg", taken="2024:02:01 00:00:00", tags=["Trips/Later"])
+        self.vl.forget("Trips/Later")   # read before the index made nodes
         self.assertEqual([], self.ids("keyword", "Trips/Later"))
         self.vl.tree("Trips/Later")
         from tagpup.store import taxonomy
@@ -420,21 +198,21 @@ class APerson(Library):
         self.nobody = self.vl.photo("A", "d.jpg", taken="2024:01:04 00:00:00")
 
     def test_a_person_holds_the_photos_they_are_in(self):
-        self.assertEqual([self.wren_a, self.wren_b], self.ids("person", "Wren Halloway"))
-        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "Rowan Thackeray"))
+        self.assertEqual([self.wren_a, self.wren_b], self.ids("person", "People/Wren Halloway"))
+        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "People/Rowan Thackeray"))
+
+    def test_a_name_that_is_no_persons_path_holds_nothing(self):
+        self.assertEqual([], self.ids("person", "Wren Halloway"))
 
     def test_a_person_nobody_is_called_holds_nothing(self):
-        found = library_view.view(self.vl.library, "person", "Nobody At All")
+        found = library_view.ids(self.vl.library, "person", "Nobody At All")
         self.assertEqual(([], 0), (found["ids"], found["total"]))
 
-    def test_names_that_differ_only_in_case_are_one_person_and_a_photo_is_counted_once(self):
-        face_rows.add_people(self.vl.conn, self.vl.path_of(self.rowan), ["rowan thackeray"], source="face")
-        face_rows.add_people(self.vl.conn, self.vl.path_of(self.wren_a), ["WREN HALLOWAY"], source="face")
-        self.vl.conn.commit()
-        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "Rowan Thackeray"))
-        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "ROWAN THACKERAY"))
-        found = library_view.view(self.vl.library, "person", "wren halloway")
-        self.assertEqual((2, [self.wren_a, self.wren_b]), (found["total"], found["ids"]), "wren_a holds both spellings")
+    def test_a_path_in_any_case_is_one_person_and_a_photo_is_counted_once(self):
+        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "people/rowan thackeray"))
+        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "PEOPLE/ROWAN THACKERAY"))
+        found = library_view.ids(self.vl.library, "person", "People/wren halloway")
+        self.assertEqual((2, [self.wren_a, self.wren_b]), (found["total"], found["ids"]))
 
     def test_a_percent_or_a_quote_in_a_name_is_a_plain_character(self):
         for name in ("Wren %", "Wren _alloway", "Wren' OR '1'='1", "%"):
@@ -465,7 +243,7 @@ class ADate(Library):
         self.assertEqual([self.a], self.ids("month", "2023-12"))
 
     def test_a_month_nobody_was_photographed_in_is_empty(self):
-        found = library_view.view(self.vl.library, "month", "1999-01")
+        found = library_view.ids(self.vl.library, "month", "1999-01")
         self.assertEqual(([], 0), (found["ids"], found["total"]))
 
     def test_a_photo_with_no_year_is_in_no_year_but_is_in_all(self):
@@ -482,9 +260,9 @@ class TheCards(Library):
 
     def test_a_card_is_small_and_names_the_photo_by_id(self):
         card = library_view.cards(self.vl.library, [self.two, self.one])[0]
-        self.assertEqual({"id", "name", "path", "taken", "damaged", "damage", "thumb"}, set(card))
-        self.assertEqual((self.two, "two.jpg", self.vl.path_of(self.two), "2024:01:02 00:00:00", False, None),
-                         (card["id"], card["name"], card["path"], card["taken"], card["damaged"], card["damage"]))
+        self.assertEqual({"id", "name", "path", "taken", "thumb"}, set(card))
+        self.assertEqual((self.two, "two.jpg", self.vl.path_of(self.two), "2024:01:02 00:00:00"),
+                         (card["id"], card["name"], card["path"], card["taken"]))
         self.assertTrue(card["thumb"].startswith("/api/photo-thumb?id=%d&v=" % self.two))
 
     def test_the_cards_are_in_the_order_asked_and_a_deleted_photo_is_left_out(self):
@@ -496,15 +274,6 @@ class TheCards(Library):
         card = library_view.cards(self.vl.library, [self.one])[0]
         mtime = self.vl.rows("SELECT mtime FROM photos WHERE id = ?", self.one)[0][0]
         self.assertEqual("/api/photo-thumb?id=%d&v=%s" % (self.one, repr(float(mtime))), card["thumb"])
-
-    def test_a_damaged_photo_is_flagged_while_its_record_describes_it(self):
-        row = self.vl.rows("SELECT mtime, size FROM photos WHERE id = ?", self.one)[0]
-        damaged_photos.remember(self.vl.library, [(self.vl.path_of(self.one), (row[0], row[1]), "truncated", "x", 0)])
-        card = library_view.cards(self.vl.library, [self.one, self.two])
-        self.assertEqual([(True, "truncated"), (False, None)], [(each["damaged"], each["damage"]) for each in card])
-        self.vl.conn.execute("UPDATE photos SET size = size + 1 WHERE id = ?", (self.one,))
-        self.vl.conn.commit()
-        self.assertFalse(library_view.cards(self.vl.library, [self.one])[0]["damaged"], "the file is not the one found damaged")
 
     def test_500_cards_are_one_batch_and_read_no_blob_or_metadata(self):
         for n in range(60):
@@ -533,29 +302,12 @@ class TheCards(Library):
         self.assertEqual(counted[0], counted[1], "as many reads for 62 photos as for 3")
 
 
-class NotReady(unittest.TestCase):
-    def test_a_library_behind_is_a_sentence_and_nothing_is_migrated(self):
-        home = own_home.for_test(self)
-        from tagpup.core.library import Library as LibraryName
-        for version in (18, 19):
-            with self.subTest(version=version):
-                path = home.library("older%d.db" % version)
-                at_version(path, version)
-                library = LibraryName(path)
-                for call in (lambda: library_view.view(library, "all"), lambda: library_view.navigator(library, "folders"),
-                             lambda: library_view.cards(library, [1])):
-                    with self.assertRaises(library_view.NotReady) as caught:
-                        call()
-                    self.assertIn("has not been brought up to date", str(caught.exception))
-                    self.assertIn("older%d" % version, str(caught.exception))
-                self.assertEqual(version, db.connect(db.readonly_uri(path), uri=True).execute(
-                    "SELECT MAX(version) FROM schema_version").fetchone()[0], "reading it did not migrate it")
-
+class ALibraryThatIsNotThere(unittest.TestCase):
     def test_a_library_that_is_not_there_is_not_found(self):
         from tagpup.core.library import Library as LibraryName
         from tagpup.core.result import NotFound
         with self.assertRaises(NotFound):
-            library_view.view(LibraryName(os.path.join(own_home.for_test(self).data, "nobody.db")), "all")
+            library_view.ids(LibraryName(os.path.join(own_home.for_test(self).data, "nobody.db")), "all")
 
 
 class TheNavigator(Library):
@@ -571,6 +323,7 @@ class TheNavigator(Library):
         photo("2023 B", "4.jpg", taken="2023:01:02 00:00:00", tags=["Activity/Sailing", "Not In The Tree"])
         photo("Misc", "5.jpg")
         photo("2019", "6.jpg")
+        self.vl.forget("Not In The Tree")   # a keyword read before the index made nodes: it has none
 
     def section(self, name):
         return library_view.navigator(self.vl.library, name)
@@ -603,9 +356,8 @@ class TheNavigator(Library):
         self.assertIsNone(found["Trips"]["parent"])
         self.assertEqual("Coast", found["Trips/Coast"]["name"])
 
-    def test_every_keyword_count_equals_the_store_s_count_under_a_tag(self):
+    def test_every_keyword_count_equals_the_photos_its_source_shows(self):
         for each in self.section("keywords")["keywords"]:
-            self.assertEqual(derived.count_under_tag(self.vl.conn, each["tag"]), each["count"], each["tag"])
             self.assertEqual(each["count"], len(self.ids("keyword", each["tag"])), each["tag"])
 
     def test_a_keyword_no_node_has_is_in_no_count(self):
@@ -614,14 +366,6 @@ class TheNavigator(Library):
     def test_the_people_are_counted_by_photos_most_first(self):
         found = self.section("people")["people"]
         self.assertEqual([("Wren Halloway", 2), ("Rowan Thackeray", 1)], [(each["name"], each["count"]) for each in found])
-
-    def test_people_who_differ_only_in_case_are_one_entry_and_a_photo_counts_once(self):
-        photo = self.vl.photo("2024 A", "extra.jpg", taken="2024:08:01 00:00:00")
-        face_rows.add_people(self.vl.conn, self.vl.path_of(photo), ["wren halloway", "WREN HALLOWAY"], source="face")
-        self.vl.conn.commit()
-        found = {each["name"]: each["count"] for each in self.section("people")["people"]}
-        self.assertEqual(3, found["Wren Halloway"])
-        self.assertEqual(2, len(found))
 
     def test_the_dates_are_years_with_their_months_and_what_has_no_month_of_it(self):
         found = self.section("dates")
@@ -633,11 +377,23 @@ class TheNavigator(Library):
         self.assertEqual((1, [], 1), (years[2019]["count"], years[2019]["months"], years[2019]["other"]), "a year from a name")
         self.assertEqual(1, found["undated"])
 
+    def test_a_year_nobody_could_have_taken_it_in_is_marked_for_the_page_to_group(self):
+        # #510: photo_index holds 61 years, 1827 to 2079: a number in a file name, a scan's clock. The server says
+        # which are implausible (before 1900, after next year) and the page only shows what it is told.
+        import datetime
+        this_year = datetime.date.today().year
+        for taken in ("1888:05:01 10:00:00", "1900:01:02 10:00:00", "1919:03:04 10:00:00",
+                      "%04d:06:07 10:00:00" % (this_year + 1), "%04d:06:07 10:00:00" % (this_year + 2)):
+            self.vl.photo("odd years", "%s.jpg" % taken[:4], taken=taken)
+        found = {each["year"]: each["implausible"] for each in self.section("dates")["years"]}
+        self.assertEqual({1888: True, 1900: False, 1919: False, 2019: False, 2023: False, 2024: False,
+                          this_year + 1: False, this_year + 2: True}, found)
+
     def test_each_month_and_year_agrees_with_the_source_it_opens(self):
         for each in self.section("dates")["years"]:
-            self.assertEqual(each["count"], library_view.view(self.vl.library, "year", str(each["year"]))["total"])
+            self.assertEqual(each["count"], library_view.ids(self.vl.library, "year", str(each["year"]))["total"])
             for month in each["months"]:
-                self.assertEqual(month["count"], library_view.view(self.vl.library, "month", month["month"])["total"])
+                self.assertEqual(month["count"], library_view.ids(self.vl.library, "month", month["month"])["total"])
 
     def test_a_date_written_with_dashes_is_in_its_year_and_in_no_month(self):
         photo = self.vl.photo("2025 X", "dashes.jpg", taken="2025-02-03 10:00:00")
@@ -675,24 +431,24 @@ class ARootedLibrary(unittest.TestCase):
 
     def test_views_speak_native_paths_and_open_a_folder_by_the_path_the_owner_knows(self):
         folder = os.path.join(self.side.pictures, rl.FOLDERS[0])
-        found = library_view.view(self.library, "folder", folder, False)
+        found = library_view.ids(self.library, "folder", folder, False)
         self.assertEqual(3, found["total"])
-        for card in found["cards"]:
+        for card in library_view.cards(self.library, found["ids"]):
             self.assertTrue(card["path"].startswith(folder), card["path"])
         listed = {each["path"] for each in library_view.navigator(self.library, "folders")["folders"]}
         self.assertIn(folder, listed)
         self.assertIn(self.side.pictures, listed)
-        self.assertEqual(3, len(library_view.view(self.library, "folder", self.side.pictures, True, limit=500)["ids"]) // 3)
+        self.assertEqual(3, len(library_view.ids(self.library, "folder", self.side.pictures, True)["ids"]) // 3)
 
     def test_a_photo_outside_every_root_is_in_all_and_in_its_folder(self):
-        outside = library_view.view(self.library, "folder", self.side.outside_folder, True)
+        outside = library_view.ids(self.library, "folder", self.side.outside_folder, True)
         self.assertEqual(2, outside["total"])
-        self.assertTrue(all(card["path"].startswith(self.side.outside_folder) for card in outside["cards"]))
+        self.assertTrue(all(card["path"].startswith(self.side.outside_folder)
+                            for card in library_view.cards(self.library, outside["ids"])))
 
     def test_a_root_this_machine_does_not_place_is_the_roots_sentence_and_never_an_empty_library(self):
         os.remove(config.machine_roots_path())
-        for call in (lambda: library_view.view(self.library, "all"), lambda: library_view.navigator(self.library, "folders"),
-                     lambda: library_view.cards(self.library, [1])):
+        for call in (lambda: library_view.navigator(self.library, "folders"), lambda: library_view.cards(self.library, [1])):
             with self.assertRaises(paths.RootsError) as caught:
                 call()
             self.assertIn("machine_roots.json", str(caught.exception))
@@ -703,21 +459,9 @@ class ARootedLibrary(unittest.TestCase):
         shutil.copytree(self.side.pictures, copy, copy_function=shutil.copy2)
         old = os.path.join(self.side.pictures, rl.FOLDERS[0])
         config.set_location(rl.NAME, copy)
-        found = library_view.view(self.library, "folder", old, False)
+        found = library_view.ids(self.library, "folder", old, False)
         self.assertEqual(3, found["total"])
-        self.assertTrue(found["cards"][0]["path"].startswith(copy), "paths are the first place's now")
-
-
-class TheSchemaOfThePlans(unittest.TestCase):
-    def test_ready_needs_the_tables_and_the_indexes(self):
-        home = own_home.for_test(self)
-        path = home.library("harbour.db")
-        schema.ensure(path)
-        conn = db.connect(path)
-        self.addCleanup(conn.close)
-        self.assertTrue(store.ready(conn))
-        conn.execute("DROP INDEX idx_photos_year")
-        self.assertFalse(store.ready(conn))
+        self.assertTrue(library_view.cards(self.library, found["ids"])[0]["path"].startswith(copy), "paths are the first place's now")
 
 
 if __name__ == "__main__":

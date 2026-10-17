@@ -15,7 +15,7 @@ faces deliberately excluded. The newer one is a bare re-detection. So the rule i
 whichever row knows something, and a group whose copies disagree about a name is left
 alone for a person to look at rather than resolved by guesswork.
 
-scripts/dedupe_faces.py and the MCP server's tool both call `dedupe_faces`, on the
+The MCP server's tool calls `dedupe_faces`, on the
 maintenance scaffold (tagpup.services.maintenance).
 """
 import collections
@@ -66,15 +66,17 @@ def find_duplicates(conn):
         photo_path = copies[0][1]
         face_ids = sorted(r[0] for r in copies)
 
-        names = {r[3] for r in copies if r[3]}
-        if len(names) > 1:
-            # Two names for one face is a disagreement, not a duplicate.
-            disputed.append((photo_path, sorted(names), face_ids))
+        # Told apart by the node's id: two people called alike are two.
+        people = {r[3].id: r[3].name for r in copies if r[3]}
+        names = sorted(people.values())
+        if len(people) > 1:
+            # Two people for one face is a disagreement, not a duplicate.
+            disputed.append((photo_path, names, face_ids))
             continue
-        if names and any(r[5] for r in copies):
+        if people and any(r[5] for r in copies):
             # So is a name beside an exclusion. Keeping either throws the other
             # away, and the exclusion used to be the one that went.
-            disputed.append((photo_path, sorted(names) + ["(excluded)"], face_ids))
+            disputed.append((photo_path, names + ["(excluded)"], face_ids))
             continue
 
         # Best-curated first; oldest id breaks a tie, since it is the one every other
@@ -122,8 +124,10 @@ def _edits(planned):
     """Each copy, by id, while it still carries what the plan saw: the app may name or
     exclude one between the plan and the write, and then the change is refused. Its crop
     goes with it, recorded (tagpup.store.journal.CASCADES)."""
-    return [journal.delete("faces", (face_id,), {"name": name, "name_source": source, "excluded": excluded})
-            for face_id, name, source, excluded in planned.work]
+    return [journal.delete("faces", (face_id,), {"name": person.name if person else None,
+                                                 "tag_id": person.id if person else None,
+                                                 "name_source": source, "excluded": excluded})
+            for face_id, person, source, excluded in planned.work]
 
 
 def _remaining(library):

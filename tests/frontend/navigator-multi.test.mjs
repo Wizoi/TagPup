@@ -8,7 +8,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { closeAllApps, click } from "./harness.mjs";
-import { loadViewPage, pageErrors, syntheticDates } from "./view-page.mjs";
+import { loadViewPage, pageErrors, personRow, syntheticDates } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -83,7 +83,7 @@ describe("several rows at once", () => {
     click(ctx.window, first, { ctrlKey: true });
     await ctx.settle();
     assert.equal(asked(ctx).kind, "person", "a union of one is that person");
-    assert.equal(asked(ctx).value, second.querySelector(".nav-label").textContent);
+    assert.equal(asked(ctx).value, "People/" + second.querySelector(".nav-label").textContent, "a person is asked for by their tag");
     const requests = ctx.idsAsked.length;
     click(ctx.window, second, { ctrlKey: true });
     await ctx.settle();
@@ -267,9 +267,9 @@ describe("the People under their branches", () => {
     { tag: "Friends", name: "Friends", parent: null, count: 9 },
   ];
   const people = [
-    { name: "Rowan Thackeray", count: 12, group: "Family/Immediate" }, { name: "Wren Halloway", count: 10, group: "Family/Immediate" },
-    { name: "Hazel Brookmire", count: 15, group: "Family/Cousins" }, { name: "Orla Pemberley", count: 9, group: "Friends" },
-    { name: "Ash Gantry", count: 3, group: null },
+    personRow(1, "Rowan Thackeray", 12, "Family/Immediate"), personRow(2, "Wren Halloway", 10, "Family/Immediate"),
+    personRow(3, "Hazel Brookmire", 15, "Family/Cousins"), personRow(4, "Orla Pemberley", 9, "Friends"),
+    personRow(5, "Ash Gantry", 3, null),
   ];
   const navigator = { people: { people, groups, unfiled: 3 } };
 
@@ -290,20 +290,55 @@ describe("the People under their branches", () => {
     await ctx.settle();
     const source = asked(ctx);
     assert.equal(source.kind, "any_of");
-    assert.deepEqual(source.value.map((m) => m.value).sort(), ["Hazel Brookmire", "Rowan Thackeray", "Wren Halloway"]);
+    assert.deepEqual(source.value.map((m) => m.value).sort(), ["Family/Cousins/Hazel Brookmire", "Family/Immediate/Rowan Thackeray", "Family/Immediate/Wren Halloway"]);
     assert.equal(ctx.selectedRows("people").length, 6, "the branch, its two branches and its three people");
     click(ctx.window, ctx.rowByLabel("people", "Wren Halloway"), { ctrlKey: true });
     await ctx.settle();
-    assert.deepEqual(asked(ctx).value.map((m) => m.value).sort(), ["Hazel Brookmire", "Rowan Thackeray"]);
+    assert.deepEqual(asked(ctx).value.map((m) => m.value).sort(), ["Family/Cousins/Hazel Brookmire", "Family/Immediate/Rowan Thackeray"]);
   });
 
   test("a person opened from the address is found under their branch, and the filter finds people with their place", async (t) => {
-    const ctx = await loadViewPage(t, { search: "?view=person&value=orla%20pemberley", navigator });
+    const ctx = await loadViewPage(t, { search: "?view=person&value=friends%2Forla%20pemberley", navigator });
     assert.equal(ctx.state.nav.tab, "people");
     // Orla is the only person of Friends: the branch, holding nothing of its own, is all selected too.
     assert.deepEqual(ctx.selectedRows("people").map((row) => row.querySelector(".nav-label").textContent), ["Friends", "Orla Pemberley"]);
     await filter(ctx, "people", "rowan");
     assert.deepEqual(ctx.rows("people").map((row) => row.querySelector(".nav-hint").textContent), ["Family/Immediate"]);
+  });
+});
+
+describe("two people called alike", () => {
+  // The route's rows as the server answers them (tests/test_selection_scenarios.py): each person keyed by their id,
+  // a name two people have marked `shared` with the tag that tells them apart.
+  const groups = [
+    { tag: "Family", name: "Family", parent: null, count: 5 },
+    { tag: "Family/Ingersoll", name: "Ingersoll", parent: "Family", count: 2 },
+    { tag: "Family/Thackeray", name: "Thackeray", parent: "Family", count: 3 },
+  ];
+  const sam = (id, group, count) => ({
+    name: "Sam", count, group: `Family/${group}`, person_id: id,
+    person: { id, name: "Sam", tag: `Family/${group}/Sam` },
+  });
+  const navigator = { people: { people: [sam(12, "Ingersoll", 2), sam(10, "Thackeray", 3)], groups, unfiled: 0 } };
+
+  test("each is a row of their own, and a click opens exactly that person's photos, by their tag", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator });
+    await ctx.openTab("people");
+    const rows = ctx.rows("people").filter((row) => row.querySelector(".nav-label").textContent === "Sam");
+    assert.equal(rows.length, 2, "not one row for the two");
+    assert.equal(new Set(rows.map((row) => row.dataset.row)).size, 2, "two ids");
+    click(ctx.window, rows[1]);
+    await ctx.settle();
+    assert.deepEqual([asked(ctx).kind, asked(ctx).value], ["person", "Family/Thackeray/Sam"]);
+    assert.equal(ctx.selectedRows("people").filter((row) => row.querySelector(".nav-label").textContent === "Sam").length, 1,
+      "only that Sam is shown selected");
+  });
+
+  test("an address that names one of them by tag opens the navigator on that person", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=person&value=Family%2FIngersoll%2FSam", navigator });
+    assert.equal(ctx.state.nav.tab, "people");
+    const selected = ctx.selectedRows("people").map((row) => row.querySelector(".nav-count").textContent);
+    assert.ok(selected.includes("2") && !selected.includes("3"), "the Ingersoll Sam, not the Thackeray one: " + selected);
   });
 });
 

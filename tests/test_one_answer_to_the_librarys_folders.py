@@ -67,7 +67,7 @@ class AnAddedFolder(unittest.TestCase):
         self.queued = []
 
         def index_folder(library, subfolders=True):
-            def index(folder, cluster, report):
+            def index(folder, report):
                 self.queued.extend([folder] if isinstance(folder, str) else list(folder))
                 return Result(attempted=1, changed=1)
             return index
@@ -109,6 +109,20 @@ class AnAddedFolder(unittest.TestCase):
         self.assertIn(paths.key(self.trip), listed)
         self.assertEqual(0, listed[paths.key(self.trip)]["own_photos"])
 
+    def test_remove_folders_list_reads_the_folders_not_every_photo(self):
+        """#501: the library's folders were counted from every photo's path (0.6 s on the 59,519-photo library); the
+        derived folders answer it in one statement, the same in the three libraries (counted 2026-10-15)."""
+        said, real = [], db.connect
+
+        def traced(*args, **kwargs):
+            conn = real(*args, **kwargs)
+            conn.set_trace_callback(said.append)
+            return conn
+        with mock.patch.object(db, "connect", traced):
+            listed = {paths.key(entry["path"]): entry["own_photos"] for entry in photo_actions.indexed_folders(self.library)}
+        self.assertEqual(1, listed[paths.key(self.regatta)])
+        self.assertEqual([], [sql for sql in said if "SELECT path FROM photos" in sql], "every photo's path was read")
+
     def test_an_ignored_folder_under_it_is_not_the_librarys(self):
         self.assertEqual([self.scans], library_actions.not_held(self.library, [self.scanned], leave_out_ignored=False))
         with self.assertRaises(NotHeld):
@@ -140,7 +154,7 @@ class RemovingAFolderCoveredByAnAdd(unittest.TestCase):
         self.assertEqual((1, True), (reply.get_json()["photos_removed"], reply.get_json()["ignored"]))
         self.assertIn(paths.stored(self.scans), settings_service.of(self.library).ignored)
         self.assertEqual([self.scans], library_actions.not_held(self.library, [self.photo], leave_out_ignored=False))
-        self.assertIsNotNone(library_actions.not_in(self.library, self.scans), "Suggest would start there")
+        self.assertIsNotNone(library_actions.suggest_how(self.library, self.scans)[0], "Suggest would start there")
         with self.assertRaises(NotHeld):
             db.write_with_connection(self.library.path, lambda conn: store_photos.ensure_row(conn, self.photo))
         # The rest of Pictures stays the library's.

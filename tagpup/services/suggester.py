@@ -1,5 +1,6 @@
-"""Suggesting tags for a photo: TagSuggester, and what a folder's run calls
-(SuggestionModel, model_for_run).
+"""Suggesting tags for a photo: TagSuggester, what a folder's run calls (SuggestionModel,
+model_for_run), and what Suggest offered each photo as the runs (tagpup.jobs.suggestions) read
+and keep it: in the library, by the photo's id (saved_in, keep, offer; tagpup.store.suggestions).
 
 The rules it applies -- the value a tag is offered from, the words CLIP is asked about,
 the sentence each is put in, how alike a face must be -- are tagpup.core.suggesting's
@@ -21,8 +22,10 @@ import numpy as np
 from tagpup.core import clustering, dates, paths, suggesting, vocabulary
 from tagpup.services import faces as face_records
 from tagpup.services import search
+from tagpup.store import db, person_ids
 from tagpup.store import faces as store_faces
 from tagpup.store import faces_detected as store_faces_detected
+from tagpup.store import suggestions as store_suggestions
 from tagpup.store.taxonomy import TagTaxonomy
 
 logger = logging.getLogger("tagpup_cli.suggester")
@@ -73,6 +76,32 @@ def forget_looking_text_embeddings(db_path):
         _looking_text.pop(paths.key(str(db_path)), None)
 
 
+def saved_in(db_path, folder):
+    """{photo as stored: entry} of what the library holds for the photos directly in
+    `folder`; nothing for a library that is not there."""
+    if not os.path.exists(db_path):
+        return {}
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return store_suggestions.in_folder(conn, folder)
+    finally:
+        conn.close()
+
+
+def keep(db_path, photo, found, model_key=None):
+    """Keep `found` as what was suggested for `photo`, through the write lock."""
+    db.write_with_connection(db_path, lambda conn: store_suggestions.put(conn, photo, found, model_key),
+                             label="suggestions for %s" % os.path.basename(photo))
+
+
+def offer(db_path, offered, label="folder consensus"):
+    """Change what is offered for each photo in `offered`, [(photo, (tags, people,
+    title))], leaving what the suggester made as it was. Returns rows changed."""
+    return db.write_with_connection(
+        db_path, lambda conn: sum(store_suggestions.offer(conn, photo, tags, people, title)
+                                  for photo, (tags, people, title) in offered), label=label)
+
+
 def extract_path_hints(file_path: str) -> List[str]:
     """Extract folder names from the file's path as hints."""
     abs_path = os.path.abspath(file_path)
@@ -100,6 +129,20 @@ def extract_path_hints(file_path: str) -> List[str]:
     hints = parts[-3:] if len(parts) >= 3 else parts
     return hints
 
+def _ends_with(tag, tail):
+    """Is `tail` the last whole segments of `tag`, without case: "Family/Wren Okafor" ends with "Wren Okafor" and with
+    itself, never with "Okafor" alone cut mid-segment."""
+    have = [vocabulary.key(each) for each in vocabulary.segments(tag)]
+    want = [vocabulary.key(each) for each in vocabulary.segments(tail)]
+    return bool(want) and have[-len(want):] == want
+
+
+def _is_above(branch, tag):
+    """Is `branch` a path above `tag` (not the tag itself), without case: "Coast" is above "Coast/Pier"."""
+    wanted = vocabulary.keyword_key(vocabulary.normalize(branch))
+    return any(vocabulary.keyword_key(each) == wanted for each in vocabulary.lineage(tag)[:-1])
+
+
 class TagSuggester:
     """What to suggest for a photo of one library: from its nearest neighbours' tags, the
     people its faces look like, and what CLIP says it shows.
@@ -107,13 +150,13 @@ class TagSuggester:
     Given everything it uses. `index` is the library's (tagpup.services.search.PhotoIndex):
     its neighbours, its connection and its tag embeddings. `embedder` is the CLIP model
     (tagpup.ml.clip.ClipModel) the candidate words are embedded with, and `faces` the face
-    model (tagpup.ml.faces.FaceModel) a photo with no faces on file is detected with --
-    none, and such a photo is not detected. The face model was a module-level one the
+    model (tagpup.ml.faces.FaceModel) a photo with no faces on file is detected with: both
+    always, as a run is given them (model_for_run). The face model was a module-level one the
     suggester made for itself.
     """
 
-    def __init__(self, index, taxonomy, embedder=None, candidate_tags: List[str] = None, faces=None,
-                 remember=True, text_cache=None):
+    def __init__(self, index, taxonomy, *, embedder, faces, candidate_tags: List[str] = None,
+                 remember=True, text_cache=None, detect_max_side=None):
         self.index = index
         #: Where a prompt's embedding is kept when `remember` is False (TextEmbeddingCache).
         self.text_cache = text_cache
@@ -124,6 +167,8 @@ class TagSuggester:
         self.taxonomy = taxonomy
         self.embedder = embedder
         self.faces = faces
+        #: The cap on the picture `faces` detects in (LibrarySettings.detect_max_side; None, the default, is none).
+        self.detect_max_side = detect_max_side
 
         user_candidates = candidate_tags or []
         # Exclude face-matched folders/people names from candidate tags
@@ -135,8 +180,8 @@ class TagSuggester:
         combined = []
         for c in (user_candidates + people_candidates):
             c_clean = c.strip()
-            if c_clean and c_clean.lower() not in seen:
-                seen.add(c_clean.lower())
+            if c_clean and vocabulary.keyword_key(c_clean) not in seen:
+                seen.add(vocabulary.keyword_key(c_clean))
                 combined.append(c_clean)
 
         self.candidate_tags = combined
@@ -146,7 +191,9 @@ class TagSuggester:
         self._people_lock = threading.Lock()
 
     def _known_people(self):
-        """(lower-cased names of everyone known, their named faces as KnownFaces).
+        """(lower-cased names of everyone known, their named faces as KnownFaces -- keyed by person, with their `labels`; and
+        {the id of each person the tree files: their tag}, which says exactly who a face resembles even when two people share a
+        name).
 
         Loaded once per suggester -- one folder run -- rather than per photo. Both
         halves used to come from reading the whole faces table, twice a photo.
@@ -157,16 +204,22 @@ class TagSuggester:
                 face_roots = self.taxonomy.people_roots()   # the tree's (docs/findings.md, #66)
                 for path in self.taxonomy.paths:
                     parts = vocabulary.segments(path)
-                    if len(parts) >= 2 and parts[0].lower() in face_roots:
-                        names.add(parts[-1].lower())
-                known = clustering.KnownFaces()
-                try:
-                    known = face_records.known_faces(self.index.db_path)
-                except Exception as db_err:
-                    logger.warning(f"Failed to load known faces from database: {db_err}")
-                names.update(name.lower() for name in known.names())
-                self._people = (names, known)
+                    if len(parts) >= 2 and vocabulary.key(parts[0]) in face_roots:
+                        names.add(vocabulary.key(parts[-1]))
+                # Read when the run begins (model_for_run): a read that fails fails the run, never "nobody is known".
+                known = face_records.known_faces(self.index.db_path)
+                tags_by_id = self._tags_by_id()
+                names.update(vocabulary.key(person.name) for person in known.labels.values())
+                self._people = (names, known, tags_by_id)
             return self._people
+
+    def _tags_by_id(self):
+        """{id: tag} of everyone the tree files as a person, read-only."""
+        conn = db.connect(db.readonly_uri(self.index.db_path), uri=True)
+        try:
+            return {record["id"]: record["tag"] for record in person_ids.Directory.read(conn).records()}
+        finally:
+            conn.close()
 
     def knows_named_faces(self):
         """Does the library hold a named face to compare a photo's faces with?"""
@@ -174,19 +227,15 @@ class TagSuggester:
 
     def _precompute_candidates(self):
         """Precompute embeddings for candidate tags using a template."""
-        if not self.embedder or not self.candidate_tags or self.candidate_embeddings:
+        if not self.candidate_tags or self.candidate_embeddings:
             return
 
-        model_name = getattr(self.embedder, "model_name", "unknown")
-        pretrained = getattr(self.embedder, "pretrained", "unknown")
+        model_name, pretrained = self.embedder.model_name, self.embedder.pretrained
 
         needed_tags = []
         for tag in self.candidate_tags:
             prompt = suggesting.clip_prompt(tag)
-            cached_emb = None
-            if self.index and hasattr(self.index, "get_tag_embedding"):
-                cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
-
+            cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
             if cached_emb is None and self.text_cache is not None:
                 cached_emb = self.text_cache.get((prompt, model_name, pretrained))
 
@@ -198,15 +247,12 @@ class TagSuggester:
         if needed_tags:
             logger.info(f"Precomputing embeddings for {len(needed_tags)} candidate tags...")
             for tag, prompt in needed_tags:
-                try:
-                    emb = self.embedder.embed_text(prompt)
-                    self.candidate_embeddings[tag] = emb
-                    if self.text_cache is not None:
-                        self.text_cache.put((prompt, model_name, pretrained), emb)
-                    if self.remember and self.index and hasattr(self.index, "save_tag_embedding"):
-                        self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
-                except Exception as e:
-                    logger.warning(f"Failed to embed candidate tag '{tag}': {e}")
+                emb = self.embedder.embed_text(prompt)
+                self.candidate_embeddings[tag] = emb
+                if self.text_cache is not None:
+                    self.text_cache.put((prompt, model_name, pretrained), emb)
+                if self.remember:
+                    self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
 
     def _get_candidate_embeddings_for_year(self, year: Optional[int]) -> Dict[str, List[float]]:
         """Get standard or year-specific candidate embeddings."""
@@ -218,8 +264,7 @@ class TagSuggester:
         if year in self.year_candidate_embeddings:
             return self.year_candidate_embeddings[year]
 
-        model_name = getattr(self.embedder, "model_name", "unknown")
-        pretrained = getattr(self.embedder, "pretrained", "unknown")
+        model_name, pretrained = self.embedder.model_name, self.embedder.pretrained
 
         year_embeddings = {}
         needed_tags = []
@@ -230,17 +275,15 @@ class TagSuggester:
             is_person = False
             for path in self.taxonomy.paths:
                 parts = vocabulary.segments(path)
-                if len(parts) >= 2 and parts[0].lower() in face_roots:
-                    if parts[-1].lower() == tag.lower() or path.lower() == tag.lower():
+                if len(parts) >= 2 and vocabulary.key(parts[0]) in face_roots:
+                    if (vocabulary.key(parts[-1]) == vocabulary.key(tag)
+                            or vocabulary.keyword_key(path) == vocabulary.keyword_key(tag)):
                         is_person = True
                         break
 
             prompt = suggesting.clip_prompt(tag, year, person=is_person)
 
-            cached_emb = None
-            if self.index and hasattr(self.index, "get_tag_embedding"):
-                cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
-
+            cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
             if cached_emb is None and self.text_cache is not None:
                 cached_emb = self.text_cache.get((prompt, model_name, pretrained))
 
@@ -252,17 +295,12 @@ class TagSuggester:
         if needed_tags:
             logger.info(f"Computing era-aware candidate embeddings for year {year} ({len(needed_tags)} tags needed)...")
             for tag, prompt in needed_tags:
-                try:
-                    emb = self.embedder.embed_text(prompt)
-                    year_embeddings[tag] = emb
-                    if self.text_cache is not None:
-                        self.text_cache.put((prompt, model_name, pretrained), emb)
-                    if self.remember and self.index and hasattr(self.index, "save_tag_embedding"):
-                        self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
-                except Exception as e:
-                    logger.warning(f"Failed to embed era-aware candidate tag '{tag}' for year {year}: {e}")
-                    if tag in self.candidate_embeddings:
-                        year_embeddings[tag] = self.candidate_embeddings[tag]
+                emb = self.embedder.embed_text(prompt)
+                year_embeddings[tag] = emb
+                if self.text_cache is not None:
+                    self.text_cache.put((prompt, model_name, pretrained), emb)
+                if self.remember:
+                    self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
 
         self.year_candidate_embeddings[year] = year_embeddings
         return year_embeddings
@@ -276,7 +314,7 @@ class TagSuggester:
         target_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags."""
-        known_people, known_faces = self._known_people()
+        known_people, known_faces, tags_by_id = self._known_people()
 
         # 1. Search index for neighbors
         neighbors = self.index.search(embedding, k=k)
@@ -318,16 +356,16 @@ class TagSuggester:
             expanded_tags = set()
             for tag in raw_tags:
                 tag_parts = vocabulary.segments(tag)
-                if tag_parts and tag_parts[0].lower() in face_roots:
+                if tag_parts and vocabulary.key(tag_parts[0]) in face_roots:
                     continue
-                if tag_parts and tag_parts[-1].lower() in known_people:
+                if tag_parts and vocabulary.key(tag_parts[-1]) in known_people:
                     continue
                 expanded = self.taxonomy.expand_tag(tag)
                 for t in expanded:
                     t_parts = vocabulary.segments(t)
-                    if t_parts and t_parts[0].lower() in face_roots:
+                    if t_parts and vocabulary.key(t_parts[0]) in face_roots:
                         continue
-                    if t_parts and t_parts[-1].lower() in known_people:
+                    if t_parts and vocabulary.key(t_parts[-1]) in known_people:
                         continue
                     expanded_tags.add(t)
 
@@ -363,7 +401,7 @@ class TagSuggester:
                 # Check for folder path hints boost
                 # We boost if the tag or any component of the tag matches a path hint
                 boost = 0.0
-                tag_parts = [p.lower() for p in vocabulary.segments(tag)]
+                tag_parts = [vocabulary.key(p) for p in vocabulary.segments(tag)]
 
                 for hint in path_hints_lower:
                     # Match exact folder name or check if folder name matches part of the tag
@@ -379,116 +417,108 @@ class TagSuggester:
                     "source_count": count
                 })
 
-        # 4b. Face recognition suggestions
-        try:
-            def on_file():
-                """(whether the photo has faces on file, those to compare)."""
-                detected, has_rows = [], False
-                if self.index and self.index.conn:
-                    try:
-                        for row in store_faces.in_photo(self.index.conn, photo_path):
-                            box_json, emb_bytes, prob, excluded, name, name_source = row
-                            has_rows = True
-                            # A face someone excluded, or decided is nobody, is not to be
-                            # named again by resemblance. It still counts as a face on
-                            # file, so the photo is not sent through detection again.
-                            if excluded or (name is None and name_source == "manual"):
-                                continue
-                            box = json.loads(box_json)
-                            emb = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
-                            detected.append({
-                                "box": box,
-                                "embedding": emb,
-                                "prob": prob
-                            })
-                        # Detected before and none found: as good as faces on file (#773).
-                        if not has_rows and self.faces is not None:
-                            has_rows = store_faces_detected.detected(
-                                self.index.conn, photo_path, face_records.detector_of(self.faces))
-                    except Exception as db_err:
-                        logger.warning(f"Failed to query database faces: {db_err}")
-                return has_rows, detected
+        # 4b. Face recognition suggestions. A read or a write of the library that fails here fails the photo,
+        # which the run marks unread and tries again (tagpup.jobs.suggestions): never 'no face'.
+        def on_file():
+            """(whether the photo has faces on file, those to compare)."""
+            detected, has_rows = [], False
+            if self.index.conn:
+                for row in store_faces.in_photo(self.index.conn, photo_path):
+                    box_json, emb_bytes, prob, excluded, name, name_source = row
+                    has_rows = True
+                    # A face someone excluded, or decided is nobody, is not to be
+                    # named again by resemblance. It still counts as a face on
+                    # file, so the photo is not sent through detection again.
+                    if excluded or (name is None and name_source == "manual"):
+                        continue
+                    box = json.loads(box_json)
+                    emb = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
+                    detected.append({
+                        "box": box,
+                        "embedding": emb,
+                        "prob": prob
+                    })
+                # Detected before and none found: as good as faces on file (#773).
+                if not has_rows:
+                    has_rows = store_faces_detected.detected(
+                        self.index.conn, photo_path, face_records.detector_of(self.faces, self.detect_max_side))
+            return has_rows, detected
 
-            # Check database cache first
+        # Check database cache first
+        has_face_rows, detected_faces = on_file()
+
+        # A face model that waits for its turn on the graphics card (a Suggest run's,
+        # tagpup.runtime) is waited for first, and the library asked again: the turn
+        # may have been the index's, recording this photo's faces (#750).
+        if not has_face_rows:
+            self.faces.ready()
             has_face_rows, detected_faces = on_file()
 
-            # A face model that waits for its turn on the graphics card (a Suggest run's,
-            # tagpup.runtime) is waited for first, and the library asked again: the turn
-            # may have been the index's, recording this photo's faces (#750).
-            ready = getattr(self.faces, "ready", None)
-            if not has_face_rows and callable(ready):
-                ready()
-                has_face_rows, detected_faces = on_file()
+        # If not in database, detect and embed on-the-fly
+        if not has_face_rows:
+            detected_faces = self.faces.detect_and_embed_faces(photo_path, max_side=self.detect_max_side)
 
-            # If not in database, detect and embed on-the-fly
-            if not has_face_rows and self.faces is not None:
-                detected_faces = self.faces.detect_and_embed_faces(photo_path)
+            # Keep what we just computed. Detection and embedding are the expensive
+            # part of this whole pipeline, and they were previously discarded when the
+            # request ended -- so a photo could be suggested for repeatedly and never
+            # contribute a single face to the database. Recording them means ordinary
+            # tagging feeds TagTuner's identify queue, and a folder added but not yet
+            # indexed still accumulates face data. Strictly additive: photos that already have face
+            # rows are left untouched, so manual names and exclusions are safe.
+            if self.remember:
+                saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces,
+                                                     detector=face_records.detector_of(self.faces, self.detect_max_side))
+                if saved:
+                    logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
 
-                # Keep what we just computed. Detection and embedding are the expensive
-                # part of this whole pipeline, and they were previously discarded when the
-                # request ended -- so a photo could be suggested for repeatedly and never
-                # contribute a single face to the database. Recording them means ordinary
-                # tagging feeds TagTuner's identify queue, and a folder added but not yet
-                # indexed still accumulates face data. Strictly additive: photos that already have face
-                # rows are left untouched, so manual names and exclusions are safe.
-                # Found none, detection still ran: a photo marked as having faces still to
-                # detect (store.faces_pending) is marked no longer.
-                if self.index is not None and self.remember:
-                    try:
-                        saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces,
-                                                             detector=face_records.detector_of(self.faces))
-                        if saved:
-                            logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
-                    except Exception as save_err:
-                        logger.warning(f"Could not record detected faces: {save_err}")
+        if detected_faces:
+            # Tiny faces in the background are noise: no name is offered for them
+            # (tagpup.core.clustering).
+            background = clustering.background_faces([f.get("box") for f in detected_faces])
+            valid_detected_faces = [f for i, f in enumerate(detected_faces) if i not in background]
 
-            if detected_faces:
-                # Tiny faces in the background are noise: no name is offered for them
-                # (tagpup.core.clustering).
-                background = clustering.background_faces([f.get("box") for f in detected_faces])
-                valid_detected_faces = [f for i, f in enumerate(detected_faces) if i not in background]
+            if valid_detected_faces:
+                if known_faces.names():
+                    for face in valid_detected_faces:
+                        # The person the face is most like, by their closest face of the
+                        # years around the photo, never one of its own; offered from the
+                        # value every screen offers a name from, scored by that likeness
+                        # (tagpup.core.clustering). It was a mean face with no years, a
+                        # distance cut of 0.90, and a score made up between 0.5 and 1.
+                        best_key, likeness = known_faces.most_like(face["embedding"], target_year, photo_path)
+                        if best_key and clustering.is_offered(likeness):
+                            label = known_faces.labels.get(best_key)
+                            best_name = label.name if label else str(best_key)
+                            score = round(likeness, 2)
 
-                if valid_detected_faces:
-                    if known_faces.names():
-                        for face in valid_detected_faces:
-                            # The person the face is most like, by their closest face of the
-                            # years around the photo, never one of its own; offered from the
-                            # value every screen offers a name from, scored by that likeness
-                            # (tagpup.core.clustering). It was a mean face with no years, a
-                            # distance cut of 0.90, and a score made up between 0.5 and 1.
-                            best_name, likeness = known_faces.most_like(face["embedding"], target_year, photo_path)
-                            if best_name and clustering.is_offered(likeness):
-                                score = round(likeness, 2)
+                            # Resolve leaf name to full taxonomy path if possible.
+                            # This looked under a hardcoded "family"/"friends"/
+                            # "pets" only, so anyone filed under People came back
+                            # as a bare leaf and was suggested -- and written --
+                            # in the one form the keywords must not hold.
+                            # A name filed twice is not resolved to either
+                            # path, and not offered at all: a guess names the
+                            # wrong person (docs/findings.md, #27).
+                            # A person is the tag of their node: another person called alike is another tag. A face
+                            # whose person the tree no longer files (or never did: a name from before ids) suggests nobody.
+                            resolved_path = tags_by_id.get(best_key)
+                            if resolved_path is None:
+                                continue
 
-                                # Resolve leaf name to full taxonomy path if possible.
-                                # This looked under a hardcoded "family"/"friends"/
-                                # "pets" only, so anyone filed under People came back
-                                # as a bare leaf and was suggested -- and written --
-                                # in the one form the keywords must not hold.
-                                # A name filed twice is not resolved to either
-                                # path, and not offered at all: a guess names the
-                                # wrong person (docs/findings.md, #27).
-                                filed = self.taxonomy.person_paths(best_name)
-                                if len(filed) > 1:
-                                    continue
-                                resolved_path = filed[0] if filed else best_name
-
-                                # Boost or insert tag
-                                found = False
-                                for t in suggested_tags:
-                                    if t["tag"].lower() == resolved_path.lower() or t["tag"].lower().endswith("/" + resolved_path.lower()):
-                                        t["score"] = max(t["score"], score)
-                                        found = True
-                                        break
-                                if not found:
-                                    suggested_tags.append({
-                                        "tag": resolved_path,
-                                        "score": score,
-                                        "source_count": 1,
-                                        "has_face_match": True
-                                    })
-        except Exception as e:
-            logger.warning(f"Failed to perform face matching suggestions for {photo_path}: {e}")
+                            # Boost or insert tag
+                            found = False
+                            for t in suggested_tags:
+                                if _ends_with(t["tag"], resolved_path):
+                                    t["score"] = max(t["score"], score)
+                                    found = True
+                                    break
+                            if not found:
+                                suggested_tags.append({
+                                    "tag": resolved_path,
+                                    "score": score,
+                                    "source_count": 1,
+                                    "has_face_match": True
+                                })
 
         # 5. Zero-shot candidate suggestions (new potential tags)
         active_candidates = self._get_candidate_embeddings_for_year(target_year)
@@ -500,12 +530,11 @@ class TagSuggester:
 
             for tag, tag_emb in active_candidates.items():
                 # Skip if this tag is a person tag (to defer entirely to face matching)
-                if tag.lower() in known_people:
+                if vocabulary.key(tag) in known_people:
                     continue
 
                 # Skip if this tag is already suggested by neighbors
-                tag_lower = tag.lower()
-                if any(t["tag"].lower() == tag_lower or t["tag"].lower().endswith("/" + tag_lower) for t in suggested_tags):
+                if any(_ends_with(t["tag"], tag) for t in suggested_tags):
                     continue
 
                 tag_np = np.array(tag_emb, dtype=np.float32)
@@ -542,12 +571,12 @@ class TagSuggester:
             for active_item in pruned_tags:
                 active_tag = active_item["tag"]
                 # Check if active_tag is a descendant of tag (e.g., 'Family/Immediate/Laurel' starts with 'Family/Immediate/')
-                if active_tag.startswith(tag + "/"):
+                if _is_above(tag, active_tag):
                     is_redundant = True
                     break
                 # Check if active_tag is a hierarchical tag whose leaf node matches the current tag (e.g. 'Family/Laurel' implies 'Laurel')
                 active_parts = vocabulary.segments(active_tag)
-                if len(active_parts) >= 2 and active_parts[-1].lower() == tag.lower():
+                if len(active_parts) >= 2 and vocabulary.key(active_parts[-1]) == vocabulary.key(tag):
                     is_redundant = True
                     break
             if not is_redundant:
@@ -604,12 +633,8 @@ class TagSuggester:
             tag = item.get("tag")
             if not tag:
                 continue
-            if "/" not in tag:
-                resolved = None
-                try:
-                    resolved = self.taxonomy.find_by_leaf(tag)
-                except Exception:
-                    resolved = None
+            if len(vocabulary.segments(tag)) == 1:
+                resolved = self.taxonomy.find_by_leaf(tag)
                 if resolved:
                     item = dict(item, tag=resolved)
             # Resolving can collide two suggestions onto one path; keep the stronger.
@@ -656,8 +681,8 @@ class TagSuggester:
                     score = item["score"]
                     consensus_rate = tag_consensus.get(tag, 0.0)
 
-                    is_context_tag = any(tag.startswith(root + vocabulary.SEPARATOR)
-                                         for root in vocabulary.CONTEXT_ROOTS)
+                    is_context_tag = (len(vocabulary.segments(tag)) > 1
+                                      and vocabulary.root_of(tag) in vocabulary.CONTEXT_ROOTS)
 
                     new_score = score
                     if consensus_rate >= 0.40:
@@ -723,30 +748,29 @@ class SuggestionModel:
         when it is done: [sentence]. A new library holds no vectors and no named faces, and
         its photos are then suggested nothing -- not an error, so the page is told why."""
         notes = []
-        if getattr(self.suggester.index, "indexed", None) == 0:
+        if self.suggester.index.indexed == 0:
             notes.append("The library has no photo vectors yet, so no tags are suggested from similar photos.")
-        try:
-            if not self.suggester.knows_named_faces():
-                notes.append("The library has no named faces yet, so no people are suggested.")
-        except Exception as e:
-            logger.warning("Could not tell whether the library has named faces: %s", e)
+        if not self.suggester.knows_named_faces():
+            notes.append("The library has no named faces yet, so no people are suggested.")
         return notes
 
 
-def model_for_run(photo_index, clip, faces, configured_words, remember=True):
+def model_for_run(photo_index, clip, faces, configured_words, *, detect_max_side, remember=True):
     """Ready the suggester for one run over a library, on the run's thread: its tag tree,
     the words CLIP is asked about -- `configured_words`, the library's, and the tree's, but
     no one's name (tagpup.core.suggesting) -- and their embeddings, before the parallel
     photos need them. `photo_index` is the library's, loaded; `clip` and `faces` the
-    models (tagpup.runtime). Not `remember`: nothing computed is kept in the library -- no
+    models (tagpup.runtime), `detect_max_side` the library's cap on what `faces` detects in. Not `remember`: nothing computed is kept in the library -- no
     vector, no face, no candidate word's embedding -- and what it reads of it is what it
     holds (a Just look run)."""
     taxonomy = TagTaxonomy(photo_index.db_path)
     taxonomy.load()
     candidates = suggesting.zero_shot_words(configured_words, taxonomy.paths, taxonomy.people_roots())
-    # Said only when it differs, so a stand-in for either class need not know of it.
-    given = {} if remember else {"remember": False}
-    own = {} if remember else dict(given, text_cache=looking_text_embeddings(photo_index.db_path))
-    suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces, **own)
+    text_cache = None if remember else looking_text_embeddings(photo_index.db_path)
+    suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces,
+                             remember=remember, text_cache=text_cache, detect_max_side=detect_max_side)
     suggester._precompute_candidates()
-    return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index, **given), taxonomy.people_roots())
+    # Who is known, read once for the run, now: a read that fails fails the run's start, with its sentence.
+    suggester.knows_named_faces()
+    return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index, remember=remember),
+                           taxonomy.people_roots())

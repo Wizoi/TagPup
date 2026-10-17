@@ -13,13 +13,14 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from face_rows import people_of  # noqa: E402
 
 from tagpup.core import vocabulary  # noqa: E402
-from tagpup.core.result import NotFound, Result  # noqa: E402
+from tagpup.core.result import NotFound, Refused, Result  # noqa: E402
 from tagpup.services import tags  # noqa: E402
-from tagpup.store import db, derived, people as store_people, photos as store_photos, taxonomy  # noqa: E402
+from tagpup.store import db, derived, faces as store_faces, people as store_people, taxonomy  # noqa: E402
 
 
 class TreeCase(unittest.TestCase):
@@ -38,7 +39,7 @@ class TreeCase(unittest.TestCase):
                 else:
                     # What the real one records in the index, having written the file.
                     held = json.loads(self.lib.rows("SELECT tags FROM photos WHERE path = ?", (path,))[0][0])
-                    store_photos.record_tags(library.path, path, vocabulary.retag(held, old, new)[0])
+                    photo_rows.tag(library.path, path, vocabulary.retag(held, old, new)[0])
             return result
 
         patcher = mock.patch("tagpup.services.tagging.replace_tag", side_effect=replace_tag)
@@ -58,7 +59,10 @@ class TreeCase(unittest.TestCase):
         """A photo carrying `tags_`, and keywords naming `people` after them; its people
         rebuilt from them."""
         path = self.lib.photo(name)
-        self.lib.add_row(path, tags=list(tags_) + ["People/" + person for person in people])
+        named = ["People/" + person for person in people]
+        self.lib.add_row(path, tags=list(tags_) + named)
+        # The nodes of the people its keywords name, as the index makes them when it reads the file (every tag has an id).
+        db.write_with_connection(self.lib.library.path, lambda conn: derived.make_nodes(conn, [named]), label="test: nodes")
         # A photo's keywords are in photo_tags as the writers keep them (the tree's counts read it, #534).
         db.write_with_connection(self.lib.library.path, derived.rebuild_all, label="test: derived tables")
         self.rebuild(path)
@@ -174,34 +178,17 @@ class Deleting(TreeCase):
 
 
 class Renaming(TreeCase):
-    def test_the_branch_and_its_photos(self):
-        self.node("Crew/Divers/Juniors")
-        crew = self.id_of("Crew/Divers")
-        photo = self.photo("a.jpg", ["Crew/Divers/Juniors"])
-        result = tags.rename(self.lib.library, crew, "Swimmers", "exiftool")
-        self.assertTrue(result.ok, result.message())
-        self.assertEqual(sorted(self.tree()), ["Crew", "Crew/Swimmers", "Crew/Swimmers/Juniors"])
-        self.assertEqual(self.tree()["Crew/Swimmers"][0], "Swimmers")
-        self.assertEqual(self.rewrites, [([photo], "Crew/Divers", "Crew/Swimmers")])
+    """The branch and its photos, and a keyword leaving faces alone, are test_taxonomy_lifecycle's (through the route)."""
 
     def test_a_person_is_renamed_on_their_faces_and_in_each_photos_people(self):
         person = self.node("People/Rowan Thackeray", has_face=1)
-        # Its keywords name the new name already, so after the rename it is listed once.
-        photo = self.photo("a.jpg", ["People/Rowan Thackeray"],
-                           people=["Ada Pembrook", "Rowan Thackeray-Vale"])
+        photo = self.photo("a.jpg", ["People/Rowan Thackeray"], people=["Ada Pembrook"])
         self.face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
-        self.assertEqual(self.people(photo), ["Rowan Thackeray", "Ada Pembrook", "Rowan Thackeray-Vale"])
+        self.assertEqual(self.people(photo), ["Rowan Thackeray", "Ada Pembrook"])
         result = tags.rename(self.lib.library, person, "Rowan Thackeray-Vale", "exiftool")
         self.assertEqual(result.details["faces_renamed"], 1)
         self.assertEqual(self.lib.rows("SELECT name FROM faces"), [("Rowan Thackeray-Vale",)])
         self.assertEqual(self.people(photo), ["Rowan Thackeray-Vale", "Ada Pembrook"])
-
-    def test_a_keyword_that_holds_no_faces_leaves_faces_alone(self):
-        rowing = self.node("Activity/Rowan")
-        photo = self.photo("a.jpg", ["Activity/Rowan"], people=["Rowan"])
-        self.face(photo, [0, 0, 10, 10], name="Rowan")
-        tags.rename(self.lib.library, rowing, "Rowing", "exiftool")
-        self.assertEqual(self.lib.rows("SELECT name FROM faces"), [("Rowan",)])
 
     def test_onto_a_node_that_is_there_is_refused(self):
         crew = self.node("Crew/Divers")
@@ -274,59 +261,88 @@ class Merging(TreeCase):
 
 
 class RenamingAPerson(TreeCase):
+    """Rename Person renames the ONE person picked (docs/ARCHITECTURE.md, "People by id, stage 2"; owner, 2026-10-09): the node
+    keeps its id, so the faces and the lists follow it and take the new name in the same transaction; another person called
+    alike is left alone; it never merges."""
+
     def setUp(self):
         super().setUp()
         # Both roots flagged as holding faces, as a library filing people there does.
-        self.node("People/Rowan Thackeray", has_face=1)
-        self.node("Family/Rowan Thackeray", has_face=1)
+        self.people_rowan = self.node("People/Rowan Thackeray", has_face=1)
+        self.family_rowan = self.node("Family/Rowan Thackeray", has_face=1)
 
-    def rename(self, old, new):
-        return tags.rename_person(self.lib.library, old, new, "exiftool")
+    def rename(self, who, new):
+        return tags.rename_person(self.lib.library, who, new, "exiftool")
 
-    def test_every_node_filed_under_the_name_and_the_photos_carrying_them(self):
+    def name(self, face_id, who):
+        db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(conn, [face_id], who))
+
+    def test_the_one_picked_is_renamed_and_the_other_is_left(self):
         photo = self.photo("a.jpg", ["People/Rowan Thackeray"])
-        result = self.rename("Rowan Thackeray", "Rowan Vale")
+        result = self.rename(self.people_rowan, "Rowan Vale")
         self.assertTrue(result.ok, result.message())
-        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Vale", "People", "People/Rowan Vale"])
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Thackeray", "People", "People/Rowan Vale"])
+        self.assertEqual(self.id_of("People/Rowan Vale"), self.people_rowan, "the node keeps its id")
         self.assertEqual(self.rewrites, [([photo], "People/Rowan Thackeray", "People/Rowan Vale")])
         self.assertEqual(result.details["photos_affected"], 1)
 
-    def test_faces_whatever_their_case_and_each_photos_people(self):
-        # Listed by a face named in lower case; the keyword people come first, then
-        # whom only a face names, in the order the faces were found.
+    def test_a_name_two_people_have_is_refused_naming_them(self):
+        with self.assertRaises(Refused) as why:
+            self.rename("Rowan Thackeray", "Rowan Vale")
+        self.assertIn("Family/Rowan Thackeray", str(why.exception))
+        self.assertIn("People/Rowan Thackeray", str(why.exception))
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Thackeray", "People", "People/Rowan Thackeray"])
+
+    def test_an_id_that_is_nobody_is_not_found_and_changes_nothing(self):
+        with self.assertRaises(NotFound):
+            self.rename(99999, "Rowan Vale")
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Thackeray", "People", "People/Rowan Thackeray"])
+
+    def test_its_faces_and_each_photos_people_follow_the_id(self):
+        # Listed by a face; the keyword people come first, then whom only a face names, in the order the faces were found.
         photo = self.photo("a.jpg", people=["Ada Pembrook"])
-        self.face(photo, [0, 0, 10, 10], name="rowan thackeray")
-        self.face(photo, [10, 10, 20, 20], name="Rowan Thackeray")
-        self.assertEqual(self.people(photo), ["Ada Pembrook", "rowan thackeray"])
-        result = self.rename("Rowan Thackeray", "Rowan Vale")
-        self.assertEqual(result.details["faces_renamed"], 2)
-        self.assertEqual(self.lib.rows("SELECT DISTINCT name FROM faces"), [("Rowan Vale",)])
+        self.face(photo, [0, 0, 10, 10], name=None)
+        other = self.photo("b.jpg")
+        self.face(other, [0, 0, 10, 10], name=None)
+        for face_id, who in zip((row[0] for row in self.lib.rows("SELECT id FROM faces ORDER BY id")),
+                                (self.people_rowan, self.family_rowan)):
+            self.name(face_id, who)
+        self.assertEqual(self.people(photo), ["Ada Pembrook", "Rowan Thackeray"])
+        result = self.rename(self.people_rowan, "Rowan Vale")
+        self.assertEqual(result.details["faces_renamed"], 1)
+        self.assertEqual(self.lib.rows("SELECT tag_id, name FROM faces ORDER BY id"),
+                         [(self.people_rowan, "Rowan Vale"), (self.family_rowan, "Rowan Thackeray")])
         self.assertEqual(self.people(photo), ["Ada Pembrook", "Rowan Vale"])
+        self.assertEqual(self.people(other), ["Rowan Thackeray"], "the other Rowan is not renamed")
 
-    def test_a_photo_naming_them_by_a_bare_keyword_keeps_them(self):
-        # Only the photos carrying the path were rewritten; once the tree moved, a bare
-        # "Rowan Thackeray" named nobody, and the photo lost the person (#87).
+    def test_a_bare_keyword_spelled_like_them_is_another_tag_and_is_left(self):
+        # A keyword is a path (owner, 2026-10-11): the bare name is a tag of its own, not the person's.
+        self.lib.execute("DELETE FROM tag_taxonomy WHERE tag = 'Family/Rowan Thackeray'")
         photo = self.photo("a.jpg", ["Rowan Thackeray"])
-        self.assertEqual(self.people(photo), ["Rowan Thackeray"])
-        result = self.rename("Rowan Thackeray", "Rowan Vale")
+        self.assertEqual(self.people(photo), [])
+        result = self.rename(self.people_rowan, "Rowan Vale")
         self.assertTrue(result.ok, result.message())
-        self.assertEqual(self.people(photo), ["Rowan Vale"])
-        # The bare name for the bare name: the keyword writer files it where the person
-        # is filed (vocabulary.resolve_people).
-        self.assertIn(([photo], "Rowan Thackeray", "Rowan Vale"), self.rewrites)
-        self.assertEqual(result.details["photos_affected"], 1)
+        self.assertNotIn(([photo], "Rowan Thackeray", "Rowan Vale"), self.rewrites)
+        self.assertEqual(self.people(photo), [])
 
-    def test_into_a_name_filed_already_the_two_become_one(self):
+    def test_into_a_name_filed_already_it_is_refused_and_nothing_is_merged(self):
         self.node("People/Rowan Vale")
         photo = self.photo("a.jpg", ["People/Rowan Thackeray"])
-        self.rename("Rowan Thackeray", "Rowan Vale")
-        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Vale", "People", "People/Rowan Vale"])
-        self.assertIn(([photo], "People/Rowan Thackeray", "People/Rowan Vale"), self.rewrites)
+        result = self.rename(self.people_rowan, "Rowan Vale")
+        self.assertIn("merge them instead", result.refused)
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Thackeray", "People", "People/Rowan Thackeray",
+                                               "People/Rowan Vale"])
+        self.assertEqual([], self.rewrites, "no photo %s was rewritten" % photo)
+
+    def test_a_name_no_person_is_called_is_refused(self):
+        result = self.rename("Tamsin Vey", "Tamsin Vale")
+        self.assertIn("create the person first", result.refused)
 
     def test_what_cannot_be_asked(self):
-        for old, new in (("", "X"), ("Rowan Thackeray", tags.UNMATCHED), ("Rowan Thackeray", "A/B")):
+        for old, new in ((self.people_rowan, tags.UNMATCHED), (self.people_rowan, "A/B"), (self.people_rowan, "")):
             self.assertTrue(self.rename(old, new).refused, (old, new))
-        self.assertEqual(self.rename("Rowan Thackeray", "Rowan Thackeray").changed, 0)
+        self.assertTrue(self.rename("", "X").refused)
+        self.assertEqual(self.rename(self.people_rowan, "Rowan Thackeray").changed, 0)
 
 
 class AnIndexBehindItsFiles(unittest.TestCase):
@@ -349,7 +365,7 @@ class AnIndexBehindItsFiles(unittest.TestCase):
         class Files:
             """ExifTool over `files`: each photo's keywords, read and written."""
 
-            def get_tags(self, photo_paths, tags=None):
+            def get_tags(self, photo_paths, tags=None, params=None):
                 return [{"SourceFile": p, "XMP:Subject": list(files[p])} for p in photo_paths]
 
             def set_tags(self, photo_paths, tags=None, params=None):
@@ -385,12 +401,6 @@ class AnIndexBehindItsFiles(unittest.TestCase):
 
 
 class TheTreeView(TreeCase):
-    def test_counts_a_photo_toward_each_level_above_its_tags(self):
-        self.node("Activity/Hiking")
-        self.photo("a.jpg", ["Activity/Hiking"])
-        counts = {node["tag"]: node["usage_count"] for node in tags.tree(self.lib.library)}
-        self.assertEqual(counts, {"Activity": 1, "Activity/Hiking": 1})
-
     def test_a_photo_counts_once_toward_a_node_however_many_of_its_tags_are_under_it(self):
         """docs/findings.md, #41: a photo counted once for each of its tags under a node."""
         self.node("Family/Immediate/Ada Pembrook")
@@ -399,12 +409,6 @@ class TheTreeView(TreeCase):
         counts = {node["tag"]: node["usage_count"] for node in tags.tree(self.lib.library)}
         self.assertEqual(counts, {"Family": 1, "Family/Immediate": 1,
                                   "Family/Immediate/Ada Pembrook": 1, "Family/Immediate/Wren Halloway": 1})
-
-    def test_a_node_whose_parent_is_missing_is_put_right(self):
-        self.lib.execute("INSERT INTO tag_taxonomy (tag, name, parent_id, has_face)"
-                         " VALUES ('Trips/Boston MA', 'Boston MA', NULL, 0)")
-        nodes = {node["tag"]: node for node in tags.tree(self.lib.library)}
-        self.assertEqual(nodes["Trips/Boston MA"]["parent_id"], nodes["Trips"]["id"])
 
 
 if __name__ == "__main__":

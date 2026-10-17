@@ -15,9 +15,9 @@ import time
 
 from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
-from tagpup.core.result import DAMAGED_PHOTOS, NOT_IN_LIBRARY, Result
+from tagpup.core.result import Result
 from tagpup.files import images, recycle_bin, shares
-from tagpup.services import damaged_photos, settings
+from tagpup.services import settings
 from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, photos, schema, taxonomy
 from tagpup.store import folders as store_folders
@@ -26,16 +26,47 @@ logger = logging.getLogger(__name__)
 
 
 
+#: Raised for a library made by a newer version of TagPup than this one (tagpup.store.schema.NewerLibrary):
+#: its text is the sentence to show the owner. Every entry point answers it with that sentence.
+NewerLibrary = schema.NewerLibrary
+
+
 def bring_up_to_date(db_path):
     """The library's tables, made or migrated (tagpup.store.schema.ensure). Returns the
-    names of the migrations applied: none, usually."""
+    names of the migrations applied: none, usually. NewerLibrary for a library made by a newer
+    version of TagPup than this one."""
     return schema.ensure(db_path)
+
+
+reading_newer = schema.reading_newer
+newer_note = schema.newer_note
+RECOVERY_COMMANDS = schema.RECOVERY_COMMANDS
+
+
+def newer_problem(db_path):
+    """The sentence saying the library at `db_path` is newer than this version of TagPup, or None
+    (tagpup.store.schema.newer_problem). Reads only: for an entry point that does not open it
+    through bring_up_to_date."""
+    return schema.newer_problem(db_path)
 
 
 #: How many libraries the startup thread has still to bring up to date (bring_up_to_date_in_background):
 #: work beside the requests, which /api/server shows and a drain waits for (tagpup.web.lifecycle.long_work).
 _bringing = 0
 _bringing_guard = threading.Lock()
+
+#: The libraries (by key) the startup thread has not yet looked at: a request for one is answered "updating" at once
+#: rather than run the migration on, or wait on the lock of, a server thread (tagpup.web.libraries).
+_waiting = {}
+
+
+def updating(db_path):
+    """Is the library at `db_path` being brought up to date by this process just now -- migrating, or still to be looked
+    at by the startup thread? A cheap read; a request for it waits (503) instead of holding a thread on the write lock."""
+    with _bringing_guard:
+        if _waiting.get(db.key(db_path), 0) > 0:
+            return True
+    return schema.migrating(db_path)
 
 
 def bringing_up_to_date():
@@ -48,11 +79,10 @@ def bring_up_to_date_in_background(libraries_served):
     """Bring each library the server serves to the current schema on a thread of its own, started as the
     server starts (docs/findings.md, #661): a migration -- 21 takes 17.5 s on photo_index cold -- runs
     then, not in the first request that names the library. The server answers meanwhile: /api/server,
-    which the supervisor's hand-over asks, names no library, and says the thread is busy; a drain waits
+    which a launcher's hand-over asks, names no library, and says the thread is busy; a drain waits
     for it (bringing_up_to_date, #664), so a new version does not end the server part-way through a
-    migration. A page opened meanwhile gets a blank tab until the migration ends -- every URL under the
-    library's name resolves it and waits on its write lock -- and a page already open shows its own
-    spinner for its requests (#666). A library that cannot be brought up to date now -- held by another
+    migration. A request for the library meanwhile is answered 503 "updating" at once (`updating`; the pages
+    wait that out, #666), not parked on the write lock: sixteen parked threads left /api/server no thread. A library that cannot be brought up to date now -- held by another
     program past the busy timeout -- is logged and left for its first request. A library whose file is
     not there is left alone: bringing it up to date would make it, and the picker offers the default
     library in an empty data folder (#100). Returns the thread."""
@@ -60,6 +90,8 @@ def bring_up_to_date_in_background(libraries_served):
     there = [library for library in libraries_served if os.path.exists(library.path)]
     with _bringing_guard:
         _bringing += len(there)
+        for library in there:
+            _waiting[db.key(library.path)] = _waiting.get(db.key(library.path), 0) + 1
 
     def run():
         global _bringing
@@ -75,6 +107,7 @@ def bring_up_to_date_in_background(libraries_served):
             finally:
                 with _bringing_guard:
                     _bringing -= 1
+                    _waiting[db.key(library.path)] -= 1
 
     thread = threading.Thread(target=run, name="BringUpToDateThread", daemon=True)
     thread.start()
@@ -95,7 +128,11 @@ def create(db_path):
         return result
     existed = os.path.exists(db_path)
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-    bring_up_to_date(db_path)
+    try:
+        bring_up_to_date(db_path)
+    except NewerLibrary as e:
+        result.refuse(str(e))   # a library of that name is there, from a newer TagPup: not touched
+        return result
     taxonomy.seed(db_path)
     if not existed:
         # A new library holds the defaults from the start (tagpup.services.settings): it
@@ -137,7 +174,7 @@ def not_held(library, photo_paths, ignored=None, leave_out_ignored=True):
     `ignored` are the library's ignored folders, read from its settings unless given. An
     ignored folder is never the library's; unless not `leave_out_ignored` it is left out
     here too -- not to be offered, as sync passes it over (tagpup.services.sync). Writes
-    keep them (refuse_writes): a photo there is not the library's to write."""
+    keep them (split): a photo there is not the library's to write."""
     wanted = {}
     for photo_path in photo_paths:
         folder = os.path.dirname(paths.stored(photo_path))
@@ -251,7 +288,7 @@ def membership_checked(library, folder, roots=(), ignored=(), deadline=None):
     second walk of one folder, however often the view is opened. A folder on a network share (a UNC path or a mapped
     drive) must first say it is there within a second (tagpup.files.shares.bounded), else the answer is
     could_not_check("the network share is away") and no thread is left walking it. A walk that outlives the deadline
-    answers could_not_check("it took too long") and goes on, for the next request to be answered by when it is done. A
+    answers could_not_check("it took too long") and goes on; a request while it still runs is answered by it, one after it ends makes a new walk. A
     walk that raised raises here."""
     folder = paths.stored(folder)
     waited = MEMBERSHIP_DEADLINE if deadline is None else deadline
@@ -309,28 +346,6 @@ def _ignored_message(library, folder):
             % (paths.stored(folder), name, name))
 
 
-def not_in(library, folder, ignored=None):
-    """Why nothing that makes rows -- Suggest, whose faces, vectors and suggestions each
-    need their photo's row -- may be done in `folder` for `library`, or None when the
-    library holds every folder of photos under it but its `ignored` folders (read from
-    its settings unless given), which the work leaves out; an ignored folder itself is
-    refused. "<folder> is not in <library>", for a person to read. One walk of the
-    folder, no file read."""
-    name = picker_name(os.path.basename(library.path))
-    if ignored is None:
-        ignored = _read(library.path, store_folders.ignored, [])
-    if ignored and store_folders.is_ignored(folder, ignored):
-        return _ignored_message(library, folder)
-    unheld = not_held(library, images.photos_under(folder), ignored)
-    if not unheld:
-        return None
-    folder = paths.stored(folder)
-    if len(unheld) == 1 and paths.same(unheld[0], folder):
-        return "%s is not in %s. Add it to %s first." % (folder, name, name)
-    return ("%d folder(s) under %s are not in %s, %s first. Add the folder to %s first."
-            % (len(unheld), folder, name, unheld[0], name))
-
-
 def split(library, photo_paths):
     """(the photos of `photo_paths` in a folder the library holds, those in one it does not),
     each in the order given: decided here, now, by the library's own answer (tagpup.store.
@@ -345,82 +360,6 @@ def split(library, photo_paths):
     for photo_path in photo_paths:
         (loose if paths.key(os.path.dirname(paths.stored(photo_path))) in unheld else held).append(photo_path)
     return held, loose
-
-
-def refuse_writes(result, library, photo_paths, damaged_ok=False):
-    """Refuse `result` -- a write of photo files, nothing written yet -- when the library
-    does not hold the folder of any photo of `photo_paths`: "<folder> is not in
-    <library>. Add it to <library> first." Returns True when refused. The one check every
-    write of a photo makes (tagging, rotating, renaming, a time shift, a delete): writing
-    kr-track's tags into the photos of a folder photo_index holds, through kr-track, was
-    the same mistake as Suggest making rows there. `details[NOT_IN_LIBRARY]` holds the
-    folders, which a web route answers with 409.
-
-    Refused too, unless `damaged_ok` (a delete), when a photo of `photo_paths` was found
-    damaged or possibly an incomplete copy (tagpup.services.damaged_photos) and is
-    unchanged since: nothing is written into it, as the page tells the owner.
-    `details[DAMAGED_PHOTOS]` holds them, answered 409 as well."""
-    unheld = not_held(library, photo_paths, leave_out_ignored=False)
-    if not unheld:
-        if damaged_ok:
-            return False
-        found, unanswered = damaged_photos.for_write(library, photo_paths)
-        if refuse_unchecked(result, unanswered, photo_paths):
-            return True
-        if not found:
-            return False
-        more = "" if len(found) == 1 else " (and %d more)" % (len(found) - 1)
-        result.refuse("%s%s was found damaged -- %s -- and nothing is written to it. Restore it from a backup, "
-                      "then Check again." % (found[0]["name"], more, found[0]["reason"]))
-        result.details[DAMAGED_PHOTOS] = [each["path"] for each in found]
-        return True
-    name = picker_name(os.path.basename(library.path))
-    more = "" if len(unheld) == 1 else " (and %d more folder(s))" % (len(unheld) - 1)
-    result.refuse("%s is not in %s%s. Add it to %s first." % (unheld[0], name, more, name))
-    result.details[NOT_IN_LIBRARY] = unheld
-    return True
-
-
-#: What a Result's details count of the photos a bulk write skipped as damaged.
-SKIPPED_DAMAGED = "skipped_damaged"
-
-
-def refuse_unchecked(result, unanswered, photo_paths):
-    """Refuse `result` when a share holding a photo recorded damaged did not answer
-    (damaged_photos.for_write): whether the photo is still damaged cannot be told, and a
-    write is never let through on that. Returns True when refused."""
-    if not unanswered:
-        return False
-    result.refuse("Can't check %s: try again. A photo there was found damaged, and whether it still is could not "
-                  "be told." % ", ".join(unanswered))
-    result.details[DAMAGED_PHOTOS] = [path for path in photo_paths
-                                      if any(paths.is_under(path, share) for share in unanswered)]
-    return True
-
-
-def leave_out_damaged(result, library, photo_paths):
-    """(`photo_paths` but the photos recorded damaged or possibly incomplete and unchanged
-    since, [(path, why)] of those left out). A bulk write skips them and writes the rest;
-    a write of one photo is refused instead (refuse_writes). (None, None), and `result`
-    refused, when a share holding one did not answer (refuse_unchecked)."""
-    found, unanswered = damaged_photos.for_write(library, photo_paths)
-    if refuse_unchecked(result, unanswered, photo_paths):
-        return None, None
-    if not found:
-        return list(photo_paths), []
-    out = {paths.key(each["path"]) for each in found}
-    return ([path for path in photo_paths if paths.key(path) not in out],
-            [(each["path"], "damaged, nothing is written to it: %s" % each["reason"]) for each in found])
-
-
-def with_skipped(result, left):
-    """`result`, with the photos `left` out as damaged (leave_out_damaged) skipped and
-    counted: details[SKIPPED_DAMAGED]."""
-    result.attempted += len(left)
-    for what, why in left:
-        result.skip(what, why)
-    result.details[SKIPPED_DAMAGED] = len(left)
-    return result
 
 
 def record_added(library, folders, subfolders=True):

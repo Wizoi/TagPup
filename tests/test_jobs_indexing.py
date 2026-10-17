@@ -4,7 +4,9 @@ The queue is driven directly here, with indexing stood in for. What indexing doe
 test_service_indexing.py's; what the routes accept and answer is in
 test_tuner_server_api.py.
 """
+import inspect
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -52,7 +54,7 @@ class TheWorker(QueueTest):
         seen, running, most = [], [0], [0]
         lock = threading.Lock()
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             with lock:
                 running[0] += 1
                 most[0] = max(most[0], running[0])
@@ -71,7 +73,7 @@ class TheWorker(QueueTest):
     def test_one_folder_that_fails_does_not_cost_the_others(self):
         folders = self.folders(3)
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             if folder == folders[1]:
                 raise RuntimeError("that folder is unreadable")
             return Result(changed=1)
@@ -84,7 +86,7 @@ class TheWorker(QueueTest):
     def test_a_failed_result_is_recorded_with_what_it_said(self):
         folder = self.folders(1)[0]
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             result = Result(attempted=1)
             result.fail(folder, "Indexing failed with exit code 3.")
             result.details["percent"] = 0
@@ -98,7 +100,7 @@ class TheWorker(QueueTest):
 
     def test_a_folder_indexed_says_what_indexing_said(self):
         folder = self.folders(1)[0]
-        self.queue.start([folder], lambda f, c, report: Result(
+        self.queue.start([folder], lambda f, report: Result(
             changed=1, details={"percent": 100, "message": "Folder indexed."}))
         self.wait_until_idle()
         self.assertEqual(self.queue.status(folder)["message"], "Folder indexed.")
@@ -107,7 +109,7 @@ class TheWorker(QueueTest):
         folder = self.folders(1)[0]
         reported, release = threading.Event(), threading.Event()
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             report("Generating embeddings: 42% (21/50)", 37)
             reported.set()
             release.wait(10)
@@ -126,27 +128,19 @@ class TheWorker(QueueTest):
             release.set()
         self.wait_until_idle()
 
-    def test_it_is_told_whether_to_cluster(self):
-        folder = self.folders(1)[0]
-        asked = []
-        self.queue.start([folder], lambda f, cluster, report: asked.append(cluster) or Result(),
-                         cluster=True)
-        self.wait_until_idle()
-        self.assertEqual(asked, [True])
-
     def test_it_stops_when_the_queue_empties_and_a_later_start_starts_another(self):
         first, second = self.folders(2)
-        self.queue.start([first], lambda f, c, r: Result(changed=1))
+        self.queue.start([first], lambda f, r: Result(changed=1))
         self.wait_until_idle()
         self.assertIsNone(self.queue._runner)
-        self.queue.start([second], lambda f, c, r: Result(changed=1))
+        self.queue.start([second], lambda f, r: Result(changed=1))
         self.wait_until_idle()
         self.assertEqual(self.statuses([first, second]), ["completed", "completed"])
 
     def test_a_folder_whose_status_went_missing_is_still_recorded(self):
         folder = self.folders(1)[0]
         self.queue._ensure_runner = lambda: None
-        self.queue.start([folder], lambda f, c, r: Result(changed=1))
+        self.queue.start([folder], lambda f, r: Result(changed=1))
         self.queue._statuses.clear()
         self.queue.run_pending()
         self.assertEqual(self.queue.status(folder)["status"], "completed")
@@ -159,7 +153,7 @@ class WhatIsQueued(QueueTest):
         self.queue._ensure_runner = lambda: None
 
     def start(self, folders, **options):
-        return self.queue.start(folders, lambda f, c, r: Result(changed=1), **options)
+        return self.queue.start(folders, lambda f, r: Result(changed=1), **options)
 
     def test_each_folder_waits_in_the_order_given_spelled_as_stored(self):
         folders = self.folders(2)
@@ -198,7 +192,7 @@ class WhatIsQueued(QueueTest):
         self.start(folders)
         result = self.queue.cancel([folders[1]])
         self.assertEqual((result.details["cancelled"], result.details["pending"]), ([folders[1]], 2))
-        self.assertEqual(self.statuses(folders), ["queued", "cancelled", "queued"])
+        self.assertEqual(self.statuses(folders), ["queued", "cancelled", "queued"], "a cancelled folder is not 'completed'")
         self.assertEqual(self.queue.cancel(everything=True).details["cancelled"],
                          [folders[0], folders[2]])
         self.assertEqual(self.queue.pending(), [])
@@ -338,6 +332,62 @@ class FilesArrivingDuringAnIndex(QueueTest):
         queue_one.wait()
         indexing.queue_for(other).wait()
         self.assertEqual((len(ran["one"]), len(ran["other"])), (2, 1))
+
+
+class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
+    """Lifted from test_index_queue_is_locked and test_index_queue_active_is_one_read (#750's branch). index-start,
+    index-cancel and the worker each read the waiting list, changed it and wrote it back with no lock: a job the worker had
+    just taken could be written back by a start and indexed twice, and a worker that had found the list empty still looked
+    alive to a start in the moment before it cleared itself. Breaks: cancel's `with self._lock:` made `if True:` (the
+    first test); active() reading the running folders apart from the waiting ones (the second)."""
+
+    #: A write of the waiting list or the worker.
+    WRITE = re.compile(r"self\._(pending|runner)\s*=[^=]|self\._pending\.(append|pop|insert|remove|clear)\(")
+
+    def test_the_waiting_list_and_the_worker_are_only_written_under_the_lock(self):
+        with open(inspect.getsourcefile(indexing), encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        writes = [i for i, line in enumerate(lines) if self.WRITE.search(line)]
+        self.assertGreaterEqual(len(writes), 7)
+        unlocked = []
+        for i in writes:
+            indent = len(lines[i]) - len(lines[i].lstrip())
+            for j in range(i - 1, -1, -1):
+                text = lines[j].strip()
+                own = len(lines[j]) - len(lines[j].lstrip())
+                if not text or own >= indent:
+                    continue
+                if text.startswith("with ") and "self._lock" in text:
+                    break
+                if text.startswith(("def ", "class ")):
+                    if not text.startswith("def __init__("):   # nothing else can see a queue while it is being made
+                        unlocked.append("indexing.py:%d: %s" % (i + 1, lines[i].strip()))
+                    break
+                indent = own
+        self.assertEqual([], unlocked, "written without the queue's lock")
+
+    def test_a_job_taken_while_the_queue_is_asked_what_is_running_is_still_seen(self):
+        folder = self.folders(1)[0]
+        self.queue._ensure_runner = lambda: None      # queued with no worker: the test plays the worker's step itself
+        self.queue.start([folder], lambda folder, cluster, report: None)
+        took = threading.Event()
+
+        def worker_takes_the_job():
+            with self.queue._lock:
+                job = self.queue._pending.pop(0)
+                self.queue._statuses[paths.key(job["folder"])] = {"status": "running", "percent": 0,
+                                                                  "message": "Starting indexing...", "folder": job["folder"]}
+            took.set()
+        asked = self.queue.pending
+
+        def pending_after_the_worker():
+            threading.Thread(target=worker_takes_the_job, daemon=True).start()
+            took.wait(1.0)
+            return asked()
+        self.queue.pending = pending_after_the_worker
+        found = self.queue.active()
+        self.assertTrue(took.wait(5))
+        self.assertEqual((True, 1), (found["busy"], found["remaining"]), found)
 
 
 class EachLibraryHasAQueue(unittest.TestCase):

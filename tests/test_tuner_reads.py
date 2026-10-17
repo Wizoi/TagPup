@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tagpup.services.search import PhotoIndex  # noqa: E402
-from face_rows import add_people  # noqa: E402
+from face_rows import add_face, add_people  # noqa: E402
 import tuner_client  # noqa: E402
 
 from tagpup.store import db  # noqa: E402
@@ -56,10 +56,9 @@ class TunerReads(unittest.TestCase):
         return path
 
     def face(self, photo_path, name=None, embedding=None, excluded=0, source=None):
-        face_id = self.conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, name_source, excluded)"
-            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 10, 10]', ?, ?, ?, ?)",
-            (photo_path, embedding if embedding is not None else vector(1), name, source, excluded)).lastrowid
+        # As the writers name a face: with the id of the one node called so (tests/face_rows.add_face).
+        face_id = add_face(self.conn, photo_path, embedding=embedding if embedding is not None else vector(1),
+                           name=name, name_source=source, excluded=excluded)
         self.conn.commit()
         return face_id
 
@@ -133,7 +132,9 @@ class PeopleWithCounts(TunerReads):
             db.connect = connect
         self.assertEqual(4, len(answer))
         tree_reads = [s for s in statements if "FROM tag_taxonomy" in s]
-        self.assertLessEqual(len(tree_reads), 2, tree_reads)
+        # Two for the hidden nodes and where everyone is filed, two for who the people are (person_ids.Directory:
+        # their ids and groups): a number of reads, never one for each person.
+        self.assertLessEqual(len(tree_reads), 4, tree_reads)
 
     def test_leaves_out_people_whose_every_node_is_hidden(self):
         self.node("People/Wren Halloway", hidden=1)
@@ -142,7 +143,8 @@ class PeopleWithCounts(TunerReads):
         self.face(self.photo("b.jpg"), name="Ansel Ditmore")
         self.face(self.photo("c.jpg"), name="Ansel Ditmore")
         answer = self.requests.get("/api/people-with-counts")
-        self.assertEqual([{"name": "Ansel Ditmore", "count": 2}], answer)
+        self.assertEqual([("Ansel Ditmore", 2)], [(each["name"], each["count"]) for each in answer])
+        self.assertEqual(["Ansel Ditmore", "People/Ansel Ditmore"], [answer[0]["person"][key] for key in ("name", "tag")])
 
 
 if __name__ == "__main__":

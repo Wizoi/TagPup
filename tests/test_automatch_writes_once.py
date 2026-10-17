@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tests.test_service_faces import FacesCase, vector  # noqa: E402
 
+from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import db, person_ids, taxonomy  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -34,7 +35,8 @@ class AutomatchNamesItsFacesInOneWrite(FacesCase):
         self.lookalikes = [self.face(self.photo("p%d.jpg" % n), embedding=self.rowan) for n in range(4)]
 
     def matrix(self):
-        return [self.known], [ROWAN], np.stack([self.rowan])
+        node = self.lib.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", ("People/" + ROWAN,))[0][0]
+        return [self.known], [Ref(node, ROWAN)], np.stack([self.rowan])
 
     def test_one_rebuild_and_one_read_of_the_tree_for_the_whole_folder(self):
         with mock.patch.object(store_faces, "_rebuilt", wraps=store_faces._rebuilt) as rebuilt, \
@@ -48,11 +50,21 @@ class AutomatchNamesItsFacesInOneWrite(FacesCase):
             "SELECT name, tag_id FROM faces WHERE id IN (%s)" % ",".join("?" * 4), self.lookalikes)))
 
 
+#: A face another writer named: the name with its node's id, as every writer writes it.
+ODA_NAMED = ("UPDATE faces SET name = 'Oda Castellane',"
+             " tag_id = (SELECT id FROM tag_taxonomy WHERE tag = 'People/Oda Castellane') WHERE id = ?")
+
+
 class NamingUnnamedFacesTogether(FacesCase):
+    def setUp(self):
+        super().setUp()
+        db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.add_node(conn, "People/" + ROWAN, 1))
+        db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.add_node(conn, "People/Oda Castellane", 1))
+
     def test_only_faces_still_unnamed_in_play_and_not_unmatched_by_hand_are_named(self):
         photo = self.photo("a.jpg")
         free, named, excluded, nobody = (self.face(photo) for _ in range(4))
-        self.lib.execute("UPDATE faces SET name = 'Oda Castellane' WHERE id = ?", (named,))
+        self.lib.execute(ODA_NAMED, (named,))
         self.lib.execute("UPDATE faces SET excluded = 1 WHERE id = ?", (excluded,))
         self.lib.execute("UPDATE faces SET name_source = 'manual' WHERE id = ?", (nobody,))
         done = db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name_unnamed(
@@ -82,7 +94,7 @@ class NamingUnnamedFacesTogether(FacesCase):
                     self.done = True
                     other = db.connect(path)
                     try:
-                        other.execute("UPDATE faces SET name = 'Oda Castellane' WHERE id = ?", (theirs,))
+                        other.execute(ODA_NAMED, (theirs,))
                         other.commit()
                     finally:
                         other.close()
@@ -103,6 +115,7 @@ class NamingUnnamedFacesTogether(FacesCase):
                          self.lib.rows("SELECT id, name FROM faces WHERE id IN (?, ?) ORDER BY id", (mine, theirs)))
 
     def test_a_write_rebuilds_its_photos_reading_the_tree_once(self):
+        db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.add_node(conn, "People/" + ROWAN, 1))
         face = self.face(self.photo("b.jpg"))
         with mock.patch.object(person_ids.People, "read", wraps=person_ids.People.read) as reads:
             db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(conn, [face], ROWAN))

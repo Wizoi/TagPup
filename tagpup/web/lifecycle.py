@@ -1,29 +1,29 @@
 """Which version answers, whether the server takes new work, and letting the work under
-way finish before the always-on process moves it onto a new version (docs/ARCHITECTURE.md,
-phase 8, "Updating itself").
+way finish before a launch or an install moves it onto a new version (docs/ARCHITECTURE.md,
+"Updating a running server").
 
-The supervisor (tagpup.supervisor) runs the web server as its child. When a newer commit
-has been installed it asks the server to drain -- POST /api/server/drain, with the token
-it gave the server (tagpup.supervisor.TOKEN, which tagpup_web hands the Lifecycle) -- and
+When a newer commit has been installed, the launcher asks the server to drain --
+POST /api/server/drain, with the token in the server's record (`launcher_token`) -- and
 moves it onto the new version only once the drain says it is done:
 
 - A drain is refused at once, taking nothing away, while work runs beside the requests:
   a Suggest run, an index, a recurring job (the background tasks' busy(), tagpup.runtime);
   and, asked for a quiet moment (`quiet`), while a request came in that many seconds
-  ago -- someone is using the app. The supervisor asks again later. An update never
+  ago -- someone is using the app. The launcher asks again later. An update never
   interrupts a write.
 - Otherwise the server stops taking new work: each new request is answered 503 with
   Retry-After, which the pages wait out and send again (web/common/api.js). The
   background tasks are stopped, and the requests already in flight -- a journaled write
-  among them -- are let finish.
-- When nothing is in flight and nothing runs, it is drained, and the supervisor stops it.
+  among them -- are let finish. A batch of photo files (tagpup.services.batches) is asked to
+  stop: it ends after its chunk, what it wrote applied and in History, and is started again
+  by the person; one that waited is never begun.
+- When nothing is in flight and nothing runs, it is drained, and the launcher stops it.
   When the deadline passes first, it takes work again, and says what it waited for.
 
-Without the always-on process, a launcher of another version drains it the same way
-(tagpup.launcher), with the token this server wrote in its record (`launcher_token`), and
-only from this machine; drained, the launcher ends it and serves in its place.
+The token comes only from this machine (tagpup.launcher); drained, the launcher ends the
+server and serves in its place.
 
-A server drained and never stopped -- its supervisor gone -- takes work again after
+A server drained and never stopped -- its launcher gone -- takes work again after
 LEFT_DRAINED. GET /api/server says which version answers, which the gear shows, and every
 response says it in X-TagPup-Version, by which a page left open learns that the server
 was replaced (web/common/api.js).
@@ -32,15 +32,17 @@ import hmac
 import logging
 import threading
 import time
+from typing import NamedTuple, Optional
 
 from flask import Blueprint, current_app, jsonify, request
 
-from tagpup.jobs import bulk_edits as bulk_edit_jobs
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.jobs import naming_faces as naming_faces_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup import launcher
+from tagpup import runtime as runtimes
+from tagpup.services import batches
 from tagpup.services import libraries as library_actions
-from tagpup.supervisor import TOKEN_HEADER
 from tagpup.web import responses, security
 
 logger = logging.getLogger(__name__)
@@ -53,22 +55,21 @@ RETRY_AFTER_SECONDS = 2
 DRAIN_SECONDS = 120
 MAX_DRAIN_SECONDS = 1800
 
-#: A drained server not stopped in this long takes work again: its supervisor is gone.
+#: A drained server not stopped in this long takes work again: its launcher is gone.
 LEFT_DRAINED = 180
 
 #: The paths answered while draining, and not counted as work: asking how the server
 #: is, and the drain itself -- as the gate sees them, before the library's middleware
 #: takes /<library> off the path.
 #:
-#: The bare status (/api/server) is the supervisor's and startup.py's. The pages ask it
+#: The bare status (/api/server) is the launcher's. The pages ask it
 #: under their library's address (/<library>/api/server: the gear's version, and
 #: api.js's probe after an /api/ image failed), and that one is NOT exempt, on purpose:
 #: while the server drains it is turned away 503 with X-TagPup-Updating, which is how the
-#: probe learns the server is away. The drain and the resume are exempt under any
-#: library's address too: counted, a drain would wait for itself.
-STATUS, DRAIN, RESUME = "/api/server", "/api/server/drain", "/api/server/resume"
-EXEMPT = frozenset({STATUS, DRAIN, RESUME})
-CONTROL = (DRAIN, RESUME)
+#: probe learns the server is away. The drain is exempt under any library's address
+#: too: counted, a drain would wait for itself.
+STATUS, DRAIN = "/api/server", "/api/server/drain"
+EXEMPT = frozenset({STATUS, DRAIN})
 
 
 #: What only watches the server: the Activity page and its reads (tagpup.web.activity_routes),
@@ -89,45 +90,81 @@ def exempt(path):
         return True
     # A URL's path, not a tag: what follows its first part, "/<library>".
     second = path.find("/", 1)
-    return second > 0 and path[second:] in CONTROL
+    return second > 0 and path[second:] == DRAIN
 
 UPDATING_MESSAGE = "TagPup is moving to a new version; this is sent again in a moment."
 
 
-def long_work():
-    """The work under way in this process beside its requests, by what it is: what a drain
-    will not interrupt."""
-    found = []
-    runs = suggestion_jobs.running()
-    if runs:
-        found.append("%d Suggest run(s)" % runs)
-    indexing = indexing_jobs.running()
-    if indexing:
-        found.append("indexing in %d library(ies)" % indexing)
-    edits = bulk_edit_jobs.running()
-    if edits:
-        found.append("%d bulk edit(s)" % edits)
+#: What a piece of work under way is (Work.kind). The drain tells a batch of photo files, which it asks to stop, from the
+#: rest, which it waits for, by its kind.
+INDEX, SUGGEST, NAMING, BATCH, MIGRATING, SYNC = "index", "suggest", "naming", "batch", "migrating", "sync"
+
+
+class Work(NamedTuple):
+    """One piece of work under way in this process: its `kind`, the name of the library it is for (None for what is
+    counted for the process: the naming of faces, the batches, the startup migrations) and the sentence that says it."""
+    kind: str
+    library: Optional[str]
+    sentence: str
+
+
+def under_way(watcher=None):
+    """The one list of what runs in this process beside its requests: [Work]. Each index queue busy and each Suggest
+    run by its library, the naming of faces, the batches of photo files and the startup migrations (#664) counted, and
+    the sync of `watcher` (the folder watcher this process runs, Lifecycle.watcher), when it is given. A drain reads it
+    (long_work), and so do the Activity page, the roots' moves and Name faces from tags (Lifecycle.under_way)."""
+    found = [Work(INDEX, name, "an index run is running or queued")
+             for name, queue in indexing_jobs.every_queue() if queue.busy()]
+    found += [Work(SUGGEST, run["library"], "Suggest is running") for run in suggestion_jobs.under_way()]
+    naming = naming_faces_jobs.running()
+    if naming:
+        found.append(Work(NAMING, None, "%d naming of faces from tags" % naming))
+    found += [Work(BATCH, None, sentence) for sentence in batches.sentences()]
     bringing = library_actions.bringing_up_to_date()
     if bringing:
-        found.append("bringing %d library(ies) up to date" % bringing)   # the startup migrations (#664)
+        found.append(Work(MIGRATING, None, "bringing %d library(ies) up to date" % bringing))
+    syncing = watcher.status()["syncing"] if watcher is not None else None
+    if syncing:
+        found.append(Work(SYNC, syncing["library"], "a sync is running"))
     return found
+
+
+#: The kinds a drain says counted over every library, and how.
+COUNTED = {SUGGEST: "%d Suggest run(s)", INDEX: "indexing in %d library(ies)"}
+
+
+def long_work():
+    """The work under way in this process beside its requests, by what it is: what a drain will not interrupt, [Work],
+    the runs of one kind counted together (COUNTED). The folder watcher's sync is its background task's (Lifecycle.busy)."""
+    found = under_way()
+    counted = []
+    for kind, said in COUNTED.items():
+        count = sum(1 for work in found if work.kind == kind)
+        if count:
+            counted.append(Work(kind, None, said % count))
+    return counted + [work for work in found if work.kind not in COUNTED]
+
+
+def running_for(library):
+    """What runs for `library` in this process, as sentences (Lifecycle.under_way): what a move of a root and Name faces
+    from tags are refused beside."""
+    return [work.sentence for work in _lifecycle().under_way(library)]
 
 
 class Lifecycle:
     """One server process's: `version` (the installed version's name, or None from a
-    checkout), `token` (the supervisor's, or None), `launcher_token` (the one in this
+    checkout), `launcher_token` (the one in this
     server's record, tagpup.launcher, or None), `background` (tagpup.runtime.Background,
-    stopped by a drain and started again by a resume), `work()` (long_work, or a test's)
+    stopped by a drain and started again by a resume), `work()` (long_work, or a test's: [Work])
     and `clock`."""
 
-    def __init__(self, version=None, token=None, background=None, work=long_work, clock=time.monotonic,
+    def __init__(self, version=None, background=None, work=long_work, clock=time.monotonic,
                  launcher_token=None):
         self.version = version
         #: What X-TagPup-Version says: the version, or that it runs from a checkout.
         self.version_label = version or launcher.FROM_A_CHECKOUT
         #: When this server started (seconds since the epoch): the Activity page's "running since".
         self.started = time.time()
-        self._token = token or None
         self._launcher_token = launcher_token or None
         self._background = background
         self._work = work
@@ -141,8 +178,7 @@ class Lifecycle:
         self._last_request = None
         #: A drain is under way: a second joins it.
         self._draining = False
-        #: How long a drained server not stopped waits before it takes work again: the
-        #: drain's `lease`, or LEFT_DRAINED.
+        #: How long a drained server not stopped waits before it takes work again: the drain's `lease`.
         self._lease = LEFT_DRAINED
 
     # ---- What it says ---------------------------------------------------------------
@@ -152,19 +188,27 @@ class Lifecycle:
         """The background tasks this process runs (tagpup.runtime.Background), or None."""
         return self._background
 
-    def busy(self):
-        """What runs beside the requests now: [what, ...]."""
-        return list(self._work()) + (self._background.busy() if self._background is not None else [])
+    def watcher(self):
+        """The folder watcher this process runs (tagpup.jobs.watching.Watcher), or None."""
+        return self._background.task(runtimes.FOLDER_WATCHER) if self._background is not None else None
+
+    def under_way(self, library=None):
+        """under_way, with this process's watcher: [Work], only `library`'s when it is given."""
+        found = under_way(self.watcher())
+        if library is None:
+            return found
+        return [work for work in found if work.library is not None and work.library.lower() == library.name.lower()]
+
+    def busy(self, but=()):
+        """What runs beside the requests now, but the kinds `but`: [what, ...]."""
+        return ([work.sentence for work in self._work() if work.kind not in but]
+                + (self._background.busy() if self._background is not None else []))
 
     def status(self):
         with self._changed:
             closed, in_flight = self._closed, self._in_flight
-        return {"version": self.version, "supervised": self._token is not None, "taking_work": not closed,
+        return {"version": self.version, "taking_work": not closed,
                 "requests": in_flight, "busy": self.busy()}
-
-    def allows(self, token):
-        """Is `token` the supervisor's?"""
-        return self._token is not None and isinstance(token, str) and hmac.compare_digest(token, self._token)
 
     def allows_launcher(self, token, remote):
         """Is `token` the one in this server's record, sent from this machine (`remote`, the
@@ -173,9 +217,9 @@ class Lifecycle:
                 and hmac.compare_digest(token, self._launcher_token))
 
     def authorizes(self, headers, remote):
-        """May a request with `headers` from `remote` drain or resume this server: the
-        supervisor's token, or a launcher's from this machine?"""
-        return self.allows(headers.get(TOKEN_HEADER)) or self.allows_launcher(headers.get(launcher.HEADER), remote)
+        """May a request with `headers` from `remote` drain this server: a launcher's token,
+        from this machine?"""
+        return self.allows_launcher(headers.get(launcher.HEADER), remote)
 
     # ---- The gate every request passes ------------------------------------------------
 
@@ -207,13 +251,13 @@ class Lifecycle:
 
     # ---- Draining ---------------------------------------------------------------------
 
-    def drain(self, seconds=DRAIN_SECONDS, quiet=0, lease=None):
+    def drain(self, seconds=DRAIN_SECONDS, quiet=0, *, lease):
         """Stop taking new work and wait up to `seconds` for what is under way to finish.
         {"drained": True}, or {"drained": False, "waiting_for": [...]}: refused at once,
         nothing turned away, while work runs beside the requests or a request came in
         the last `quiet` seconds (someone is using the app); or the deadline passed, and
         the server takes work again. Drained and not stopped within `lease` seconds
-        (LEFT_DRAINED by default), it takes work again: a launcher's window closed
+        (the launcher always says), it takes work again: a launcher's window closed
         between its drain and the end it would have made (tagpup.launcher)."""
         deadline = self._clock() + seconds
         with self._changed:
@@ -228,13 +272,17 @@ class Lifecycle:
                 since = None if self._last_request is None else self._clock() - self._last_request
                 if quiet and since is not None and since < quiet:
                     return {"drained": False, "waiting_for": ["a request %ds ago" % since]}
-                busy = self.busy()
+                # A batch is asked to stop once the server is closed (_drain_until), not waited for.
+                busy = self.busy(but=(BATCH,))
                 if busy:
                     logger.info("An update waits: %s under way.", ", ".join(busy))
                     return {"drained": False, "waiting_for": busy}
                 self._closed = True
                 self._drained_at = None
-                self._lease = LEFT_DRAINED if lease is None else lease
+                self._lease = lease
+                # Under the lock a resume takes: a resume cannot reopen before the batches are told to stop.
+                if batches.stop_all():
+                    logger.info("Asked the batches of photo files to stop at their chunk.")
             in_flight = self._in_flight
             self._draining = True
         try:
@@ -253,7 +301,9 @@ class Lifecycle:
                 if not self._closed:
                     # Taken back while it waited (a resume, or left drained too long).
                     return {"drained": False, "waiting_for": ["taken back"]}
-                waiting = (["%d request(s)" % self._in_flight] if self._in_flight else []) + self.busy()
+                # A batch is a request in flight too: it is named once, with its photos.
+                requests = self._in_flight - batches.running_here()
+                waiting = (["%d request(s)" % requests] if requests > 0 else []) + self.busy()
                 if not waiting:
                     self._drained_at = self._clock()
                     logger.info("Drained: nothing in flight, nothing running.")
@@ -267,7 +317,8 @@ class Lifecycle:
         return {"drained": False, "waiting_for": waiting}
 
     def resume(self):
-        """Take work again, and start the background tasks a drain stopped."""
+        """Take work again, and start the background tasks a drain stopped. Only the server's own: a drain's lease ended,
+        or its time ran out (no route does it)."""
         with self._changed:
             was_closed = self._closed
             self._reopen()
@@ -276,6 +327,7 @@ class Lifecycle:
         return was_closed
 
     def _reopen(self):
+        batches.reopen()
         self._closed = False
         self._drained_at = None
         self._changed.notify_all()
@@ -366,32 +418,20 @@ def server_status():
 
 @routes.post(DRAIN)
 def drain():
-    """Stop taking new work and let what is under way finish (Lifecycle.drain): the
-    supervisor's, before it moves the server onto a new version; or a launcher's on this
+    """Stop taking new work and let what is under way finish (Lifecycle.drain): a launcher's or an install's on this
     machine, before it serves another version in its place (tagpup.launcher)."""
     lifecycle = _lifecycle()
     if not lifecycle.authorizes(request.headers, request.remote_addr):
-        return responses.error(403, "Only the process that started this server, or a launch on this machine, "
-                                    "may drain it")
+        return responses.error(403, "Only a launch or an install on this machine may drain this server")
     body = request.get_json(silent=True) or {}
     seconds = body.get("seconds", DRAIN_SECONDS)
     quiet = body.get("quiet", 0)
     lease = body.get("lease")
-    if lease is not None and (isinstance(lease, bool) or not isinstance(lease, (int, float))
-                              or not 0 < lease <= LEFT_DRAINED):
+    if isinstance(lease, bool) or not isinstance(lease, (int, float)) or not 0 < lease <= LEFT_DRAINED:
         return responses.error(400, "lease must be a number of seconds, more than 0 and at most %d" % LEFT_DRAINED)
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds <= MAX_DRAIN_SECONDS:
         return responses.error(400, "seconds must be a number of seconds, more than 0 and at most %d"
                                % MAX_DRAIN_SECONDS)
     if isinstance(quiet, bool) or not isinstance(quiet, (int, float)) or quiet < 0:
         return responses.error(400, "quiet must be a number of seconds, 0 or more")
-    return jsonify(dict(lifecycle.drain(seconds, quiet, lease), success=True))
-
-
-@routes.post(RESUME)
-def resume():
-    """Take work again after a drain (the supervisor's, when it could not move the server)."""
-    lifecycle = _lifecycle()
-    if not lifecycle.authorizes(request.headers, request.remote_addr):
-        return responses.error(403, "Only the process that started this server may resume it")
-    return jsonify({"success": True, "resumed": lifecycle.resume()})
+    return jsonify(dict(lifecycle.drain(seconds, quiet, lease=lease), success=True))

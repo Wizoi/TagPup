@@ -13,8 +13,8 @@ layers, revisited"). A model is now one object, built once by the runtime and sh
 handing it on.
 """
 from tagpup.ml import free_device_memory, gpu, refuse_in_tests
+import contextlib
 import logging
-import os
 import threading
 
 import open_clip
@@ -26,23 +26,6 @@ logger = logging.getLogger("tagpup_cli.embedder")
 
 #: The settings a model is made from: tagpup.services.settings.LibrarySettings.embedder's keys.
 SETTINGS = ("model_name", "pretrained", "preserve_full_frame", "max_aspect_ratio", "force_image_size")
-
-
-def output_dim(model_name):
-    """How long the vectors `model_name` makes are, from open_clip's own description of
-    the model; None for one it does not describe (from the hub), known only once loaded.
-
-    The CLI guessed it from the name in three places -- 768 for ViT-L, 1024 for ViT-H,
-    else 512 -- and ViT-bigG-14's are 1280: every index cleared the library's vectors,
-    and Suggest and search refused to run (docs/findings.md, #74).
-    """
-    if model_name.startswith("hf-hub:"):
-        return None   # open_clip would fetch its description from the hub to answer
-    try:
-        config = open_clip.get_model_config(model_name)
-    except Exception:
-        return None
-    return config.get("embed_dim") if config else None
 
 
 class ClipModel:
@@ -76,6 +59,10 @@ class ClipModel:
     def load(self):
         """Load the model now, if it is not loaded yet."""
         self._init_model()
+
+    def loaded(self):
+        """Are the weights in memory now?"""
+        return self.model is not None
 
     def unload(self):
         """Let the weights go, and the GPU memory they held (tagpup.runtime drops a model
@@ -115,13 +102,6 @@ class ClipModel:
                 )
                 model.eval()
 
-                if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
-                    try:
-                        logger.info("Compiling CLIP model for CUDA acceleration...")
-                        model = torch.compile(model)
-                    except Exception as compile_err:
-                        logger.warning(f"Failed to compile CLIP model: {compile_err}. Using standard model.")
-
                 self.preprocess = preprocess
                 self.tokenizer = open_clip.get_tokenizer(self.model_name)
                 self.model = model
@@ -129,6 +109,20 @@ class ClipModel:
             except Exception as e:
                 logger.error(f"Failed to load CLIP model: {e}", exc_info=True)
                 raise e
+
+    @contextlib.contextmanager
+    def _running(self):
+        """The model's lock, held with the model loaded: the weights, the preprocessing and the tokenizer are read
+        inside it. `unload` takes the lock to drop all three, so a read made after `_init_model` returned and
+        before the lock was taken saw None (a text embedded while the idle release ran raised "'NoneType' object is
+        not callable"); the model is loaded again, outside the lock, when that happened."""
+        for _attempt in range(3):
+            self._init_model()
+            with self.model_lock:
+                if self.model is not None:
+                    yield
+                    return
+        raise RuntimeError("The CLIP model was let go as often as it was loaded; try again.")
 
     def embed_image(self, file_path, seen=None):
         """Embed one photo as it is now. Nothing is kept: see PhotoEmbeddings.
@@ -152,7 +146,6 @@ class ClipModel:
 
     def embed_picture(self, img):
         """Embed a decoded picture: an RGB Pillow image, upright."""
-        self._init_model()
         # Pad to square to preserve full frame if configured and within aspect ratio limit
         if self.preserve_full_frame:
             width, height = img.size
@@ -160,12 +153,11 @@ class ClipModel:
             if aspect <= self.max_aspect_ratio:
                 img = images.pad_to_square(img)
 
-        image_input = self.preprocess(img).unsqueeze(0).to(self.device)
-        if self.device == "cuda":
-            image_input = image_input.half()
-
-        with self.model_lock:
-            with torch.no_grad():
+        with self._running():
+            image_input = self.preprocess(img).unsqueeze(0).to(self.device)
+            if self.device == "cuda":
+                image_input = image_input.half()
+            with torch.inference_mode():
                 image_features = self.model.encode_image(image_input)
                 # L2 normalize the features
                 image_features /= image_features.norm(dim=-1, keepdim=True)
@@ -173,11 +165,10 @@ class ClipModel:
 
     def embed_text(self, text):
         """Embed a text query for semantic search."""
-        self._init_model()
         try:
-            text_input = self.tokenizer([text]).to(self.device)
-            with self.model_lock:
-                with torch.no_grad():
+            with self._running():
+                text_input = self.tokenizer([text]).to(self.device)
+                with torch.inference_mode():
                     text_features = self.model.encode_text(text_input)
                     text_features /= text_features.norm(dim=-1, keepdim=True)
                     return text_features[0].cpu().numpy().tolist()

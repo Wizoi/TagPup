@@ -7,9 +7,10 @@ needs in one go, and returns it; the fingerprint of the faces table it read unde
 back beside anything worth caching (tagpup.jobs.identify keeps the caches). Every query
 kept its shape: each was tuned against that library (docs/findings.md, #45, #49, #50).
 
-`named()` is how a read gets every named face as unit vectors -- (ids, names, matrix)
--- built once per state of the table rather than per click: reading all 35,758 of them
-from SQLite to answer one click cost half a second, every click.
+`named()` is how a read gets every named face as unit vectors -- (ids, people, matrix), a Ref
+(the node's id, the cached name) for each row --, built once per state of the table rather than per
+click: reading all 35,758 of them from SQLite to answer one click cost half a second, every click.
+People are told apart by the id of their node: two people called alike are two.
 """
 import json
 import logging
@@ -21,8 +22,10 @@ from tagpup.core import clustering as face_rules
 from tagpup.core import dates, vocabulary
 from tagpup.core.result import NotFound
 from tagpup.ml import grouping
+from tagpup.services import people as people_service
+from tagpup.services import photos as photos_service
 from tagpup.services import roots as roots_service
-from tagpup.store import db, faces, generations, people, photos
+from tagpup.store import db, faces, generations, people, person_ids, photos
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +62,8 @@ def fingerprint(library):
 
 
 def named_faces(library):
-    """(fingerprint, (ids, names, matrix)): every face that carries a name, as unit
-    vectors, with the names beside them; matrix None when nobody has been named yet.
+    """(fingerprint, (ids, people, matrix)): every face that carries a name, as unit
+    vectors, with the person (a Ref) beside each; matrix None when nobody has been named yet.
 
     Not one averaged face per person: the diagnostics panel scores a candidate against
     the best single named face, and a suggestion that scored the same pair differently
@@ -77,7 +80,7 @@ def named_faces(library):
     conn = _reading(library)
     try:
         stamp = faces.fingerprint(conn)
-        ids, names, vecs = [], [], []
+        ids, refs, vecs = [], [], []
         for face_id, person, blob in faces.for_named_matrix(conn):
             try:
                 vec = np.frombuffer(blob, dtype=np.float32)
@@ -88,11 +91,11 @@ def named_faces(library):
             if norm == 0:
                 continue
             ids.append(face_id)
-            names.append(person)
+            refs.append(person)
             vecs.append(vec / norm)
     finally:
         conn.close()
-    return stamp, (ids, names, np.vstack(vecs) if vecs else None)
+    return stamp, (ids, refs, np.vstack(vecs) if vecs else None)
 
 
 #: faces.name_source of a name a person gave a face, and so the only kind that stands for them.
@@ -114,18 +117,18 @@ def _decided_stamp(conn):
 
 
 def decided_faces(library):
-    """(stamp, (ids, names, matrix)): as named_faces, but only the faces a person decided --
+    """(stamp, (ids, people, matrix)): as named_faces, but only the faces a person decided --
     named by hand (name_source 'manual'), or on a photo whose keywords name the same person
-    (photo_people, source 'keyword', compared by vocabulary.key as people.rebuild does). A name
+    (photo_people, source 'keyword', compared by the node's id as people.rebuild lists them). A name
     automatch or clustering gave, that no keyword on its photo bears out, is a guess and is
     never what a later guess is compared with; automatch alone reads this matrix."""
     conn = _reading(library)
     try:
         stamp = _decided_stamp(conn)
         keywords = people.keyword_keys(conn)
-        ids, names, vecs = [], [], []
+        ids, refs, vecs = [], [], []
         for face_id, person, blob, source, photo_id in faces.for_decided_matrix(conn):
-            if source != DECIDED and vocabulary.key(person) not in keywords.get(photo_id, ()):
+            if source != DECIDED and person.id not in keywords.get(photo_id, ()):
                 continue
             try:
                 vec = np.frombuffer(blob, dtype=np.float32)
@@ -135,11 +138,101 @@ def decided_faces(library):
             if norm == 0:
                 continue
             ids.append(face_id)
-            names.append(person)
+            refs.append(person)
             vecs.append(vec / norm)
     finally:
         conn.close()
-    return stamp, (ids, names, np.vstack(vecs) if vecs else None)
+    return stamp, (ids, refs, np.vstack(vecs) if vecs else None)
+
+
+def _groups(people_of_rows):
+    """{person id: (the id, [rows])} of a matrix's rows: a person is the node, so two people called alike are two groups."""
+    groups = {}
+    for row, person in enumerate(people_of_rows):
+        groups.setdefault(person.id, (person.id, []))[1].append(row)
+    return groups
+
+
+def _closest_to_mean(ids, people_of_rows, matrix, skip=()):
+    """{person: id of the face nearest the mean of that person's faces}, for each person not in `skip` (people as they travel:
+    the id of their node). One pass over the matrix's rows: the people are grouped once and each
+    group is read as a slice, so no group's mean is the size of the table. A tie goes to the lowest id."""
+    if matrix is None or not len(ids):
+        return {}
+    ids = np.asarray(ids)
+    chosen = {}
+    for wire, rows in _groups(people_of_rows).values():
+        if wire in skip:
+            continue
+        rows = np.asarray(rows)
+        vectors = matrix[rows]
+        centre = vectors.mean(axis=0)
+        norm = np.linalg.norm(centre)
+        scores = vectors @ (centre / norm) if norm else np.zeros(len(rows))
+        best = np.flatnonzero(scores >= scores.max() - 1e-7)
+        chosen[wire] = int(ids[rows[best]].min())
+    return chosen
+
+
+def representative_faces(decided, named):
+    """{person: face id}: for each person the face most like them, to show beside the name (a person is the id of their node).
+
+    The decided face (decided_faces: named by hand, or borne out by its photo's keyword)
+    nearest the mean of that person's decided faces. A person none of whose faces is
+    decided gets the face nearest the mean of their named ones; a person with neither
+    (every named face unreadable or excluded) is absent. An excluded face is in neither
+    matrix, so is never chosen. Both arguments are (ids, people, matrix) as the matrices
+    are cached."""
+    chosen = _closest_to_mean(*decided)
+    chosen.update(_closest_to_mean(*named, skip=chosen))
+    return chosen
+
+
+#: How many faces of a person a hover shows (web/common/person-faces.js).
+SAMPLE_FACES = 4
+
+
+def _ranked_by_mean(ids, people_of_rows, matrix, limit):
+    """{person: [up to `limit` face ids]}: each person's faces, the one nearest the mean of theirs
+    first, as _closest_to_mean chooses it (a tie to the lowest id), the rest by the same
+    closeness. One pass over the matrix, the people grouped once."""
+    if matrix is None or not len(ids):
+        return {}
+    ids = np.asarray(ids)
+    ranked = {}
+    for wire, rows in _groups(people_of_rows).values():
+        rows = np.asarray(rows)
+        vectors = matrix[rows]
+        centre = vectors.mean(axis=0)
+        norm = np.linalg.norm(centre)
+        scores = vectors @ (centre / norm) if norm else np.zeros(len(rows))
+        # Closest first; faces as close as 1e-7 are one rank, the lowest id first.
+        best = np.lexsort((ids[rows], -np.round(scores, 7)))
+        ranked[wire] = [int(face_id) for face_id in ids[rows[best[:limit]]]]
+    return ranked
+
+
+def face_samples(decided, named, limit=SAMPLE_FACES):
+    """{person: [face ids]}: up to `limit` faces to show of each person, the faces a person
+    decided first (decided_faces: named by hand, or borne out by the photo's keyword), most
+    like the person first, and, to fill the places left, their other named faces in the same
+    order. A person with no readable face is absent. Both arguments are (ids, people, matrix)
+    as the matrices are cached; an excluded face is in neither, so is never shown."""
+    chosen = _ranked_by_mean(*decided, limit)
+    for person, more in _ranked_by_mean(*named, limit).items():
+        have = chosen.setdefault(person, [])
+        have.extend(face_id for face_id in more if face_id not in have)
+        del have[limit:]
+    return chosen
+
+
+def for_pages(library, by_person):
+    """`by_person` ({person: value}, representative_faces' or face_samples') as the pages read it: keyed `id:<id>` by the id of
+    the person's node, and only so (owner, 2026-10-10: the leaf is never identity). A name with no person node is nobody's and is
+    left out, as is a person the tree no longer files. Read now from the tree."""
+    everyone = people_service.directory(library)
+    return {"id:%d" % person: value for person, value in by_person.items()
+            if everyone.of_id(person) is not None}
 
 
 # ---- The photos, and one photo ----------------------------------------------------------
@@ -170,11 +263,13 @@ def photos_waiting(library, show_matched=False):
 def photo_details(library, photo_path, named):
     """One photo for the panel: its people, tags, caption and year, and each face with
     how like the closest named face it is. A photo with no row still answers, with
-    nothing on it: the panel opens on any file the page names."""
+    nothing on it: the panel opens on any file the page names. `size` is the pixel size
+    the faces' boxes are in (_box_pixels)."""
     conn = _reading(library)
     try:
         photo_row = photos.details(conn, photo_path)
         face_rows = faces.in_photo_with_names(conn, photo_path)
+        everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
 
@@ -199,10 +294,11 @@ def photo_details(library, photo_path, named):
     # Every named face, from the matrix shared with face_matches. This read all of
     # them from SQLite on every click of a face card -- 35,826 rows, half a second --
     # for the one number per face shown beside it.
-    _known_ids, _known_names, known_matrix = named()
+    _known_ids, _known_people, known_matrix = named()
 
     found = []
-    for fid, box_str, fname, emb_bytes, excluded in face_rows:
+    for fid, box_str, carried, emb_bytes, excluded in face_rows:
+        fname = carried.name if carried else None
         try:
             box = json.loads(box_str)
         except Exception:
@@ -218,8 +314,9 @@ def photo_details(library, photo_path, named):
                 max_sim = float(np.max(sims))
         # Excluded: the page counts a photo's unmatched faces from these, and an excluded
         # face is not one, as the list's counts say (docs/findings.md, #642, #655).
-        found.append({"id": fid, "box": box, "name": fname, "max_similarity": max_sim,
-                      "excluded": bool(excluded)})
+        found.append({"id": fid, "box": box, "name": fname,
+                      "person": everyone.of_id(carried.id) if carried else None,
+                      "max_similarity": max_sim, "excluded": bool(excluded)})
 
     return {
         "path": photo_path,
@@ -229,6 +326,7 @@ def photo_details(library, photo_path, named):
         "caption": caption,
         "faces": found,
         "year": shown_year(year_taken),
+        "size": photos_service.box_shape(photo_path)["size"],
     }
 
 
@@ -243,38 +341,43 @@ def _embedding_of(conn, face_id):
 
 def face_matches(library, face_id, named):
     """The five people a face most resembles, best first, each with the similarity and
-    its band. Selecting a card asks this."""
+    its band, and the `person` the name is (tagpup.services.people). Selecting a card asks this."""
     conn = _reading(library)
     try:
         target_emb = _embedding_of(conn, face_id)
+        everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
 
-    known_ids, names, embeddings_matrix = named()
-    if embeddings_matrix is None:
+    return [{"name": found.name, "person": everyone.of_id(found.id), "similarity": similarity,
+             "band": face_rules.band(similarity)}
+            for found, similarity in nearest_people(named(), target_emb, face_id)]
+
+
+def nearest_people(known, embedding, skip_id=None, limit=5):
+    """[(person, similarity)], the `limit` people most like `embedding`, best first, one entry a person, from `known`
+    (named_faces' ids, people and matrix). The one place that says who a face looks like: the boxes' list
+    (face_matches) and the strip's suggestion (tagpup.services.faces.panel) both read it.
+
+    The face `skip_id` is skipped rather than excluded from the matrix, which is shared and cannot be rebuilt per
+    face; a face is not a suggestion for itself."""
+    known_ids, known_people, matrix = known
+    if matrix is None:
         return []
-
-    similarities = np.dot(embeddings_matrix, target_emb)
-    sorted_indices = np.argsort(similarities)[::-1]
-
-    # The face itself is skipped rather than excluded from the matrix, which is shared
-    # and cannot be rebuilt per face; a face is not a suggestion for itself.
-    top_matches, seen = [], set()
-    for idx in sorted_indices:
-        if known_ids[idx] == face_id:
+    similarities = np.dot(matrix, embedding)
+    found, seen = [], set()
+    for idx in np.argsort(similarities)[::-1]:
+        if known_ids[idx] == skip_id:
             continue
-        name = names[idx]
-        if name in seen:
+        person = known_people[idx]
+        key = person.id
+        if key in seen:
             continue
-        seen.add(name)
-        top_matches.append({
-            "name": name,
-            "similarity": float(similarities[idx]),
-            "band": face_rules.band(float(similarities[idx])),
-        })
-        if len(top_matches) >= 5:
+        seen.add(key)
+        found.append((person, float(similarities[idx])))
+        if len(found) >= limit:
             break
-    return top_matches
+    return found
 
 
 class UnnamedFaces:
@@ -427,26 +530,33 @@ def unnamed_like(library, face_id, unnamed=None):
 
 # ---- One person's faces, and the faces ruled out ---------------------------------------------
 
-def person_faces(library, name, limit=100, page=1):
-    """A page of a person's faces, each scored against their closest other face of the
-    years around it, never one of its own photo (tagpup.core.clustering, #71), and
-    flagged when the name looks wrong. A negative limit is no limit."""
+def person_faces(library, person, limit=100, page=1):
+    """A page of a person's faces (`person`: the id of their node, or a tag path or a name; a name two people have is
+    refused, naming their paths), each scored against their closest other face of the years around it, never one of its own photo
+    (tagpup.core.clustering, #71), and flagged when the name looks wrong. A negative limit is no limit."""
     offset = (page - 1) * limit
     conn = _reading(library)
     try:
-        total_count = faces.count_named(conn, name)
-        all_matched_rows = faces.person_embeddings(conn, name)
-        rows = faces.person_page(conn, name, limit, offset)
+        try:
+            found = person_ids.target(conn, person)
+        except person_ids.PersonProblem as problem:
+            people_service.translate(problem)
+        if found[0] is None:
+            raise NotFound("No person is called %s: reload the page." % found[1])
+        ref = key = found[0]
+        total_count = faces.count_named(conn, ref)
+        all_matched_rows = faces.person_embeddings(conn, ref)
+        rows = faces.person_page(conn, ref, limit, offset)
     finally:
         conn.close()
 
     known = face_rules.KnownFaces()
     for emb_bytes, _mtime, year, photo_path in all_matched_rows:
         if emb_bytes and len(emb_bytes) > 0:
-            known.add(name, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
+            known.add(key, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
 
     # The page's faces against the person's, in one pass (KnownFaces.likeness_many).
-    likenesses = iter(known.likeness_many(name, [
+    likenesses = iter(known.likeness_many(key, [
         (np.frombuffer(r[5], dtype=np.float32), r[6], r[1]) for r in rows if r[5] is not None and len(r[5]) > 0]))
 
     found = []
@@ -514,9 +624,21 @@ def _queue_stamp(conn):
     return (faces.fingerprint(conn), generations.value(conn, "photos"))
 
 
+def _listed(people_json):
+    """[(node id, name)] of a photo's people (faces.identify_candidates' JSON, [[id, name]]); none for text that is not. A row
+    with no id (from before ids) is no person."""
+    if not people_json:
+        return []
+    try:
+        return [(tag_id, name) for tag_id, name in json.loads(people_json) if tag_id is not None]
+    except Exception:
+        return []
+
+
 def queue(library):
-    """(stamp, [{"name", "count", "unit", "photos"}]): who is waiting to be identified,
-    and how many faces. Counting only -- no clustering here.
+    """(stamp, [{"name", "count", "unit", "photos", "person_id"}]): who is waiting to be identified,
+    and how many faces. A person is the node of the tag tree: two people called alike are two entries, told
+    apart by `person_id` (None for a bucket, and for a name no person is filed under). Counting only -- no clustering here.
 
     This used to run DBSCAN over every tag group and over the whole unknown group on
     each request. On a real library that is tens of thousands of 512-dimensional
@@ -533,21 +655,20 @@ def queue(library):
     finally:
         conn.close()
 
-    tag_candidates, unknown_candidates, photo_unmatched_tags = {}, [], {}
+    tag_candidates, unknown_candidates, photo_unmatched_tags, labels = {}, [], {}, {}
     for r in unmatched_rows:
         photo_path, people_json, embedding_length = r[1], r[2], r[3]
         # A face with no embedding cannot take part in identifying, so it is not
         # waiting for anybody and must not be counted as though it were.
         if not embedding_length:
             continue
-        people = []
-        if people_json:
-            try:
-                people = json.loads(people_json)
-            except Exception:
-                pass
-        matched_names = matched_by_photo.get(photo_path, set())
-        unmatched_tags = [p for p in people if p not in matched_names]
+        matched_keys = matched_by_photo.get(photo_path, set())
+        unmatched_tags = []
+        for tag_id, name in _listed(people_json):
+            key = tag_id
+            if key not in matched_keys:
+                unmatched_tags.append(key)
+                labels.setdefault(key, (tag_id, name))
         if unmatched_tags:
             photo_unmatched_tags.setdefault(photo_path, set()).update(unmatched_tags)
             for tag in unmatched_tags:
@@ -580,8 +701,9 @@ def queue(library):
     people_counts = []
     for tag, candidates in tag_candidates.items():
         if len(tag_photos.get(tag, ())) > 0:
-            people_counts.append({"name": tag, "count": len(candidates), "unit": "face",
-                                  "photos": len(tag_photos[tag])})
+            tag_id, name = labels[tag]
+            people_counts.append({"name": name, "count": len(candidates), "unit": "face",
+                                  "photos": len(tag_photos[tag]), "person_id": tag_id})
     people_counts.sort(key=lambda x: x["count"], reverse=True)
 
     # Unknown Faces first, then Ungrouped, as the two catch-all buckets.
@@ -617,10 +739,16 @@ def _empty_grid():
     return {"faces": [], "total_count": 0, "has_more": False}
 
 
+def is_bucket(name):
+    """Is `name` one of the buckets of the queue (Unknown Faces, Ungrouped, Excluded) and not a person?"""
+    return isinstance(name, str) and name in vocabulary.BUCKETS.values()
+
+
 def grid(library, name, named, on_progress=None):
     """(fingerprint, payload): the nameless faces that are candidates for `name` -- or
     for the Unknown Faces and Ungrouped buckets -- grouped by resemblance, each group
-    offered the person it most resembles, and the leftovers ranked and capped.
+    offered the person it most resembles, and the leftovers ranked and capped. `name` is a bucket, or the id of a person's
+    node.
 
     The slow path of the screen, the better part of a minute on a real library.
     `on_progress(stage, fraction, message)` hears each stage as it starts and, while
@@ -641,28 +769,20 @@ def grid(library, name, named, on_progress=None):
 
     # How many unmatched candidates each tag has library-wide, so "Ungrouped" can
     # recognise the tags that cannot form a group. Mirrors the queue listing.
+    seeking_keys = set() if is_bucket(name) else {name}
     tag_candidate_counts = {}
     if name == vocabulary.BUCKETS["ungrouped"]:
         for r in unmatched_rows:
-            try:
-                r_people = json.loads(r[7] or "[]")
-            except Exception:
-                continue
-            for tag in r_people:
-                if tag not in matched_by_photo.get(r[1], set()):
-                    tag_candidate_counts[tag] = tag_candidate_counts.get(tag, 0) + 1
+            for tag_id, tag_name in _listed(r[7]):
+                key = tag_id
+                if key not in matched_by_photo.get(r[1], set()):
+                    tag_candidate_counts[key] = tag_candidate_counts.get(key, 0) + 1
 
     candidate_rows = []
     for r in unmatched_rows:
-        photo_path, people_json = r[1], r[7]
-        people = []
-        if people_json:
-            try:
-                people = json.loads(people_json)
-            except Exception:
-                pass
+        photo_path = r[1]
         matched_names = matched_by_photo.get(photo_path, set())
-        unmatched_tags = [p for p in people if p not in matched_names]
+        unmatched_tags = [tag_id for tag_id, _name in _listed(r[7]) if tag_id not in matched_names]
 
         if name == vocabulary.BUCKETS["unknown"]:
             # Photos with no unmatched tags
@@ -675,7 +795,7 @@ def grid(library, name, named, on_progress=None):
             if unmatched_tags and all(
                     tag_candidate_counts.get(tag, 0) <= 1 for tag in unmatched_tags):
                 candidate_rows.append(r)
-        elif name in unmatched_tags:
+        elif seeking_keys.intersection(unmatched_tags):
             candidate_rows.append(r)
 
     if not candidate_rows:
@@ -685,15 +805,15 @@ def grid(library, name, named, on_progress=None):
     # (tagpup.core.clustering.is_offered): below it a suggestion is more distraction
     # than help. The number is always shown, and its band says how sure it is.
     report("reading", 0.7, "Reading the faces already named")
-    _known_ids, known_names, known_matrix = named()
+    _known_ids, known_people, known_matrix = named()
 
-    def reference_faces(person):
-        """Every face already named as this person; None when nobody has been named
+    def reference_faces(person_keys):
+        """Every face already named as this person (or any of the people a shared name is); None when nobody has been named
         yet -- the ordinary case for somebody being identified for the first time, and
         the reason this cannot simply replace the keyword queue."""
-        if known_matrix is None:
+        if known_matrix is None or not person_keys:
             return None
-        rows = [i for i, n in enumerate(known_names) if n == person]
+        rows = [i for i, found in enumerate(known_people) if found.id in person_keys]
         return known_matrix[rows] if rows else None
 
     def suggest_for_all(centroids):
@@ -725,7 +845,7 @@ def grid(library, name, named, on_progress=None):
                 if not usable[i]:
                     continue
                 score = float(scores[offset])
-                results[i] = (known_names[int(best[offset])] if face_rules.is_offered(score) else None,
+                results[i] = (known_people[int(best[offset])] if face_rules.is_offered(score) else None,
                               score)
         return results
 
@@ -733,12 +853,9 @@ def grid(library, name, named, on_progress=None):
         """Which other people the candidate's photo still has no face for. A photo naming
         two unaccounted people offers both its faces under both names, which is right but
         reads as noise until you are told why."""
-        try:
-            people = json.loads(row[7] or "[]")
-        except Exception:
-            return []
         matched = matched_by_photo.get(row[1], set())
-        return [p for p in people if p not in matched and p != name]
+        return [tag_name for tag_id, tag_name in _listed(row[7])
+                if tag_id not in matched and tag_id not in seeking_keys]
 
     valid_rows, embs = [], []
     for r in candidate_rows:
@@ -792,7 +909,8 @@ def grid(library, name, named, on_progress=None):
     cluster_suggestions = suggest_for_all(cluster_centroids)
 
     def card(r, similarity, cluster_id, cluster_name, suggested, global_idx):
-        suggested_name, suggested_sim = suggested
+        suggested_person, suggested_sim = suggested
+        suggested_name = suggested_person.name if suggested_person else None
         return {
             "id": r[0],
             "photo_path": r[1],
@@ -806,6 +924,7 @@ def grid(library, name, named, on_progress=None):
             "cluster_name": cluster_name,
             "other_names": other_unaccounted_names(r),
             "suggested_name": suggested_name,
+            "suggested_person_id": suggested_person.id if suggested_person else None,
             "suggested_similarity": round(suggested_sim, 3),
             "suggestion_strength": face_rules.band(suggested_sim) if suggested_name else None,
             "_emb_idx": global_idx,
@@ -823,7 +942,7 @@ def grid(library, name, named, on_progress=None):
     # UNCLUSTERED_LIMIT. The person being sought is needed before the cap rather than
     # after it: ranking has to see every candidate to choose the strongest 500.
     unclustered_total = len(noise_indices)
-    seeking = reference_faces(name)
+    seeking = reference_faces(seeking_keys)
 
     # Rank the whole set, then take the top of it. This used to slice the first 500
     # off an unordered list and sort those, so with 4,739 unclustered faces the 500 on

@@ -22,10 +22,12 @@ from contextlib import closing
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
+from tagpup.files import images, shares
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
-from tagpup.store import db, embeddings, inspection, taxonomy
+from tagpup.store import db, embeddings, inspection, schema, taxonomy
+from tagpup.store import photos as photo_rows
 
 #: How many ids an answer lists at most, unless asked for more; the count is always whole.
 LIMIT = 100
@@ -87,11 +89,11 @@ def summary(library, embedder_settings=None):
     sentence = _unplaced(library)
     if sentence:
         with _reading(library) as conn:
-            return {"roots_problem": sentence, "schema_version": inspection.schema_version(conn),
+            return {"roots_problem": sentence, "schema_version": schema.version(conn),
                     "tree_nodes": inspection.tree_nodes(conn)}
     with _reading(library) as conn:
         held = dict(rules.summary(conn))
-        held["schema_version"] = inspection.schema_version(conn)
+        held["schema_version"] = schema.version(conn)
         held["tree_nodes"] = inspection.tree_nodes(conn)
         held["people"] = inspection.people_named(conn)
         if embedder_settings is not None:
@@ -124,7 +126,8 @@ def photos(library, folder=None, tag=None, person=None, reveal=False, limit=LIMI
     """The photos under a folder (any depth), carrying a tag (or a tag under it), or listing
     a person among their people -- each given narrows the others. Their count and ids;
     their paths only with `reveal`. A person is a name (Rowan Thackeray) or their tag
-    (People/Rowan Thackeray), spelled as the photos spell it."""
+    (People/Rowan Thackeray): a tag path is the one person filed there (two people called alike are told apart by it), a name is
+    everyone called it; a path no node holds names no one filed."""
     if not (folder or tag or person):
         raise Refused("Name a folder, a tag or a person.")
     found = None
@@ -132,8 +135,7 @@ def photos(library, folder=None, tag=None, person=None, reveal=False, limit=LIMI
         if folder:
             found = dict(inspection.under(conn, folder))
         if person:
-            name = vocabulary.leaf_of(person)
-            of_person = dict(inspection.of_person(conn, name))
+            of_person = dict(inspection.of_person(conn, person))
             found = of_person if found is None else {i: p for i, p in found.items() if i in of_person}
         if tag:
             # Only the photos a folder or a person has narrowed to: it read every
@@ -197,9 +199,9 @@ def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
         answer["stale"] = True
         return answer
     record = MetadataExtractor(exiftool_path).batch_read([row["path"]], people=known)[0]
-    if "document_id" not in record:
-        # ExifTool could not be started, or could not read this file: the extractor
-        # answers an empty record, which is no statement about what the file holds.
+    if "document_id" not in record or record["mtime"] is None:
+        # ExifTool could not be started, or could not read this file, or its stamp could not be taken: the extractor
+        # answers an empty or unstamped record, which is no statement about what the file holds.
         answer.update(file_read=False, stale=None)
         return answer
     answer["file_read"] = True
@@ -208,7 +210,7 @@ def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
     # different fields, and only what both hold can disagree.
     differing = sorted(k for k in set(in_row) & set(in_file) if in_row[k] != in_file[k])
     answer.update(
-        mtime={"same": row["mtime"] is not None and abs(row["mtime"] - record["mtime"]) < 0.1,
+        mtime={"same": photo_rows.same_mtime(row["mtime"], record["mtime"]),
                "seconds_apart": None if row["mtime"] is None else round(record["mtime"] - row["mtime"], 3)},
         size={"same": row["size"] == record["size"], "row": row["size"], "file": record["size"]},
         tags=_compared(row["tags"], record["tags"], reveal),
@@ -296,7 +298,45 @@ def all_checks(library, reveal=False, embedder_settings=None):
         answer = {"broken": sum(1 for r in results if r["count"]), "checks": results}
         if embedder_settings is not None:
             answer["without_a_vector"] = rules.without_a_vector(conn, embeddings.model_key(**embedder_settings))
+        answer["people_at_the_top"] = _people_at_the_top(conn, reveal)
     return answer
+
+
+def _people_at_the_top(conn, reveal=False):
+    """The people directly under the tree's root, not yet filed in a branch (reported, not broken): `count`, and their tags
+    as `tags` only with `reveal`."""
+    top = sorted(taxonomy.top_level_people(conn))
+    return dict({"count": len(top)}, **({"tags": top} if reveal else {}))
+
+
+# ---- Photos whose file does not open ------------------------------------------------------
+
+def files_that_fail_to_open(library):
+    """The photos whose file is there and does not open: empty, ending in zero bytes as an interrupted copy leaves
+    a file (images.ZERO_TAIL), or not a picture Pillow can identify -- the end of each file and its header are
+    read, and no picture is decoded (about a millisecond a photo; a whole decode is thirty). A JPEG cut short in the
+    middle of its picture is not found here, and takes a write of its tags (DECISIONS 2026-10-15). {"count", "unreached": photos whose file could not be looked at (a share, a lock), not counted, and
+    not the missing ones (`missing_files`), "files": [(id, path, why)] by path}. Reported, not broken. Nothing is
+    written; the paths are for a caller that reveals them."""
+    with _reading(library) as conn:
+        held = inspection.photo_files(conn)
+    failed, unreached = [], 0
+    for photo_id, path in held:
+        try:
+            if images.tail_check(path) >= images.ZERO_TAIL:
+                failed.append((photo_id, path, images.DAMAGE["zero-filled"]))
+                continue
+            images.shown_size(path)
+        except images.Unreadable as damage:
+            failed.append((photo_id, path, images.DAMAGE.get(damage.kind, damage.kind)))
+        except FileNotFoundError:
+            continue
+        except OSError as problem:
+            if images.is_damage(problem):
+                failed.append((photo_id, path, images.DAMAGE["not an image"]))
+            else:
+                unreached += 1
+    return {"count": len(failed), "unreached": unreached, "files": failed}
 
 
 # ---- Rows whose file is gone ------------------------------------------------------------
@@ -307,9 +347,20 @@ def missing_files(library, reveal=False, limit=LIMIT):
     and excluded, and how many different names sit on them -- which answers #42's
     question, which names sit on rows of a folder whose files are gone. Folder paths
     and the names only with `reveal`. Missing rows are reported, never removed: a
-    folder on an unplugged drive looks the same as a deleted one."""
+    folder renamed looks the same as a deleted one. A photo on a share that does not answer,
+    or that cannot be read, is not looked at (`not_looked_at`), neither gone nor there, and a
+    folder on a share is gone only when the share answers (shares.stamp_of, folder_state;
+    #1356); on a local drive that is not connected it is gone (#1387)."""
     with _reading(library) as conn:
-        gone = inspection.whose_file_is_gone(conn)
+        held = inspection.photo_files(conn)
+    gone, not_looked_at = [], 0
+    for photo_id, path in held:
+        stamp = shares.stamp_of(path)
+        if stamp is None:
+            gone.append((photo_id, path))
+        elif stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
+            not_looked_at += 1
+    with _reading(library) as conn:
         faces = inspection.faces_on(conn, [photo_id for photo_id, _path in gone])
     by_folder = {}
     for photo_id, path in gone:
@@ -320,7 +371,7 @@ def missing_files(library, reveal=False, limit=LIMIT):
         folder, ids = by_folder[key]
         on_them = [face for photo_id in ids for face in faces.get(photo_id, [])]
         names = sorted({name for _id, name, _source, _excluded in on_them if name})
-        entry = {"folder": len(listed) + 1, "folder_gone": not os.path.isdir(folder), "rows": len(ids),
+        entry = {"folder": len(listed) + 1, "folder_gone": shares.folder_state(folder) == "gone", "rows": len(ids),
                  "ids": ids[:max(0, limit)], "faces": len(on_them),
                  "named": sum(1 for f in on_them if f[1]),
                  "named_by_hand": sum(1 for f in on_them if f[1] and f[2] == "manual"),
@@ -331,7 +382,7 @@ def missing_files(library, reveal=False, limit=LIMIT):
             entry["path"] = folder
             entry["name_list"] = names
         listed.append(entry)
-    return {"rows": len(gone), "folders": len(listed),
+    return {"rows": len(gone), "folders": len(listed), "not_looked_at": not_looked_at,
             "folders_gone": sum(1 for f in listed if f["folder_gone"]),
             "named": sum(f["named"] for f in listed), "names": len({
                 name for faces_of in faces.values() for _id, name, _s, _e in faces_of if name}),

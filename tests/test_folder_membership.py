@@ -234,7 +234,7 @@ class IgnoredFolders(unittest.TestCase):
         self.assertEqual([scanned[0]], [meta["path"] for meta in self.started[0].photos().values()])
 
     def test_the_ignored_folder_itself_is_still_not_the_librarys(self):
-        self.assertIsNotNone(library_actions.not_in(self.library, self.scans, ignored=[]))
+        self.assertEqual((None, True), library_actions.suggest_how(self.library, self.scans, ignored=[]))
 
 
 if __name__ == "__main__":

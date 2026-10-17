@@ -34,12 +34,12 @@ class PathLockerTestBase(unittest.TestCase):
     def lock_file_for(self, locker, path):
         return locker._get_lock_path(path)
 
-    def write_lock(self, locker, path, pid, host=None, age=0.0, legacy=False):
+    def write_lock(self, locker, path, pid, host=None, age=0.0, torn=False):
         """Plant a lock as some other process would have left it."""
         lock_file = self.lock_file_for(locker, path)
         with open(lock_file, "w", encoding="utf-8") as f:
-            if legacy:
-                f.write(os.path.abspath(path))  # the old format: just a path
+            if torn:
+                f.write(os.path.abspath(path))  # a file that is no JSON: a write cut short, or the format before holders were named
             else:
                 json.dump({
                     "path": os.path.abspath(path),
@@ -127,15 +127,16 @@ class TestAbandonedLocks(PathLockerTestBase):
         self.write_lock(locker, self.photo, pid=os.getpid(), age=3600)
         self.assertTrue(locker.acquire(self.photo))
 
-    def test_a_lock_in_the_old_format_still_expires_by_age(self):
-        """348 real locks are in the old format; they must not be immortal."""
+    def test_a_torn_lock_file_still_expires_by_age(self):
+        """A lock file that cannot be read says nobody holds it; it must not be immortal. (348 locks of the format before
+        holders were named once made photos unindexable; 0 of the 60 locks in the live libraries are of it now, counted 2026-10-15.)"""
         locker = self.locker(max_age=60)
-        self.write_lock(locker, self.photo, pid=0, age=3600, legacy=True)
+        self.write_lock(locker, self.photo, pid=0, age=3600, torn=True)
         self.assertTrue(locker.acquire(self.photo))
 
-    def test_a_fresh_lock_in_the_old_format_is_respected(self):
+    def test_a_fresh_torn_lock_file_is_respected(self):
         locker = self.locker(max_age=3600)
-        self.write_lock(locker, self.photo, pid=0, age=0, legacy=True)
+        self.write_lock(locker, self.photo, pid=0, age=0, torn=True)
         self.assertFalse(locker.acquire(self.photo))
 
     def test_another_machines_lock_is_not_stolen_on_a_pid_check(self):

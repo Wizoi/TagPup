@@ -5,10 +5,10 @@ persisted into the database and then written back into photo files by later edit
 They take plain dictionaries -- the shape ExifTool returns -- so no image, no ExifTool
 and no model is needed.
 
-People resolution is the subtle part: a name can arrive as an explicit PersonInImage
-tag, as the leaf of a hierarchical tag under a face-matching root, or as a flat tag
-that the taxonomy marks as a person. All three paths are covered, including the
-database-backed ones using a temporary taxonomy.
+People resolution is the subtle part: a name arrives as the leaf of a hierarchical tag
+under a face-matching root, or as a flat tag that the taxonomy marks as a person (a
+file's PersonInImage and RegionName are not read: owner, 2026-10-15). Both paths are
+covered, including the database-backed ones using a temporary taxonomy.
 """
 import os
 import sys
@@ -21,6 +21,9 @@ from unittest import mock
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import photo_rows  # noqa: E402
 
 from tagpup.core.dates import record_year
 from tagpup.core.suggesting import caption_from_tags as _derive_caption
@@ -120,32 +123,24 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
     Family and Friends were assumed as well, whatever a library's tree said
     (docs/findings.md, #66)."""
 
-    def test_reads_person_in_image(self):
-        people = extract_people({"XMP:PersonInImage": ["Jane Doe"]}, [], people_vocabulary(""))
-        self.assertEqual(people, ["Jane Doe"])
-
-    def test_reads_region_names(self):
-        people = extract_people({"XMP:RegionName": ["Jane Doe"]}, [], people_vocabulary(""))
-        self.assertEqual(people, ["Jane Doe"])
-
     def test_takes_the_leaf_of_a_hierarchical_people_tag(self):
-        people = extract_people({}, ["People/Immediate/Jane Doe"], people_vocabulary(""))
+        people = extract_people(["People/Immediate/Jane Doe"], people_vocabulary(""))
         self.assertEqual(people, ["Jane Doe"])
 
     def test_family_and_friends_are_not_face_roots_without_a_library(self):
         # docs/findings.md, #66: only a library's tree says Family or Friends hold faces.
-        self.assertEqual(extract_people({}, ["Family/Immediate/Jane Doe"], people_vocabulary("")), [])
-        self.assertEqual(extract_people({}, ["Friends/Bob Roe"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["Family/Immediate/Jane Doe"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["Friends/Bob Roe"], people_vocabulary("")), [])
 
     def test_handles_backslash_and_pipe_separators(self):
-        self.assertEqual(extract_people({}, [r"People\Jane Doe"], people_vocabulary("")), ["Jane Doe"])
-        self.assertEqual(extract_people({}, ["People|Bob Roe"], people_vocabulary("")), ["Bob Roe"])
+        self.assertEqual(extract_people([r"People\Jane Doe"], people_vocabulary("")), ["Jane Doe"])
+        self.assertEqual(extract_people(["People|Bob Roe"], people_vocabulary("")), ["Bob Roe"])
 
     def test_ignores_non_people_hierarchies(self):
-        self.assertEqual(extract_people({}, ["Trips/Texas"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["Trips/Texas"], people_vocabulary("")), [])
 
     def test_ignores_a_bare_root_with_no_leaf(self):
-        self.assertEqual(extract_people({}, ["People"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["People"], people_vocabulary("")), [])
 
     def test_no_database_means_no_taxonomy_resolution(self):
         """Without a database there must be no implicit fallback to another library.
@@ -153,13 +148,9 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
         extract_people used to default to data/photo_index.db, so a caller working on
         one database silently resolved people against the default library's taxonomy.
         """
-        self.assertEqual(extract_people({}, ["Some Person"], people_vocabulary("")), [])
-        self.assertEqual(extract_people({}, ["Some Person"]), [])
+        self.assertEqual(extract_people(["Some Person"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["Some Person"]), [])
 
-    def test_deduplicates_names_from_different_sources(self):
-        people = extract_people(
-            {"XMP:PersonInImage": ["Jane Doe"]}, ["People/Jane Doe"], people_vocabulary(""))
-        self.assertEqual(people, ["Jane Doe"])
 
 
 class TestExtractPeopleWithATaxonomy(unittest.TestCase):
@@ -190,11 +181,13 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         except Exception:
             pass
 
-    def add_tag(self, tag, name, has_face, parent_id=None):
+    def add_tag(self, tag, name, has_face):
+        """A node under its parent's node, as the tree files it (a path whose parent is not in the tree has none: 0 live)."""
         conn = sqlite3.connect(self.db_path)
+        parent = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag.rpartition("/")[0],)).fetchone()
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-            (tag, parent_id, name, has_face),
+            (tag, parent[0] if parent else None, name, has_face),
         )
         conn.commit()
         conn.close()
@@ -216,31 +209,37 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
 
     def test_people_are_extracted_under_a_custom_face_root(self):
         self.add_tag("Crew", "Crew", has_face=1)
-        people = extract_people({}, ["Crew/Jane Doe"], people_vocabulary(self.db_path))
+        people = extract_people(["Crew/Jane Doe"], people_vocabulary(self.db_path))
         self.assertEqual(people, ["Jane Doe"])
 
     def test_a_flat_tag_marked_as_a_person_resolves_to_that_person(self):
-        """'Cora Ingersoll' with no hierarchy still counts if the taxonomy says it is a person."""
+        """'Cora Ingersoll' with no hierarchy is the person of that path, if the taxonomy says it is a person; the same name
+        filed under a branch is named by its own path alone (owner, 2026-10-11)."""
         self.add_tag("People", "People", has_face=1)
         self.add_tag("People/Cora Ingersoll", "Cora Ingersoll", has_face=1)
-        people = extract_people({}, ["Cora Ingersoll"], people_vocabulary(self.db_path))
-        self.assertEqual(people, ["Cora Ingersoll"])
+        self.add_tag("Tamsin Marlowe", "Tamsin Marlowe", has_face=1)
+        known = people_vocabulary(self.db_path)
+        self.assertEqual(extract_people(["Tamsin Marlowe"], known), ["Tamsin Marlowe"])
+        self.assertEqual(extract_people(["Cora Ingersoll"], known), [])
+        self.assertEqual(extract_people(["People/Cora Ingersoll"], known), ["Cora Ingersoll"])
 
     def test_a_face_root_category_never_resolves_as_a_person(self):
-        """"Family" is a category; a photo tagged with it gains no person named Family."""
+        """"Family" is a category -- a face root with tags under it; a photo tagged with it gains no person named Family.
+        (One with nothing under it is a person of the top level: tests/test_top_level_person.py.)"""
         self.add_tag("Family", "Family", has_face=1)
-        self.assertEqual(extract_people({}, ["Family"], people_vocabulary(self.db_path)), [])
+        self.add_tag("Family/Jane Doe", "Jane Doe", has_face=1)
+        self.assertEqual(extract_people(["Family"], people_vocabulary(self.db_path)), [])
 
     def test_a_person_under_a_face_root_still_resolves(self):
         self.add_tag("Family", "Family", has_face=1)
         self.add_tag("Family/Jane Doe", "Jane Doe", has_face=1)
         self.assertEqual(
-            extract_people({}, ["Jane Doe"], people_vocabulary(self.db_path)), ["Jane Doe"]
+            extract_people(["Family/Jane Doe"], people_vocabulary(self.db_path)), ["Jane Doe"]
         )
 
     def test_a_flat_tag_that_is_not_a_person_is_ignored(self):
         self.add_tag("Trips/Texas", "Texas", has_face=0)
-        self.assertEqual(extract_people({}, ["Texas"], people_vocabulary(self.db_path)), [])
+        self.assertEqual(extract_people(["Texas"], people_vocabulary(self.db_path)), [])
 
     def test_an_existing_connection_is_reused_instead_of_opening_another(self):
         """Opening a second connection inside a write transaction deadlocks SQLite."""
@@ -252,7 +251,7 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
                 "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
                 ("Crew/Temp", None, "Temp", 1),
             )
-            people = extract_people({}, ["Crew/Jane Doe"], people_vocabulary(conn=conn))
+            people = extract_people(["Crew/Jane Doe"], people_vocabulary(conn=conn))
             self.assertEqual(people, ["Jane Doe"])
         finally:
             conn.rollback()
@@ -323,6 +322,18 @@ class TestBuildPhotoUIRecord(unittest.TestCase):
         self.assertEqual(rec["mtime"], 123.0)
         self.assertEqual(rec["size"], 456)
         self.assertEqual(rec["year"], "2014")
+
+    def test_the_camera_and_the_lens_are_named_as_a_search_finds_them(self):
+        read = photo_rows.as_read(r"D:\Library\a.jpg", {
+            "EXIF:Make": "Lanternfly", "EXIF:Model": "Pixel 8 Pro", "EXIF:LensModel": "Objectif Elan 35mm"})
+        rec = page_record(r"D:\Library\a.jpg", read)
+        self.assertEqual(("Lanternfly Pixel 8 Pro", "Objectif Elan 35mm"), (rec["camera"], rec["lens"]))
+
+    def test_a_photo_that_names_no_camera_has_empty_text_not_none(self):
+        """The page joins what there is: a scan, and a record built of a row never read."""
+        for meta in ({}, {"raw_metadata": {"XMP:Subject": ["a"]}}):
+            rec = page_record(r"D:\Library\a.jpg", meta)
+            self.assertEqual(("", ""), (rec["camera"], rec["lens"]))
 
     def test_year_is_the_string_unknown_when_undatable(self):
         """Callers compare this field, so it must never be None or an int."""
@@ -446,7 +457,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
                 self.terminate()
                 return False
 
-            def get_tags(self, files, tags=None):
+            def get_tags(self, files, tags=None, params=None):
                 if outer.bad in files:
                     raise RuntimeError("execute returned a non-zero exit status: 1")
                 return [outer._tags_for(f) for f in files]
@@ -514,6 +525,16 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
 
         self.assertEqual([r["path"] for r in results], self.paths)
         self.assertTrue(all(r["tags"] == [] for r in results))
+        # Left unread, and the indexer says why: not "ExifTool did not answer" (#1495).
+        from tagpup.files import metadata
+        self.assertEqual([(None, metadata.NOT_STARTED)] * 3, [(r["mtime"], r["unread"]) for r in results])
+
+    def test_a_file_whose_stat_fails_is_left_unread_and_says_so(self):
+        from tagpup.files import metadata
+        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()), \
+                mock.patch.object(metadata.MetadataExtractor, "_stamp", return_value=(None, None)):
+            results = self.extractor.batch_read([self.paths[0]])
+        self.assertEqual([(None, metadata.NO_STAT)], [(r["mtime"], r["unread"]) for r in results])
 
 
 class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):
@@ -543,7 +564,7 @@ class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):
         from tagpup.store import taxonomy
 
         session = mock.MagicMock()
-        session.return_value.__enter__.return_value.get_tags.side_effect = lambda files, tags=None: [
+        session.return_value.__enter__.return_value.get_tags.side_effect = lambda files, tags=None, params=None: [
             {"SourceFile": f, "XMP:Subject": ["Crew/Tamsin Oakes"]} for f in files]
         with mock.patch("tagpup.files.metadata.ExifToolSession", session), \
                 mock.patch.object(taxonomy, "people_vocabulary",

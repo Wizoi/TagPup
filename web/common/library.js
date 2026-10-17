@@ -8,6 +8,7 @@
  */
 import { api, libraryIn } from './api.js';
 import { ruleProblem } from './validate.js';
+import { enhanceSelect } from './library-picker.js';
 
 // The library opened last, kept in this browser. The server used to keep it, in
 // config.ini, and wrote that file whenever a library was chosen (docs/findings.md,
@@ -49,7 +50,9 @@ export function goToLibrary(name) {
  */
 export function initDatabaseSelector(select, createButton, { beforeLeaving = (go) => go() } = {}) {
     if (!select) return;
-    
+    // The list that opens is the page's own, not the browser's (library-picker.js, #909).
+    const picker = enhanceSelect(select);
+
     const activeDb = libraryIn(window.location.pathname);
 
     if (activeDb) rememberLibrary(activeDb);
@@ -83,12 +86,13 @@ export function initDatabaseSelector(select, createButton, { beforeLeaving = (go
                 }
                 select.appendChild(option);
             });
+            picker.refresh();
         })
         .catch(err => console.error('Error fetching databases:', err));
 
     select.addEventListener('change', () => {
         const chosen = select.value;
-        beforeLeaving(() => goToLibrary(chosen), () => { select.value = activeDb; });
+        beforeLeaving(() => goToLibrary(chosen), () => { select.value = activeDb; picker.refresh(); });
     });
 
     if (createButton) {

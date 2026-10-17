@@ -8,6 +8,8 @@ Three properties are enforced:
   1. Every implemented `/api/...` route appears in the matching spec.
   2. Every route named in a spec is actually implemented.
   3. Every request parameter a spec documents is one the handler reads.
+And for the CLI: every command of tagpup_cli.py has a heading in docs/SPEC_TAGPUP_CLI.md, and every heading
+there names a command.
 
 Only *request* parameters are compared. Response shapes are described in prose in the
 specs and deliberately not parsed here.
@@ -29,12 +31,13 @@ SERVER_SPEC_PAIRS = (
 #: How a Flask route reads its request: the JSON body as `body`, the query as
 #: `request.args`.
 FLASK_BODY = re.compile(r'body\.get\(\s*"([^"]+)"')
-FLASK_QUERY = re.compile(r'(?:request\.args\.get|_int_arg)\(\s*"([^"]+)"')
+FLASK_QUERY = re.compile(r'(?:request\.args\.get|_?int_arg)\(\s*"([^"]+)"')
 
 
 def flask_routes(kind):
     """Each /api route of the Flask app for `kind`, with the parameters its view reads,
-    following one level of the module's own helpers as implemented_routes does."""
+    following one level of the module's own helpers as implemented_routes does: a private one, or an alias of one (TagTuner's
+    `_read_face_ids`), and a public function the module itself defines (`face_routes.read_face_ids`)."""
     import inspect
 
     from tagpup.web import app as web
@@ -47,9 +50,10 @@ def flask_routes(kind):
         view = app.view_functions[rule.endpoint]
         source = inspect.getsource(view)
         module = inspect.getmodule(view)
-        for helper in set(re.findall(r"\b(_\w+)\(", source)):
+        for helper in set(re.findall(r"\b([A-Za-z_]\w*)\(", source)):
             found = getattr(module, helper, None)
-            if inspect.isfunction(found):
+            if inspect.isfunction(found) and found is not view and (
+                    helper.startswith("_") or found.__module__ == module.__name__):
                 source += "\n" + inspect.getsource(found)
         out[rule.rule] = {"handler": view.__name__, "body": set(FLASK_BODY.findall(source)),
                           "query": set(FLASK_QUERY.findall(source))}
@@ -217,6 +221,54 @@ class TestSpecDatabaseSchemaMatchesCode(unittest.TestCase):
                 )
 
         self.assertEqual(problems, [], "\n  " + "\n  ".join(problems))
+
+
+class TestCliSpecMatchesTheCommands(unittest.TestCase):
+    """docs/SPEC_TAGPUP_CLI.md has a `###` (or `####`) heading, named in backticks, for each command."""
+
+    #: The words of a heading's backticks up to the first argument or option: `snapshots restore NAME [--apply]`
+    #: names "snapshots restore".
+    COMMAND = re.compile(r"^#{3,4} (?:\d+\. )?`([^`]+)`", re.M)
+
+    @staticmethod
+    def commands(group, prefix=()):
+        """The names ("index", "roots check") of the commands of a click group a person runs: its leaves, and a group
+        that does something when run by itself."""
+        import click
+        found = set()
+        for name, command in sorted(group.commands.items()):
+            words = prefix + (name,)
+            if isinstance(command, click.Group):
+                if command.invoke_without_command:
+                    found.add(" ".join(words))
+                found |= TestCliSpecMatchesTheCommands.commands(command, words)
+            else:
+                found.add(" ".join(words))
+        return found
+
+    @staticmethod
+    def documented():
+        with open(os.path.join(WORKSPACE_DIR, "docs", "SPEC_TAGPUP_CLI.md"), encoding="utf-8") as handle:
+            text = handle.read()
+        names = set()
+        for heading in TestCliSpecMatchesTheCommands.COMMAND.findall(text):
+            words = []
+            for word in heading.split():
+                if not re.fullmatch(r"[a-z][a-z-]*", word):
+                    break
+                words.append(word)
+            names.add(" ".join(words))
+        return names
+
+    def test_every_command_has_a_heading_and_every_heading_a_command(self):
+        import tagpup_cli
+        implemented = self.commands(tagpup_cli.cli)
+        documented = self.documented()
+        self.assertGreater(len(implemented), 8, "the scan found almost no commands")
+        self.assertEqual([], sorted(implemented - documented),
+                         "commands of tagpup_cli.py with no heading in docs/SPEC_TAGPUP_CLI.md")
+        self.assertEqual([], sorted(documented - implemented),
+                         "headings of docs/SPEC_TAGPUP_CLI.md that name no command of tagpup_cli.py")
 
 
 if __name__ == "__main__":

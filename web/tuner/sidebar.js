@@ -10,7 +10,7 @@ import {
 import { UNKNOWN_YEAR } from './rules.js';
 import { updateURLParams } from './shared.js';
 import { loadTags, renderTagList } from './tags.js';
-import { fetchPeopleWithCounts, selectPerson } from './people.js';
+import { fetchPeopleWithCounts, selectPerson, showPeopleViewChoice } from './people.js';
 import { selectPhoto } from './faces-strip.js';
 import { REEXAMINE_TITLE, reexamineFolder } from './reexamine.js';
 
@@ -50,6 +50,7 @@ export function refreshSidebarQuietly() {
 export function fetchPhotos() {
     const mode = modeSelect.value;
     updateEmptyState();
+    showPeopleViewChoice();
 
     // Abort any ongoing sidebar fetches
     if (state.sidebarAbortController) {
@@ -351,8 +352,10 @@ function filterPhotos() {
         const items = Array.from(photoList.children);
         items.forEach(item => {
             if (item.personName) {
-                const match = item.personName.toLowerCase().includes(query);
-                item.style.display = match ? 'block' : 'none';
+                // By the name and by the label shown (`Sam · Pets`).
+                const match = item.personName.toLowerCase().includes(query)
+                    || String(item.personText || '').toLowerCase().includes(query);
+                item.style.display = match ? '' : 'none';
             }
         });
         return;

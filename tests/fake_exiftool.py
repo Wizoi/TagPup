@@ -7,14 +7,26 @@ tagpup.files.exiftool_session.ExifToolSession, and a test reaches into the middl
 * `on_read(path, n)`: called before the n-th read of `path` is answered -- another program edits the file between the plan's read
   and the write's;
 * `on_write(path, n)`: called before the n-th write of any file (a test pauses a job here: set an event, wait for another);
-* `unreadable`, `fails`: the keys (tagpup.core.paths.key) of paths ExifTool answers as not a photo, and whose write it refuses.
+* `unreadable`, `fails`: the keys (tagpup.core.paths.key) of paths ExifTool answers as not a photo, and whose write it refuses;
 
 A file is also a real one on disk when the test made it so (tests/view_library.py make_jpeg), which the lock-free parts of a write
 (the stat, the tail check, the Recycle Bin) look at.
 """
 import threading
+from unittest import mock
 
 from tagpup.core import fields, paths
+
+
+def standing_in(testcase):
+    """ExifTool is a table of files for `testcase` (ExifToolSession patched until it ends): the Files, for a test of a route
+    that writes a photo's tags as a face is named or unnamed (tagpup.services.face_people), whose photos are rows and not
+    always files."""
+    files = Files()
+    patcher = mock.patch("tagpup.files.exiftool_session.ExifToolSession", files.session)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+    return files
 
 
 class Files:
@@ -72,7 +84,7 @@ class Files:
                 return False
         return Session()
 
-    def get_tags(self, photo_paths, tags=None):
+    def get_tags(self, photo_paths, tags=None, params=None):
         with self.lock:
             self.read_calls += 1
         rows = []
@@ -111,8 +123,9 @@ class Files:
             for field in params or []:
                 if field.startswith("-") and field.endswith("="):
                     held.pop(fields.read_key(field[1:-1]), None)
+            answered_as = {written: read for read, written in fields.WRITTEN_AS.items()}
             for field, value in (tags or {}).items():
-                held[fields.read_key(field)] = value
+                held[fields.read_key(answered_as.get(field, field))] = value
 
     def execute(self, *args):
         held = self.fields.setdefault(paths.key(args[-1]), {})

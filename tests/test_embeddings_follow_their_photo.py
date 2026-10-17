@@ -5,6 +5,12 @@ Before, the same vector was kept twice. The cache Suggest read was keyed by path
 the file's mtime, so every keyword write made the next Suggest embed the photo again;
 a rotation left the vector describing the picture before the turn; and removing a
 folder left its photos' vectors behind.
+
+Lifted: test_rename_moves_suggestions_and_embeddings. Its two route tests are the rename in test_suggest_then_apply_all
+(mutation: a rename that deletes the suggestions row, or the vectors, fails it); its swap is below (mutation: the
+rename's placeholder step removed, so a swap collides on the unique path, fails it). A rename keeping the vectors and a
+folder's removal taking them are scenario V9 (test_suggest_then_apply_all, through the routes; mutation: move_rows_in
+deleting the photo's vectors, or remove_under deleting no photo, fails it).
 """
 import os
 import sys
@@ -12,7 +18,9 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+import fake_exiftool  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -31,10 +39,10 @@ class Vectors(unittest.TestCase):
         self.lib.add_row(self.photo, mtime=stat.st_mtime, size=stat.st_size)
         self.keep(MODEL, stat.st_mtime, stat.st_size)
 
-    def keep(self, model, mtime, size, photo=None):
+    def keep(self, model, mtime, size, photo=None, vector=VECTOR):
         conn = db.connect(self.lib.library.path)
         try:
-            embeddings.put(conn, photo or self.photo, model, mtime, size, VECTOR)
+            embeddings.put(conn, photo or self.photo, model, mtime, size, vector)
             conn.commit()
         finally:
             conn.close()
@@ -58,12 +66,12 @@ class Vectors(unittest.TestCase):
 
     def test_a_keyword_write_keeps_the_vector_for_the_file_it_leaves(self):
         before, stat = self.written_by_the_app()
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
         self.assertEqual((stat.st_mtime, stat.st_size), self.stored()[:2])
 
     def test_a_caption_or_a_time_shift_keeps_it_too(self):
         before, stat = self.written_by_the_app()
-        photos.record_file_stat(self.lib.library.path, self.photo, before=before)
+        photo_rows.written(self.lib.library.path, self.photo, {"XMP:Description": "At the beach"}, before=before)
         self.assertEqual((stat.st_mtime, stat.st_size), self.stored()[:2])
 
 
@@ -73,20 +81,20 @@ class Vectors(unittest.TestCase):
         # vector was carried onto the new file (#84).
         stored = self.stored()
         self.change_the_file()
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Beach"])
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Beach"])
         self.assertEqual(stored, self.stored())
 
     def test_a_file_changed_elsewhere_and_then_tagged_in_the_app_is_embedded_again(self):
         stored = self.stored()
         self.change_the_file()
         before, _stat = self.written_by_the_app()
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
         self.assertEqual(stored, self.stored())
 
     def test_a_vector_already_stale_is_not_made_current_by_a_write(self):
         self.keep(MODEL, 1.0, 1)
         before, _stat = self.written_by_the_app()
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
         self.assertEqual((1.0, 1), self.stored()[:2])
 
     def test_an_embedding_without_its_model_is_refused(self):
@@ -99,28 +107,21 @@ class Vectors(unittest.TestCase):
             conn.close()
 
     def test_a_rotation_takes_the_vectors_away(self):
-        with mock.patch("tagpup.files.images.shown_size", return_value=(40, 30, False)), \
-                mock.patch("tagpup.files.metadata.rotate_image_file", return_value=6):
-            photo_actions.rotate(self.lib.library, self.photo, "right", "exiftool")
+        fake_exiftool.standing_in(self).hold(self.photo, EXIF__Orientation=1)
+        self.assertEqual(1, photo_actions.rotate(self.lib.library, self.photo, "right", "exiftool").changed)
         self.assertIsNone(self.stored())
 
-    def test_a_rename_keeps_them(self):
-        renamed = os.path.join(os.path.dirname(self.photo), "renamed.jpg")
-        photos.move_rows(self.lib.library.path, {self.photo: renamed})
-        self.assertEqual(VECTOR, self.stored(photo=renamed).vector)
+    def test_two_photos_swapping_names_swap_their_vectors(self):
+        # path is the photos table's unique key, so a swap passes through placeholders (the Smart Rename that
+        # shuffles numbered files among themselves). The rename's own suggestions: test_suggest_then_apply_all.
+        other, vector = self.lib.photo("dunes.jpg"), b"\x00\x00\x00\x40" * 4
+        self.keep(MODEL, 1.0, 1, photo=other, vector=vector)
+        photo_rows.move(self.lib.library.path, {self.photo: other, other: self.photo})
+        self.assertEqual((VECTOR, vector), (self.stored(photo=other).vector, self.stored(photo=self.photo).vector))
 
     def test_deleting_the_photo_takes_them(self):
         self.keep(OTHER, 1.0, 1)
         photos.forget_photo(self.lib.library.path, self.photo)
-        self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embeddings"))
-
-    def test_removing_the_folder_takes_them(self):
-        conn = db.connect(self.lib.library.path)
-        try:
-            photos.remove_under(conn, os.path.dirname(self.photo))
-            conn.commit()
-        finally:
-            conn.close()
         self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embeddings"))
 
     def test_each_model_keeps_its_own(self):
@@ -134,11 +135,12 @@ class Vectors(unittest.TestCase):
             other_photo = self.lib.photo("dunes.jpg")
             embeddings.put(conn, other_photo, OTHER, 1.0, 1, VECTOR)
             conn.commit()
-            vectors = {path: vector for path, *_rest, vector in photos.index_rows(conn, MODEL)}
+            vectors = dict(photos.vectors(conn, MODEL))
+            (photo_id,), (other_id,) = photos.ids_at(conn, [self.photo]), photos.ids_at(conn, [other_photo])
         finally:
             conn.close()
-        self.assertEqual(VECTOR, vectors[self.photo])
-        self.assertIsNone(vectors[other_photo])
+        self.assertEqual(VECTOR, vectors[photo_id])
+        self.assertNotIn(other_id, vectors)
 
 
 class AnEmbedding(unittest.TestCase):

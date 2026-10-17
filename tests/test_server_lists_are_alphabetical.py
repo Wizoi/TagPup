@@ -41,7 +41,7 @@ class ListsAreAlphabetical(unittest.TestCase):
 
     def test_the_autocomplete_is_alphabetical_and_holds_the_same_tags(self):
         offered = tags_service.autocomplete(self.lib.library)
-        self.assertEqual(sorted(offered), sorted(set(IN_ORDER_OF_ADDING) | {"People"}))
+        self.assertEqual(sorted(offered), sorted(set(IN_ORDER_OF_ADDING) | {"People", "Places"}))
         self.assertLess(offered.index("apple"), offered.index("Zoo"))
         self.assertLess(offered.index("Trip 3"), offered.index("Trip 10"))
         self.assertLess(offered.index("Éclair"), offered.index("Trip 3"))
@@ -51,7 +51,8 @@ class ListsAreAlphabetical(unittest.TestCase):
     def test_the_people_offered_are_alphabetical(self):
         for name in ("Zoe Abbott", "émile Roy", "anh Tran", "Bao Le"):
             self.lib.add_face(self.photo, [0, 0, 10, 10], name=name)
-        self.assertEqual(people_service.names(self.lib.library), ["anh Tran", "Bao Le", "émile Roy", "Zoe Abbott"])
+        self.assertEqual([each["name"] for each in people_service.records(self.lib.library)],
+                         ["anh Tran", "Bao Le", "émile Roy", "Wen Zhao", "Zoe Abbott"], "everyone the tree files")
 
     def test_review_peoples_counts_are_most_first_with_the_alphabet_for_a_tie(self):
         for name, faces in (("Zoe Abbott", 1), ("émile Roy", 2), ("anh Tran", 1), ("Bao Le", 2)):

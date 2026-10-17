@@ -55,7 +55,7 @@ class Drifted:
         self.indexed, self.with_subfolders, self.runs = [], [], []
 
         def index_folder(library, subfolders=True):
-            def index(folder, cluster, report):
+            def index(folder, report):
                 # A batch is handed as a list: one run of the indexer.
                 folders = [folder] if isinstance(folder, str) else list(folder)
                 self.runs.append(folders)
@@ -186,12 +186,13 @@ class TheCli(Drifted, unittest.TestCase):
         self.assert_no_path(result.output)
         return result.output
 
-    def test_a_dry_run_says_what_it_found_and_changes_nothing(self):
-        out = self.run_cli()
-        self.assertIn("1 new file(s), in 1 folder(s)", out)
-        self.assertIn("--apply", out)
-        self.assertEqual([], self.indexed)
-        self.assertIsNone(self.last()["last_run"])
+    def test_a_held_folder_that_is_gone_is_said_as_a_folder_the_library_holds(self):
+        """#917: the folder a library's rows are in (no root is set), gone whole, was said to be "a whole root"."""
+        import shutil
+        shutil.rmtree(self.folder)
+        output = self.run_cli()
+        self.assertIn("1 of them a folder the library holds, not there at all", output)
+        self.assertNotIn("root", output)
 
     def test_apply_indexes_the_new_files_folder_and_waits_for_it(self):
         out = self.run_cli("--apply")
@@ -226,7 +227,7 @@ class TheCli(Drifted, unittest.TestCase):
         os.makedirs(other)
         handed = []
 
-        def index(folders, cluster, report):
+        def index(folders, report):
             handed.append(folders)
             return Result(attempted=1, changed=1)
 
@@ -239,23 +240,6 @@ class TheCli(Drifted, unittest.TestCase):
         self.assertEqual([[self.folder, other]], handed)
         self.assertEqual(("completed", "completed"), (queue.status(self.folder)["status"],
                                                       queue.status(other)["status"]))
-
-    def test_jobs_run_sync_waits_for_the_indexing_it_queued(self):
-        """The CLI is a process that ends: the index queue it filled is indexed on its
-        thread, so `jobs run sync` waits for it, as `sync --apply` does."""
-        waited = []
-        real_wait = indexing_jobs.IndexQueue.wait
-
-        def wait(queue):
-            waited.append(queue)
-            return real_wait(queue)
-
-        with mock.patch.object(indexing_jobs.IndexQueue, "wait", autospec=True, side_effect=wait):
-            result = CliRunner().invoke(cli, ["--db", self.db_path, "jobs", "run", "sync"])
-        self.assertEqual(0, result.exit_code, result.output + repr(result.exception))
-        self.assertEqual([self.folder], self.indexed)
-        self.assertIn(indexing_jobs.queue_for(Library(self.db_path)), waited)
-        indexing_jobs.forget(Library(self.db_path))
 
 
 class TheTools(Drifted, unittest.TestCase):
@@ -298,6 +282,43 @@ class TheTools(Drifted, unittest.TestCase):
         async with create_connected_server_and_client_session(server.build()) as client:
             result = await client.call_tool("sync", {"library": "harbour", "reveal": True})
         return json.loads(result.content[0].text)["reveal"]["new"]
+
+
+class FakeWatcher:
+    def __init__(self, found):
+        self.found = found
+
+    def start(self):
+        pass
+
+    def stop(self, timeout=30):
+        return True
+
+    def busy(self):
+        return False
+
+    def status(self):
+        return self.found
+
+
+class TheSyncRouteSaysWhetherItIsSyncing(unittest.TestCase):
+    def test_syncing_is_false_with_no_watcher_and_true_only_for_the_library_being_synced(self):
+        from tagpup import runtime as runtimes
+        from tagpup.web import app as web
+        from tagpup.web.lifecycle import Lifecycle
+        home = own_home.for_test(self)
+        harbour = home.library("harbour.db")
+        library_actions.create(harbour)
+        library_actions.create(home.library("regatta.db"))
+        idle = {"running": True, "roots": [], "libraries": {}, "syncing": None}
+        busy = dict(idle, syncing={"library": "harbour", "folder": "x", "started": "y"})
+        for tasks, harbour_syncs, regatta_syncs in (([], False, False), ([("folder watcher", FakeWatcher(idle))], False, False),
+                                                    ([("folder watcher", FakeWatcher(busy))], True, False)):
+            app = web.create_app("tagpup", startup=Library(harbour), lifecycle=Lifecycle(background=runtimes.Background(list(tasks))))
+            app.testing = True
+            client = app.test_client()
+            self.assertEqual(harbour_syncs, client.get("/harbour/api/sync").get_json()["syncing"], tasks)
+            self.assertEqual(regatta_syncs, client.get("/regatta/api/sync").get_json()["syncing"], tasks)
 
 
 if __name__ == "__main__":

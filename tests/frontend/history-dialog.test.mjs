@@ -24,7 +24,7 @@ function change(id, operation, extra = {}) {
 }
 
 function historyAnswer(changes) {
-  return { library: LIBRARY, retention_days: 90, changes };
+  return { library: LIBRARY, changes };
 }
 
 const REHEARSED = { success: true, dry_run: true, change: 12, attempted: 2, changed: 0, refused: null,

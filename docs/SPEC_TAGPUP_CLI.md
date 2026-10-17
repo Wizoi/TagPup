@@ -22,13 +22,7 @@ The tool is built as a modular Python application with script wrappers. It relie
                        [TagTaxonomy]             ---> [TagSuggester] (Face Match)
                                |                              | (Aggregate & Score)
                                v                              v
-                       [photo_index.db: tree]   ---> [photo_index_suggestions.json]
-                                                              |
-                                                              v
-                                                      [write_suggestions (ExifTool)]
-                                                              |
-                                                              v
-                                                      [Tagged Image]
+                       [photo_index.db: tree]   ---> [suggestions kept in the library]
 ```
 
 - **`tagpup_cli.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
@@ -40,7 +34,6 @@ The tool is built as a modular Python application with script wrappers. It relie
 - **`tagpup/services/identities.py` (Identity Clustering)**: Performs density-based clustering (**DBSCAN**) of a library's faces to resolve and assign names to visual identities based on co-occurrence tagging patterns, by the rules in `tagpup/core/clustering.py`.
 - **`tagpup/store/taxonomy.py` (Hierarchical Tag Taxonomy)**: Builds and updates a tree of all known hierarchical paths (e.g. `Family/Immediate/John Doe`). Resolves leaf tags to their ancestors.
 - **`tagpup/services/suggester.py` (Tag Suggestion Engine)**: Scores tags using cosine similarity of nearest visual neighbors and boosts matched tags if specific face embeddings are recognized in the target image. It is given its models.
-- **`tagpup/services/tagging.py` (`suggestion_writes`, `write_suggestions`)**: What `write` writes -- the tags at or above the score, and the caption made from them (`tagpup/core/suggesting.py`) -- written back to photos using ExifTool as one change of photo files (`tagpup/services/file_changes.py`), each file recorded in the index as it is written; `undo <change>` puts the files back. No `_original` copies are made. The CLI reads the suggestions file, shows the preview and asks for confirmation.
 
 ---
 
@@ -79,7 +72,7 @@ The system reads and writes metadata using the following tags:
 
 ### Read Fields
 - **Keywords / Tags**: `IPTC:Keywords`, `XMP:Subject`, `XMP:HierarchicalSubject`
-- **People / Faces**: `XMP:PersonInImage`, `XMP:RegionName`, plus leaf nodes extracted from hierarchical tags starting with `Family/` or `Friends/` (e.g., `John Doe` from `Family/Immediate/John Doe`).
+- **People / Faces**: the leaf of a hierarchical tag under a root the library's tree marks as holding faces (e.g., `John Doe` from `Family/Immediate/John Doe`). `XMP:PersonInImage` and `XMP:RegionName` are not read at all (owner, 2026-10-15).
 - **Captions / Descriptions**: `IPTC:Caption-Abstract`, `XMP:Description`
 - **Title / Name**: `XMP:Title`, `IPTC:ObjectName`
 - **Date Taken**: `EXIF:DateTimeOriginal`, `XMP:DateTimeOriginal`, `EXIF:CreateDate`
@@ -111,18 +104,26 @@ Tags and captions are written back using ExifTool:
   18,502 keyword values in the main gallery, 18,364 are full paths separated by `/` and
   none are bare leaves. Levels are preserved on every write; a photo's existing depth is
   never flattened.
-- **People Enter The Taxonomy Under A People Root**:`extract_people()` returns *leaf*
-  names -- `photos.people` is the flattened view used for display and matching -- so
-  passing that list to `taxonomy.add_tags()` treated each leaf as a whole path and
-  minted a bare root node per person, beside the `People/<name>` the hierarchical
-  keyword had already created. Indexing calls `taxonomy.add_people()` instead, which
-  files a person under the root the library already uses for people (`People`,
-  `Family`, `Friends`, or one marked `has_face`) and does nothing at all when that
-  person is already in the taxonomy somewhere.
-
-  A newly seen person is filed at the depth the library already uses: where people live
-  at `Family/Immediate/<name>`, a new one joins them there rather than appearing at
-  `Family/<name>`, which would be a second and shallower home for people.
+- **A Name Or Keyword Seen For The First Time Gets A Node (every tag has an id, owner 2026-10-10)**:
+  `extract_people()` returns *leaf* names, and indexing used to file a new person under the
+  library's people root by the depth it used. Now the index records a batch of photos and
+  makes the node of each keyword and name the tree lacks in one place, `taxonomy.ensure_node`
+  (`derived.make_nodes` for the batch's keywords, the face and photo writers for names): a keyword
+  its own path (a bare one is a tag of its own and names nobody), a name a node directly under the
+  tree's root marked as a person (a name two people have, or a group's leaf, is another path: it
+  gets its own node), to be merged into the right branch in the tag view. Nothing is made for the
+  name of a group at the top, or for a keyword that would go under a person that faces or photos
+  use (a file never turns a person into a group; the doctor counts the keywords). A person is listed
+  for a photo by the id of a node and no other way (owner, 2026-10-11): a name alone is nobody
+  (owner, 2026-10-15), and the doctor counts a row with a name and no id among the rows whose name
+  is not their person's; `--rebuild-derived --apply` unnames such a face (no name, no id, no
+  decider) and takes such a listed person off the photo's list.
+  **A folder from another program with thousands of distinct keywords makes thousands of
+  nodes**, each a tag the owner must merge or delete by hand (there is no bulk delete) and
+  that Suggest embeds. So a batch of reads that would make more than 500 new nodes
+  (`derived.MAX_NEW_NODES_PER_BATCH`) makes none and leaves its keywords without a node:
+  the doctor counts them. A
+  `sync` re-read of a changed file does not make nodes.
 
   `add_tag()` additionally refusesto create a bare root that an existing **people**
   path already claims: photo files carry both forms in the wild, and a file saying
@@ -132,8 +133,8 @@ Tags and captions are written back using ExifTool:
 
   This matters because indexing runs repeatedly: the kr-track taxonomy had been cleaned
   from 51 such duplicates to zero once before, and the next index run recreated them
-  all. `scripts/merge_duplicate_person_tags.py` merges any that already exist (dry-run
-  by default, `--apply` to write); it removed 53 across 129 photos here.
+  all. The MCP tool `merge_duplicate_person_tags` merges any that already exist (a rehearsal
+  unless `apply`); it removed 53 across 129 photos here.
 - **Per-Photo Locking**:A photo is locked for the duration of its processing by creating a
   file in `data/locks/`, named for the MD5 of its absolute path -- exclusive creation makes this
   atomic between processes. The lock records the holding process's pid, host and acquisition
@@ -203,6 +204,7 @@ To resolve individual image noise by leveraging event-level folder context, reco
 The `tagpup_cli.py` engine is accessed via `click` subcommands. 
 
 ### Global Options
+- **A library from a newer TagPup is not opened.** With `--db` (or `TAGPUP_DB_PATH`) naming a library whose schema is newer than this version knows, every command but `history` and `snapshots` (list and restore: the recovery commands, which open it as it is with a one-line note) stops before it starts: the sentence of `schema.NewerLibrary` (the library's name, its schema, the one this version knows, and to start the newest TagPup), exit status 1, nothing written. `tools/doctor.py` and the MCP's tools say the same.
 - `--test`: Use the test library (`test_photo_index.db`) to avoid altering the production one. The tag tree is in the library, so the test tree stays in the test library (findings.md, #61).
 
 ---
@@ -211,6 +213,7 @@ The `tagpup_cli.py` engine is accessed via `click` subcommands.
 
 #### 1. `index`
 Scans and indexes a photo library recursively: one or more directories, in one run (the models are loaded once; sync hands it every folder of new files at once). Indexing a folder adds it to the library: it is recorded as added (`tagpup.services.libraries.record_added`; with `--no-subfolders`, without its subfolders), as TagPup's Add and TagTuner's Add Folder record it, and each photo's row is made as it is read.
+**After an index that recorded a photo, it clusters the library's faces** (`cluster-faces`'s work; owner, DECISIONS 2026-10-16), once its turn on the graphics card is let go: this command is what both apps' queues and sync's run, so every index does it alike. It prints `Resolving and matching face identities...` first (the server refuses writes of faces from that line to the end of the process). A run that recorded no photo (everything current) clusters nothing; one that recorded a photo clusters with `--skip-faces` too, or when it only read photos again: clustering's evidence is the photos' people keywords, which such a run records (by design). Stopped while it waits for the card (exit status 76), it indexed and clustered nothing. A clustering that fails leaves the photos indexed and exits with status 77, saying so; the library's roots changed by another process while it clusters is the one roots stop (status 75), the photos indexed too. Either way `cluster-faces` runs it again (an index again of photos already read clusters nothing). On photo_index the clustering takes about 200 s; on the small libraries a few seconds.
 - **Usage**: `run.bat [global-options] index <DIRECTORY> [<DIRECTORY> ...]`
 - **Options**:
   - `--force-reembed`: Force recreation of all CLIP visual embeddings.
@@ -218,99 +221,47 @@ Scans and indexes a photo library recursively: one or more directories, in one r
   - `--skip-faces`: Skip MTCNN face detection and FaceNet embedding extraction during indexing.
   - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
-#### 2. `suggest`
-Analyzes untagged photos and generates tag recommendations.
-- **Usage**: `run.bat [global-options] suggest <DIRECTORY>`
-- **Options**:
-  - `--k INTEGER`: Number of nearest neighbors to consider (default: `15`).
-  - `--min-sim FLOAT`: Cosine similarity cutoff (default: `0.35`).
-  - `--output TEXT`: Path to write the output suggestions JSON file (default: `<library>_suggestions.json` beside the library, e.g. `data/photo_index_suggestions.json`; never the working folder).
-  - `--add`: Add DIRECTORY to the library first when the library does not hold every folder of photos under it: the folder is recorded as added, as TagPup's Add does (`index` then reads its photos). Without it such a folder is refused, exit code 1, with a message naming the folder and the library: Suggest records faces and vectors on each photo's row, and a row makes its folder the library's -- kept in step, watched, its new files indexed (`tagpup.services.libraries.not_in`).
-
-#### 3. `write`
-Refused, exit code 1 and nothing written, when the library does not hold the folder of a photo the file names (`tagpup.services.libraries.refuse_writes`): "<folder> is not in <library>. Add it to <library> first."
-Writes suggested tags and descriptions back to photo file metadata using ExifTool.
-- **Usage**: `run.bat [global-options] write <SUGGESTIONS_FILE>`
-- **Options**:
-  - `-Live`: Write tags to files for real (actually modifies image files on disk).
-  - `-MinScore FLOAT`: Write tags at or above this score (default: `0.60`, `tagpup.core.suggesting.OFFER_A_TAG`, the value TagPup shows a tag from).
-  - `--nobackup`: Kept for scripts that pass it; a write makes no `_original` copies. It is recorded as one change, which `undo` reverses.
-
-#### 4. `search`
-Semantic natural language query against indexed visual vectors.
-- **Usage**: `run.bat [global-options] search <QUERY>`
-- **Options**:
-  - `--k INTEGER`: Number of search results to return (default: `10`).
-
-#### 5. `stats`
-Displays overall database metrics, unique tags count, unique people count, top tags, top people, and taxonomy coverage.
-- **Usage**: `run.bat [global-options] stats`
-
-#### 6. `inspect`
-Debugs and displays parsed metadata and raw read fields for a single photo file.
-- **Usage**: `run.bat inspect <PHOTO_PATH>`
-
-#### 7. `list-index`
-Lists all photo filenames currently stored in the index.
-- **Usage**: `run.bat [global-options] list-index`
-- **Options**:
-  - `--folder TEXT`: Filter list results to paths under this directory.
-
-#### 8. `remove`
-Deletes a photo or folder's indexed vector and metadata from the database.
-- **Usage**: `run.bat [global-options] remove`
-- **Options**:
-  - `--path TEXT`: Remove a specific image path from the index.
-  - `--folder TEXT`: Remove all indexed images under this directory recursively.
-
-#### 9. `index-faces`
-Manually scans photos and indexes face embeddings into the database.
-- **Usage**: `run.bat [global-options] index-faces <DIRECTORY>`
-- **Options**:
-  - `--force`: Force re-detection of faces on already processed images.
-
-#### 10. `cluster-faces`
-Runs self-tuning identity resolution to cluster face embeddings and assign names.
-- **Usage**: `run.bat [global-options] cluster-faces`
-- **Options**:
-  - `--reset`: Clear the names clustering assigned (automatic names) before clustering again. Names a person gave (`name_source = 'manual'`), their "nobody" decisions and exclusions are kept: they are the anchors clustering works from.
-  - `--max-iterations INTEGER`: Maximum iterations for propagation loop (default: `5`, set to `0` for anchor-only).
-
----
-[◀ Back to README](../README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)
+#### 2. `cluster-faces`
+What `index` runs after an index that recorded a photo, with no options. Run by hand only to try again after that clustering failed or stopped (`index`'s status 77 or 75 after `Resolving and matching face identities...`; the server's queue says so in the folder's status). It clusters the face embeddings and names the faces from their photos' people (`tagpup.services.identities.resolve`). Names a person gave (`name_source = 'manual'`), their "nobody" decisions and exclusions are kept; a face is written only while it is still as the run read it, and a person is written by id. Two or more faces of a photo
+whose keywords name as many people no face is known for stay unnamed (nothing tells which is whose; owner, 2026-10-15), and
+so does a face whose people tie in its votes; the run says how many faces it left so and how many earlier guesses it took
+back.
 
 ### `compact [--apply]`
 Says how much of the library's file holds nothing: pages left free by deleted rows and dropped columns, which SQLite keeps until the file is rewritten. With `--apply`, backs the library up (`db.backup`, into `backups/`), then rewrites it without them (`VACUUM`, `db.compact`) and says the size before and after. The rewrite needs the file to itself; close the apps first. After phase 4's migrations photo_index holds about 1 GB free of 4 GB.
 
 ### `history [--change ID] [--limit N] [--reveal]`
-The library's journal (`tagpup.services.journal`): the changes the maintenance scripts and the MCP server's write tools applied, newest first -- each one's id, operation, status (`applied`, `derived_pending`, `undone`, `pruned`), when it was made and undone, the schema version it was made at, and how many rows of each table it inserted, updated and deleted. `--change ID` shows that change alone with the keys (ids) of every row it wrote; with `--reveal` too, each column's value before and after, a BLOB by its size. Values can name people, so they are shown only when asked.
+The library's journal (`tagpup.services.journal`): the changes the maintenance scripts and the MCP server's write tools applied, newest first -- each one's id, operation, status (`applied`, `derived_pending`, `undone`), when it was made and undone, the schema version it was made at, and how many rows of each table it inserted, updated and deleted. `--change ID` shows that change alone with the keys (ids) of every row it wrote; with `--reveal` too, each column's value before and after, a BLOB by its size. Values can name people, so they are shown only when asked.
 
 ### `undo ID [--apply]`
 Undoes change ID of the journal. Without `--apply` it rehearses: undoes the change and applies it again inside a transaction rolled back, and says whether that restored every row exactly. With `--apply` it writes the old values back, only where every row is still what the change left. Refused, with nothing written and exit status 1, when a row has changed since, when a newer change touched the same rows (named), or when the library's schema has moved on since the change was made -- and for a stamp of the library's settings, its first settings, which are changed rather than undone.
 
-### `prune-journal [--days N] [--apply]`
-Says how many changes are older than N days (90 by default, `journal.RETENTION_DAYS`); with `--apply`, drops their values and keeps their summaries, and they can no longer be undone. Every apply of a maintenance operation prunes by the default as well. The changes of a bulk time shift that has a record to resume from (its list of photos and its state, kept 30 days from its last activity, and while it runs) are never pruned, whatever the age: they are the only account of which photos of its last chunk were shifted, and a resume without it could shift them twice. Once the record goes their changes are pruned like any other. Both the dry run and the apply say what was left: "kept for a resumable bulk job: N".
-
 ### `sync [--folder FOLDER] [--apply]`
-Brings the library in step with its folders (`tagpup.runtime.sync`, over `tagpup.services.sync`; ARCHITECTURE.md, phase 8): walks the library's root folders (`library.roots`) and every folder it holds photos in, each once from the topmost, or FOLDER, and compares each file with its row by path, size and modified time. Says how many files are new (and in how many folders), changed, moved and missing, and how many folders are wholly gone -- a whole root among them, as an unplugged drive is. A dry run unless `--apply`, reading only the changed files (and, where a row is missing, the DocumentIDs of the new files its name, size and modified time did not match); nothing is written. With `--apply`: the changed rows are read again from their files, as `refresh_rows` does, and the rows of moved files follow them with their faces, as one change of the journal (`sync`), which `undo` takes back; the folders the library holds that hold new files are indexed, each without its subfolders, one at a time, and the command waits for them; a folder under a root holding no indexed photo is counted as a folder to review, never indexed on its own (TagTuner's gear, Folders to review), and one under an ignored folder (`library.ignored`) is passed over; missing files are never removed. Each applied run is recorded in the library (`sync_runs`), which the pages show as "last in step". Counts only; exit status 1 when refused -- FOLDER not a full path, or holding no photo of the library and under none of its root folders -- or something failed.
+Brings the library in step with its folders (`tagpup.runtime.sync`, over `tagpup.services.sync`; ARCHITECTURE.md, phase 8): walks the library's root folders (`library.roots`) and every folder it holds photos in, each once from the topmost, or FOLDER, and compares each file with its row by path, size and modified time. Says how many files are new (and in how many folders), changed, moved and missing, and how many folders are wholly gone -- among them a folder the library holds (a root, a folder its rows are in, a folder added) that is not there at all, as on an unplugged drive. A dry run unless `--apply`, reading only the changed files (and, where a row is missing, the DocumentIDs of the new files its name, size and modified time did not match); nothing is written. With `--apply`: the changed rows are read again from their files, as `refresh_rows` does, and the rows of moved files follow them with their faces, as one change of the journal (`sync`), which `undo` takes back; the folders the library holds that hold new files are indexed, each without its subfolders, one at a time, and the command waits for them; a folder under a root holding no indexed photo is counted as a folder to review, never indexed on its own (TagTuner's gear, Folders to review), and one under an ignored folder (`library.ignored`) is passed over; missing files are never removed. Each applied run is recorded in the library (`sync_runs`), which the pages show as "last in step". Counts only; exit status 1 when refused -- FOLDER not a full path, or holding no photo of the library and under none of its root folders -- or something failed. **A renamed folder** is not followed by anything but the pairing above (name, size and modified time): one renamed and saved again before the next sync is reported as missing folders (`folders gone`) with its rows left as they were, and the owner renames it back by hand. The hidden `.tagpup` files that `folder-ids mark` once wrote are ignored (nothing reads or deletes them; the command is gone, owner 2026-10-10).
 
-### `settings` and `settings set KEY VALUE [--acknowledge GROUP] [--apply]`
-`settings` lists the library's settings, key and value, read without stamping it. `settings set` changes one as one journaled change (`tagpup.services.settings.change`), which `history` lists and `undo` takes back -- a dry run unless `--apply`, saying what would change. A value the validator refuses is refused (exit status 1), as is a locked setting (the CLIP model, face detection, ExifTool) unless its group is named with `--acknowledge`. Folders (`library.roots`, `library.ignored`) are one a line or separated by `|`: `tagpup_cli.py --db photo_index settings set library.roots "D:\Training\Pictures" --apply`. Setting the roots adds every folder under a new root that holds photos and no indexed photo to `library.ignored` in the same change, and says how many; a root not on disk now is taken, with a warning. A dry run reads the settings without migrating a library behind this version, and says how far behind it is.
+### `tags-from-faces [--apply] [--guesses] [--folder FOLDER]`
+**`--folder FOLDER`** (#994) counts and writes only the photos under that folder and its subfolders (the folder is spelled by its root's first place, as in `tagpup.services.folder_scope`); the rule for each photo is the same, so the folder's plan is the whole-library plan restricted to its photos. A folder the library holds no photo under is refused (exit status 1).
+
+Puts on a photo the people its faces name and its keywords do not (`tagpup.services.tags_from_faces`, over `tagpup.services.face_people`; #861). A face named and the photo's person tag are one decision; faces named before that (TagTuner's strip, Match, AutoMatch All, Identify Faces, clustering) left photos listing a person from a face alone (`photo_people` source `face`), "a green box and No people tags". A dry run unless `--apply`: counts only, never a name or a path -- the photos, the people, how many photo files would be written, and how many people are left: filed by the tag tree in two places (or under several people roots), for you to place; named in the photo's keywords already under a root the tree does not file people under (`Parkrunner/<name>`: the same rule as the keyword writer, the leaf under any root; a tree question -- make that root a people root, or retag), so the count to write is what `--apply` writes and a second run finds none; and "from a guess only" -- no face of that name was named by hand, only by clustering or automatch. `--guesses` writes those too, with a printed warning: the keyword makes each guess a decided reference for the faces compared with it afterwards (#640). **`--apply` changes photo files**: it writes each person's keyword into the photo's file with ExifTool, one change of the journal (operation `person tags from faces`; `history` lists it, `undo` takes it back, recording every file's fields before and after -- no copy of the library is taken), a batch of photo files written 25 at a time, its progress on the Activity page. Ctrl+C or Ctrl+Break stops it: the files written stay written, applied and undoable, the photos not reached are taken out of the change (not written by the next program to open the library), and it says how many it wrote. A file ExifTool cannot read or write is counted and the others are written (exit status 1, run it again); a file changed since it was read is a conflict, reported and never overwritten; TagPup and TagTuner may stay open. The doctor (`tools/doctor.py`) reports the same count as "photos listing a person from a face alone" (reported, not broken).
 
 ### `thumbs warm [--folder FOLDER] [--limit N] [--apply]`
 Makes the library's thumbnails ahead of the first time each is asked for (`tagpup.services.thumbnails.warm`; ARCHITECTURE.md, phase 9a-2): a 300 px JPEG of each photo, kept under `cache/<library>/thumbs` beside the library, which the library views show instead of decoding every photo's file again. A dry run unless `--apply`: it reads the library and each file's size and modified time -- never the picture -- and says how many photos already have a thumbnail for their file as it is now, how many need one and about how much they will take (the average entry already kept, or 30 KB when none is), how many have no file there, how many are damaged (recorded so, or found not to decode: they are not decoded again until their file changes, and nothing is kept for them), and how many could not be reached (a share away). It writes nothing, not even the cache folder. With `--apply` it makes them, four at a time, and prints its progress after each 500 photos; a library behind this version's schema is brought up to date first, and the thumbnails of photos the library no longer holds (a restore, a delete outside TagPup) are deleted. It can be stopped (Ctrl+C) and run again: every thumbnail is written whole or not at all, what was made is found there, and the run goes on from it. `--limit N` stops after making N, so a large library can be filled in parts. `--folder` limits it to the photos under that folder. The cache is not bounded (the owner's decision: 1.5 to 3 GB for photo_index) and every entry can be made again; a photo that leaves the library takes its thumbnail with it. Exit status 1 when the library holds a root this machine does not place, or when the cache folder cannot be written (the thumbnails were made and not kept: it says so).
 
-### `export-tree OUTPUT`
-Writes the library's tag tree to OUTPUT as JSON (`{"paths": [...]}`): a copy to keep or read. The tree lives in the library; nothing reads this file back.
+### `repair-vectors [--apply]`
 
-### `jobs`
-Lists each recurring job for the library `--db` names, or for every library in the data folder: its period, why it is scheduled (`safety`, `retention`, `catch-up`: only what no event announces is), when it last ran, how that run ended (`running`, `done`, `failed`, `abandoned`), what it changed as counts, and when it is due next. The runs are recorded in each library (`job_runs`). Only the web server -- the always-on process -- runs what is due, looking every ten minutes; the CLI runs a job only when told to, with `jobs run`, and the MCP server never. A job is due a period after its last run that ended started -- an hour sooner for a period of a day or more, since the server looks every ten minutes; an hour after a failed one -- so a missed period runs once. A library that has not had this version's migrations is left alone (`behind`) until an app opens it: running a job never migrates a library.
+Makes the vectors of turned photos (an EXIF Orientation of 2 to 8) describe the photo as it is shown (`tagpup.services.embedding_repair`; docs/AI_PIPELINE.md, phase 1f; #1529). Vectors made before CLIP was shown photos upright were kept, since their file's stamp still matches. A row holds no Orientation and a vector no age, so the turned photos are found by each file's header (never the picture), and a vector is told stale by making it again. A dry run unless `--apply`: it prints its progress, then counts the photos looked at, the turned ones, those that hold a vector for their file as it is, those that hold none or one for an earlier file (the next look at those makes one upright), and those with no file, that could not be read or whose header does not read. A network share that does not answer is asked once, named, and its photos counted as left (run it again when it is back), never as unreadable. With `--apply` each is embedded again by `PhotoEmbeddings`, the one writer of vectors, on a turn of the graphics card taken through the runtime (one process at a time; it says who holds the card while it waits); a file turned or edited since the look is embedded as it now is and stamped so. The run says how many were replaced (different, and read back as written), how many already matched, how many were not kept (the file changed meanwhile: the next look makes them), how many were damaged, and how many could not be made, by the name of the failure (out of memory, say); none of those ends the run. Run again it finds each already matching and keeps what it made; stopped (Ctrl+C) it keeps what was made and the next run resumes by what the table holds. Face vectors and boxes are not touched. The write is not a journaled change (the table is derived). A running TagPup keeps the vectors it loaded until a photo is edited or the app is restarted: restart it to search by the new ones. Exit status 1 when the library holds a root this machine does not place.
 
-### `jobs run NAME`
-Runs the recurring job NAME now, for the library `--db` names or every library, whether or not it is due; a job another process is running is left to it (`not run, running`). Exit status 1 when a run failed or was not run. `jobs run snapshots` takes a daily snapshot now.
+### `roots`
+The library's roots (`tagpup.services.roots.listing`): for each, its name, address, when it was added and where this machine keeps it, or "NOT PLACED on this machine" with the map's file when it does not. A library with no roots says so: every path in it is this machine's own. Reads only.
+
+### `roots check`
+Whether every rooted row converts back: its root is the library's and this machine places it (`tagpup.services.roots.check`). Says the library's roots are in order, or one line for each problem and exit status 1. Reads only; changes nothing in the library or the map.
 
 ### `snapshots list`
 The library's snapshots (`tagpup.services.snapshots`), its backup: three dailies, one weekly and one monthly in `data/backups/<library>/daily|weekly|monthly`, and the last two `before-restore` copies. Each by name (`daily/20260926_090000`), when it was taken, its size and how many of the journal's changes were made since -- what restoring it would lose -- and the disk they take together. A daily is taken when the newest is a day old, the weekly and the monthly from that same copy when theirs are 7 and 30 days old; each is copied in one step of SQLite's backup API, one read transaction, while writers go on, checked (`PRAGMA quick_check`) under a temporary name and only then renamed into place, and an old one is removed only after its replacement passed. photo_index (2.5 GB) takes about 12 s to copy and about 13 GB for five.
 
 ### `snapshots restore NAME [--apply]`
 Says which of the journal's changes the library holds that snapshot NAME does not, by id, time and operation: what restoring it would lose; and what it costs: about three times the library free on the disk (the library as it is, snapshotted first, and the copy back through its WAL) against what the disk has, and about half a minute for photo_index. Refused, with nothing written, on a disk without the room. With `--apply`, snapshots the library as it is first (`before-restore/<time>`, which `snapshots restore` puts back), then copies NAME into the library through SQLite's backup API, into the file the apps have open, and checkpoints the WAL without waiting for readers (one a reader held up is logged, and finished by the next checkpoint). Photo files written since keep what was written; the rows go back. Refused, exit status 1, for a snapshot made by a newer TagPup.
+
+---
+[◀ Back to README](../README.md) | [📖 Tutorial](TUTORIAL.md) | [💡 CLI Examples](EXAMPLE.md) | [🖥️ TagPup GUI Spec](SPEC_TAGPUP_GUI.md) | [🎯 TagTuner UI Spec](SPEC_TAGTUNER.md) | [🐶 CLI Engine Spec](SPEC_TAGPUP_CLI.md) | [🗄️ Database Spec](DATABASE.md)

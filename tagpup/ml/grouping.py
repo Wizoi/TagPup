@@ -5,11 +5,12 @@ a real library that is tens of thousands of 512-dimensional vectors. This was th
 server's own code; it is the model side of that screen, so it lives with the models.
 The radius it groups at is clustering's (tagpup.core.clustering.GROUPING): the server
 must not carry a number of its own.
+
+scipy and scikit-learn are imported inside cluster_candidates: they take over a second to
+load and the web app imports this module (through the Identify service) whether or not
+anything is grouped. tests/test_heavy_imports_stay_lazy.py keeps it so.
 """
 import numpy as np
-from scipy import sparse
-from sklearn.cluster import DBSCAN
-from sklearn.neighbors import sort_graph_by_row_values
 
 from tagpup.core import clustering
 
@@ -76,6 +77,10 @@ def cluster_candidates(embeddings, on_progress=None):
     # A face is its own neighbour at distance zero, and min_samples counts it. Sparse
     # storage drops an explicit zero, which would lose that, so the floor keeps it.
     values = np.maximum(np.concatenate(distances), 1e-9)
+
+    from scipy import sparse
+    from sklearn.cluster import DBSCAN
+    from sklearn.neighbors import sort_graph_by_row_values
 
     graph = sparse.csr_matrix((values, (rows, cols)), shape=(count, count))
     sort_graph_by_row_values(graph, warn_when_not_sorted=False)

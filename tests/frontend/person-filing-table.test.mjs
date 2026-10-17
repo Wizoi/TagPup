@@ -8,7 +8,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -36,11 +36,12 @@ function nodes(roots, paths) {
 
 for (const found of TABLE.cases) {
   test(`${found.why}: ${found.expect}`, async (t) => {
+    const tree = nodes(found.roots, found.paths);
     const photo = photoRecord({ filename: "wren.jpg", tags: found.file, people: [] });
     const server = new FakeServer()
       .on("/api/tags", [])
-      .on("/api/people", found.known)
-      .on("/api/taxonomy/tree", nodes(found.roots, found.paths))
+      .on("/api/taxonomy/tree", tree)
+      .first(PEOPLE_ROUTE, peopleRecordsOf(tree))
       .on("/api/taxonomy/create", { success: true })
       .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
       .on("/api/folder/index-status", { status: "completed", percent: 100 })
@@ -64,6 +65,21 @@ for (const found of TABLE.cases) {
       return;
     }
     assert.ok(chip, "the person is not offered");
+    // Filed twice, she is two people called alike: a chip for each, by tag, instead of the question (suggestions.js
+    // personChips), and a click writes exactly that one. The server's Apply All, with no one to ask, writes the name as it is.
+    const filed = peopleRecordsOf(tree).filter((person) => person.name === TABLE.name).map((person) => person.tag);
+    if (found.expect === "ask" && filed.length > 1) {
+      const chips = [...ctx.document.querySelectorAll("#suggested-people-container .suggestion-chip")];
+      assert.equal(chips.length, filed.length, "not a chip for each person called the name");
+      assert.equal(saves().length, 0);
+      click(ctx.window, chips[0]);
+      await flush(ctx.window, 10);
+      assert.equal(saves().length, 1, "nothing was written");
+      const added = saves()[0].body.tags.filter((tag) => !found.file.includes(tag));
+      assert.equal(added.length, 1);
+      assert.ok(filed.includes(added[0]), `${added[0]} is neither of them`);
+      return;
+    }
     click(ctx.window, chip);
     await flush(ctx.window, 10);
     if (found.expect === "ask") {

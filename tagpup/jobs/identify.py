@@ -39,13 +39,14 @@ BUILD_STAGES = (
 class BuildProgress:
     """How far along each grid being built has got, so the screen can say so instead of
     sitting blank for a minute. Written by the request doing the work and read by a
-    status request on another thread. Keyed by person, because two people's grids can
-    be built at once."""
+    status request on another thread. Keyed by what the request called the grid -- the id of
+    the person's node (a page that has the person), a bucket's name, or the name an old page
+    or an unresolved name sends -- because two people's grids can be built at once."""
 
     def __init__(self):
-        self._by_name = {}
+        self._by_key = {}
 
-    def report(self, name, stage, fraction, message):
+    def report(self, key, stage, fraction, message):
         """`fraction` is progress within the stage, 0 to 1. The overall figure comes
         from the stage weights, so it only ever moves forward."""
         done = 0.0
@@ -54,8 +55,8 @@ class BuildProgress:
                 done += weight * max(0.0, min(1.0, fraction))
                 break
             done += weight
-        self._by_name[name] = {
-            "name": name,
+        self._by_key[key] = {
+            "name": key,
             "stage": stage,
             "message": message,
             "percent": int(round(done * 100)),
@@ -63,18 +64,18 @@ class BuildProgress:
             "updated": time.time(),
         }
 
-    def done(self, name):
+    def done(self, key):
         """However a build ended, nothing is being built for this person any more.
         Left behind, a stale entry would keep a progress bar on screen for good."""
-        self._by_name.pop(name, None)
+        self._by_key.pop(key, None)
 
     def building(self):
         """Is a grid being built now?"""
-        return bool(self._by_name)
+        return bool(self._by_key)
 
-    def of(self, name):
+    def of(self, key):
         """The progress the status route answers with: what was reported, or idle."""
-        return self._by_name.get(name) or {"name": name, "active": False, "percent": 0}
+        return self._by_key.get(key) or {"name": key, "active": False, "percent": 0}
 
 
 class GridCache:
@@ -264,7 +265,7 @@ def dissolve_stranded_clusters(faces):
 # ---- The reads, cached -------------------------------------------------------------------
 
 def named_faces(library, cache):
-    """(ids, names, matrix) of every named face (tagpup.services.identify.named_faces),
+    """(ids, people, matrix) of every named face (tagpup.services.identify.named_faces),
     built once per state of the faces table rather than once per request. Naming or
     excluding a face moves the fingerprint and the matrix is rebuilt; nothing else
     disturbs it."""
@@ -277,7 +278,7 @@ def named_faces(library, cache):
 
 
 def decided_faces(library, cache):
-    """(ids, names, matrix) of the faces a person decided (tagpup.services.identify.decided_faces),
+    """(ids, people, matrix) of the faces a person decided (tagpup.services.identify.decided_faces),
     for automatch alone. Cached against the faces fingerprint and the photos generation: a
     keyword written or removed changes which faces qualify without touching a face."""
     cached = cache.get("decided_matrix", identify.decided_stamp(library))
@@ -285,6 +286,33 @@ def decided_faces(library, cache):
         return cached
     stamp, value = identify.decided_faces(library)
     cache.put("decided_matrix", stamp, value)
+    return value
+
+
+def representative_faces(library, cache):
+    """{person: face id} of the face most like each person, a person being the id of their node or the name of one no node
+    is (tagpup.services.identify
+    .representative_faces), cached against the decided matrix's stamp: a rename, a merge,
+    an exclusion or a keyword changes it, and nothing else does."""
+    stamp = identify.decided_stamp(library)
+    cached = cache.get("representatives", stamp)
+    if cached is not None:
+        return cached
+    value = identify.representative_faces(decided_faces(library, cache), named_faces(library, cache))
+    cache.put("representatives", stamp, value)
+    return value
+
+
+def face_samples(library, cache):
+    """{person: [face ids]} of the faces to show of each person (tagpup.services.identify.face_samples),
+    cached against the decided matrix's stamp like representative_faces: one pass over every
+    named face, read again when a name, a keyword or an exclusion changes it."""
+    stamp = identify.decided_stamp(library)
+    cached = cache.get("face_samples", stamp)
+    if cached is not None:
+        return cached
+    value = identify.face_samples(decided_faces(library, cache), named_faces(library, cache))
+    cache.put("face_samples", stamp, value)
     return value
 
 
@@ -313,11 +341,12 @@ def queue(library, cache):
     return value
 
 
-def grid(library, cache, progress, name):
-    """A person's grid (tagpup.services.identify.grid), from the cache when the faces
-    table has not moved since it was built; else built, its progress published under
-    `name` from here until it is done, and cached."""
+def grid(library, cache, progress, name, progress_key=None):
+    """A person's grid (tagpup.services.identify.grid; `name` is a bucket, or the id of the person's node), from the cache when the faces table has not moved since it was built; else
+    built, its progress published under `progress_key` (what the request called it; `name` as text) from here until it is
+    done, and cached."""
     key = "matches:%s" % name
+    shown = str(name) if progress_key is None else progress_key
     cached = cache.get(key, identify.fingerprint(library))
     if cached is not None:
         return cached
@@ -326,8 +355,8 @@ def grid(library, cache, progress, name):
     try:
         stamp, value = identify.grid(
             library, name, lambda: named_faces(library, cache),
-            on_progress=lambda stage, fraction, message: progress.report(name, stage, fraction, message))
+            on_progress=lambda stage, fraction, message: progress.report(shown, stage, fraction, message))
     finally:
-        progress.done(name)
+        progress.done(shown)
     cache.put(key, stamp, value)
     return value

@@ -205,7 +205,7 @@ describe("Re-examine this folder", () => {
   test("a refusal from the server is shown, and the button comes back", async (t) => {
     const s = server();
     s.first("/api/folder/automatch",
-      { success: false, error: "Server is currently clustering faces. Please try again later." }, { status: 409 });
+      { success: false, error: "The server is clustering faces; this waits until it finishes." }, { status: 409 });
     const ctx = await loadApp("tagtuner", { t, url: "http://localhost:8080/kr-track/?mode=folder-match", server: s });
     const alerts = [];
     ctx.window.alert = (text) => alerts.push(text);

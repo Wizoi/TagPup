@@ -13,7 +13,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -29,8 +29,8 @@ async function openPhoto(t, { tags = [], people = [], suggestions = {}, faces } 
   const photo = photoRecord({ filename: "a.jpg", tags, people });
   const server = new FakeServer()
     .on("/api/tags", ["People/Hazel Brookmire", "Cross Country"])
-    .on("/api/people", ["Hazel Brookmire", "Anh Tran"])
     .on("/api/taxonomy/tree", TAXONOMY)
+    .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
     .on("/api/taxonomy/create", { success: true })
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100 })

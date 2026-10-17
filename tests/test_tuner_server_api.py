@@ -1,8 +1,6 @@
-"""Coverage for the TagTuner face-tuning endpoints that `test_stability.py` leaves out.
-
-`test_stability.py` concentrates on matching and clustering rules. The read paths the
-UI is actually built on -- photo details, face crops, similarity ranking, the unmatched
-queue -- plus the unmatch and person-rename writes had no coverage at all.
+"""Coverage for the TagTuner face-tuning endpoints: the read paths the UI is actually built on --
+photo details, face crops, similarity ranking, the unmatched queue -- plus the unmatch and
+person-rename writes. (The matching and clustering rules are test_face_clustering_rules.)
 
 Face embeddings here are synthetic unit vectors, chosen so similarity ordering is exact
 and assertions can be about *which* identity ranks first rather than about a threshold.
@@ -24,12 +22,16 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 import face_rows  # noqa: E402
+import fake_exiftool  # noqa: E402
 import tuner_client  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 FACE_DIM = 512
@@ -76,6 +78,7 @@ class TunerAPITestBase(unittest.TestCase):
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
+        conn.execute("DELETE FROM tag_taxonomy")   # a name given to a face makes its node (2026-10-10): not for the next test
         conn.commit()
         conn.close()
 
@@ -207,6 +210,21 @@ class TestPhotoDetails(TunerAPITestBase):
         self.assertIn("Trips/Texas", data.get("tags", []))
         self.assertEqual(len(data.get("faces", [])), 1)
         self.assertEqual(data["faces"][0]["id"], face_id)
+
+    def test_says_the_size_the_boxes_are_in(self):
+        """#787: a face's box is in the stored pixels of the full file; the pane shows a 512 px
+        copy, so it needs the file's own size to place the box."""
+        photo = self.make_photo_file("big.jpg", size=(1600, 1200))
+        self.add_photo(photo)
+        self.add_face(photo, unit_vector(7), name=None)
+
+        data = self.get(f"/api/photo-details?path={urllib.parse.quote(photo)}")
+        self.assertEqual([1600, 1200], data["size"])
+
+    def test_a_photo_that_is_not_there_has_no_size(self):
+        ghost = os.path.join(self.tmpdir, "gone.jpg")
+        data = self.get(f"/api/photo-details?path={urllib.parse.quote(ghost)}")
+        self.assertIsNone(data["size"])
 
     def test_reports_unmatched_faces_with_null_name(self):
         photo = self.make_photo_file("a.jpg")
@@ -427,7 +445,13 @@ class TestMatchBulkListsThePerson(TunerAPITestBase):
     def test_naming_unnamed_faces_lists_the_person_on_their_photo(self):
         """docs/findings.md, #42: the photo's people were written only when the
         assignment also displaced another name."""
+        # Naming writes the person to the photo's file (#907), so the file holds what the row says: Bob.
+        files = fake_exiftool.standing_in(self)
+        # The tree a library has once it has a node (naming a face with a new name makes one): its face root is in it.
+        db.write_with_connection(self.TEST_DB, lambda conn: (taxonomy.add_path(conn, "People", root_has_face=1),
+                                                             taxonomy.add_path(conn, "People/Bob")))
         photo = self.add_photo(self.make_photo_file("a.jpg"), tags=["People/Bob"])
+        files.keep_tags(photo, ["People/Bob"])
         face = self.add_face(photo, unit_vector(80))
         self.rebuild(photo)
         self.assertEqual(["Bob"], self.photo_people(photo))
@@ -435,6 +459,17 @@ class TestMatchBulkListsThePerson(TunerAPITestBase):
         status, body = self.post("/api/faces/match-bulk", {"face_ids": [face], "person_name": "Jane"})
         self.assertEqual(status, 200, body)
         self.assertEqual(self.photo_people(photo), ["Bob", "Jane"])
+
+
+class TestMatchValidation(TunerAPITestBase):
+    """Lifted: test_stability's malformed-JSON and missing-parameter tests. Mutation: face_match not refusing a body
+    with no face or no person."""
+
+    def test_a_match_with_no_json_or_no_person_is_refused(self):
+        status, _ = self.requests.post("/api/face/match", data=b"not-json-format")
+        self.assertEqual(400, status)
+        status, _ = self.post("/api/face/match", {"face_id": 1})
+        self.assertEqual(400, status)
 
 
 class TestUnmatchBulk(TunerAPITestBase):
@@ -489,19 +524,17 @@ class TestUnmatchAll(TunerAPITestBase):
 
 
 class TestPersonRename(TunerAPITestBase):
-    def test_renames_across_faces_and_photo_people(self):
+    def test_a_name_no_person_is_called_is_refused_and_nothing_changes(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"))
         face_id = self.add_face(photo, unit_vector(90), name="Jane Doe")
         self.rebuild(photo)
-        self.assertEqual(["Jane Doe"], self.photo_people(photo))
 
         status, body = self.post(
-            "/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"}
+            "/api/person/rename", {"old_name": "Jane Dow", "new_name": "Jane Smith"}
         )
-        self.assertEqual(status, 200, body)
-        self.assertEqual(self.face_name(face_id), "Jane Smith")
-        self.assertIn("Jane Smith", self.photo_people(photo))
-        self.assertNotIn("Jane Doe", self.photo_people(photo))
+        self.assertEqual(status, 400, body)
+        self.assertEqual(self.face_name(face_id), "Jane Doe")
+        self.assertEqual(["Jane Doe"], self.photo_people(photo))
 
     def test_leaves_other_people_untouched(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"))
@@ -512,15 +545,6 @@ class TestPersonRename(TunerAPITestBase):
         self.post("/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"})
         self.assertEqual(self.face_name(bob), "Bob Roe")
         self.assertIn("Bob Roe", self.photo_people(photo))
-
-    def test_renaming_to_the_same_name_is_a_noop(self):
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
-        face_id = self.add_face(photo, unit_vector(93), name="Jane Doe")
-        status, body = self.post(
-            "/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Doe"}
-        )
-        self.assertEqual(status, 200, body)
-        self.assertEqual(self.face_name(face_id), "Jane Doe")
 
     def test_rejects_the_reserved_unmatched_label(self):
         status, _ = self.post(
@@ -564,11 +588,11 @@ class TestPersonRename(TunerAPITestBase):
         self.assertIn("Jane Smith", names)
 
     def test_a_non_person_taxonomy_node_is_left_alone(self):
-        """Only face categories are people; a keyword that happens to match is not."""
+        """Only face categories are people; a keyword at another path that happens to end alike is not."""
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, 0)",
-            ("Jane Doe", "Jane Doe"),
+            ("Places/Jane Doe", "Jane Doe"),
         )
         conn.commit()
         conn.close()
@@ -580,7 +604,7 @@ class TestPersonRename(TunerAPITestBase):
         conn = sqlite3.connect(self.TEST_DB)
         tags = {r[0] for r in conn.execute("SELECT tag FROM tag_taxonomy").fetchall()}
         conn.close()
-        self.assertIn("Jane Doe", tags, "a non-person keyword tag was renamed")
+        self.assertIn("Places/Jane Doe", tags, "a non-person keyword tag was renamed")
 
 
 class TestUnmatchedFacesQueue(TunerAPITestBase):
@@ -736,7 +760,7 @@ class TestClusteringLock(TunerAPITestBase):
         photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
         face_id = self.add_face(photo, unit_vector(99), name="Jane Doe")
 
-        being_clustered = tuner_routes.clustering.of(Library(self.TEST_DB))
+        being_clustered = indexing.clustering.of(Library(self.TEST_DB))
         being_clustered.set()
         try:
             status, _ = self.post("/api/face/unmatch", {"face_id": face_id})
@@ -913,11 +937,11 @@ class TestQueueRunner(TestFolderQueue):
         folders = self.make_folders(3)
         seen = []
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             seen.append(folder)
             return Result(changed=1)
 
-        with patch.object(tuner_routes, "folder_indexer", return_value=index):
+        with patch.object(tuner_routes.runtimes, "index_folder", return_value=index):
             self.post_start(folders, block_runner=False)
             self.wait_until_idle()
         self.assertEqual(seen, folders)
@@ -990,13 +1014,8 @@ class TestSubfolderListing(TunerAPITestBase):
     def test_already_indexed_photos_are_counted_per_folder(self):
         """So the picker can show what is already in rather than offering it as new."""
         child = self.make_child("shoot", images=2)
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO photos (path, tags, captions) VALUES (?, '[]', '[]')",
-            (os.path.join(child, "img0.jpg"),),
-        )
-        conn.commit()
-        conn.close()
+        # The row as the indexer records it, its folder with it (the library's folders are the derived folders).
+        db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, os.path.join(child, "img0.jpg"), {}))
         body = self.list_subfolders()
         self.assertEqual(body["folders"][0]["indexed"], 1)
 
@@ -1060,31 +1079,6 @@ class TestTunerFolderIndexing(TunerAPITestBase):
         self.assertEqual(final.get("status"), "completed", final)
         self.assertTrue(popen.called, "the indexer subprocess never started")
 
-    def test_indexing_does_not_cluster_unless_asked(self):
-        """Clustering rewrites every name in the database, so it is never implicit."""
-        from unittest.mock import patch, MagicMock
-        import tempfile
-
-        folder = tempfile.mkdtemp(prefix="tuner_idx_")
-        proc = MagicMock()
-        proc.returncode = 0
-        proc.stdout.readline.side_effect = ["done\n", ""]
-
-        with patch("subprocess.Popen", return_value=proc) as popen:
-            self.post("/api/folder/index-start", {"folder_path": folder})
-            q = urllib.parse.quote(folder)
-            deadline = time.time() + 20
-            while time.time() < deadline:
-                if self.get(f"/api/folder/index-status?path={q}").get("status") != "running":
-                    break
-                time.sleep(0.1)
-
-        commands = [call.args[0] for call in popen.call_args_list]
-        self.assertFalse(
-            any("cluster-faces" in c for c in commands),
-            f"indexing clustered without being asked: {commands}",
-        )
-
 
 class TestTunerFolderRemoval(TunerAPITestBase):
     def seed_folder(self, name="removeme"):
@@ -1094,12 +1088,8 @@ class TestTunerFolderRemoval(TunerAPITestBase):
         from PIL import Image
         Image.new("RGB", (16, 16)).save(photo, "JPEG")
 
+        db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, photo, {}))
         conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-            " VALUES (?, 1.0, 1, '[]', '[]', '{}')",
-            (photo,),
-        )
         conn.execute(
             "INSERT INTO faces (photo_id, box, embedding, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?, 'manual')",
             (photo, unit_vector(500).tobytes(), "Jane Doe"),
@@ -1332,7 +1322,7 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         conn = db.connect(self.TEST_DB)
         try:
             store_faces.insert(conn, photo.swapcase(), [10, 10, 50, 50], unit_vector(911).tobytes(),
-                               name="Tamsin Okafor")
+                               name=face_rows.person_of(conn, "Tamsin Okafor"))
             conn.commit()
         finally:
             conn.close()
@@ -1375,11 +1365,11 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
         folders = self.make_folders(2)
         seen = []
 
-        def look(folder, cluster, report):
+        def look(folder, report):
             seen.append(self.get("/api/folder/index-active"))
             return Result(changed=1)
 
-        with patch.object(tuner_routes, "folder_indexer", return_value=look):
+        with patch.object(tuner_routes.runtimes, "index_folder", return_value=look):
             status, body = self.post_start([forward_slashes(f) for f in folders])
         self.assertEqual(status, 200, body)
         self.assertEqual(body["queued"], folders)
@@ -1395,13 +1385,8 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
 class TestSubfoldersOfATypedParent(TestSubfolderListing):
     def test_children_of_a_parent_typed_with_forward_slashes_are_spelled_one_way(self):
         child = self.make_child("shoot", images=1)
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO photos (path, tags, captions) VALUES (?, '[]', '[]')",
-            (os.path.join(child, "img0.jpg"),),
-        )
-        conn.commit()
-        conn.close()
+        # The row as the indexer records it, its folder with it (the library's folders are the derived folders).
+        db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, os.path.join(child, "img0.jpg"), {}))
         body = self.get("/api/folder/subfolders?path=%s"
                         % urllib.parse.quote(other_spelling(self.parent)))
         self.assertEqual(body["folders"][0]["indexed"], 1)

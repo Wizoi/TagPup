@@ -1,12 +1,13 @@
 """A person's id beside their name has one owner: tagpup.store.person_ids (docs/ARCHITECTURE.md,
 "Identity by id").
 
-`faces.tag_id` and `photo_people.tag_id` are derived from the name and the tag tree. A writer that set
-a name and not the id -- or worked the id out by a rule of its own -- would leave rows whose id names
-someone else, and stage 2 reads the id. So this fails the build on a function in tagpup/ that
+`faces.tag_id` and `photo_people.tag_id` are the PERSON (the node of the tag tree; stage 2: docs/ARCHITECTURE.md,
+"People by id, stage 2"), and `name` beside them the cache of the node's leaf. A writer that set a name and not the id -- or
+worked the id out by a rule of its own -- would leave rows whose id names someone else, and every reader reads the id. So this
+fails the build on a function in tagpup/ that
 
-* writes `tag_id` of faces or photo_people anywhere but person_ids (schema.py adds the column, and
-  calls person_ids to fill it); or
+* writes `tag_id` of faces or photo_people anywhere but person_ids and is not one of the named few that take the pair from it
+  (IDS_WRITTEN_WITH_THE_PAIR below); or
 * writes a face's name (UPDATE faces SET ... name, INSERT INTO faces) or a photo's people (INSERT INTO
   or UPDATE photo_people) and neither calls person_ids nor ends in faces._rebuilt, which does.
 
@@ -25,16 +26,24 @@ from shipped_sources import ROOT, python_sources  # noqa: E402
 OWNER = "tagpup/store/person_ids.py"
 
 #: SQL that writes the id of a face or of a listed person.
-ID_WRITE = re.compile(r"\b(?:UPDATE\s+(?:faces|photo_people)\s+SET\b[^;]*\btag_id\b"
+ID_WRITE = re.compile(r"\b(?:UPDATE\s+(?:faces|photo_people)\s+SET\b(?:(?!\bWHERE\b).)*\btag_id\b"
                       r"|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(?:faces|photo_people)\s*\([^)]*\btag_id\b)", re.I | re.S)
 #: SQL that writes a face's name or a photo's people.
-NAME_WRITE = re.compile(r"\b(?:UPDATE\s+faces\s+SET\b(?:(?!\bWHERE\b).)*\bname\b|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+faces\b"
+NAME_WRITE = re.compile(r"\b(?:UPDATE\s+faces\s+SET\b(?:(?!\bWHERE\b).)*\bname\b|UPDATE\s+faces\s+SET\s*$"
+                        r"|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+faces\b"
                         r"|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+photo_people\b|UPDATE\s+photo_people\s+SET\b)", re.I | re.S)
+
+#: (module, function) that write a person's id outside person_ids, and why that is the pair's one owner all the same. Each must
+#: mention person_ids: the pair comes from it.
+IDS_WRITTEN_WITH_THE_PAIR = {
+    # target() gives the pair (the node's id and its leaf) and the INSERT writes both.
+    ("tagpup/store/faces.py", "insert"): "person_ids.target",
+    # The ids vocabulary.people_rows gave from the tree it was read from; settled by person_ids.follow_listed right after.
+    ("tagpup/store/people.py", "rebuild"): "person_ids.follow_listed",
+}
 
 #: (module, function) that write names and say so, with the function that gives the ids.
 COVERED_ELSEWHERE = {
-    # Migration 4 rebuilt faces before the column existed; migration 21 fills it (_person_ids).
-    ("tagpup/store/schema.py", "_photo_ids"): ("tagpup/store/schema.py", "_person_ids"),
     # The journal writes any row of a journaled table; _derive follows what it wrote.
     ("tagpup/store/journal.py", "_write"): ("tagpup/store/journal.py", "_derive"),
 }
@@ -88,12 +97,17 @@ class PersonIdsHaveOneOwner(unittest.TestCase):
         """A guard that matches nothing passes forever."""
         found = {(module, name) for module, name, _node in self.names}
         self.assertLessEqual({("tagpup/store/faces.py", "name"), ("tagpup/store/faces.py", "insert"),
-                              ("tagpup/store/faces.py", "set_names"), ("tagpup/store/people.py", "rename"),
+                              ("tagpup/store/faces.py", "set_names"),
                               ("tagpup/store/people.py", "rebuild")}, found)
         self.assertIn((OWNER, "follow_faces"), self.ids)
 
-    def test_only_person_ids_writes_an_id(self):
-        self.assertEqual([], [found for found in self.ids if found[0] != OWNER])
+    def test_only_person_ids_writes_an_id_but_the_few_that_take_the_pair_from_it(self):
+        self.assertEqual([], [found for found in self.ids if found[0] != OWNER and found not in IDS_WRITTEN_WITH_THE_PAIR])
+        for found, via in IDS_WRITTEN_WITH_THE_PAIR.items():
+            with self.subTest(found):
+                self.assertIn(found, self.ids, "the exception is for a function that does write an id")
+                self.assertTrue(mentions(self.nodes[found], "person_ids") or mentions(self.nodes[found], "_target"),
+                                "%s: the pair comes from %s" % (found, via))
 
     def test_every_writer_of_a_name_follows_it_with_the_id(self):
         unfollowed = []
@@ -103,7 +117,7 @@ class PersonIdsHaveOneOwner(unittest.TestCase):
             covered = COVERED_ELSEWHERE.get((module, name))
             if covered is not None:
                 self.assertIn(covered, self.nodes, "the function said to cover %s.%s is gone" % (module, name))
-                if not mentions(self.nodes[covered], "person_ids") and covered[1] != "_person_ids":
+                if not mentions(self.nodes[covered], "person_ids"):
                     unfollowed.append("%s.%s (by %s)" % (module, name, covered[1]))
                 continue
             if mentions(node, "person_ids") or any(mentions(node, d) for d in DELEGATES):
@@ -116,7 +130,6 @@ class PersonIdsHaveOneOwner(unittest.TestCase):
             self.assertTrue(mentions(self.nodes[(module, delegate)], "person_ids"), delegate)
         self.assertTrue(mentions(self.nodes[("tagpup/store/people.py", "tree_edit")], "follow_tree"))
         self.assertTrue(mentions(self.nodes[("tagpup/store/journal.py", "_derive")], "person_ids"))
-        self.assertTrue(mentions(self.nodes[("tagpup/store/schema.py", "_person_ids")], "person_ids"))
 
 
 if __name__ == "__main__":

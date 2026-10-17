@@ -1,11 +1,13 @@
 // TagPup's page: moving between photos, by key, swipe or drag.
 import { state } from './state.js';
 import { dialogOpen } from './common/dialog.js';
+import { imageZoomOpen } from './common/image-zoom.js';
 import { photoList, photoSearch } from './elements.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { carryTagsForward, openLibraryPhoto, selectPhoto } from './photo.js';
 import { libraryStepTarget } from './library-source.js';
 import { undoLastOperation } from './undo.js';
+import { backToView } from './view-left.js';
 
 /**
  * Move the selection through the list by a number of steps.
@@ -90,6 +92,18 @@ export function wireKeyboard() {
             return;
         }
         if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+        // Escape closes a photo opened over a library view: back to the view as it was left (view-left.js, #780). What has the key
+        // first keeps it: the zoom (it hears it before this does), a face's panel, and a field it was pressed in -- which empties
+        // itself and lets go of the focus, so the focus is no longer where the key was pressed: the event's target says.
+        if (e.key === 'Escape') {
+            if (!e.defaultPrevented && state.library && state.activePhotoPath && !imageZoomOpen() && state.faceBoxes.open === null
+                && !keystrokeBelongsToField(e.target)) {
+                e.preventDefault();
+                backToView();
+            }
+            return;
+        }
 
         // Left/right are the same move as up/down. Up/down reads as "the row below"
         // in the list; left/right reads as "the next photo" over the image. Both are

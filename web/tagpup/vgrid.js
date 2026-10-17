@@ -90,7 +90,7 @@ export function createVGrid(options) {
     let frame = 0;
     let imageTimer = 0;
     let destroyed = false;
-    let layout = null;             // the last measurement with a real card in it
+    let layout = null;             // the last measurement with a real card in it: columns, stride, where the grid starts, the gap between rows
     let stale = true;              // the cards' height must be read again (size, width)
     let anchor = null;             // the row kept in view across a change of layout
     let lastTop = 0;               // the scroll offset to come back to when the grid is shown again
@@ -101,7 +101,7 @@ export function createVGrid(options) {
     let viewTo = 0;
     let marginFrom = 0;            // and a row either side of it
     let marginTo = 0;
-    let moved = 0;                 // when the view last changed what it showed
+    let moved = 0;                 // when the view last changed what it showed; -1: just now, by the render under way
     let lastWidth = -1;
     let observer = null;
 
@@ -132,7 +132,8 @@ export function createVGrid(options) {
     function setViewRange(firstSeen, lastSeen, columns, rows) {
         const from = firstSeen * columns;
         const to = (lastSeen + 1) * columns;
-        if (from !== viewFrom || to !== viewTo) moved = Date.now();
+        // Timed when the cards are drawn (settleImages), not before: a slow draw is not the view standing still.
+        if (from !== viewFrom || to !== viewTo) moved = -1;
         viewFrom = from;
         viewTo = to;
         marginFrom = clamp(firstSeen - imageRows, 0, rows - 1) * columns;
@@ -158,6 +159,7 @@ export function createVGrid(options) {
             }
         }
         const now = Date.now();
+        if (moved < 0) moved = now;
         let next = Infinity;
         for (const entry of live.values()) {
             const img = entry.img;
@@ -396,7 +398,7 @@ export function createVGrid(options) {
         measured = true;
         everLaidOut = true;
         setViewRange(firstSeen, lastSeen, m.columns, rows);
-        layout = { columns: m.columns, stride, gridTop: m.gridTop };
+        layout = { columns: m.columns, stride, gridTop: m.gridTop, rowGap: m.rowGap };
         laidOut = true;
         draw(firstRow * m.columns, Math.min(total, (lastRow + 1) * m.columns),
             firstRow * stride, (rows - 1 - lastRow) * stride, m);
@@ -415,16 +417,48 @@ export function createVGrid(options) {
         });
     }
 
+    // The row at the top of the view, read from the cards where they are on screen: the first card whose bottom is below the
+    // scroller's top, and how far into its row the top is. What the browser shows is what is kept, whatever `layout` last
+    // recorded of a card's height (a card's height can change by a pixel or two with the width, and the stride of a layout
+    // measured before that is then not the stride of the rows now drawn: the row kept would be one the view never showed, #780).
+    // Null where there is nothing laid out to read (no cards, or a page with no layout: a test's).
+    function anchorFromCards() {
+        const top = scroller.getBoundingClientRect().top;
+        let first = null;
+        for (const entry of order) {
+            const box = entry.card.getBoundingClientRect();
+            if (!(box.height > 0)) continue;
+            if (box.bottom > top) {
+                first = { entry, box };
+                break;
+            }
+        }
+        if (!first) return null;
+        const gap = layout.rowGap || 0;
+        const columns = layout.columns;
+        return {
+            index: Math.floor(first.entry.index / columns) * columns,
+            fraction: clamp((top - first.box.top) / (first.box.height + gap), 0, 1),
+        };
+    }
+
     // The columns or the size of a card changed: read them again, and keep the row that is
     // at the top of the view at the top of the view.
     function relayout() {
-        if (layout && laidOut && scroller.clientHeight > 0) {
-            const row = (scroller.scrollTop - layout.gridTop) / layout.stride;
-            const whole = Math.max(0, Math.floor(row));
-            anchor = { index: whole * layout.columns, fraction: Math.max(0, row - whole) };
-        }
+        if (layout && laidOut && scroller.clientHeight > 0) anchor = currentPlace();
         stale = true;
         render();
+    }
+
+    // Where the view is: the row at its top (the index of its first card) and how far into the row the top is, from the cards where they
+    // are; with no cards to read, from the offset and the last layout's stride. Null with no layout.
+    function currentPlace() {
+        if (!layout || !laidOut || !(scroller.clientHeight > 0)) return null;
+        const found = anchorFromCards();
+        if (found) return found;
+        const row = (scroller.scrollTop - layout.gridTop) / layout.stride;
+        const whole = Math.max(0, Math.floor(row));
+        return { index: whole * layout.columns, fraction: Math.max(0, row - whole) };
     }
 
     function onScroll() {
@@ -485,6 +519,19 @@ export function createVGrid(options) {
         render,
         /** The cards' size changed (a size class): read it again, keeping the place. */
         relayout,
+        /**
+         * Where the view is, as a place that outlives a change of the cards' size or the grid's width: { index, fraction }, the first
+         * card of the row at the top and how far into the row the top is. Null when the grid is not laid out (hidden).
+         */
+        placeOfView: currentPlace,
+        /** Show the view at a place `placeOfView()` gave: the cards' height is read again first, so the row is the row whatever the grid is now. */
+        showPlace(place) {
+            if (!place || !Number.isFinite(place.index)) return false;
+            anchor = { index: place.index, fraction: Number(place.fraction) || 0 };
+            stale = true;
+            render();
+            return true;
+        },
         setSource(next) {
             source = next;
         },

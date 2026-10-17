@@ -111,7 +111,6 @@ function renderHistory(data) {
     } else {
         replaceContent(historyDialog.body, buildElement('ul', { className: 'history-list' }, changes.map(changeRow)));
     }
-    say(data.retention_days ? `A change can be undone for ${data.retention_days} days.` : '');
 }
 
 function loadHistory() {

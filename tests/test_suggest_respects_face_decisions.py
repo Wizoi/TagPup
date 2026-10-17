@@ -4,7 +4,8 @@ The suggester read every face row on the photo and matched each against the know
 people, so a passer-by excluded in TagTuner, or a face marked "nobody", came back as a
 suggestion for whoever it most resembled -- the decision was undone one click later.
 Skipping them must not make the photo look faceless, either: a photo whose every face
-had been excluded would then be sent through detection again.
+had been excluded would then be sent through detection again. The suggester is the one a run
+is handed (model_for_run), its tree the library's, CLIP stood in for (tests/stand_in_models.py).
 """
 import os
 import shutil
@@ -17,36 +18,23 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.services.search import PhotoIndex  # noqa: E402
-from tagpup.services.suggester import TagSuggester  # noqa: E402
+from tagpup.store import taxonomy  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
+from face_rows import person_of  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]
 
 
-class FakeTaxonomy:
-    paths = ["People/Rowan Thackeray"]
-
-    def expand_tag(self, tag):
-        return [tag]
-
-    def find_person_path(self, name):
-        return "People/" + name
-
-    def person_paths(self, name):
-        return ["People/" + name]
-
-    def find_by_leaf(self, leaf):
-        return None
-
-    def people_roots(self):
-        # The roots the library's tree flags as holding faces (docs/findings.md, #66).
-        return {"people"}
-
-
-class CountingFaceProcessor:
+class CountingFaceProcessor(stand_in_models.Faces):
     def __init__(self):
         self.calls = 0
 
-    def detect_and_embed_faces(self, path):
+    def ready(self):
+        """The run's turn on the graphics card (tagpup.runtime._OnTheCard): nothing to wait for here."""
+
+    def detect_and_embed_faces(self, path, *, max_side):
         self.calls += 1
         return [{"box": [0, 0, 100, 100], "embedding": ROWAN, "prob": 0.99}]
 
@@ -57,6 +45,8 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.index = PhotoIndex(os.path.join(self.dir, "lib.db"))
         self.index.load()
         self.processor = CountingFaceProcessor()
+        taxonomy.add_path(self.index.conn, "People", root_has_face=1)   # the tree files Rowan: a face is named by a node
+        taxonomy.add_path(self.index.conn, "People/Rowan Thackeray")
         # Rowan is known from another photo.
         self.add_face(r"D:\Pictures\known.jpg", "Rowan Thackeray", None, 0)
 
@@ -68,13 +58,15 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         conn = self.index.conn
         conn.execute("INSERT OR IGNORE INTO photos (path) VALUES (?)", (path,))
         conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, prob, name, name_source, excluded)"
-            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 100, 100]', ?, 0.99, ?, ?, ?)",
-            (path, np.asarray(ROWAN, dtype=np.float32).tobytes(), name, name_source, excluded))
+            "INSERT INTO faces (photo_id, box, embedding, prob, name, tag_id, name_source, excluded)"
+            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 100, 100]', ?, 0.99, ?, ?, ?, ?)",
+            (path, np.asarray(ROWAN, dtype=np.float32).tobytes(), name, person_of(conn, name) if name else None,
+             name_source, excluded))
         conn.commit()
 
     def suggested(self, path):
-        result = TagSuggester(self.index, FakeTaxonomy(), faces=self.processor).suggest_for_photo(path, ROWAN)
+        run = stand_in_models.run_for(self.index, self.processor, dim=len(ROWAN))
+        result = run.suggester.suggest_for_photo(path, ROWAN)
         return [t["tag"] for t in result["suggested_tags"]]
 
     def test_an_unnamed_face_is_still_matched(self):
@@ -90,8 +82,7 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.assertNotIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\stranger.jpg"))
 
     def test_a_photo_with_no_face_rows_is_detected_with_the_model_it_is_given(self):
-        # The other tests only show detection is skipped, which a suggester given no
-        # face model would pass too; this one needs the model (found in review of 6.5).
+        # The other tests only show detection is skipped; this one needs the model (found in review of 6.5).
         self.assertIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\new.jpg"))
         self.assertEqual(1, self.processor.calls)
 

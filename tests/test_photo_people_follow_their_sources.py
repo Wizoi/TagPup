@@ -11,7 +11,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_face, people_of  # noqa: E402
+import photo_rows  # noqa: E402
+from face_rows import add_face, people_of, person_of  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.store import checks, db, faces, generations, people, photos, taxonomy  # noqa: E402
@@ -25,6 +26,9 @@ class PhotoPeople(unittest.TestCase):
         self.lib = TempLibrary(self)
         self.photo = self.lib.photo("dunes.jpg")
         self.lib.add_row(self.photo, tags=["People/" + WREN, "Places/Dunes"])
+        # The nodes the read of those keywords made (2026-10-10).
+        self.write(lambda conn: (taxonomy.add_path(conn, "People", root_has_face=1),
+                                 taxonomy.add_path(conn, "People/" + WREN), taxonomy.add_path(conn, "Places/Dunes")))
         self.write(lambda conn: people.rebuild(conn))
 
     def write(self, operation):
@@ -48,43 +52,44 @@ class PhotoPeople(unittest.TestCase):
 
     def test_naming_a_face_adds_them(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         self.assertEqual([WREN, ODA], self.listed())
 
     def test_unnaming_a_face_keeps_someone_a_keyword_still_names(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], WREN))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, WREN)))
         self.write(lambda conn: faces.unname(conn, [face_id]))
         self.assertEqual([WREN], self.listed())
 
     def test_a_face_named_in_another_case_is_not_listed_twice(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], WREN.upper()))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, WREN.upper())))
         self.assertEqual([WREN], self.listed())
 
     def test_excluding_a_face_takes_its_name_off(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         self.assertEqual([WREN, ODA], self.listed())
         self.write(lambda conn: faces.exclude(conn, [face_id], "stranger"))
         self.assertEqual([WREN], self.listed())
 
     def test_clustering_naming_faces_adds_them(self):
         face_id = self.face()
-        self.write(lambda conn: faces.set_names(conn, {face_id: ODA}))
+        oda = self.write(lambda conn: taxonomy.add_path(conn, "People/" + ODA))
+        self.write(lambda conn: faces.set_names(conn, {face_id: oda}, {face_id: None}))
         self.assertEqual([WREN, ODA], self.listed())
 
     def test_detecting_the_faces_again_takes_off_whom_only_a_face_named(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         self.assertEqual([WREN, ODA], self.listed())
         self.write(lambda conn: faces.remove_for_photo(conn, self.photo))
         self.assertEqual([WREN], self.listed())
 
     def test_a_keyword_write_keeps_whom_a_face_names(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Dunes"])
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Dunes"])
         self.assertEqual([ODA], self.listed())
 
     def test_a_root_flagged_as_holding_faces_names_the_people_under_it(self):
@@ -108,7 +113,7 @@ class PhotoPeople(unittest.TestCase):
         # Such faces have happened (the doctor watches for them); restored, the face
         # counts again (#89).
         face_id = self.face()
-        self.write(lambda conn: conn.execute("UPDATE faces SET name = ?, excluded = 1 WHERE id = ?", (ODA, face_id)))
+        self.write(lambda conn: conn.execute("UPDATE faces SET name = ?, tag_id = ?, excluded = 1 WHERE id = ?", (ODA, person_of(conn, ODA), face_id)))
         self.write(lambda conn: faces.restore(conn, [face_id]))
         self.assertEqual([WREN, ODA], self.listed())
 
@@ -119,12 +124,12 @@ class PhotoPeople(unittest.TestCase):
     def test_a_change_moves_the_photos_generation(self):
         before = self.read(lambda conn: generations.value(conn, "photos"))
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         self.assertGreater(self.read(lambda conn: generations.value(conn, "photos")), before)
 
     def test_readers_see_them_as_the_list_they_always_had(self):
-        rows = self.read(lambda conn: photos.index_rows(conn, "any model"))
-        self.assertEqual('["%s"]' % WREN, rows[0][4])
+        rows = self.read(lambda conn: photos.records(conn, "any model"))
+        self.assertEqual('["%s"]' % WREN, rows[0][photos.RECORD_COLUMNS.index("people")])
 
     def test_the_doctor_finds_a_photo_whose_people_were_written_by_hand(self):
         self.write(lambda conn: conn.execute("UPDATE photo_people SET name = 'Somebody Else'"))

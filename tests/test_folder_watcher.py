@@ -8,7 +8,6 @@ TagPup makes is synced too, and the sync reads no file. Stopping waits for a syn
 way. No library of the owner's is touched: the libraries here are stand-ins, or made in
 the test's own home.
 """
-import json
 import os
 import shutil
 import sys
@@ -20,6 +19,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
@@ -239,6 +239,36 @@ class WhenNotificationsMayHaveBeenMissed(Base):
         self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
         self.wait_until(lambda: ("harbour", None) in self.synced)
 
+    def test_a_watched_folder_whose_share_stops_answering_keeps_its_watch_and_is_not_synced_whole(self):
+        """#1392: the watcher asked a bare os.path.isdir, so a root on a share that stopped answering was let go as not
+        there, and its library synced whole when it answered again. Neither there nor gone, it keeps its watch. (A local
+        drive that is not connected is gone, #1387: test_a_watched_folder_removed_is_let_go_...)"""
+        watcher = self.started(self.make())
+        root = paths.key(self.root)
+        real_isdir = os.path.isdir
+        with mock.patch.object(os.path, "isdir", lambda path: False if paths.key(path) == root else real_isdir(path)), \
+                mock.patch("tagpup.files.shares.on_a_network_drive", lambda path: paths.key(path) == root), \
+                mock.patch("tagpup.files.shares._share_answers", lambda path: paths.key(path) != root):
+            time.sleep(0.8)   # four looks at the roots (recheck 0.2)
+            self.assertEqual([paths.stored(self.root)], watcher.watched(), "a share that does not answer was let go")
+        time.sleep(0.5)
+        self.assertEqual([], self.synced, "synced whole as if it had come back")
+
+    def test_a_watched_folder_renamed_is_noticed_from_its_parent_and_its_library_synced_whole(self):
+        # The 30 s look at the folders is not what finds it: its watch sees nothing of its own rename.
+        watcher = self.started(self.make(recheck=30.0))
+        self.wait_until(lambda: watcher.watched_parents() == [paths.stored(self.home.root)])
+        os.rename(self.root, self.root + " 2026")
+        self.wait_until(lambda: ("harbour", None) in self.synced, 10)
+
+    def test_a_folder_beside_a_watched_one_renamed_is_no_sync(self):
+        watcher = self.started(self.make(recheck=30.0))
+        self.wait_until(lambda: watcher.watched_parents() == [paths.stored(self.home.root)])
+        os.makedirs(os.path.join(self.home.root, "Other"))
+        os.rename(os.path.join(self.home.root, "Other"), os.path.join(self.home.root, "Other 2"))
+        time.sleep(1.5)
+        self.assertEqual([], self.synced)
+
     def test_a_library_in_too_many_separate_folders_is_not_watched_and_is_told_why(self):
         folders = [tempfile.mkdtemp(dir=self.home.root) for _ in range(3)]
         watcher = watching.Watcher(lambda: [self.library], lambda library: folders, self.sync,
@@ -312,10 +342,10 @@ class TheCatchUpAtStart(Base):
         library = Library(home.library("harbour.db"))
         schema.ensure(library.path)
         self.assertFalse(sync_service.synced_whole_within(library, 3600))
-        from tagpup.store import sync_runs
-        sync_runs.record(library.path, sync_runs.now(), whole=False, in_step=True, found={}, changed={})
+        from tagpup.store import job_runs
+        job_runs.record_sync(library.path, job_runs.stamp(time.time()), whole=False, in_step=True, found={}, changed={})
         self.assertFalse(sync_service.synced_whole_within(library, 3600), "a folder's sync is not the whole")
-        sync_runs.record(library.path, sync_runs.now(), whole=True, in_step=False, found={}, changed={})
+        job_runs.record_sync(library.path, job_runs.stamp(time.time()), whole=True, in_step=False, found={}, changed={})
         self.assertTrue(sync_service.synced_whole_within(library, 3600))
         with mock.patch.object(sync_service.time, "time", return_value=time.time() + 3601):
             self.assertFalse(sync_service.synced_whole_within(library, 3600))
@@ -334,15 +364,9 @@ class WhichProcessWatches(unittest.TestCase):
 
 
 def seed(library_path, photo):
-    """The photo's row as the indexer leaves it: its stamp and what it holds."""
-    stat = os.stat(photo)
-    conn = db.connect(library_path)
-    try:
-        conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
-                     (paths.stored(photo), stat.st_mtime, stat.st_size, json.dumps([]), json.dumps([]), json.dumps({})))
-        conn.commit()
-    finally:
-        conn.close()
+    """The photo's row as the indexer leaves it (photo_rows.add_read): its stamp, what it holds, and its folder. It was an
+    INSERT of the photo alone, with no folder row: a shape nothing real makes."""
+    db.write_with_connection(library_path, lambda conn: photo_rows.add_read(conn, photo, {}))
 
 
 class WhichFoldersALibraryHas(unittest.TestCase):
@@ -441,6 +465,78 @@ class TagPupsOwnWrites(unittest.TestCase):
         self.assertEqual((0, 0, 0, 0), (counts["changed"], counts["new"], counts["moved"], counts["missing"]))
         self.assertEqual(0, result.changed)
         self.assertEqual([], reads, "the sync of TagPup's own write read a file")
+
+
+class FakeObserver:
+    """An observer that records what is scheduled, and lets a test run something when a watch is unscheduled."""
+
+    class Emitter:
+        def __init__(self, watch):
+            self.watch, self.alive = watch, True
+
+        def is_alive(self):
+            return self.alive
+
+    def __init__(self):
+        self.scheduled, self.emitters, self.on_unschedule = [], [], None
+
+    def schedule(self, handler, path, recursive=False):
+        watch = ("watch", path, recursive, len(self.scheduled))
+        self.scheduled.append((path, recursive))
+        self.emitters.append(self.Emitter(watch))
+        return watch
+
+    def unschedule(self, watch):
+        self.emitters = [e for e in self.emitters if e.watch != watch]
+        if self.on_unschedule:
+            self.on_unschedule(watch)
+
+
+class TheWatchesThemselves(Base):
+    def watcher_over(self, folders, **options):
+        self.folders = folders
+        return watching.Watcher(lambda: [self.library], lambda library: list(self.folders), self.sync,
+                                images.is_photo, **options)
+
+    def test_a_watch_is_unscheduled_outside_the_lock_watchdog_dispatches_into(self):
+        # watchdog calls notice() with the observer's lock held; unscheduling holds that lock too. If the watcher
+        # unschedules while holding its own, each waits for the other.
+        watcher, observer = self.watcher_over([self.root]), FakeObserver()
+        watcher._look(observer)
+        stuck = []
+
+        def a_notification_arrives(_watch):
+            from watchdog.events import FileCreatedEvent
+            thread = threading.Thread(target=watcher.notice, args=(
+                paths.key(self.root), FileCreatedEvent(os.path.join(self.root, "Regatta", "A.jpg"))), daemon=True)
+            thread.start()
+            thread.join(3)
+            stuck.append(thread.is_alive())
+
+        observer.on_unschedule = a_notification_arrives
+        self.folders = []
+        watcher._look(observer)
+        self.assertTrue(stuck, "nothing was unscheduled")
+        self.assertEqual([False] * len(stuck), stuck, "a notification waited on the lock unschedule was holding")
+
+    def test_the_parents_count_toward_the_limit_of_watches(self):
+        observer = FakeObserver()
+        self.watcher_over([self.root], max_watches=1)._look(observer)
+        self.assertEqual([(paths.stored(self.root), True)], observer.scheduled)
+        observer = FakeObserver()
+        self.watcher_over([self.root], max_watches=2)._look(observer)
+        self.assertEqual([(paths.stored(self.root), True), (paths.stored(self.home.root), False)],
+                         observer.scheduled)
+
+    def test_a_parent_whose_watch_died_is_watched_again_and_its_libraries_synced_whole(self):
+        watcher, observer = self.watcher_over([self.root]), FakeObserver()
+        watcher._look(observer)
+        parent = [e for e in observer.emitters if e.watch[1] == paths.stored(self.home.root)][0]
+        parent.alive = False
+        before = len(observer.scheduled)
+        watcher._look(observer)
+        self.assertEqual((paths.stored(self.home.root), False), observer.scheduled[before])
+        self.assertIsNotNone(watcher._pending[self.library.key]["whole"])
 
 
 if __name__ == "__main__":

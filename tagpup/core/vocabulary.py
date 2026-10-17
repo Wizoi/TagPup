@@ -16,6 +16,7 @@ Reading the metadata out of a file is tagpup.files.metadata's; what a library's 
 tree says about people is read by tagpup.store.taxonomy and passed in. Everything here
 works on what they hand over, and touches neither.
 """
+import collections
 import unicodedata
 
 SEPARATOR = "/"
@@ -142,6 +143,22 @@ def same_person(a, b):
     return bool(left) and left == key(leaf_of(b))
 
 
+def person_ref_of_tag(tag, known):
+    """The Ref the one keyword `tag` names -- under a face root or a person's node, by `known` (a PeopleVocabulary) -- or None
+    when it names nobody (a group, a word)."""
+    found = extract_refs([tag], known)
+    return found[0] if found else None
+
+
+def names_same_person(known, a, b):
+    """Do the keywords `a` and `b` name the same person? By the id of their nodes alone (`known` is a PeopleVocabulary read
+    with ids): two people called alike are two, and a keyword that names nobody, or whose person has no id here -- a word
+    spelled like a person's leaf (Trips/Wren Okafor), a bare name -- is nobody (DECISIONS 2026-10-11; docs/findings.md,
+    #1394: it was the person of its leaf, and the person's own tag was never written)."""
+    first, second = person_ref_of_tag(a, known), person_ref_of_tag(b, known)
+    return (first is not None and second is not None and first.id is not None and first.id == second.id)
+
+
 def person_tag(name, filed, roots):
     """The tag a suggested person `name` is written as, or None when someone must choose: the one
     rule a click on the person's chip and Apply All both follow. The page's resolveTagOrPerson
@@ -149,8 +166,8 @@ def person_tag(name, filed, roots):
     fed (tests/test_person_filing_table.py, tests/frontend/person-filing-table.test.mjs).
 
     `filed` are the paths the tree files the name under, under its people roots; `roots` the
-    people roots' names as the tree spells them. A name the tree files once is that path; filed
-    twice, None (which folder?). Not filed: under the one people root, under People when the tree
+    people roots' names as the tree spells them. A name that is one of those paths (a person at the top
+    of the tree) is that path; a name the tree files once is that path; filed twice, None (which folder?). Not filed: under the one people root, under People when the tree
     has none, and None when it has several. A name that is already a path is as it is. The name is
     trimmed, as the page's resolveTagOrPerson trims it, and a name with nothing in it is None."""
     name = (name or "").strip()
@@ -158,6 +175,11 @@ def person_tag(name, filed, roots):
         return None
     if "/" in name:
         return name
+    # A person at the top of the tree is suggested by their own tag, which has no "/": that tag is that person, whoever
+    # else is called alike under a people root (#1408).
+    exact = [path for path in filed if key(path) == key(name)]
+    if len(exact) == 1:
+        return exact[0]
     if len(filed) == 1:
         return filed[0]
     if len(filed) > 1:
@@ -179,6 +201,12 @@ def hidden_by(tag, hidden):
 #: faces in its tree, by has_face; no list of names here overrides it. There were five,
 #: and they disagreed with the tree and with each other (docs/findings.md, #66).
 NEW_LIBRARY_FACE_ROOT = "People"
+
+
+def is_filing_root(tag):
+    """Is `tag` the face root a new library is given? Empty, it is where people are filed, not a person called People: the
+    one top-level face node with nothing under it that is not a person (owner, 2026-10-10)."""
+    return key(tag) == NEW_LIBRARY_FACE_ROOT.lower()
 
 #: The root a photo's activities are filed under: the caption puts them after its people.
 ACTIVITY_ROOT = "Activity"
@@ -215,9 +243,6 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 #: Keywords, flat and hierarchical.
 KEYWORD_FIELDS = ("XMP:Subject", "Subject", "IPTC:Keywords", "Keywords")
 HIERARCHY_FIELDS = ("XMP:HierarchicalSubject", "HierarchicalSubject")
-
-#: People named outright, rather than by a keyword under a people root.
-PERSON_FIELDS = ("XMP:PersonInImage", "PersonInImage", "XMP:RegionName", "RegionName")
 
 #: Captions and titles, most wanted first: the first is the one shown.
 CAPTION_FIELDS = ("IPTC:Caption-Abstract", "Caption-Abstract", "XMP:Description", "Description",
@@ -310,14 +335,27 @@ class PeopleVocabulary:
     library. extract_people used to read both from the database for every photo and
     scan the whole tree per keyword -- 30s over 68,000 photos -- so anything resolving
     many photos reads this once and passes it.
+
+    `groups` are the keywords (keyword_key) of the face nodes that have tags under them --
+    Family/Thackeray beside Family/Thackeray/Sam. A group tag is legitimate on a photo and is
+    not a person (owner, 2026-10-09; docs/findings.md, #986): it names nobody here, and is
+    in neither `by_keyword` nor anyone's offer, so a bare keyword spelled like it names nobody.
+
+    `ids` are the people by the id of their node (docs/ARCHITECTURE.md, "People by id, stage 2"): {keyword: id} for a
+    keyword spelled as a person's PATH, which names exactly one node, even when the leaf is shared. `names` is {id: name}.
+    Who is a person and who a group is not decided here: `of_people` is given the tree's people as
+    tagpup.store.person_ids.People reads them (tagpup.store.taxonomy.vocabulary_of), the one owner of that rule.
     """
 
     #: What a photo read without its library assumes (NEW_LIBRARY_FACE_ROOT).
     DEFAULT_ROOTS = frozenset({NEW_LIBRARY_FACE_ROOT.lower()})
 
-    def __init__(self, roots, by_keyword):
+    def __init__(self, roots, by_keyword, groups=(), ids=None, names=None):
         self.roots = set(roots)
         self.by_keyword = by_keyword
+        self.groups = frozenset(groups)
+        self.ids = ids or {}
+        self.names = names or {}
 
     @classmethod
     def defaults(cls):
@@ -325,61 +363,99 @@ class PeopleVocabulary:
         return cls(cls.DEFAULT_ROOTS, {})
 
     @classmethod
-    def from_rows(cls, root_names, face_rows):
-        """From a tag tree: the names of its face roots, and (tag, name) of every face node.
-        The tree's roots only: a root it does not flag holds no faces."""
-        roots = {name.lower().strip() for name in root_names if name}
-        by_keyword = {}
-        for tag, name in face_rows:
-            # A face ROOT (People, Family, Pets, ...) is a category, not a person, so
-            # a photo tagged plainly "Family" must not gain a name.
-            if name and name.lower() in roots and "/" not in tag:
-                continue
-            # The first row to match a keyword by either spelling wins, as it did
-            # when this was a scan in row order.
-            if tag:
-                by_keyword.setdefault(tag.lower(), name)
-            if name:
-                by_keyword.setdefault(name.lower(), name)
-        return cls(roots, by_keyword)
+    def of_people(cls, roots, people, groups=()):
+        """From the tree's people as person_ids.People tells them apart: the names of the face nodes at the top of the tree
+        (`roots`: a keyword under one names a person), (id, tag, name) of each person (`people`), and the tags of the groups
+        (`groups`: a group names nobody). A keyword is a PATH (owner, 2026-10-11): a person's leaf alone names nobody, and a
+        person at the top of the tree is their own path."""
+        by_keyword, ids, names = {}, {}, {}
+        for node_id, tag, name in people:
+            by_keyword.setdefault(keyword_key(tag), name)
+            ids.setdefault(keyword_key(tag), node_id)
+            names[node_id] = name
+        return cls({key(name) for name in roots if name}, by_keyword,
+                   {keyword_key(tag) for tag in groups if SEPARATOR in tag}, ids, names)
 
 
-def extract_people(meta, tags, known=None):
-    """Whom a photo's metadata names: its person fields, and its keywords.
+#: One person as a photo lists them: the id of their node (None for a name no person is filed under, or that two
+#: people have) and their name.
+Ref = collections.namedtuple("Ref", "id name")
+
+
+def extract_refs(tags, known=None):
+    """The people a photo's keywords name, as Refs, in order. A file's person fields (XMP PersonInImage, RegionName) are not
+    read: a bare name is never linked to a person by its leaf (owner, DECISIONS 2026-10-15).
 
     A keyword names a person when it sits under one of the face roots in `known` (a
     PeopleVocabulary; without one, the usual roots), or when `known` has it as a face
-    node of its own -- "Cora Ingersoll" with no hierarchy, filed as a person.
-    """
+    node of its own -- "Cora Ingersoll" with no hierarchy, filed as a person. A group
+    tag (a face node with tags under it) names nobody (#986). A keyword spelled as a PATH names the
+    one node that path is, so two people called alike are two Refs; a bare name is a person's only
+    when exactly one is called it (PeopleVocabulary.ids). A Ref is listed once; a name with no id once
+    as spelled."""
     known = known or PeopleVocabulary.defaults()
-    people = _values(meta, PERSON_FIELDS)
+    people = []
     for tag in tags:
         parts = segments(tag)
-        if len(parts) >= 2 and parts[0].lower() in known.roots:
-            people.append(parts[-1])
+        if len(parts) >= 2 and parts[0].lower() in known.roots and keyword_key(tag) not in known.groups:
+            found = known.ids.get(keyword_key(tag))
+            people.append(Ref(found, known.names.get(found, parts[-1])))
     for tag in tags:
         name = known.by_keyword.get(keyword_key(tag))
         if name:
-            people.append(name)
-    return list(dict.fromkeys(p for p in people if p))
+            found = known.ids.get(keyword_key(tag))
+            people.append(Ref(found, known.names.get(found, name)))
+    refs, seen_ids, seen_names = [], set(), set()
+    for ref in people:
+        if not ref.name:
+            continue
+        if ref.id is not None:
+            if ref.id in seen_ids:
+                continue
+            seen_ids.add(ref.id)
+        elif ref.name in seen_names:
+            continue
+        else:
+            seen_names.add(ref.name)
+        refs.append(ref)
+    # A name with no id that a person with an id is called too is that person's: the bare keyword of a leaf two
+    # people have, beside the path that says which.
+    resolved = {key(ref.name) for ref in refs if ref.id is not None}
+    return [ref for ref in refs if ref.id is not None or key(ref.name) not in resolved]
 
 
-def people_in_photo(meta, tags, face_names, known=None):
-    """Everyone in a photo: whom its metadata names, and whom its faces were named as.
+def extract_people(tags, known=None):
+    """Whom a photo's keywords name, as names (extract_refs, without the ids). A name appears once for each person called
+    it."""
+    return [ref.name for ref in extract_refs(tags, known)]
 
-    What photos.people means. It has two sources and two kinds of writer: naming a
-    face in TagTuner adds the person without necessarily writing a keyword, while
-    every keyword write rebuilt the column from the keywords alone -- so tagging a
-    photo silently took off everyone identified only by their face. Every writer of
-    the column goes through here, so both sources always count.
-    """
-    people = extract_people(meta, tags, known)
-    seen = {p.lower() for p in people}
-    for name in face_names:
-        if name.lower() not in seen:
-            seen.add(name.lower())
-            people.append(name)
-    return people
+
+def people_rows(tags, face_refs, known=None):
+    """Everyone in a photo, as [(Ref, source)]: whom its keywords name ('keyword') and whom its faces were named as
+    ('face') -- `face_refs` are Refs, (tag_id, name) of each face not ruled out, in detection order.
+
+    The one rule for a photo's people (tagpup.store.people rebuilds `photo_people` by it). Two sources and two kinds
+    of writer: naming a face in TagTuner adds the person without necessarily writing a keyword, while every keyword write
+    rebuilt the column from the keywords alone -- so tagging a photo silently took off everyone identified only by their
+    face. Every writer goes through here, so both sources always count. A person is listed once by id; two faces named
+    two people called alike list both. A named face holds its person's id (a name alone is nobody, owner 2026-10-15)."""
+    rows = [[ref, "keyword"] for ref in extract_refs(tags, known)]
+    for face in face_refs:
+        if not face.name or face.id is None or any(row[0].id == face.id for row in rows):
+            continue
+        # The bare keyword of a leaf two people have, beside the face that says which of them.
+        same = [row for row in rows if row[0].id is None and key(row[0].name) == key(face.name)]
+        if same:
+            same[0][0] = face
+            continue
+        rows.append([face, "face"])
+    return [(ref, source) for ref, source in rows]
+
+
+def people_in_photo(tags, face_refs, known=None):
+    """Everyone in a photo, as names: whom its keywords name, and whom its faces were named as (people_rows; `face_refs`
+    are Refs). A name two people are called appears twice."""
+    return [ref.name for ref, _source in people_rows(tags, face_refs, known or PeopleVocabulary.defaults())]
 
 
 def retag(tags, old, new=None):
@@ -399,40 +475,3 @@ def retag(tags, old, new=None):
         else:
             result.append(tag)
     return result, changed
-
-
-def resolve_people(tags, people_paths):
-    """Give every person in `tags` the path they are filed under.
-
-    `people_paths` maps a lowercased name to its tag (tagpup.store.taxonomy.people_paths).
-    This is the last line of defence, and deliberately at the write boundary rather
-    than at each caller. A person's name reaches this program as a leaf from half a
-    dozen directions -- the faces table, CLIP suggestions, neighbour propagation, a
-    typed name -- and each of those resolving it for itself is exactly how "Hailey
-    Brookmire" kept being written beside "People/Hazel Brookmire". One of them always
-    gets missed; folder auto-apply was the one that outlived three fixes.
-
-    Only a bare tag whose name matches somebody already in the people tree is touched.
-    A flat keyword that is not a person -- "Cross Country", "Kentridge" -- is legitimate
-    and is left exactly as it is. A leaf duplicating a path already on the photo is
-    dropped.
-    """
-    if not people_paths:
-        return list(tags)
-
-    pathed_leaves = {key(leaf_of(t)) for t in tags if "/" in t}
-
-    resolved = []
-    for tag in tags:
-        if "/" in tag:
-            if tag not in resolved:
-                resolved.append(tag)
-            continue
-        low = str(tag).strip().lower()
-        if low in pathed_leaves:
-            continue
-        person = people_paths.get(low)
-        target = person or tag
-        if target not in resolved:
-            resolved.append(target)
-    return resolved

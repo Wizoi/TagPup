@@ -9,7 +9,15 @@ in scripts/faces.py, beside the face models it never used (docs/ARCHITECTURE.md,
 layers, revisited").
 
 How each face was named is recorded in the library's trace file (resolution_trace_path).
+
+**People are IDS while it works**: the node each face carries, each photo lists (photo_people) and each keyword's path is, and
+they are written as those ids: a person renamed meanwhile is the same person, one merged away meanwhile is nobody
+(store_faces.set_names). Two people who share a leaf under two groups are two people here too, each guessed on their own photos
+(docs/findings.md, #1357: keyed by name, the two were pooled into one and neither was ever guessed). A face a person decided by
+hand is never written at all (docs/ARCHITECTURE.md, "People by id, stage 2"). The names are looked up only for what the run
+tells: its trace and its summary.
 """
+import collections
 import json
 import logging
 
@@ -19,6 +27,7 @@ from tqdm import tqdm
 from tagpup.core import clustering, dates, paths
 from tagpup.core import vocabulary as tag_vocabulary
 from tagpup.core.library import Library
+from tagpup.store import person_ids
 from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
 
@@ -35,7 +44,7 @@ def resolution_trace_path(db_path):
 
 
 def _all_faces(photo_index):
-    """Every face's id, photo, box, vector, name and probability; [] if they cannot be read."""
+    """Every face's id, photo, box, vector, person (the Ref it carries, and its id) and probability; [] if they cannot be read."""
     if photo_index.conn is None:
         return []
     try:
@@ -44,21 +53,23 @@ def _all_faces(photo_index):
             "photo_path": photo_path,
             "box": json.loads(box_json),
             "embedding": np.frombuffer(emb_bytes, dtype=np.float32),
-            "name": name,
+            "person": person,
+            "person_id": person.id if person else None,
             "prob": prob,
-        } for face_id, photo_path, box_json, emb_bytes, name, prob in store_faces.for_clustering(photo_index.conn)]
+        } for face_id, photo_path, box_json, emb_bytes, person, prob in store_faces.for_clustering(photo_index.conn)]
     except Exception as e:
         logger.error(f"Error retrieving faces: {e}")
         return []
 
 
 def _manual_face_names(photo_index):
-    """face_id -> name for every face a person decided by hand. A manual entry with a
-    name of None is a deliberate "this is nobody I want labelled", and as binding."""
+    """face_id -> the person's id for every face a person decided by hand. A manual entry of None is a deliberate
+    "this is nobody I want labelled", and as binding."""
     if photo_index.conn is None:
         return {}
     try:
-        return store_faces.manual_names(photo_index.conn)
+        return {face_id: person.id if person else None
+                for face_id, person in store_faces.manual_names(photo_index.conn).items()}
     except Exception as e:
         logger.warning(f"Could not read manual face names: {e}")
         return {}
@@ -75,28 +86,54 @@ def _excluded_face_ids(photo_index):
         return set()
 
 
-def _save_face_names(photo_index, face_updates):
-    """Write the names resolved, (name, face id) each."""
+def _save_face_names(photo_index, face_updates, as_read):
+    """Write the people resolved, (the person's id or None, face id) each. A face is written only while it is still what was
+    read (`as_read`: {face id: the person's id it carried}, store_faces.set_names): one a person named meanwhile keeps its
+    name. Returns (the ids of the faces written, how many were left, {face id: the tag of the person written} of those)."""
     if photo_index.conn is None or not face_updates:
-        return
+        return [], 0, {}
     try:
-        store_faces.set_names(photo_index.conn, {face_id: name for name, face_id in face_updates})
-        photo_index.conn.commit()
+        conn = photo_index.conn
+        wanted = {face_id: person for person, face_id in face_updates}
+        written, left = store_faces.set_names(conn, wanted, as_read)
+        tags = person_ids.read(conn).by_id   # in the write's transaction: each person written is a node of it
+        given = {face_id: tags[wanted[face_id]].tag for face_id in written if wanted[face_id] is not None}
+        conn.commit()
+        return written, len(left), given
     except Exception as e:
         logger.error(f"Error updating face names: {e}")
         photo_index.conn.rollback()
         raise e
 
 
-def resolve(photo_index, max_iterations=5):
+#: How many clusters, photos or faces resolve goes through between two calls of its `on_step`.
+STEP = 2000
+
+
+#: How many rounds the names propagate through the photos' people before the last matching.
+MAX_ITERATIONS = 5
+
+
+def resolve(photo_index, on_step=None):
     """Cluster a library's faces with DBSCAN, name each cluster from the people its photos'
-    tags name, and write the names back; returns {name: faces named}.
+    tags name, and write them back; returns {the tag of each person: faces it newly named}.
 
     `photo_index` is the library's, loaded (tagpup.services.search.PhotoIndex): its
     connection, its photos' metadata and its path. Names given by hand are never
     overwritten, and excluded faces take no part.
+
+    `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
+    DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving", then "unpaired" (total: the faces
+    left unnamed because their photo names people no face is known for and nothing tells which is whose, #1374, #1454;
+    done: how many of them carried a guess this run took back, #1455) and "left" (done: the faces not written because
+    the library changed under the run: a person named the face, or another face of its photo, or merged the person
+    away) -- and may raise to stop it. Every stage before "saving" only reads; the names are written in one commit
+    after it is announced, so a stop is nothing written or all of it, never part (the job behind the apps' button,
+    tagpup.jobs.naming_faces).
     """
+    step = on_step or (lambda stage, done=0, total=1: None)
     logger.info("Starting self-tuning face identity resolution...")
+    step("reading", 0, 1)
     all_faces = _all_faces(photo_index)
     if not all_faces:
         logger.info("No face embeddings found in the index.")
@@ -127,6 +164,7 @@ def resolve(photo_index, max_iterations=5):
         )
 
     # Prepare embeddings for clustering
+    step("grouping", 0, 1)
     embeddings = np.array([f["embedding"] for f in all_faces], dtype=np.float32)
     
     # DBSCAN parameters:
@@ -135,19 +173,13 @@ def resolve(photo_index, max_iterations=5):
     # Euclidean eps = sqrt(2 * 0.15) = sqrt(0.3) ≈ 0.547.
     # Euclidean, at clustering's radius (tagpup.core.clustering.GROUPING, as a
     # distance). min_samples=1 so single faces can form their own cluster.
-    try:
-        # pyrefly: ignore [missing-import] The codebase is written defensively to support both GPU and CPU execution. It wraps the import in a standard Python try/except ImportError block
-        from cuml.cluster import DBSCAN as cuDBSCAN
-        db = cuDBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean')
-        labels = db.fit_predict(embeddings)
-        logger.info("Using GPU-accelerated cuML DBSCAN for clustering.")
-    except ImportError:
-        # Fallback to CPU DBSCAN. Imported here: scikit-learn takes a second to import,
-        # and the face records beside this need none of it.
-        from sklearn.cluster import DBSCAN
-        # n_jobs=-1 enables multi-threaded distance computation for large datasets.
-        db = DBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean', n_jobs=-1)
-        labels = db.fit_predict(embeddings)
+    # On the processor: clustering takes no turn of the graphics card (tagpup.ml.gpu), and runs after the indexer let
+    # its turn go. A cuML arm on the card, without a turn, was here; cuML was never installed (2026-10-16).
+    # Imported here: scikit-learn takes a second to import, and the face records beside this need none of it.
+    from sklearn.cluster import DBSCAN
+    # n_jobs=-1 enables multi-threaded distance computation for large datasets.
+    db = DBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean', n_jobs=-1)
+    labels = db.fit_predict(embeddings)
     
     # Group face index records by cluster ID
     clusters = {}
@@ -165,7 +197,9 @@ def resolve(photo_index, max_iterations=5):
     # spell its photo apart from the row, and a raw lookup missed it and lost the
     # photo's people tags -- the anchors and votes this whole resolution runs on.
     # Read once for the run: the index keeps no records (PhotoIndex.records).
-    meta_by_key = {paths.key(meta["path"]): meta for meta in photo_index.records()}
+    # Each photo's people are the ids it lists (photo_people), "people_ids", read in the statement that reads its keywords:
+    # two people called alike are two, and a keyword write meanwhile cannot set the two apart (#1372).
+    meta_by_key = {paths.key(meta["path"]): meta for meta in photo_index.records(people_ids=True)}
 
     # What counts as evidence of who is in a photo: its keywords, and names given
     # to its faces by hand. `people` also holds the names on its faces, and some of
@@ -181,8 +215,8 @@ def resolve(photo_index, max_iterations=5):
         if f["id"] in manual_names:
             if manual_names[f["id"]]:
                 manual_by_path.setdefault(f["photo_path"], set()).add(manual_names[f["id"]])
-        elif f.get("name"):
-            guessed_by_path.setdefault(f["photo_path"], set()).add(f["name"])
+        elif f["person_id"] is not None:
+            guessed_by_path.setdefault(f["photo_path"], set()).add(f["person_id"])
 
     meta_by_path = {}
     for face_path in {f["photo_path"] for f in all_faces}:
@@ -191,10 +225,9 @@ def resolve(photo_index, max_iterations=5):
             continue
         guessed = guessed_by_path.get(face_path, set())
         if guessed:
-            written = set(tag_vocabulary.extract_people(meta.get("raw_metadata") or {},
-                                                        meta.get("tags") or [], vocabulary))
+            written = {ref.id for ref in tag_vocabulary.extract_refs(meta.get("tags") or [], vocabulary)}
             written |= manual_by_path.get(face_path, set())
-            meta = dict(meta, people=[p for p in meta.get("people", [])
+            meta = dict(meta, people_ids=[p for p in meta.get("people_ids", [])
                                       if p not in guessed or p in written])
         meta_by_path[face_path] = meta
     
@@ -214,7 +247,7 @@ def resolve(photo_index, max_iterations=5):
         p_path = face["photo_path"]
         meta = meta_by_path.get(p_path)
         if meta:
-            people = meta.get("people", [])
+            people = meta.get("people_ids", [])
             if face_counts_by_photo.get(p_path, 0) == 1 and len(people) == 1:
                 direct_anchors[face["id"]] = people[0]
 
@@ -227,7 +260,9 @@ def resolve(photo_index, max_iterations=5):
 
     # Phase 2: Cluster voting using direct anchors
     initial_resolved_names = {}
-    for cluster_id, cluster_faces in tqdm(clusters.items(), desc="Resolving face identities"):
+    for number, (cluster_id, cluster_faces) in enumerate(tqdm(clusters.items(), desc="Resolving face identities")):
+        if number % STEP == 0:
+            step("voting", number, len(clusters))
         # Count direct anchor names present in this cluster
         cluster_anchors = {}
         photo_people_tags = []
@@ -247,7 +282,7 @@ def resolve(photo_index, max_iterations=5):
             # Also gather people tags on parent photos of this cluster (for majority vote fallback)
             meta = meta_by_path.get(path)
             if meta:
-                people = meta.get("people", [])
+                people = meta.get("people_ids", [])
                 photo_people_tags.extend(people)
 
         resolved_name = None
@@ -255,8 +290,9 @@ def resolve(photo_index, max_iterations=5):
         trigger_photos = []
         
         if cluster_anchors:
-            # If there are direct anchors in the cluster, resolve to the one with the most anchor votes
-            resolved_name = max(cluster_anchors, key=cluster_anchors.get)
+            # The cluster is the person with the most anchors in it. Anchors that tie name nobody and leave its faces to
+            # likeness and elimination: the first anchor read was a coin toss (#1468; the vote below, #1454)
+            resolved_name = clustering.singled_out(cluster_anchors)
             method = "direct_anchor_propagation"
             # Gather photos that triggered this anchor vote
             for face in cluster_faces:
@@ -265,19 +301,18 @@ def resolve(photo_index, max_iterations=5):
                 if anchor_name == resolved_name:
                     trigger_photos.append(path)
         elif photo_people_tags:
-            # Fall back to majority voting of people tags on all parent photos
-            unique_tags, counts = np.unique(photo_people_tags, return_counts=True)
-            tag_freqs = dict(zip(unique_tags, counts))
-            best_tag = max(tag_freqs, key=tag_freqs.get)
-            
+            # Fall back to majority voting of people tags on all parent photos: a tie names nobody (#1454)
+            tag_freqs = collections.Counter(photo_people_tags)
+            best_tag = clustering.singled_out(tag_freqs)
+
             # Check if this tag appears on at least 50% of the photos holding this face cluster
             total_photos = len(photo_face_counts)
-            if tag_freqs[best_tag] / total_photos >= 0.50:
+            if best_tag is not None and tag_freqs[best_tag] / total_photos >= 0.50:
                 resolved_name = best_tag
                 method = "cluster_majority_vote"
                 for face in cluster_faces:
                     path = face["photo_path"]
-                    people = meta_by_path.get(path, {}).get("people", []) if meta_by_path.get(path) else []
+                    people = meta_by_path.get(path, {}).get("people_ids", []) if meta_by_path.get(path) else []
                     if resolved_name in people:
                         trigger_photos.append(path)
 
@@ -287,7 +322,7 @@ def resolve(photo_index, max_iterations=5):
             for face in cluster_faces:
                 p_path = face["photo_path"]
                 meta = meta_by_path.get(p_path)
-                photo_people = meta.get("people", []) if meta else []
+                photo_people = meta.get("people_ids", []) if meta else []
                 
                 if resolved_name in photo_people:
                     initial_resolved_names[face["id"]] = resolved_name
@@ -299,7 +334,7 @@ def resolve(photo_index, max_iterations=5):
                             "face_id": face["id"],
                             "photo_path": p_path,
                             "cluster_id": int(cluster_id),
-                            "assigned_name": resolved_name,
+                            "person_id": resolved_name,
                             "resolution_method": "direct_anchor",
                             "assignment_order": assignment_counter,
                             "trigger_photos": [p_path]
@@ -312,7 +347,7 @@ def resolve(photo_index, max_iterations=5):
                             "face_id": face["id"],
                             "photo_path": p_path,
                             "cluster_id": int(cluster_id),
-                            "assigned_name": resolved_name,
+                            "person_id": resolved_name,
                             "resolution_method": method,
                             "assignment_order": assignment_counter,
                             "trigger_photos": truncated_triggers
@@ -323,7 +358,7 @@ def resolve(photo_index, max_iterations=5):
                         "face_id": face["id"],
                         "photo_path": p_path,
                         "cluster_id": int(cluster_id),
-                        "assigned_name": None,
+                        "person_id": None,
                         "resolution_method": "strict_tag_enforcement_override",
                         "assignment_order": None,
                         "trigger_photos": []
@@ -334,7 +369,7 @@ def resolve(photo_index, max_iterations=5):
                     "face_id": face["id"],
                     "photo_path": face["photo_path"],
                     "cluster_id": int(cluster_id),
-                    "assigned_name": None,
+                    "person_id": None,
                     "resolution_method": "unassigned",
                     "assignment_order": None,
                     "trigger_photos": []
@@ -350,7 +385,7 @@ def resolve(photo_index, max_iterations=5):
         p_path = face["photo_path"]
         meta = meta_by_path.get(p_path)
         if meta:
-            photo_tags = set(meta.get("people", []))
+            photo_tags = set(meta.get("people_ids", []))
             if photo_tags:
                 curr_name = current_resolved_names.get(fid)
                 if curr_name and curr_name not in photo_tags:
@@ -360,7 +395,7 @@ def resolve(photo_index, max_iterations=5):
                         "face_id": fid,
                         "photo_path": p_path,
                         "cluster_id": traces.get(fid, {}).get("cluster_id") if fid in traces else None,
-                        "assigned_name": None,
+                        "person_id": None,
                         "resolution_method": "metadata_conflict_override",
                         "assignment_order": None,
                         "trigger_photos": []
@@ -382,8 +417,12 @@ def resolve(photo_index, max_iterations=5):
     photo_years = {}
     for path, meta in meta_by_path.items():
         photo_years[path] = dates.record_year(meta)
-        
-    for iteration in range(max_iterations):
+
+    # photo -> its faces left unnamed in the last round because it names two or more people no face is known for (#1374).
+    unpaired = {}
+
+    for iteration in range(MAX_ITERATIONS):
+        step("propagating", iteration, MAX_ITERATIONS)
         # 2a. Group embeddings and their photo years by name
         # Prioritize direct anchors to build unpolluted centroids
         resolved_by_name = {}
@@ -408,19 +447,25 @@ def resolve(photo_index, max_iterations=5):
 
         new_resolved_names = {}
         
-        for p_path, photo_faces in faces_by_photo.items():
+        for number, (p_path, photo_faces) in enumerate(faces_by_photo.items()):
+            if number and number % STEP == 0:
+                step("propagating", iteration, MAX_ITERATIONS)
             # Get photo metadata people tags
             meta = meta_by_path.get(p_path)
-            photo_tags = set(meta.get("people", [])) if meta else set()
-            
+            photo_tags = set(meta.get("people_ids", [])) if meta else set()
+            unpaired.pop(p_path, None)
+
             # Map of face_id -> resolved_name in this photo
             face_resolved = {f["id"]: current_resolved_names.get(f["id"]) for f in photo_faces}
             
             # A name clustering gave is kept while the face still reaches the value
-            # it was named at, against the person's closest face (tagpup.core.clustering).
+            # it was named at, against the person's closest face (tagpup.core.clustering)
+            # -- unless the photo's own keywords name the person: the tag bears the name
+            # out, whatever the likeness (docs/findings.md, #855). That took away the
+            # names faces-from-tags had written at 0.70 to 0.80.
             for f in photo_faces:
                 name = face_resolved.get(f["id"])
-                if name and name in resolved_by_name:
+                if name and name in resolved_by_name and name not in photo_tags:
                     similarity = closest_to(name, f["embedding"], f["photo_path"])
                     if similarity is not None and not clustering.names_unasked(similarity):
                         face_resolved[f["id"]] = None
@@ -508,14 +553,16 @@ def resolve(photo_index, max_iterations=5):
                 unused_tags = photo_tags - assigned_names
                 unknown_unused = [t for t in unused_tags if t not in resolved_by_name]
                 
-                # 2. Match unknown tags by process of elimination
-                if len(unassigned_faces) == 1 and len(unknown_unused) == 1:
-                    f = unassigned_faces[0]
-                    tag = list(unknown_unused)[0]
-                    face_resolved[f["id"]] = tag
-                elif len(unassigned_faces) == len(unknown_unused) and len(unassigned_faces) > 0:
-                    for f, tag in zip(unassigned_faces, sorted(list(unknown_unused))):
-                        face_resolved[f["id"]] = tag
+                # 2. Match unknown tags by process of elimination: every other face of the photo is somebody, so the one
+                # face left is the one person left. Two faces and two such people are a tie and not paired: nothing tells
+                # which is whose, and pairing them by the order of their ids wrote a coin toss as a name (owner, 2026-10-15,
+                # #1374).
+                face_left = clustering.singled_out(dict.fromkeys((f["id"] for f in unassigned_faces), 1))
+                person_left = clustering.singled_out(dict.fromkeys(unknown_unused, 1))
+                if face_left is not None and person_left is not None:
+                    face_resolved[face_left] = person_left
+                elif len(unassigned_faces) == len(unknown_unused) > 1:
+                    unpaired[p_path] = {f["id"] for f in unassigned_faces}
 
             # Store refined assignments and update traces if resolved names changed
             for f in photo_faces:
@@ -531,7 +578,7 @@ def resolve(photo_index, max_iterations=5):
                             "face_id": fid,
                             "photo_path": f["photo_path"],
                             "cluster_id": traces.get(fid, {}).get("cluster_id") if fid in traces else None,
-                            "assigned_name": new_val,
+                            "person_id": new_val,
                             "resolution_method": f"iterative_propagation_iteration_{iteration + 1}",
                             "assignment_order": assignment_counter,
                             "trigger_photos": [p_path]
@@ -541,7 +588,7 @@ def resolve(photo_index, max_iterations=5):
                             "face_id": fid,
                             "photo_path": f["photo_path"],
                             "cluster_id": traces.get(fid, {}).get("cluster_id") if fid in traces else None,
-                            "assigned_name": None,
+                            "person_id": None,
                             "resolution_method": "unassigned",
                             "assignment_order": None,
                             "trigger_photos": []
@@ -562,6 +609,9 @@ def resolve(photo_index, max_iterations=5):
         
     refined_resolved_names = current_resolved_names
 
+    # Its own line: without it the log put this pass's time under the loop's, and the 32 minutes it took were looked for
+    # in the loop (#1530).
+    logger.info("Matching the faces left unnamed against everyone named (the last pass)...")
     # Step 4: Build database updates and calculate final statistics
     # Compute mean embeddings for the final resolved names to classify remaining unassigned faces
     # Prioritize direct anchors to build unpolluted centroids
@@ -583,6 +633,9 @@ def resolve(photo_index, max_iterations=5):
 
     face_updates = []
     resolved_stats = {}
+    as_read = {f["id"]: f["person_id"] for f in all_faces}
+    unpaired_ids = set().union(*unpaired.values())
+    left_unpaired = []
 
     # Names already spoken for in each photo. The iterative loop refuses to put one
     # person on two faces of the same photo; without tracking that here, this final
@@ -593,36 +646,49 @@ def resolve(photo_index, max_iterations=5):
         if name:
             assigned_names_by_photo.setdefault(face["photo_path"], set()).add(name)
 
-    for face in all_faces:
+    def tags_of(face):
+        meta = meta_by_path.get(face["photo_path"])
+        return set(meta.get("people_ids", [])) if meta else set()
+
+    likenesses = {}
+    for number, face in enumerate(all_faces):
+        if number % STEP == 0:
+            step("matching", number, len(all_faces))
+            # The likeness of every face of the next STEP that this pass asks about -- one left unnamed, in a photo tagged
+            # with people -- to everyone, in one go (KnownFaces.likeness_table): it asked a face and a person at a time,
+            # and the faces of untagged photos too, whose answer it never used (#1530).
+            asked = [f for f in all_faces[number:number + STEP]
+                     if refined_resolved_names.get(f["id"]) is None and tags_of(f)]
+            table, columns = final_known.likeness_table([(f["embedding"], photo_years.get(f["photo_path"]), f["photo_path"])
+                                                for f in asked])
+            likenesses = {f["id"]: row for f, row in zip(asked, table)}
         final_name = refined_resolved_names.get(face["id"])
 
         if final_name is None:
             p_path = face["photo_path"]
             names_taken_here = assigned_names_by_photo.setdefault(p_path, set())
-
-            # If unresolved, check similarity to all known resolved people, skipping
-            # anyone already matched to another face in this same photo.
-            best_name, best_sim = final_known.most_like(
-                face["embedding"], photo_years.get(p_path), p_path, skip=names_taken_here)
-            best_sim = -1.0 if best_sim is None else best_sim
-
-            # Check parent photo metadata for people tags
-            meta = meta_by_path.get(p_path)
-            photo_tags = set(meta.get("people", [])) if meta else set()
+            photo_tags = tags_of(face)
 
             if photo_tags:
+                # Check similarity to all known resolved people, skipping anyone already matched to another face in this
+                # same photo.
+                best_name, best_sim = final_known.best(likenesses[face["id"]], columns, skip=names_taken_here)
+                best_sim = -1.0 if best_sim is None else best_sim
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
-                # Since we have confirmation via tags, we name without asking at the
-                # value for that (tagpup.core.clustering), to prevent false
-                # assignments in multi-face photos
-                if best_name in photo_tags and clustering.names_unasked(best_sim):
+                # The tag bears the name out, so the face is named from where it is worth offering
+                # (tagpup.core.clustering.is_offered), not only from where it is named with no one
+                # looking: the loop above keeps a tag-confirmed name whatever the likeness (#855), and a
+                # face that reaches this pass unnamed -- its cluster has no anchor -- was left unnamed at
+                # 0.73 and 0.78 (docs/findings.md, #902). A name already taken by another face of the photo
+                # is skipped (`skip`), to prevent false assignments in multi-face photos.
+                if best_name in photo_tags and clustering.is_offered(best_sim):
                     final_name = best_name
                     names_taken_here.add(final_name)
                     traces[face["id"]] = {
                         "face_id": face["id"],
                         "photo_path": p_path,
                         "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
-                        "assigned_name": final_name,
+                        "person_id": final_name,
                         "resolution_method": f"final_matching_tagged_photo (similarity={best_sim:.4f})",
                         "assignment_order": None,
                         "trigger_photos": []
@@ -633,7 +699,7 @@ def resolve(photo_index, max_iterations=5):
                         "face_id": face["id"],
                         "photo_path": p_path,
                         "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
-                        "assigned_name": None,
+                        "person_id": None,
                         "resolution_method": f"final_matching_tagged_photo_failed (max_similarity={best_sim:.4f})",
                         "assignment_order": None,
                         "trigger_photos": []
@@ -645,7 +711,7 @@ def resolve(photo_index, max_iterations=5):
                     "face_id": face["id"],
                     "photo_path": p_path,
                     "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
-                    "assigned_name": None,
+                    "person_id": None,
                     "resolution_method": "untagged_photo_strict_tag_enforcement",
                     "assignment_order": None,
                     "trigger_photos": []
@@ -658,23 +724,48 @@ def resolve(photo_index, max_iterations=5):
                 "face_id": face["id"],
                 "photo_path": face["photo_path"],
                 "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
-                "assigned_name": final_name,
+                "person_id": final_name,
                 "resolution_method": "manual_override_preserved",
                 "assignment_order": None,
                 "trigger_photos": []
             }
+        elif final_name is None and face["id"] in unpaired_ids:
+            left_unpaired.append(face["id"])
+            traces[face["id"]]["resolution_method"] = "unpaired_people_with_no_known_face"
 
-        face_updates.append((final_name, face["id"]))
-        if final_name:
-            resolved_stats[final_name] = resolved_stats.get(final_name, 0) + 1
+        # A face a person decided is not written; nor is one that already carries what was found: the person, or nobody.
+        carried = face["person"]
+        unchanged = carried is None if final_name is None else carried is not None and carried.id == final_name
+        if face["id"] not in manual_names and not unchanged:
+            face_updates.append((final_name, face["id"]))
 
-    # Apply name updates to the SQLite database
+    # Apply name updates to the SQLite database: the last place to stop
+    step("saving", 0, 1)
+    written, left = [], 0
     if face_updates:
-        _save_face_names(photo_index, face_updates)
+        written, left, given = _save_face_names(photo_index, face_updates, as_read)
+        for tag in given.values():
+            resolved_stats[tag] = resolved_stats.get(tag, 0) + 1
+        logger.info("Wrote %d face(s); %d left as they were.", len(written), left)
+    # What the run did to them (#1455): a guess it wrote off is taken back; a face it meant to write off and found changed
+    # under it is the "left" below, not one it left unnamed.
+    meant = {face_id for _, face_id in face_updates}
+    written = set(written)
+    left_unpaired = [face_id for face_id in left_unpaired if face_id not in meant or face_id in written]
+    if left_unpaired:
+        taken_back = sum(1 for face_id in left_unpaired if face_id in written)
+        logger.info("%d face(s) left unnamed, %d guess(es) taken back: their photo names people no face is known for.",
+                    len(left_unpaired), taken_back)
+        step("unpaired", taken_back, len(left_unpaired))
+    if left:
+        step("left", left, len(face_updates))   # the library changed under them while this ran
         
     # Save traces to JSON
     try:
         trace_path = resolution_trace_path(photo_index.db_path)
+        names = person_ids.read(photo_index.conn).node_names
+        for trace in traces.values():
+            trace["assigned_name"] = names.get(trace["person_id"])   # what the person is called now, for a reader of the file
         with open(trace_path, "w", encoding="utf-8") as f:
             json.dump(list(traces.values()), f, indent=2)
         logger.info(f"Face resolution traces saved to {trace_path}")

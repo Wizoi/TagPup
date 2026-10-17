@@ -36,10 +36,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from .code_snapshot import REPO_ROOT, copy_code
-    from .sandbox import free_port, place_roots, remove_sandbox
+    from .sandbox import environment, free_port, place_roots, remove_sandbox
 except ImportError:  # imported as a top-level module
     from code_snapshot import REPO_ROOT, copy_code
-    from sandbox import free_port, place_roots, remove_sandbox
+    from sandbox import environment, free_port, place_roots, remove_sandbox
 
 import _root  # noqa: E402,F401
 from tagpup.store import db as tagpup_db  # noqa: E402
@@ -60,7 +60,7 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     # The server runs with the sandbox as its TAGPUP_HOME, so library names resolve to
     # its data/. The copy keeps the library's settings -- suggestions made with a
     # different model would be measuring something else; a library not stamped yet is
-    # stamped below with what stamping it at home would give.
+    # stamped below with the defaults, as it would be at home.
     target = os.path.join(sandbox, "data", "measured.db")
     started = time.time()
     source = tagpup_db.connect(tagpup_db.readonly_uri(source_db), uri=True)
@@ -72,7 +72,7 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
         source.close()
     home = runtimes.peek_settings(Library(source_db))
     if not home.stamped:
-        library_settings.stamp(Library(target), home.values)
+        library_settings.stamp(Library(target))
     print("  copied %.1f GB in %.1fs" % (os.path.getsize(target) / 1e9, time.time() - started))
     # A copy that holds roots points, through the machine's map, at the real photos: the sandbox
     # gets a map of its own, placing each root inside it.
@@ -97,8 +97,8 @@ def start_server(sandbox, db_path, port):
     log_path = os.path.join(sandbox, "data", "logs", "tagpup_web.log")
     # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
     process = processes.start([sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
-                               "--tagpup-port", str(port), "--tuner-port", str(free_port())],
-                              cwd=sandbox, env=dict(os.environ, TAGPUP_HOME=sandbox),
+                               "--tagpup-port", str(port), "--tuner-port", str(free_port()), "--warm-up"],
+                              cwd=sandbox, env=environment(sandbox, TAGPUP_NO_JOBS="1"),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return process, log_path
 

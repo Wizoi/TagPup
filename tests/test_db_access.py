@@ -58,9 +58,9 @@ class TestNobodyConnectsDirectly(unittest.TestCase):
             self.assertIn("sqlite3.connect", f.read())
 
     def test_every_launcher_is_checked(self):
-        """runner.py opened its own connection unseen, because the list skipped it."""
+        """A launcher once opened its own connection unseen, because the list skipped it."""
         checked = {os.path.relpath(p, WORKSPACE_DIR) for p in source_files()}
-        for launcher in ("runner.py", "tagpup_cli.py", "tagpup_web.py"):
+        for launcher in ("tagpup_cli.py", "tagpup_web.py"):
             self.assertIn(launcher, checked)
 
 

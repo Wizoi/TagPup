@@ -1,0 +1,17 @@
+{
+  "what": "Pairs of sources a search's chips may hold. `same_chip`: the page (web/tagpup/search-model.js memberKey) treats them as one chip, so a second is not added. Whatever the page calls one chip, the server must read as the same photos (tests/test_chip_keys_follow_the_server.py: tagpup.services.library_view); the page may be finer than the server (two chips for what the server reads alike) but never coarser. {folder} is a folder the test's library holds.",
+  "pairs": [
+    {"name": "a tag in another case", "a": {"kind": "keyword", "value": "Trips/Coast"}, "b": {"kind": "keyword", "value": "trips/coast"}, "same_chip": true},
+    {"name": "a tag alone in another case", "a": {"kind": "keyword_only", "value": "Trips/Coast"}, "b": {"kind": "keyword_only", "value": "TRIPS/COAST"}, "same_chip": true},
+    {"name": "a person in another case", "a": {"kind": "person", "value": "People/Wren Halloway"}, "b": {"kind": "person", "value": "people/wren halloway"}, "same_chip": true},
+    {"name": "a tag and the same tag alone", "a": {"kind": "keyword", "value": "Trips/Coast"}, "b": {"kind": "keyword_only", "value": "Trips/Coast"}, "same_chip": false},
+    {"name": "a person and the tag they are filed under", "a": {"kind": "person", "value": "People/Wren Halloway"}, "b": {"kind": "keyword", "value": "People/Wren Halloway"}, "same_chip": false},
+    {"name": "a folder and the folder with what is under it", "a": {"kind": "folder", "value": "{folder}", "recursive": false}, "b": {"kind": "folder", "value": "{folder}", "recursive": true}, "same_chip": false},
+    {"name": "a folder twice", "a": {"kind": "folder", "value": "{folder}", "recursive": true}, "b": {"kind": "folder", "value": "{folder}", "recursive": true}, "same_chip": true},
+    {"name": "a year as a number and as text", "a": {"kind": "year", "value": 2024}, "b": {"kind": "year", "value": "2024"}, "same_chip": true},
+    {"name": "a month twice", "a": {"kind": "month", "value": "2024-01"}, "b": {"kind": "month", "value": "2024-01"}, "same_chip": true},
+    {"name": "two months", "a": {"kind": "month", "value": "2024-01"}, "b": {"kind": "month", "value": "2024-02"}, "same_chip": false},
+    {"name": "a year with no month and the year", "a": {"kind": "year_other", "value": "2024"}, "b": {"kind": "year", "value": "2024"}, "same_chip": false},
+    {"name": "the whole library twice", "a": {"kind": "all", "value": null}, "b": {"kind": "all", "value": null}, "same_chip": true}
+  ]
+}

@@ -16,7 +16,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 const NAME = "Unknown Faces";
 const GUESS = "Imogen Vale";
@@ -64,9 +64,10 @@ async function openGrid(t, { clusterSize = 6, matchReply, matchStatus = 200,
     .on("/api/faces/exclude", excludeReply || { success: true }, { status: excludeStatus })
     .on("/api/faces/match-bulk", matchReply || { success: true }, { status: matchStatus })
     .on("/api/faces/unmatch-bulk", { success: true })
+    .on("/api/history/31/undo", { success: true, changed: 3, errors: [] })
     .on("/api/faces/restore", { success: true })
     .on("/api/people-with-counts", [])
-    .on("/api/people", [GUESS]);
+    .on(PEOPLE_ROUTE, [{ id: 31, name: GUESS, tag: `People/${GUESS}` }]);
 
   const { window, document } = await loadApp("tagtuner", {
     server,
@@ -150,6 +151,26 @@ describe("cluster buttons act on the faces still in the cluster", () => {
       [5, 6],
       "Ignore Cluster excluded faces that had just been named, which wipes their names",
     );
+  });
+
+  test("a selection ruled out in bulk is ruled out as faces only: no photo's keywords are written (#901)", async (t) => {
+    const { window, document, server } = await openGrid(t, { clusterSize: 6 });
+    await excludeByHand(window, document, [5, 6]);
+    assert.equal(server.lastBody("/api/faces/exclude").bulk, true);
+    const section = clusterSection(document, "Cluster 5");
+    await pressIgnoreCluster(window, document, section);
+    assert.equal(server.lastBody("/api/faces/exclude").bulk, true);
+  });
+
+  test("the server's warning on a bulk exclusion is shown, not thrown away", async (t) => {
+    const { window, document, server } = await openGrid(t, {
+      clusterSize: 6, excludeReply: { success: true, excluded: 2, warning: "A sentence from the server." },
+    });
+    const said = [];
+    window.alert = (text) => said.push(text);
+    await excludeByHand(window, document, [5, 6]);
+    assert.deepEqual(said, ["A sentence from the server."]);
+    assert.ok(server.lastBody("/api/faces/exclude"));
   });
 
   test("Assign N after excluding one does not name the excluded face", async (t) => {
@@ -241,7 +262,7 @@ describe("Undo is offered for what the server confirmed", () => {
   test("Undo covers only the faces the server says it assigned", async (t) => {
     const { window, document, server } = await openGrid(t, {
       clusterSize: 4,
-      matchReply: { success: true, matched: 3, matched_ids: [1, 2, 3], skipped_excluded: [4] },
+      matchReply: { success: true, matched: 3, matched_ids: [1, 2, 3], skipped_excluded: [4], change: 31 },
     });
     const section = clusterSection(document, "Cluster 5");
     clickOn(window, section.querySelector(".cluster-suggestion-assign"));
@@ -251,7 +272,9 @@ describe("Undo is offered for what the server confirmed", () => {
       document.getElementById("assign-undo-text").textContent);
     clickOn(window, document.getElementById("btn-assign-undo"));
     await wait(window, 100);
-    assert.deepEqual(idsIn(server.lastBody("/api/faces/unmatch-bulk")), [1, 2, 3]);
+    assert.deepEqual(server.lastBody("/api/history/31/undo"), { apply: true }, "the change that named them is undone");
+    assert.deepEqual([1, 2, 3, 4].map((id) => cardFor(document, id) !== null), [true, true, true, true],
+      "the faces the server named came back; the one left out never left");
   });
 
   test("a refused Ignore Cluster offers no Undo", async (t) => {

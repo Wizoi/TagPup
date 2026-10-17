@@ -145,39 +145,16 @@ def is_damage(error):
 
 def tail_check(photo_path):
     """How many zero bytes the file at `photo_path` ends in (zero_tail_of), having read only the end of
-    it: for a write that wants to refuse a damaged photo without decoding it (#523). Raises Unreadable
-    for an empty file, and what the system raised for one that cannot be read. At PARITY with the held
-    path and the indexer (#528): a zero-filled tail is `zero_tail_of`'s rule, the caller's to refuse at
-    ZERO_TAIL, and nothing is judged of what follows the picture -- a Samsung trailer, an MP4 appended
-    to a motion photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode, and a
-    false refusal of a good photo is the worst thing a cheap check can do. It cannot see damage in the
-    middle of a picture, which the indexer's full decode (`opened`) does; ExifTool's own failure to read
-    the file is the other signal, and a write that needs the picture itself (a rotate) decodes it
-    (zero_tail_if_whole)."""
+    it: for the doctor's count of photos whose file fails to open (tagpup.services.inspect), without
+    decoding them. Raises Unreadable for an empty file, and what the system raised for one that cannot
+    be read. A zero-filled tail is `zero_tail_of`'s rule, at ZERO_TAIL, as the indexer's (#528), and
+    nothing is judged of what follows the picture -- a Samsung trailer, an MP4 appended to a motion
+    photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode. It cannot see
+    damage in the middle of a picture, which the indexer's full decode (`opened`) does. No write asks
+    it (DECISIONS 2026-10-15)."""
     if os.path.getsize(photo_path) == 0:
         raise Unreadable("empty", "the file is empty")
     return zero_tail_of(photo_path)
-
-
-def zero_tail_if_whole(photo_path):
-    """How many zero bytes the file at `photo_path` ends in, once its picture has been
-    decoded to the end; raises Unreadable when it does not decode (damage), or what the
-    system raised when it cannot be read. Nothing is kept: for a write that has no row to
-    record a photo found damaged in (a photo of a folder the library does not hold), which
-    must still not be written into one. A JPEG is decoded at a fraction of its size
-    (`draft`), which still reads every byte of the stream."""
-    with open(photo_path, "rb") as handle:
-        data = handle.read()
-    try:
-        with Image.open(io.BytesIO(data)) as img:
-            if img.format == "JPEG":
-                img.draft("RGB", (128, 128))
-            img.load()
-    except Exception as error:
-        if not _decoder_failed(error):
-            raise
-        raise damage(data, error) from error
-    return zero_tail(data)
 
 
 def shown_size(photo_path):
@@ -196,6 +173,23 @@ def shown_size(photo_path):
     return width, height, oriented
 
 
+def shown_shape(photo_path):
+    """(width, height, oriented, orientation): `shown_size`, and the EXIF Orientation (1 to 8) the file
+    declares -- 1 when it declares none -- from the same open of the file. 2 to 8 turn or flip the
+    picture as it is shown, and a face's box stays in the stored pixels: the boxes of such a photo do not
+    sit on its faces when drawn over the picture as it is shown (the tabled orientation redesign)."""
+    with Image.open(photo_path) as img:
+        oriented = img.format == "TIFF"
+        if oriented:
+            img.load()
+        width, height = img.size
+        try:
+            orientation = img.getexif().get(0x0112, 1)
+        except Exception:
+            orientation = 1
+    return width, height, oriented, (orientation if orientation in range(1, 9) else 1)
+
+
 def is_photo(path):
     """Does `path` name a photo, by its extension (PHOTO_EXTENSIONS)?"""
     return os.path.splitext(str(path).lower())[1] in PHOTO_EXTENSIONS
@@ -205,7 +199,7 @@ def is_photo(path):
 is_servable = is_photo
 
 
-def _walk_into(entry):
+def walks_into(entry):
     """Is a folder's entry a folder to walk into? Not a link to one, and not a junction:
     os.scandir's is_symlink() is False for a junction on Python 3.11, and a junction back
     up the tree was walked round and round, finding the same photos under ever longer
@@ -219,27 +213,36 @@ def _walk_into(entry):
     return not attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
 
 
-def photo_entries(folder):
+def photo_entries(folder, unlisted=None):
     """Each photo under `folder`, at any depth, as its folder's listing entry, in the
     order os.walk gives: a folder's photos, then each subfolder in turn. Walked from
-    paths.stored(folder); a folder that cannot be listed is passed over."""
+    paths.stored(folder); a folder that cannot be listed, or whose listing fails part-way
+    (a share dropping), is passed over and, when `unlisted` (a list) is given, appended to
+    it: what it holds was not looked at, which is not the same as not there (#1356)."""
     pending = [paths.stored(folder)]
     while pending:
+        current = pending.pop()
         try:
-            listing = os.scandir(pending.pop())
+            listing = os.scandir(current)
         except OSError:
+            if unlisted is not None:
+                unlisted.append(current)
             continue
         subfolders = []
         with listing:
-            for entry in listing:
-                if _walk_into(entry):
-                    subfolders.append(entry.path)
-                elif is_photo(entry.name):
-                    try:
-                        if not entry.is_dir():
-                            yield entry
-                    except OSError:
-                        continue
+            try:
+                for entry in listing:
+                    if walks_into(entry):
+                        subfolders.append(entry.path)
+                    elif is_photo(entry.name):
+                        try:
+                            if not entry.is_dir():
+                                yield entry
+                        except OSError:
+                            continue
+            except OSError:
+                if unlisted is not None:
+                    unlisted.append(current)
         pending.extend(reversed(subfolders))
 
 
@@ -247,16 +250,16 @@ def photos_under(folder):
     """The photos under `folder`, at any depth, in the form the index stores: walked from
     paths.stored(folder), as os.walk joins onto whatever it is given, and a folder typed
     D:/Photos gave D:/Photos\\a.jpg. Five walks each had a copy of this, two walking the
-    folder as typed. No link or junction to a folder is walked into (_walk_into)."""
+    folder as typed. No link or junction to a folder is walked into (walks_into)."""
     return [entry.path for entry in photo_entries(folder)]
 
 
 def has_subfolders(folder):
-    """Does `folder` hold a folder the walk would go into (_walk_into): not a link or a
+    """Does `folder` hold a folder the walk would go into (walks_into): not a link or a
     junction? False for one that cannot be listed."""
     try:
         with os.scandir(paths.stored(folder)) as listing:
-            return any(_walk_into(entry) for entry in listing)
+            return any(walks_into(entry) for entry in listing)
     except OSError:
         return False
 
@@ -267,19 +270,40 @@ def photos_in(folder):
     folder = paths.stored(folder)
     try:
         with os.scandir(folder) as listing:
-            return [entry.path for entry in listing if is_photo(entry.name) and not _walk_into(entry)
+            return [entry.path for entry in listing if is_photo(entry.name) and not walks_into(entry)
                     and not entry.is_dir()]
     except OSError:
         return []
 
 
-def stamps_under(folder):
+def stamps_in(folder):
+    """{paths.key: (path as stored, mtime, size)} of the photos directly in `folder`, not in its subfolders:
+    photos_in, each with the stamp its listing gives, as stamps_under does for a folder and all below it."""
+    found = {}
+    try:
+        with os.scandir(paths.stored(folder)) as listing:
+            for entry in listing:
+                if is_photo(entry.name) and not walks_into(entry):
+                    try:
+                        if entry.is_dir():
+                            continue
+                        stat_of = entry.stat()
+                    except OSError:
+                        continue
+                    found[paths.key(entry.path)] = (entry.path, stat_of.st_mtime, stat_of.st_size)
+    except OSError:
+        pass
+    return found
+
+
+def stamps_under(folder, unlisted=None):
     """{paths.key: (path as stored, mtime, size)} of the photos under `folder`, at any
     depth: the photos photos_under finds, each with the stamp its folder's listing gives.
     On Windows the listing carries both, so no file is opened or looked up on its own: a
-    sync that finds nothing costs one walk (docs/ARCHITECTURE.md, phase 8)."""
+    sync that finds nothing costs one walk (docs/ARCHITECTURE.md, phase 8). The folders
+    that could not be listed go into `unlisted`, as photo_entries puts them."""
     found = {}
-    for entry in photo_entries(folder):
+    for entry in photo_entries(folder, unlisted):
         try:
             stat_of = entry.stat()
         except OSError:
@@ -372,16 +396,10 @@ def pad_to_square(image, background_color=(0, 0, 0)):
 
 
 def parse_box(box):
-    """A face box as stored -- JSON, or the bare "[x1, y1, x2, y2]" of older rows -- as a
-    list of numbers, or [] if it cannot be read."""
-    try:
-        parsed = json.loads(box) if box else []
-    except Exception:
-        try:
-            parsed = [int(x) for x in str(box).replace("[", "").replace("]", "").split(",")]
-        except Exception:
-            parsed = []
-    return parsed if isinstance(parsed, list) else []
+    """A face box as stored, the JSON list [x1, y1, x2, y2], as a list of numbers; [] for none. Every box is
+    JSON (200,962 of 200,962 in the three libraries, 2026-10-15): the reading of a bare list for older rows had
+    no row to read."""
+    return json.loads(box) if box else []
 
 
 def face_crop(photo_path, box):

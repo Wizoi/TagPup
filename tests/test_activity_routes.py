@@ -4,10 +4,9 @@ and Run now; the syncs, the watcher, the snapshots; one timeline of what was don
 logs, read from the end and never whole, by level, text and run.
 
 Every library is made in a home of the test's own; the runs, syncs and changes are
-seeded as the store records them (tagpup.store.job_runs, sync_runs; a journaled change of
+seeded as the store records them (tagpup.store.job_runs, its syncs; a journaled change of
 the settings), never through what is under test.
 """
-import json
 import logging
 import os
 import sys
@@ -27,7 +26,7 @@ from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
-from tagpup.store import job_runs, snapshots, sync_runs  # noqa: E402
+from tagpup.store import job_runs, snapshots  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
@@ -141,7 +140,7 @@ class Now(Base):
         queue = indexing_jobs.queue_for(self.harbour)
         self.addCleanup(indexing_jobs.forget, self.harbour)
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             report("Indexing: 40% (4/10)", 40)
             release.wait(10)
             return Result(attempted=1, changed=1)
@@ -176,17 +175,6 @@ class Now(Base):
                          indexing["running"]["logs"])
         self.assertIsNone(by_name["regatta"]["indexing"]["running"])
         self.assertTrue(found["server"]["taking_work"])
-
-    def test_the_supervisors_state_is_shown_without_its_token(self):
-        state = {"pid": 4242, "state": "running", "since": "2026-09-26 09:00:00", "version": "20260926-090000-abc1234",
-                 "server_token": "a-secret", "update_refused": None, "crashes": 1}
-        with open(os.path.join(self.home.data, "supervisor.json"), "w", encoding="utf-8") as handle:
-            json.dump(state, handle)
-        found = self.get("/api/activity/now")["supervisor"]
-        self.assertEqual("running", found["state"])
-        self.assertEqual(1, found["crashes"])
-        self.assertNotIn("server_token", found)
-        self.assertNotIn("a-secret", json.dumps(self.get("/api/activity/server")))
 
     def test_the_watchers_sync_under_way(self):
         watcher = FakeWatcher({"running": True, "roots": [], "libraries": {},
@@ -236,9 +224,9 @@ class ScheduledJobs(Base):
 
     def test_how_many_runs_are_listed(self):
         for day in range(4):
-            self.ran(self.harbour, "prune-journal", self.NOON + day * 86400, "done")
+            self.ran(self.harbour, "snapshots", self.NOON + day * 86400, "done")
         jobs = self.jobs_of(self.client().get("/api/activity/jobs?runs=2").get_json(), "harbour")
-        self.assertEqual(2, len(jobs["prune-journal"]["runs"]))
+        self.assertEqual(2, len(jobs["snapshots"]["runs"]))
 
 
 class RunNow(Base):
@@ -246,7 +234,7 @@ class RunNow(Base):
         registry = recurring.Registry()
         self.calls = []
 
-        @registry.job("tidy", recurring.DAILY, reason=recurring.RETENTION)
+        @registry.job("tidy", recurring.DAILY, reason=recurring.SAFETY)
         def _tidy(library, run):
             self.calls.append((library.name, run.forced))
             if gate is not None:
@@ -297,9 +285,9 @@ class RunNow(Base):
 
 class SyncSnapshotsAndTheTimeline(Base):
     def test_the_last_syncs_the_review_count_and_the_roots(self):
-        sync_runs.record(self.harbour.path, "2026-09-25 08:00:00", whole=True, in_step=True,
+        job_runs.record_sync(self.harbour.path, "2026-09-25 08:00:00", whole=True, in_step=True,
                          found={"review_folders": 3, "missing": 0}, changed={"rows": 0})
-        sync_runs.record(self.harbour.path, "2026-09-26 09:00:00", whole=False, in_step=False,
+        job_runs.record_sync(self.harbour.path, "2026-09-26 09:00:00", whole=False, in_step=False,
                          found={"new": 4}, changed={"rows": 2, "queued_folders": 1})
         root = os.path.join(self.home.root, "Photos")
         os.makedirs(root)
@@ -317,8 +305,8 @@ class SyncSnapshotsAndTheTimeline(Base):
         self.assertEqual("sync:harbour:20260925T080000", harbour["last_whole"]["run"])
         self.assertEqual({"rows": 2, "queued_folders": 1}, harbour["last_folder"]["changed"])
         self.assertIsNotNone(harbour["last_in_step"])
-        self.assertEqual([{"path": root, "there": True, "watched": True},
-                          {"path": gone, "there": False, "watched": False}], harbour["roots"])
+        self.assertEqual([{"path": root, "there": True, "answering": True, "watched": True},
+                          {"path": gone, "there": False, "answering": True, "watched": False}], harbour["roots"])
         self.assertEqual("2026-09-26 09:59:00", harbour["watcher"]["last_event"])
         self.assertEqual("http://localhost:8080/harbour/?review=1", harbour["review_url"])
         regatta = [each for each in found["libraries"] if each["name"] == "regatta"][0]
@@ -357,7 +345,7 @@ class SyncSnapshotsAndTheTimeline(Base):
         job_runs.finish(self.harbour.path, claim.run_id, "failed", seconds("2026-09-20 12:00:05"), {"errors": 1},
                         "OSError: full")
         changed = settings.change(self.regatta, {"candidates.tags": "harbour, regatta"})
-        sync_runs.record(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True,
+        job_runs.record_sync(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True,
                          found={"new": 0, "missing": 2}, changed={"rows": 0, "queued_folders": 0},
                          change_id=None)
         found = self.get("/api/activity/timeline")
@@ -383,7 +371,7 @@ class SyncSnapshotsAndTheTimeline(Base):
     def test_the_index_queues_runs_are_in_the_timeline(self):
         queue = indexing_jobs.queue_for(self.harbour)
         self.addCleanup(indexing_jobs.forget, self.harbour)
-        queue.start([self.home.root], lambda folder, cluster, report: Result(attempted=1, changed=1))
+        queue.start([self.home.root], lambda folder, report: Result(attempted=1, changed=1))
         queue.wait()
         entries = [e for e in self.get("/api/activity/timeline")["entries"] if e["kind"] == "index"]
         self.assertEqual(1, len(entries))
@@ -398,12 +386,12 @@ class SyncSnapshotsAndTheTimeline(Base):
         sync's "Logs for this run" includes the indexer's own log."""
         started = "2026-09-26 09:00:00"
         sync_tag = runs.sync_tag("harbour", started)
-        sync_runs.record(self.harbour.path, started, whole=True, in_step=True, found={}, changed={})
+        job_runs.record_sync(self.harbour.path, started, whole=True, in_step=True, found={}, changed={})
         queue = indexing_jobs.queue_for(self.harbour)
         self.addCleanup(indexing_jobs.forget, self.harbour)
         seen = {}
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             seen["tags"] = runs.current()
             return Result(attempted=1, changed=1)
 
@@ -423,7 +411,7 @@ class SyncSnapshotsAndTheTimeline(Base):
     def test_every_run_says_which_logs_hold_its_lines(self):
         claim = job_runs.claim(self.harbour.path, "snapshots", "harbour", seconds("2026-09-20 12:00:00"))
         job_runs.finish(self.harbour.path, claim.run_id, "done", seconds("2026-09-20 12:00:05"), {})
-        sync_runs.record(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True, found={}, changed={})
+        job_runs.record_sync(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True, found={}, changed={})
         entries = self.get("/api/activity/timeline")["entries"]
         for entry in entries:
             self.assertEqual([logs.SERVER_LOG] if entry["run"] else [], entry["logs"], entry)
@@ -612,11 +600,11 @@ class TheActivityPageIsNotSomebodyUsingTheApp(unittest.TestCase):
         ask("GET", "/activity/main.js")
         clock[0] += 5
         # Nothing but the page's reads: the quiet moment is there.
-        self.assertTrue(lifecycle.drain(seconds=1, quiet=120)["drained"])
+        self.assertTrue(lifecycle.drain(seconds=1, quiet=120, lease=60)["drained"])
         lifecycle.resume()
         ask("POST", "/api/activity/jobs/run")
         clock[0] += 5
-        self.assertFalse(lifecycle.drain(seconds=1, quiet=120)["drained"])
+        self.assertFalse(lifecycle.drain(seconds=1, quiet=120, lease=60)["drained"])
 
 
 if __name__ == "__main__":

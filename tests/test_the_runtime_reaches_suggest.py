@@ -9,6 +9,7 @@ hands it to the run.
 """
 import os
 import sys
+import types
 import unittest
 from unittest import mock
 
@@ -23,7 +24,6 @@ from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
-from tagpup.store import db  # noqa: E402
 
 
 class TheRuntimeReachesSuggest(unittest.TestCase):
@@ -49,13 +49,6 @@ class TheRuntimeReachesSuggest(unittest.TestCase):
         self.assertEqual(1, len(started))
         started[0].begin()
         self.runtime.begin.assert_called_once_with(Library(self.home.library("library.db")))
-
-    def test_an_app_made_without_one_says_so_when_a_run_begins(self):
-        app, home = web_client.app_for(self, "tagpup")
-        self.assertIsNone(app.config["RUNTIME"])
-        work = suggestion_jobs.work_for(Library(home.library("library.db")), dict, None)
-        with self.assertRaisesRegex(RuntimeError, "without a runtime"):
-            work.begin()
 
 
 class ARuntime(unittest.TestCase):
@@ -85,30 +78,16 @@ class ARuntime(unittest.TestCase):
         next run without a restart. Found in review of 5.5, where the runtime read them
         once, at start. Now they are the library's, changed in its settings."""
         library_settings.change(self.library, {"candidates.tags": "Kayak"})
-        runtime = Runtime(clip=object(), faces=object())
+        runtime = Runtime(build_clip=lambda settings: types.SimpleNamespace(),
+                          build_faces=lambda settings: types.SimpleNamespace())
         self.addCleanup(runtime.forget, self.library)
         asked = []
         with mock.patch("tagpup.services.suggester.model_for_run",
-                        side_effect=lambda index, clip, faces, words: asked.append(words)):
+                        side_effect=lambda index, clip, faces, words, detect_max_side, remember: asked.append(words)):
             runtime.begin(self.library).end()
             library_settings.change(self.library, {"candidates.tags": "Kayak, Canoe"})
             runtime.begin(self.library).end()
         self.assertEqual([["Kayak"], ["Kayak", "Canoe"]], asked)
-
-    def test_a_command_with_no_face_model_reads_no_face_settings(self):
-        """stats, list and remove never touch a model; a malformed face setting failed
-        them once the runtime read every setting at its start. Found in review of 5.5.
-        (A value the validator would refuse, as a later version might have left it.)"""
-        conn = db.connect(self.library.path)
-        try:
-            conn.execute("UPDATE settings SET value = 'twenty' WHERE key = 'faces.min_face_size'")
-            conn.commit()
-        finally:
-            conn.close()
-        runtime = Runtime()
-        self.assertTrue(runtime.model_key(self.library))
-        with self.assertRaises(ValueError):
-            runtime.faces(self.library)
 
     def test_names_its_vectors_as_the_store_does(self):
         from tagpup.store import embeddings

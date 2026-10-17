@@ -1,11 +1,10 @@
 # tagpup_cli.py
 import contextlib
 import functools
+from collections import Counter
 import os
 import sys
-import json
 import logging
-from typing import List
 import click
 from rich.console import Console
 from rich.table import Table
@@ -67,62 +66,34 @@ from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
+from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
-from tagpup.services import damaged_photos
 from tagpup.services import thumbnails
-from tagpup.core import runs as run_tags
+from tagpup.services import embedding_repair
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
 from tagpup.core.result import NotFound
-from tagpup.services import tagging
 from tagpup.services import maintenance
 from tagpup.jobs import indexing as indexing_jobs
-from tagpup.services.search import PhotoIndex, stored_mismatch
-from tagpup.services.suggester import TagSuggester
+from tagpup.services.search import PhotoIndex
 from tagpup.store.locks import PathLocker
-from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
-from tagpup.core import suggesting
 from tagpup.files import images as image_files
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
 
-def get_runtime(read_only=False):
+def get_runtime():
     """The models a command runs (tagpup.runtime), from the settings of the library it is
     given: each is built the first time the command asks for it, and loaded the first
-    time it is used. `read_only` for a command that only looks (stats, list-index,
-    search): it reads the library's settings without stamping one that holds none, as
-    the MCP server's inspections and the doctor do -- a look was a journaled change."""
-    return Runtime(read_only=read_only)
+    time it is used."""
+    return Runtime()
 
-def _stamp(path):
-    """(mtime, size) of the file now, or None when it cannot be read."""
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return None
-    return (stat.st_mtime, stat.st_size)
+def library_index(runtime, db_path):
+    """The library's photos, with their vectors under its CLIP model."""
+    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)))
 
-def library_index(runtime, db_path, read_only=False):
-    """The library's photos, with their vectors under its CLIP model. `read_only` for a
-    command that only looks: the library is not migrated (docs/findings.md, #243)."""
-    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)), read_only=read_only)
-
-def default_suggestions_file(db_path):
-    """Where `suggest` writes when not told: beside the library, named for it, as the
-    app's own files are. It was suggestions.json in whatever folder the command was run
-    from, which left one at the checkout's root (docs/findings.md, #102)."""
-    folder = os.path.dirname(os.path.abspath(db_path))
-    return os.path.join(folder, os.path.splitext(os.path.basename(db_path))[0] + "_suggestions.json")
-
-def say_if_behind(photo_index):
-    """Tell the person a library a look did not migrate is behind this version of TagPup."""
-    if photo_index.behind:
-        console.print(f"[yellow]This library has not had {len(photo_index.behind)} of this version's"
-                      " migrations; a look does not apply them. Indexing it, or opening it in TagPup,"
-                      " brings it up to date.[/yellow]")
 
 def get_exiftool_path(db_path, read_only=False) -> str:
     """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool).
@@ -152,26 +123,6 @@ def get_db_path(test_mode=False, cli_db=None):
 
     raise click.UsageError("Say which library: --db <name or path> (a file in the data folder, or a path)")
 
-def scan_for_images(dir_path: str) -> List[str]:
-    """Recursively scan directory for image files, in the form the index stores.
-
-    Walked from paths.stored(dir_path), not from the string as typed: os.walk joins
-    onto whatever it is given, so a folder typed as D:/Photos produced
-    "D:/Photos\\a.jpg" -- both separators in one row -- and a relative folder
-    produced relative rows.
-    """
-    return image_files.photos_under(dir_path)
-
-def _outcome_text(outcome):
-    if outcome.error is not None:
-        return "failed: %s" % outcome.error
-    result = outcome.result
-    text = "%s, %d changed" % ("done" if result.ok else "failed: %s" % result.message(), result.changed)
-    for what, why in result.skipped:
-        text += "; %s skipped: %s" % (what, why)
-    return text
-
-
 @click.group()
 @click.option("--db", type=str, help="The library to work on: a name in the data folder (e.g. 'my_photos') or a path. Required.")
 @click.option("--test", is_flag=True, help="Use test database paths to avoid cluttering production index.")
@@ -181,6 +132,17 @@ def cli(ctx, db, test):
     ctx.ensure_object(dict)
     ctx.obj["test"] = test
     ctx.obj["db"] = db
+    if db or os.environ.get("TAGPUP_DB_PATH"):
+        # A library made by a newer TagPup is not opened by this one, whatever the command: it would misread
+        # it (tagpup.store.schema.NewerLibrary). A sentence and exit 1, not a traceback.
+        newer_path = get_db_path(test, db)
+        problem = library_actions.newer_problem(newer_path)
+        if problem and ctx.invoked_subcommand not in library_actions.RECOVERY_COMMANDS:
+            raise click.ClickException(problem)
+        if problem:
+            # The recovery commands (the journal's read, the snapshots) still work, as it is, with a note.
+            click.echo(library_actions.newer_note(newer_path), err=True)
+            ctx.with_resource(library_actions.reading_newer())
 
 def _resolve_directories(library, kwargs):
     """A folder typed in an old place's spelling is the first place's folder: spelled so before the command
@@ -264,33 +226,23 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     settings = runtime.settings(Library(db_path))
     exiftool_path = runtimes.exiftool(Library(db_path), settings)
-    model_name = settings.embedder["model_name"]
 
     # Setup / Load components
+    # Connected, its vectors not read: the index needs their stamps alone.
     photo_index = library_index(runtime, db_path)
-    photo_index.load()
-
-    # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-    mismatch = stored_mismatch(photo_index, model_name)
-    if mismatch:
-        console.print(f"[yellow]Warning: Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Clearing cached photo embeddings to reindex with the new model...[/yellow]")
-        try:
-            photo_index.clear_clip_embeddings()
-        except Exception as e:
-            console.print(f"[bold red]Failed to clear CLIP embeddings: {e}[/bold red]")
+    photo_index.open()
 
     taxonomy = TagTaxonomy(db_path)
     taxonomy.load()
 
-    embeddings = runtime.embeddings(Library(db_path), photo_index)
-
-    all_images, seen_images = [], set()
+    # Each photo with the stamp its folder's listing gave (images.stamps_under / stamps_in), by paths.key.
+    on_disk = {}
     for directory in directories:
         console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
-        for found in (image_files.photos_in(directory) if no_subfolders else scan_for_images(directory)):
-            if paths.key(found) not in seen_images:
-                seen_images.add(paths.key(found))
-                all_images.append(found)
+        for key, stamp in (image_files.stamps_in(directory) if no_subfolders
+                           else image_files.stamps_under(directory)).items():
+            on_disk.setdefault(key, stamp)
+    all_images = [stamp[0] for stamp in on_disk.values()]
     console.print(f"Found {len(all_images)} image(s) total.")
 
     if not all_images:
@@ -308,61 +260,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # By paths.key: a folder indexed under one spelling and scanned under another is
     # the same photos, and keyed by the raw string every one of them was re-embedded
     # and given a second row.
-    existing_entries = {paths.key(meta["path"]): meta for meta in photo_index.records()}
-    images_to_process = []
-    skipped_count = 0
-
+    # The stamps alone: no photo's JSON is read to learn whether its file changed.
     if force_reembed:
         images_to_process = all_images
     else:
-        for path in all_images:
-            saved = existing_entries.get(paths.key(path))
-            if saved is not None:
-                try:
-                    stat = os.stat(path)
-                    if (saved.get("mtime") == stat.st_mtime and 
-                        saved.get("size") == stat.st_size and 
-                        saved.get("has_embedding", False)):
-                        skipped_count += 1
-                        continue
-                except Exception:
-                    pass
-            images_to_process.append(path)
-
-    # A photo found damaged before, and unchanged since, is not read again: it would fail
-    # again (docs/findings.md, #407). Replaced or changed, it is read at once.
-    # --force-reembed reads them again all the same.
-    damaged_before = damaged_photos.records(Library(db_path))
-    passed_over = {} if force_reembed else damaged_photos.unreadable(damaged_before)
-    if passed_over:
-        still = []
-        for path in images_to_process:
-            stamp_then = passed_over.get(paths.key(path))
-            if stamp_then is not None and damaged_photos.describes(stamp_then, _stamp(path)):
-                continue
-            still.append(path)
-        if len(still) < len(images_to_process):
-            console.print(f"[yellow]Passed over {len(images_to_process) - len(still)} photo(s) found damaged before "
-                          f"and unchanged since; restore them from a backup (the Activity page lists them).[/yellow]")
-        images_to_process = still
-
-    # A photo whose faces are still to be detected -- indexed from a damaged file, whole
-    # now -- is indexed even with a vector: Suggest may have made one since
-    # (tagpup.store.faces_pending).
-    if not skip_faces:
-        chosen = {paths.key(path) for path in images_to_process}
-        again = []
-        for path in damaged_photos.faces_to_detect(Library(db_path)):
-            if paths.key(path) in chosen or not os.path.exists(path):
-                continue
-            if any(paths.same(os.path.dirname(path), directory)
-                   or (not no_subfolders and paths.is_under(path, directory)) for directory in directories):
-                again.append(path)
-        if again:
-            console.print(f"[cyan]Detecting the faces of {len(again)} photo(s) again: each was indexed from a "
-                          f"damaged copy.[/cyan]")
-            images_to_process += again
-            skipped_count -= len(again)
+        current = photo_index.current(on_disk)
+        images_to_process = [path for path in all_images if paths.key(path) not in current]
+    skipped_count = len(all_images) - len(images_to_process)
 
     if skipped_count > 0:
         console.print(f"[green]Skipped {skipped_count} unchanged image(s) already present in the index.[/green]")
@@ -377,6 +281,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 console.print(f"  • {root}: {count} path(s)")
         photo_index.close()
         return
+
+    # Only now that a photo is to be embedded: the CLIP model's library (open_clip, torch) takes seconds to import,
+    # and a run that finds nothing to index -- every sync, every watcher run -- needs none of it (docs/findings.md, #1089).
+    # A model's vectors are kept under its own key (tagpup.store.embeddings.model_key): another model's are never compared.
+    embeddings = runtime.embeddings(Library(db_path), photo_index)
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")
@@ -405,7 +314,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # Untagged photos contribute no tags when they turn up as a suggestion neighbour,
     # and the scoring denominator counts only neighbours that do contribute, so they
     # cannot dilute a suggestion.
-    to_index_meta = all_metadata
+    # A photo ExifTool did not answer for (a share gone away) is left as it was, unread: its record has no stamp
+    # (MetadataExtractor.batch_read), and the next index reads it again.
+    left_unread = Counter(m["unread"] for m in all_metadata if m["mtime"] is None)
+    to_index_meta = [m for m in all_metadata if m["mtime"] is not None]
+    for why, count in sorted(left_unread.items()):
+        console.print(f"[bold yellow]{count} photo(s) were not read: {why}.[/bold yellow] They are left as they were; "
+                      f"the next index reads them.")
     tagged_count = sum(1 for m in to_index_meta if m["tags"] or m["people"] or m["captions"])
 
     console.print(
@@ -427,26 +342,18 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
     face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
+    # The library's cap on the picture the detector looks at, as the run began: one argument of each detection, not
+    # part of the model (two libraries differing only in it share one).
+    detect_max_side = settings.detect_max_side
     # The indexer records what it reads, so it may give a photo its identity -- after the
     # photo's picture has decoded in full, never before (IdentityWriter).
     identity_writer = IdentityWriter(exiftool_path)
     unreadable, incomplete = [], []
-    # Recorded as found (tagpup.services.damaged_photos), each with the stamp its file had
-    # when it was read -- and only a file that kept it while it was read: one still being
-    # copied is read again when it has settled. A photo recorded before and read whole now
-    # is forgotten.
-    recorded_before = {paths.key(each.path): each for each in damaged_before}
-    found_by = (run_tags.current() or (None,))[-1]
 
-    def found_damaged(path, stamp, kind, detail, zeros):
-        if stamp is None or _stamp(path) != stamp:
-            logger.info(f"{path} changed while it was read; it is read again once it has settled.")
-            return
-        damaged_photos.remember(Library(db_path), [(path, stamp, kind, detail, zeros)], run=found_by)
-    
     # The index queue's Cancel, while this waits for the graphics card (tagpup.jobs.indexing).
     stop_file = os.environ.get(indexing_service.STOP_FILE)
     turn = None
+    total_new_indexed = 0
     try:
         # One process at a time has a model on the graphics card (tagpup.ml.gpu): its turn is
         # taken before the first photo, waited for in order -- each change of who has it said
@@ -490,20 +397,16 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 
             try:
                 read = {}
-                stamp = _stamp(path)
                 try:
                     # Reads the file once and decodes the whole picture; a vector kept from
                     # the file as it is was made by such a decode.
-                    # A photo recorded damaged is embedded again whatever vector is kept: it
-                    # may have been made from the damaged file, its stamp restored since.
-                    emb = embeddings.of(path, force_recompute=force_reembed or paths.key(path) in recorded_before,
+                    emb = embeddings.of(path, force_recompute=force_reembed,
                                         seen=lambda picture: read.update(
                         zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0)))
                 except image_files.Unreadable as damaged:
                     # Nothing is written into it: no identity, no row.
                     unreadable.append((path, damaged))
                     logger.info(f"Not indexed, and not written to: {path} does not decode: {damaged}")
-                    found_damaged(path, stamp, damaged.kind, damaged.detail, damaged.zero_tail)
                     locker.release(path)
                     continue
                 zeros = read["zeros"] if "zeros" in read else image_files.zero_tail_of(path)
@@ -512,21 +415,14 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     incomplete.append((path, zeros))
                     logger.info(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
                                 f"{zeros} zero bytes")
-                    found_damaged(path, stamp, damaged_photos.INCOMPLETE,
-                                  "the last %d bytes are zeros" % zeros, zeros)
                 else:
                     # Decoded: only now may the photo be written to. The row recorded below
                     # takes the stamp the write left, and the vector with it.
                     identity_writer.give(meta, decoded=True)
-                    if paths.key(path) in recorded_before:
-                        # Read whole now: forgotten, and what was made of the damaged file
-                        # taken away -- its vectors, its faces unless decided -- before this
-                        # run records the photo afresh.
-                        damaged_photos.forget_to_reindex(Library(db_path), [recorded_before[paths.key(path)]])
                 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
-                    faces = face_processor.detect_and_embed_faces(path)
+                    faces = face_processor.detect_and_embed_faces(path, max_side=detect_max_side)
                     batch_faces[path] = faces
                 
                 # A photo already indexed is not removed first: build_or_update
@@ -536,27 +432,22 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 batch_embeddings.append(emb)
                 batch_metas.append(meta)
                 
-                # Learn new tags into taxonomy
-                taxonomy.add_tags(meta["tags"])
-                # Not add_tags: people[] holds leaf names, and treating a leaf as a
-                # whole path mints a bare root node beside the People/<name> that
-                # already exists. This runs on every index, so it undid every cleanup.
-                taxonomy.add_people(meta["people"])
+                # The nodes of the tags and people a photo names are made where the batch is recorded
+                # (derived.make_nodes, taxonomy.ensure_node): the one writer of them.
                 
                 # Save progress incrementally in batches of 100
                 if len(batch_embeddings) >= 100:
-                    photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=False)
+                    photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
                     
                     # Save faces for the batch in a single transaction
                     if batch_faces:
                         # --force-reembed means redo the work; without it the
                         # existing face rows, and the curation on them, are kept.
                         face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
-                                                  detector=face_records.detector_of(face_processor))
+                                                  detector=face_records.detector_of(face_processor, detect_max_side))
                         batch_faces.clear()
                     
-                    taxonomy.save()
-                    
+
                     # Release locks for saved images
                     for saved_meta in batch_metas:
                         locker.release(saved_meta["path"])
@@ -570,15 +461,15 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
-            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=True)
+            # Not reloaded: nothing below searches this index, and a reload reads every vector again.
+            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
             
             # Save the remaining face embeddings
             if batch_faces:
                 face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
-                                          detector=face_records.detector_of(face_processor))
+                                          detector=face_records.detector_of(face_processor, detect_max_side))
                 batch_faces.clear()
             
-            taxonomy.save()
             for saved_meta in batch_metas:
                 locker.release(saved_meta["path"])
             total_new_indexed += len(batch_embeddings)
@@ -634,419 +525,30 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         for root, count in sorted(roots.items(), key=lambda x: -x[1]):
             console.print(f"  • {root}: {count} path(s)")
 
-@cli.command()
-@click.argument("directory", type=click.Path(exists=True, file_okay=False))
-@click.option("--k", default=15, help="Number of nearest neighbors to consider.")
-@click.option("--min-sim", default=0.35, type=float, help="Cosine similarity cutoff.")
-@click.option("--output", default=None,
-              help="Path to write the suggestions JSON file (default: <library>_suggestions.json beside the library).")
-@click.option("--add", "add_folder", is_flag=True,
-              help="Add the folder to the library first when it does not hold it: each photo gets its row, as "
-                   "TagPup's Add does. Without it, a folder the library does not hold is refused.")
-@click.pass_context
-def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder: bool = False):
-    """Phase 2: Suggest tags for untagged photos."""
-    runtime = get_runtime()
+    # An index is followed by clustering (owner, DECISIONS 2026-10-16), here, so that every way of indexing -- both
+    # apps' queue and sync's, which run this command, and this command by hand -- does it alike. Only after a run that
+    # recorded a photo: one that recorded none (every sync and watcher run that found nothing new, a folder added
+    # again) changed nothing clustering reads. The card's turn was let go above, its models unloaded: clustering is
+    # the processor's work and holds no turn while another library's index waits for the card.
+    if total_new_indexed:
+        _cluster_after_index(runtime, db_path)
 
-    # Load Index & Taxonomy
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-    output = output or default_suggestions_file(db_path)
-    library = Library(db_path)
-    # Suggest records faces and vectors for every photo it looks at, each on its row: only
-    # in the folders the library holds (tagpup.services.libraries.not_in).
-    settings = runtime.settings(library)
-    refusal = library_actions.not_in(library, directory, settings.ignored)
-    if refusal and not add_folder:
-        console.print(f"[bold red]Error:[/bold red] {refusal} (--add adds it; `index` adds and reads it)")
-        ctx.exit(1)
-    if refusal:
-        library_actions.record_added(library, [directory])
-        console.print(f"Added the folder to {library.name}; `index` reads its photos into it.")
-    model_name = settings.embedder["model_name"]
 
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
-        return
-    
+def _cluster_after_index(runtime, db_path):
+    """Cluster the library's faces after an index (`cluster-faces`'s work), said on stdout first as the server's index
+    queue reads it (tagpup.services.indexing.CLUSTERING_STARTS: it refuses writes of faces until this process ends). A
+    failure is said and exits with EXIT_CLUSTERING_FAILED: the photos indexed stay indexed. The library's roots changed
+    by another process meanwhile is the index's one roots stop (_holds_the_roots), not a failure."""
+    console.print(indexing_service.CLUSTERING_STARTS, markup=False, soft_wrap=True)
     try:
-        # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-        mismatch = stored_mismatch(photo_index, model_name)
-        if mismatch:
-            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
-            return
-
-        taxonomy = TagTaxonomy(db_path)
-        taxonomy.load()
-
-        # The library's words and the tree's, but no one's name (tagpup.core.suggesting).
-        candidate_tags = suggesting.zero_shot_words(settings.candidate_words, taxonomy.paths, taxonomy.people_roots())
-
-        embeddings = runtime.embeddings(library, photo_index)
-        suggester = TagSuggester(photo_index, taxonomy, embedder=runtime.clip(library, settings),
-                                 candidate_tags=candidate_tags, faces=runtime.faces(library, settings))
-
-        # Scan untagged photos
-        console.print(f"[bold cyan]Scanning directory for untagged photos:[/bold cyan] {directory}")
-        all_images = scan_for_images(directory)
-        console.print(f"Found {len(all_images)} image(s) total.")
-
-        if not all_images:
-            console.print("[yellow]No supported images found. Exiting.[/yellow]")
-            return
-
-        # Batch read metadata for all untagged images
-        console.print(f"[bold cyan]Reading metadata for {len(all_images)} image(s)...[/bold cyan]")
-        exiftool_path = runtimes.exiftool(library, settings)
-        extractor = MetadataExtractor(exiftool_path=exiftool_path)
-        
-        batch_size = 500
-        metadata_map = {}
-        from tqdm import tqdm
-        for i in tqdm(range(0, len(all_images), batch_size), desc="Reading metadata"):
-            batch = all_images[i:i+batch_size]
-            batch_meta = extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path))
-            for meta in batch_meta:
-                metadata_map[meta["path"]] = meta
-
-        # Process each untagged image
-        console.print("[bold cyan]Generating suggestions...[/bold cyan]")
-        suggestions_output = []
-        
-        for path in tqdm(all_images, desc="Generating suggestions"):
-            try:
-                emb = embeddings.of(path)
-                meta = metadata_map.get(path)
-                sugg = suggester.suggest_for_photo(path, emb, k=k, min_sim=min_sim, target_metadata=meta)
-                suggestions_output.append(sugg)
-            except Exception as e:
-                logger.error(f"Error processing {path}: {e}")
-
-        # Apply folder consensus post-processing to boost/decay scores
-        console.print("[bold cyan]Applying event-level folder consensus...[/bold cyan]")
-        suggestions_output = suggester.apply_folder_consensus(suggestions_output)
-
-        import numpy as np
-
-        def convert_numpy_types(obj):
-            if isinstance(obj, dict):
-                return {k: convert_numpy_types(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_numpy_types(item) for item in obj]
-            elif isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif isinstance(obj, np.integer):
-                return int(obj)
-            elif isinstance(obj, np.floating):
-                return float(obj)
-            elif isinstance(obj, np.bool_):
-                return bool(obj)
-            elif isinstance(obj, np.complexfloating):
-                return complex(obj)
-            elif isinstance(obj, np.float32):
-                return float(obj)
-            elif isinstance(obj, np.float64):
-                return float(obj)
-            elif isinstance(obj, np.int32):
-                return int(obj)
-            elif isinstance(obj, np.int64):
-                return int(obj)
-            # Handle any other numpy scalar types that might not be caught above
-            elif hasattr(obj, 'dtype') and hasattr(obj, 'item'):
-                # This catches numpy scalars like np.float32, np.int32 etc.
-                try:
-                    return obj.item()
-                except:
-                    return obj
-            return obj
-
-        # Write suggestions to JSON
-        try:
-            # Convert all numpy types to native Python types
-            suggestions_converted = convert_numpy_types(suggestions_output)
-
-            with open(output, "w", encoding="utf-8") as f:
-                json.dump(suggestions_converted, f, indent=2)
-            console.print(f"[bold green]Suggestions successfully written to {output}[/bold green]\n")
-            
-            # Display a summary table
-            if suggestions_converted:
-                table = Table(title="Generated Tag Suggestions Summary")
-                table.add_column("Photo File", style="green")
-                table.add_column("Top Suggested Tags (Confidence)", style="magenta")
-                table.add_column("Nearest Neighbors (Similarity)", style="cyan")
-
-                for sugg in suggestions_converted:
-                    # Format suggested tags, limiting to top 5 for neatness
-                    # Appends '*' for tags that are new recommendations
-                    tags = sugg.get("suggested_tags", [])
-                    tags_str = ", ".join([f"{t['tag']}{'*' if t.get('is_new_recommendation') else ''} ({t['score']:.2f})" for t in tags[:5]])
-                    if len(tags) > 5:
-                        tags_str += f" (+{len(tags) - 5} more)"
-                    if not tags:
-                        tags_str = "[yellow]No tags suggested[/yellow]"
-
-                    # Format closest match
-                    neighbors = sugg.get("nearest_neighbors", [])
-                    neighbors_str = ", ".join([f"{os.path.basename(n['path'])} ({n['similarity']:.2f})" for n in neighbors[:2]])
-                    if not neighbors:
-                        neighbors_str = "[yellow]None[/yellow]"
-
-                    table.add_row(
-                        os.path.basename(sugg["path"]),
-                        tags_str,
-                        neighbors_str
-                    )
-                console.print(table)
-        except Exception as e:
-            console.print(f"[bold red]Error writing suggestions to disk: {e}[/bold red]")
-    finally:
-        photo_index.close()
-
-@cli.command()
-@click.argument("suggestions_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("-Live", "live", is_flag=True, help="Write tags to files for real (modifies files).")
-@click.option("-MinScore", "min_score", default=suggesting.OFFER_A_TAG, type=float,
-              help="Write tags at or above this score (default: the value the app shows them from).")
-@click.option("--nobackup", is_flag=True,
-              help="Kept for scripts that pass it: a write keeps no _original copies; it is one change, which undo reverses.")
-@click.pass_context
-def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bool):
-    """Phase 3: Write suggested tags back to photos using ExifTool."""
-    # The library: its taxonomy files people, and its index is told what was written.
-    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    exiftool_path = get_exiftool_path(db_path)
-
-    write_suggestions_file(suggestions_file, db_path, exiftool_path, live=live,
-                           min_score=min_score, nobackup=nobackup)
-
-
-#: What `write` logs, under the name scripts/writer.py logged it.
-writer_log = logging.getLogger("tagpup_cli.writer")
-
-
-def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
-                           min_score=suggesting.OFFER_A_TAG, nobackup=False) -> bool:
-    """`write`: read the suggestions file, show what would be written, and with `live`
-    and a typed YES write it (tagpup.services.tagging.write_suggestions). True when
-    nothing failed.
-
-    `db_path` is the library: people are filed by its tree, and its index is told what
-    was written.
-    """
-    if not os.path.exists(suggestions_file):
-        writer_log.error(f"Suggestions file not found: {suggestions_file}")
-        return False
-
-    try:
-        with open(suggestions_file, "r", encoding="utf-8") as f:
-            suggestions = json.load(f)
+        _resolve_identities(runtime, db_path)
+    except library_roots.RootsChanged:
+        raise
     except Exception as e:
-        writer_log.error(f"Error loading suggestions file: {e}")
-        return False
-
-    if not isinstance(suggestions, list):
-        # Might be a single entry wrapped or just invalid
-        if isinstance(suggestions, dict):
-            suggestions = [suggestions]
-        else:
-            writer_log.error("Invalid suggestions.json format. Expected array of objects.")
-            return False
-
-    library = Library(db_path)
-    write_tasks, missing = tagging.suggestion_writes(library, suggestions, min_score)
-    for path in missing:
-        writer_log.warning(f"File path does not exist, skipping: {path}")
-
-    if not write_tasks:
-        print("No tags or captions met the minimum score threshold to be written.")
-        return True
-
-    # Print summary/preview
-    print("\n--- Tag & Caption Writing Preview ---")
-    for path, tags, caption in write_tasks:
-        print(f"File: {path}")
-        if tags:
-            print(f"  Tags to append: {', '.join(tags)}")
-        if caption:
-            print(f"  Caption to set: \"{caption}\"")
-    print(f"Total files to modify: {len(write_tasks)}")
-    print(f"Write Mode: {'LIVE (files will be modified)' if live else 'PREVIEW (dry-run, no files changed)'}")
-    print("-------------------------------------")
-
-    if not live:
-        print("To write these tags and captions for real, run with the -Live flag.")
-        return True
-
-    # Ask for confirmation
-    confirm = input("Type 'YES' to confirm and write metadata to files: ").strip()
-    if confirm != "YES":
-        print("Aborted. No files were modified.")
-        return False
-
-    print("Writing metadata...")
-    executable = exiftool_path
-    if executable and not os.path.isabs(executable):
-        executable = os.path.abspath(executable)
-
-    try:
-        result = tagging.write_suggestions(library, write_tasks, executable, nobackup=nobackup)
-    except Exception as e:
-        writer_log.error(f"ExifTool writer error: {e}", exc_info=True)
-        return False
-    if result.refused:
-        # Nothing was written: a folder the library does not hold, say.
-        raise click.ClickException(result.refused)
-    for path, error in result.errors:
-        writer_log.error(f"Failed to write metadata to {path}: {error}")
-
-    print(f"Finished writing metadata. Success: {result.changed}, Errors: {len(result.errors)}")
-    skipped = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
-    if skipped:
-        print(f"Skipped {skipped} photo(s) found damaged; nothing was written to them. Restore them from a backup:")
-        for path, why in result.skipped[-skipped:]:
-            print(f"  {path}: {why}")
-    change = result.details.get("change")
-    if change:
-        print(f"Recorded as change {change}; `undo {change}` shows what undoing it would put back.")
-    return not result.errors
-
-@cli.command()
-@click.argument("query")
-@click.option("--k", default=10, help="Number of results to return.")
-@click.pass_context
-def search(ctx, query: str, k: int):
-    """Semantic text search across indexed library."""
-    runtime = get_runtime(read_only=True)
-
-    # Load Index
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-    model_name = runtime.settings(Library(db_path)).embedder["model_name"]
-    photo_index = library_index(runtime, db_path, read_only=True)
-    loaded = photo_index.load()
-    say_if_behind(photo_index)
-    if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
-        return
-        
-    try:
-        # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-        mismatch = stored_mismatch(photo_index, model_name)
-        if mismatch:
-            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
-            return
-
-        # Embed text query
-        console.print(f"Embedding query: '[bold yellow]{query}[/bold yellow]'")
-        query_vector = runtime.clip(Library(db_path)).embed_text(query)
-
-        # Perform search
-        results = photo_index.search(query_vector, k=k)
-
-        if not results:
-            console.print("[yellow]No matches found.[/yellow]")
-            return
-
-        # Print results
-        table = Table(title=f"Search Results for '{query}'")
-        table.add_column("Similarity", justify="right", style="cyan")
-        table.add_column("Photo Path", style="green")
-        table.add_column("Existing Tags", style="magenta")
-
-        for sim, meta in results:
-            tags_str = ", ".join(meta.get("tags", []) + meta.get("people", []))
-            table.add_row(f"{sim:.3f}", meta["path"], tags_str)
-
-        console.print(table)
-    finally:
-        photo_index.close()
-
-@cli.command()
-@click.pass_context
-def stats(ctx):
-    """Index statistics (tag counts, people, coverage)."""
-    runtime = get_runtime(read_only=True)
-
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path, read_only=True)
-    loaded = photo_index.load()
-    say_if_behind(photo_index)
-    if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
-        return
-        
-    try:
-        taxonomy = TagTaxonomy(db_path)
-        taxonomy.load()
-
-        records = photo_index.records()
-        total_indexed = len(records)
-        
-        # Tag and people distribution
-        tag_counts = {}
-        people_counts = {}
-        
-        for meta in records:
-            for tag in meta.get("tags", []):
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
-            for person in meta.get("people", []):
-                people_counts[person] = people_counts.get(person, 0) + 1
-
-        console.print("\n[bold underline]Index Statistics[/bold underline]")
-        console.print(f"Total Indexed Photos: [bold green]{total_indexed}[/bold green]")
-        console.print(f"Unique Tags Found: {len(tag_counts)}")
-        console.print(f"Unique People Tagged: {len(people_counts)}")
-        console.print(f"Total Taxonomy Paths: {len(taxonomy.paths)}")
-
-        # Display Top Tags
-        if tag_counts:
-            top_tags_table = Table(title="Top 10 Tags")
-            top_tags_table.add_column("Tag", style="magenta")
-            top_tags_table.add_column("Count", justify="right", style="cyan")
-            for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1])[:10]:
-                top_tags_table.add_row(tag, str(count))
-            console.print(top_tags_table)
-
-        # Display Top People
-        if people_counts:
-            top_people_table = Table(title="Top 10 People")
-            top_people_table.add_column("Person", style="green")
-            top_people_table.add_column("Count", justify="right", style="cyan")
-            for person, count in sorted(people_counts.items(), key=lambda x: -x[1])[:10]:
-                top_people_table.add_row(person, str(count))
-            console.print(top_people_table)
-
-        # Root Taxonomy Stats
-        roots = taxonomy.get_root_categories()
-        if roots:
-            roots_table = Table(title="Taxonomy Roots Coverage")
-            roots_table.add_column("Root Category", style="yellow")
-            roots_table.add_column("Path Count", justify="right", style="cyan")
-            for root, count in sorted(roots.items(), key=lambda x: -x[1]):
-                roots_table.add_row(root, str(count))
-            console.print(roots_table)
-    finally:
-        photo_index.close()
-
-@cli.command("export-tree")
-@click.argument("output", type=click.Path(dir_okay=False))
-@click.pass_context
-def export_tree(ctx, output: str):
-    """Write the library's tag tree to OUTPUT as JSON: a copy to keep or read. The tree
-    itself lives in the library."""
-    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    if not os.path.exists(db_path):
-        raise click.ClickException("There is no library at %s." % db_path)
-    count = store_taxonomy.export_json(db_path, output)
-    console.print(f"Wrote {count} tag(s) to [bold cyan]{output}[/bold cyan].")
-
+        logger.exception("Resolving face identities after the index failed")
+        console.print("The photos are indexed, but resolving face identities failed: %s: %s" % (type(e).__name__, e),
+                      markup=False, soft_wrap=True)
+        raise SystemExit(indexing_service.EXIT_CLUSTERING_FAILED) from None
 
 @cli.command()
 @click.option("--apply", "apply_", is_flag=True, help="Back the library up, then compact it. Without it, only says how much would be freed.")
@@ -1110,7 +612,7 @@ def _files_line(files):
 @click.pass_context
 def history(ctx, change_id, limit, reveal):
     """The library's journal: the changes bulk operations applied, newest first, each
-    undoable with `undo` until it is pruned."""
+    undoable with `undo`."""
     library = _existing_library(ctx)
     try:
         found = library_journal.history(library, change_id, reveal, limit)
@@ -1125,6 +627,11 @@ def history(ctx, change_id, limit, reveal):
             ", undone %s" % entry["undone"] if entry["undone"] else "", entry["schema_version"],
             _rows_line(entry["rows"]) if entry["rows"] or not entry.get("files") else "",
             _files_line(entry.get("files"))), markup=False, soft_wrap=True)
+    for entry in found["changes"]:
+        scope = entry["summary"].get("scope")
+        if scope and change_id is not None:
+            console.print("  scope: %s%s" % (scope, ": " + entry["summary"]["folder"] if entry["summary"].get("folder") else ""),
+                          markup=False, soft_wrap=True)
     if change_id is not None:
         entry = found["changes"][0]
         for table, keys in sorted(entry.get("keys", {}).items()):
@@ -1133,7 +640,6 @@ def history(ctx, change_id, limit, reveal):
         for row in entry.get("values", []):
             console.print("  %s %s %s: %s -> %s" % (row["action"], row["table"], "/".join(str(k) for k in row["key"]),
                                                    row["old"], row["new"]), markup=False)
-    console.print("Changes stay undoable for %d days." % found["retention_days"])
 
 
 def _say_rehearsal(result):
@@ -1178,22 +684,14 @@ def undo(ctx, change_id, apply_):
         console.print("[yellow]%s: %s[/yellow]" % (what, error))
 
 
-@cli.command("prune-journal")
-@click.option("--days", default=library_journal.RETENTION_DAYS, type=int, show_default=True,
-              help="Changes older than this lose their values and can no longer be undone.")
-@click.option("--apply", "apply_", is_flag=True, help="Prune. Without it, only says what would go.")
-@click.pass_context
-def prune_journal(ctx, days, apply_):
-    """Let old changes go: each keeps its summary, and loses the values an undo needs."""
-    library = _existing_library(ctx)
-    result = library_journal.prune(library, days, apply=apply_)
-    if not apply_:
-        console.print("%d change(s) older than %d days would be pruned (%d value(s)). --apply prunes them."
-                      % (result.attempted, days, result.details["values"]))
-    else:
-        console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
-    if result.details["note"]:
-        console.print(result.details["note"])
+
+
+def _not_looked_at(counts):
+    """What `sync` says of the folders it could not look at, or None when it looked at every one."""
+    if not counts.get("folders_not_looked_at"):
+        return None
+    return ("%d folder(s) not looked at (share not answering or not listable): %d row(s) under them are neither missing nor moved;"
+            " not in step until a sync looks at them." % (counts["folders_not_looked_at"], counts["not_looked_at"]))
 
 
 #: What `sync` says of each thing it counts.
@@ -1221,21 +719,29 @@ def sync(ctx, folder, apply_):
         counts["rows"], counts["files"], counts["folders_walked"]))
     for what, text, second in SYNC_FOUND:
         console.print("  %d %s" % (counts[what], text % counts[second] if second else text))
+    if _not_looked_at(counts):
+        console.print("  " + _not_looked_at(counts), markup=False, soft_wrap=True)
     if counts["review_folders"]:
         console.print("  %d folder(s) under the library's roots hold %d photo(s) and no indexed one: to review in"
                       " TagTuner (gear, Folders to review), never indexed on their own."
                       % (counts["review_folders"], counts["review_photos"]))
     if counts["missing"]:
-        console.print("  %d folder(s) wholly gone, %d of them a whole root (an unplugged drive looks the same);"
-                      " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
+        console.print("  %d folder(s) wholly gone, %d of them a folder the library holds, not there at all (an "
+                      "unplugged drive looks the same); their rows are kept."
+                      % (counts["folders_gone"], counts["roots_gone"]), markup=False, soft_wrap=True)
+        if counts["folders_gone"]:
+            console.print("  A folder renamed in Explorer looks the same: its rows are kept; rename it back "
+                          "by hand.")
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
-    if counts.get("unreadable_files"):
-        console.print("  %d photo(s) found damaged before, unchanged since, passed over: restore them from a"
-                      " backup (the Activity page lists them)." % counts["unreadable_files"])
+    if counts.get("size_changed"):
+        console.print("  %d of the changed file(s) changed SIZE: their vectors and face boxes may be of an older picture "
+                      "(a keyword write changes the size too); they are left as they are." % counts["size_changed"])
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
-        console.print("In step." if result.details["in_step"] else "Nothing changed. --apply brings it in step.")
+        console.print("In step." if result.details["in_step"] else
+                      "Nothing changed. --apply brings what it looked at in step." if _not_looked_at(counts) else
+                      "Nothing changed. --apply brings it in step.")
         return
     changed = result.details["changed"]
     console.print("Wrote %d row(s): %d read again, %d moved. %s" % (
@@ -1249,69 +755,116 @@ def sync(ctx, folder, apply_):
         queue.wait()
         for folder_path in result.details["reveal"]["new_folders"]:
             console.print("  %s" % queue.status(folder_path)["message"], markup=False)
-    console.print("In step." if result.details["in_step"] else "Not yet in step: sync again once indexing is done.")
+    console.print("In step." if result.details["in_step"] else
+                  "Not in step: some folders were not looked at (share not answering or not listable)." if _not_looked_at(counts) else
+                  "Not yet in step: sync again once indexing is done.")
     if result.errors:
         raise SystemExit(1)
-def _job_libraries(ctx):
-    """The library --db names, or every library in the data folder."""
-    if ctx.obj.get("db"):
-        return [_existing_library(ctx)]
-    return runtimes.home_libraries(ctx.obj.get("test", False))
 
 
-@cli.group("settings", invoke_without_command=True)
-@click.pass_context
-def settings_command(ctx):
-    """The library's settings (tagpup.services.settings): each key and its value, read
-    without stamping the library. `settings set KEY VALUE` changes one."""
-    if ctx.invoked_subcommand is not None:
+@contextlib.contextmanager
+def _break_is_an_interrupt():
+    """Ctrl+Break (SIGBREAK, Windows) stops a long write as Ctrl+C does, so that it ends as asked
+    (file_changes withdraws the files not reached) instead of being killed with them planned."""
+    import signal
+    if not hasattr(signal, "SIGBREAK"):
+        yield
         return
-    library = _existing_library(ctx)
-    found = runtimes.peek_settings(library)
-    for key, value in found.values.items():
-        console.print("%s = %s" % (key, value.replace(chr(10), " | ")), markup=False, soft_wrap=True)
+
+    def interrupt(_signum, _frame):
+        raise KeyboardInterrupt
+
+    try:
+        previous = signal.signal(signal.SIGBREAK, interrupt)
+    except ValueError:      # not the main thread: nothing to install
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGBREAK, previous)
 
 
-@settings_command.command("set")
-@click.argument("key")
-@click.argument("value")
-@click.option("--acknowledge", "acknowledged", multiple=True,
-              help="A locked group whose consequences you accept (clip, faces, exiftool).")
-@click.option("--apply", "apply_", is_flag=True, help="Write the change. Without it, only says what it would change.")
+@cli.command("tags-from-faces")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the keywords into the photo files. Without it, only says how many photos it would write.")
+@click.option("--guesses", is_flag=True,
+              help="Also write people only a guess backs (clustering's or automatch's): the keyword makes the guess a decided reference.")
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder, at any depth (a second location of a root works). Without it, the whole "
+                   "library. A folder the library holds no photo under is refused.")
 @click.pass_context
-def settings_set(ctx, key, value, acknowledged, apply_):
-    """Change the setting KEY to VALUE as one journaled change, undoable (`history`,
-    `undo`). Folders (library.roots, library.ignored) are given one a line, or separated
-    by |. Setting the roots also ignores every folder under a new root that holds photos
-    and none indexed. A dry run unless --apply."""
+def tags_from_faces(ctx, apply_, guesses, folder):
+    """Put on a photo the people its faces name and its keywords do not: a face named, the photo
+    saying "No people tags" (#861). A dry run unless --apply; counts only, never names.
+
+    --apply CHANGES PHOTO FILES: it writes each person's keyword into the photo's file with
+    ExifTool, one change of the journal (`history` lists it, `undo` takes it back). Ctrl+C or Ctrl+Break
+    stops it: the files written stay written and undoable, the rest are not written.
+    Run it on a small library first; TagPup and TagTuner may stay open (a file changed meanwhile
+    is a conflict, reported and not overwritten: run it again). Left, and counted: a person the
+    a photo whose keywords already name the person under a root the
+    tree does not file people under; and, unless --guesses, a person only a guess backs.
+
+    --folder limits the count and the write to the photos under one folder and its subfolders."""
     library = _existing_library(ctx)
-    if key in (library_settings.ROOTS, library_settings.IGNORED):
-        value = chr(10).join(part.strip() for part in value.replace("|", chr(10)).split(chr(10)) if part.strip())
-    result = library_settings.change(library, {key: value}, acknowledged=list(acknowledged), apply=apply_)
+    planned = tags_from_faces_service.plan(library, guesses=guesses, folder=folder)
+    if planned.refused:
+        console.print("Refused: %s" % planned.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = planned.details["counts"]
+    if folder:
+        console.print("Only the photos under the folder given, and its subfolders.")
+    console.print("%d photo(s) list a person from a face alone (%d people): their keywords do not name them."
+                  % (counts["photos_with_a_person_on_a_face_alone"], counts["people"]))
+    if counts["people_from_a_guess_only"]:
+        console.print("  %d of the people: from a guess only (clustering's or automatch's, no face of that name named by hand): "
+                      "skipped. --guesses writes them." % counts["people_from_a_guess_only"], markup=False, soft_wrap=True)
+    if guesses:
+        console.print("  WARNING: --guesses writes people only a guess backs; the keyword makes each guess a decided reference "
+                      "for the faces compared with it afterwards (#640).", markup=False, soft_wrap=True)
+    console.print("  %d photo file(s) would be written, for %d people."
+                  % (counts["photos_to_write"], counts["people_to_write"]))
+    if not apply_:
+        console.print("Nothing changed. --apply writes the keywords into those %d PHOTO FILE(S), one change "
+                      "of the journal that `undo` takes back." % counts["photos_to_write"], markup=False, soft_wrap=True)
+        return
+    if not counts["photos_to_write"]:
+        console.print("Nothing to write.")
+        return
+    exiftool = get_exiftool_path(library.path)
+    console.print("Writing %d photo file(s)..." % counts["photos_to_write"])
+    try:
+        with _break_is_an_interrupt():
+            result = tags_from_faces_service.apply(library, planned, exiftool)
+    except KeyboardInterrupt as stopped:
+        written, left = getattr(stopped, "written", None), getattr(stopped, "left", 0)
+        if left:
+            # The file under way could not be read (the Ctrl+C ended ExifTool too): its count is not known yet.
+            console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal; %d more is settled the "
+                          "next time the library is opened, and then `undo` takes the change back. The rest were not "
+                          "written. Run it again for them."
+                          % ("?" if written is None else written, getattr(stopped, "change", None), left),
+                          markup=False, soft_wrap=True)
+            raise SystemExit(1) from None
+        console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal (`undo` takes it back); "
+                      "the rest were not written. Run it again for them."
+                      % ("?" if written is None else written, getattr(stopped, "change", None) or "none"), markup=False,
+                      soft_wrap=True)
+        raise SystemExit(1) from None
+    console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
+                  % (result.changed, len(result.details.get("changes", []))), markup=False)
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+    if result.errors:
+        reasons = {}
+        for _photo, why in result.errors:
+            reasons[why] = reasons.get(why, 0) + 1
+        console.print("%d photo(s) could not be written; run it again once they can:" % len(result.errors), markup=False)
+        for why, count in sorted(reasons.items(), key=lambda pair: -pair[1])[:5]:
+            console.print("  %d x %s" % (count, why), markup=False, soft_wrap=True)
+    if result.refused or result.errors:
         raise SystemExit(1)
-    if key == library_settings.ROOTS:
-        # Taken, but said: a root on a drive not plugged in now is walked when it is back.
-        for root in value.split(chr(10)):
-            if root and not os.path.isdir(root):
-                console.print("Warning: %s is not on disk now; sync finds nothing under it until it is." % root,
-                              markup=False, soft_wrap=True)
-    changed = result.details.get("changed", [])
-    added = result.details.get("ignored_added", 0)
-    if not changed:
-        console.print("%s already holds that value; nothing to change." % key, markup=False)
-        return
-    also = " and %d folder(s) under the new roots added to library.ignored" % added if added else ""
-    if not apply_:
-        console.print("Would change %s%s. Nothing changed. --apply writes it." % (", ".join(changed), also),
-                      markup=False, soft_wrap=True)
-        if result.details.get("behind"):
-            console.print("The library is behind this version by %d migration(s); --apply brings it up to date "
-                          "first." % result.details["behind"], markup=False)
-        return
-    console.print("Changed %s%s. %s" % (", ".join(changed), also, maintenance.recorded(result, library.path)),
-                  markup=False, soft_wrap=True)
 
 
 def _machine():
@@ -1325,8 +878,8 @@ def _machine():
 @click.pass_context
 def roots_command(ctx):
     """The library's roots (tagpup.services.roots): the places its photos' paths are held
-    relative to, and where this machine keeps each. `roots adopt` adds one and converts the
-    paths under it -- a dry run unless --apply; nothing converts a library unasked."""
+    relative to, and where this machine keeps each. `roots check` says whether the rows agree
+    with them."""
     if ctx.invoked_subcommand is not None:
         return
     library = _existing_library(ctx)
@@ -1340,78 +893,6 @@ def roots_command(ctx):
         where = ", ".join(entry["locations"]) if entry["mapped"] else "NOT PLACED on this machine (%s)" % found["map"]
         console.print("%s  address %s  added %s  kept at %s" % (entry["name"], entry["address"] or "(none)",
                                                                entry["added"], where), markup=False, soft_wrap=True)
-
-
-def _say_conversion(report):
-    for table, counts in report["tables"].items():
-        parts = ["%d row(s)" % counts["rows"], "%d to convert" % counts["convert"]]
-        for key, label in (("already", "already rooted"), ("outside", "under no root (kept as they are)"),
-                           ("respelled", "taking the location's spelling (same file)"),
-                           ("duplicates", "already two rows of one file (merge them; they do not block)"),
-                           ("share_spelled", "spelled by the share's address (REFUSED, see below)"),
-                           ("irreversible", "NOT reversible or not an absolute path (REFUSED)"),
-                           ("json", "with a path inside their JSON")):
-            if counts[key]:
-                parts.append("%d %s" % (counts[key], label))
-        console.print("  %s: %s" % (table, ", ".join(parts)), markup=False, soft_wrap=True)
-    if report["settings"]:
-        console.print("  settings it rewrites: %s" % ", ".join(report["settings"]), markup=False)
-    if report["share_spelled"]["rows"]:
-        console.print("  rows spelled by the share's address, by folder (converting them would retarget them from "
-                      "the master, the share, to this machine's copy; fix their spelling first, or adopt a root "
-                      "whose location is the share):", markup=False, soft_wrap=True)
-        for group in report["share_spelled"]["folders"]:
-            console.print("    %6d  %s" % (group["count"], group["group"]), markup=False, soft_wrap=True)
-    if report["outside"]:
-        console.print("  rows under no root, by folder:", markup=False)
-        for group in report["outside"]:
-            console.print("    %6d  %s" % (group["count"], group["group"]), markup=False, soft_wrap=True)
-
-
-@roots_command.command("adopt")
-@click.option("--name", required=True, help="The root's name: 1 to 32 characters of a-z, 0-9, _ and -, as in pictures.")
-@click.option("--address", default="", help="The share's own address, as in \\\\server\\Pictures\\Pictures.")
-@click.option("--location", required=True, help="Where THIS machine keeps the root: a folder that holds the photos.")
-@click.option("--apply", "apply_", is_flag=True,
-              help="Back the library up, then convert it. Without it, only says what would change.")
-@click.pass_context
-def roots_adopt(ctx, name, address, location, apply_):
-    """Adopt the root NAME for the library: every path under LOCATION becomes the root's name
-    and the path under it, in one transaction, recorded as one change that `undo` reverses.
-    Writes the machine's map (machine_roots.json) if it lacks the root. Refuses a wrong
-    location, a root already adopted, a row that would not convert back. A dry run unless
-    --apply."""
-    library = _existing_library(ctx)
-    # The dry run is always made first and printed in full, the warning with it, BEFORE anything
-    # that holds the write lock runs: --apply tells the owner what it is about to do, then does it.
-    result = library_roots.adopt(library, name, address, location, _machine(), apply=False)
-    report = result.details.get("rehearsal")
-    if report:
-        console.print("%s root %s at %s:" % ("Would adopt" if not apply_ else "Adopting", report["root"],
-                                              report["locations"][0]), markup=False, soft_wrap=True)
-        _say_conversion(report)
-        console.print("Run this with TagPup and TagTuner stopped: the backup holds the write lock for the length of "
-                      "the copy (about %d s for a library this size, %.1f GB); an app writing meanwhile waits, "
-                      "and is told why if it gives up.%s" % (
-                          report["backup"]["seconds"], report["backup"]["bytes"] / 1e9,
-                          " --apply holds the lock for the copy, starting now." if apply_ and not result.refused
-                          else ""), markup=False, soft_wrap=True)
-    if not result.refused and apply_:
-        result = library_roots.adopt(library, name, address, location, _machine(), apply=True)
-    if result.refused:
-        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
-        raise SystemExit(1)
-    if not apply_:
-        console.print("Nothing changed. --apply %swrites it." % (
-            "writes %s and " % result.details["map"]["file"] if result.details["map"]["would_write"] else ""),
-            markup=False, soft_wrap=True)
-        return
-    backup = result.details["backup"]
-    console.print("Backup: %s taken first." % os.path.basename(backup["file"]), markup=False)
-    if result.details["map"].get("written"):
-        console.print("Wrote %s." % result.details["map"]["file"], markup=False, soft_wrap=True)
-    console.print("Adopted: %d row(s) converted, change %d. `undo %d` reverses it." % (
-        result.changed, result.details["change"], result.details["change"]), markup=False)
 
 
 @roots_command.command("check")
@@ -1511,60 +992,62 @@ def thumbs_warm(ctx, folder, limit, apply_):
         console.print("Stopped at --limit; run it again to go on.", markup=False)
 
 
-@cli.group(invoke_without_command=True)
+@cli.command("repair-vectors")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Make the vectors again and replace those that differ. Without it, only counts the turned photos.")
 @click.pass_context
-def jobs(ctx):
-    """The recurring jobs (snapshots, pruning the journal, sync): each one's last run and when
-    it is due next, for the library --db names or every library in the data folder. The
-    web server runs them; `jobs run NAME` runs one now, by hand."""
-    if ctx.invoked_subcommand is not None:
-        return
-    from tagpup.jobs import recurring
-    libraries = _job_libraries(ctx)
-    if not libraries:
-        console.print("There is no library in %s." % tagpup_config.data_dir(), markup=False)
-        return
-    table = Table(title="Recurring jobs")
-    for column in ("Job", "Period", "Why", "Library", "Last run", "Outcome", "Changed", "Next due"):
-        table.add_column(column)
-    for library in libraries:
-        for entry in recurring.status(library):
-            last = entry["last"] or {}
-            changed = ", ".join("%s %s" % (value, name) for name, value in sorted((last.get("changed") or {}).items()))
-            table.add_row(entry["name"], entry["period"], entry["reason"], library.name, last.get("started") or "never",
-                          last.get("outcome") or "", changed, entry["next_due"])
-    console.print(table)
+def repair_vectors(ctx, apply_):
+    """Make the vectors of turned photos (an EXIF Orientation of 2 to 8) describe the photo as it is shown. A dry run
+    unless --apply: it reads each photo's header (never the picture) and counts the turned ones that hold a vector for
+    their file as it is. With --apply each is embedded again on a turn of the graphics card, and its vector replaced
+    when the new one differs; run again it finds each already matching. A photo whose file changed meanwhile is
+    embedded as it now is. Face vectors and boxes are not touched."""
+    library = _existing_library(ctx)
+    if apply_:
+        applied = library_actions.bring_up_to_date(library.path)
+        if applied:
+            console.print("Brought the library up to date: %s." % ", ".join(applied), markup=False, soft_wrap=True)
+    def progress(counts):
+        console.print("  looked at %d photo(s): %d turned" % (counts["photos"], counts["turned"]) + (
+            ", %d made again, %d already matched" % (counts["replaced"], counts["already_upright"])
+            if "replaced" in counts else ""), markup=False)
 
+    def say_waiting(line):
+        console.print(line, markup=False, soft_wrap=True)
 
-@jobs.command("run")
-@click.argument("name")
-@click.pass_context
-def jobs_run(ctx, name):
-    """Run the recurring job NAME now, for the library --db names or every library, whether
-    or not it is due: unless another process is running it."""
-    runner = runtimes.recurring_jobs(Runtime(), libraries=lambda: runtimes.home_libraries(ctx.obj.get("test", False)))
-    if runner.registry.get(name) is None:
-        raise click.ClickException("There is no recurring job %s; there are %s." % (name, ", ".join(runner.registry.names())))
-    library = _existing_library(ctx) if ctx.obj.get("db") else None
-    failed = False
-    for outcome in runner.run(name, library):
-        if outcome.ran:
-            console.print("%s for %s: %s" % (name, outcome.library or "every library", _outcome_text(outcome)),
-                          markup=False)
-            failed = failed or outcome.error is not None or not outcome.result.ok
-        else:
-            console.print("%s for %s: not run, %s" % (name, outcome.library or "every library", outcome.why),
-                          markup=False)
-            failed = True
-    # A job may have filled this process's index queue (sync's new files): the process
-    # ends when this command does, so it waits for them, as `sync --apply` does.
-    for each in ([library] if library else runner.libraries()):
-        queue = indexing_jobs.queue_for(each)
-        if queue.active()["busy"]:
-            console.print("Indexing the new files' folders for %s..." % each.name, markup=False)
-        queue.wait()
-    if failed:
-        raise SystemExit(1)
+    try:
+        with library_roots.pinned(library):
+            counts = embedding_repair.repair(library, get_runtime(), apply=apply_, progress=progress,
+                                             report=say_waiting)
+    except library_roots.RootsChanged:
+        console.print(library_roots.STOPPED, markup=False, soft_wrap=True)
+        raise SystemExit(library_roots.EXIT_ROOTS_CHANGED) from None
+    except (library_roots.Unplaced, ValueError) as why:
+        console.print("Not run: %s" % why, markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
+    except KeyboardInterrupt:
+        console.print("Stopped. What was replaced is kept: run it again to go on.", markup=False)
+        raise SystemExit(130) from None
+    console.print("%d photo(s) looked at: %d turned, of which %d hold a vector for their file as it is, %d hold none and "
+                  "%d hold one for an earlier file (the next look at those makes one upright); %d have no file, %d could "
+                  "not be read, %d have a header that does not read." % (
+                      counts["photos"], counts["turned"], counts["to_recompute"], counts["no_vector"],
+                      counts["stale_stamp"], counts["missing"], counts["failed"], counts["no_header"]),
+                  markup=False, soft_wrap=True)
+    if counts["away"]:
+        console.print("Not walked: %s did not answer (taken as away) and its %d photo(s) were left; run it again when it "
+                      "is back." % (", ".join(counts["away"]), counts["skipped_away"]), markup=False, soft_wrap=True)
+    if not apply_:
+        console.print("--apply would make %d vector(s) again. Nothing was written." % counts["to_recompute"],
+                      markup=False, soft_wrap=True)
+        return
+    console.print("Replaced %d (read back as written), %d already matched, %d not kept (the file changed meanwhile or the "
+                  "write failed; run it again), %d damaged, %d could not be made%s." % (
+                      counts["replaced"], counts["already_upright"], counts["not_kept"], counts["damaged"],
+                      counts["unreadable"], (": " + ", ".join("%s x%d" % item for item in counts["reasons"].items()))
+                      if counts["reasons"] else ""), markup=False, soft_wrap=True)
+    console.print("A running TagPup keeps the vectors it loaded until a photo is edited or the app is restarted: "
+                  "restart it to search by the new ones.", markup=False, soft_wrap=True)
 
 
 @cli.group()
@@ -1581,14 +1064,15 @@ def snapshots_list(ctx):
     library = _existing_library(ctx)
     found = library_snapshots.listing(library)
     if not found["snapshots"]:
-        console.print("%s has no snapshots yet; `jobs run snapshots` takes one." % library.name, markup=False)
+        console.print("%s has no snapshots yet; the Activity page's Run now takes one." % library.name, markup=False)
         return
     table = Table(title="Snapshots of %s" % library.name)
-    for column in ("Name", "Taken", "Size", "Changes since"):
+    for column in ("Name", "Taken", "Size", "Changes since", "Schema"):
         table.add_column(column)
     for snapshot in found["snapshots"]:
         table.add_row(snapshot["name"], snapshot["taken"], "%s MB" % format(snapshot["bytes"] // 1_000_000, ","),
-                      str(snapshot["changes_since"]))
+                      str(snapshot["changes_since"]),
+                      "%d (too old to restore)" % snapshot["schema"] if snapshot["too_old"] else str(snapshot["schema"]))
     console.print(table)
     console.print("They take %s MB." % format(found["bytes"] // 1_000_000, ","), markup=False)
 
@@ -1611,10 +1095,11 @@ def snapshots_restore(ctx, name, apply_):
         name, len(lost), ":" if lost else "."), markup=False)
     for change in lost:
         console.print("  %d  %s  %s" % (change["id"], change["created"], change["operation"]), markup=False)
-    console.print("It needs about %s MB free on the disk -- the library as it is, snapshotted first, and the copy"
-                  " back -- and the disk has %s MB free. photo_index takes about half a minute." % (
-                      format(result.details["needs"] // 1_000_000, ","), format(result.details["free"] // 1_000_000, ",")),
-                  markup=False, soft_wrap=True)
+    if "needs" in result.details:   # not for a snapshot refused for its schema, which is refused before the disk is asked
+        console.print("It needs about %s MB free on the disk -- the library as it is, snapshotted first, and the copy"
+                      " back -- and the disk has %s MB free. photo_index takes about half a minute." % (
+                          format(result.details["needs"] // 1_000_000, ","), format(result.details["free"] // 1_000_000, ",")),
+                      markup=False, soft_wrap=True)
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
         raise SystemExit(1)
@@ -1626,236 +1111,44 @@ def snapshots_restore(ctx, name, apply_):
                   markup=False)
 
 
-@cli.command()
-@click.argument("photo_path", type=click.Path(exists=True, dir_okay=False))
-@click.pass_context
-def inspect(ctx, photo_path: str):
-    """Inspect metadata found in a single image (useful for debugging)."""
-    # Who the keywords name depends on the library's taxonomy.
-    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    exiftool_path = get_exiftool_path(db_path, read_only=True)
-
-    console.print(f"Inspecting file: [bold cyan]{photo_path}[/bold cyan]")
-    extractor = MetadataExtractor(exiftool_path=exiftool_path)
-    meta = extractor.batch_read([photo_path], people=store_taxonomy.people_vocabulary(db_path))[0]
-
-    console.print("\n[bold underline]Parsed Output[/bold underline]")
-    console.print(f"Path: {meta['path']}")
-    console.print(f"Tags: {meta['tags']}")
-    console.print(f"People: {meta['people']}")
-    console.print(f"Captions: {meta['captions']}")
-
-    # Raw metadata output
-    raw = meta.get("raw_metadata", {})
-    if raw:
-        table = Table(title="Raw Read Fields")
-        table.add_column("ExifTool Tag", style="yellow")
-        table.add_column("Value", style="green")
-        for k, v in sorted(raw.items()):
-            table.add_row(k, str(v))
-        console.print(table)
-    else:
-        console.print("[yellow]No raw metadata fields read by ExifTool.[/yellow]")
-
-@cli.command("list-index")
-@click.option("--folder", default=None, help="Filter results to paths under this directory.")
-@click.pass_context
-def list_index(ctx, folder):
-    """List all photos currently stored in the index, optionally filtered by folder."""
-    runtime = get_runtime(read_only=True)
-
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path, read_only=True)
-    loaded = photo_index.load()
-    say_if_behind(photo_index)
-    if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found.")
-        return
-        
-    try:
-        # Filter paths and gather metadata
-        # paths.is_under, not startswith: C:\Photos2 starts with C:\Photos.
-        matches = [meta for meta in photo_index.records()
-                   if not folder or paths.is_under(meta["path"], folder)]
-
-        if not matches:
-            console.print("[yellow]No matching photos found in the index.[/yellow]")
-            return
-
-        table = Table(title=f"Indexed Photos Summary ({len(matches)} matches)")
-        table.add_column("Photo File", style="green")
-        table.add_column("Tags", style="magenta")
-        table.add_column("People", style="cyan")
-        table.add_column("Caption", style="yellow")
-
-        for meta in sorted(matches, key=lambda x: x["path"]):
-            filename = os.path.basename(meta["path"])
-            tags_str = ", ".join(meta.get("tags", [])) or "-"
-            people_str = ", ".join(meta.get("people", [])) or "-"
-            
-            captions = meta.get("captions", [])
-            caption_str = captions[0] if captions else "-"
-            if len(caption_str) > 50:
-                caption_str = caption_str[:47] + "..."
-
-            table.add_row(filename, tags_str, people_str, caption_str)
-
-        console.print(table)
-    finally:
-        photo_index.close()
-
-
-@cli.command("remove")
-@click.option("--path", default=None, help="Remove a specific image path from the index.")
-@click.option("--folder", default=None, help="Remove all indexed images under this directory.")
-@click.pass_context
-def remove(ctx, path, folder):
-    """Remove a specific photo or an entire folder of photos from the index."""
-    if not path and not folder:
-        console.print("[bold red]Error:[/bold red] You must specify either --path or --folder to remove items.")
-        return
-
-    runtime = get_runtime()
-
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
-        console.print("[bold red]Error:[/bold red] No photo index found.")
-        return
-
-    try:
-        to_remove = set()
-        records = photo_index.records() if (path or folder) else []
-        if path:
-            for meta in records:
-                if paths.same(meta["path"], path):
-                    to_remove.add(meta["path"])
-
-        if folder:
-            # is_under, not startswith: removing C:\Photos must not take C:\Photos2.
-            for meta in records:
-                if paths.is_under(meta["path"], folder):
-                    to_remove.add(meta["path"])
-
-        if not to_remove:
-            console.print("[yellow]No matching photos found in the index to remove.[/yellow]")
-            return
-
-        console.print(f"[bold yellow]Found {len(to_remove)} photo(s) to remove from the index.[/bold yellow]")
-        for p in sorted(list(to_remove)):
-            console.print(f"  • {p}")
-
-        confirm = input("Type 'YES' to confirm deletion: ").strip()
-        if confirm != "YES":
-            console.print("Aborted. No changes were made.")
-            return
-
-        photo_index.remove_paths(to_remove)
-        console.print("[bold green]Successfully removed the photos from the index.[/bold green]")
-    finally:
-        photo_index.close()
-
-
-@cli.command("index-faces")
-@click.argument("directory", type=click.Path(exists=True, file_okay=False))
-@click.option("--force", is_flag=True, help="Force re-detection of faces on already processed images.")
-@click.pass_context
-def index_faces(ctx, directory: str, force: bool):
-    """Scan photos and extract/index face embeddings into the database."""
-    runtime = get_runtime()
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
-        return
-
-    try:
-        # Find all files in the directory that are already indexed in photos
-        console.print(f"[bold cyan]Scanning directory for photos to index faces:[/bold cyan] {directory}")
-        all_images = scan_for_images(directory)
-        # Compared by key, and each photo carried forward under its row's spelling so
-        # the faces recorded for it name the same path its photos row does.
-        indexed_paths = {paths.key(meta["path"]): meta["path"] for meta in photo_index.records()}
-
-        target_images = [indexed_paths[paths.key(img)] for img in all_images
-                         if paths.key(img) in indexed_paths]
-        console.print(f"Found {len(target_images)} photo(s) in directory that are in the photo index.")
-
-        if not target_images:
-            console.print("[yellow]No indexed photos found to extract faces from.[/yellow]")
-            return
-
-        # Determine which images need processing
-        to_process = []
-        if force:
-            to_process = target_images
-        else:
-            # Query paths that already have face records in the faces table
-            already_processed = {paths.key(p) for p in store_faces.photos_with_faces(photo_index.conn)}
-            to_process = [img for img in target_images if paths.key(img) not in already_processed]
-
-        if not to_process:
-            console.print("[bold green]All faces are already indexed![/bold green]")
-            return
-
-        console.print(f"Extracting face embeddings for [bold yellow]{len(to_process)}[/bold yellow] photo(s)...")
-        processor = runtime.faces(Library(db_path))
-        
-        from tqdm import tqdm
-        count_faces = 0
-        for path in tqdm(to_process, desc="Detecting and embedding faces"):
-            faces = processor.detect_and_embed_faces(path)
-            face_records.replace_detected(photo_index.conn, path, faces,
-                                          detector=face_records.detector_of(processor))
-            count_faces += len(faces)
-
-        console.print(f"[bold green]Successfully indexed {count_faces} faces across {len(to_process)} photos.[/bold green]")
-    finally:
-        photo_index.close()
-
-
 @cli.command("cluster-faces")
-@click.option("--reset", is_flag=True, help="Clear the names clustering gave to faces before clustering again. Names given by hand are kept.")
-@click.option("--max-iterations", default=5, type=int, help="Maximum iterations for propagation loop (set to 0 for anchor only).")
 @click.pass_context
-def cluster_faces(ctx, reset: bool, max_iterations: int):
-    """Run self-tuning identity resolution to cluster and name faces using photo tags."""
-    runtime = get_runtime()
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
+def cluster_faces(ctx):
+    """Run self-tuning identity resolution to cluster and name faces using photo tags (`index` runs it after an index
+    that recorded a photo)."""
+    _resolve_identities(get_runtime(), get_db_path(ctx.obj.get("test", False), ctx.obj.get("db")))
 
+
+def _resolve_identities(runtime, db_path):
+    """Cluster and name the library's faces from its photos' tags (tagpup.services.identities.resolve), saying what it
+    named: `cluster-faces`, and `index` after an index that recorded a photo."""
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found.")
         return
 
-    if reset:
-        try:
-            cleared = face_records.clear_automatic_names(photo_index.conn)
-            console.print(f"[bold yellow]Cleared {cleared} automatically assigned face name(s); names given by hand are kept.[/bold yellow]")
-        except Exception as e:
-            console.print(f"[bold red]Failed to reset face assignments: {e}[/bold red]")
-
     try:
-        resolved_stats = identities.resolve(photo_index, max_iterations=max_iterations)
-        
+        unpaired = []
+
+        def heard(stage, done=0, total=1):
+            if stage == "left":
+                console.print(f"[bold yellow]{done} face(s) were left as they were: the library changed under them while this ran.[/bold yellow]")
+            if stage == "unpaired":
+                # The reason first, and short: the indexer's progress line shows 90 characters.
+                unpaired.append(total)
+                console.print(f"[yellow]People with no known face, not told apart: {done} guess(es) taken back, "
+                              f"{total} left unnamed.[/yellow]")
+        resolved_stats = identities.resolve(photo_index, on_step=heard)
+
         if not resolved_stats:
-            console.print("[yellow]No faces were resolved to identities. Try tagging photos with people names first.[/yellow]")
+            # Tagging is no advice for faces whose photo is tagged and whose people cannot be told apart.
+            console.print("[yellow]No face was newly named." + ("" if unpaired else " Try tagging photos with people names first.")
+                          + "[/yellow]")
             return
 
         table = Table(title="Resolved Face Identities Summary")
-        table.add_column("Person Name", style="green")
-        table.add_column("Faces Linked", justify="right", style="cyan")
+        table.add_column("Person (tag)", style="green")
+        table.add_column("Faces Named", justify="right", style="cyan")
 
         for name, count in sorted(resolved_stats.items(), key=lambda x: -x[1]):
             table.add_row(name, str(count))
@@ -1866,5 +1159,9 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
         photo_index.close()
 
 if __name__ == "__main__":
-    cli()
+    try:
+        cli()
+    except library_actions.NewerLibrary as e:   # one a command opened without the group having seen it
+        console.print(str(e), markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
 

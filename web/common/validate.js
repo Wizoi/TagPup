@@ -174,6 +174,17 @@ function check(rules, value) {
 }
 
 /**
+ * The choices the rules publish for a `kind` ("exclusion reason"), in the order given, or null while the rules have not
+ * arrived: what a page offers is the server's list, not a copy of it.
+ */
+export function choicesOf(kind) {
+    const declared = published && published.kinds[kind];
+    if (!declared) return null;
+    const rule = declared.rules.find(each => Array.isArray(each.choices));
+    return rule ? rule.choices.slice() : null;
+}
+
+/**
  * Why `value` cannot be set as a `kind` ("tag", "name", "caption", "library name",
  * "grouping", "folder", "time shift", "setting faces.min_face_size", ...), or null if
  * it can -- or if the rules have not arrived yet.

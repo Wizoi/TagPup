@@ -1,5 +1,5 @@
 """Reading a photo file's metadata with ExifTool, and the two file operations built on
-it: a quarter turn, and renaming a photo after its caption.
+it: a quarter turn, and the name a photo takes from its caption (the caller renames it).
 
 What the fields mean -- which hold tags, people, captions -- is tagpup.core.vocabulary's.
 What the library's tag tree says about people, and the rename format its settings name,
@@ -9,11 +9,11 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from tagpup.core import fields, renaming, vocabulary
+from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
-from tagpup.files.exiftool_session import ExifToolSession
-from tagpup.files.identity import ensure_document_id, read_document_id
+from tagpup.files import field_values
+from tagpup.files.exiftool_session import ExifToolSession, StaysDead
 
 logger = logging.getLogger("tagpup_cli.metadata")
 
@@ -60,6 +60,11 @@ def structured(meta):
     return cleaned
 
 
+#: Why a record is left unread (its `unread`): what the indexer says of the photos it did not record.
+NOT_ANSWERED = "ExifTool did not answer for them (a share gone away?)"
+NOT_STARTED = "ExifTool could not be started"
+NO_STAT = "their file could not be looked at (its modified time and size could not be read)"
+
 #: Where ExifTool puts an error about a file in what it answers.
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
@@ -73,113 +78,91 @@ class MetadataExtractor:
 
     def batch_read(self, file_paths: List[str],
                    people: Optional[vocabulary.PeopleVocabulary] = None) -> List[Dict[str, Any]]:
-        """Read metadata for a batch of files using pyexiftool.
+        """A record of each of `file_paths`, in order, read in one ExifTool session through the one batch reader
+        (tagpup.files.field_values.read: a batch ExifTool refuses is read again a photo at a time, one it does not
+        answer is not retried).
 
-        `people` is what the library's tag tree says about people, read once for the
-        batch; without it, only the usual face roots name anybody.
+        A photo ExifTool refuses (or that is not a photo) is recorded holding nothing, with `read_error`, stamped: a
+        file that cannot be read is not read again every run. A photo ExifTool did not answer for (a share gone away),
+        or whose stat failed, or that no ExifTool could be started to read, is left UNREAD: its record has no stamp (mtime
+        and size None) and says why in `unread` (NOT_ANSWERED, NO_STAT, NOT_STARTED), so nothing records it as read. The
+        session stays dead after a timeout (StaysDead): one deadline is waited for, not one a command. `people` is what the library's tag tree says about people, read once for the batch; without it, only the
+        usual face roots name anybody.
         """
         if not file_paths:
             return []
 
-        # Configure pyexiftool path if provided
         executable = self.exiftool_path
         if executable and not os.path.isabs(executable):
-            # Try to resolve relative path to absolute
             executable = os.path.abspath(executable)
 
-        results = []
+        # Each file's stamp before the read (_stamp).
+        stamps = [self._stamp(path) for path in file_paths]
+        records, not_started = {}, None
         try:
-            # We initialize pyexiftool client
-            # ExifToolSession manages the lifecycle, and cannot stall on stderr
             with ExifToolSession(executable=executable) as et:
-                # Read specific fields we care about
-                # Passing tag names directly
-                batch_meta = et.get_tags(file_paths, tags=METADATA_FIELDS)
-
-                # Check mapping to return formatted info
-                for path, meta in zip(file_paths, batch_meta):
-                    results.append(self._structure(path, meta, people))
+                found = field_values.read(StaysDead(et), file_paths, [], METADATA_FIELDS, records)
         except Exception as e:
-            # ExifTool exits non-zero if *any* file in the batch is unreadable, and
-            # pyexiftool raises on that status, so a single corrupt or unsupported
-            # file used to cost every other file in the batch its metadata -- 500 at
-            # a time, recorded as having no tags, people or captions at all. Read them
-            # one at a time instead, so the damage is limited to the file that caused it.
-            logger.warning(
-                f"Batch metadata read failed ({e}); retrying {len(file_paths)} file(s) "
-                f"individually so one bad file does not blank the rest."
-            )
-            results = self._read_one_by_one(file_paths, executable, people)
-
+            logger.error("Could not start ExifTool to read %d file(s): %s", len(file_paths), e)
+            not_started = str(e) or type(e).__name__
+            found = {}
+        results = []
+        for path, stamp in zip(file_paths, stamps):
+            held, record = found.get(paths.key(path)), records.get(paths.key(path))
+            if not_started is not None:
+                results.append(dict(self._empty(path, not_started, (None, None)), unread=NOT_STARTED))
+            elif isinstance(held, field_values.NotAnswered):
+                results.append(dict(self._empty(path, held, (None, None)), unread=NOT_ANSWERED))
+            elif stamp == (None, None):
+                results.append(dict(self._empty(path, held or "its stat failed", stamp), unread=NO_STAT))
+            elif isinstance(held, Exception) or not record:
+                logger.error("Unreadable metadata, indexing without it: %s (%s)", path, held or "no answer")
+                results.append(self._empty(path, held or "ExifTool answered nothing for it", stamp))
+            else:
+                # What the reader asked to tell a photo from another kind of file is not the photo's metadata.
+                record = {key: value for key, value in record.items() if key != field_values.MIME_TYPE}
+                results.append(self._structure(path, record, people, stamp))
         return results
 
-    def _structure(self, path, meta, people):
-        """Turn one ExifTool record into the shape the rest of the pipeline expects."""
+    @staticmethod
+    def _stamp(path):
+        """(mtime, size) of the file, for change detection: taken BEFORE ExifTool reads it, so that a change another
+        program makes during the read leaves the row older than its file, which the next scan reads again. Taken after,
+        it stamped what was read before the change as the newer file. (None, None), unread, when the stat fails."""
+        try:
+            stat = os.stat(path)
+            return stat.st_mtime, stat.st_size
+        except OSError:
+            return None, None
+
+    def _structure(self, path, meta, people, stamp):
+        """Turn one ExifTool record into the shape the rest of the pipeline expects; `stamp`, the file's (mtime, size)
+        from before the read (_stamp)."""
         cleaned = structured(meta)
 
         tags = vocabulary.extract_tags(cleaned)
-
-        # Retrieve file stats for change detection
-        try:
-            stat = os.stat(path)
-            mtime, size = stat.st_mtime, stat.st_size
-        except Exception:
-            mtime, size = 0.0, 0
+        mtime, size = stamp
 
         record = {
             "path": path,
             "mtime": mtime,
             "size": size,
             "tags": tags,
-            "people": vocabulary.extract_people(cleaned, tags, people),
+            "people": vocabulary.extract_people(tags, people),
             "captions": vocabulary.extract_captions(cleaned),
             "raw_metadata": cleaned,
-            "document_id": read_document_id(cleaned),
+            "document_id": fields.read_document_id(cleaned),
         }
         error = next((meta[key] for key in READ_ERROR_KEYS if meta.get(key)), None)
         if error:
             record["read_error"] = str(error)
         return record
 
-    def _read_one_by_one(self, file_paths, executable, people):
-        """Fallback for a failed batch: read each file on its own.
-
-        A file that fails here is genuinely unreadable rather than merely unlucky in
-        its batch, so it gets the empty skeleton -- but it still carries its mtime and
-        size, or every later run would see it as changed and re-index it forever.
-        """
-        results = []
-        try:
-            et = ExifToolSession(executable=executable)
-            et.run()
-        except Exception as e:
-            logger.error(f"Could not start ExifTool for the per-file retry: {e}")
-            return [self._empty(path, e) for path in file_paths]
-
-        try:
-            for path in file_paths:
-                try:
-                    meta = et.get_tags([path], tags=METADATA_FIELDS)
-                    results.append(self._structure(path, meta[0], people))
-                except Exception as e:
-                    logger.error(f"Unreadable metadata, indexing without it: {path} ({e})")
-                    results.append(self._empty(path, e))
-        finally:
-            try:
-                et.terminate()
-            except Exception:
-                pass
-        return results
-
     @staticmethod
-    def _empty(path, error):
-        """The record of a file ExifTool could not read: nothing read, and `read_error`,
-        why -- so nothing is written into it (IdentityWriter)."""
-        try:
-            stat = os.stat(path)
-            mtime, size = stat.st_mtime, stat.st_size
-        except Exception:
-            mtime, size = 0.0, 0
+    def _empty(path, error, stamp):
+        """The record of a file ExifTool could not read: nothing read, and `read_error`, why -- so nothing is written
+        into it (IdentityWriter). `stamp` is the file's from before the read, or (None, None) for one left unread."""
+        mtime, size = stamp
         return {
             "path": path,
             "mtime": mtime,
@@ -236,7 +219,7 @@ class IdentityWriter:
         et = self._session()
         if et is None:
             return None
-        minted = ensure_document_id(et, record["path"], record.get("raw_metadata"))
+        minted = field_values.ensure_document_id(et, record["path"], record.get("raw_metadata"))
         if not minted:
             return None
         self.minted += 1
@@ -269,119 +252,42 @@ class IdentityWriter:
                 pass
 
 
-#: The EXIF Orientation a photo has after a quarter turn, by the one it had before.
-#: Worked out against ImageOps.exif_transpose -- what is shown for the new value is
-#: what was shown for the old one, turned -- and checked the same way in
-#: tests/test_rotate_keeps_the_photo.py. The mirrored values (2, 4, 5, 7) stay mirrored.
-ROTATED_ORIENTATION = {
-    "left": {1: 8, 2: 5, 3: 6, 4: 7, 5: 4, 6: 1, 7: 2, 8: 3},
-    "right": {1: 6, 2: 7, 3: 8, 4: 5, 5: 2, 6: 3, 7: 4, 8: 1},
-}
-
-
-def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[str] = None) -> int:
-    """Turn a photo a quarter left or right. Returns the Orientation it now has.
-
-    Only the EXIF Orientation tag changes; the pixels are not touched. This used to
-    decode the photo with Pillow, turn it, and save it again passing only the EXIF
-    block, which dropped every XMP and IPTC field -- keywords, people, caption,
-    DocumentID -- and re-encoded the JPEG at quality 95 on every click. Browsers, and
-    the server's previews (ImageOps.exif_transpose), show a photo by its orientation,
-    so changing that turns what everybody sees and leaves everything else alone.
-
-    The new value is composed with the one already there, so turning a phone photo
-    stored sideways (Orientation 6) left makes it 1, not 8.
-
-    Raises if ExifTool is unavailable or the file does not end up with the value
-    written: a rotation that silently did nothing would be reported as done.
-    """
-    turns = ROTATED_ORIENTATION.get(direction)
-    if turns is None:
-        raise ValueError("Direction must be 'left' or 'right', not %r" % (direction,))
-    if not exiftool_path:
-        raise ValueError("Rotating a photo needs ExifTool, and no ExifTool path was given")
-
-    def orientation_of(et):
-        found = et.get_tags([photo_path], tags=["EXIF:Orientation"])
-        value = (found[0] if found else {}).get("EXIF:Orientation")
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return None
-        return value if 1 <= value <= 8 else None
-
-    with ExifToolSession(executable=exiftool_path) as et:
-        new = turns[orientation_of(et) or 1]
-        # Written without a group, so an XMP tiff:Orientation already in the file is
-        # updated to match instead of being left to contradict the EXIF one.
-        et.set_tags([photo_path], tags={"Orientation": new}, params=["-overwrite_original"])
-        written = orientation_of(et)
-    if written != new:
-        raise RuntimeError("Rotated %s to orientation %s, but the file now says %s"
-                           % (os.path.basename(photo_path), new, written))
-    return new
-
-
-def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
-                           rename_format: str, preserved: Optional[str] = None) -> str:
-    """If the photo has an XMP-xmpMM:PreservedFileName tag set, automatically syncs
-    any changes to the title back into the filename structure, in `rename_format`
-    (the library's renaming.format setting, tagpup.services.settings).
-    Returns the new path if renamed, or the original path if not renamed. `preserved`
-    is the photo's PreservedFileName when the caller has read it ("" for none): then
-    ExifTool is not started to read it again."""
-    if not os.path.exists(photo_path):
+def title_filename(photo_path: str, new_title: str, rename_format: str, preserved: str) -> str:
+    """Where a Smart-Renamed photo goes when its caption becomes `new_title`: the path whose name
+    `rename_format` (the library's renaming.format setting, tagpup.services.settings) gives it, a free
+    name where that one is taken; or `photo_path` when nothing is to move. A photo is Smart-Renamed
+    when it holds the name it had before in `preserved` (XMP-xmpMM:PreservedFileName, "" for none).
+    Nothing is renamed here: the caller renames, through the file journal (docs/findings.md, #298)."""
+    if not preserved or not os.path.exists(photo_path):
         return photo_path
-
     try:
-        if preserved is None:
-            with ExifToolSession(executable=exiftool_path) as et:
-                meta = et.get_tags([photo_path], tags=["XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName"])
-                meta_dict = meta[0] if meta else {}
-            preserved = meta_dict.get("XMP-xmpMM:PreservedFileName") or meta_dict.get("XMP:PreservedFileName")
-        if not preserved:
-            # Not renamed in this way, do nothing
-            return photo_path
-
-        # Parse current filename structure
         base_name, ext = os.path.splitext(os.path.basename(photo_path))
         parts = [p.strip() for p in base_name.split(" - ")]
-
-        if len(parts) >= 2:
-            grouping = parts[0]
-            index_str = parts[1]
-
-            new_name = renaming.file_base(rename_format, grouping, index_str, new_title) + ext
-
-            new_path = os.path.join(os.path.dirname(photo_path), new_name)
-
-            if photo_path != new_path:
-                # Handle potential collision
-                if os.path.exists(new_path):
-                    base_part, ext_part = os.path.splitext(new_name)
-                    counter = 1
-                    while os.path.exists(os.path.join(os.path.dirname(photo_path), f"{base_part}_{counter}{ext_part}")):
-                        counter += 1
-                    new_name = f"{base_part}_{counter}{ext_part}"
-                    new_path = os.path.join(os.path.dirname(photo_path), new_name)
-
-                os.rename(photo_path, new_path)
-                return new_path
-
+        if len(parts) < 2:
+            return photo_path
+        grouping, index_str = parts[0], parts[1]
+        new_name = renaming.file_base(rename_format, grouping, index_str, new_title) + ext
+        folder = os.path.dirname(photo_path)
+        new_path = os.path.join(folder, new_name)
+        if photo_path == new_path:
+            return photo_path
+        if os.path.exists(new_path):
+            base_part, ext_part = os.path.splitext(new_name)
+            counter = 1
+            while os.path.exists(os.path.join(folder, f"{base_part}_{counter}{ext_part}")):
+                counter += 1
+            new_path = os.path.join(folder, f"{base_part}_{counter}{ext_part}")
+        return new_path
     except Exception as e:
-        logging.getLogger("metadata").error(f"Error syncing title to filename: {e}")
+        logging.getLogger("metadata").error(f"Error working out the name for the title: {e}")
+        return photo_path
 
-    return photo_path
 
-
-def raw_metadata(et, photo_path, record=None):
-    """A photo's metadata as a save records it in the index: every field the reader
-    reads, in the shape the indexer records it in (structured). Read in the session
-    given -- or taken from `record`, an ExifTool record of the photo read with more
-    fields than the reader asks (tagpup.services.file_changes' read back), of which
-    only those the scan reads (fields.scan_reads) are kept."""
-    if record is None:
-        found = et.get_tags([photo_path], tags=METADATA_FIELDS)
-        return structured(found[0] if found else {})
-    return structured({key: value for key, value in record.items()
-                       if key == "SourceFile" or fields.scan_reads(key)})
+def raw_metadata(record):
+    """A photo's metadata as a save records it in the index, from `record`, an ExifTool record
+    of the photo read with more fields than the reader asks (tagpup.services.file_changes'
+    whole read back): every field the scan reads (fields.scan_reads), in the shape the indexer
+    records it in (structured). It replaces the row's raw_metadata whole."""
+    cleaned = structured({key: value for key, value in record.items()
+                          if key == "SourceFile" or fields.scan_reads(key)})
+    return cleaned

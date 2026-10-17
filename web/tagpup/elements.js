@@ -40,9 +40,13 @@ export const folderViewContent = document.getElementById('folder-view-content');
 export const folderViewMain = document.getElementById('folder-view-main');
 export const folderViewTitle = document.getElementById('folder-view-title');
 export const folderViewStats = document.getElementById('folder-view-stats');
+export const btnDetailsToggle = document.getElementById('btn-details-toggle');
+export const btnDetailsClose = document.getElementById('btn-details-close');
 export const btnSelectAllThumbnails = document.getElementById('btn-select-all-thumbnails');
 export const btnSelectNoneThumbnails = document.getElementById('btn-select-none-thumbnails');
 export const btnDeleteSelection = document.getElementById('btn-delete-selection');
+// The photo panel's way back to the grid of a library view (view-left.js, #780)
+export const btnPhotoBack = document.getElementById('btn-photo-back');
 export const selectedThumbnailsCount = document.getElementById('selected-thumbnails-count');
 export const btnFolderAutoApply = document.getElementById('btn-folder-auto-apply');
 export const facesStrip = document.getElementById('faces-strip');
@@ -60,6 +64,13 @@ export const selectionDateGroup = document.getElementById('selection-date-group'
 export const selectionDateLabel = document.getElementById('selection-date-label');
 export const selectionFoldersGroup = document.getElementById('selection-folders-group');
 export const selectionFoldersList = document.getElementById('selection-folders-list');
+// The panel's two halves (selection-panel.js, #781)
+export const selectionNavigation = document.getElementById('selection-navigation');
+export const selectionPeopleJump = document.getElementById('selection-people-jump');
+export const selectionKeywordJump = document.getElementById('selection-keyword-jump');
+export const btnSelectionTagging = document.getElementById('btn-selection-tagging');
+export const selectionTaggingBody = document.getElementById('selection-tagging-body');
+export const selectionAutoApply = document.getElementById('selection-auto-apply');
 export const selectionDateValue = document.getElementById('selection-date-value');
 export const bulkAddPeopleInput = document.getElementById('bulk-add-people-input');
 export const btnBulkAddPeople = document.getElementById('btn-bulk-add-people');
@@ -83,6 +94,8 @@ export const renameGroupingInput = document.getElementById('rename-grouping-inpu
 export const btnApplyRename = document.getElementById('btn-apply-rename');
 
 export const mainImage = document.getElementById('main-image');
+export const imageViewer = document.getElementById('image-viewer');
+export const faceLayer = document.getElementById('face-layer');
 export const btnRotateLeft = document.getElementById('btn-rotate-left');
 export const btnRotateRight = document.getElementById('btn-rotate-right');
 export const btnDeletePhoto = document.getElementById('btn-delete-photo');
@@ -90,28 +103,14 @@ export const facesSection = document.getElementById('faces-section');
 
 export const detailPath = document.getElementById('detail-path');
 export const detailDateTaken = document.getElementById('detail-date-taken');
+export const detailCamera = document.getElementById('detail-camera');
+export const detailCameraItem = document.getElementById('detail-camera-item');
 export const inputPhotoTitle = document.getElementById('input-photo-title');
 export const btnSaveTitle = document.getElementById('btn-save-title');
 export const btnSaveDetails = document.getElementById('btn-save-details');
 export const writeQueueBox = document.getElementById('write-queue');
 
 // The bulk edit's strip (bulk-strip.js)
-export const bulkStrip = document.getElementById('bulk-strip');
-export const bulkStripTitle = document.getElementById('bulk-strip-title');
-export const bulkStripBar = document.getElementById('bulk-strip-bar');
-export const bulkStripProgress = document.getElementById('bulk-strip-progress');
-export const bulkStripEta = document.getElementById('bulk-strip-eta');
-export const bulkStripCounts = document.getElementById('bulk-strip-counts');
-export const bulkStripMessage = document.getElementById('bulk-strip-message');
-export const bulkStripErrors = document.getElementById('bulk-strip-errors');
-export const bulkStripErrorsSummary = document.getElementById('bulk-strip-errors-summary');
-export const bulkStripErrorList = document.getElementById('bulk-strip-error-list');
-export const bulkStripLive = document.getElementById('bulk-strip-live');
-export const btnBulkCancel = document.getElementById('btn-bulk-cancel');
-export const btnBulkResume = document.getElementById('btn-bulk-resume');
-export const btnBulkAgain = document.getElementById('btn-bulk-again');
-export const btnBulkShow = document.getElementById('btn-bulk-show');
-export const btnBulkDismiss = document.getElementById('btn-bulk-dismiss');
 export const detailPeople = document.getElementById('detail-people');
 export const inputAddPerson = document.getElementById('input-add-person');
 export const btnAddPerson = document.getElementById('btn-add-person');
@@ -155,10 +154,6 @@ export const photoMissingNote = document.getElementById('photo-missing-note');
 // The grid's right-click menu (grid.js)
 export const gridContextMenu = document.getElementById('grid-context-menu');
 
-// The photo, zoomed (photo.js)
-export const imageZoom = document.getElementById('image-zoom');
-export const imageZoomImg = document.getElementById('image-zoom-img');
-
 // Date Taken Editor Dialog Controls
 export const btnEditDateTaken = document.getElementById('btn-edit-date-taken');
 export const dateTakenModal = document.getElementById('date-taken-modal');
@@ -176,7 +171,6 @@ export const addFolderFacts = document.getElementById('add-folder-facts');
 export const btnAddFolder = document.getElementById('btn-add-folder');
 export const btnJustLook = document.getElementById('btn-just-look');
 export const justLookingNote = document.getElementById('just-looking-note');
-export const damagedBadge = document.getElementById('damaged-badge');
 // The top of the grid, one floating header in a library view (#713), and its strip that says which view is open (library-view.js)
 export const folderViewTop = document.getElementById('folder-view-top');
 export const libraryStrip = document.getElementById('library-strip');
@@ -198,7 +192,5 @@ export const librarySearchNote = document.getElementById('library-search-note');
 export const btnSortBy = document.getElementById('btn-sort-by');
 export const sortByCurrent = document.getElementById('sort-by-current');
 export const sortMenu = document.getElementById('sort-menu');
-export const damagedNotice = document.getElementById('damaged-notice');
-export const photoDamagedNote = document.getElementById('photo-damaged-note');
 export const justLookingText = document.getElementById('just-looking-text');
 export const btnAddFolderFromNote = document.getElementById('btn-add-folder-from-note');

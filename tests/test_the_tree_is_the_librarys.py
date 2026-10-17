@@ -17,7 +17,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 
 import tagpup_cli  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
-from tagpup.store import schema, taxonomy  # noqa: E402
+from tagpup.store import schema  # noqa: E402
 
 
 class TheCliTestModeKeepsToItsLibrary(unittest.TestCase):
@@ -44,24 +44,6 @@ class TheCliTestModeKeepsToItsLibrary(unittest.TestCase):
             tagpup_cli.get_db_path()
         with self.assertRaises(click.UsageError):
             tagpup_cli.get_db_path(test_mode=True)
-
-    def test_a_tree_saved_in_test_mode_stays_out_of_the_real_library(self):
-        test_library = tagpup_cli.get_db_path(test_mode=True, cli_db="photo_index")
-        schema.ensure(test_library)
-        tree = taxonomy.TagTaxonomy(test_library)
-        tree.load()
-        tree.add_tag("Trips/Harbour Walk")
-        tree.save()
-        self.assertIsNotNone(taxonomy.find(test_library, "Trips/Harbour Walk"))
-        self.assertIsNone(taxonomy.find(self.real, "Trips/Harbour Walk"))
-
-    def test_no_file_is_written_beside_either(self):
-        tree = taxonomy.TagTaxonomy(self.real)
-        tree.load()
-        tree.add_tag("Trips/Harbour Walk")
-        tree.save()
-        folder = os.path.dirname(self.real)
-        self.assertEqual([], [name for name in os.listdir(folder) if name.endswith(".json")])
 
 
 if __name__ == "__main__":

@@ -45,10 +45,9 @@ import threading
 import numpy as np
 
 from tagpup.core import paths
-from tagpup.core.gpu_turns import Cancelled
+from tagpup.core.gpu_turns import Cancelled, OtherModelsInUse
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import libraries, suggester
-from tagpup.services import suggestions as saved
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +83,7 @@ def work_for(library, photos, models, looking=False, held_now=None):
     for the library -- something with `begin(library)` (tagpup.runtime.Runtime), which
     returns what a run calls (`suggest`, `offered`, `consensus`, `model_key`; see
     SuggestionRuns.start). Everything the run's thread needs is handed to it here; it
-    never asks which library a request was for (docs/findings.md, #44). Without models,
-    a run over a folder with photos fails with a message saying so. `looking`: the folder is
+    never asks which library a request was for (docs/findings.md, #44). `looking`: the folder is
     not the library's, and the run keeps what it finds in memory and adds nothing to the
     library (decided by the route, from the library's own answer). `held_now()`, for such a run: does
     the library hold every folder of it now (suggest_how no longer says to look)? Asked when the run ends: a folder added meanwhile, whose
@@ -110,9 +108,6 @@ def work_for(library, photos, models, looking=False, held_now=None):
                           "report": report}
 
         def begin(self):
-            if models is None:
-                raise RuntimeError("Suggest has no model: this app was made without a runtime "
-                                   "(tagpup.web.app.create_app(runtime=...))")
             return models.begin(library, remember=False, **self._turn) if looking \
                 else models.begin(library, **self._turn)
 
@@ -132,6 +127,15 @@ def _end(model):
             logger.error("Could not end a suggestion run: %s", e)
 
 
+def _log_failure(line, folder, error):
+    """A run that failed, in the log: with its traceback, unless it was refused for another run's models
+    (OtherModelsInUse), which is expected and says all there is to say."""
+    if isinstance(error, OtherModelsInUse):
+        logger.info("Suggest of %s was refused: %s", folder, error)
+    else:
+        logger.exception(line, folder, error)
+
+
 def runs_for(library):
     """This process's runs for a library, made the first time they are asked for."""
     with _runs_lock:
@@ -143,7 +147,7 @@ def runs_for(library):
 
 def running():
     """How many suggestion runs are under way in this process, in any library: what an
-    update of the always-on process waits for (tagpup.web.lifecycle)."""
+    update of the server waits for (tagpup.web.lifecycle)."""
     with _runs_lock:
         every = list(_runs.values())
     count = 0
@@ -262,6 +266,15 @@ def _succeeded(found):
     return isinstance(found, dict) and "error" not in found
 
 
+def _unread_notes(failed):
+    """The sentence a finished run says of the photos it could not suggest for (`failed`: their entries), for the
+    page: none when every photo was read. One wording for a run that remembers and one that only looks."""
+    if not failed:
+        return []
+    return ["%d photo(s) could not be analysed, nothing was recorded of them (%s)."
+            % (len(failed), failed[0].get("error", "unreadable"))]
+
+
 class SuggestionRuns:
     """One library's folders' suggestion runs. `statuses` maps a folder's key to its run:
     {"status", "completed", "total"[, "message"]}. Changed only under `lock`."""
@@ -294,7 +307,7 @@ class SuggestionRuns:
         for meta in (photos or {}).values():
             spelled[paths.key(meta["path"])] = paths.stored(meta["path"])
         return {spelled.get(paths.key(photo), photo): found
-                for photo, found in saved.saved_in(self.db_path, folder).items()}
+                for photo, found in suggester.saved_in(self.db_path, folder).items()}
 
     # ---- What a page asks -----------------------------------------------------------
 
@@ -572,7 +585,12 @@ class SuggestionRuns:
                     return
                 if fresh and key in self.statuses:
                     self._take_consensus(folder, photos, model)
+                # The library is read outside the lock a poll waits on.
+                wanted = {paths.key(meta["path"]) for meta in photos.values()}
+                failed = [found for photo, found in self._saved(folder, photos).items()
+                          if paths.key(photo) in wanted and not _succeeded(found)]
                 with self.lock:
+                    self.statuses[key].update(notes=_unread_notes(failed), unread=len(failed))
                     self.statuses[key]["status"] = "completed"
             finally:
                 _end(model)
@@ -581,7 +599,7 @@ class SuggestionRuns:
                 logger.info("Suggest of %s was cancelled.", folder)
                 self._say_cancelled(key)
                 return
-            logger.exception("Error running suggestions for %s: %s", folder, e)
+            _log_failure("Error running suggestions for %s: %s", folder, e)
             # Always said, even with the entry gone, so the page stops polling instead of
             # spinning on "preparing" for ever.
             with self.lock:
@@ -626,7 +644,7 @@ class SuggestionRuns:
             try:
                 model = work.begin()
             except Exception as e:
-                if stop.is_set():
+                if stop.is_set() or isinstance(e, OtherModelsInUse):
                     raise
                 raise RuntimeError("The models could not be made ready, so no photo was analysed and nothing "
                                    "was changed: %s" % e) from e
@@ -659,7 +677,7 @@ class SuggestionRuns:
                 logger.info("Suggest of %s was cancelled.", folder)
                 self._say_cancelled(key)
                 return
-            logger.exception("Error analysing the photos of %s without saving: %s", folder, e)
+            _log_failure("Error analysing the photos of %s without saving: %s", folder, e)
             said = str(e).strip()
             # Whatever failed -- the scan, the models -- a run that only looks has written nothing to the library.
             if "nothing was changed" not in said.lower():
@@ -703,9 +721,7 @@ class SuggestionRuns:
         with self.lock:
             memory = dict(self.looks.get(key, {}))
         failed = [found for photo, found in memory.items() if paths.key(photo) in wanted and not _succeeded(found)]
-        if failed:
-            notes.append("%d photo(s) could not be analysed, nothing was recorded of them (%s)."
-                         % (len(failed), failed[0].get("error", "unreadable")))
+        notes.extend(_unread_notes(failed))
         if left_out:
             notes.append("%d photo(s) were left out: a look keeps the suggestions of at most %d photos of a folder "
                          "in memory. Add the folder to the library to suggest for all of them."
@@ -788,7 +804,7 @@ class SuggestionRuns:
             # inside the suggester -- may have left it short of its faces. Not kept.
             return None
         try:
-            saved.keep(self.db_path, photo, plain(found), getattr(model, "model_key", None))
+            suggester.keep(self.db_path, photo, plain(found), getattr(model, "model_key", None))
         except Exception as e:
             # Not kept, so the next run suggests for it again; the rest of this run and
             # its consensus go on (#95).
@@ -812,7 +828,7 @@ class SuggestionRuns:
                    and isinstance(found.get("raw_suggestions"), dict) and found["raw_suggestions"].get("path")]
             if len(raw) < 2:
                 return
-            saved.offer(self.db_path, [(paths.stored(s["path"]), plain(model.offered(s))) for s in model.consensus(raw)],
+            suggester.offer(self.db_path, [(paths.stored(s["path"]), plain(model.offered(s))) for s in model.consensus(raw)],
                         label="folder consensus for %s" % os.path.basename(folder))
         except Exception as e:
             logger.error("Error taking folder consensus: %s", e)

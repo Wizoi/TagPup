@@ -2,27 +2,19 @@
 // reassign it.
 export const state = {
     //: How often Now is asked again while the page is in view, and the rest of the page
-    //: (jobs, syncs, snapshots, the always-on process, the timeline), in milliseconds.
+    //: (jobs, syncs, snapshots, the server, the timeline), in milliseconds.
     //: `?every=<ms>` sets the first, for a test or a measurement; the rest follow it.
     every: 3000,
     slowEvery: 30000,
     //: What each section last read, as the server answered it.
-    attention: null,
-    //: Check again under way (its buttons disabled), and what the last one found, shown
-    //: above the list: { text, ok } or null.
-    attentionChecking: false,
-    attentionChecked: null,
     now: null,
     jobs: null,
     sync: null,
     snapshots: null,
     server: null,
-    //: File access: what the check last found, whether one is under way, why it failed, and the
-    //: findings the owner has dealt with in this browser ({ id: true }, localStorage).
-    fileAccess: null,
-    fileAccessChecking: false,
-    fileAccessError: null,
-    fileAccessDismissed: {},
+    //: Unload models now under way (its button disabled), and what it last answered: { text, ok } or null.
+    unloading: false,
+    unloaded: null,
     timeline: { limit: 50, entries: [], more: false },
     //: The Run now asked and waiting for its confirmation: { job, library } or null.
     confirming: null,

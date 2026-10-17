@@ -42,7 +42,7 @@ import time
 import exiftool
 from exiftool.exceptions import ExifToolExecuteError, ExifToolNotRunning, ExifToolVersionError
 
-__all__ = ["ExifToolSession", "ExifToolTimeout", "ExifToolFailed", "DEFAULT_TIMEOUT"]
+__all__ = ["ExifToolSession", "ExifToolTimeout", "ExifToolFailed", "StaysDead", "DEFAULT_TIMEOUT"]
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +68,26 @@ class ExifToolTimeout(RuntimeError):
 SAID_LINES = 2
 
 
+#: What ExifTool says when the copy it writes a photo through is there already, and what the owner is told to do: a
+#: failed write leaves it (a read-only or locked photo), and nothing here deletes a file beside a photo -- after a
+#: failure that deleted the original it is the photo's only copy (#1410, #1411).
+TEMPORARY_IN_THE_WAY = "Temporary file already exists"
+TEMPORARY_SENTENCE = (". A file named as the photo with _exiftool_tmp after it, left beside it by a write that failed, "
+                      "is in the way; the server's log names both. If the photo is there and opens, delete that file; "
+                      "if the photo is gone, that file is its only copy: rename it back. Then try again.")
+
+
 class ExifToolFailed(ExifToolExecuteError):
     """ExifTool ran a command and failed it: pyexiftool's error, its message saying what
-    ExifTool said (its first SAID_LINES error lines, each photo named "<file>")."""
+    ExifTool said (its first SAID_LINES error lines, each photo named "<file>"), and, when
+    its temporary file is in the way, what to do (TEMPORARY_SENTENCE)."""
 
     def __init__(self, exit_status, cmd_stdout, cmd_stderr, params):
         super().__init__(exit_status, cmd_stdout, cmd_stderr, params)
         said = said_briefly(cmd_stderr, params)
         if said:
-            self.args = ("ExifTool: %s (exit status %s)" % (said, exit_status),) + self.args[1:]
+            more = TEMPORARY_SENTENCE if TEMPORARY_IN_THE_WAY in said else ""
+            self.args = ("ExifTool: %s (exit status %s)%s" % (said, exit_status, more),) + self.args[1:]
 
     def __str__(self):
         return str(self.args[0])
@@ -301,3 +312,28 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
             logger.warning("ExifTool failed a command (exit status %s, %s): %s", e.returncode,
                            _describe(e.cmd), _text(e.stderr).strip() or "it said nothing")
             raise ExifToolFailed(e.returncode, e.stdout, e.stderr, e.cmd) from None
+
+
+class StaysDead:
+    """A session of one batch of writes, which stays dead once a command has timed out: pyexiftool starts its process again on the
+    next command, and that command would wait its own deadline for a share that is not coming back. Every command after a timeout
+    answers the same ExifToolTimeout at once, so the files after it are errors in the time it takes to say so."""
+
+    def __init__(self, session):
+        self._session = session
+        self._dead = None
+
+    def __getattr__(self, name):
+        wanted = getattr(self._session, name)
+        if not callable(wanted):
+            return wanted
+
+        def command(*args, **kwargs):
+            if self._dead is not None:
+                raise self._dead
+            try:
+                return wanted(*args, **kwargs)
+            except ExifToolTimeout as stalled:
+                self._dead = stalled
+                raise
+        return command

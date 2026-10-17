@@ -16,7 +16,7 @@ PRESERVED_NAME = "XMP-xmpMM:PreservedFileName"
 
 #: What Smart Rename reads from each photo: the name it had before it was first renamed,
 #: and its caption.
-RENAME_FIELDS = ["XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName",
+RENAME_FIELDS = [PRESERVED_NAME, "XMP:PreservedFileName",
                  "XMP:Title", "Title", "XMP:Description", "Description",
                  "IPTC:Caption-Abstract", "Caption-Abstract"]
 
@@ -30,10 +30,14 @@ def _field(meta, *names):
 
 
 def preserved_name(meta):
-    """The name a photo had before Smart Rename first renamed it, or None."""
+    """The name a photo had before Smart Rename first renamed it, as an ExifTool record of it
+    (`meta`) holds it under any group; "" for none. The one reader of the field."""
     for _base, value in _field(meta, "PreservedFileName"):
-        return str(value).strip()
-    return None
+        if isinstance(value, list):
+            value = value[0] if value else None
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
 
 def caption_for_name(meta):

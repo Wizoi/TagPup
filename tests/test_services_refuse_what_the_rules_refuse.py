@@ -33,7 +33,7 @@ def fake_exiftool(fields):
     (docs/findings.md, #276)."""
     held = dict(fields)
     et = mock.MagicMock()
-    et.get_tags.side_effect = lambda paths, tags=None: [dict(held)]
+    et.get_tags.side_effect = lambda paths, tags=None, params=None: [dict(held)]
 
     def set_tags(paths, tags=None, params=None):
         held.update(tags or {})
@@ -106,7 +106,7 @@ class Tagging(PhotoCase):
     def test_a_caption_the_file_holds_already_is_not_being_set(self):
         # Written by another program; refusing it would leave the photo unsaveable.
         _session, et = self.exiftool({"XMP:Subject": ["Places/Harbour"], "XMP:Description": "Relays" + BELL})
-        with mock.patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
+        with mock.patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             result = tagging.save_photo(self.lib.library, self.photo, "Relays" + BELL, ["Places/Harbour"],
                                         None, "exiftool", "{grouping} - {index} - {caption}")
         self.assertIsNone(result.refused)
@@ -117,14 +117,14 @@ class Tagging(PhotoCase):
         _session, et = self.exiftool()
         held = dict(fields)
         et.get_tags.return_value = None
-        et.get_tags.side_effect = lambda files, tags=None: [
+        et.get_tags.side_effect = lambda files, tags=None, params=None: [
             {key: value for key, value in held.items() if tags is None or key in tags}]
         # And keeps what is written, as a file does.
         et.set_tags.side_effect = lambda files, tags=None, params=None: held.update(tags or {})
         return et
 
     def save(self, caption):
-        with mock.patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
+        with mock.patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             return tagging.save_photo(self.lib.library, self.photo, caption, ["Places/Harbour"],
                                       None, "exiftool", "{grouping} - {index} - {caption}")
 
@@ -144,9 +144,9 @@ class Tagging(PhotoCase):
         self.reading_only_what_is_asked({"XMP:Subject": ["Places/Harbour"], "EXIF:ImageDescription": "Relays"})
         self.assertEqual(self.save("Relays" + BELL).refused, CAPTION)
 
-    def test_the_clis_write(self):
+    def test_the_bulk_tags_write(self):
         session, _et = self.exiftool()
-        result = tagging.write_suggestions(self.lib.library, [(self.photo, ["Places|Dunes"], "")], "exiftool")
+        result = tagging.change_tags(self.lib.library, [self.photo], ["Places|Dunes"], [], "exiftool")
         self.assertEqual((result.refused, result.changed), (PIPE, 0))
         session.assert_not_called()
 

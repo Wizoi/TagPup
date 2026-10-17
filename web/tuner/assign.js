@@ -1,7 +1,8 @@
 // What is done to a selection of faces: assign, unmatch, exclude, restore, ignore,
 // undo, rename.
 import { api } from './common/api.js';
-import { nameProblem } from './common/vocabulary.js';
+import { choicesOf, loadRules } from './common/validate.js';
+import { nameProblem, personFields } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnExcludeSelected, btnReassignSelected, btnRenamePerson, btnRestoreSelected,
@@ -9,7 +10,7 @@ import {
     panelContent,
 } from './elements.js';
 import { upper } from './hooks.js';
-import { fetchKnownPeople, personExists, updateURLParams } from './shared.js';
+import { fetchKnownPeople, personGone, resolveTyped, updateURLParams } from './shared.js';
 import { clearFaceDetails, updateMatchingSelectionUI } from './selection.js';
 import { putFacesBack, removeFacesFromGrid, updateTabLabels } from './grid-parts.js';
 
@@ -25,15 +26,16 @@ const btnAssignUndo = document.getElementById('btn-assign-undo');
 const btnAssignUndoDismiss = document.getElementById('btn-assign-undo-dismiss');
 
 /**
- * The person beside `name` in the sidebar, as it is drawn: the one before, or after for the first.
+ * The person beside the one chosen in the sidebar, as it is drawn: the one before, or after for the first, as {name, id}. The
+ * chosen one is found by their id when they have one (two people may be called alike).
  * It followed the server's order, which is not the order shown once the list is sorted by name.
  */
-function besidePerson(name) {
+function besidePerson(name, personId = null) {
     const people = state.shownPeople.length > 0 ? state.shownPeople : (state.allPeopleWithCounts || []);
-    const idx = people.findIndex(p => p.name === name);
+    const idx = people.findIndex(p => (personId !== null ? p.person_id === personId : p.name === name));
     if (idx === -1) return null;
-    if (idx > 0) return people[idx - 1].name;
-    return people.length > 1 ? people[idx + 1].name : null;
+    const beside = idx > 0 ? people[idx - 1] : (people.length > 1 ? people[idx + 1] : null);
+    return beside ? { name: beside.name, id: beside.person_id !== undefined ? beside.person_id : null } : null;
 }
 
 // ---- Excluding faces ---------------------------------------------------
@@ -42,11 +44,16 @@ function besidePerson(name) {
 // a person's centroid around. Excluding keeps the row and the crop but takes the
 // face out of identity work entirely; it is reversible from the Excluded bucket.
 //
-// The reasons, as tagpup.services.faces.EXCLUSION_REASONS gives them
-// (tests/test_rules_have_one_owner.py holds this copy to it): the four offered, the
-// first of them the default, and the one given when a cluster is ignored.
-const EXCLUDE_REASONS = ['not a person', 'stranger', 'bad crop', 'duplicate'];
+// The reasons are the server's: /api/rules publishes them as the "exclusion reason" kind's
+// choices (web/common/validate.js), the first of them the default, which the server gives a
+// reason left empty. The page offers every one but the reason it gives when a cluster is
+// ignored, which it names (tests/test_rules_have_one_owner.py holds it to the service's).
 export const EXCLUDE_IGNORED_CLUSTER = 'ignored cluster';
+
+/** The reasons to ask the person about: the published choices, less the one an ignored cluster is given. */
+function offeredReasons() {
+    return (choicesOf('exclusion reason') || []).filter(reason => reason !== EXCLUDE_IGNORED_CLUSTER);
+}
 
 /**
  * Ask why, with buttons rather than a text box.
@@ -62,12 +69,23 @@ export const EXCLUDE_IGNORED_CLUSTER = 'ignored cluster';
 function askExcludeReason(count) {
     const modal = document.getElementById('exclude-reason-modal');
     const choices = document.getElementById('exclude-reason-choices');
-    const title = document.getElementById('exclude-reason-title');
     if (!modal || !choices) {
-        // Nothing to ask with; fall back rather than block the exclusion.
-        return Promise.resolve(EXCLUDE_REASONS[0]);
+        // Nothing to ask with; fall back rather than block the exclusion: the server gives its default.
+        return Promise.resolve('');
     }
+    // The choices are the server's: wait for them if they have not arrived. With none, nothing is decided here.
+    return loadRules().then(() => {
+        const reasons = offeredReasons();
+        if (!reasons.length) {
+            alert('The reasons to exclude a face could not be loaded from the server: try again in a moment.');
+            return null;
+        }
+        return askWith(reasons, count, modal, choices);
+    });
+}
 
+function askWith(reasons, count, modal, choices) {
+    const title = document.getElementById('exclude-reason-title');
     if (title) {
         title.textContent = count === 1
             ? 'Why exclude this face?'
@@ -84,7 +102,7 @@ function askExcludeReason(count) {
         };
 
         choices.innerHTML = '';
-        EXCLUDE_REASONS.forEach(reason => {
+        reasons.forEach(reason => {
             const button = document.createElement('button');
             button.className = 'exclude-reason-choice';
             button.dataset.reason = reason;
@@ -103,7 +121,17 @@ function askExcludeReason(count) {
     });
 }
 
-/** Resolves true once the server has excluded the faces, false otherwise. */
+/** The server's own words for a refused exclusion, else a plain sentence. */
+async function exclusionWhy(res) {
+    try {
+        const body = await res.json();
+        return (body && (body.error || body.message)) || 'Exclude failed';
+    } catch (error) {
+        return 'Exclude failed';
+    }
+}
+
+/** Resolves to the ids the server excluded (some may be left: a photo that could not be written), false when it did not. */
 export function postExcludeBulk(faceIds, presetReason) {
     if (!faceIds.length) return Promise.resolve(false);
     // A caller that has already asked the question passes the reason in, rather
@@ -123,23 +151,31 @@ export function postExcludeBulk(faceIds, presetReason) {
     return api.fetch('/api/faces/exclude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() || EXCLUDE_REASONS[0] })
+        // A selection is ruled out as one batch on the server: the faces, and the people they were named taken off their
+        // photos unless another face of the photo is them; this request waits for the end (the strip shows how far it is).
+        body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim(), bulk: true })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('Exclude failed');
+    .then(async res => {
+        if (!res.ok) throw new Error(await exclusionWhy(res));
         return res.json();
     })
-    .then(() => {
-        const excluded = new Set(faceIds);
+    .then(data => {
+        // Said, not thrown: the faces are ruled out all the same.
+        if (data && data.warning) alert(data.warning);
+        state.lastAssignChange = data && data.change ? { change: data.change, kind: 'ignore', plain: data.plain || [] } : null;
+        // The faces the server left (their photo could not be written, the batch was stopped) stay where they are.
+        const left = new Set((data && data.left) || []);
+        const done = faceIds.filter(id => !left.has(id));
+        const excluded = new Set(done);
         state.activePersonFaces = state.activePersonFaces.filter(f => !excluded.has(f.id));
         // In place. Rebuilding the grid to account for a handful of cards leaving
         // meant recreating every card on screen -- ten seconds for Unknown Faces.
-        removeFacesFromGrid(faceIds);
+        removeFacesFromGrid(done);
         updateTabLabels();
         clearFaceDetails();
         // Go through the mode dispatcher so the sidebar always matches Tune target.
         upper.refreshSidebarQuietly();
-        return true;
+        return done;
     })
     .catch(err => {
         console.error(err);
@@ -188,7 +224,7 @@ function postRestoreBulk(faceIds, { undo = false } = {}) {
 }
 
 // POST bulk unmatch to backend API
-function postUnmatchBulk(faceIds, { undo = false } = {}) {
+function postUnmatchBulk(faceIds) {
     btnUnmatchSelected.disabled = true;
     const originalText = btnUnmatchSelected.textContent;
     btnUnmatchSelected.textContent = 'Unmatching...';
@@ -198,27 +234,22 @@ function postUnmatchBulk(faceIds, { undo = false } = {}) {
         headers: {
             'Content-Type': 'application/json'
         },
-        // An Undo puts them back unreviewed; an unmatch records "nobody".
-        body: JSON.stringify({ face_ids: faceIds, undo })
+        // An unmatch records "nobody".
+        body: JSON.stringify({ face_ids: faceIds })
     })
     .then(res => {
         if (!res.ok) throw new Error('Bulk unmatch operation failed');
         return res.json();
     })
     .then(data => {
-        if (data.success && undo) {
-            // Undoing an assign: the faces come back to the grid they left.
-            putFacesBack(faceIds);
-            clearFaceDetails();
-            upper.fetchPeopleWithCounts(true, true);
-            return;
-        }
+        if (data.warning) alert(data.warning);
         if (data.success) {
-            // In place: only the cards that left. This removed them and then
+            // In place: only the cards that left (not the faces the server left as they were). This removed them and then
             // rebuilt every card on screen as well.
-            const leaving = new Set(faceIds);
+            const left = new Set(data.left || []);
+            const leaving = new Set(faceIds.filter(id => !left.has(id)));
             state.activePersonFaces = state.activePersonFaces.filter(f => !leaving.has(f.id));
-            removeFacesFromGrid(faceIds);
+            removeFacesFromGrid([...leaving]);
 
             // Update tab counts
             updateTabLabels();
@@ -229,12 +260,13 @@ function postUnmatchBulk(faceIds, { undo = false } = {}) {
             // Check if the person is going to be removed after unmatching
             const willBeRemoved = (state.activePersonFaces.length === 0);
             if (willBeRemoved) {
-                const priorName = besidePerson(state.activePersonName);
+                const prior = besidePerson(state.activePersonName, state.activePersonId);
 
-                if (priorName) {
-                    upper.selectPerson(priorName);
+                if (prior) {
+                    upper.selectPerson(prior.name, null, false, false, prior.id);
                 } else {
                     state.activePersonName = null;
+                    state.activePersonId = null;
                     updateURLParams();
                     emptyState.classList.remove('hidden');
                     panelContent.classList.add('hidden');
@@ -286,7 +318,9 @@ export function askBeforeIgnoring(faceCount, photoCount, proceed) {
     ignoreConfirmText.textContent =
         `${faceCount} face${faceCount !== 1 ? 's' : ''} from `
         + `${photoCount} photo${photoCount !== 1 ? 's' : ''} will stop being offered `
-        + `as a match for anyone.`;
+        + `as a match for anyone. A face that is named also loses its name, and its person is taken off the photo`
+        + `'s tags (written into the file) unless another face of the photo is them. Undo, offered for 20 seconds, `
+        + `puts the faces back with their names and the tags back in the files.`;
     if (ignoreConfirmDontAsk) ignoreConfirmDontAsk.checked = false;
     ignoreConfirmModal.classList.remove('hidden');
 }
@@ -296,13 +330,66 @@ function closeIgnoreConfirm() {
     state.pendingIgnore = null;
 }
 
+/** Undo the last assign or ignore: the journal's undo of its change (POST /api/history/<change>/undo, as History's), then put its faces back in the grid they left. */
+function undoAssignment(faceIds, change, kind, plain = []) {
+    // Synchronous on the server (the files a few at a time): the bar says so, stays until it ends, and cannot be pressed twice.
+    if (state.assignUndoTimer) {
+        clearTimeout(state.assignUndoTimer);
+        state.assignUndoTimer = null;
+    }
+    const was = assignUndoText ? assignUndoText.textContent : '';
+    if (assignUndoText) assignUndoText.textContent = 'Undoing...';
+    if (btnAssignUndo) btnAssignUndo.disabled = true;
+    api.fetch(`/api/history/${change}/undo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apply: true })
+    })
+    .then(async res => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || data.description || 'Undo failed');
+        return data;
+    })
+    .then(data => {
+        hideAssignUndo();
+        if (btnAssignUndo) btnAssignUndo.disabled = false;
+        const refused = (data.errors || []).length;
+        const facesLeft = data.faces_left || 0;
+        if (refused || facesLeft) {
+            // A file changed since is never overwritten, and a face somebody changed since is not put back: they stay as they are.
+            alert(`${refused} photo(s) and ${facesLeft} face(s) could not be put back (changed since); they were left as they are.`);
+        }
+        if (kind === 'ignore' && plain.length) {
+            // The faces that carried no name had no photo to write: the faces' own call restores them (and puts them back in the grid).
+            postRestoreBulk(plain, { undo: true });
+        }
+        if (refused || facesLeft) {
+            // Which cards are back is the server's to say: the person is read again.
+            if (state.activePersonName) upper.selectPerson(state.activePersonName, null, false, false, state.activePersonId);
+        } else {
+            const apart = new Set(plain);
+            putFacesBack(faceIds.filter(id => !apart.has(id)));
+        }
+        clearFaceDetails();
+        upper.fetchPeopleWithCounts(true, true);
+        updateMatchingSelectionUI();
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Could not undo: ' + err.message);
+        state.lastAssignChange = { change, kind };
+        if (assignUndoText) assignUndoText.textContent = was;
+        if (btnAssignUndo) btnAssignUndo.disabled = false;
+    });
+}
+
 export function offerAssignUndo(faceIds, name, kind) {
     if (!assignUndoBar) return;
     if (state.assignUndoTimer) clearTimeout(state.assignUndoTimer);
 
     const n = faceIds.length;
     assignUndoText.textContent = kind === 'ignore'
-        ? `Ignored ${n} face${n !== 1 ? 's' : ''}`
+        ? `Ignored ${n} face${n !== 1 ? 's' : ''} (Undo puts back their names and tags)`
         : `Assigned ${n} face${n !== 1 ? 's' : ''} to ${name}`;
     assignUndoBar.classList.remove('hidden');
     assignUndoBar.dataset.faceIds = JSON.stringify(faceIds);
@@ -322,8 +409,10 @@ function hideAssignUndo() {
     if (assignUndoBar) assignUndoBar.classList.add('hidden');
 }
 
-export function postMatchBulk(faceIds, name) {
-    const problem = nameProblem(name);
+// `who` is a person ({id, name, ...}: named by the id of their node, the only way to name one of two people called alike) or a
+// name no tag has (a new person).
+export function postMatchBulk(faceIds, who) {
+    const problem = nameProblem(typeof who === 'string' ? who : who.name);
     if (problem) {
         alert(problem);
         return Promise.resolve(null);
@@ -339,7 +428,7 @@ export function postMatchBulk(faceIds, name) {
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ face_ids: faceIds, person_name: name })
+        body: JSON.stringify({ face_ids: faceIds, ...personFields(who) })
     })
     .then(async res => {
         if (!res.ok) {
@@ -348,7 +437,9 @@ export function postMatchBulk(faceIds, name) {
                 const errData = await res.json();
                 if (errData && errData.error) errMsg = errData.error;
             } catch(e) {}
-            throw new Error(errMsg);
+            const failure = new Error(errMsg);
+            failure.status = res.status;
+            throw failure;
         }
         return res.json();
     })
@@ -363,7 +454,11 @@ export function postMatchBulk(faceIds, name) {
                 : faceIds;
             const skippedIds = new Set(Array.isArray(data.skipped_excluded)
                 ? data.skipped_excluded.map(Number) : []);
-            const leavingIds = faceIds.filter(id => !skippedIds.has(id));
+            // A face the server could not name (its photo's file could not be written, or the job stopped) stays where it is.
+            const notNamed = new Set(Array.isArray(data.not_named) ? data.not_named.map(Number) : []);
+            const leavingIds = faceIds.filter(id => !skippedIds.has(id) && !notNamed.has(id));
+            if (data.warning) alert(data.warning);
+            state.lastAssignChange = data.change ? { change: data.change, kind: 'assign' } : null;
             const skipped = skippedIds.size;
             if (skipped) {
                 alert(`${skipped} of these face${skipped !== 1 ? 's were' : ' was'} `
@@ -393,12 +488,13 @@ export function postMatchBulk(faceIds, name) {
             // Check if the person is going to be removed after matching
             const willBeRemoved = (state.activePersonFaces.length === 0);
             if (willBeRemoved) {
-                const priorName = besidePerson(state.activePersonName);
+                const prior = besidePerson(state.activePersonName, state.activePersonId);
 
-                if (priorName) {
-                    upper.selectPerson(priorName);
+                if (prior) {
+                    upper.selectPerson(prior.name, null, false, false, prior.id);
                 } else {
                     state.activePersonName = null;
+                    state.activePersonId = null;
                     updateURLParams();
                     emptyState.classList.remove('hidden');
                     panelContent.classList.add('hidden');
@@ -419,6 +515,7 @@ export function postMatchBulk(faceIds, name) {
     .catch(err => {
         console.error('Error in bulk reassign:', err);
         alert('Error reassigning faces: ' + err.message);
+        personGone(err.status);
         return null;
     })
     .finally(() => {
@@ -429,25 +526,33 @@ export function postMatchBulk(faceIds, name) {
 }
 
 // POST rename person to backend API
-function postRenamePerson(oldName, newName) {
+function postRenamePerson(oldName, newName, personId = null) {
     const problem = nameProblem(newName);
     if (problem) {
         alert(problem);
         return;
     }
-    if (btnRenamePerson) btnRenamePerson.disabled = true;
-    const originalText = btnRenamePerson.textContent;
-    btnRenamePerson.textContent = '✏️ Renaming...';
+    if (btnRenamePerson) btnRenamePerson.disabled = true;      // how far a long rename has got is the shared strip's (batch-strip.js)
 
     api.fetch('/api/person/rename', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ old_name: oldName, new_name: newName })
+        body: JSON.stringify(personId !== null ? { person_id: personId, old_name: oldName, new_name: newName } : { old_name: oldName, new_name: newName })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('Rename operation failed');
+    .then(async res => {
+        if (!res.ok) {
+            // The server's own words: "merge them instead", a stale person.
+            let said = 'Rename operation failed';
+            try {
+                const body = await res.json();
+                if (body && (body.error || body.description)) said = body.error || body.description;
+            } catch (e) { /* the generic sentence */ }
+            const failure = new Error(said);
+            failure.status = res.status;
+            throw failure;
+        }
         return res.json();
     })
     .then(data => {
@@ -463,18 +568,16 @@ function postRenamePerson(oldName, newName) {
             upper.fetchPeopleWithCounts();
             fetchKnownPeople();
         } else {
-            alert('Failed to rename person');
+            alert(data.renamed === false ? 'Not renamed: ' + data.error : 'Failed to rename person');
         }
     })
     .catch(err => {
         console.error('Error renaming person:', err);
         alert('Error renaming person: ' + err.message);
+        personGone(err.status);
     })
     .finally(() => {
-        if (btnRenamePerson) {
-            btnRenamePerson.disabled = false;
-            btnRenamePerson.textContent = originalText;
-        }
+        if (btnRenamePerson) btnRenamePerson.disabled = false;
     });
 }
 
@@ -630,30 +733,40 @@ ${summary}${note}`)) {
                 const next = (i) => {
                     if (i >= runs.length) return;
                     const [person, ids] = runs[i];
-                    Promise.resolve(postMatchBulk(ids, person)).then(() => next(i + 1));
+                    // The badge's label finds its person again (two people called alike have different labels).
+                    resolveTyped(person).then(found => (found ? postMatchBulk(ids, found.person || found.name) : null))
+                        .then(() => next(i + 1));
                 };
                 next(0);
                 return;
             }
 
             if (!name) return;
-            if (!personExists(name)) {
-                if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign it to the selected face(s)?`)) {
-                    return;
+            // Who the text is: a person (the id travels), after asking which when two have the name; or a new one.
+            const ids = state.selectedFaceIds.slice();
+            resolveTyped(name).then(found => {
+                if (!found) return;
+                if (!found.person) {
+                    if (!confirm(`"${found.name}" is not currently in the database. Do you want to create a new person tag and assign it to the selected face(s)?`)) {
+                        return;
+                    }
+                } else {
+                    if (!confirm(`Are you sure you want to assign the ${ids.length} selected face(s) to "${found.person ? found.person.name : found.name}"?`)) {
+                        return;
+                    }
                 }
-            } else {
-                if (!confirm(`Are you sure you want to assign the ${state.selectedFaceIds.length} selected face(s) to "${name}"?`)) {
-                    return;
-                }
-            }
-            postMatchBulk(state.selectedFaceIds, name);
+                postMatchBulk(ids, found.person || found.name);
+            });
         });
     }
 
     if (btnRenamePerson) {
         btnRenamePerson.addEventListener('click', () => {
             if (!state.activePersonName) return;
-            const newName = prompt(`Rename person "${state.activePersonName}" to:`, state.activePersonName);
+            const row = (state.allPeopleWithCounts || []).find(each => state.activePersonId !== null
+                ? each.person_id === state.activePersonId : each.name === state.activePersonName);
+            const shownAs = row && row.person ? row.person.name : state.activePersonName;
+            const newName = prompt(`Rename person "${shownAs}" to:`, state.activePersonName);
             if (newName === null) return;
             const trimmed = newName.trim();
             if (!trimmed) {
@@ -662,11 +775,11 @@ ${summary}${note}`)) {
             }
             if (trimmed === state.activePersonName) return;
             
-            if (!confirm(`Are you sure you want to rename "${state.activePersonName}" to "${trimmed}"? This will update all of their matched face tags and photo metadata.`)) {
+            if (!confirm(`Are you sure you want to rename "${shownAs}" to "${trimmed}"? This will update all of their matched face tags and photo metadata.`)) {
                 return;
             }
             
-            postRenamePerson(state.activePersonName, trimmed);
+            postRenamePerson(state.activePersonName, trimmed, state.activePersonId);
         });
     }
 
@@ -703,12 +816,17 @@ ${summary}${note}`)) {
                 ids = JSON.parse(assignUndoBar.dataset.faceIds || '[]');
             } catch (e) { /* nothing to undo */ }
             const kind = assignUndoBar.dataset.undoKind || 'assign';
+            if (!ids.length) return hideAssignUndo();
+            // The journal's change is undone: the faces as they were AND the photo files it wrote.
+            const last = state.lastAssignChange;
+            if (last && last.kind === kind) {
+                state.lastAssignChange = null;
+                undoAssignment(ids, last.change, kind, last.plain || []);
+                return;
+            }
             hideAssignUndo();
-            if (!ids.length) return;
-            // Each action has its own way back: an assignment is unmatched, an
-            // exclusion is restored. Getting this wrong would quietly do nothing.
+            // Faces that carried no name wrote no photo, so there is no change: an exclusion is restored (an assignment always has one).
             if (kind === 'ignore') postRestoreBulk(ids, { undo: true });
-            else postUnmatchBulk(ids, { undo: true });
         });
     }
     if (btnAssignUndoDismiss) {

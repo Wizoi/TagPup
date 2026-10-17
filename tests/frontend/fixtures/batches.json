@@ -1,0 +1,10 @@
+{
+"another_program": [{"conflict": 0, "done": 0, "here": false, "id": 10, "library": "library", "operation": "bulk tags", "photos": 30, "planned": 30, "position": 0, "started": null, "state": "running", "ticket": null}],
+"cancel_answer": {"success": true},
+"cancel_of_a_batch_that_is_gone": {"body": {"error": "This server has no such batch (it may have finished, or another program runs it)", "success": false}, "status": 404},
+"cancelled_before_it_began": {"body": {"error": "The batch was cancelled before it began; nothing was written.", "success": false}, "status": 400},
+"over_the_cap": {"body": {"error": "Select up to 5,000 photos at a time (5,001 are selected).", "success": false}, "status": 400},
+"queue_full": {"body": {"error": "9 photo batches are ahead of this one (one running, 8 waiting). Try again when one has finished.", "success": false}, "status": 409},
+"running_and_queued": [{"conflict": 0, "done": 0, "here": true, "id": 10, "library": "library", "operation": "bulk tags", "photos": 60, "planned": 60, "position": 0, "started": 1000.0, "state": "running", "ticket": 1}, {"conflict": 0, "done": 0, "here": true, "id": null, "library": "library", "operation": "bulk tags", "photos": 60, "planned": 0, "position": 1, "started": null, "state": "queued", "ticket": 2}],
+"stopped_reply": {"changed": 25, "error_count": 35, "errors": [{"id": 12, "name": "p011.jpg", "why": "Stopped as asked after 25 of 60 photos: 25 file(s) were written, recorded as change 3 in History, which can be undone; the rest were not written."}, {"id": 13, "name": "p012.jpg", "why": "Stopped as asked after 25 of 60 photos: 25 file(s) were written, recorded as change 3 in History, which can be undone; the rest were not written."}], "excluded": 0, "missing": 0, "op": "tags", "requested": 60, "skipped_missing": 0, "success": true, "total": 60, "unchanged": 0}
+}

@@ -1,4 +1,4 @@
-"""A search's words (tagpup.store.search_index; docs/ARCHITECTURE.md, phase 9e-1): two FTS5 tables made by migration 24
+"""A search's words (tagpup.store.search_index; docs/ARCHITECTURE.md, phase 9e-1): two FTS5 tables made with the library (the baseline)
 and kept by the store's writes -- the words of keywords, captions and people, prefix-matched; the file name and its
 folders below the root, by trigram -- every term typed ANDed as a set with the search's sources, nothing typed ever read
 as FTS5's syntax.
@@ -11,21 +11,18 @@ import json
 import os
 import sys
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-import web_client  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library  # noqa: E402
 from face_rows import add_face  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.services import library_view, selection  # noqa: E402
-from tagpup.store import checks, db, derived, faces, journal, people, schema, search_index, taxonomy  # noqa: E402
+from tagpup.store import checks, db, derived, faces, journal, people, search_index, taxonomy  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
 
 WREN, ROWAN, ELODIE = "Wren Halloway", "Rowan Thackeray", "Élodie Marchetti"
@@ -106,22 +103,14 @@ class WhatTheWordsFind(Library):
         with self.assertRaises(Refused):
             self.found(" ".join("w%d" % n for n in range(search_index.MAX_TERMS + 1)))
 
-    def test_words_with_sources_and_in_every_order_page_as_their_list(self):
+    def test_words_with_sources_are_found_in_every_order(self):
         self.vl.photo("Misc", "harbour_b.jpg", taken="2018:01:01 10:00:00", caption="the harbour again")
         self.vl.photo("Misc", "harbour_a.jpg", caption="harbour, undated")
         for order in store.ORDERS:
             with self.subTest(order=order):
                 value = words("harbour", none_of=[{"kind": "month", "value": "2018-01"}])
                 listed = library_view.ids(self.vl.library, "search", value, order=order)
-                token, paged = None, []
-                while True:
-                    page = library_view.view(self.vl.library, "search", value, False, token, 1, order)
-                    paged += page["ids"]
-                    token = page["next"]
-                    if token is None:
-                        break
-                self.assertEqual(listed["ids"], paged)
-                self.assertEqual(2, listed["total"])
+                self.assertEqual((2, 2), (len(listed["ids"]), listed["total"]))
         within = self.found("misc", all_of=[{"kind": "year", "value": "2020"}])
         self.assertEqual([self.water], within)
 
@@ -245,132 +234,6 @@ class TheDoctor(Library):
         self.vl.conn.execute("DELETE FROM search_words WHERE rowid = ?", (self.cafe,))
         self.vl.conn.commit()
         self.assertIn("--rebuild-derived --apply", search_index.problems(self.vl.conn)[0])
-
-
-class WhileTheIndexIsBeingMade(unittest.TestCase):
-    """#753: a library below migration 24 is one whose migration is under way or due -- the server brings every library
-    it serves up to date as it starts and as a request first names it -- so a search of its words is asked again in a few
-    seconds (503, Retry-After), never told to open the library in TagPup."""
-
-    def setUp(self):
-        self.app, self.home = web_client.app_for(self, "tagpup", startup=None)
-        self.path = self.home.library("library.db")
-        at_version(self.path, 23)
-        schema._current.clear()
-        # The startup thread holds the library, migrating it: the request's own bringing up to date waits, then gives up.
-        held = mock.patch("tagpup.services.libraries.bring_up_to_date",
-                          side_effect=db.sqlite3.OperationalError("database is locked"))
-        held.start()
-        self.addCleanup(held.stop)
-
-    def test_a_search_of_words_is_answered_try_again_in_a_moment(self):
-        client = self.app.test_client()
-        for method in ("get", "post"):
-            with self.subTest(method=method):
-                if method == "get":
-                    reply = client.get("/library/api/library/ids", query_string={"kind": "search", "value": words("harbour")})
-                else:
-                    reply = client.post("/library/api/library/view", json={"kind": "search", "value": {"words": "harbour"}})
-                self.assertEqual(503, reply.status_code, reply.get_data(as_text=True))
-                self.assertEqual("5", reply.headers.get("Retry-After"))
-                self.assertIn("being made now", reply.get_json()["error"])
-                self.assertNotIn("Open it in TagPup", reply.get_json()["error"])
-        structured = client.post("/library/api/library/ids", json={"kind": "search", "value": {"none_of": [
-            {"kind": "year", "value": "1900"}]}})
-        self.assertEqual(200, structured.status_code, "a search without words does not wait for the index")
-
-    def test_at_24_with_no_tables_it_is_not_a_wait(self):
-        conn = db.connect(self.path)
-        try:
-            conn.execute("INSERT INTO schema_version VALUES (24, 'photos by their words', '2026-10-04 00:00:00')")
-            conn.commit()
-        finally:
-            conn.close()
-        reply = self.app.test_client().post("/library/api/library/ids", json={"kind": "search", "value": {"words": "x"}})
-        self.assertEqual(400, reply.status_code)
-        self.assertNotIn("being made now", reply.get_json()["error"])
-
-
-class MigrationTwentyFour(unittest.TestCase):
-    def setUp(self):
-        self.home = own_home.for_test(self)
-        self.path = self.home.library("harbour.db")
-        at_version(self.path, 23)
-        conn = db.connect(self.path)
-        try:
-            for name, caption in (("b.jpg", "Beach day"), ("a.jpg", None), ("Café.jpg", "anchor")):
-                fields = {"EXIF:DateTimeOriginal": "2024:06:01 10:00:00", "XMP:Subject": ["Trips/Coast"]}
-                if caption:
-                    fields["XMP:Description"] = caption
-                photo_rows.add_read(conn, os.path.join(self.home.root, "Pictures", "2024 Coast", name), fields)
-            conn.commit()
-        finally:
-            conn.close()
-        schema._current.clear()
-
-    def migrate(self):
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:24]), mock.patch.object(schema, "LATEST", 24):
-            return schema.ensure(self.path)
-
-    def schema_rows(self):
-        return look(self.path, "SELECT type, name, tbl_name FROM sqlite_master ORDER BY type, name")
-
-    def test_a_library_at_23_gets_the_two_tables_their_shadows_and_the_trigger_and_nothing_else(self):
-        before_schema = self.schema_rows()
-        tables = [name for (name,) in look(self.path, "SELECT name FROM sqlite_master WHERE type = 'table' "
-                                                       "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-        tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
-        before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
-        self.assertEqual(["photos by their words"], self.migrate())
-        added = sorted(row for row in self.schema_rows() if row not in before_schema)
-        expected = sorted([("table", name, name) for name in search_index.TABLES + search_index.SHADOWS]
-                          + [("trigger", "search_goes_with_its_photo", "photos")])
-        self.assertEqual(expected, added, "the FTS5 tables and their shadows, and one trigger: no column, no index")
-        self.assertEqual(before, {table: look(self.path, "SELECT * FROM %s" % table) for table in tables},
-                         "every row of every table that was there is unchanged")
-        migration = [m for m in schema.MIGRATIONS if m.version == 24][0]
-        self.assertEqual((schema.ADDITIVE, search_index.TABLES), (migration.kind, migration.touches))
-        self.assertLessEqual(set(search_index.TABLES + search_index.SHADOWS), set(schema.UNWATCHED),
-                             "a later migration's watch makes no trigger on them")
-        self.assertEqual(look(self.path, "SELECT COUNT(*) FROM photos"), look(self.path, "SELECT COUNT(*) FROM search_words"))
-        conn = db.connect(self.path)
-        try:
-            self.assertEqual([], search_index.stale(conn, sample=None))
-        finally:
-            conn.close()
-        library = ViewLibrary.__new__(ViewLibrary)
-        from tagpup.core.library import Library as Lib
-        library.library = Lib(self.path)
-        self.assertEqual(1, len(library_view.ids(library.library, "search", words("cafe"))["ids"]))
-        self.assertEqual(1, len(library_view.ids(library.library, "search", words("beach"))["ids"]))
-
-    def test_a_change_made_at_23_is_still_undoable_after_it(self):
-        applied = journal.apply(self.path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
-        self.migrate()
-        conn = db.connect(db.readonly_uri(self.path), uri=True)
-        try:
-            self.assertEqual([], journal.refusal(conn, applied.change_id))
-        finally:
-            conn.close()
-        journal.undo(self.path, applied.change_id)
-        self.assertEqual([], look(self.path, "SELECT id FROM tag_taxonomy WHERE tag = 'Fresh'"))
-
-    def test_interrupted_it_leaves_the_library_at_23_and_runs_again(self):
-        real = search_index.rebuild
-
-        def halfway(conn):
-            conn.execute("INSERT INTO search_words (rowid, tags) VALUES (1, 'partial')")
-            raise RuntimeError("the power went")
-
-        with mock.patch.object(search_index, "rebuild", side_effect=halfway):
-            with self.assertRaises(RuntimeError):
-                self.migrate()
-        self.assertEqual(23, look(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
-        self.assertEqual([], look(self.path, "SELECT name FROM sqlite_master WHERE name LIKE 'search%'"))
-        schema._current.clear()
-        with mock.patch.object(search_index, "rebuild", side_effect=real):
-            self.assertEqual(["photos by their words"], self.migrate())
-        self.assertEqual(look(self.path, "SELECT COUNT(*) FROM photos"), look(self.path, "SELECT COUNT(*) FROM search_words"))
 
 
 if __name__ == "__main__":

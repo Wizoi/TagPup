@@ -3,7 +3,7 @@ phase 8.5): its syncs, its snapshots, and one timeline of what was done in it --
 journal's changes, the recurring jobs' runs and the syncs -- newest first.
 
 Counts, times and run tags (tagpup.core.runs), from the library's own records: `changes`
-(tagpup.store.journal), `job_runs`, `sync_runs` and `damaged_files`. A job run's note -- why it failed --
+(tagpup.store.journal) and `job_runs`, the syncs among them (tagpup.store.job_runs.record_sync). A job run's note -- why it failed --
 is given as its `error`: the page that asks answers this PC alone (tagpup.web.
 activity_routes), and says what went wrong, which a count cannot. A library behind this
 version's schema reads as holding none of what it lacks; nothing is migrated by a look.
@@ -12,8 +12,8 @@ import numbers
 import time
 
 from tagpup.core import runs
-from tagpup.services import damaged_photos
-from tagpup.store import damaged_files, db, job_runs, journal, snapshots, sync_runs
+from tagpup.files import shares
+from tagpup.store import db, job_runs, journal, snapshots
 
 #: The most entries a timeline gathers from each record.
 MOST = 500
@@ -21,6 +21,17 @@ MOST = 500
 
 def _look(library):
     return db.connect(db.readonly_uri(library.path), uri=True)
+
+
+def roots_there(roots):
+    """[{"path", "there", "answering"}] of each root folder, asked as a sync asks it (shares.folder_state, bounded on
+    a share): a root on a share that does not answer is not answering, never "not there" (#1356); one on a local
+    drive that is not connected is not there (#1387)."""
+    listed = []
+    for root in roots:
+        state = shares.folder_state(root)
+        listed.append({"path": root, "there": state == "there", "answering": state != "unanswered"})
+    return listed
 
 
 def _counts(found):
@@ -41,8 +52,8 @@ def seconds_between(started, finished):
     if not started or not finished:
         return None
     try:
-        return max(0, int(time.mktime(time.strptime(finished, sync_runs.TIME))
-                          - time.mktime(time.strptime(started, sync_runs.TIME))))
+        return max(0, int(time.mktime(time.strptime(finished, job_runs.TIME))
+                          - time.mktime(time.strptime(started, job_runs.TIME))))
     except (TypeError, ValueError):
         return None
 
@@ -63,9 +74,9 @@ def sync_state(library):
     whole library counted them (None before any)."""
     conn = _look(library)
     try:
-        last = sync_runs.last(conn)
-        whole = sync_runs.newest(conn, whole=True)
-        folder = sync_runs.newest(conn, whole=False)
+        last = job_runs.last_sync(conn)
+        whole = job_runs.newest_sync(conn, whole=True)
+        folder = job_runs.newest_sync(conn, whole=False)
     finally:
         conn.close()
     counted = whole or last["last_run"]
@@ -82,55 +93,23 @@ def snapshot_list(library, now=None):
     now = time.time() if now is None else now
     found = snapshots.listed(library.path)
     return {"snapshots": [{"name": each.name, "kind": each.kind,
-                           "taken": time.strftime(sync_runs.TIME, time.localtime(each.taken)),
+                           "taken": time.strftime(job_runs.TIME, time.localtime(each.taken)),
                            "age_seconds": max(0, int(now - each.taken)), "bytes": each.size} for each in found],
             "bytes": sum(each.size for each in found)}
 
 
-def _plural(count, one, many):
-    return "%d %s" % (count, one if count == 1 else many)
-
-
-def found_damaged(records):
-    """The timeline's entries for damaged photos found (store.damaged_files): one for each
-    run of the indexer that found some -- or, found outside a run, each moment -- saying
-    how many, as {"time", "what", "counts", "run"}. What the lists count: a photo replaced
-    or changed since is no longer counted (damaged_photos.current)."""
-    groups = {}
-    for each in records:
-        key = each.run or each.found
-        group = groups.setdefault(key, {"time": each.found, "unreadable": 0, "incomplete": 0, "run": each.run})
-        group["time"] = min(group["time"], each.found)
-        group["incomplete" if each.kind == damaged_files.INCOMPLETE else "unreadable"] += 1
-    found = []
-    for group in groups.values():
-        said = []
-        if group["unreadable"]:
-            said.append(_plural(group["unreadable"], "unreadable photo", "unreadable photos"))
-        if group["incomplete"]:
-            said.append(_plural(group["incomplete"], "possibly incomplete copy", "possibly incomplete copies"))
-        found.append({"time": group["time"], "what": "found " + " and ".join(said), "run": group["run"],
-                      "counts": {"unreadable": group["unreadable"], "incomplete": group["incomplete"]}})
-    return found
-
-
 def timeline(library, limit=50):
     """What was done in `library`, newest first, at most `limit` entries: each
-    {"kind": "change" | "job" | "sync" | "found", "library", "time", "finished", "seconds",
+    {"kind": "change" | "job" | "sync", "library", "time", "finished", "seconds",
     "what", "outcome", "counts", "id", "run", "error"}. A sync's change of the journal is its
-    sync's entry, not one of its own; "found" is damaged photos found (found_damaged)."""
+    sync's entry, not one of its own."""
     limit = max(1, min(int(limit), MOST))
     entries = []
     conn = _look(library)
     try:
-        syncs = sync_runs.recent(conn, limit)
+        syncs = job_runs.recent_syncs(conn, limit)
     finally:
         conn.close()
-    damaged = damaged_photos.current(library)
-    for found in found_damaged(damaged):
-        entries.append({"kind": "found", "library": library.name, "time": found["time"], "finished": None,
-                        "seconds": None, "what": found["what"], "outcome": "needs attention",
-                        "counts": found["counts"], "id": None, "run": found["run"], "error": None})
     sync_changes = set()
     for record in syncs:
         entry = _sync_entry(library, record)
@@ -143,7 +122,7 @@ def timeline(library, limit=50):
                         "counts": dict(entry["changed"], **{"found_" + k: v for k, v in entry["found"].items()
                                                             if k in ("new", "missing", "moved", "changed")}),
                         "id": record["id"], "run": entry["run"], "error": None})
-    for run in job_runs.runs(library.path, None, limit):
+    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS):   # a sync's entry is above
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
                         "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,

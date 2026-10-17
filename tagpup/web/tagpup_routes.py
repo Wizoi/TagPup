@@ -5,7 +5,7 @@ its faces, Suggest and the bulk writes. The tag tree's routes are both apps'
 Each route is thin: it reads the request, calls a service, and shapes the reply. What
 this server keeps for a library between requests is a `tagpup.core.per_library.PerLibrary`
 here: the folder cache. The suggestion runs and the index queue keep theirs in
-`tagpup.jobs`, and the people cache is the store's, keyed by the tree's generation.
+`tagpup.jobs`.
 
 The old server kept the folder cache in a dict that resolved the library through a
 thread-local set at the top of each request, and set again by hand on every background
@@ -20,18 +20,14 @@ import threading
 
 from flask import Blueprint, Response, jsonify, request
 
-from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.core.result import Conflict, NotFound, Refused
-from tagpup.jobs import bulk_edits as bulk_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.services import bulk_edit, damaged_photos
-from tagpup.services import faces as face_actions
+from tagpup.services import bulk_edit
 from tagpup.services import file_changes, file_only
-from tagpup.services import indexing
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
 from tagpup.services import people as people_service
@@ -68,32 +64,70 @@ class FolderCache:
     page record}}. Written by a scan, kept true by every write the page makes through
     this server, and read by Suggest for the folder's photos.
 
-    A scan stores its whole recursive walk under the scanned folder's key, so a photo in
-    a subfolder is filed under an ancestor, not under its own directory. The writers
-    looked it up under paths.key(dirname(photo)) and never found it: its record went on
-    showing what it held before the write. `entries_for` finds every map holding a
-    photo, since a folder and a subfolder of it may both have been scanned.
+    A scan is kept with the library's photos and taxonomy counters as they were before the scan
+    (`stamp`, tagpup.services.photos.scan_stamp), and `get` hands it back only while they are
+    where they were. That is the one way a scan goes stale (contract table row 11): every write
+    of a held photo's row moves the photos counter, whoever makes it -- this server's writes,
+    the tag tree's rewrites, an undo, a sync, the indexer, a CLI or MCP write, a snapshot restore
+    -- a move of a root moves it too (its salt), and an edit of the tree moves the taxonomy one.
+    The scan after one is read again from the library's rows, at the cost of a stat of each file.
+    `peek` is `get` without that check, for a caller that wants the scan's spellings and not its
+    content.
+
+    A write to a photo of a folder the library does not hold is its file's only and moves no
+    counter: its records are patched (`entries_for`), which is also what the reply of a time
+    shift sends. A scan stores its whole recursive walk under the scanned folder's key, so a
+    photo in a subfolder is filed under an ancestor, not under its own directory; `entries_for`
+    finds every map holding a photo, since a folder and a subfolder of it may both have been
+    scanned.
     """
 
-    def __init__(self):
+    def __init__(self, library=None):
+        self._library = library
         self._maps = {}
+        self._stamps = {}
         self._lock = threading.Lock()
 
+    def stamp(self):
+        """The library's photos and taxonomy counters now (photos.scan_stamp): taken before a scan, given to `put` with
+        it, so a write that lands during the scan costs one more scan later and is never missed."""
+        return photo_actions.scan_stamp(self._library) if self._library is not None else None
+
     def get(self, folder):
+        key = paths.key(folder)
+        with self._lock:
+            held = self._maps.get(key)
+            if held is None:
+                return None
+            kept = self._stamps.get(key)
+        if kept == self.stamp():
+            return held
+        with self._lock:
+            if self._maps.get(key) is held:
+                del self._maps[key]
+                self._stamps.pop(key, None)
+        return None
+
+    def peek(self, folder):
         with self._lock:
             return self._maps.get(paths.key(folder))
 
-    def put(self, folder, photos):
+    def put(self, folder, photos, stamp=None):
+        """Keep a scan; `stamp` is `self.stamp()` as it was before the scan (taken now when not given)."""
+        stamp = self.stamp() if stamp is None else stamp
         with self._lock:
             self._maps[paths.key(folder)] = photos
+            self._stamps[paths.key(folder)] = stamp
 
     def pop(self, folder):
         with self._lock:
+            self._stamps.pop(paths.key(folder), None)
             return self._maps.pop(paths.key(folder), None)
 
     def clear(self):
         with self._lock:
             self._maps.clear()
+            self._stamps.clear()
 
     def entries_for(self, photo_path):
         """Every map holding this photo, as (map, record) pairs."""
@@ -110,7 +144,7 @@ class FolderCache:
         return found
 
 
-folders = state.PerLibrary(lambda library: FolderCache())
+folders = state.PerLibrary(FolderCache)
 
 
 @routes.before_request
@@ -144,38 +178,18 @@ def idle_caches(idle):
     suggestion_jobs.on_looks_use = looks_used
 
 
-def forget_scans(library):
-    """Photos of `library` were rewritten: its cached scans describe them as they were.
-    The cache is the process's, so whichever app rewrote them calls this -- the tree's
-    routes, and TagTuner's tag merge and person rename."""
-    folders.of(library).clear()
-
-
-def _folder_photos(library, folder):
-    """The folder's photos as the page was shown them, scanned now if it has not been:
-    what a suggestion run works from. Called on the run's own thread, with the library
-    it was handed."""
+def _folder_photos(library, folder, force=False):
+    """The folder's photos as the page was shown them: the one filler of the cache. Scanned now when they have not
+    been, when the library moved since (FolderCache.get), or when `force` (the page's Refresh); an empty folder is
+    walked again each time, so photos copied in after it was first opened show. Opening a folder, Suggest (on the
+    run's own thread, with the library it was handed) and a time shift."""
     cache = folders.of(library)
-    found = cache.get(folder)
+    found = None if force else cache.get(folder)
     if not found:
-        logger.info("Folder cache empty for %s; scanning it.", folder)
+        stamp = cache.stamp()
         found = photo_actions.scan_folder(library, folder, state.exiftool(library))
-        cache.put(folder, found)
+        cache.put(folder, found, stamp)
     return found
-
-
-def _folder_indexer(library):
-    """How this server adds a folder to a library: through the CLI
-    (tagpup.services.indexing.index_folder). Then the folder's cached scan is dropped,
-    since rows were written even when clustering failed afterwards. Runs on the queue's
-    thread, with the library it was handed."""
-    def index(folder, cluster, report):
-        try:
-            return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT,
-                                         cluster=cluster, report=report)
-        finally:
-            folders.of(library).pop(folder)
-    return index
 
 
 def _wanted_path():
@@ -243,30 +257,7 @@ def folder_scan():
     force = (request.args.get("force") or "false").lower() == "true"
     if not os.path.isdir(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
-    folder = paths.stored(folder)
-    cache = folders.of(library)
-    # An empty folder is walked again each time: photos copied in after it was first
-    # opened never showed until Refresh, since its empty scan was kept like any other.
-    photos = None if force else cache.get(folder)
-    if not photos:
-        photos = photo_actions.scan_folder(library, folder, state.exiftool(library))
-        cache.put(folder, photos)
-    return jsonify(_sorted(photos))
-
-
-@routes.get("/api/folder/damaged")
-def folder_damaged():
-    """The photos under the folder, at any depth, found damaged and not replaced since
-    (tagpup.services.damaged_photos), with their paths and why: the folder's notice and
-    its cards' marks. Their paths to this PC only, as the Activity page: another address is
-    answered an empty list, quietly -- the page asks as every folder opens."""
-    library = state.require()
-    folder = _wanted_path()
-    if not folder:
-        return responses.error(400, "Missing 'path' parameter")
-    if not security.from_this_pc(request.remote_addr):
-        return jsonify({"folder": paths.stored(folder), "photos": []})
-    return jsonify({"folder": paths.stored(folder), "photos": damaged_photos.listed(library, paths.stored(folder))})
+    return jsonify(_sorted(_folder_photos(library, paths.stored(folder), force)))
 
 
 @routes.get("/api/folder/membership")
@@ -299,14 +290,12 @@ def folder_index_status():
 @routes.post("/api/folder/index-start")
 def folder_index_start():
     """Queue a folder to be added to this library (tagpup.services.libraries.add, through
-    tagpup.jobs.indexing). The page asks /api/folder/add instead. Clustering re-derives
-    every face name in the library, not only this folder's, and can discard manual
-    corrections, so it is opt-in."""
+    tagpup.jobs.indexing). The page asks /api/folder/add instead. The index is followed by clustering when it
+    recorded a photo, as every index is (tagpup.services.indexing.index_folder)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    cluster = bool(body.get("cluster", False))
     result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(
-        library).start(folders, _folder_indexer(library), cluster=cluster))
+        library).start(folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, [body.get("folder_path")])
     if result.refused:
         return responses.error(400, result.message())
@@ -324,7 +313,7 @@ def folder_add():
     if not folder or not isinstance(folder, str) or not os.path.isdir(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
-        folders, _folder_indexer(library)))
+        folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, [folder])
     if result.refused:
         return responses.error(400, result.message())
@@ -339,7 +328,8 @@ def folder_suggest_status():
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
     # Under the spellings this server's scan gave the page (tagpup.jobs.suggestions).
-    return jsonify(suggestion_jobs.runs_for(library).status(folder, folders.of(library).get(folder)))
+    status = suggestion_jobs.runs_for(library).status(folder, folders.of(library).peek(folder))
+    return jsonify(people_service.annotate_suggestions(library, status))
 
 
 @routes.post("/api/folder/suggest-start")
@@ -397,10 +387,6 @@ def folder_auto_apply():
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
-    # No floor of its own. The list this writes has already been filtered to what the
-    # page was shown; a second threshold here could only take away some of what was
-    # offered, which is the behaviour that made Apply All ambiguous.
-    threshold = body.get("threshold", 0.0)
     if not folder or not os.path.isdir(folder):
         return responses.error(400, "Invalid folder path")
     suggestions = suggestion_jobs.runs_for(library).suggestions(folder)
@@ -414,19 +400,20 @@ def folder_auto_apply():
     # click on their chip files them (tagging.person_filer), the tree read once.
     try:
         # The page's records are told in the order the files were written.
-        with file_changes.exclusively():
-            result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library), threshold)
+        with file_changes.batch_exclusively(library, "apply suggestions", len(suggestions)):
+            result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library))
             if result.refused:
-                return responses.refused(result)
-            _records_written(library, result)
+                return _refused_after_writing(library, result)
+            records_written(library, result)
+    except (Conflict, Refused) as why:
+        return responses.error(409, str(why))      # too many batches wait ahead (tagpup.services.batches)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
         return responses.error(500, str(e))
     if not result.ok:
         logger.error("Error auto-applying suggestions: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result),
-                    **_where(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_where(result)})
 
 
 @routes.post("/api/folder/time-shift")
@@ -445,14 +432,11 @@ def folder_time_shift():
     # the page -- was lower case.
     folder = paths.stored(folder)
     cache = folders.of(library)
-    photos = cache.get(folder)
-    if not photos:
-        try:
-            photos = photo_actions.read_folder(library, folder, state.exiftool(library))
-            cache.put(folder, photos)
-        except Exception as e:
-            logger.error("Error scanning folder on the fly for time shift: %s", e)
-            return responses.error(500, "Folder must be scanned first, and scan fallback failed: %s" % e)
+    try:
+        photos = _folder_photos(library, folder)
+    except Exception as e:
+        logger.error("Error scanning folder on the fly for time shift: %s", e)
+        return responses.error(500, "Folder must be scanned first, and scan fallback failed: %s" % e)
     # The photos of the camera asked for (tagpup.core.fields).
     targets = [paths.stored(record["path"]) for record in photos.values()
                if fields.on_camera(record.get("raw_metadata"), camera_model)]
@@ -468,16 +452,14 @@ def folder_time_shift():
             path = paths.stored(meta["path"])
             # Every map holding the photo: this folder's, and an ancestor's scan that
             # walked into it.
-            for held, previous in cache.entries_for(path):
-                held[paths.key(path)] = photo_actions.page_record(
-                    path, meta, meta.get("mtime", previous.get("mtime", 0.0)),
-                    meta.get("size", previous.get("size", 0)))
+            for held, _previous in cache.entries_for(path):
+                held[paths.key(path)] = photo_actions.page_record(path, meta, meta["mtime"], meta["size"])
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
     return jsonify({"success": True, "updated_photos": list(photos.values()),
                     "updated_count": result.changed, "requested_count": result.attempted,
-                    **_skipped_damaged(result), **_where(result)})
+                    **_where(result)})
 
 
 @routes.post("/api/folder/rename-photos")
@@ -492,8 +474,6 @@ def folder_rename_photos():
         return responses.error(400, "Invalid folder path")
     if not photo_paths:
         return responses.error(400, "No photos selected for renaming")
-    if (refusal := _too_many(len(photo_paths))) is not None:
-        return refusal
     cache = folders.of(library)
     try:
         # In the order they were taken, by the Date Taken in the folder's cached scan; a
@@ -550,26 +530,11 @@ def folder_rename_photos():
         "updated_photos": _sorted(photos),
         "index_rows_moved": result.details["index_rows_moved"],
         "index_skipped": [new for _, new in result.details["index_skipped"]],
-        **_skipped_damaged(result), **_where(result),
+        **_where(result),
     })
 
 
 # ---- One photo ---------------------------------------------------------------------------
-
-@routes.get("/api/photo-faces")
-def photo_faces():
-    """Faces detected on one photo, with the best identity guess for each
-    (tagpup.services.faces.panel)."""
-    library = state.require()
-    photo_path = _wanted_path()
-    if not photo_path:
-        return responses.error(400, "Missing 'path' parameter")
-    try:
-        return jsonify(face_actions.panel(library, photo_path))
-    except Exception as e:
-        logger.error("Error listing faces for %s: %s", photo_path, e)
-        return responses.error(500, str(e))
-
 
 @routes.get("/api/face-crop")
 def face_crop():
@@ -609,13 +574,6 @@ def _this_pc_only():
 
 def _view_error(why):
     """The reply for what a view's service refused or could not read: its own sentence, never a traceback."""
-    if isinstance(why, library_view.WordIndexComing):
-        # Migration 24 is under way or due (#753): the page asks again.
-        reply = responses.error(503, str(why))
-        reply[0].headers["Retry-After"] = "5"
-        return reply
-    if isinstance(why, library_view.NotReady):
-        return responses.error(409, str(why))
     if isinstance(why, Refused):
         return responses.error(400, str(why))
     if isinstance(why, NotFound):
@@ -646,7 +604,7 @@ def library_navigator():
 
 
 def _source_asked():
-    """(kind, value, recursive, order, after, limit) a library view's request names: the query of a GET, or the JSON body
+    """(kind, value, recursive, order) a library view's request names: the query of a GET, or the JSON body
     of a POST -- a union of 1,000 folders on a share is longer than an address the server reads (#696), so the page sends
     a union in a body. A folder is named by `folder`, which the Roots ingress resolves through the first place of its root
     like every path of a request (in the query or the body); the other kinds by `value` (a union's: its list, or that list
@@ -656,28 +614,10 @@ def _source_asked():
         body = body if isinstance(body, dict) else {}
         kind = body.get("kind")
         value = (body.get("folder") or body.get("value")) if kind == "folder" else body.get("value")
-        return kind, value, body.get("recursive") is True, body.get("order"), body.get("after"), body.get("limit")
+        return kind, value, body.get("recursive") is True, body.get("order")
     kind = request.args.get("kind")
     value = (request.args.get("folder") or request.args.get("value")) if kind == "folder" else request.args.get("value")
-    return (kind, value, (request.args.get("recursive") or "").lower() in YES, request.args.get("order"),
-            request.args.get("after"), request.args.get("limit"))
-
-
-@routes.route("/api/library/view", methods=["GET", "POST"])
-def library_page():
-    """A page of the photos of a source, ordered by Date Taken, with the total and the cards
-    (tagpup.services.library_view.view)."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    kind, value, recursive, order, after, limit = _source_asked()
-    try:
-        return jsonify(library_view.view(library, kind, value, recursive, after, limit, order))
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
-    except Exception as e:
-        logger.error("Error reading a page of the library: %s", e, exc_info=True)
-        return responses.error(500, str(e))
+    return kind, value, (request.args.get("recursive") or "").lower() in YES, request.args.get("order")
 
 
 @routes.route("/api/library/ids", methods=["GET", "POST"])
@@ -687,7 +627,7 @@ def library_ids():
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
-    kind, value, recursive, order, _after, _limit = _source_asked()
+    kind, value, recursive, order = _source_asked()
     try:
         return jsonify(library_view.ids(library, kind, value, recursive, order=order))
     except (Refused, NotFound, paths.RootsError) as why:
@@ -789,12 +729,6 @@ def library_selection_delete_check():
         return responses.error(500, str(e))
 
 
-def _job_id(text):
-    """The id of a bulk job a request names (digits only, as a photo id is), else None."""
-    text = text or ""
-    return int(text) if text.isascii() and text.isdigit() and len(text) <= 18 else None
-
-
 def _bulk_reply(why):
     """The reply for what a bulk route's service refused: a sentence, never a traceback; None for anything else."""
     if isinstance(why, Conflict):
@@ -802,13 +736,14 @@ def _bulk_reply(why):
     return _view_error(why)
 
 
-@routes.post("/api/library/bulk/start")
-def library_bulk_start():
-    """Begin a bulk edit of a selection of photos by id, as a job with progress and a cancel (phase 9d-1,
-    tagpup.jobs.bulk_edits): `{"op": "tags"|"people"|"time_shift"|"delete", "selection": SELECTION, "params": {...}}` answers
-    `{"job"}`.
-    The edit is read and checked first (a tag the rules refuse, a person filed in two places, a shift of 0), then the selection
-    is resolved on the server; nothing is written by the request itself."""
+@routes.post("/api/library/bulk-edit")
+def library_bulk_edit():
+    """Edit a selection of photos by id, in this request (tagpup.services.bulk_edit): `{"op": "tags"|"people"|"delete",
+    "selection": SELECTION, "params": {...}}` answers when it is done, with what each photo came to: `changed`, `unchanged`,
+    `skipped_missing`, `error_count` and the first 50 `errors`. At most 5,000 photos (a selection of more
+    is refused, nothing read); about a twentieth of a second each, so a large one takes minutes and the page says so.
+    The edit is read and checked first (a tag the rules refuse, a name two people have), then the selection is resolved
+    on the server, then written as one journaled change; it goes on to its end if the page stops waiting."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
@@ -816,104 +751,19 @@ def library_bulk_start():
     body = body if isinstance(body, dict) else {}
     try:
         edit = bulk_edit.prepare(library, body.get("op"), body.get("params", {}))
-        chosen = selection_service.read(library, body.get("selection"))
-        resolved = selection_service.resolve(library, chosen)
+        resolved = selection_service.resolve(library, selection_service.read(library, body.get("selection")))
         # A delete deletes exactly the photos its question named, or nothing (#691).
         bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of)
-        job = bulk_jobs.start(library, edit, resolved.ids, state.exiftool(library),
-                              after_write=lambda: forget_scans(library))
+        out = bulk_edit.run(library, edit, resolved.ids, state.exiftool(library))
     except (Refused, NotFound, Conflict, paths.RootsError) as why:
         return _bulk_reply(why)
     except Exception as e:
-        logger.error("Error starting a bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-    return jsonify({"success": True, "job": job.handle, "op": edit.op, "total": len(resolved.ids),
-                    "requested": resolved.requested, "missing": resolved.missing, "excluded": resolved.excluded})
-
-
-@routes.get("/api/library/bulk/status")
-def library_bulk_status():
-    """How a bulk edit is getting on (tagpup.jobs.bulk_edits.status): state, counts of what changed, the first 50 errors and
-    the time left, from memory; a job this process did not run (it was restarted) is read from what the library kept.
-    `ids=1` adds `shifted_ids`, the photos a time shift has shifted, by the journal."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    job = _job_id(request.args.get("job"))
-    if job is None:
-        return responses.error(400, "job must be a whole number.")
-    try:
-        found = bulk_jobs.status(library, job)
-        if found is None:
-            return responses.error(404, "There is no bulk edit %d in this library." % job)
-        if (request.args.get("ids") or "").lower() in YES:
-            found["shifted_ids"] = sorted(bulk_jobs.shifted_ids(library, job))
-        return jsonify({"success": True, **found})
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
-    except Exception as e:
-        logger.error("Error reading a bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-
-
-@routes.get("/api/library/bulk/current")
-def library_bulk_current():
-    """The bulk edit a page opening the library should show again (phase 9d-2, tagpup.jobs.bulk_edits.current): the one
-    running, else the latest that stopped part-way; `{"job": status or null}`. A page that was closed, reloaded or left for
-    another library asks it as it opens, and picks the strip up where it was."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    try:
-        return jsonify({"success": True, "job": bulk_jobs.current(library)})
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
-    except Exception as e:
-        logger.error("Error reading the current bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-
-
-@routes.post("/api/library/bulk/cancel")
-def library_bulk_cancel():
-    """Ask a bulk edit to stop after the chunk it is writing (tagpup.jobs.bulk_edits.cancel): its status, `cancelling` true
-    while it is running; one that has finished is no error."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    body = request.get_json(silent=True)
-    job = _job_id(str(body.get("job", "")) if isinstance(body, dict) else "")
-    if job is None:
-        return responses.error(400, "job must be a whole number.")
-    try:
-        return jsonify({"success": True, **bulk_jobs.cancel(library, job)})
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
-    except Exception as e:
-        logger.error("Error cancelling a bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-
-
-@routes.post("/api/library/bulk/resume")
-def library_bulk_resume():
-    """Carry on a time shift that was cancelled, stopped or abandoned by a restart, from where its record says, shifting no
-    photo twice (tagpup.jobs.bulk_edits.resume). `409` for a job that is running or when another runs; `400` for one that
-    is not resumable."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    body = request.get_json(silent=True)
-    job = _job_id(str(body.get("job", "")) if isinstance(body, dict) else "")
-    if job is None:
-        return responses.error(400, "job must be a whole number.")
-    try:
-        resumed = bulk_jobs.resume(library, job, state.exiftool(library), after_write=lambda: forget_scans(library))
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
-    except Exception as e:
-        logger.error("Error resuming a bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-    return jsonify({"success": True, "job": resumed.handle, "total": resumed.total, "done": resumed.done,
-                    "message": resumed.message})
+        # Not the text of the exception: it can name a path. The photos written before it keep the edit (History lists them).
+        logger.error("Error in a bulk edit: %s", e, exc_info=True)
+        return responses.error(500, "The bulk edit stopped (%s); the server's log says why. Photos already written keep the "
+                                    "edit: make it again to do the rest." % type(e).__name__)
+    return jsonify({"success": True, "op": edit.op, "total": len(resolved.ids), "requested": resolved.requested,
+                    "missing": resolved.missing, "excluded": resolved.excluded, **out.reply()})
 
 
 @routes.get("/api/photo-thumb")
@@ -945,7 +795,7 @@ def photo_thumb():
     reply.headers["X-TagPup-Thumb"] = thumb.kind
     stamped = False
     try:
-        stamped = thumb.mtime is not None and abs(float(request.args.get("v")) - thumb.mtime) < 0.1
+        stamped = thumb.is_version(float(request.args.get("v")))
     except (TypeError, ValueError):
         pass
     if thumb.etag:
@@ -1048,20 +898,6 @@ def photo_delete():
     return jsonify(reply)
 
 
-#: The most photos one bulk write names (bulk tags, Smart Rename): a request over it is refused before anything is
-#: written. A write of that many runs under the global file-changes lock with no progress, no cancel and no undo
-#: of its own; a job for more arrives with the editing stage (docs/ARCHITECTURE.md, phase 9d; findings #535).
-BULK_LIMIT = 5000
-
-
-def _too_many(count):
-    """The 400 for a bulk write naming more than BULK_LIMIT photos, else None."""
-    if count > BULK_LIMIT:
-        return responses.error(400, "Narrow the selection: bulk edits over %d photos arrive with the editing stage. "
-                                    "%d were named." % (BULK_LIMIT, count))
-    return None
-
-
 def _stamp_of(sent):
     """((mtime, size) a write names, or None; why it cannot be read): the `stamp` of a request, {"mtime", "size"}, is
     the file's stamp as the record the page built the write from had it (docs: findings #533); absent is no check."""
@@ -1116,6 +952,9 @@ def photo_save_metadata():
                                             state.exiftool(library), state.rename_format(library), stamp, base)
         if result.refused:
             return responses.refused(result)
+        if not result.ok:
+            logger.error("Error saving metadata for %s: %s", photo_path, result.message())
+            return responses.error(500, result.message())
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
         # Every folder map holding the photo, found under the name it had (a rename
         # stays in the same directory).
@@ -1139,9 +978,11 @@ def photo_save_metadata():
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
     reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path),
-             "base": result.details.get("base")}
+             "base": result.details.get("base"), **_faces_unnamed(result)}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
+    if result.details.get("rename_failed"):
+        reply["rename_failed"] = result.details["rename_failed"]   # the caption was saved; the photo was not renamed after it
     return jsonify(reply)
 
 
@@ -1154,23 +995,20 @@ def photos_bulk_tags():
     remove_tags = body.get("remove_tags", [])
     if not photo_paths:
         return responses.error(400, "Missing paths list")
-    if (refusal := _too_many(len(photo_paths))) is not None:
-        return refusal
     try:
         # What is added is checked, not what is removed (tagpup.services.tagging). The
         # page's records are told in the order the files were written.
-        with file_changes.exclusively():
+        with file_changes.batch_exclusively(library, "bulk tags", len(photo_paths)):
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                                  state.exiftool(library))
             if result.refused:
-                # A write stopped half-way (its roots changed) has written some files: the page is told which,
-                # and its records say so, as for a failure.
-                if result.details.get("written"):
-                    _records_written(library, result)
-                    return responses.refused(result, written=_written_tags(result),
-                                             change=result.details.get("change"))
-                return responses.refused(result)
-            _records_written(library, result)
+                return _refused_after_writing(library, result)
+            records_written(library, result)
+    except Conflict as why:
+        return responses.error(409, str(why))      # too many batches wait ahead (tagpup.services.batches)
+    except Refused as why:
+        # More photos than a write may name (file_changes.too_many), or cancelled before its turn: nothing was written.
+        return responses.error(400, str(why))
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))
@@ -1180,7 +1018,22 @@ def photos_bulk_tags():
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
     return jsonify({"success": True, "written": _written_tags(result), **_skipped_photos(result),
-                    "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result)})
+                    "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result),
+                    **_faces_unnamed(result)})
+
+
+def _faces_unnamed(result):
+    """What a write that took a person off a photo says of the faces it unnamed (#908): `unnamed_faces`, [{"id", "name"}], for
+    the page's Undo to name again; `faces_problem`, a sentence, when they could not be. Only what happened, nothing when no face
+    was touched."""
+    said = {}
+    if result.details.get("unnamed_faces"):
+        said["unnamed_faces"] = result.details["unnamed_faces"]
+    if result.details.get("renamed_faces"):
+        said["renamed_faces"] = result.details["renamed_faces"]
+    if result.details.get("faces_problem"):
+        said["faces_problem"] = result.details["faces_problem"]
+    return said
 
 
 def _where(result):
@@ -1191,28 +1044,11 @@ def _where(result):
             file_only.WITH_ROWS: result.details.get(file_only.WITH_ROWS, 0)}
 
 
-def _skipped_damaged(result):
-    """What a bulk write's reply says of the photos it skipped as damaged
-    (tagpup.services.libraries.leave_out_damaged): {"skipped_damaged": n, "skipped":
-    [{"path", "why"}]}, the photos the page shows."""
-    count = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
-    # By what they say, not by position: a write of two parts (held photos and the others)
-    # skips in each.
-    damaged = [{"path": what, "why": why} for what, why in result.skipped if why.startswith("damaged, ")]
-    return {"skipped_damaged": count, "skipped": damaged if count else []}
-
-
 def _skipped_photos(result):
-    """_skipped_damaged, and the photos a bulk tag write left out because their files are gone
-    (tagpup.services.tagging.leave_out_missing): {"skipped_damaged": n, "skipped_missing": m,
-    "skipped": [{"path", "why"}]}."""
-    out = _skipped_damaged(result)
-    gone = result.details.get(tagging_actions.SKIPPED_MISSING, 0)
-    out["skipped_missing"] = gone
-    if gone:
-        out["skipped"] = out["skipped"] + [{"path": what, "why": why} for what, why in result.skipped
-                                           if why.startswith("missing, ")]
-    return out
+    """The photos a bulk tag write left out because their files are gone (tagpup.services.tagging.leave_out_missing):
+    {"skipped_missing": m, "skipped": [{"path", "why"}]}."""
+    return {"skipped_missing": result.details.get(tagging_actions.SKIPPED_MISSING, 0),
+            "skipped": [{"path": what, "why": why} for what, why in result.skipped if why.startswith("missing, ")]}
 
 
 def _written_tags(result):
@@ -1221,7 +1057,17 @@ def _written_tags(result):
     return {path: list(tags) for path, (tags, _flat, _hierarchical) in result.details["written"].items()}
 
 
-def _records_written(library, result):
+def _refused_after_writing(library, result):
+    """The reply to a bulk write that was refused. One that stopped half-way (its roots changed) has written
+    some files: the page is told which, and the cached records say so, as for a failure -- the one owner of that
+    answer for the bulk tag write and Apply All (findings #878)."""
+    if result.details.get("written"):
+        records_written(library, result)
+        return responses.refused(result, written=_written_tags(result), change=result.details.get("change"))
+    return responses.refused(result)
+
+
+def records_written(library, result):
     """The page's records of the photos a bulk write wrote (`written` in its details).
     The photos written before any failure are written; the page's copy of them has to
     say so either way."""
@@ -1247,8 +1093,10 @@ def tags():
 
 @routes.get("/api/people")
 def people():
-    """The people offered while a name is typed (tagpup.services.people.names)."""
+    """The people with a person tag, each `{id, name, tag}` (tagpup.services.people.records); ?include_hidden=1 adds those
+    hidden from autocomplete."""
     try:
-        return jsonify(people_service.names(state.require()))
+        library = state.require()
+        return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden") == "1"))
     except Exception as e:
         return responses.error(500, str(e))

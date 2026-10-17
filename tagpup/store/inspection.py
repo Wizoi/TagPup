@@ -7,10 +7,10 @@ writes. The questions are the ones findings were settled with, which each took a
 of its own to ask (docs/ARCHITECTURE.md, phase 7).
 """
 import json
-import os
 import re
 import sqlite3
 
+from tagpup.store import person_ids
 from tagpup.store import roots as store_roots
 
 #: How many ids go in one IN (...): well under SQLite's limit on parameters.
@@ -36,21 +36,14 @@ def _json(text, empty):
 
 # ---- What a library holds ---------------------------------------------------------------
 
-def schema_version(conn):
-    """The highest migration applied, or 0 before any was recorded."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'").fetchone():
-        return 0
-    return conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
-
-
 def tree_nodes(conn):
     """How many nodes the tag tree has."""
     return conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0]
 
 
 def people_named(conn):
-    """How many distinct people the photos list (photo_people), by exact spelling."""
-    return conn.execute("SELECT COUNT(DISTINCT name) FROM photo_people").fetchone()[0]
+    """How many distinct people the photos list (photo_people), by their node's id."""
+    return conn.execute("SELECT COUNT(DISTINCT tag_id) FROM photo_people").fetchone()[0]
 
 
 # ---- Photos -----------------------------------------------------------------------------
@@ -88,11 +81,22 @@ def tags_of(conn, photo_ids):
 
 
 def of_person(conn, name):
-    """(id, path as stored) of each photo whose people (photo_people) list `name`, spelled
-    exactly as the rows spell it, by id. idx_photo_people_name serves it."""
+    """(id, path as stored) of each photo whose people (photo_people) list the person `name` is, by id: a tag path is the one
+    person filed there, a name every person called it; a path or name no person has lists none. idx_photo_people_tag serves it."""
+    from tagpup.core import vocabulary   # read-only helper; not at import
+    known = person_ids.read(conn)
+    text = str(name).strip()
+    path = vocabulary.normalize(text)
+    if vocabulary.SEPARATOR in path:
+        found = known.by_tag.get(path.lower())
+        ids = [found.id] if found else []
+    else:
+        ids = [person.id for person in known.called(text)]
+    if not ids:
+        return []
     return store_roots.natives(conn, conn.execute(
-        "SELECT p.id, p.path FROM photos p WHERE p.id IN"
-        " (SELECT photo_id FROM photo_people WHERE name = ?) ORDER BY p.id", (name,)).fetchall(), 1)
+        "SELECT p.id, p.path FROM photos p WHERE p.id IN (SELECT photo_id FROM photo_people WHERE tag_id IN (%s)) ORDER BY p.id"
+        % _marks(ids), ids).fetchall(), 1)
 
 
 def row(conn, photo_id):
@@ -158,13 +162,10 @@ def faces_on(conn, photo_ids):
 
 # ---- Files ------------------------------------------------------------------------------
 
-def whose_file_is_gone(conn):
-    """(id, path as stored) of each photo whose file is not on disk, by path. What
-    tagpup.store.checks.missing_files counts by folder, row by row."""
-    return store_roots.ordered(conn, [
-        (photo_id, path) for photo_id, path in store_roots.natives(
-            conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1)
-        if not os.path.exists(path)], 1)
+def photo_files(conn):
+    """(id, native path) of every photo, by path: the files a library says it holds."""
+    return store_roots.ordered(conn, store_roots.natives(
+        conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1), 1)
 
 
 # ---- Query plans ------------------------------------------------------------------------

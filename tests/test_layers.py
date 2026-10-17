@@ -1,4 +1,5 @@
-"""Imports inside tagpup/ only go down the layers in docs/ARCHITECTURE.md.
+"""Imports inside tagpup/ only go down the layers in docs/ARCHITECTURE.md. The same file holds the two
+other rules about where code may sit: SQL only in tagpup/store, and scripts/ is programs, not a library.
 
 The two servers grew by importing whatever they needed from wherever it was, until
 each carried its own copy of what a photo library is: 51 function names defined in
@@ -13,6 +14,7 @@ A new layer is added to MAY_IMPORT and to docs/ARCHITECTURE.md together; a packa
 in neither fails.
 """
 import ast
+import importlib.machinery
 import os
 import re
 import sys
@@ -29,17 +31,30 @@ MAY_IMPORT = {
     "core": set(),
     "config": {"core"},
     "logs": {"core", "config"},
-    "supervisor": {"core", "config", "logs"},
-    "launcher": {"core", "config", "logs", "supervisor"},
+    "launcher": {"core", "config", "logs"},
     "store": {"core"},
     "files": {"core"},
     "ml": {"core", "files"},
     "services": {"core", "store", "files", "ml"},
     "jobs": {"core", "services"},
     "runtime": {"core", "config", "logs", "store", "files", "ml", "services", "jobs"},
-    "web": {"core", "config", "logs", "runtime", "services", "jobs", "supervisor", "launcher"},
+    "web": {"core", "config", "logs", "runtime", "services", "jobs", "launcher"},
     "cli": {"core", "config", "logs", "runtime", "services", "jobs"},
     "mcp": {"core", "config", "logs", "runtime", "services", "jobs"},
+}
+
+#: The programs (the launchers in the repository's root, and scripts/) are not in the package, and used to be checked by nothing.
+#: They are a shell over the actions: they may import every layer above the data, but not the database or the files or the
+#: models directly (`store`, `files`, `ml`): that is the services' to do, and a program that did it wrote around the rules the
+#: services keep (docs/ARCHITECTURE.md, "Layers"). These import such a layer today, each as many times as listed; the count can
+#: only go down, and the test says when it has (lower the number here). A new program, or a new import, fails.
+PROGRAMS_MAY_NOT_IMPORT = {"store", "files", "ml"}
+PROGRAMS_TODAY = {
+    "tagpup_cli.py": 6,
+    "scripts/measure_suggest_folder.py": 2,
+    "scripts/prepare_test_environment.py": 7,
+    "scripts/sandbox.py": 2,
+    "scripts/verify_workflow.py": 3,
 }
 
 #: A line importing the package itself, not a module whose name starts with "tagpup".
@@ -138,6 +153,25 @@ class ImportsGoDown(unittest.TestCase):
         """A guard that finds no files passes forever."""
         self.assertIn(os.path.join("tagpup", "store", "db.py"), package_sources())
 
+    def test_programs_reach_the_data_through_the_services(self):
+        from code_snapshot import LAUNCHERS
+        found = {}
+        for relative in python_sources():
+            name = relative.replace(os.sep, "/")
+            if not (relative in LAUNCHERS or name.startswith("scripts/")):
+                continue
+            with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+                source = handle.read()
+            count = sum(1 for target in imported_names(source, module_name(relative), False)
+                        if layer_of(target) in PROGRAMS_MAY_NOT_IMPORT)
+            if count:
+                found[name] = count
+        over = {name: n for name, n in found.items() if n > PROGRAMS_TODAY.get(name, 0)}
+        self.assertEqual({}, over, "a program imports store, files or ml directly: go through a service "
+                                   "(docs/ARCHITECTURE.md), do not raise the number")
+        under = {name: n for name, n in PROGRAMS_TODAY.items() if found.get(name, 0) < n}
+        self.assertEqual({}, under, "fewer than listed (now %s): lower PROGRAMS_TODAY, it can only go down" % found)
+
     def test_scripts_reach_the_package_through_root(self):
         """A module in scripts/ imports _root before tagpup, or works only by luck.
 
@@ -180,12 +214,146 @@ class ImportsGoDown(unittest.TestCase):
             (core, "import tagpup.files.identity", True),
             (files, "from ..store import db", True),
             (files, "from tagpup import store", True),
-            (store, "import dedupe_faces", True),
+            (store, "import reloader", True),
             (store, "def f():\n    from reloader import start_reloader_thread", True),
             (os.path.join("tagpup", "__init__.py"), "from tagpup import core", True),
         ]
         for relative, source, expected in samples:
             self.assertEqual(bool(violations(relative, source)), expected, "%s: %s" % (relative, source))
+
+
+# --- SQL is written only inside tagpup.store (#48): 210 statements sat outside it on 2026-09-24, and the same question
+# --- was asked of the database in several places in several ways. A statement is a string starting with an SQL
+# --- keyword in capitals, or a call to executemany or executescript; docstrings are prose.
+STATEMENT = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|PRAGMA|BEGIN|REPLACE|WITH)\b")
+STORE = os.path.join("tagpup", "store") + os.sep
+
+
+def sql_in(source):
+    """(line, what) of each SQL statement in `source`."""
+    tree = ast.parse(source)
+    prose = {id(n.body[0].value) for n in ast.walk(tree)
+             if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body
+             and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+    prose |= {id(part) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for part in n.values}
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in prose:
+            if STATEMENT.match(node.value):
+                found.append((node.lineno, node.value.strip().split("\n")[0][:60]))
+        elif isinstance(node, ast.JoinedStr) and node.values and isinstance(node.values[0], ast.Constant) \
+                and STATEMENT.match(str(node.values[0].value)):
+            found.append((node.lineno, str(node.values[0].value).strip()[:60]))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr in ("executemany", "executescript"):
+            found.append((node.lineno, node.func.attr))
+    return found
+
+
+# --- scripts/ holds programs and what they share, and nothing else imports from it. Every module that moved into
+# --- tagpup/ left a shim at its old name, and a test that patched a module by its old name could silently stop
+# --- reaching the code under test (#128); they are gone (ARCHITECTURE.md, "Phase 6.5: No shims").
+SCRIPTS = os.path.join(ROOT, "scripts")
+#: Modules in scripts/ that are not programs, and why each is there.
+HELPERS = {
+    "_root": "puts the repository root on sys.path for a script run directly",
+    "code_snapshot": "the code, as the installer and the measurement sandbox copy it",
+    "sandbox": "a private copy of a library, a free port and a clean-up that tells, which the measurement "
+               "scripts share (measure_identify_faces, measure_suggest_folder, measure_select_list, "
+               "measure_pipeline_stages, measure_pipeline_holdouts)",
+    "reloader": "the development auto-reloader tagpup_web.py starts",
+}
+#: A script that uses another program's code. None may be added.
+SHARED_UNTIL_TOOLS = {(os.path.join("scripts", "generate_screenshots.py"), "prepare_test_environment")}
+#: The shims and compositions phase 6.5 removed. Each name is the package's now.
+RETIRED = ("db", "paths", "taxonomy", "exiftool_session", "identity",
+           "embedder", "faces", "index", "suggester", "writer", "metadata")
+
+
+def read(relative):
+    with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+        return handle.read()
+
+
+def script_modules():
+    return sorted(os.path.splitext(name)[0] for name in os.listdir(SCRIPTS) if name.endswith(".py"))
+
+
+def is_entry_point(source):
+    """Has a module-level `if __name__ == "__main__":`."""
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare):
+            names = [node.test.left] + list(node.test.comparators)
+            if (any(isinstance(n, ast.Name) and n.id == "__name__" for n in names)
+                    and any(isinstance(n, ast.Constant) and n.value == "__main__" for n in names)):
+                return True
+    return False
+
+
+def imported_modules(source):
+    """The top-level name of every module a file imports, anywhere in it (relative imports left out)."""
+    found = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            found.add(node.module.split(".")[0])
+    return found
+
+
+class SqlOnlyInTheStore(unittest.TestCase):
+    def test_no_shipped_file_outside_the_store_holds_sql(self):
+        problems = ["%s:%d  %s" % (relative, line, what) for relative in python_sources()
+                    if not relative.startswith(STORE) for line, what in sql_in(read(relative))]
+        self.assertEqual(problems, [], "SQL outside tagpup.store:\n  " + "\n  ".join(problems))
+
+    def test_the_guard_sees_a_statement_however_it_is_written(self):
+        source = ('def plain(c):\n    """SELECT in a docstring is prose."""\n    return c.execute("SELECT path FROM photos")\n'
+                  'def built(c, w):\n    return c.execute("UPDATE faces SET name = NULL WHERE " + w)\n'
+                  'def formatted(c, t):\n    return c.execute(f"DELETE FROM {t}")\n'
+                  'def many(c, rows):\n    c.executemany("?", rows)\n')
+        self.assertEqual([3, 5, 7, 9], sorted(line for line, _ in sql_in(source)))
+        self.assertEqual([], sql_in('message = "select a folder first"\nhint = "Update the app"\n'))
+
+
+class ScriptsAreEntryPoints(unittest.TestCase):
+    def test_every_module_in_scripts_is_a_program_or_a_helper(self):
+        stray = [name for name in script_modules()
+                 if name not in HELPERS and not is_entry_point(read(os.path.join("scripts", name + ".py")))]
+        self.assertEqual([], stray, "in scripts/ but neither an entry point (a __main__ block) nor a "
+                                    "helper named in HELPERS; a module goes in tagpup/ (docs/ARCHITECTURE.md)")
+        self.assertEqual([], sorted(set(HELPERS) - set(script_modules())), "a helper that has moved comes off the list")
+
+    def test_nothing_imports_a_script_but_scripts_launchers_and_tests(self):
+        scripts = set(script_modules())
+        problems = []
+        tools = [os.path.join("tools", n) for n in sorted(os.listdir(os.path.join(ROOT, "tools"))) if n.endswith(".py")]
+        for relative in sorted(set(python_sources()) | set(tools)):
+            used = imported_modules(read(relative)) & scripts
+            if relative.startswith(("tagpup" + os.sep, "tools" + os.sep)):
+                allowed = set()
+            elif relative in LAUNCHERS:
+                allowed = set(HELPERS)
+            else:   # a script
+                own = os.path.splitext(os.path.basename(relative))[0]
+                allowed = set(HELPERS) | {own} | {m for r, m in SHARED_UNTIL_TOOLS if r == relative}
+            problems += ["%s imports %s" % (relative, name) for name in sorted(used - allowed)]
+        self.assertEqual([], problems, "only a script's tests import it; what two programs share belongs in tagpup/")
+        for relative, module in sorted(SHARED_UNTIL_TOOLS):   # an exception no longer needed comes off the list
+            self.assertIn(module, imported_modules(read(relative)), relative)
+
+    def test_the_old_names_are_gone(self):
+        """`import db` fails, from scripts/ or the root: nothing answers to an old name."""
+        for name in RETIRED:
+            self.assertIsNone(importlib.machinery.PathFinder.find_spec(name, [SCRIPTS, ROOT]), name)
+
+    def test_the_guard_recognises_what_it_forbids(self):
+        self.assertTrue(is_entry_point('import sys\n\nif __name__ == "__main__":\n    sys.exit(0)\n'))
+        self.assertTrue(is_entry_point("if '__main__' == __name__:\n    pass\n"))
+        self.assertFalse(is_entry_point('def main():\n    if __name__ == "__main__":\n        pass\n'))
+        self.assertEqual({"dedupe_faces", "tagpup", "os"},
+                         imported_modules("import os\nimport dedupe_faces\ndef f():\n    from tagpup.store import db\n"))
+        self.assertIn("reloader", imported_modules(read("tagpup_web.py")))
 
 
 if __name__ == "__main__":

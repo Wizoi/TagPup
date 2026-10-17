@@ -262,6 +262,9 @@ describe("Enter and Space", () => {
 
   test("Enter on a place whose card has not arrived opens the photo all the same (by its id)", async (t) => {
     const ctx = await viewPage(t, 400, { onCards: (asked) => ({ cards: asked.filter((id) => id < 1200).map((id) => cardOf(id)) }) });
+    // The cards' reply is held: it has not arrived, however long the frame takes. Answered, it would drop the photo
+    // (the library has no card for it), and on a busy machine it was answered before the Enter (#721).
+    ctx.hold.cards = true;
     ctx.cardById(1000).focus();
     ctx.key(ctx.focused(), "End");
     await frame(ctx.window);
@@ -287,12 +290,15 @@ describe("Enter and Space", () => {
 
   test("Space on a place whose card has not arrived selects the photo all the same, by its id; a photo the library turns out not to have is let go", async (t) => {
     const ctx = await viewPage(t, 400, { onCards: (asked) => ({ cards: asked.filter((id) => id < 1200).map((id) => cardOf(id)) }) });
+    ctx.hold.cards = true;   // not arrived, however long the frame takes (#721)
     ctx.cardById(1000).focus();
     ctx.key(ctx.focused(), "End");
     await frame(ctx.window);
     ctx.key(ctx.focused(), " ");
     assert.deepEqual(ctx.selectedIds(), [1399], "no card is needed to select a photo");
     await ctx.settle(100);
+    ctx.hold.cards = false;
+    await ctx.release("cards");
     assert.deepEqual(ctx.selectedIds(), [], "the library has no such photo (deleted since): dropped from the view, and from the selection");
   });
 });

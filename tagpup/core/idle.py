@@ -1,6 +1,6 @@
 """What a process keeps in memory only while it is used, let go after an idle period.
 
-The always-on process runs all day, and what it builds to answer quickly -- the models,
+The server runs all day, and what it builds to answer quickly -- the models,
 each library's vectors, New Person's pool of faces, the Identify Faces grids, the folder
 scans -- was held until it ended: on photo_index some 700 MB for a library opened once
 (owner, 2026-09-26: "can the in-memory cache be minimized when not in use?"). Each such
@@ -50,6 +50,25 @@ class IdleCaches:
                 cache["used"] = now
             else:
                 self._caches[name] = {"release": lambda: None, "in_use": lambda: False, "used": now}
+
+    def idle_for(self, name):
+        """Seconds since `name` was last used, or None when it was let go (or never used)."""
+        with self._lock:
+            cache = self._caches.get(name)
+            used = cache["used"] if cache is not None else None
+        return None if used is None else max(0.0, self._clock() - used)
+
+    def release_now(self, name):
+        """Let `name` go now, whatever its idle time -- the owner's button. False, and nothing
+        done, while it is in use; True once its release has run."""
+        with self._lock:
+            cache = self._caches.get(name)
+        if cache is None or cache["in_use"]():
+            return False
+        cache["release"]()
+        with self._lock:
+            cache["used"] = None
+        return True
 
     def release_idle(self):
         """Let go of each cache unused for `idle_after` and not in use; the names let go.

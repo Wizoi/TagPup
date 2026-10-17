@@ -1,7 +1,15 @@
 """A loop of per-photo writes shares ONE read of the tag tree (findings #494), and a damaged read is no
-keywords (#495). Timings are bounds, generous against the machine: the old cost was 1 ms a photo for the
-tree alone, which is what a Smart Rename of thousands of photos paid under the write lock.
+keywords (#495). The old cost was 1 ms a photo for the tree alone, which is what a Smart Rename of
+thousands of photos paid under the write lock.
+
+What is asserted is what that defect was: the reads of the tree (derived.Tree.read, which every
+refresh without a batch makes), and the times the write lock was taken, counted. Not the time it took: a wall-clock limit failed whenever the machine was busy
+(#721: 1.2 s seen as 2.97 s beside 32 busy processes), and measured the machine, not the code. The
+process's CPU time is kept as a backstop, ten times what it is on a quiet machine, against a cost that
+grows some other way. It is deliberately loose: it catches an O(n^2) or a query per photo, not a regression of
+1 ms a photo; the counted assertions are the guard.
 """
+import contextlib
 import os
 import sys
 import time
@@ -9,6 +17,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 
 import own_home  # noqa: E402
 
@@ -51,30 +60,54 @@ class WithABigTree(unittest.TestCase):
             conn.close()
         return found
 
-    def timed(self, work):
-        began = time.perf_counter()
-        work()
-        return time.perf_counter() - began
+    @contextlib.contextmanager
+    def counted(self):
+        """What the block did: `tree_reads`, the reads of the whole tag tree; `locks`, the times the
+        write lock was taken; `cpu`, the seconds of this process's CPU time it took."""
+        seen = {"tree_reads": 0, "locks": 0, "cpu": 0.0}
+        real_read, real_lock_for = derived.Tree.read, db.lock_for
+
+        def read(cls, conn):
+            seen["tree_reads"] += 1
+            return real_read.__func__(cls, conn)
+
+        def lock_for(target):
+            seen["locks"] += 1
+            return real_lock_for(target)
+
+        derived.Tree.read, db.lock_for = classmethod(read), lock_for
+        began = time.process_time()
+        try:
+            yield seen
+        finally:
+            seen["cpu"] = time.process_time() - began
+            derived.Tree.read, db.lock_for = real_read, real_lock_for
 
 
 class OneBatchForALoop(WithABigTree):
-    def test_five_thousand_follows_of_one_photo_each_with_a_shared_batch_take_under_a_second(self):
+    def test_fifty_follows_of_one_photo_each_with_a_shared_batch_read_the_tree_once(self):
         self.seed(50)
         conn = db.connect(self.path)
         try:
             conn.execute("BEGIN IMMEDIATE")
             batch = derived.Batch(conn)
-            took = self.timed(lambda: [derived.refresh_photos(conn, [1 + n % 50], batch) for n in range(5000)])
+            with self.counted() as seen:
+                for n in range(50):
+                    derived.refresh_photos(conn, [1 + n % 50], batch)
             conn.rollback()
         finally:
             conn.close()
-        self.assertLess(took, 1.0)
+        self.assertEqual(1, seen["tree_reads"], "the batch reads the tree once for the whole loop")
 
     def test_a_rename_of_two_thousand_photos_does_not_read_the_tree_for_each(self):
         paths = self.seed(2000)
         renames = {path: path.replace("IMG_", "Regatta_") for path in paths}
-        took = self.timed(lambda: photos.move_rows(self.path, renames))
-        self.assertLess(took, 1.2, "the write lock was held for %.2f s" % took)
+        with self.counted() as seen:
+            moved, skipped = photo_rows.move(self.path, renames)
+        self.assertEqual((2000, []), (moved, skipped))
+        self.assertEqual(1, seen["locks"], "the rows of every photo are moved under one taking of the write lock")
+        self.assertEqual(1, seen["tree_reads"], "and the tree is read once for all of them")
+        self.assertLess(seen["cpu"], 3.0, "0.3 s of CPU on a quiet machine")
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
             self.assertEqual([], derived.problems(conn))
@@ -84,8 +117,11 @@ class OneBatchForALoop(WithABigTree):
     def test_files_left_alone_and_followed_read_the_tree_once(self):
         paths = self.seed(2000)
         followed = [(path, {"XMP:Subject": [TAGS[(n + 1) % len(TAGS)]]}) for n, path in enumerate(paths)]
-        took = self.timed(lambda: file_changes._follow(self.library, followed))
-        self.assertLess(took, 2.5, "the write lock was held for %.2f s" % took)
+        with self.counted() as seen:
+            file_changes._follow(self.library, followed)
+        self.assertEqual(1, seen["locks"], "every file's rows are written under one taking of the write lock")
+        self.assertEqual(1, seen["tree_reads"], "and the tree is read once for all of them")
+        self.assertLess(seen["cpu"], 6.0, "0.6 s of CPU on a quiet machine")
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
             self.assertEqual([], derived.problems(conn))
@@ -122,16 +158,10 @@ class ADamagedRead(WithABigTree):
             photos.record_indexed(conn, os.path.join(self.folder, "good.jpg"),
                                   {"tags": [TAGS[0]], "raw_metadata": {}}, batch=batch)
             conn.commit()
-            self.assertEqual(5, conn.execute("SELECT COUNT(*) FROM photo_meta").fetchone()[0])
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM photo_tags").fetchone()[0])
             self.assertEqual([], derived.problems(conn))
         finally:
             conn.close()
-
-
-class NothingReadsBackWithoutAnOwner(unittest.TestCase):
-    def test_record_reads_is_gone(self):
-        self.assertFalse(hasattr(photos, "record_reads"))
 
 
 if __name__ == "__main__":

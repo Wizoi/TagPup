@@ -32,6 +32,7 @@ from tagpup.core import library as libraries
 from tagpup.core.library import Library
 from tagpup.core.result import NotFound, Refused
 from tagpup.services import duplicate_faces, inspect, person_tags, refresh_rows
+from tagpup.services import libraries as library_service
 from tagpup.services import roots as roots_service
 from tagpup.services import sync as sync_service
 from tagpup.services import journal as library_journal
@@ -47,7 +48,7 @@ INSTRUCTIONS = (
     "maintenance operations (refresh_rows, sync, merge_duplicate_person_tags, dedupe_faces), each "
     "a rehearsal unless called with apply=true, which records it as one change of the "
     "library's journal; and the journal itself: `history`, `undo` (a rehearsal unless "
-    "applied) and `prune_journal`. Call "
+    "applied). Call "
     "`libraries` first; every other tool names one of them. Answers give counts and ids. "
     "Paths, names and tags -- tags name people -- are given only with reveal=true: the "
     "library is photographs of real people, many of them minors. Ask for them only when "
@@ -111,7 +112,11 @@ def library_names():
             if os.path.exists(config.library_path(name + ".db"))]
 
 
-def find_library(name, photos=True):
+#: What a read tool says when the library is newer than this version: set by find_library, added to the answer by _answer.
+_notes = []
+
+
+def find_library(name, photos=True, writes=False):
     """The Library called `name` in the home's data folder; ToolError when there is none. And, for a
     tool that reads photos' paths (`photos`), when the library holds a root this machine does not
     place: the message names machine_roots.json and the line to add (tagpup.services.roots.problem),
@@ -119,6 +124,11 @@ def find_library(name, photos=True):
     if not name or name not in library_names():
         raise ToolError("There is no library called %r; `libraries` lists them." % (name,))
     found = Library(config.library_path(name + ".db"))
+    newer = library_service.newer_problem(found.path)
+    if newer and writes:
+        raise ToolError(newer)   # a library of a newer TagPup: this version would misread it and write it wrong
+    if newer:
+        _notes.append(library_service.newer_note(found.path))   # a read tool still reads it, as it is
     if photos:
         unplaced = roots_service.problem(found)
         if unplaced:
@@ -136,12 +146,22 @@ def _embedder(library):
         return None
 
 
-def _answer(action, reveal=False):
+def _answer(action, reveal=False, writes=False):
     """Run `action`, turning what the service refuses into the tool's error. An error
     the service did not expect is logged whole and answered by its kind alone, unless
-    `reveal`: its message can hold a path."""
+    `reveal`: its message can hold a path. A READ tool runs inside `reading_newer()` (a newer library is read as
+    it is); a tool that `writes` never does: the refusal in `ensure` is the last guard on every journaled
+    write, and a library migrated by an update while a long sync runs must not be written."""
+    del _notes[:]
     try:
-        return action()
+        if writes:
+            answer = action()
+        else:
+            with library_service.reading_newer():
+                answer = action()
+        if _notes and isinstance(answer, dict):
+            answer = dict(answer, note=_notes[0])
+        return answer
     except ToolError:
         raise
     except (NotFound, Refused) as e:
@@ -214,7 +234,8 @@ def build():
 
     @tool("Every consistency check tools/doctor.py runs, in its order, with how many rows break "
           "each and how many checks are broken; and how many photos have no CLIP vector for the "
-          "library's CLIP model (reported, not broken). Rows whose file is gone are missing_files'."
+          "library's CLIP model, and `people_at_the_top` -- the people directly under the tag tree's root, "
+          "not yet filed in a branch (reported, not broken). Rows whose file is gone are missing_files'."
           + REVEAL)
     def checks(library: str, reveal: bool = False) -> dict[str, Any]:
         def read():
@@ -225,7 +246,8 @@ def build():
     @tool("The rows whose file is not on disk, by folder: whether each folder is gone entirely, its "
           "rows as ids (up to `limit` a folder), and the faces on them -- named, named by hand, "
           "excluded, and how many different names. Answers which names sit on rows of a folder "
-          "whose files are gone (findings #42). Reported, never removed." + REVEAL)
+          "whose files are gone (findings #42). Reported, never removed. A photo on a network share "
+          "that does not answer is counted `not_looked_at`, never gone." + REVEAL)
     def missing_files(library: str, reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
         return _answer(lambda: inspect.missing_files(find_library(library), reveal, limit), reveal)
 
@@ -242,23 +264,22 @@ def build():
 
     @write_tool("Re-read the photos whose rows no longer describe their files, and record what the "
                 "files hold (tags, people, captions, raw metadata, modified time and size, a missing "
-                "DocumentID); rows that only list a caption twice are fixed from the row. `folder` "
+                "DocumentID). `folder` "
                 "limits it to the rows under a folder. SLOW even as a dry run: planning reads every "
                 "stale photo's file with ExifTool, which on a whole library can take many minutes; "
-                "ask about one folder first. Files are only read, never written. `changed_by_kind` "
-                "splits rows changed from their files and captions alone. Before applying, the "
+                "ask about one folder first. Files are only read, never written. Before applying, the "
                 "person should close TagPup and TagTuner: an open page holds rows in memory, and "
                 "its next save writes back what it held before the refresh." + APPLY + REVEAL,
                 name="refresh_rows")
     def refresh(library: str, apply: bool = False, folder: Optional[str] = None,
                 reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, writes=True)
             # The library's ExifTool, read without stamping it: a dry run writes nothing.
             exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
             return written(refresh_rows.refresh_rows(found, exiftool, apply=apply, folder=folder),
                            found, reveal, limit)
-        return _answer(act, reveal)
+        return _answer(act, reveal, writes=True)
 
     @write_tool("Bring the library in step with its folders: walk every folder it holds photos in (or "
                 "`folder`) and compare each file with its row by path, size and modified time. Rows of "
@@ -266,21 +287,21 @@ def build():
                 "a row whose file moved follows it, by its DocumentID, with its faces; new files are "
                 "counted (`new`, `new_folders`), not indexed -- index their folders in TagTuner or with "
                 "the CLI's `sync --apply`; missing files are counted by folder (`folders_gone`, "
-                "`roots_gone`: a folder on an unplugged drive looks the same as a deleted one) and never "
-                "removed. When nothing changed it reads no file. `changed_by_kind` splits rows read "
+                "`roots_gone`: a folder renamed looks the same as a deleted one) and never removed; rows "
+                "under a folder on a share not answering are `not_looked_at`, neither missing nor moved. When nothing changed it reads no file. `changed_by_kind` splits rows read "
                 "again (`from_files`) and moved (`relinked`). An applied run is recorded as the "
                 "library's last sync (`sync_state`)." + APPLY + REVEAL,
                 name="sync")
     def sync(library: str, apply: bool = False, folder: Optional[str] = None,
              reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, writes=True)
             result = runtimes.sync(found, folder=folder, apply=apply, index_new=False)
             answer = written(result, found, reveal, limit)
             answer["in_step"] = result.details["in_step"]
             answer["warnings"] = result.details.get("warnings", [])
             return answer
-        return _answer(act, reveal)
+        return _answer(act, reveal, writes=True)
 
     @tool("When the library was last in step with its folders, and its last applied sync: when it "
           "started and finished, whether it looked at the whole library, whether it left it in step, "
@@ -296,9 +317,9 @@ def build():
     def merge_duplicate_person_tags(library: str, apply: bool = False, reveal: bool = False,
                                     limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, writes=True)
             return written(person_tags.merge_duplicate_person_tags(found, apply=apply), found, reveal, limit)
-        return _answer(act, reveal)
+        return _answer(act, reveal, writes=True)
 
     @write_tool("Remove face rows that copy another face of the same photo (same box) and know no "
                 "more than the copy kept: a name given by hand or an exclusion always wins. Faces "
@@ -307,18 +328,16 @@ def build():
     def dedupe_faces(library: str, apply: bool = False, reveal: bool = False,
                      limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, writes=True)
             return written(duplicate_faces.dedupe_faces(found, apply=apply), found, reveal, limit)
-        return _answer(act, reveal)
+        return _answer(act, reveal, writes=True)
 
     @tool("The library's journal: every change a maintenance operation applied, newest first (up to "
-          "`limit`), each with its id, operation, status (applied, derived_pending, undone, pruned), "
+          "`limit`), each with its id, operation, status (applied, derived_pending, undone), "
           "the schema version it was made at, when it was made, applied and undone, its summary "
           "(counts), and how many rows of each table it inserted, updated and deleted. With `change`, "
           "that change alone and the keys (ids) of every row it wrote; with reveal=true too, each "
-          "column's value before and after (a BLOB by its size), which can name people. Changes stay "
-          "undoable for %d days; then pruning keeps the summary and drops the values."
-          % library_journal.RETENTION_DAYS)
+          "column's value before and after (a BLOB by its size), which can name people.")
     def history(library: str, change: Optional[int] = None, reveal: bool = False,
                 limit: int = 20) -> dict[str, Any]:
         return _answer(lambda: library_journal.history(find_library(library, photos=False), change, reveal, limit), reveal)
@@ -333,26 +352,11 @@ def build():
                 "Answers name tables, row ids and columns, never values.")
     def undo(library: str, change: int, apply: bool = False) -> dict[str, Any]:
         def act():
-            found = find_library(library, photos=False)
+            found = find_library(library, photos=False, writes=True)
             # A change of photo files is undone file by file, through the library's ExifTool.
             exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
             return written(library_journal.undo(found, change, apply=apply, exiftool_path=exiftool), found)
-        return _answer(act)
-
-    @write_tool("Prune the library's journal: the changes older than `days` (%d unless given) keep their "
-                "summary and lose their values, and can no longer be undone. The default is a dry run "
-                "saying how many changes and values it would take away; apply=true does it. The changes of a bulk time shift "
-                "that can still be resumed are never taken (`kept`, and `note` says it)."
-                % library_journal.RETENTION_DAYS)
-    def prune_journal(library: str, days: int = library_journal.RETENTION_DAYS,
-                      apply: bool = False) -> dict[str, Any]:
-        def act():
-            found = find_library(library, photos=False)
-            result = library_journal.prune(found, days, apply=apply)
-            return {"ok": result.ok, "dry_run": not apply, "changes": result.attempted,
-                    "pruned": result.changed, "values": result.details["values"], "days": days,
-                    "kept": result.details["kept"], "note": result.details["note"]}
-        return _answer(act)
+        return _answer(act, writes=True)
 
     return server
 

@@ -20,20 +20,27 @@ folder scan's rule), and sorts what differs:
   reported as ambiguous, never guessed, and the folders of its files are not queued.
   What that leaves is matched by the DocumentID (or, renamed in its folder by TagPup,
   the PreservedFileName) read from those new files alone (relink_photos.claims_of, pair);
-- damaged files -- a new file the indexer found does not decode, whose file still has
-  the stamp it had then (tagpup.services.damaged_photos): not new, and not queued. Queued,
-  it failed again, and each run loaded the photo index and CLIP for nothing -- the watcher
-  and the catch-up sync queued it over and over (docs/findings.md, #407). Counted as
-  `unreadable_files`, and the library is in step all the same: restoring the file is the
-  owner's, and once the file changes it is new again;
+- pictures changed -- a changed file whose SIZE differs from its row's: its picture may have been edited
+  elsewhere, and its vector and face boxes are then the old picture's (docs/findings.md, #336). COUNTED
+  (`size_changed`) and shown by the CLI, nothing more: a keyword or caption write changes a file's size too, and
+  of the 1,229 size changes photo_index's journal holds every one was a metadata write. The row is re-read like
+  any changed row (tags, captions, raw metadata, stamp); its vector and faces are left as they are, and the owner
+  fixes a real picture edit by hand (owner, 2026-10-10: the command that took them away on a setting is gone);
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
-  removed. A folder on an unplugged drive looks the same as a deleted one, so removing
+  removed. A folder renamed in Explorer looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
-  folders are wholly gone.
+  folders are wholly gone (on a local drive, connected or not, or a share that answers:
+  shares.folder_state).
+- not looked at -- a row under a folder the walk could not look at: a root on a share that
+  does not answer (tagpup.files.shares.folder_state), or a folder whose listing failed or
+  dropped part-way (images.stamps_under's `unlisted`). Neither missing nor paired with a
+  file elsewhere, and the library is not in step (owner, 2026-10-15; #1356): a share
+  asleep once read as a root gone, and an applied sync could take a copy for a move.
 
 Which folders: the library's root folders (its settings, tagpup.services.settings) and
 every folder it holds photos in, each walked once from the topmost, or the one folder
-asked for. New files in a folder the library holds photos in are queued with that folder
+asked for. A library with no roots set yet walks the folders it holds, and a new subfolder
+of one is a folder to review as under a root, never queued unasked (#395). New files in a folder the library holds photos in are queued with that folder
 alone (indexed without its subfolders); a folder under a root that holds photos and no
 indexed photo is not indexed on its own: it is listed as a folder to review (`review`),
 which the page offers to include (`include`: indexed with its subfolders) or to ignore
@@ -46,28 +53,37 @@ On the maintenance scaffold (tagpup.services.maintenance): a dry run by default,
 reads and rehearses and writes nothing -- neither a row nor a photo file (the files are
 only ever read: no DocumentID is minted); applied, the re-read rows and the moved rows are
 one change of the journal, `sync`, undoable. Then the new files' folders are queued, and
-the run is recorded in the library (tagpup.store.sync_runs): what it found and what it
+the run is recorded in the library (tagpup.store.job_runs.record_sync, a run of the job "sync-whole" or
+"sync-folder"): what it found and what it
 changed, and whether it left the library in step -- nothing new, changed or moved left
-over; missing files do not count against it -- which is the pages' "last in step".
+over and no folder left unlooked at; missing files do not count against it -- which is the
+pages' "last in step".
 """
+import logging
 import os
 import threading
 import time
 
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
-from tagpup.files import images
-from tagpup.services import damaged_photos, maintenance, refresh_rows, relink_photos
+from tagpup.files import images, shares
+from tagpup.services import maintenance, refresh_rows, relink_photos
 from tagpup.services import roots as roots_service
-from tagpup.store import damaged_files, db, generations, schema, sync_runs
+from tagpup.store import db, generations, job_runs, schema
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
+
+logger = logging.getLogger(__name__)
 
 #: What the change is recorded as.
 OPERATION = "sync"
 
 #: The kinds of row the change writes: re-read from its file, or following its file.
 KINDS = ("from_files", "relinked")
+
+#: How long a sync waits to hear whether a root, or a missing row's folder, on a network share is there, in seconds:
+#: a job, not a page, so longer than shares.SHARE_WAIT; one that does not answer in it is not looked at.
+FOLDER_WAIT = 10.0
 
 
 def walk_roots(folders):
@@ -116,47 +132,75 @@ def pair_by_stamp(missing, new):
 
 
 def _missing_by_folder(missing):
-    """[(folder, rows, whether it is gone)] of the missing rows' folders, the most first."""
+    """[(folder, rows, whether it is gone)] of the missing rows' folders, the most first: on a share, gone only when
+    the share answers that it is not there (shares.folder_state)."""
     by_folder = {}
     for _photo_id, path in missing:
         folder = os.path.dirname(path)
         by_folder.setdefault(paths.key(folder), [folder, 0])[1] += 1
-    listed = [(folder, count, not os.path.isdir(folder)) for folder, count in by_folder.values()]
+    listed = [(folder, count, shares.folder_state(folder, FOLDER_WAIT) == "gone") for folder, count in by_folder.values()]
     return sorted(listed, key=lambda entry: (-entry[1], paths.key(entry[0])))
 
 
 def _under_any(folder, folders):
-    """Is `folder` one of `folders` ({key: spelling}), or under one?"""
-    key = paths.key(folder)
-    return key in folders or any(paths.is_under(folder, other) for other in folders.values())
+    """Is `folder` one of `folders` ({key: spelling}), or under one? Its parents are asked of the keys, one each: a
+    sync whose listing failed for a thousand folders asks it of every row it did not see (_unseen)."""
+    current = paths.stored(folder)
+    while folders:
+        key = paths.key(current)
+        # A share's own folder is keyed without its last separator, and is its parents' dirname with it.
+        if key in folders or key.rstrip(os.sep) in folders or key + os.sep in folders:
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return False
+
+
+def watch_states(folders):
+    """{paths.key(folder): "there", "gone" or "unanswered"} of the folders the watcher watches or would (shares.folder_state,
+    each within its SHARE_WAIT): what it asks before it watches under one, a share that does not answer being neither there
+    nor gone. The jobs layer asks sync, not tagpup.files (tests/test_layers.py)."""
+    return {paths.key(folder): shares.folder_state(folder) for folder in folders}
 
 
 def _scan(conn, folder, roots, library_folders):
     """What is on disk against the rows: (by_key {key: (id, path, mtime, size)} of the rows
-    looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there).
+    looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there,
+    those that did not answer, those under them that would not list).
     The whole library walks every root and every folder of the library's
     (`library_folders`, tagpup.store.folders: those with rows, and those added), each once
-    from the topmost; a folder, that folder alone."""
+    from the topmost; a folder, that folder alone. Each is asked through shares.folder_state."""
     by_key = {}
     for photo_id, path, mtime, size in store_photos.stamps(conn, folder):
         by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
     walked = [paths.stored(folder)] if folder else walk_roots(set(roots) | set(library_folders.walked()))
-    on_disk, gone = {}, []
+    on_disk, gone, unanswered, unlisted = {}, [], [], []
     for root in walked:
-        if os.path.isdir(root):
-            on_disk.update(images.stamps_under(root))
-        else:
+        state = shares.folder_state(root, FOLDER_WAIT)
+        if state == "there":
+            on_disk.update(images.stamps_under(root, unlisted))
+        elif state == "gone":
             gone.append(root)
-    return by_key, on_disk, walked, gone
+        else:
+            unanswered.append(root)
+    return by_key, on_disk, walked, gone, unanswered, unlisted
 
 
-def _pass_over_damaged(conn, new):
-    """(the new files but those found not to decode and unchanged since, {key: path} of
-    those). One read of the records: a handful."""
-    known = damaged_photos.unreadable(damaged_files.every(conn))
-    damaged = {key: path for key, (path, mtime, size) in new.items()
-               if key in known and damaged_photos.describes(known[key], (mtime, size))}
-    return {key: stamp for key, stamp in new.items() if key not in damaged}, damaged
+def _unseen(by_key, on_disk, not_looked_at):
+    """(missing [(photo_id, path, mtime, size)], not looked at [photo_id]) of the rows whose file the walk did not
+    see: not looked at when under a folder the walk could not look at (`not_looked_at`, folders)."""
+    folders = {paths.key(f): f for f in not_looked_at}
+    missing, unseen = [], []
+    for key, (photo_id, path, mtime, size) in by_key.items():
+        if key in on_disk:
+            continue
+        if folders and _under_any(os.path.dirname(path), folders):
+            unseen.append(photo_id)
+        else:
+            missing.append((photo_id, path, mtime, size))
+    return missing, unseen
 
 
 def _missing_elsewhere(conn, by_key, new):
@@ -167,7 +211,8 @@ def _missing_elsewhere(conn, by_key, new):
     wanted = {(os.path.basename(path), size) for path, _m, size in new.values()}
     found = []
     for photo_id, path, mtime, size in store_photos.stamps(conn):
-        if (os.path.basename(path), size) in wanted and paths.key(path) not in by_key and not os.path.exists(path):
+        if ((os.path.basename(path), size) in wanted and paths.key(path) not in by_key
+                and shares.stamp_of(path) is None):
             found.append((photo_id, path, mtime, size))
     return found
 
@@ -196,8 +241,8 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots, library_folde
     """Where each new file goes: ({indexed folder: new files}, the folders its new files
     are queued for; {folder to review: photos}; photos under an ignored folder; {folder
     held back: files}; photos in no folder the library holds and under none of `roots`).
-    With no `roots` (none set yet), a new file under a held folder is queued with its own
-    folder, whether the library holds it or not, and nothing is reviewed.
+    With no `roots` (none set yet), a new subfolder of a held folder is a folder to review, as
+    under a root: never queued unasked.
     A new file in a folder the library holds photos in is indexed
     with that folder alone. One in a folder holding none is under a folder to review: the
     topmost above it, below a root (`stops`, keys), that holds no indexed photo at any
@@ -244,15 +289,9 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots, library_folde
                 top = parent
             tops[folder_key] = top
         top = tops[folder_key]
-        if not roots:
-            # A library with no roots (none set yet): every folder under one it holds is
-            # kept in step as indexing walked it -- a new subfolder queued too, each
-            # folder of new files indexed on its own -- and nothing is reviewed.
-            if folder_key in ambiguous_folders:
-                held_back[folder] = held_back.get(folder, 0) + 1
-            else:
-                queued.setdefault(folder_key, [folder, 0])[1] += 1
-        elif not _under_any(folder, roots):
+        # A library with no roots (none set yet) offers a new subfolder of a folder it holds for review, as it does
+        # under a root, and never queues it unasked (#395); nothing is "outside" the roots it has not got.
+        if roots and not _under_any(folder, roots):
             # Beside a folder the library holds outside every root (a folder indexed by
             # hand, elsewhere): kept in step itself, and nothing new beside it offered.
             outside += 1
@@ -289,22 +328,26 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         library_folders = store_folders.of(conn, list(ignored_by_key.values()))
-        by_key, on_disk, walked, roots_gone = _scan(conn, folder, roots, library_folders)
+        by_key, on_disk, walked, roots_gone, unanswered, unlisted = _scan(conn, folder, roots, library_folders)
         if (folder is not None and not by_key and not library_folders.holds(folder)
                 and not _under_any(folder, {paths.key(r): r for r in roots})):
             return maintenance.Plan(refused=(
                 "The library holds no photo under that folder, and it is under none of the library's root "
                 "folders: sync keeps the library's folders in step. To add it, add a root folder or index it."))
 
-        changed, missing, never_stamped = {}, [], 0
+        not_looked_at = unanswered + unlisted
+        missing, unseen = _unseen(by_key, on_disk, not_looked_at)
+        changed, never_stamped, resized = {}, 0, set()
         for key, (photo_id, path, mtime, size) in by_key.items():
             stamp = on_disk.get(key)
             if stamp is None:
-                missing.append((photo_id, path, mtime, size))
-            elif not store_photos.describes(mtime, size, stamp[1:]):
+                continue
+            if not store_photos.describes(mtime, size, stamp[1:]):
                 changed[path] = photo_id
                 never_stamped += mtime is None or size is None
-        new, damaged = _pass_over_damaged(conn, {key: stamp for key, stamp in on_disk.items() if key not in by_key})
+                if size is not None and size != stamp[2]:
+                    resized.add(path)
+        new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
 
         # Moved: a missing row whose file turns up among the new ones. A folder alone also
         # looks for the rows of files moved in from elsewhere.
@@ -332,10 +375,12 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
             found[path] = {"mtime": mtime, "size": size, "tags": tags, "captions": captions, "raw_metadata": raw}
         records, to_write, fields, unreadable, _shown, identities = refresh_rows.reread(
             conn, {path: ["mtime/size"] for path in changed}, exiftool_path)
+        # A file ExifTool could not read is left for the next sync: its faces are not thrown away unseen.
+        resized -= set(unreadable)
     finally:
         conn.close()
 
-    edits = refresh_rows.edits_for(records, to_write, {}, found, identities, changed)
+    edits = refresh_rows.edits_for(records, to_write, found, identities, changed)
     moved_edits, occupied = relink_photos.edits_for(library, moves)
     by_folder = _missing_by_folder(missing)
     stops = {paths.key(root) for root in walked + roots}
@@ -347,19 +392,22 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     listed = [{"path": top, "photos": review[top]} for top in sorted(review, key=paths.key)]
     return maintenance.Plan(
         size=len(edits) + len(moved_edits),
-        counts={"rows": len(by_key), "files": len(on_disk), "folders_walked": len(walked) - len(roots_gone),
+        counts={"rows": len(by_key), "files": len(on_disk),
+                "folders_walked": len(walked) - len(roots_gone) - len(unanswered)
+                - len({paths.key(f) for f in walked} & {paths.key(f) for f in unlisted}),
                 "new": sum(queued.values()), "new_folders": len(new_folders),
                 "review_folders": len(review), "review_photos": sum(review.values()),
                 "ignored_files": ignored_files, "outside_roots_files": outside,
                 "changed": len(changed), "never_stamped": never_stamped, "to_write": len(to_write),
+                "size_changed": len(resized),
                 "fields": dict(fields.most_common()), "unreadable": len(unreadable),
                 "moved": len(moves), "moved_faces": sum(m["faces"] for m in moves),
                 "moved_named": sum(m["named"] for m in moves), "moved_changed": moved_changed,
                 "occupied": len(occupied), "ambiguous_rows": len(ambiguous_rows),
                 "ambiguous_files": len(ambiguous_files), "held_back_folders": len(held_back),
-                "unreadable_files": len(damaged),
                 "missing": len(missing), "missing_folders": len(by_folder),
-                "folders_gone": sum(1 for _f, _n, gone in by_folder if gone), "roots_gone": len(roots_gone)},
+                "folders_gone": sum(1 for _f, _n, gone in by_folder if gone), "roots_gone": len(roots_gone),
+                "not_looked_at": len(unseen), "folders_not_looked_at": len(not_looked_at)},
         ids={"changed": sorted(changed.values()), "to_write": sorted(changed[p] for p in to_write),
              "unreadable": sorted(changed[p] for p in unreadable),
              "moved": sorted(id_of[paths.key(m["from"])] for m in moves),
@@ -370,7 +418,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "ambiguous": {"rows": ambiguous_rows, "files": sorted(new[key][0] for key in ambiguous_files),
                               "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
-                "roots_gone": roots_gone, "unreadable_files": sorted(damaged.values(), key=paths.key)},
+                "roots_gone": roots_gone, "not_looked_at": sorted(not_looked_at, key=paths.key)},
         work={"edits": edits + moved_edits, "new_folders": new_folders})
 
 
@@ -383,10 +431,9 @@ def review(library, roots=(), ignored=()):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         library_folders = store_folders.of(conn, [paths.stored(f) for f in ignored])
-        by_key, on_disk, walked, _gone = _scan(conn, None, roots, library_folders)
-        missing = [(photo_id, path, mtime, size) for key, (photo_id, path, mtime, size) in by_key.items()
-                   if key not in on_disk]
-        new, _damaged = _pass_over_damaged(conn, {key: stamp for key, stamp in on_disk.items() if key not in by_key})
+        by_key, on_disk, walked, _gone, unanswered, unlisted = _scan(conn, None, roots, library_folders)
+        missing, _unseen_ids = _unseen(by_key, on_disk, unanswered + unlisted)
+        new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
         ambiguous_files = set()
         if missing and new:
             pairs, _rows, ambiguous_files = _pair_moves(conn, by_key, missing, new, None, read=False)
@@ -402,22 +449,38 @@ def review(library, roots=(), ignored=()):
     return {"folders": listed, "photos": sum(found.values())}
 
 
-def include(library, folder, roots, queue):
+def include(library, folder, roots, queue, ignored=()):
     """Index a folder to review, with its subfolders: `queue([folder])` (the index queue's
     start). Refused for a folder the rules do not take as one, one not on disk, and one
-    under none of the library's `roots`. A Result: `changed` 1 when it was queued."""
+    under none of the library's `roots` -- or, a library with no roots yet, under none of the
+    folders it holds (never an ignored one: `ignored`, the library's, as look has it). A Result: `changed` 1 when it was queued."""
     result = Result(attempted=1)
     problem = validation.problem("folder", folder)
     if problem:
         result.refuse(problem)
         return result
     folder = paths.stored(folder)
-    if not os.path.isdir(folder):
-        result.refuse("That folder is not on disk.")
+    state = shares.folder_state(folder)
+    if state != "there":
+        result.refuse("That folder is not on disk." if state == "gone" else
+                      "That folder's share is not answering: try again when it is.")
         return result
-    if not _under_any(folder, {paths.key(r): paths.stored(r) for r in roots}):
-        result.refuse("That folder is under none of the library's root folders.")
+    if ignored and _under_any(folder, {paths.key(f): paths.stored(f) for f in ignored}):
+        result.refuse("That folder is one the library ignores (or under one).")
         return result
+    if roots:
+        if not _under_any(folder, {paths.key(r): paths.stored(r) for r in roots}):
+            result.refuse("That folder is under none of the library's root folders.")
+            return result
+    else:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            walked = store_folders.of(conn, [paths.stored(f) for f in ignored]).walked()
+        finally:
+            conn.close()
+        if not _under_any(folder, {paths.key(f): f for f in walked}):
+            result.refuse("That folder is under none of the folders the library holds.")
+            return result
     outcome = queue([folder])
     result.changed = outcome.changed
     for what, why in outcome.skipped:
@@ -430,13 +493,12 @@ def include(library, folder, roots, queue):
 def in_step(counts, result=None):
     """Is the library in step with its folders by what a sync found (`counts`) and, once
     applied, did (`result`)? Nothing new, nothing changed or moved left unwritten, nothing
-    unreadable. Missing files do not count: they are reported, and removing their rows is
-    the owner's choice; nor do damaged files passed over (`unreadable_files`): restoring
-    them is. A sync refused found nothing to say so."""
+    unreadable, no folder it could not look at. Missing files do not count: they are reported,
+    and removing their rows is the owner's choice. A sync refused found nothing to say so."""
     if not counts:
         return False
     if (counts.get("new") or counts.get("unreadable") or counts.get("moved_changed") or counts.get("occupied")
-            or counts.get("ambiguous_rows")):
+            or counts.get("ambiguous_rows") or counts.get("folders_not_looked_at")):
         return False
     if result is None:
         return not (counts.get("to_write") or counts.get("moved"))
@@ -457,12 +519,12 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
     Applied, the folders holding new files are handed to `queue(folders)`, which returns
     the index queue's Result (tagpup.jobs.indexing.IndexQueue.start): details["queued"] is
     the folders it queued. Without a queue they are reported, not queued. Then the run is
-    recorded (tagpup.store.sync_runs) -- unless it was refused or its write failed, when
-    nothing is queued or recorded; a record that cannot be written is one of
+    recorded (tagpup.store.job_runs.record_sync) -- unless it was refused or its write failed, when
+    nothing is queued or recorded, or it was of one folder and found and changed nothing (worth_recording); a record that cannot be written is one of
     details["warnings"], not a failure of the write. details["in_step"] says whether the
     library is in step: for a dry run, as found; applied, after the write.
     """
-    started = sync_runs.now()
+    started = job_runs.stamp(time.time())
     # Every line the sync logs carries its tag, made from what its record keeps (the
     # library and when it started): the Activity page's "Logs for this run".
     try:
@@ -477,8 +539,13 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
 def _not_run(stop, apply):
     """A sync that did not run -- the library's roots changed under it, or this machine does
     not place one: a refused Result with what the callers read of any, and why."""
+    return not_run(roots_service.stopped(stop), apply)
+
+
+def not_run(why, apply):
+    """A sync that did not run, `why` said: a refused Result with what the callers read of any."""
     result = Result()
-    result.refuse(roots_service.stopped(stop))
+    result.refuse(why)
     result.details.update(counts={}, in_step=False, changed={kind: 0 for kind in KINDS}, queued=0, warnings=[],
                           dry_run=not apply)
     return result
@@ -491,8 +558,7 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
         held["plan"] = look(found_library, folder, exiftool_path, roots, ignored)
         return held["plan"]
 
-    result = maintenance.run(library, OPERATION, plan, lambda planned: planned.work["edits"],
-                             apply=apply, kinds=KINDS)
+    result = maintenance.run(library, OPERATION, plan, lambda planned: planned.work["edits"], apply=apply, kinds=KINDS)
     planned = held.get("plan")
     counts = result.details["counts"]
     if not apply:
@@ -509,16 +575,6 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
         result.details["in_step"] = False
         return result
     new_folders = list(planned.work["new_folders"]) if planned is not None and planned.work else []
-    try:
-        # A damaged photo replaced, changed or deleted is no longer one (damaged_photos): a
-        # changed one is indexed again for real, its folder queued with the new files'.
-        pruned = damaged_photos.prune(library)
-        result.details["damaged_forgotten"] = pruned["forgotten"]
-        known = {paths.key(folder) for folder in new_folders}
-        new_folders += [folder for folder in pruned["folders"] if paths.key(folder) not in known]
-    except Exception as e:
-        result.details["warnings"].append("The damaged photos found before were not checked (%s: %s)."
-                                          % (type(e).__name__, e))
     queued = 0
     if new_folders and queue is not None:
         try:
@@ -531,16 +587,40 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
     result.details["queued"] = queued
     result.details["in_step"] = in_step(counts, result)
     try:
-        result.details["record"] = sync_runs.record(
-            library.path, started, whole=folder is None, in_step=result.details["in_step"],
-            found={what: n for what, n in counts.items() if isinstance(n, int)},
-            changed={"rows": result.changed, **result.details["changed"], "queued_folders": queued},
-            change_id=result.details.get("change"))
+        if worth_recording(library, folder is None, result.details["in_step"], counts, result.changed, queued):
+            result.details["record"] = job_runs.record_sync(
+                library.path, started, whole=folder is None, in_step=result.details["in_step"],
+                found={what: n for what, n in counts.items() if isinstance(n, int)},
+                changed={"rows": result.changed, **result.details["changed"], "queued_folders": queued},
+                change_id=result.details.get("change"))
     except Exception as e:
         # The rows are written and the folders queued; only the record of it is missing.
         result.details["warnings"].append("The sync was not recorded (%s: %s); the next sync records its own."
                                           % (type(e).__name__, e))
     return result
+
+
+#: What a sync of one folder can find that makes it worth a record by itself (the Activity page's "found_..." counts).
+FOUND_WORTH = ("new", "missing", "moved", "changed")
+
+
+def worth_recording(library, whole, in_step, counts, changed, queued):
+    """Is a sync, just applied, recorded? The whole library's always. A folder's when it found (FOUND_WORTH), changed or queued
+    something, or left the library not in step -- and, when it found nothing, when the newest record says not in step, so that
+    "in step" is not left standing on an older one. A folder settling on nothing is not: the watcher syncs a folder each time
+    one settles, and a record of each pushed the daily whole sync out of the old table (the Files owner's finding). A read that
+    fails records."""
+    if whole or not in_step or changed or queued or any(counts.get(what) for what in FOUND_WORTH):
+        return True
+    try:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            newest = job_runs.newest_sync(conn)
+        finally:
+            conn.close()
+    except Exception:
+        return True
+    return newest is not None and not newest["in_step"]
 
 
 #: {library key: (photos generation, the folders it holds photos in)}: watch_folders is
@@ -551,7 +631,7 @@ _held_lock = threading.Lock()
 
 
 def watch_folders(library, roots=()):
-    """The folders the always-on process watches for `library` (tagpup.jobs.watching): its
+    """The folders the server watches for `library` (tagpup.jobs.watching): its
     root folders and every folder of the library's (tagpup.store.folders: with rows, or
     added), each the topmost of those under it -- the folders sync keeps in step. None for
     a library behind this version's schema: it is left alone until an app opens it and
@@ -581,23 +661,23 @@ def synced_whole_within(library, seconds):
     kept only for a sync that wrote what it found.)"""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        finished = sync_runs.last_whole(conn)
+        newest = job_runs.newest_sync(conn, whole=True)
     finally:
         conn.close()
-    if not finished:
+    if not newest:
         return False
     try:
-        at = time.mktime(time.strptime(finished, sync_runs.TIME))
+        at = time.mktime(time.strptime(newest["finished"], job_runs.TIME))
     except (TypeError, ValueError):
         return False
     return time.time() - at < seconds
 
 
 def last(library):
-    """{"last_run", "last_in_step"} of `library` (tagpup.store.sync_runs.last): counts and
-    times, never a path. Reads only; a library from before migration 14 has neither."""
+    """{"last_run", "last_in_step"} of `library` (tagpup.store.job_runs.last_sync): counts and
+    times, never a path. Reads only; a library from before migration 13 has neither."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        return sync_runs.last(conn)
+        return job_runs.last_sync(conn)
     finally:
         conn.close()

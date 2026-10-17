@@ -15,7 +15,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -28,8 +28,8 @@ const TAXONOMY = [
 function serverFor(photo, faces, suggestions) {
   return new FakeServer()
     .on("/api/tags", ["People/Hazel Brookmire", "People/Kira Bao", "Activity/Cross Country"])
-    .on("/api/people", ["Hazel Brookmire", "Kira Bao"])
     .on("/api/taxonomy/tree", TAXONOMY)
+    .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
     .on("/api/taxonomy/create", { success: true })
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/suggest-status", suggestions || { status: "idle" })
@@ -154,8 +154,8 @@ describe("removing a person from a selection", () => {
   async function loadGridWithPeople(t, photos) {
     const server = new FakeServer()
       .on("/api/tags", ["People/Hazel Brookmire"])
-      .on("/api/people", ["Hazel Brookmire"])
       .on("/api/taxonomy/tree", TAXONOMY)
+      .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
       .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
       .on("/api/folder/suggest-status", { status: "idle" })
       .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })

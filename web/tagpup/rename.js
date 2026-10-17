@@ -58,7 +58,7 @@ export function wireRenameAndTimeShift() {
         }
 
         if (state.selectedThumbnails.length > BULK_LIMIT) {
-            alert(`Narrow the selection: bulk edits over ${BULK_LIMIT} photos arrive with the editing stage.`);
+            alert(`Select up to ${BULK_LIMIT.toLocaleString()} photos at a time.`);
             return;
         }
         if (!confirm(`Are you sure you want to smart-rename the ${state.selectedThumbnails.length} selected photos?`)) {
@@ -114,9 +114,7 @@ export function wireRenameAndTimeShift() {
             updateSelectedThumbnailsCount();
             saveToLocalStorageCache();
             
-            const skipped = data.skipped_damaged || 0;
-            setStatus('ready', `Renamed ${renamedCount} photo(s)` + (skipped ? `; ${skipped} skipped: damaged` : '')
-                + whereWritten(data));
+            setStatus('ready', `Renamed ${renamedCount} photo(s)` + whereWritten(data));
         })
         .catch(err => {
             console.error(err);
@@ -127,10 +125,9 @@ export function wireRenameAndTimeShift() {
     });
 }
 
-// The camera a photo came from, as tagpup.core.fields names it for the server's
-// time shift (tests/test_rules_have_one_owner.py holds this copy to it): the first
-// of CAMERA_FIELDS the photo has, else UNKNOWN_CAMERA. ALL_CAMERAS asks for every one.
-export const CAMERA_FIELDS = ['EXIF:Model', 'Model', 'EXIF:Make', 'Make'];
+// The camera a photo came from is named by the server (tagpup.core.photo_meta.camera_name, the photo record's `camera`),
+// as it chooses the photos of a time shift by it (tagpup.core.fields.camera_of): the page keeps no copy of the rule.
+// UNKNOWN_CAMERA is the name of a photo that has none; ALL_CAMERAS asks for every one.
 export const UNKNOWN_CAMERA = 'Unknown Camera';
 export const ALL_CAMERAS = 'All Cameras';
 
@@ -174,9 +171,7 @@ export function populateCameraModelsDropdown() {
 
 /** The camera a photo came from, as the time-shift dropdown labels it. */
 export function cameraModelOf(photo) {
-    const raw = (photo && photo.raw_metadata) || {};
-    const field = CAMERA_FIELDS.find(name => raw[name]);
-    return field ? raw[field] : UNKNOWN_CAMERA;
+    return (photo && photo.camera) || UNKNOWN_CAMERA;
 }
 
 /** Is `photo` one a time shift for `camera` is about? As the server decides it. */
@@ -226,6 +221,12 @@ export function applyTimeShift() {
         })
     })
     .then(data => {
+        if (data.success && data.updated_count === undefined) {
+            // The server found no photo of that camera: a page left open since before the cameras were named as the
+            // server names them asks for a name it no longer knows.
+            setStatus('error', 'No photos matched that camera: reload the page and try again', { transient: false });
+            return;
+        }
         if (data.success) {
             if (data.updated_photos) {
                 state.folderPhotos = data.updated_photos;
@@ -233,16 +234,13 @@ export function applyTimeShift() {
             
             // What ExifTool wrote, not what was asked: a photo it could not
             // write keeps its old time, and saying so is the only way to know.
-            // A photo found damaged is skipped, nothing written to it: said, not a failure.
-            const skipped = data.skipped_damaged || 0;
             const done = data.updated_count ?? 0;
-            const asked = (data.requested_count ?? affected) - skipped;
-            const also = skipped ? `; ${skipped} skipped: damaged` : '';
+            const asked = data.requested_count ?? affected;
             if (done < asked) {
-                setStatus('error', `Time shift applied to ${done} of ${asked} photo(s); ${asked - done} could not be written${also}`,
+                setStatus('error', `Time shift applied to ${done} of ${asked} photo(s); ${asked - done} could not be written`,
                     { transient: false });
             } else {
-                setStatus('ready', `Time shift applied to ${done} photo(s)${also}.${whereWritten(data)}`.replace(/\.$/, ''));
+                setStatus('ready', `Time shift applied to ${done} photo(s).${whereWritten(data)}`.replace(/\.$/, ''));
             }
 
             renderFileList();

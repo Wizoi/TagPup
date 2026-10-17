@@ -22,7 +22,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import add_face, add_people, photo_id  # noqa: E402
+from face_rows import add_people, photo_id  # noqa: E402
 from shipped_sources import ROOT  # noqa: E402
 
 from mcp import types  # noqa: E402
@@ -31,6 +31,7 @@ from mcp.shared.memory import create_connected_server_and_client_session  # noqa
 from tagpup.core import processes  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
 from tagpup.store import checks, db, derived, person_ids, schema  # noqa: E402
+from tagpup.store import faces  # noqa: E402
 
 LIBRARY = "harbour"
 
@@ -44,19 +45,21 @@ READ_TOOLS = {"libraries", "summary", "folders", "photos", "photo_against_file",
 #: The maintenance operations (tests/test_mcp_write_tools.py applies them).
 MAINTENANCE_TOOLS = {"refresh_rows", "sync", "merge_duplicate_person_tags", "dedupe_faces"}
 
-#: What writes: the maintenance operations, and undoing and pruning the journal
+#: What writes: the maintenance operations, and undoing
 #: (tests/test_journal_through_the_tools.py).
-WRITE_TOOLS = MAINTENANCE_TOOLS | {"undo", "prune_journal"}
+WRITE_TOOLS = MAINTENANCE_TOOLS | {"undo"}
 
 TOOLS = READ_TOOLS | WRITE_TOOLS
 
 
 def _tree(conn):
-    """The tag tree: People holds faces, one person filed under it, an activity branch,
+    """The tag tree: People holds faces, four people filed under it (every name has a node), an activity branch,
     and a node whose parent is gone (an orphan, for the checks)."""
     rows = [(1, "People", None, "People", 1), (2, "People/Rowan Thackeray", 1, "Rowan Thackeray", 1),
             (3, "Activity", None, "Activity", 0), (4, "Activity/Sailing", 3, "Sailing", 0),
-            (5, "Activity/Sailing/Dinghy", 4, "Dinghy", 0), (6, "Clubs/Quayside Rowers", 99, "Quayside Rowers", 0)]
+            (5, "Activity/Sailing/Dinghy", 4, "Dinghy", 0), (6, "Clubs/Quayside Rowers", 99, "Quayside Rowers", 0),
+            (7, "People/Tamsin Ferrow", 1, "Tamsin Ferrow", 1), (8, "People/Pell Quarrington", 1, "Pell Quarrington", 1),
+            (9, "People/Maren Oakhollow", 1, "Maren Oakhollow", 1)]
     for row in rows:
         conn.execute("INSERT INTO tag_taxonomy (id, tag, parent_id, name, has_face) VALUES (?, ?, ?, ?, ?)", row)
 
@@ -97,22 +100,27 @@ class McpServer(unittest.TestCase):
                 "camp2": _photo(conn, os.path.join(cls.gone, "camp_002.jpg"), []),
             }
             add_people(conn, cls.sailing, ["Rowan Thackeray"])
+            # The faces are made by the store's writers, as the indexer and a person's decision make them (the people are
+            # the tree's nodes: Rowan 2, Pell 8, Maren 9).
+            camp1, camp2 = os.path.join(cls.gone, "camp_001.jpg"), os.path.join(cls.gone, "camp_002.jpg")
             cls.faces = {
-                "rowan": add_face(conn, cls.sailing, (10, 20, 110, 140), name="Rowan Thackeray",
-                                  name_source="manual", prob=0.99, embedding=b"\x00" * 16),
-                "stranger": add_face(conn, cls.sailing, (200, 20, 260, 90), excluded=1,
-                                     excluded_reason="background", prob=0.91, embedding=b"\x00" * 16),
-                # Named and excluded: what the doctor's named_and_excluded finds (#3).
-                "both": add_face(conn, cls.dinghy, name="Pell Quarrington", excluded=1, excluded_reason="background"),
+                "rowan": faces.insert(conn, cls.sailing, [10, 20, 110, 140], b"\x00" * 16, prob=0.99),
+                "stranger": faces.insert(conn, cls.sailing, [200, 20, 260, 90], b"\x00" * 16, prob=0.91),
+                "both": faces.insert(conn, cls.dinghy, [0, 0, 10, 10], None),
                 # #42: names on the rows of a folder whose files are gone.
-                "camp1": add_face(conn, os.path.join(cls.gone, "camp_001.jpg"), name="Maren Oakhollow",
-                                  name_source="manual"),
-                "camp2": add_face(conn, os.path.join(cls.gone, "camp_002.jpg"), name="Maren Oakhollow",
-                                  name_source="manual"),
-                "camp2b": add_face(conn, os.path.join(cls.gone, "camp_002.jpg")),
+                "camp1": faces.insert(conn, camp1, [0, 0, 10, 10], None),
+                "camp2": faces.insert(conn, camp2, [0, 0, 10, 10], None),
+                "camp2b": faces.insert(conn, camp2, [0, 0, 10, 10], None),
             }
-            add_people(conn, os.path.join(cls.gone, "camp_001.jpg"), ["Maren Oakhollow"], source="face")
-            add_people(conn, os.path.join(cls.gone, "camp_002.jpg"), ["Maren Oakhollow"], source="face")
+            faces.name(conn, [cls.faces["rowan"]], 2)
+            faces.exclude(conn, [cls.faces["stranger"]], "background")
+            faces.name(conn, [cls.faces["camp1"], cls.faces["camp2"]], 9)
+            # Named and excluded: what the doctor's named_and_excluded finds (#3). No writer makes it (exclude takes the name
+            # off, name leaves an excluded face alone): it is the broken shape, so the name is put back on a face that was
+            # named, then excluded, the shape the doctor exists to find.
+            faces.name(conn, [cls.faces["both"]], 8)
+            faces.exclude(conn, [cls.faces["both"]], "background")
+            conn.execute("UPDATE faces SET name = 'Pell Quarrington', tag_id = 8 WHERE id = ?", (cls.faces["both"],))
             derived.rebuild_all(conn)   # a library at rest: its derived tables are what its photos say
             person_ids.sync(conn)       # and its faces and people hold the ids their names give
             conn.commit()
@@ -128,10 +136,13 @@ class McpServer(unittest.TestCase):
             Image.new("RGB", (64, 48), (90, 120, 200)).save(path, "JPEG")
         if cls.exiftool:
             from tagpup.files.exiftool_session import ExifToolSession
-            from tagpup.files.keywords import write_keywords
+            from tagpup.core import fields
             with ExifToolSession(executable=cls.exiftool) as et:
                 # The file carries one tag its row does not.
-                write_keywords(et, cls.sailing, ["People/Rowan Thackeray", "Activity/Sailing", "Activity/Racing"])
+                flat, hierarchical = fields.expand_tag_fields(
+                    ["People/Rowan Thackeray", "Activity/Sailing", "Activity/Racing"])
+                et.set_tags([cls.sailing], tags=fields.keyword_fields(flat, hierarchical),
+                            params=["-overwrite_original"])
 
     def tearDown(self):
         with open(self.db_path, "rb") as handle:
@@ -206,9 +217,9 @@ class McpServer(unittest.TestCase):
             conn.close()
         self.assertEqual({k: answer[k] for k in printed}, printed)
         self.assertEqual((answer["photos"], answer["faces"], answer["named"], answer["manual"], answer["excluded"]),
-                         (5, 6, 4, 3, 2))
+                         (5, 6, 4, 5, 2))
         self.assertEqual(answer["schema_version"], schema.MIGRATIONS[-1].version)
-        self.assertEqual(answer["tree_nodes"], 6)
+        self.assertEqual(answer["tree_nodes"], 9)
         self.assertEqual(answer["without_a_vector"], 5)
 
     def test_folders_count_their_photos_and_say_which_are_gone(self):
@@ -333,13 +344,13 @@ class McpServer(unittest.TestCase):
                  ("query_plan", {"sql": "SELECT path FROM photos WHERE path = 'Harbourview'"})]
         # The write tools as dry runs: tearDown holds the library to being unchanged.
         calls += [(tool, {}) for tool in sorted(MAINTENANCE_TOOLS)]
-        calls += [("history", {}), ("undo", {"change": 1}), ("prune_journal", {}), ("sync_state", {})]
+        calls += [("history", {}), ("undo", {"change": 1}), ("sync_state", {})]
         calls += [("check", {"name": rule.__name__}) for rule in checks.RULES]
         self.assertEqual({tool for tool, _ in calls}, TOOLS)
         for tool, arguments in calls:
             if tool != "libraries":
                 arguments = dict(arguments, library=LIBRARY)
-                if tool not in ("summary", "query_plan", "prune_journal", "undo", "sync_state"):
+                if tool not in ("summary", "query_plan", "undo", "sync_state"):
                     arguments["reveal"] = reveal
             result = self.result(tool, **arguments)
             texts.append((tool, " ".join(c.text for c in result.content) + json.dumps(result.structuredContent)))

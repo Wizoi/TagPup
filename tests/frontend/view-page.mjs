@@ -17,16 +17,14 @@ export function pageErrors() {
   return found;
 }
 
-/** What GET /api/library/bulk/status says of a job: every field the page reads, as tagpup.jobs.bulk_edits.Job.status makes it. */
-export const jobStatus = (extra = {}) => ({
-  job: 7, op: "tags", state: "running", total: 100, done: 0, changed: 0, unchanged: 0, skipped_missing: 0, skipped_damaged: 0,
-  errors: [], error_count: 0, started: 1760000000, finished: null, eta_seconds: null, message: null, cancelling: false,
-  resumable: false, what: "bulk tags: add 1 tag(s), 0 of 100 photos", ...extra,
+/** What POST /api/library/bulk-edit answers when the edit is written: every field the page reads, as tagpup.web.tagpup_routes.library_bulk_edit makes it. */
+export const editReply = (extra = {}) => ({
+  success: true, op: "tags", total: 0, requested: 0, missing: 0, excluded: 0, changed: 0, unchanged: 0, skipped_missing: 0,
+  error_count: 0, errors: [], ...extra,
 });
 
 /**
- * Make the page's slow clocks fast: a timer of a second or more runs after a hundredth of that (a poll of the bulk job every second
- * is every 10 ms). The delays the page asked for are kept in `ctx.delays`, as it asked for them.
+ * Make the page's slow clocks fast: a timer of a second or more runs after a hundredth of that (a wait of a second is 10 ms). The delays the page asked for are kept in `ctx.delays`, as it asked for them.
  */
 export function speedUp(ctx) {
   const real = ctx.window.setTimeout.bind(ctx.window);
@@ -93,22 +91,32 @@ export function syntheticKeywords() {
   return nodes;
 }
 
+/** One person as the route answers: their node's id and tag beside the name (a person is the id of a node). */
+export function personRow(id, name, count, group = null) {
+  return { name, count, group, person_id: id, person: { id, name, tag: `${group || "People"}/${name}` } };
+}
+
 /** 413 people, fictional. */
 export function syntheticPeople() {
   const people = [];
   for (let i = 0; i < 413; i++) {
-    people.push({ name: `${GIVEN[i % GIVEN.length]} ${FAMILY[Math.floor(i / GIVEN.length) % FAMILY.length]}${i >= 130 ? " " + (Math.floor(i / 130) + 1) : ""}`, count: 5 + (i * 37) % 900 });
+    const name = `${GIVEN[i % GIVEN.length]} ${FAMILY[Math.floor(i / GIVEN.length) % FAMILY.length]}${i >= 130 ? " " + (Math.floor(i / 130) + 1) : ""}`;
+    people.push(personRow(i + 1, name, 5 + (i * 37) % 900));
   }
   return people;
 }
 
-/** 61 years: 1970 up to this year, and as many years that are not dates (the year 1, 2099, ...) as make up the 61. */
+/**
+ * 61 years: 1970 up to this year, and as many years that are not dates (the year 1, 2099, ...) as make up the 61. Each
+ * carries `implausible` as the route says it (tagpup.store.library_view.plausible_year: before 1900 or after next year;
+ * tests/test_library_view.py holds the rule itself): the page only shows it.
+ */
 export function syntheticDates(thisYear = new Date().getFullYear()) {
   const years = [];
   const make = (year, count) => {
     const months = [];
     for (let m = 12; m >= 1; m--) months.push({ month: `${String(year).padStart(4, "0")}-${String(m).padStart(2, "0")}`, count: Math.floor(count / 12) });
-    return { year, count, months, other: count - 12 * Math.floor(count / 12) };
+    return { year, count, months, other: count - 12 * Math.floor(count / 12), implausible: year < 1900 || year > thisYear + 1 };
   };
   for (let year = 1970; year <= thisYear; year++) years.push(make(year, 600 + year % 97));
   const junk = [1, 1899, 1901, 2099, 2100, 2200, 9999, 1969, 1950, 1000];
@@ -121,7 +129,7 @@ const frame = (window) => new Promise((resolve) => window.requestAnimationFrame(
 
 export const cardOf = (id, extra = {}) => ({
   id, name: `IMG_${id}.jpg`, path: `D:\\Library\\2020\\Event 01\\IMG_${id}.jpg`, taken: "2020:01:01 10:00:00",
-  damaged: false, damage: null, thumb: `/api/photo-thumb?id=${id}&v=1600000000.0`, ...extra,
+  thumb: `/api/photo-thumb?id=${id}&v=1600000000.0`, ...extra,
 });
 export const recordOf = (id, extra = {}) => photoRecord({
   id, filename: `IMG_${id}.jpg`, path: `D:\\Library\\2020\\Event 01\\IMG_${id}.jpg`, tags: ["Trips/Coast"], people: [],
@@ -140,10 +148,10 @@ export async function loadViewPage(t, {
 } = {}) {
   const server = new FakeServer();
   const ctx = { server, held: [], navigatorAsked: [], idsAsked: [], cardsAsked: [], photosAsked: [], membershipAsked: [], syncAsked: [], hold: {} };
-  // What the library says of bulk edits (phase 9d): `current` for GET .../current, `status` for .../status and .../cancel, `start`
-  // and `resume` what those routes add to their answers, `tally` for the selection's tally. A test changes them as the server would.
+  // What the library says of bulk edits (phase 9d): `edit` what POST .../bulk-edit adds to its answer (held until released when
+  // `ctx.hold.bulkEdit`), `tally` for the selection's tally. A test changes them as the server would.
   ctx.bulk = {
-    current: null, status: jobStatus(), start: {}, resume: {},
+    edit: {},
     tally: { total: 0, tags: [], more_tags: 0, people: [], more_people: 0 },
   };
   const answer = (key, make) => (url) => {
@@ -168,16 +176,11 @@ export async function loadViewPage(t, {
     .on("/api/databases", { databases: ["photo_index", "other"], selected: library })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/suggest-status", { status: "idle" })
-    .on("/api/folder/damaged", { photos: [] })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/photo/delete", { success: true })
     .on("/api/photos/bulk-tags", { success: true })
-    .on("/api/library/bulk/current", () => ({ success: true, job: typeof ctx.bulk.current === "function" ? ctx.bulk.current() : ctx.bulk.current }))
-    .on("/api/library/bulk/status", () => ({ success: true, ...ctx.bulk.status }))
-    .on("/api/library/bulk/start", (url) => ({ success: true, job: 7, op: "tags", total: 0, requested: 0, missing: 0, excluded: 0, ...ctx.bulk.start }))
-    .on("/api/library/bulk/cancel", () => ({ success: true, ...ctx.bulk.status }))
-    .on("/api/library/bulk/resume", () => ({ success: true, job: 7, total: 0, done: 0, ...ctx.bulk.resume }))
+    .on("/api/library/bulk-edit", answer("bulkEdit", () => editReply(ctx.bulk.edit)))
     .on("/api/library/selection/tally", () => (typeof ctx.bulk.tally === "function" ? ctx.bulk.tally() : ctx.bulk.tally))
     .on("/api/folder/scan", () => (scan ? scan() : [photoRecord({ filename: "a.jpg" }), photoRecord({ filename: "b.jpg" })]))
     .on("/api/folder/membership", answer("membership", (url) => {

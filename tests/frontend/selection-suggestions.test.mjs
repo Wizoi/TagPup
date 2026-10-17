@@ -20,7 +20,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 
@@ -33,8 +33,8 @@ const TAXONOMY = [
 function build(photos, suggestions) {
   return new FakeServer()
     .on("/api/tags", ["People/Kira Bao", "People/Rory Olwen", "Cross Country"])
-    .on("/api/people", ["Kira Bao", "Rory Olwen"])
     .on("/api/taxonomy/tree", TAXONOMY)
+    .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", photos)
@@ -290,8 +290,7 @@ describe("Apply All applies all of it", () => {
     const ctx = await applyAll(t, 0.9);
     const body = ctx.server.lastBody("/api/folder/auto-apply");
     assert.ok(body, "Apply All sent nothing");
-    assert.equal(body.threshold, 0.0,
-      `a threshold was still sent, so some suggestions would be skipped: ${body.threshold}`);
+    assert.equal(body.threshold, undefined, `a threshold was sent, so some suggestions would be skipped: ${body.threshold}`);
   });
 
   test("a low-confidence suggestion still enables the button", async (t) => {
@@ -302,5 +301,17 @@ describe("Apply All applies all of it", () => {
       ctx.document.getElementById("btn-folder-auto-apply").disabled, false,
       "the button was disabled while suggestions were on screen"
     );
+  });
+});
+
+describe("a finished run in a folder the library holds names the photos it could not read", () => {
+  test("the status line carries the run's notes, as it does for a run that only looks", async (t) => {
+    const photo = photoRecord({ filename: "a.jpg", tags: [], people: [] });
+    const ctx = await loadSelected(t, [photo], {
+      status: "completed", unread: 1, suggestions: {},
+      notes: ["1 photo(s) could not be analysed, nothing was recorded of them (disk I/O error)."],
+    });
+    assert.match(ctx.document.getElementById("status-text").textContent,
+      /1 photo\(s\) could not be analysed.*disk I\/O error/);
   });
 });

@@ -1,5 +1,5 @@
 """What the library views ask of the database (docs/ARCHITECTURE.md, phase 9a-2): which photos a source
-holds, in what order, a page at a time, and the counts the navigator shows.
+holds, in what order, and the counts the navigator shows.
 
 A SOURCE says which photos: all of them; a folder -- by its path, never an id -- and, when asked, its
 subfolders; a keyword and everything under it, or its node alone (`keyword_only`); a person; a year; the
@@ -7,10 +7,7 @@ photos of a year whose date names no month of it (`year_other`); a month; or ANY
 union: the rows a person selected in the navigator, phase 9 #672 -- one statement, a photo in two of
 them once); or a SEARCH (phase 9e): the photos in ALL OF a list of sources, ANY OF another and NONE OF a third, and
 -- once the library has its word index -- matching the words typed, again one statement. Every source is ordered by when the photo was taken and then by id, those with no date at
-the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way), and
-paged by a KEYSET -- the (taken, id) of the last photo of the page before -- never by OFFSET, so a page costs
-what a page costs however far down it is, and a photo added, taken away or re-dated between two pages
-neither repeats nor skips another.
+the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way).
 
 `taken` is the text ExifTool gave ("2024:06:01 10:00:00", with a zone after it in a few), which sorts as
 the time does; a few rows hold a date written with dashes, which sort apart from the rest and are paged
@@ -27,11 +24,11 @@ says so); the service answers that in a sentence.
 import collections
 import time
 
-from tagpup.core import paths, vocabulary
-from tagpup.core.result import Refused
-from tagpup.store import damaged_files, db, derived, person_ids, schema, search_index
+from tagpup.core import vocabulary
+from tagpup.store import db, derived, person_ids, search_index
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
+from tagpup.core.vocabulary import Ref
 
 #: The kinds of source (Source.kind).
 ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH = "all", "folder", "keyword", "person", "year", "month"
@@ -60,31 +57,6 @@ Source = collections.namedtuple("Source", "kind value recursive", defaults=(None
 #: matching every word typed. Tuples, so a Source holding one is hashable as a union's members are.
 Search = collections.namedtuple("Search", "all_of any_of none_of words", defaults=((), (), (), ""))
 
-
-class NoWordIndex(Refused):
-    """A search asked for words of a library at the version that makes the word index and without it (its tables dropped
-    by hand): refused with a sentence, wherever the search is read -- a page, the ids, a selection, a bulk edit."""
-
-    def __init__(self, sentence=None):
-        super().__init__(sentence or "This library has no word index, though it is at the version that makes one: search "
-                                     "by tags, people, folders and dates.")
-
-
-class WordIndexComing(NoWordIndex):
-    """A search asked for words of a library below migration 24 (#753). The server brings every library it serves up to
-    date as it starts and as a request first names it, so such a library is one whose migration is under way -- the
-    startup thread, or another program, holds it -- or due: the web layer answers 503 with Retry-After, and the page asks
-    again (docs/ARCHITECTURE.md, phase 9e-1, the contract for 9e-2)."""
-
-    def __init__(self):
-        super().__init__("The word index is being made now; try again in a few seconds. Searching by tags, people, "
-                         "folders and dates works meanwhile.")
-
-#: Where a page begins and after what: (phase, taken, id). Phase 0 holds the photos with a date, ordered by
-#: (taken, id); phase 1 those with none, ordered by id (taken is None). None begins at the start. In an order by name
-#: `taken` holds the file name of the last photo and the phase is 0: every photo has a name. In an order by caption
-#: phase 0 holds the captioned photos, `taken` the caption's key (caption_sql), and phase 1 those with none.
-Cursor = collections.namedtuple("Cursor", "phase taken id")
 
 #: The orders a source is read in (phase 9, #671, #714): by Date Taken -- the photos with none AFTER the dated ones in both
 #: directions, by id in the order's direction --, by file name, or by caption -- the photos with none after the captioned
@@ -125,20 +97,6 @@ def caption_sql(column="captions"):
 
 #: Ids read in one statement.
 CHUNK = 500
-
-#: The indexes migration 20 makes.
-INDEXES = ("idx_photos_taken", "idx_photos_year")
-
-
-def ready(conn):
-    """Has the library on `conn` what the views stand on: the derived tables (migration 19) and the indexes
-    the pages are ordered by (migration 20)?"""
-    if not derived.present(conn):
-        return False
-    found = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (%s)"
-                         % ",".join("?" * len(INDEXES)), INDEXES).fetchone()[0]
-    return found == len(INDEXES)
-
 
 # ---- A source's photos -----------------------------------------------------------------------
 
@@ -197,29 +155,29 @@ def _marks(items):
 
 def _words_clause(conn, words):
     """(SQL over `p`, params) of the photos holding every term of `words` (tagpup.store.search_index.clause: a set, never
-    ranked), or None when no term says anything; NoWordIndex for a library without the index (before migration 24)."""
-    if not search_index.present(conn):
-        if schema.version(conn) < search_index.MIGRATION:
-            raise WordIndexComing()
-        raise NoWordIndex()
-    return search_index.clause(words)
+    ranked), or None when no term says anything."""
+    return search_index.clause(conn, words)
 
 
 class _Reads:
-    """What resolving the members of one source reads once however many members name it (#751): the names photo_people
-    holds, by vocabulary.key (one pass of its name index), the tag tree's nodes (read only when a keyword is not spelled
-    exactly as a node is), and the folders' parent ids. One for each statement a source is compiled into, never kept."""
+    """What resolving the members of one source reads once however many members name it (#751): the people of the tag tree (a
+    person is the node, docs/ARCHITECTURE.md "People by id, stage 2"), the tag tree's nodes (read only when a keyword is not
+    spelled exactly as a node is), and the folders' parent ids. One for each statement a source is compiled into, never kept."""
 
     def __init__(self, conn):
         self.conn = conn
-        self._spelled = self._nodes = self._children = None
+        self._nodes = self._children = self._known = None
 
-    def spellings(self, name):
-        if self._spelled is None:
-            self._spelled = collections.defaultdict(list)
-            for (held,) in self.conn.execute("SELECT DISTINCT name FROM photo_people"):
-                self._spelled[vocabulary.key(held)].append(held)
-        return list(self._spelled.get(vocabulary.key(name), ()))
+    def persons(self, value):
+        """[the id of the person `value` names]: an id, or the tag path of the node (a person at the top of the tree is the bare
+        name of their node), exactly: the leaf is never identity (owner, 2026-10-11), so a name that is no person's path names
+        nobody. A group is nobody."""
+        if self._known is None:
+            self._known = person_ids.read(self.conn)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return [value] if value in self._known.by_id else []
+        found = self._known.by_tag.get(vocabulary.normalize(str(value).strip()).lower())
+        return [found.id] if found else []
 
     def tag(self, tag):
         if self.conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone():
@@ -296,7 +254,7 @@ def _search_scope(conn, search, reads):
 def _union_scope(conn, members, reads=None):
     """The Scope of the union of `members`: ONE where-clause over `photos p`, so a photo in two of them is one row and the
     count counts it once. The members are gathered by kind -- the folders' ids (a folder with its subfolders is its own and
-    every folder under it, by the tree's parent ids), the tag tree's node ids, the people's spellings, the years -- each
+    every folder under it, by the tree's parent ids), the tag tree's node ids, the people's ids, the years -- each
     gathering one IN (...), the months and the "Other" of years OR'd: a union of 400 people is one seek of the name index
     for each name, not 400 subqueries. None when no member holds anything.
 
@@ -305,7 +263,7 @@ def _union_scope(conn, members, reads=None):
     if any(member.kind == ALL for member in members):
         return _scope(conn, Source(ALL))
     reads = reads or _Reads(conn)
-    folder_ids, tag_ids, names, years, clauses = set(), set(), set(), set(), []
+    folder_ids, tag_ids, person_tags, years, clauses = set(), set(), set(), set(), []
     walked = set()   # the folders whose subfolders are in: apart from folder_ids, so a folder named alone first is still walked (#695)
     for member in members:
         kind = member.kind
@@ -329,7 +287,7 @@ def _union_scope(conn, members, reads=None):
             sql, params = derived.under(tag) if kind == KEYWORD else ("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,))
             tag_ids.update(node_id for (node_id,) in conn.execute(sql, params))
         elif kind == PERSON:
-            names.update(reads.spellings(member.value))
+            person_tags.update(reads.persons(member.value))
         elif kind == YEAR:
             years.add(int(member.value))
         elif kind == MONTH:
@@ -339,7 +297,7 @@ def _union_scope(conn, members, reads=None):
         else:
             raise ValueError("no such kind of source in a union: %r" % (kind,))
     for table, column, held in (("photo_folder", "folder_id", folder_ids), ("photo_tags", "tag_id", tag_ids),
-                                ("photo_people", "name", names)):
+                                ("photo_people", "tag_id", person_tags)):
         if held:
             ordered = sorted(held)
             clauses.append(("p.id IN (SELECT photo_id FROM %s WHERE %s IN (%s))" % (table, column, _marks(ordered)),
@@ -397,31 +355,13 @@ def _scope(conn, source, reads=None):
         return Scope("photos p", "p.id IN (SELECT photo_id FROM photo_tags WHERE tag_id IN (%s))" % sql, params,
                      ("SELECT COUNT(DISTINCT photo_id) FROM photo_tags WHERE tag_id IN (%s)" % sql, params))
     if kind == PERSON:
-        names = reads.spellings(source.value)
-        if not names:
+        found_ids = reads.persons(source.value)
+        if not found_ids:
             return None
-        marks = ",".join("?" * len(names))
-        return Scope("photos p", "p.id IN (SELECT photo_id FROM photo_people WHERE name IN (%s))" % marks, tuple(names),
-                     ("SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE name IN (%s)" % marks, tuple(names)))
+        inner, params = "SELECT photo_id FROM photo_people WHERE tag_id IN (%s)" % _marks(found_ids), tuple(sorted(found_ids))
+        return Scope("photos p", "p.id IN (%s)" % inner, params,
+                     ("SELECT COUNT(DISTINCT photo_id) FROM (%s)" % inner, params))
     raise ValueError("no such kind of source: %r" % (kind,))
-
-
-def resolve_tag(conn, tag):
-    """The tag of the node a typed keyword names: itself when the tree has exactly it (that wins), else the node
-    it is without case and with its segments trimmed, as photo_tags ties a photo's keywords to nodes
-    (derived.Tree: the lowest id when two differ only in case); `tag` as typed when there is none, which holds
-    nothing."""
-    return _Reads(conn).tag(tag)
-
-
-def spellings(conn, name):
-    """The names `photo_people` holds that are `name` -- the same person without regard to case -- as it holds
-    them: usually one. One pass of the name index (400 names on photo_index: 4 ms)."""
-    return _Reads(conn).spellings(name)
-
-
-#: The largest id a photo can have, and one more: the start of a descending read of ids.
-_PAST_LAST_ID = 2 ** 62
 
 
 #: The orders read by the index of an expression: {order: (the expression of `p`, the index, whether a photo may have
@@ -434,21 +374,6 @@ for _orders, _key, _index, _nullable in (((NAME, NAME_DESC), name_sql("p.path"),
                                          ((CAPTION, CAPTION_DESC), caption_sql("p.captions"), CAPTION_INDEX, True)):
     for _order in _orders:
         _KEYED[_order] = (_key, _index, _nullable)
-
-
-def has_index(conn, index):
-    """Has the library on `conn` the index `index` (NAME_INDEX, migration 22; CAPTION_INDEX, migration 23)? Without it an
-    order by that key is a sort of the source, the same order; remembered on the connection once true."""
-    held = getattr(conn, "view_indexes", None)
-    if held is not None and index in held:
-        return True
-    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (index,)).fetchone() is not None
-    if found:
-        try:
-            conn.view_indexes = (held or frozenset()) | {index}
-        except AttributeError:
-            pass   # a connection that is not db.connect's cannot remember
-    return found
 
 
 #: Read every source by the name or caption index, as before #722: what a measurement compares against.
@@ -469,9 +394,8 @@ def _walks(conn, scope, index):
     list of ids -- a keyword, a person, a folder alone, a union holding one of those -- are: left to itself SQLite reads the
     list and sorts it. A range of another index (Scope.ranged: a month, a year, a year's Other, a folder with its
     subfolders, a union of months and years) is left to SQLite, which reads the range and sorts it, unless it holds more
-    than 1/RANGE_SHARE of the library: forced, a small range walked every photo of the library for each page (#722)."""
-    if not has_index(conn, index):
-        return False
+    than 1/RANGE_SHARE of the library: forced, a small range walked every photo of the library for each page (#722). Both
+    indexes are the baseline's (tagpup.store.schema)."""
     if FORCE_ALWAYS or not scope.ranged:
         return True
     held = conn.execute(*scope.count).fetchone()[0]
@@ -486,64 +410,8 @@ def _by_index(conn, scope, index):
     return from_, "(%s)" % where, scope.params
 
 
-def _keyed_page(conn, scope, cursor, limit, order):
-    """A page in an order of _KEYED: those with a key by (key without case, id), then -- for a key a photo may lack --
-    those with none by id, each phase one statement, as _page reads the dated and the undated."""
-    key, index, nullable = _KEYED[order]
-    from_, where, params = _by_index(conn, scope, index)
-    way, beyond = (" DESC", "<") if order in DESCENDING else ("", ">")
-    want = limit + 1
-    rows = []
-    if cursor is None or cursor.phase == 0:
-        sql = "SELECT %s, p.id FROM %s WHERE %s" % (key, from_, where)
-        values = list(params)
-        if nullable and cursor is None:
-            # After a cursor its bound is the range, and NULL is neither above nor below it: one lower bound for the index to
-            # seek, not two of which it might take the first.
-            sql += _HAS_KEY % key
-        if cursor is not None:
-            # The bound on the key alone is what the index seeks; the pair with the id is the keyset.
-            sql += " AND %s COLLATE NOCASE %s= ? AND (%s COLLATE NOCASE, p.id) %s (?, ?)" % (key, beyond, key, beyond)
-            values += [cursor.taken, cursor.taken, cursor.id]
-        sql += " ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?" % (key, way, way)
-        rows = [(photo_id, value) for value, photo_id in conn.execute(sql, values + [want])]
-    if nullable and len(rows) < want:
-        start = _PAST_LAST_ID if order in DESCENDING else 0
-        after = cursor.id if cursor is not None and cursor.phase == 1 else start
-        rows += [(photo_id, None) for (photo_id,) in conn.execute(
-            "SELECT p.id FROM %s WHERE %s AND %s IS NULL AND p.id %s ? ORDER BY p.id%s LIMIT ?" % (from_, where, key, beyond, way),
-            list(params) + [after, want - len(rows)])]
-    return rows[:limit], len(rows) > limit
-
-
-def _page(conn, scope, cursor, limit, order=TAKEN):
-    if order in _KEYED:
-        return _keyed_page(conn, scope, cursor, limit, order)
-    desc = order == TAKEN_DESC
-    way, beyond = (" DESC", "<") if desc else ("", ">")
-    want = limit + 1   # one more than the page says whether another page follows
-    rows = []
-    if cursor is None or cursor.phase == 0:
-        sql = "SELECT p.taken, p.id FROM %s WHERE (%s) AND p.taken IS NOT NULL" % (scope.from_, scope.where)
-        values = list(scope.params)
-        if cursor is not None:
-            sql += " AND (p.taken, p.id) %s (?, ?)" % beyond
-            values += [cursor.taken, cursor.id]
-        sql += " ORDER BY p.taken%s, p.id%s LIMIT ?" % (way, way)
-        rows = [(photo_id, taken) for taken, photo_id in conn.execute(sql, values + [want])]
-    if len(rows) < want and not scope.dated:
-        # The undated photos come after the dated ones in either direction, by id in the order's.
-        start = _PAST_LAST_ID if desc else 0
-        after = cursor.id if cursor is not None and cursor.phase == 1 else start
-        undated = conn.execute(
-            "SELECT p.id FROM %s WHERE (%s) AND p.taken IS NULL AND p.id %s ? ORDER BY p.id%s LIMIT ?"
-            % (scope.from_, scope.where, beyond, way), list(scope.params) + [after, want - len(rows)]).fetchall()
-        rows += [(photo_id, None) for (photo_id,) in undated]
-    return rows[:limit], len(rows) > limit
-
-
 def all_ids(conn, source, cap, order=TAKEN):
-    """([photo id] of the whole source in the order `page` gives, how many photos the source holds): at most `cap`
+    """([photo id] of the whole source in the order asked, how many photos the source holds): at most `cap`
     ids, the total counted when the source holds more. Two statements at most, one per phase, each an index-ordered
     read of ids alone -- the keyset page's order without the keyset. By name, one: the name index walked in order. By
     caption, the caption index walked in order, the captioned and then those with none."""
@@ -623,36 +491,6 @@ def id_plans(conn, source, cap, order=TAKEN):
             for sql in seen if sql.lstrip().upper().startswith("SELECT")], elapsed
 
 
-def total(conn, source):
-    """How many photos `source` holds."""
-    scope = _scope(conn, source)
-    return 0 if scope is None else conn.execute(*scope.count).fetchone()[0]
-
-
-def page(conn, source, cursor=None, limit=100, order=TAKEN):
-    """([(photo id, taken)] of the page after `cursor`, whether there are more after it): `limit` photos of
-    `source` in order, those with a date first by (taken, id), then those with none by id (in `order`; by name the
-    second of each pair is the file name, by caption the caption's key or None). One statement for each phase it
-    reaches; `next_cursor` of the last photo continues."""
-    scope = _scope(conn, source)
-    return ([], False) if scope is None else _page(conn, scope, cursor, limit, order)
-
-
-def view(conn, source, cursor=None, limit=100, order=TAKEN):
-    """(page rows, whether more follow, the total): `page` and `total` with the source resolved once."""
-    scope = _scope(conn, source)
-    if scope is None:
-        return [], False, 0
-    rows, more = _page(conn, scope, cursor, limit, order)
-    return rows, more, conn.execute(*scope.count).fetchone()[0]
-
-
-def next_cursor(row):
-    """The cursor that continues after `row`, (photo id, taken -- or name, by name; caption, by caption)."""
-    photo_id, taken = row
-    return Cursor(0 if taken is not None else 1, taken, photo_id)
-
-
 # ---- The cards -------------------------------------------------------------------------------
 
 def card_rows(conn, photo_ids):
@@ -688,11 +526,6 @@ def photo_row(conn, photo_id):
     return tuple(rows[0]) if rows else None
 
 
-def damaged(conn):
-    """{paths.key: store.damaged_files.Record} of every record of a damaged photo (a handful)."""
-    return {paths.key(each.path): each for each in damaged_files.every(conn)}
-
-
 # ---- A selection's tally ---------------------------------------------------------------------
 
 def selected_sql(conn, ids, source, excluded):
@@ -715,35 +548,28 @@ def selected_sql(conn, ids, source, excluded):
 
 
 def tally(conn, ids=None, source=None, excluded=()):
-    """({"total": photos selected, "tags": [(tag, photos)], "people": [(name, photos)]}) of a selection: `ids`, or every photo
+    """({"total": photos selected, "tags": [(tag, photos)], "people": [(Ref, photos)]}) of a selection: `ids`, or every photo
     of `source` but `excluded`. From photo_tags (by tag-tree node: the tag the tree spells, exactly -- not the tags under it --
     so a keyword no node holds is not counted, as the navigator's counts) and photo_people, each a single grouped statement over
-    the selection; names that are one person without regard to case are one entry under the spelling most photos hold
-    (people_counts). Unsorted: the service orders and cuts them. One read transaction."""
+    the selection; a person is the node (the id, the name beside it: two people called alike are two). A tag that is a
+    person's node (person_ids: a leaf of the tree that holds faces) is a person, listed under "people" and not here: left out
+    BEFORE the service cuts the list, so the cut spends its slots on keywords (#865). "nameless" is the people among "people"
+    that are no person node any more -- an id that became a group's (#866): not people to open a view of.
+    Unsorted: the service orders and cuts them. One read transaction."""
     db.begin(conn)
     selected, params = selected_sql(conn, ids, source, excluded)
     if selected is None:
-        return {"total": 0, "tags": [], "people": []}
+        return {"total": 0, "tags": [], "people": [], "nameless": []}
     total = conn.execute("SELECT COUNT(*) FROM (%s)" % selected, params).fetchone()[0]
-    tags = conn.execute(
-        "SELECT t.tag, COUNT(*) FROM photo_tags pt JOIN tag_taxonomy t ON t.id = pt.tag_id"
-        " WHERE pt.photo_id IN (%s) GROUP BY pt.tag_id" % selected, params).fetchall()
-    held = conn.execute("SELECT name, COUNT(DISTINCT photo_id) FROM photo_people WHERE photo_id IN (%s) GROUP BY name"
-                        % selected, params).fetchall()
-    grouped = collections.defaultdict(list)
-    for name, count in held:
-        grouped[vocabulary.key(name)].append((name, count))
-    people = []
-    for spellings_of in grouped.values():
-        spellings_of.sort(key=lambda each: (-each[1], each[0]))
-        if len(spellings_of) == 1:
-            people.append(spellings_of[0])
-            continue
-        names = [each[0] for each in spellings_of]
-        people.append((names[0], conn.execute(
-            "SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE name IN (%s) AND photo_id IN (%s)"
-            % (",".join("?" * len(names)), selected), names + list(params)).fetchone()[0]))
-    return {"total": total, "tags": [tuple(each) for each in tags], "people": people}
+    known = person_ids.read(conn)
+    tags = [(tag, count) for tag_id, tag, count in conn.execute(
+        "SELECT t.id, t.tag, COUNT(*) FROM photo_tags pt JOIN tag_taxonomy t ON t.id = pt.tag_id"
+        " WHERE pt.photo_id IN (%s) GROUP BY pt.tag_id" % selected, params) if tag_id not in known.nodes]
+    people = [(Ref(tag_id, name), count) for tag_id, name, count in conn.execute(
+        "SELECT tag_id, name, COUNT(DISTINCT photo_id) FROM photo_people WHERE photo_id IN (%s) AND tag_id IS NOT NULL"
+        " GROUP BY tag_id" % selected, params)]
+    return {"total": total, "tags": tags, "people": people,
+            "nameless": [ref for ref, _count in people if ref.id not in known.nodes]}
 
 
 # ---- The navigator's counts ------------------------------------------------------------------
@@ -752,8 +578,8 @@ def keyword_counts(conn):
     """[{"id", "tag", "name", "parent_id", "count"}] of every node of the tag tree: `count` the photos carrying the
     node's tag or a tag under it, each photo once for a node however many tags of it lie under it. The nodes
     are one read; the photos' tags one pass of photo_tags by photo (151,000 rows on photo_index) rolled up the
-    tree's parent ids in Python -- not a range query for each node. Equal, node for node, to
-    `derived.count_under_tag`."""
+    tree's parent ids in Python -- not a range query for each node. Equal, node for node, to the photos a keyword source
+    (`derived.under`) gives."""
     nodes = conn.execute("SELECT id, tag, parent_id, name FROM tag_taxonomy").fetchall()
     parent = {node_id: parent_id for node_id, _tag, parent_id, _name in nodes}
     upward = {}   # each node and every node above it: a damaged tree that loops ends the walk, never the call
@@ -780,47 +606,51 @@ def keyword_counts(conn):
 
 
 def people_counts(conn):
-    """[(name, photos)] of everyone in photo_people, most photos first, then by name: one pass of the name
-    index. Names that are one person without regard to case are one entry, under the spelling most photos
-    hold, counting each photo once."""
-    held = conn.execute("SELECT name, COUNT(*) FROM photo_people GROUP BY name").fetchall()
-    grouped = collections.defaultdict(list)
-    for name, count in held:
-        grouped[vocabulary.key(name)].append((name, count))
+    """[(Ref, photos)] of everyone in photo_people, most photos first, then by name: one pass of photo_people. A person is
+    the node (their id, the cached name beside it), so two people called alike are two entries. Only a row with an id is
+    counted: a name alone is nobody."""
+    names = person_ids.read(conn).node_names
     found = []
-    for spellings_of in grouped.values():
-        spellings_of.sort(key=lambda each: (-each[1], each[0]))
-        name = spellings_of[0][0]
-        if len(spellings_of) == 1:
-            found.append((name, spellings_of[0][1]))
-            continue
-        names = [each[0] for each in spellings_of]
-        found.append((name, conn.execute("SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE name IN (%s)"
-                                         % ",".join("?" * len(names)), names).fetchone()[0]))
-    return sorted(found, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0])))
+    # The people the tree files: one row a photo each, by the covering index of the id; named by their node.
+    for tag_id, count in conn.execute("SELECT tag_id, COUNT(*) FROM photo_people WHERE tag_id IS NOT NULL GROUP BY tag_id").fetchall():
+        name = names.get(tag_id)
+        if name is None:   # an id of a node that is gone: the rows' own name, until the next settle drops it
+            name = conn.execute("SELECT name FROM photo_people WHERE tag_id = ? LIMIT 1", (tag_id,)).fetchone()[0]
+        found.append((Ref(tag_id, name), count))
+    return sorted(found, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0].name)))
+
+
+#: The group the navigator puts the people at the top of the tree in (not a node: its id is TOP).
+TOP_LEVEL = "Top level"
+TOP = -1
 
 
 def people_groups(conn, counted):
-    """The branches of the tag tree the people of `counted` -- people_counts's [(name, photos)] -- are filed under, as the
-    navigator's People shows them (phase 9, #673): ({name: the tag of the node above the person, or None}, [{"id", "tag",
-    "name", "parent_id", "count"}] of every branch above a person, `count` the photos naming anyone under it, each photo
-    once), and how many photos name someone who is not filed (None above).
+    """The branches of the tag tree the people of `counted` -- people_counts's [(Ref, photos)] -- are filed under, as the
+    navigator's People shows them (phase 9, #673): ({the person's id: the tag of the node above the person, or None},
+    [{"id", "tag", "name", "parent_id", "count"}] of every branch above a person, `count` the photos naming anyone under it,
+    each photo once), and how many photos name someone who is not filed (None above).
 
-    A person is the tree's node by the one rule (tagpup.store.person_ids: a leaf `has_face` node, not a root, the only one
-    called that name; a branch is never a person). A name with no such node -- none, only a branch, or two -- is not filed.
-    The photos are one pass of photo_people grouped by photo in SQLite (Python sees the distinct sets of names, not 68,000
-    photos) and rolled up the tree's parent ids, as the keywords' counts are."""
+    A person is the tree's node (tagpup.store.person_ids: a `has_face` node with no node under it; a branch is never a person), by
+    the id the rows hold. A person directly under the tree's root is in the group TOP_LEVEL (a pseudo-group, id -1) until the owner
+    merges them into a branch. A name with no such node is not filed. The photos are one pass of photo_people grouped by photo in
+    SQLite (Python sees the distinct sets of ids, not 68,000 photos) and rolled up the tree's parent ids, as the keywords'
+    counts are."""
     known = person_ids.read(conn)
     nodes = {node_id: (tag, parent_id, name) for node_id, tag, parent_id, name in
              conn.execute("SELECT id, tag, parent_id, name FROM tag_taxonomy")}
-    group_of, by_key = {}, {}
-    for name, _photos in counted:
-        node = known.id_of(name)
+    nodes[TOP] = (TOP_LEVEL, None, TOP_LEVEL)
+    group_of, parent_of = {}, {}
+    for person, _photos in counted:
+        node = person.id if person.id in known.nodes else None
         parent = nodes[node][1] if node in nodes else None
-        group_of[name] = nodes[parent][0] if parent in nodes else None
-        by_key[vocabulary.key(name)] = parent if parent in nodes else None
+        if node is not None and parent is None:
+            parent = TOP   # a person at the top of the tree is filed there, not nowhere
+        group_of[person.id] = nodes[parent][0] if parent in nodes else None
+        if node is not None:
+            parent_of[node] = parent if parent in nodes else None
     upward = {}   # each group and every node above it: a damaged tree that loops ends the walk, never the call
-    for parent in set(by_key.values()) - {None}:
+    for parent in set(parent_of.values()) - {None}:
         walked, seen, here = [], set(), parent
         while here is not None and here in nodes and here not in seen:
             seen.add(here)
@@ -829,12 +659,12 @@ def people_groups(conn, counted):
         upward[parent] = walked
     counts, unfiled = collections.Counter(), 0
     separator = chr(31)   # a name never holds a control character (vocabulary.textProblem refuses them)
-    for names, photos in conn.execute(
-            "SELECT names, COUNT(*) FROM (SELECT group_concat(name, char(31)) AS names FROM photo_people GROUP BY photo_id)"
-            " GROUP BY names"):
+    for listed, photos in conn.execute(
+            "SELECT listed, COUNT(*) FROM (SELECT group_concat(COALESCE(tag_id, 0), char(31)) AS listed FROM photo_people"
+            " GROUP BY photo_id) GROUP BY listed"):
         reached, loose = set(), False
-        for name in names.split(separator):
-            parent = by_key.get(vocabulary.key(name))
+        for each in str(listed).split(separator):
+            parent = parent_of.get(int(each))
             if parent is None:
                 loose = True
             else:
@@ -847,11 +677,24 @@ def people_groups(conn, counted):
     return group_of, groups, unfiled
 
 
-def date_counts(conn):
-    """{"years": [{"year", "count", "months": [{"month": "YYYY-MM", "count"}], "other"}], "undated": n}: the photos
-    of each year (`photos.year`, the year taken or else the one in its name), and of each month of it by
+#: The first year a photo could be dated in: before it is a number from a file name or a scan's clock (photo_index
+#: holds 1827, 1843, 1874 and 1888). The last is next year (a camera's clock a little ahead). The one place the rule
+#: is, and the Dates navigator groups what falls outside it under "Other years" (docs/findings.md, #510).
+FIRST_PLAUSIBLE_YEAR = 1900
+
+
+def plausible_year(year, this_year=None):
+    """Could a photo have been taken in `year`: FIRST_PLAUSIBLE_YEAR to next year."""
+    this_year = time.localtime().tm_year if this_year is None else this_year
+    return FIRST_PLAUSIBLE_YEAR <= year <= this_year + 1
+
+
+def date_counts(conn, this_year=None):
+    """{"years": [{"year", "count", "months": [{"month": "YYYY-MM", "count"}], "other", "implausible"}], "undated": n}:
+    the photos of each year (`photos.year`, the year taken or else the one in its name), and of each month of it by
     `taken`; `other` is those of the year whose `taken` is no month of it (a date written with dashes, or
-    none). One statement, a scan of idx_photos_year, grouped. Years are in order, months in order."""
+    none); `implausible` is a year before FIRST_PLAUSIBLE_YEAR or after next year (plausible_year). One statement, a
+    scan of idx_photos_year, grouped. Years are in order, months in order."""
     years = {}
     undated = 0
     for year, month, count in conn.execute(
@@ -859,7 +702,8 @@ def date_counts(conn):
         if year is None:
             undated += count
             continue
-        entry = years.setdefault(year, {"year": year, "count": 0, "months": [], "other": 0})
+        entry = years.setdefault(year, {"year": year, "count": 0, "months": [], "other": 0,
+                                        "implausible": not plausible_year(year, this_year)})
         entry["count"] += count
         if month is not None and len(month) == 7 and month[:4] == "%04d" % year and month[4] == ":" and month[5:].isdigit() \
                 and 1 <= int(month[5:]) <= 12:

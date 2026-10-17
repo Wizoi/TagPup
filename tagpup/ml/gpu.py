@@ -15,7 +15,7 @@ has one there:
 
 - **One process at a time.** The turn is a byte lock on `card.lock` in the user's own
   folder (`folder()`: %LOCALAPPDATA%\\TagPup\\gpu, or TAGPUP_GPU_LOCK), the same lock
-  install.lock is (tagpup.supervisor.Lock): the system lets go of it when its process
+  install.lock is (tagpup.core.byte_lock): the system lets go of it when its process
   ends, however it ends. Within a process the threads share it: a second hold joins the
   first.
 - **In order.** A process waiting holds a ticket in `queue/`, a file it keeps locked
@@ -41,6 +41,7 @@ import tempfile
 import threading
 import time
 
+from tagpup.core import byte_lock
 from tagpup.core.gpu_turns import Cancelled, waiting_line
 
 logger = logging.getLogger(__name__)
@@ -95,38 +96,6 @@ def on_the_card(device):
     return str(device or "").lower().startswith("cuda")
 
 
-def _lock(fd):
-    """Lock the first byte of `fd`, or raise OSError when another handle has it."""
-    if os.name == "nt":
-        import msvcrt
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _unlock(fd):
-    if os.name == "nt":
-        import msvcrt
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fd, fcntl.LOCK_UN)
-
-
-def _try_lock(path):
-    """An open handle on `path` with its byte locked, or None when another has it."""
-    fd = os.open(path, os.O_RDWR | os.O_CREAT)
-    try:
-        _lock(fd)
-    except OSError:
-        os.close(fd)
-        return None
-    return fd
-
-
 def _alive(path):
     """Is the ticket at `path` held by a waiter? One whose lock can be taken is a dead
     waiter's, and is cleared."""
@@ -138,10 +107,10 @@ def _alive(path):
         return True   # being made or cleared this moment: looked at again next time
     try:
         try:
-            _lock(fd)
+            byte_lock.lock(fd)
         except OSError:
             return True
-        _unlock(fd)
+        byte_lock.unlock(fd)
     finally:
         os.close(fd)
     try:
@@ -312,7 +281,7 @@ class Card:
             os.makedirs(os.path.join(where, QUEUE), exist_ok=True)
             if others_waiting(where):
                 return None
-            fd = _try_lock(os.path.join(where, LOCK))
+            fd = byte_lock.try_lock(os.path.join(where, LOCK))
             if fd is None:
                 return None
             self._fd, self._held_in, self._since = fd, where, time.time()
@@ -353,7 +322,7 @@ class Card:
             self._pinned = self._yielding = False
             if fd is not None:
                 try:
-                    _unlock(fd)
+                    byte_lock.unlock(fd)
                 except OSError:
                     pass
                 os.close(fd)
@@ -374,7 +343,7 @@ class Card:
             # it is alive.
             for _ in range(40):
                 try:
-                    _lock(handle)
+                    byte_lock.lock(handle)
                     break
                 except OSError:
                     time.sleep(0.05)
@@ -382,7 +351,7 @@ class Card:
                 if cancelled is not None and cancelled():
                     raise Cancelled("%s was cancelled while it waited for the graphics card" % what)
                 if self._first(queue, name):
-                    fd = _try_lock(os.path.join(where, LOCK))
+                    fd = byte_lock.try_lock(os.path.join(where, LOCK))
                     if fd is not None:
                         return fd, where
                 line = waiting_line(read_holder(where))
@@ -475,7 +444,7 @@ class Card:
                 except OSError:
                     pass
                 try:
-                    _unlock(fd)
+                    byte_lock.unlock(fd)
                 except OSError:
                     pass
                 os.close(fd)

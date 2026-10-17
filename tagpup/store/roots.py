@@ -64,28 +64,22 @@ class RootsChanged(RuntimeError):
     from here would be converted by roots the library no longer has."""
 
 
+#: The columns of paths a root holds as `@name/rel`: (table, the key a row is named by, column). The one list
+#: (tagpup.store.roots_check reads it for `roots check` and the doctor). Not the derived `folders`: its paths are the
+#: photos' folders in the form the photos' rows are in, and derived.stale_folders compares it with the photos.
+PATH_COLUMNS = (("photos", "id", "path"), ("change_files", "id", "path"), ("change_files", "id", "new_path"),
+                ("added_folders", "rowid", "path"))
+
+
 # ---- The table -------------------------------------------------------------------------
 
-def has_table(conn):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)).fetchone() is not None
-
-
 def _rows(conn):
-    """((name, address), ...) of the library's roots, by name; () for a library with none or
-    one behind migration 18."""
-    try:
-        return tuple((name, address or "") for name, address in
-                     conn.execute("SELECT name, address FROM roots ORDER BY name"))
-    except sqlite3.OperationalError as problem:
-        if "no such table" in str(problem):
-            return ()
-        raise
+    """((name, address), ...) of the library's roots, by name; () for a library with none."""
+    return tuple((name, address or "") for name, address in conn.execute("SELECT name, address FROM roots ORDER BY name"))
 
 
 def every(conn):
     """[(name, address, added)] of the library's roots, by name."""
-    if not has_table(conn):
-        return []
     return [tuple(row) for row in conn.execute("SELECT name, address, added FROM roots ORDER BY name")]
 
 
@@ -96,7 +90,7 @@ def logical(conn):
 
 def listing(db_path):
     """[{"name", "address", "added"}] of the roots of the library at `db_path`, read-only:
-    nothing is migrated, and a library behind migration 18 has none."""
+    nothing is migrated (a library below the baseline is refused before it is opened)."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         return [{"name": name, "address": address, "added": added} for name, address, added in every(conn)]
@@ -489,22 +483,6 @@ def row_value(roots, table, column, value, key=None):
         return suggested_to_row(value, roots)
     elif table == "settings" and column == "value" and key in FOLDER_SETTINGS:
         return folders_to_row(value, roots)
-    return value
-
-
-def native_value(roots, table, column, value, key=None):
-    """row_value, the other way: what this machine reads."""
-    if roots.identity or value is None:
-        return value
-    if table == "photos":
-        if column == "path":
-            return paths.from_row(value, roots) if value and value.startswith(paths.ROOT_MARK) else value
-        if column == "raw_metadata":
-            return raw_to_native(value, roots)
-    elif table == "suggestions" and column == "raw":
-        return suggested_to_native(value, roots)
-    elif table == "settings" and column == "value" and key in FOLDER_SETTINGS:
-        return folders_to_native(value, roots)
     return value
 
 

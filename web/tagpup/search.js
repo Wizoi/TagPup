@@ -20,8 +20,7 @@
 //
 // WHAT FAILS: a list of more than 1,000, or a search whose address would be longer than the page can be reloaded by
 // (MAX_ADDRESS), is a sentence by the box and nothing is sent; words with no letter or digit are left out and said so; a
-// search the server refuses (400) says the server's sentence by the box; a library still making its word index (503) says
-// so in the strip and is asked again for about a minute (library-source.js). A later search wins: the view it replaces asks
+// search the server refuses (400) says the server's sentence by the box. A later search wins: the view it replaces asks
 // nothing more and its answer is dropped. Everything the box holds is `state.search`.
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
@@ -30,6 +29,7 @@ import {
     librarySearchWithinName, librarySearchWithinRow, librarySearchWords
 } from './elements.js';
 import { closeViewAsNewPlace, openLibraryView } from './library-view.js';
+import { searchPlacesBack } from './view-left.js';
 import {
     MAX_MEMBERS, MAX_WORDS, SEARCH_LISTS, addressTooLong, searchAsksSomething, searchValue, searchWords, termSaysSomething,
     viewLabel
@@ -137,7 +137,7 @@ function paintChips() {
         const members = s.lists[list];
         const chips = [];
         members.slice(0, MAX_CHIPS_SHOWN).forEach((member, at) => {
-            const { text, title } = chipLabel(member);
+            const { text, title } = chipLabel(member, people);
             if (member.kind === 'person' && !people) readForChips('people');
             if ((member.kind === 'keyword' || member.kind === 'keyword_only') && !keywords) readForChips('keywords');
             const known = chipKnown(member, keywords, people);
@@ -301,7 +301,7 @@ export function clearSearch() {
         paintWithin();
         return;
     }
-    const back = Number(window.history.state && window.history.state.searchBack);
+    const back = searchPlacesBack();
     if (back > 0) window.history.go(-back);
     else closeViewAsNewPlace();
 }

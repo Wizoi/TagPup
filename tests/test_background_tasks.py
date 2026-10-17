@@ -55,20 +55,25 @@ class TheRegistry(unittest.TestCase):
         self.assertEqual(["start watcher", "stop watcher"], log)
 
     def test_stops_them_all_within_one_deadline(self):
+        given = []
+
         class Slow:
             def start(self):
                 pass
 
             def stop(self, timeout=30):
+                given.append(timeout)
                 time.sleep(min(timeout, 1.0))
                 return timeout >= 1.0
 
             def busy(self):
                 return False
         background = runtimes.background(Runtime(), {"one": lambda runtime: Slow(), "two": lambda runtime: Slow()})
-        started = time.monotonic()
         still = background.stop(timeout=1.0)
-        self.assertLess(time.monotonic() - started, 1.5, "each task was given the whole timeout")
+        # What each was given, not how long it took: a busy machine's seconds are not the deadline's (#721).
+        self.assertEqual(2, len(given))
+        self.assertLessEqual(given[0], 1.0)
+        self.assertLess(given[1], 0.1, "each task was given the whole timeout")
         self.assertIn("two", still)
 
     def test_says_which_are_busy(self):

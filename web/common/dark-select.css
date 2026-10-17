@@ -1,0 +1,40 @@
+/* Every page's drop-down lists (#782). The one place a select is made dark; a page's own stylesheet styles a
+   select's look but never this.
+
+   The pages are dark and a select's list is an operating-system popup, drawn by the select's own computed style
+   and nothing else of the page. Without `color-scheme` Windows draws it light, with a white strip under options
+   styled dark (beaadb2). That alone left a hairline of the select's own colour under the last option, because
+   the options were a different dark from the select: the popup's rows are whole device pixels, a list is rarely
+   a whole number of them at a fractional display scale, and what is left over shows the select's background.
+   So an option is the select's colour (`inherit`), and nothing can differ from it. What is left is the popup
+   window's own bottom row (one device pixel, light, at 125%, 150% and 175% on Chrome and Edge 154): Chromium rounds
+   the window's height up, and no style of the page reaches it (measured with a taller line-height and a
+   min-height on the options: the window did not change). A page that adds a select needs nothing; one that links
+   this file has every select dark. tests/test_dark_selects.py holds both pages
+   and the activity page to it; scripts/measure_select_list.py looks at the open list in a real browser.
+
+   The library picker is no longer a native list at all (#909: Chrome drew ~45 px of blank under its last option, which
+   no style reaches): web/common/library-picker.js and .css. Its select stays, hidden, for the page's own code. */
+select {
+    color-scheme: dark;
+}
+
+select option,
+select optgroup {
+    background-color: inherit;
+    color: inherit;
+    font-family: inherit;
+}
+
+/* The library picker in each page's header. */
+#db-select {
+    background-color: var(--bg-tertiary) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+    font-family: var(--font-body) !important;
+    font-size: 13px !important;
+    height: 32px !important;
+    border-radius: 6px !important;
+    outline: none !important;
+    cursor: pointer !important;
+}

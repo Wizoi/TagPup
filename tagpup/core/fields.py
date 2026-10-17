@@ -8,6 +8,8 @@ a removed tag came back from it.
 import json
 import re
 
+from tagpup.core import photo_meta
+
 # Define target fields mapped to keys we want to return
 # ExifTool output keys can be namespaced or bare (without prefix).
 # We check both to be safe.
@@ -16,9 +18,8 @@ METADATA_FIELDS = [
     "IPTC:Keywords", "Keywords",
     "XMP:Subject", "Subject",
     "XMP:HierarchicalSubject", "HierarchicalSubject",
-    # People / faces
-    "XMP:PersonInImage", "PersonInImage",
-    "XMP:RegionName", "RegionName",
+    # Not XMP PersonInImage or RegionName: nothing reads a file's person fields (a bare name is nobody, owner
+    # 2026-10-15), and no photo of the three libraries holds either (counted 2026-10-15).
     # Caption
     "IPTC:Caption-Abstract", "Caption-Abstract",
     "XMP:Description", "Description",
@@ -41,6 +42,15 @@ METADATA_FIELDS = [
     # Camera
     "EXIF:Make", "Make",
     "EXIF:Model", "Model",
+    # Lens. A bare name is answered under every group that holds it (checked on 400 files of a
+    # library, 2026-10-09): LensModel brings EXIF:, XMP: and MakerNotes:LensModel, LensMake brings
+    # EXIF:LensMake, LensID brings Composite:LensID and XMP:LensID. Run without print conversion a
+    # LensID is a number for Canon and Tamron (photo_meta.gear ignores a number) and text only for
+    # Google; LensModel is the lens's own name wherever the camera writes one.
+    "EXIF:LensModel", "LensModel",
+    "XMP:LensModel",
+    "EXIF:LensMake", "LensMake",
+    "Composite:LensID", "LensID",
     # Rating
     "XMP:Rating", "Rating",
     # Identity. A path is a bad name for a photo -- rename the file and the index is
@@ -64,11 +74,33 @@ def scan_reads(field):
     return key in METADATA_FIELDS or bare in METADATA_FIELDS
 
 
-#: The fields a photo's camera is named from, the first it has: what Shift Date Taken
-#: chooses photos by. The TagPup page names cameras the same way, to offer them and to
-#: show which photos a shift is about, from a copy of these that
-#: tests/test_rules_have_one_owner.py holds to them (docs/findings.md, #74).
-CAMERA_FIELDS = ("EXIF:Model", "Model", "EXIF:Make", "Make")
+#: The keys a read answers a photo's DocumentID under (the XMP standard's per-document identifier, tagpup.files.identity).
+DOCUMENT_ID_KEYS = ("XMP:DocumentID", "XMP-xmpMM:DocumentID", "DocumentID")
+
+
+def read_document_id(metadata):
+    """The photo's identity as its metadata reports it, or None."""
+    if not isinstance(metadata, dict):
+        return None
+    for key in DOCUMENT_ID_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, list):
+            value = value[0] if value else None
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+#: The field a rotation journals: the EXIF Orientation, 1 to 8 (tagpup.services.rotation).
+ORIENTATION = "EXIF:Orientation"
+
+#: Fields written under another name than the one they are read and journaled by. Orientation is written without its group,
+#: so that an XMP tiff:Orientation already in the file is updated to match and not left to contradict the EXIF one.
+WRITTEN_AS = {ORIENTATION: "Orientation"}
+
 
 #: The camera of a photo that names none.
 UNKNOWN_CAMERA = "Unknown Camera"
@@ -78,10 +110,10 @@ ALL_CAMERAS = "All Cameras"
 
 
 def camera_of(raw_metadata):
-    """The camera a photo came from, by its metadata: the first of CAMERA_FIELDS it has,
-    else UNKNOWN_CAMERA."""
-    raw = raw_metadata or {}
-    return next((raw[field] for field in CAMERA_FIELDS if raw.get(field)), UNKNOWN_CAMERA)
+    """The camera a photo came from, by its metadata: its one name (tagpup.core.photo_meta.camera_name, which Image
+    Details and the search use), else UNKNOWN_CAMERA. What Shift Date Taken chooses photos by; the TagPup page gets the
+    same name in the photo's record (`camera`) and keeps no copy of the rule (docs/findings.md, #74, #1003)."""
+    return photo_meta.gear(raw_metadata).camera or UNKNOWN_CAMERA
 
 
 def on_camera(raw_metadata, camera):
@@ -119,7 +151,7 @@ def expand_tag_fields(tags):
 def keyword_fields(flat, hierarchical):
     """Every field a keyword write sets, and what it sets it to.
 
-    The one list of them. write_keywords writes exactly these, and
+    The one list of them. The journaled write (tagpup.services.tagging) writes exactly these, and
     record_keyword_fields records exactly these, so the file and its index row cannot
     drift apart one field at a time. They did: the index recorded the two XMP fields
     and not IPTC:Keywords, which vocabulary.extract_tags also reads, so a tag removed
@@ -213,8 +245,7 @@ def record_date_taken(raw_meta, date_taken):
 
 #: The fields whose value is a list: a keyword field holds several, and ExifTool answers
 #: one of them alone as a bare value.
-LIST_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject",
-               "XMP:PersonInImage", "XMP:RegionName")
+LIST_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject")
 
 
 def read_key(field):

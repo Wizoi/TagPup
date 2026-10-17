@@ -1,8 +1,6 @@
 """Tests for the face identity resolution rules (tagpup.services.identities).
 
-`test_stability.py` already covers strict tag enforcement, the similarity threshold
-and era-aware centroids. This file covers the rest of the resolution pipeline: how
-anchors are found, how clusters vote, how conflicts inside a single photo are broken,
+This file covers the resolution pipeline: how anchors are found, how clusters vote, how conflicts inside a single photo are broken,
 which faces are dismissed as background noise, and how remaining faces are matched to
 leftover name tags.
 
@@ -102,12 +100,12 @@ class FaceClusteringTestBase(unittest.TestCase):
         conn.close()
         return face_id
 
-    def resolve(self, max_iterations=5):
+    def resolve(self):
         """Reload the index so it sees the fixtures, then run identity resolution."""
         self.index.close()
         self.index = PhotoIndex(db_path=self.db_path)
         self.index.load()
-        return identities.resolve(self.index, max_iterations=max_iterations)
+        return identities.resolve(self.index)
 
     def name_of(self, face_id):
         conn = sqlite3.connect(self.db_path)
@@ -217,6 +215,25 @@ class TestStrictTagEnforcement(FaceClusteringTestBase):
 
         self.resolve()
         self.assertNotEqual(self.name_of(mismatched_face), "Jane Doe")
+
+
+class TestAFaceUnlikeThePersonIsNotNamedForThem(FaceClusteringTestBase):
+    """Lifted: test_stability.test_strict_tag_enforcement_in_clustering (the untagged photo, above) and
+    test_similarity_threshold_in_clustering. Mutations: a face in an untagged photo given its best match's name; the
+    threshold for naming a face (clustering.names_unasked, is_offered) dropped to nothing."""
+
+    def test_a_photo_tagged_with_the_person_leaves_its_unlike_faces_unnamed(self):
+        jane = identity_vector(1)
+        anchor = self.add_face(self.add_photo("anchor.jpg", people=["Jane Doe"]), jane)
+        crowd = self.add_photo("crowd.jpg", people=["Jane Doe"])
+        # Both about 0.5 like Jane: more than a stranger's, less than the 0.70 that would offer her name.
+        strangers = [self.add_face(crowd, near(jane, 2, distance=1.7), box=(0, 0, 100, 100)),
+                     self.add_face(crowd, near(jane, 3, distance=1.7), box=(200, 0, 300, 100))]
+
+        self.resolve()
+        self.assertEqual("Jane Doe", self.name_of(anchor))
+        self.assertEqual([None, None], [self.name_of(face) for face in strangers],
+                         "faces no like Jane were named for her because their photo is tagged with her")
 
 
 class TestSameNameConflictInOnePhoto(FaceClusteringTestBase):
@@ -331,23 +348,7 @@ class TestBackgroundFaceFiltering(FaceClusteringTestBase):
 
 
 class TestProcessOfElimination(FaceClusteringTestBase):
-    def test_a_lone_unassigned_face_takes_the_lone_unused_name(self):
-        """Jane is identified; the one remaining face must be the one remaining name."""
-        jane, bob = identity_vector(1), identity_vector(2)
-
-        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        self.add_face(anchor_photo, jane)
-
-        pair_photo = self.add_photo("pair.jpg", people=["Jane Doe", "Bob Roe"])
-        jane_face = self.add_face(pair_photo, near(jane, 11), box=(0, 0, 200, 200))
-        bob_face = self.add_face(pair_photo, bob, box=(300, 0, 500, 200))
-
-        self.resolve()
-        self.assertEqual(self.name_of(jane_face), "Jane Doe")
-        self.assertEqual(
-            self.name_of(bob_face), "Bob Roe", "the leftover name was not deduced"
-        )
-
+    # The one face left taking the one person left: test_clustering_meets_naming (#1374).
     def test_elimination_does_not_invent_names_for_untagged_photos(self):
         jane, bob = identity_vector(1), identity_vector(2)
         anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
@@ -413,15 +414,6 @@ class TestResolutionOutputs(FaceClusteringTestBase):
         self.assertIn(face_a, traces)
         self.assertIn(face_b, traces)
 
-    def test_anchor_only_mode_still_assigns_direct_anchors(self):
-        """max_iterations=0 skips propagation but must keep the anchor itself."""
-        jane = identity_vector(1)
-        photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        face = self.add_face(photo, jane)
-
-        self.resolve(max_iterations=0)
-        self.assertEqual(self.name_of(face), "Jane Doe")
-
 
 class TestManualOverridesSurviveClustering(FaceClusteringTestBase):
     """Re-clustering re-derives every name; a person's own decisions must outlast it."""
@@ -465,15 +457,8 @@ class TestManualOverridesSurviveClustering(FaceClusteringTestBase):
             "a hand-matched face did not propagate to the person's other photos",
         )
 
-    def test_the_trace_records_that_a_decision_was_preserved(self):
-        jane = identity_vector(1)
-        photo = self.add_photo("a.jpg", people=["Jane Doe"])
-        face = self.add_face(photo, jane, manual_name="Jane Doe")
-
-        self.resolve()
-        self.assertEqual(
-            self.traces()[face]["resolution_method"], "manual_override_preserved"
-        )
+    # The trace's "manual_override_preserved", with the name kept through every round:
+    # test_cluster_faces_on_a_crowded_library.
 
     def test_automatic_assignments_are_still_revised(self):
         """Only manual decisions are protected; inferred ones stay revisable."""

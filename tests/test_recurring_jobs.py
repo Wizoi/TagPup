@@ -2,10 +2,19 @@
 the library; a missed period run once; one run of a job for a library at a time, across
 threads and processes, and a run a dead process left taken over; the web server's
 thread stopped cleanly; and what the apps are told, counts only.
+
+Only the web server runs them (owner, 2026-09-26): the CLI ran what was due before every
+command, so the first `stats` of a day waited 20 s for a snapshot and a look wrote to the library, and the MCP server
+ran them on a thread as it started. A server a test starts is told TAGPUP_NO_JOBS, whatever else it inherits (review
+of phase 8a, 7).
+
+Lifted: test_only_the_server_runs_jobs and test_test_servers_run_no_jobs (WhetherAProcessRunsThem). Mutation:
+tagpup/runtime.py runs_recurring_jobs returning True instead of `not under_test()` fails
+test_not_in_a_test_run_unless_asked_and_never_when_told_not_to.
 """
-import json
 import os
 import queue
+import re
 import socket
 import sys
 import threading
@@ -13,12 +22,15 @@ import time
 import unittest
 from unittest import mock
 
+from click.testing import CliRunner
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
-import web_client  # noqa: E402
 
+import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
+from tagpup.mcp import server  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
@@ -146,7 +158,7 @@ class WhatIsDue(Base):
         cove = made(self.home, "cove")
         seen = []
         registry = recurring.Registry()
-        registry.job("everywhere", recurring.WEEKLY, reason=recurring.RETENTION, per_library=False)(
+        registry.job("everywhere", recurring.WEEKLY, reason=recurring.SAFETY, per_library=False)(
             lambda libraries, run: seen.append([lib.name for lib in libraries]) or Result())
         runner = recurring.Runner(lambda: [self.harbour, cove], registry, clock=self.clock)
         self.assertEqual(1, len([o for o in runner.run_due() if o.ran]))
@@ -162,8 +174,8 @@ class WhatIsDue(Base):
         with self.assertRaises(ValueError):
             registry.job("sync", recurring.DAILY, reason=recurring.CATCH_UP)(lambda library, run: Result())
 
-    def test_the_registry_holds_the_snapshots_and_pruning_the_journal(self):
-        self.assertEqual({"snapshots": "daily", "prune-journal": "weekly", "sync": "daily"},
+    def test_the_registry_holds_the_snapshots_and_the_sync(self):
+        self.assertEqual({"snapshots": "daily", "sync": "daily"},
                          {job.name: job.period.name for job in recurring.JOBS})
         self.assertTrue(all(job.per_library for job in recurring.JOBS))
 
@@ -204,9 +216,9 @@ class EachJobSaysWhyItIsScheduled(unittest.TestCase):
         self.assertEqual([], registry.names())
 
     def test_each_registered_job_has_one_and_the_apps_are_told_it(self):
-        self.assertEqual({"snapshots": "safety", "prune-journal": "retention", "sync": "catch-up"},
+        self.assertEqual({"snapshots": "safety", "sync": "catch-up"},
                          {job.name: job.reason for job in recurring.JOBS})
-        self.assertEqual(("safety", "retention", "catch-up"), recurring.REASONS)
+        self.assertEqual(("safety", "catch-up"), recurring.REASONS)
         registry = recurring.Registry()
         registry.job("sync", recurring.DAILY, reason=recurring.CATCH_UP)(lambda library, run: Result())
         home = own_home.for_test(self, prefix="jobs_")
@@ -231,11 +243,12 @@ class ALibraryByAnySpelling(unittest.TestCase):
 
 class ALibraryBehind(unittest.TestCase):
     def test_is_left_alone_not_migrated(self):
-        from test_migrations import at_version
+        import migration_names
         from tagpup.store import schema
         home = own_home.for_test(self, prefix="jobs_")
         library = Library(home.library("harbour.db"))
-        at_version(library.path, schema.LATEST - 1)
+        schema.ensure(library.path)
+        self.enterContext(migration_names.ahead())   # the code knows a step the library has not had
         registry = recurring.Registry()
         service = Counting()
         registry.job("tidy", recurring.DAILY, reason=recurring.SAFETY)(service)
@@ -403,7 +416,41 @@ class TheWebServersThread(Base):
             self.assertEqual(["start", "serve", "stop"], order)
 
 
+#: A test starting one of the programs that may run the recurring jobs.
+STARTS_A_SERVER = re.compile(r"""tagpup_web\.py|TagTuner\.cmd|TagPup\.cmd|["']tagpup\.mcp["']""")
+SPAWNS = re.compile(r"processes\.start\(|subprocess\.Popen\(")
+
+
 class WhetherAProcessRunsThem(unittest.TestCase):
+    def test_the_cli_runs_none_before_a_command_and_the_mcp_server_starts_none(self):
+        home = own_home.for_test(self, prefix="jobs_")
+        path = home.library("harbour.db")
+        library_actions.create(path)
+        with mock.patch.dict(os.environ, {runtimes.RUN_JOBS: "1"}), \
+                mock.patch.object(tagpup_cli.runtimes, "recurring_jobs") as cli_runner:
+            answer = CliRunner().invoke(tagpup_cli.cli, ["--db", path, "history"])
+        self.assertEqual(0, answer.exit_code, answer.output)
+        cli_runner.assert_not_called()
+        with mock.patch.dict(os.environ, {runtimes.RUN_JOBS: "1"}), \
+                mock.patch.object(server.runtimes, "recurring_jobs") as mcp_runner, \
+                mock.patch.object(server.logs, "to_file", return_value="(no log file)"), \
+                mock.patch.object(server, "build") as build:
+            server.main()
+        build.return_value.run.assert_called_once_with("stdio")
+        mcp_runner.assert_not_called()
+
+    def test_every_test_that_starts_a_server_tells_it_to_run_no_jobs(self):
+        missing = []
+        tests = os.path.dirname(os.path.abspath(__file__))
+        for name in sorted(os.listdir(tests)):
+            if not (name.startswith("test_") and name.endswith(".py")) or name == os.path.basename(__file__):
+                continue
+            with open(os.path.join(tests, name), encoding="utf-8") as handle:
+                source = handle.read()
+            if SPAWNS.search(source) and STARTS_A_SERVER.search(source) and "TAGPUP_NO_JOBS" not in source:
+                missing.append(name)
+        self.assertEqual([], missing, "these start a server without TAGPUP_NO_JOBS=1")
+
     def test_not_in_a_test_run_unless_asked_and_never_when_told_not_to(self):
         with mock.patch.dict(os.environ):
             os.environ.pop(runtimes.RUN_JOBS, None)
@@ -421,30 +468,6 @@ class WhetherAProcessRunsThem(unittest.TestCase):
         made(home, "test_cove")
         self.assertEqual(["harbour"], [lib.name for lib in runtimes.home_libraries()])
         self.assertEqual(["test_cove"], [lib.name for lib in runtimes.home_libraries(test_mode=True)])
-
-
-class WhatTheAppsAreTold(unittest.TestCase):
-    def test_each_jobs_last_run_and_when_it_is_due_counts_only(self):
-        for kind in ("tagpup", "tuner"):
-            app, home = web_client.app_for(self, kind)
-            library = Library(home.library("library.db"))
-            listed = app.test_client().get("/library/api/jobs").get_json()
-            self.assertEqual(["snapshots", "prune-journal", "sync"], [job["name"] for job in listed["jobs"]])
-            self.assertEqual([None, None, None], [job["last"] for job in listed["jobs"]])
-
-            registry = recurring.Registry()
-            service = Counting()
-            service.fail = True
-            registry.job("snapshots", recurring.DAILY, reason=recurring.SAFETY)(service)
-            recurring.Runner(lambda: [library], registry).run_due()
-            answer = app.test_client().get("/library/api/jobs")
-            self.assertEqual(200, answer.status_code)
-            job = answer.get_json()["jobs"][0]
-            self.assertEqual(("failed", False, {"errors": 1}), (job["last"]["outcome"], job["running"],
-                                                                job["last"]["changed"]))
-            self.assertNotIn("Imogen", json.dumps(answer.get_json()), "a failure's note can name a path")
-            # Failed: due again an hour after it started.
-            self.assertEqual(job_runs.seconds(job["last"]["started"]) + HOUR, job_runs.seconds(job["next_due"]))
 
 
 if __name__ == "__main__":

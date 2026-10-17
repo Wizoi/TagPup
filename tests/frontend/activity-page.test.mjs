@@ -23,6 +23,14 @@ const NOW = {
       },
       suggesting: [{ library: "harbour", folder: "Lakes", status: "running", completed: 3, total: 9 }],
       jobs: [],
+      batches: [
+        { ticket: 3, id: 41, operation: "bulk tags", library: "harbour", photos: 60, done: 25, conflict: 1, planned: 34,
+          started: 1, state: "running", position: 0, here: true },
+        { ticket: 4, id: null, operation: "bulk people", library: "harbour", photos: 40, done: 0, conflict: 0, planned: 0,
+          started: null, state: "queued", position: 1, here: true },
+        { ticket: null, id: 42, operation: "bulk tags", library: "harbour", photos: 30, done: 2, conflict: 0, planned: 28,
+          started: null, state: "running", position: 0, here: false },
+      ],
     },
     { name: "regatta", indexing: { running: null, queued: [] }, suggesting: [],
       jobs: [{ job: "snapshots", run_id: 12, started: "2026-09-26 09:58:00", run: "job:regatta:12",
@@ -31,8 +39,6 @@ const NOW = {
   syncing: { library: "harbour", folder: "D:\\Photos\\Regatta", started: "2026-09-26 10:00:01" },
   watching: true,
   server: { version: "20260926-090000-abc1234", taking_work: true, requests: 1, busy: [] },
-  supervisor: { state: "moving", why: "to 20260926-100000-def5678", alive: true,
-                update_refused: { said: "the installed version is newer than the checkout", since: "2026-09-26 08:00:00" } },
 };
 
 function job(name, reason, runs, extra = {}) {
@@ -66,8 +72,11 @@ const SYNC = {
       last_whole: { id: 3, started: "2026-09-26 08:59:00", finished: "2026-09-26 09:00:00", seconds: 60, whole: true,
                     in_step: true, found: {}, changed: { rows: 0 }, change: null, run: "sync:harbour:20260926T085900",
                     logs: ["tagpup_web.log"] },
-      last_folder: null,
-      roots: [{ path: "D:\\Photos", there: true, watched: true }, { path: "E:\\Archive", there: false, watched: false }],
+      last_folder: { id: 4, started: "2026-09-26 09:10:00", finished: "2026-09-26 09:10:02", seconds: 2, whole: false,
+                     in_step: false, found: { not_looked_at: 1309, folders_not_looked_at: 1 }, changed: { rows: 0 },
+                     change: null, run: "sync:harbour:20260926T091000", logs: ["tagpup_web.log"] },
+      roots: [{ path: "D:\\Photos", there: true, watched: true }, { path: "E:\\Archive", there: false, answering: true, watched: false },
+              { path: "\\\\nas\\Pictures", there: false, answering: false, watched: false }],
       watches: ["D:\\Photos"], watcher: { last_event: "2026-09-26 09:59:00", pending_folders: 0, whole_pending: false,
                                           last_sync: null, not_watched: false } },
   ],
@@ -82,11 +91,8 @@ const SNAPSHOTS = {
 };
 
 const SERVER = {
-  version: "20260926-090000-abc1234", supervised: true, taking_work: true, busy: [], running_since: "2026-09-26 09:00:00",
+  version: "20260926-090000-abc1234", taking_work: true, busy: [], running_since: "2026-09-26 09:00:00",
   pid: 4242, background: ["recurring jobs", "folder watcher"],
-  supervisor: { state: "running", why: null, alive: true, running_since: "2026-09-26 08:59:00", crashes: 1,
-                crash_window_minutes: 10, server_starts: 2, previous_version: "20260925-090000-0123456",
-                version: "20260926-090000-abc1234", update_refused: null },
 };
 
 const TIMELINE = {
@@ -110,7 +116,6 @@ const LOG_FILES = {
   levels: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
   logs: [
     { name: "tagpup_web.log", program: "tagpup_web", source: "Web server", bytes: 20480, modified: 1, rotated: [] },
-    { name: "supervisor.log", program: "supervisor", source: "Always on (supervisor)", bytes: 2048, modified: 0, rotated: [] },
     { name: "indexer-harbour.log", program: "indexer-harbour", source: "Indexer (harbour)", bytes: 1024, modified: 0,
       rotated: [] },
   ],
@@ -144,7 +149,7 @@ function open(t, fake = server(), every = 5000) {
 }
 
 describe("the Activity page draws each section from what the server says", () => {
-  test("Now: indexing, Suggest, a job, the watcher's sync and the always-on process", async (t) => {
+  test("Now: indexing, Suggest, a job, the watcher's sync and the server", async (t) => {
     const { document, window } = await open(t);
     await flush(window, 6);
     const now = document.getElementById("now-body");
@@ -155,10 +160,26 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(now.textContent, /Lakes/);
     assert.match(now.textContent, /running, 3 of 9/);
     assert.match(now.textContent, /snapshots/);
-    assert.match(now.textContent, /update waiting/);
-    assert.match(now.textContent, /update refused/);
     assert.match(now.textContent, /D:\\Photos\\Regatta/);
     assert.equal(document.getElementById("updated").textContent, "Updated 10:00:03");
+  });
+
+  test("Now: batches of photo files, running and waiting, with Cancel for this server's own", async (t) => {
+    const fake = server().on("/api/activity/batches/cancel", { success: true });
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    const now = document.getElementById("now-body");
+    assert.match(now.textContent, /bulk tags.*25 of 60 photos written, 1 changed outside/);
+    assert.match(now.textContent, /bulk people.*40 photos, 1 ahead; a restart drops it before anything is written/);
+    assert.match(now.textContent, /2 of 30 photos written \(another program runs it\)/);
+    const buttons = now.querySelectorAll("button.cancel-batch");
+    assert.equal(buttons.length, 2, "another program's batch cannot be cancelled here");
+    click(window, buttons[0]);
+    await flush(window, 4);
+    const posted = fake.calls.filter((call) => call.method === "POST");
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].url, "/api/activity/batches/cancel");
+    assert.deepEqual(posted[0].body, { library: "harbour", ticket: 3 });
   });
 
   test("Scheduled jobs: each run with its counts and error, a failure flagged, Run now", async (t) => {
@@ -182,13 +203,20 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(unfolded[1].textContent, /changed 1/);
   });
 
-  test("Sync & watcher, Snapshots and Always on", async (t) => {
+  test("Sync & watcher, Snapshots and the server", async (t) => {
     const { document, window } = await open(t);
     await flush(window, 6);
     const sync = document.getElementById("sync-body");
     assert.match(sync.textContent, /D:\\Photos/);
     assert.match(sync.textContent, /E:\\Archive/);
     assert.match(sync.textContent, /missing/);
+    // A root on a share asleep is not answering, never missing.
+    const asleep = [...sync.querySelectorAll("ul.roots li")].find(li => /nas/.test(li.textContent));
+    assert.match(asleep.textContent, /not answering/);
+    assert.doesNotMatch(asleep.textContent, /missing/);
+    // A sync that could not look at a folder on a share asleep says so, and is not in step.
+    assert.match(sync.textContent, /1 folder not looked at \(share not answering or not listable\)/);
+    assert.match(sync.textContent, /not in step/);
     const review = sync.querySelector('a[href="http://localhost:8080/harbour/?review=1"]');
     assert.ok(review, "the folders to review open TagTuner's dialog");
     assert.equal(review.getAttribute("target"), "_blank");
@@ -198,8 +226,6 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(snapshots.textContent, /1 h/);
     const always = document.getElementById("server-body");
     assert.match(always.textContent, /20260926-090000-abc1234/);
-    assert.match(always.textContent, /1 in the last 10 minutes/);
-    assert.match(always.textContent, /from 20260925-090000-0123456 to 20260926-090000-abc1234/);
   });
 
   test("Recent activity, newest first, and More reads further back", async (t) => {
@@ -222,9 +248,17 @@ describe("the Activity page draws each section from what the server says", () =>
     await flush(window, 6);
     assert.ok(fake.urls().length >= 7);
     for (const url of fake.urls().filter((each) => !each.includes("api/rules"))) {
-      assert.ok(url.startsWith("/api/activity/") || url.startsWith("/api/file-access/"),
-        `asked under a library, or not the Activity routes: ${url}`);
+      assert.ok(url.startsWith("/api/activity/"), `asked under a library, or not the Activity routes: ${url}`);
     }
+  });
+
+  test("it has no File access section and asks nothing of the deleted probes (a server without the route gives 404)", async (t) => {
+    const fake = server();
+    const { window } = await open(t, fake);
+    await flush(window, 6);
+    assert.equal(window.document.getElementById("file-access"), null);
+    assert.equal(window.document.querySelector('a[href="#file-access"]'), null);
+    assert.deepEqual(fake.urls().filter((url) => url.includes("file-access")), []);
   });
 });
 
@@ -331,13 +365,55 @@ describe("Run now is asked first", () => {
   });
 });
 
+describe("Unload models now", () => {
+  const LOADED = { loaded: ["CLIP", "faces"], in_use: false, last_used_seconds: 120, release_after_minutes: 5,
+                   text: "Loaded: CLIP and faces. Last used 2 minutes ago. Let go after 5 minutes unused." };
+  const NONE = { loaded: [], in_use: false, last_used_seconds: null, release_after_minutes: 5,
+                 text: "Not loaded; loads when Suggest or indexing needs it." };
+  const button = (document) => document.getElementById("unload-models");
+
+  test("the line says what is loaded and the button unloads, asking the server once", async (t) => {
+    let models = LOADED;
+    const fake = server({ first: [
+      ["/api/activity/server", () => ({ ...SERVER, models })],
+      ["/api/activity/models/unload", () => { models = NONE; return { success: true, unloaded: ["CLIP", "faces"],
+                                                                      message: "Unloaded CLIP and faces; the graphics card is free.", models: NONE }; }],
+    ] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    const always = document.getElementById("server-body");
+    assert.match(always.textContent, /Loaded: CLIP and faces\. Last used 2 minutes ago/);
+    assert.equal(button(document).disabled, false);
+    click(window, button(document));
+    click(window, button(document));
+    await flush(window, 8);
+    assert.equal(fake.calls.filter((call) => call.method === "POST").length, 1);
+    assert.match(always.textContent, /Unloaded CLIP and faces; the graphics card is free/);
+    assert.match(always.textContent, /Not loaded; loads when Suggest or indexing needs it/);
+    assert.equal(button(document).disabled, true, "offered with nothing loaded");
+  });
+
+  test("a refusal under a running Suggest is shown as the server said it", async (t) => {
+    const fake = server({ first: [
+      ["/api/activity/server", { ...SERVER, models: { ...LOADED, in_use: true } }],
+      ["/api/activity/models/unload", { success: false, error: "In use by Suggest Regatta (harbour): they are let go when it ends.", unloaded: [] }],
+    ] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    click(window, button(document));
+    await flush(window, 8);
+    assert.match(document.getElementById("server-body").textContent, /In use by Suggest Regatta \(harbour\): they are let go when it ends\./);
+    assert.equal(button(document).disabled, false);
+  });
+});
+
 describe("Logs", () => {
   test("a tab for each log, the web server's first, warnings and worse by default", async (t) => {
     const fake = server();
     const { document, window } = await open(t, fake);
     await flush(window, 8);
     const tabs = [...document.querySelectorAll("#log-tabs .tab")];
-    assert.deepEqual(tabs.map((tab) => tab.dataset.log), ["tagpup_web.log", "supervisor.log", "indexer-harbour.log"]);
+    assert.deepEqual(tabs.map((tab) => tab.dataset.log), ["tagpup_web.log", "indexer-harbour.log"]);
     assert.ok(tabs[0].classList.contains("chosen"));
     const read = fake.urls().find((url) => url.startsWith("/api/activity/logs/tagpup_web.log?"));
     assert.ok(read, fake.urls().join("\n"));

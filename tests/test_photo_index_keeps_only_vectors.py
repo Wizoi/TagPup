@@ -86,19 +86,14 @@ class ASearch(Base):
     def test_reads_what_a_photo_holds_now_not_when_the_index_was_loaded(self):
         path = self.add("Regatta - 1.jpg", unit(1, 0), tags=["Activity/Rowing"])
         index = self.index()
-        store_photos.record_tags(self.db_path, path, ["Activity/Sailing"])
+        photo_rows.tag(self.db_path, path, ["Activity/Sailing"])
         self.assertEqual(["Activity/Sailing"], index.search(unit(1, 0).tolist(), k=1)[0][1]["tags"])
 
     def test_leaves_out_a_photo_removed_since(self):
         gone = self.add("Gone.jpg", unit(1, 0))
         kept = self.add("Kept.jpg", unit(0.9, 0.1))
         index = self.index()
-        conn = db.connect(self.db_path)
-        try:
-            store_photos.remove(conn, [gone])
-            conn.commit()
-        finally:
-            conn.close()
+        store_photos.forget_photo(self.db_path, gone)
         self.assertEqual([kept], [record["path"] for _sim, record in index.search(unit(1, 0).tolist(), k=2)])
 
 

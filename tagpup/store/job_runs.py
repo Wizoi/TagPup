@@ -18,6 +18,7 @@ that has just finished does not run the job again.
 Times are the journal's: local time, "YYYY-MM-DD HH:MM:SS".
 """
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -70,8 +71,11 @@ def _run(found):
     return Run(run_id, job, library, started, finished, outcome, json.loads(changed or "{}"), owner, note)
 
 
-def has_table(conn):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'job_runs'").fetchone() is not None
+def _prune(conn, job, library, keep):
+    """Delete the runs of `job` for `library` but the newest `keep`."""
+    conn.execute("DELETE FROM job_runs WHERE job = ? AND library IS ? AND id NOT IN"
+                 " (SELECT id FROM job_runs WHERE job = ? AND library IS ? ORDER BY id DESC LIMIT ?)",
+                 (job, library, job, library, keep))
 
 
 def _running(conn, job, library):
@@ -136,11 +140,11 @@ def claim(db_path, job, library, now, due=None):
     return db.write_with_connection(db_path, work, label="claim the job %s" % job)
 
 
-def finish(db_path, run_id, outcome, now, changed=None, note=None, keep=()):
+def finish(db_path, run_id, outcome, now, changed=None, note=None):
     """End run `run_id`, this process's: `outcome` done or failed, `changed` its counts.
     False when it is no longer this process's to end -- taken over as abandoned, or the
     library restored from a snapshot without it. Older runs of the job beyond KEEP_RUNS
-    are deleted, but never one whose id is in `keep` (the first run of a job that can still be resumed: its id is the job's)."""
+    are deleted."""
     if outcome not in (DONE, FAILED):
         raise ValueError("a run ends done or failed, not %r" % (outcome,))
 
@@ -152,11 +156,7 @@ def finish(db_path, run_id, outcome, now, changed=None, note=None, keep=()):
             (outcome, stamp(now), json.dumps(changed or {}, sort_keys=True), note, run_id,
              file_journal.owner())).rowcount == 1
         if found is not None:
-            kept = [int(each) for each in keep]
-            conn.execute("DELETE FROM job_runs WHERE job = ? AND library IS ? AND id NOT IN"
-                         " (SELECT id FROM job_runs WHERE job = ? AND library IS ? ORDER BY id DESC LIMIT ?)"
-                         + (" AND id NOT IN (%s)" % ",".join("?" * len(kept)) if kept else ""),
-                         [found[0], found[1], found[0], found[1], KEEP_RUNS] + kept)
+            _prune(conn, found[0], found[1], KEEP_RUNS)
         return ended
 
     return db.write_with_connection(db_path, work, label="finish run %d" % run_id)
@@ -171,16 +171,6 @@ def discard(db_path, run_id):
                             (run_id, file_journal.owner())).rowcount == 1
 
     return db.write_with_connection(db_path, work, label="discard run %d" % run_id)
-
-
-def amend(db_path, run_id, changed, note):
-    """Replace the counts and the note of run `run_id`, whatever its outcome: the record of a run that ended, corrected after
-    the fact (the files a bulk edit could have been resumed from were removed for age). False when there is no such run."""
-    def work(conn):
-        return conn.execute("UPDATE job_runs SET changed = ?, note = ? WHERE id = ?",
-                            (json.dumps(changed or {}, sort_keys=True), note, run_id)).rowcount == 1
-
-    return db.write_with_connection(db_path, work, label="amend run %d" % run_id)
 
 
 def progress(db_path, run_id, changed):
@@ -198,8 +188,6 @@ def get(db_path, run_id):
     """The run `run_id` of the library, or None. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return None
         found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE id = ?", (run_id,)).fetchone()
         return _run(found) if found else None
     finally:
@@ -208,12 +196,9 @@ def get(db_path, run_id):
 
 def latest(db_path):
     """{(job, library): (the latest run, the latest that ended)} of every job the library
-    at `db_path` has run, each a Run or None. Reads only; {} for a library without the
-    table (one a look has not migrated)."""
+    at `db_path` has run, each a Run or None. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return {}
         found = {}
         for row in conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE id IN"
                                 " (SELECT MAX(id) FROM job_runs GROUP BY job, library)"):
@@ -230,14 +215,98 @@ def latest(db_path):
         conn.close()
 
 
-def runs(db_path, job=None, limit=20):
-    """The library's runs, newest first, of `job` or of every job. Reads only."""
+# ---- The record of the syncs ---------------------------------------------------------------
+#
+# A sync of the library (tagpup.services.sync) is a finished run of the job "sync-whole" or, of one folder, "sync-folder": the
+# record the pages' "last in step" and the Activity page read. Not the recurring job "sync", which is the daily catch-up claimed
+# and ended like any job, so a manual or a watcher's sync never makes the catch-up not due. A run's `changed` holds
+# {"in_step": 0 or 1, "change": the journal's change, if it wrote one, "found_<what>": counts of what it found, <what>: counts of
+# what it changed}; counts and ids, never a path or a name. Whether it was of the whole library is the job's name.
+# Migration 32 folded the table `sync_runs` into these.
+
+SYNC_WHOLE, SYNC_FOLDER = "sync-whole", "sync-folder"
+SYNC_JOBS = (SYNC_WHOLE, SYNC_FOLDER)
+
+#: How many runs of each are kept (a job's others keep KEEP_RUNS): the two are kept apart so that a folder's syncs, which the
+#: watcher makes as folders settle, never push out the whole library's, and a sync's runs never push out another job's.
+SYNC_KEEP = 200
+
+_FOUND = "found_"
+
+
+def record_sync(db_path, started, whole, in_step, found, changed, change_id=None):
+    """Record a sync of the library at `db_path` that started at `started` (a run's time, `stamp`) and has just finished.
+    `found` and `changed` are {what: count}. Returns the run's id. Older runs beyond SYNC_KEEP of the same job go."""
+    schema.ensure(db_path)
+    job = SYNC_WHOLE if whole else SYNC_FOLDER
+    # The library's name, as tagpup.core.library.Library.name spells it.
+    library = os.path.splitext(os.path.basename(db_path))[0]
+    counts = {"in_step": 1 if in_step else 0}
+    counts.update({_FOUND + what: n for what, n in found.items()})
+    counts.update(changed)
+    if change_id is not None:
+        counts["change"] = change_id
+
+    def store(conn):
+        run_id = conn.execute(
+            "INSERT INTO job_runs (job, library, started, finished, outcome, changed) VALUES (?, ?, ?, ?, 'done', ?)",
+            (job, library, started, stamp(time.time()), json.dumps(counts, sort_keys=True))).lastrowid
+        _prune(conn, job, library, SYNC_KEEP)
+        return run_id
+
+    return db.write_with_connection(db_path, store, label="record a sync")
+
+
+def _sync(run):
+    """A sync's run as the pages read it: {"id", "started", "finished", "whole", "in_step", "found", "changed", "change_id"}."""
+    counts = dict(run.changed)
+    in_step, change_id = counts.pop("in_step", 0), counts.pop("change", None)
+    found = {what[len(_FOUND):]: n for what, n in counts.items() if what.startswith(_FOUND)}
+    return {"id": run.id, "started": run.started, "finished": run.finished, "whole": run.job == SYNC_WHOLE,
+            "in_step": bool(in_step), "found": found,
+            "changed": {what: n for what, n in counts.items() if not what.startswith(_FOUND)}, "change_id": change_id}
+
+
+def _sync_rows(conn, jobs, limit=1):
+    marks = ",".join("?" * len(jobs))
+    return conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job IN (" + marks + ") ORDER BY id DESC LIMIT ?",
+                        tuple(jobs) + (max(0, int(limit)),))
+
+
+def recent_syncs(conn, limit=50):
+    """The newest `limit` syncs, newest first."""
+    return [_sync(_run(row)) for row in _sync_rows(conn, SYNC_JOBS, limit)]
+
+
+def newest_sync(conn, whole=None):
+    """The newest sync of the whole library (`whole`), of one folder (not), or of either (None), or None."""
+    jobs = SYNC_JOBS if whole is None else (SYNC_WHOLE,) if whole else (SYNC_FOLDER,)
+    row = _sync_rows(conn, jobs).fetchone()
+    return _sync(_run(row)) if row else None
+
+
+def last_in_step(conn):
+    """When the newest sync of the whole library that left it in step finished, or None."""
+    for row in _sync_rows(conn, (SYNC_WHOLE,), SYNC_KEEP):
+        found = _sync(_run(row))
+        if found["in_step"]:
+            return found["finished"]
+    return None
+
+
+def last_sync(conn):
+    """{"last_run": the newest sync, or None; "last_in_step": when the newest sync of the whole library that left it in step
+    finished, or None} of the library open on `conn`. Both None for a library without the runs: a look does not migrate."""
+    return {"last_run": newest_sync(conn), "last_in_step": last_in_step(conn)}
+
+
+def runs(db_path, job=None, limit=20, exclude=()):
+    """The library's runs, newest first, of `job` or of every job but those in `exclude`. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return []
         if job is None:
-            found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))
+            found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job NOT IN (" + ",".join("?" * len(exclude)) + ")"
+                                 " ORDER BY id DESC LIMIT ?", tuple(exclude) + (limit,))
         else:
             found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job = ? ORDER BY id DESC LIMIT ?",
                                  (job, limit))

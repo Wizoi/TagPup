@@ -3,7 +3,7 @@
 `/api/taxonomy/tree` parsed the tags of all 68,000 photos in Python (350 ms on a one-level tree), which held the
 process at page start and made the first library request wait behind it. The counts are now one pass of the
 derived table, and are the same counts, node for node, as the JSON gave: a photo counts once toward a node
-however many of its tags lie under it. A library with no derived tables is counted from the JSON as ever.
+however many of its tags lie under it.
 """
 import json
 import os
@@ -18,6 +18,7 @@ from view_library import ViewLibrary  # noqa: E402
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.services import tags as tags_service  # noqa: E402
 from tagpup.store import db, photos  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
 
 
 def counted_from_the_json(db_path):
@@ -55,11 +56,13 @@ class TheCounts(unittest.TestCase):
 
     def test_a_keyword_with_no_node_counts_toward_nothing_and_a_case_folded_one_toward_its_node(self):
         """The meaning, pinned (findings #553): counts follow the views' derivation (photo_tags), which ties a photo's
-        keyword to a node, else the node it is without case, and makes no node: so a keyword with no node credits no
-        level above it (the old lineage count credited 'Not'), and 'trips/lakes' credits the node 'Trips/Lakes'."""
+        keyword to a node, else the node it is without case: so a keyword with no node credits no level above it (the old
+        lineage count credited 'Not'), and 'trips/lakes' credits the node 'Trips/Lakes'. The index makes a keyword's node
+        (2026-10-10), so a keyword with none is a photo read before: the node is taken out here."""
         before = photos.tag_usage(self.vl.path)
         self.vl.photo("Event 0", "folded.jpg", tags=["trips/lakes"])
         self.vl.photo("Event 0", "orphan.jpg", tags=["Orphans/Nowhere"])
+        self.vl.forget("Orphans/Nowhere", "Not/In/The/Tree")
         after = photos.tag_usage(self.vl.path)
         self.assertEqual(before["Trips/Lakes"] + 1, after["Trips/Lakes"])
         self.assertEqual(before["Trips"] + 1, after["Trips"])
@@ -83,17 +86,17 @@ class TheCounts(unittest.TestCase):
         for sql in seen:
             self.assertNotRegex(sql, r"(?i)select\s+tags\s+from\s+photos", sql)
 
-    def test_a_library_without_the_derived_tables_is_counted_from_the_json(self):
-        conn = db.connect(self.vl.path)
-        try:
-            conn.execute("DROP TABLE photo_tags")
-            conn.commit()
-        except Exception:
-            self.skipTest("the derived table cannot be dropped here")
-        finally:
-            conn.close()
-        usage = photos.tag_usage(self.vl.path)
-        self.assertEqual(counted_from_the_json(self.vl.path)["Trips/Coast"], usage["Trips/Coast"])
+    def test_a_library_that_cannot_be_read_fails_the_tree_request(self):
+        """Charter row 38 (#1452): the tree is not shown with every count 0. photo_tags is gone, as a damaged library
+        has lost it; the request answers 500 and says why."""
+        app = web.create_app("tagpup", startup=self.vl.library)
+        app.testing = True
+        client = app.test_client()
+        self.assertEqual(200, client.get("/harbour/api/taxonomy/tree").status_code)
+        self.vl.conn.execute("DROP TABLE photo_tags")
+        self.vl.conn.commit()
+        reply = client.get("/harbour/api/taxonomy/tree")
+        self.assertEqual(500, reply.status_code, reply.data)
 
     def test_it_is_fast_enough_not_to_hold_a_page_start(self):
         started = time.perf_counter()

@@ -19,6 +19,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tagpup.core import validation, vocabulary  # noqa: E402
+from tagpup.store import person_ids, taxonomy  # noqa: E402
 from shipped_sources import ROOT, python_sources  # noqa: E402
 
 
@@ -70,6 +71,10 @@ class ComparingTags(unittest.TestCase):
         self.assertFalse(vocabulary.same_person("People/Rowan Thackeray", "People/Rowan"))
         self.assertFalse(vocabulary.same_person("", ""))
 
+    def test_a_keyword_is_looked_up_by_one_spelling(self):
+        # #6: the spelling extract_people looks up by, and people.follow_tree and photos_named_by find photos by.
+        self.assertEqual("people/rowan thackeray", vocabulary.keyword_key("  People" + chr(92) + "Rowan Thackeray "))
+
     def test_a_key_ignores_case_and_the_space_around_it(self):
         self.assertEqual(vocabulary.key("  Rowan Thackeray "), "rowan thackeray")
         self.assertEqual(vocabulary.key(None), "")
@@ -100,16 +105,14 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
 
     def test_without_a_library_the_usual_roots_name_people(self):
         tags = ["People/Rowan Thackeray", "Pets/Biscuit", "Hazel Brookmire"]
-        self.assertEqual(vocabulary.extract_people({"XMP:PersonInImage": "Elias Marchetti-Oakes"}, tags),
-                         ["Elias Marchetti-Oakes", "Rowan Thackeray"])
+        self.assertEqual(vocabulary.extract_people(tags), ["Rowan Thackeray"])
 
     def test_a_library_adds_its_own_roots_and_its_flat_people(self):
-        known = vocabulary.PeopleVocabulary.from_rows(
-            ["Pets", "Crew"],
-            [("Pets", "Pets"), ("Pets/Biscuit", "Biscuit"), ("Crew", "Crew"),
-             ("Hazel Brookmire", "Hazel Brookmire")])
+        nodes = [(1, "Pets", "Pets"), (2, "Pets/Biscuit", "Biscuit"), (3, "Crew", "Crew"),
+                 (4, "Crew/Tamsin Oakes", "Tamsin Oakes"), (5, "Hazel Brookmire", "Hazel Brookmire")]
+        known = taxonomy.vocabulary_of(person_ids.People(nodes, {1, 3}))
         tags = ["Pets/Biscuit", "Crew/Tamsin Oakes", "Hazel Brookmire", "Crew"]
-        self.assertEqual(vocabulary.extract_people({}, tags, known),
+        self.assertEqual(vocabulary.extract_people(tags, known),
                          ["Biscuit", "Tamsin Oakes", "Hazel Brookmire"])
 
     def test_renaming_a_tag_takes_everything_under_it(self):
@@ -120,24 +123,6 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
     def test_without_a_new_name_the_tag_comes_off(self):
         self.assertEqual(vocabulary.retag(["Beach", "Places/Harbour"], "Beach"), (["Places/Harbour"], True))
         self.assertEqual(vocabulary.retag(["Places/Harbour"], "Beach"), (["Places/Harbour"], False))
-
-    def test_a_bare_name_is_written_as_the_tag_the_person_is_filed_under(self):
-        filed = {"hazel brookmire": "People/Hazel Brookmire"}
-        self.assertEqual(vocabulary.resolve_people(["Hazel Brookmire", "Cross Country"], filed),
-                         ["People/Hazel Brookmire", "Cross Country"])
-
-    def test_a_bare_name_beside_its_own_path_is_dropped(self):
-        filed = {"hazel brookmire": "People/Hazel Brookmire"}
-        self.assertEqual(vocabulary.resolve_people(
-            ["People/Hazel Brookmire", "hazel brookmire"], filed), ["People/Hazel Brookmire"])
-
-    def test_with_nobody_filed_the_tags_are_left_as_they_are(self):
-        self.assertEqual(vocabulary.resolve_people(["Hazel Brookmire"], {}), ["Hazel Brookmire"])
-
-    def test_a_named_face_counts_once_whatever_its_case(self):
-        people = vocabulary.people_in_photo({}, ["People/Rowan Thackeray"],
-                                            ["rowan thackeray", "Hazel Brookmire"])
-        self.assertEqual(people, ["Rowan Thackeray", "Hazel Brookmire"])
 
 
 class WhatMayBeSet(unittest.TestCase):
@@ -172,6 +157,19 @@ class TagsHaveOneReading(unittest.TestCase):
         self.assertEqual(problems, [], "\n\nTags are taken apart by tagpup/core/vocabulary.py "
                          "only (segments / leaf_of / root_of / parent_of / lineage / with_leaf):"
                          "\n\n" + "\n".join(problems))
+
+    def test_the_keyword_spelling_is_written_once(self):
+        # #6: vocabulary.keyword_key is the one copy of it.
+        spelled = 'replace("' + chr(92) * 2 + '", "/").strip().lower()'
+        found = []
+        for relative in python_sources():
+            full = os.path.join(ROOT, relative)
+            if os.path.exists(full):
+                with open(full, encoding="utf-8") as handle:
+                    count = handle.read().count(spelled)
+                if count:
+                    found.append((relative, count))
+        self.assertEqual([(OWNER, 1)], found)
 
     def test_the_guard_recognises_what_it_forbids(self):
         # A guard whose pattern quietly matches nothing passes forever.

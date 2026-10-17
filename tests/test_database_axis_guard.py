@@ -77,13 +77,14 @@ class TestNoLibraryIsResolvedImplicitly(unittest.TestCase):
         request, and the models it is handed (tagpup.jobs.suggestions.work_for)."""
         import inspect
 
+        from tagpup import runtime
         from tagpup.jobs import suggestions as suggestion_jobs
         from tagpup.web import tagpup_routes
 
         self.assertEqual(["library", "photos", "models", "looking", "held_now"],
                          list(inspect.signature(suggestion_jobs.work_for).parameters))
-        self.assertEqual(["library", "folder"], list(inspect.signature(tagpup_routes._folder_photos).parameters))
-        self.assertEqual(["library"], list(inspect.signature(tagpup_routes._folder_indexer).parameters))
+        self.assertEqual(["library", "folder", "force"], list(inspect.signature(tagpup_routes._folder_photos).parameters))
+        self.assertEqual(["library", "subfolders"], list(inspect.signature(runtime.index_folder).parameters))
 
     def test_guard_detects_an_implicit_library(self):
         """The guard must actually fail on offending code, not pass vacuously."""
@@ -103,28 +104,6 @@ class TestNoLibraryIsResolvedImplicitly(unittest.TestCase):
             "    folders.of(library).pop(folder)\n"
         )
         self.assertEqual([], _implicit_library(ast.parse(source)))
-
-
-class TestSuggestionsCacheIsScopedPerDatabase(unittest.TestCase):
-    """Migration 7 is the only reader of the old cache file (tests/test_suggestions_pipeline.py
-    checks it is the only owner); it must still read one file per database."""
-
-    def test_the_migration_scopes_the_cache_per_database(self):
-        import shutil
-        import tempfile
-
-        from tagpup.store import db, schema
-
-        folder = tempfile.mkdtemp(prefix="sugg_file_")
-        self.addCleanup(shutil.rmtree, folder, True)
-        files = set()
-        for name in ("photo_index.db", "kr-track.db", "a.db"):
-            conn = db.connect(os.path.join(folder, name))
-            try:
-                files.add(schema._suggestions_file(conn))
-            finally:
-                conn.close()
-        self.assertEqual(len(files), 3, "one database's suggestions file is another's")
 
 
 class CrossDatabaseReadIsolationMixin:
@@ -162,10 +141,6 @@ class CrossDatabaseReadIsolationMixin:
         )
         add_people(conn, f"C:/{marker}.jpg", [marker])
         add_face(conn, f"C:/{marker}.jpg", box="[]", embedding=b"", name=marker)
-        conn.execute(
-            "INSERT INTO tag_taxonomy (tag, parent_id, name) VALUES (?, NULL, ?)",
-            (marker, marker),
-        )
         conn.commit()
         conn.close()
 

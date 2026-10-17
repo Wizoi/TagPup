@@ -1,7 +1,7 @@
 """A writer of a photo's keywords, path or metadata, of a photo's row or of the tag tree, goes
 through tagpup.store.derived (docs/ARCHITECTURE.md, phase 9a).
 
-photo_tags, folders, photo_folder and photo_meta are derived from `photos.tags`, `photos.path`,
+photo_tags, folders and photo_folder are derived from `photos.tags`, `photos.path`,
 `photos.raw_metadata` and `tag_taxonomy`, and kept by the writes that change one of them, in the
 same transaction. A writer that forgot -- the bulk tag writes once did not tell the index what they
 wrote (CLAUDE.md) -- leaves the views describing what a photo used to hold. So this fails the build
@@ -35,21 +35,13 @@ DERIVED_FROM = ("tags", "path", "raw_metadata", "captions")
 
 #: (module, function) that write the rows and say so, with the function that makes up for it.
 PHOTO_WRITERS_COVERED_ELSEWHERE = {
-    # Migration 4 ran before the tables existed; migration 19 makes them by rebuild_all.
-    ("tagpup/store/schema.py", "_photo_ids"): ("tagpup/store/schema.py", "_derived_tables"),
     # A photo made for a path nothing was read from (Suggest's, a face's): ensure_row refreshes it.
     ("tagpup/store/photos.py", "_unread_row"): ("tagpup/store/photos.py", "ensure_row"),
-    # The adoption converts every path in one pass; the folders are rebuilt after it, in the same
-    # transaction, by adopt and by undo_in (the keywords and the metadata are not changed by it).
-    ("tagpup/store/adoption.py", "_photos_pass"): ("tagpup/store/adoption.py", "adopt"),
 }
-
-#: The adoption's undo rebuilds the folders too.
-ALSO_CALLS = {("tagpup/store/adoption.py", "_photos_pass"): [("tagpup/store/adoption.py", "undo_in")]}
 
 #: Functions that write the tree and are only ever called inside people.tree_edit.
 TREE_WRITERS_COVERED_ELSEWHERE = {
-    ("tagpup/store/taxonomy.py", "add_path"): "add_node, repair, move_branch, seed and TagTaxonomy.save_to_db",
+    ("tagpup/store/taxonomy.py", "add_path"): "add_node, ensure_node, repair, move_branch and seed",
 }
 
 
@@ -120,8 +112,8 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
     def test_the_scan_finds_the_writers_it_is_meant_to(self):
         """A guard that matches nothing passes forever."""
         found = {name for _module, name, _node in self.photos}
-        for known in ("record_indexed", "record_tags", "move_rows_in", "follow_fields", "record_saved",
-                      "forget_photo", "remove", "remove_under", "_photos_pass"):
+        for known in ("record_indexed", "move_rows_in", "follow_fields",
+                      "forget_photo", "remove_under"):
             self.assertIn(known, found)
         self.assertIn("add_path", {name for _module, name, _node in self.tree})
         self.assertTrue(writes_photos("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?"))
@@ -142,14 +134,14 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
             missing.append("%s: %s" % (module, name))
         self.assertEqual([], missing, "\n\nthese write a photo's tags, path or raw_metadata, or insert or delete a "
                          "photo, and do not tell tagpup.store.derived (refresh_photos / record / prune), so photo_tags, "
-                         "folders, photo_folder and photo_meta keep describing what the photo used to hold:\n"
+                         "folders and photo_folder keep describing what the photo used to hold:\n"
                          + "\n".join(missing))
 
     def test_what_makes_up_for_a_writer_does_so(self):
         writers = {(module, name) for module, name, _node in self.photos}
         for key, covering in PHOTO_WRITERS_COVERED_ELSEWHERE.items():
             self.assertIn(key, writers, "%s:%s is no longer a writer: take it out of the list" % key)
-            for each in [covering] + ALSO_CALLS.get(key, []):
+            for each in [covering]:
                 self.assertTrue(calls_derived(self.nodes[each]), "%s:%s does not call derived" % each)
         for key, covering in GENERIC_WRITERS.items():
             self.assertIn(key, self.nodes, "%s:%s is gone" % key)

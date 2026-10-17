@@ -14,19 +14,12 @@ Here is a quick reference table of the most common commands you will use in Tagp
 
 | Workflow / Task | Command | Description |
 | :--- | :--- | :--- |
-| **Launch Dashboard** | `python runner.py` | Starts the graphical GUI dashboard launcher. |
 | **Index Library** | `run.bat index "path/to/photos"` | Scans photos, extracts CLIP vectors, and detects faces in a single pass. |
-| **Cluster Faces** | `run.bat cluster-faces` | Performs DBSCAN clustering on face embeddings and resolves names. |
-| **Suggest Tags** | `run.bat suggest "path/to/untagged"` | Analyzes untagged photos and writes `data/<library>_suggestions.json` beside the library. |
-| **Preview Suggests** | `run.bat write data\photo_index_suggestions.json` | Displays a table preview of tags proposed for writing. |
-| **Apply Tags (Live)** | `run.bat write data\photo_index_suggestions.json -Live` | Appends flat/hierarchical tags and captions directly to photo files. |
-| **Semantic Search** | `run.bat search "your text query"` | Finds the top 10 visually closest matches to a natural language query. |
 | **Start TagTuner UI** | `python tagpup_web.py --open tuner` | Launches the local server and web browser client for manual face matching. |
-| **Index Stats** | `run.bat stats` | Displays overall database metrics, top tags, and resolved people. |
-| **List Photos** | `run.bat list-index` | Prints list of all photos currently present in the index database. |
+
 
 > [!TIP]
-> **Safe Testing Mode:** Prefix any database command with the global `--test` flag (e.g. `run.bat --test stats`) to run operations on a temporary test database index (`test_photo_index.db`) without touching production archives.
+> **Safe Testing Mode:** Prefix any database command with the global `--test` flag (e.g. `run.bat --test index "test_library\Tagged"`) to run operations on a temporary test database index (`test_photo_index.db`) without touching production archives.
 
 ---
 
@@ -54,18 +47,12 @@ Ensure ExifTool is installed on your machine.
 
 ## 1.5 Testing & Validation Mode
 
-If you want to run tests, validate commands, or experiment without cluttering your actual production index database, you can prefix any of the database-access commands (`index`, `suggest`, `search`, `stats`, `list-index`, `remove`, `index-faces`, `cluster-faces`) with the global `--test` flag.
+If you want to run tests, validate commands, or experiment without cluttering your actual production index database, you can prefix any of the database-access commands (`index`) with the global `--test` flag.
 
 ```cmd
 # Build a test index using test folders (generates test_photo_index.db)
 run.bat --test index "test_library\Tagged"
 
-# Suggest tags using the test index
-run.bat --test suggest "test_library\Untagged"
-
-# Inspect and view statistics for the test index
-run.bat --test stats
-run.bat --test list-index
 ```
 This guarantees your production library (`photo_index.db`, with its tag tree) remains clean and unaffected by testing.
 
@@ -95,88 +82,26 @@ run.bat index "D:\Photos\Tagged_Archive" --reset
 ---
 
 ## Scenario B: Self-Tuning Face Identity Resolution
-If you want the system to match face embeddings against specific family members, you must group them and resolve names after indexing.
+An index that recorded a photo is followed by this at once: `index` clusters the library's faces and resolves their names
+itself (Scenario A). Run the command by hand only to try again after that clustering failed or stopped:
 
 ```cmd
-# Retroactively extract faces on already indexed files (optional standalone)
-run.bat index-faces "D:\Photos\Tagged_Archive"
-
 # Cluster and assign identities using photo-level tags (Self-Tuning)
 run.bat cluster-faces
 ```
-* **What happens**: The clustering command maps similar face vectors into visual groups using DBSCAN and matches them with people tags (e.g. `Family/John Doe`). Future runs of `suggest` will match faces on untagged photos and boost recognized people tags to 1.0 (highest) confidence.
-
----
-
-### Scenario C: Suggesting Tags for New Photos
-Now, point the tool at your directory of newly imported, untagged photos.
-
-```cmd
-# Suggest tags for the untagged directory
-run.bat suggest "D:\Photos\2026_Imports"
-```
-- **What happens**: The tool generates a visual embedding for each new image, detects any faces and matches them against the database face index (applying a 1.0 confidence boost on hits), retrieves nearest visual neighbors, and writes the results beside the library, to `data\photo_index_suggestions.json` for `photo_index` (`--output` to put them elsewhere).
+* **What happens**: The clustering command maps similar face vectors into visual groups using DBSCAN and matches them with people tags (e.g. `Family/John Doe`). TagPup's Suggest will then match faces on untagged photos and boost recognized people tags to 1.0 (highest) confidence.
 
 ---
 
 ### Scenario D: Reviewing and Applying Suggestions
-Always preview the suggestions before modifying your images.
-
-#### 1. Dry Run / Preview (Safe)
-```cmd
-run.bat write data\photo_index_suggestions.json
-```
-Prints a summary table showing which tags will be added to which files. No files are modified yet.
-
-#### 2. Live Write (Apply tags)
-Once you are satisfied, apply the tags to your images:
-```cmd
-run.bat write data\photo_index_suggestions.json -Live -MinScore 0.60
-```
-- **What happens**: 
-  - Filters out suggestions with a score lower than `0.60`.
-  - Prompts you to type `YES` to confirm.
-  - Appends flat tags to `XMP:Subject` and `IPTC:Keywords` (including C# XPKeywords).
-  - Appends hierarchical paths to `XMP:HierarchicalSubject`.
-  - Generates tags-based captions and writes them to Description/XPComment fields.
-  - Records the write as one change; `run.bat undo <change>` shows what undoing it would put back, and `--apply` does.
+Suggest and apply tags in TagPup's pages: open a folder, run **Suggest**, review what it offers, and apply. The write is one change of the library's History; `run.bat undo <change>` shows what undoing it would put back, and `--apply` does.
 
 ---
 
-### Scenario E: Finding Photos Semantically
-You can search through your indexed collection using descriptive text queries:
+### Scenario G: Cleaning up the Index
+You can remove individual photos or entire folders from the index.
 
-```cmd
-run.bat search "sunset at the beach"
-run.bat search "birthday party family gathering"
-```
-Prints a table of the top 10 most visually similar photos in your index matching that description.
-
----
-
-### Scenario F: Inspecting a Specific Image's Metadata
-If you want to debug what tags or details ExifTool is reading from a single file:
-
-```cmd
-run.bat inspect "D:\Photos\Tagged_Archive\sample.jpg"
-```
-This prints the parsed tags (Tags, People, Captions) and a detailed table of raw fields read by ExifTool.
-
----
-
-### Scenario G: Inspecting & Cleaning up the Index
-You can list what files are currently indexed and remove individual photos or entire folders.
-
-#### 1. List Index Contents
-```cmd
-# List all indexed photos
-run.bat list-index
-
-# List only photos indexed under a specific folder
-run.bat list-index --folder "D:\Photos\Tagged_Archive\Family"
-```
-
-#### 2. Remove Photos from the Index
+#### Remove Photos from the Index
 ```cmd
 # Remove a single photo from the index database
 run.bat remove --path "D:\Photos\Tagged_Archive\Family\sample.jpg"

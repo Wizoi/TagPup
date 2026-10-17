@@ -245,7 +245,8 @@ SETTING_GROUPS = {
         "app": "tuner",
         "title": "Face detection",
         "consequences": [
-            "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
+            "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected "
+            "with it; the faces already found stay as they are.",
             "Indexing a folder again applies it to that folder.",
         ],
     },
@@ -325,6 +326,15 @@ SETTINGS = {
           "message": "Face detection takes three thresholds, one for each stage.",
           "each": [{"rule": "number", "message": "Each threshold is a number."},
                    _between("Each threshold", 0, 1)]}]),
+    "faces.detect_max_side": _setting(
+        "faces", "Look at most", "integer", "",
+        "The longest side, in pixels, of the picture the face detector looks at: a larger photo is scaled "
+        "down to it for finding faces, and each face found is cut from the full photo. Faster, and less of "
+        "the graphics card, on large photos; the smallest faces in a large photo may be missed. Empty looks "
+        "at the full photo.",
+        [{"rule": "optional"},
+         {"rule": "integer", "message": "Look at most is a whole number of pixels."},
+         _between("Look at most", 160, 20000)]),
     "paths.exiftool": _setting(
         "exiftool", "ExifTool program", "path", "",
         "The ExifTool program every photo file is read and written with. Empty is the one its "

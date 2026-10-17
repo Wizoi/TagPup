@@ -1,5 +1,5 @@
-"""A library's journal, as the CLI and the MCP server use it: what was changed, undoing a
-change, and letting old changes go (tagpup.store.journal; docs/ARCHITECTURE.md, phase
+"""A library's journal, as the CLI and the MCP server use it: what was changed, and undoing a
+change (tagpup.store.journal; docs/ARCHITECTURE.md, phase
 7.5).
 
 An undo is a dry run unless told to apply, as every bulk operation is: the dry run is
@@ -10,30 +10,34 @@ library is photographs of real people, many of them minors.
 
 A stamp of a library's settings (tagpup.services.settings.STAMPS) is never undone: it
 is the library's first settings, and undone the library held none -- the next read
-stamped it again, from config.ini if one was still there.
+stamped it again.
 
 A change of photo files (tagpup.services.file_changes) is undone file by file, and its
 rows follow: a file that no longer holds what the change left is refused, named, and the
 rest are put back. Its rehearsal reads every file and writes none. Undoing one needs the
 library's ExifTool, which the caller names.
 """
+import logging
+
 from tagpup.core.result import NotFound, Result
-from tagpup.services import bulk_edit, file_changes
+from tagpup.services import face_people, file_changes
 from tagpup.services import settings as library_settings
 from tagpup.store import journal
 
-#: How long a change stays undoable, in days; then pruning takes its values away.
-RETENTION_DAYS = journal.RETENTION_DAYS
-
+logger = logging.getLogger(__name__)
 
 def history(library, change_id=None, reveal=False, limit=20):
     """The library's changes, newest first, up to `limit`; or change `change_id` alone,
     with the keys of every row it wrote, and with `reveal` each column's values before
     and after (a BLOB by its size). NotFound for a change the library has not."""
     entries = journal.history(library.path, limit=limit, change_id=change_id, values=reveal)
+    if not reveal:
+        # A folder is a path, and paths can name people: the summary keeps it for `reveal` only.
+        for entry in entries:
+            entry["summary"] = {key: value for key, value in entry["summary"].items() if key != "folder"}
     if change_id is not None and not entries:
         raise NotFound("There is no change %d in the library %s." % (change_id, library.name))
-    return {"changes": entries, "retention_days": RETENTION_DAYS}
+    return {"changes": entries}
 
 
 def _stamp_refusal(operation):
@@ -85,7 +89,10 @@ def undo(library, change_id, apply=False, exiftool_path=None):
     files puts back every file still holding what it left, `changed` counting them, and
     names the rest in its errors (file_changes.undo)."""
     if file_changes.writes_files(library, change_id):
-        return file_changes.undo(library, change_id, exiftool_path, apply=apply)
+        result = file_changes.undo(library, change_id, exiftool_path, apply=apply)
+        if apply and not result.refused and result.changed:
+            _unname_what_was_taken_off(library, change_id, result)
+        return result
     rehearsal = rehearse(library, change_id)
     if not apply or rehearsal.refused:
         return rehearsal
@@ -108,34 +115,22 @@ def undo(library, change_id, apply=False, exiftool_path=None):
     return result
 
 
-#: The line a prune says of the changes it leaves.
-KEPT_SAYS = "kept for a resumable bulk job: %d"
-
-
-def kept_operations(library):
-    """The operations whose changes no prune takes: those of the bulk time shifts the library holds a record of (the list of
-    photos and the state a resume reads, kept 30 days from the job's last activity, and while the job runs). Their journal changes
-    are the only account of which photos of the chunk in flight were shifted, and a resume that cannot read it could shift them
-    twice. Once the record goes (the job is done, or too old) its changes are pruned like any other."""
-    return {bulk_edit.operation_of(bulk_edit.TIME_SHIFT, job) for job in bulk_edit.resumable_heads(library)}
-
-
-def prune(library, days=RETENTION_DAYS, apply=False):
-    """Take away the values of every change older than `days`, keeping its summary; it
-    can no longer be undone. A dry run unless `apply`: `attempted` is the changes it
-    would prune, details["values"] the column values it would delete, details["kept"] the
-    changes it leaves for a bulk time shift that can be resumed (kept_operations) and
-    details["kept_jobs"] those jobs' ids: this is said in `note`, the line a caller prints."""
-    keep = kept_operations(library)
-    changes, values = journal.prunable(library.path, days, keep=keep)
-    held = journal.held_back(library.path, days, keep=keep) if keep else {}
-    kept = sum(held.values())
-    result = Result(attempted=changes, details={"dry_run": not apply, "days": days, "values": values, "kept": kept,
-                                                "kept_jobs": sorted(job for job in bulk_edit.resumable_heads(library)
-                                                                    if bulk_edit.operation_of(bulk_edit.TIME_SHIFT, job) in held)})
-    result.details["note"] = KEPT_SAYS % kept if kept else None
-    if apply and changes:
-        pruned, deleted = journal.prune(library.path, days, keep=lambda: kept_operations(library))
-        result.changed = pruned
-        result.details["values"] = deleted
-    return result
+def _unname_what_was_taken_off(library, change_id, result):
+    """The persons an undo of a change of photo files took off their photos (an add undone) are off their faces too (#908): the
+    faces are unnamed, one journaled change of their own that History can undo. Said in the Result's details (`unnamed_faces`,
+    `faces_change`); a failure is an error entry, the files are put back all the same."""
+    try:
+        done = face_people.follow_change(library, change_id, undone=True)
+    except Exception:
+        logger.exception("Could not unname the faces of the people change %d took off", change_id)
+        result.fail("the faces of the people taken off", "could not be unnamed; the server's log says why")
+        return
+    for what, why in done.errors:
+        result.fail(what, why)
+    if done.details.get("unnamed"):
+        result.details["unnamed_faces"] = done.details["unnamed"]
+    if done.details.get("renamed"):
+        result.details["renamed_faces"] = done.details["renamed"]
+    result.details["faces_changes"] = done.details.get("faces_changes", [])
+    if done.details.get("faces_problem"):
+        result.details["faces_problem"] = done.details["faces_problem"]

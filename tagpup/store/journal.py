@@ -65,7 +65,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from tagpup.core import paths
-from tagpup.store import db, derived, file_journal, people, person_ids, schema
+from tagpup.store import db, derived, faces_detected, file_journal, people, person_ids, schema
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
@@ -90,15 +90,30 @@ KEYS = {
 NAMED = ("settings",)
 
 #: Derived tables: never journaled, rebuilt from what a change touched (`_derive`).
-DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta", "search_words", "search_names")
+DERIVED = derived.ALL
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
-#: write (a photo's dates, from its metadata and path: store.photos.date_photos; a face's
-#: person, from its name and the tree: store.person_ids). An inserted photo is recorded as
-#: written, before they are filled in, so an undo does not hold a row to them: it would find
-#: every inserted photo changed since. A face put back by an undo -- one recorded before the
-#: column existed among them -- is given its person's id by `_derive`.
-DERIVED_COLUMNS = {"photos": ("taken", "year"), "faces": ("tag_id",)}
+#: write (a photo's dates, from its metadata and path: store.photos.date_photos). An inserted photo is
+#: recorded as written, before they are filled in, so an undo does not hold a row to them: it would find
+#: every inserted photo changed since.
+#:
+#: A face's `tag_id` is NOT one: it is the person (docs/ARCHITECTURE.md, "People by id, stage 2"), recorded
+#: with the change like any column, and `name` beside it is only its cache (`cache_columns`).
+DERIVED_COLUMNS = {"photos": ("taken", "year")}
+
+
+def cache_columns(table, values):
+    """The columns of a recorded row that only repeat another, so a change is not held to them: a face's `name` beside the
+    `tag_id` of its person -- the cache of the node's leaf, which a rename of the node changes without changing the face --
+    and, in a row recorded with a name and no `tag_id`, the `tag_id`: it is what the name is, given by the settle that follows
+    a write (person_ids). A row recorded with neither, or with a `tag_id`, is held to what it says."""
+    if table != "faces":
+        return ()
+    if values.get("tag_id") is not None:
+        return ("name",)
+    if "tag_id" in values and values.get("name") is not None:
+        return ("tag_id",)
+    return ()
 
 RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
 
@@ -116,7 +131,6 @@ CASCADES = {
     ("photos", "photo_people"): ("photo_id", REBUILT),
     ("photos", "photo_tags"): ("photo_id", REBUILT),
     ("photos", "photo_folder"): ("photo_id", REBUILT),
-    ("photos", "photo_meta"): ("photo_id", REBUILT),
     # The word index (tagpup.store.search_index): FTS5 tables whose rowid is the photo's id, taken by the trigger
     # search_goes_with_its_photo and made again by _derive's refresh of the photo.
     ("photos", "search_words"): ("rowid", REBUILT),
@@ -127,16 +141,6 @@ CASCADES = {
 
 #: What the name of the journal's record of a migration begins with ("migration 8: ...").
 MIGRATION = "migration "
-
-#: What the name of the change that adopts a root begins with (tagpup.store.adoption): it holds
-#: no rows, and its undo converts the library's paths back.
-ADOPTION = "roots adopt"
-
-#: How long a change stays undoable. Pruning then deletes its values and keeps its
-#: summary, and the change becomes `pruned`. An undo is for a mistake noticed in use,
-#: and three months is long enough to notice one; a deleted face's crop and vector are
-#: 8 KB a face, which is what a change holds for longer (docs/findings.md).
-RETENTION_DAYS = 90
 
 #: The steps of an apply and an undo, in order; `_reached` is told of each.
 STEPS = ("forward written", "forward committed", "undo written", "undo committed")
@@ -250,9 +254,6 @@ class Rehearsal:
     derived_stale: int = 0
     #: [row, why] of each skippable edit applying would leave out.
     skipped: List[List[str]] = field(default_factory=list)
-    #: What the undo does that its rows do not say: the undo of an adoption converts paths in the
-    #: library's tables and in what later changes recorded.
-    notes: List[str] = field(default_factory=list)
 
     def as_dict(self):
         return asdict(self)
@@ -267,21 +268,8 @@ def _now():
     return time.strftime(TIME)
 
 
-def _same(a, b):
-    """Equal as SQLite stores them: 1 is not 1.0, nor b'1' '1'."""
-    return type(a) is type(b) and a == b
-
-
-def _key_text(key):
-    return json.dumps(list(key))
-
-
 def _named(table, key):
     return "%s %s" % (table, "/".join(str(k) for k in key))
-
-
-def _columns(conn, table):
-    return [row[1] for row in conn.execute('PRAGMA table_info("%s")' % table)]
 
 
 def _where(table):
@@ -309,11 +297,6 @@ def _canonical_value(roots, table, key, column, value):
     return store_roots.row_value(roots, table, column, value, key[0] if table == "settings" and key else None)
 
 
-def has_journal(conn):
-    """Has the library on `conn` the journal's tables (migration 9)?"""
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'changes'").fetchone() is not None
-
-
 # ---- Reading a change against the rows --------------------------------------------------
 
 def _resolve(conn, edits):
@@ -326,7 +309,7 @@ def _resolve(conn, edits):
 
     def cols(table):
         if table not in columns:
-            columns[table] = _columns(conn, table)
+            columns[table] = schema.table_columns(conn, table)
         return columns[table]
 
     refusals, top, seen, skipped = [], [], set(), []
@@ -369,9 +352,10 @@ def _resolve(conn, edits):
             else:
                 refusals.append("%s is gone" % _named(edit.table, key))
             continue
-        differs = [column for column, value in edit.expect.items()
-                   if not _same(_canonical_value(roots, edit.table, key, column, row[column]),
-                                _canonical_value(roots, edit.table, key, column, value))]
+        cached = cache_columns(edit.table, edit.expect)
+        differs = [column for column, value in edit.expect.items() if column not in cached
+                   and not schema.same_stored(_canonical_value(roots, edit.table, key, column, row[column]),
+                                 _canonical_value(roots, edit.table, key, column, value))]
         if differs:
             if edit.skippable:
                 skipped.append((_named(edit.table, key), "not what the plan read: %s changed" % ", ".join(differs)))
@@ -382,9 +366,14 @@ def _resolve(conn, edits):
         if edit.action == "update":
             wanted_values = _canonical(roots, edit.table, key, edit.values)
             changed = {column: value for column, value in wanted_values.items()
-                       if not _same(_canonical_value(roots, edit.table, key, column, row[column]), value)}
+                       if not schema.same_stored(_canonical_value(roots, edit.table, key, column, row[column]), value)}
             if changed:
                 top.append(RowChange("update", edit.table, key, {c: row[c] for c in changed}, changed, edit.kind))
+            continue
+        if edit.table == "tag_taxonomy" and conn.execute(
+                "SELECT 1 FROM faces WHERE tag_id = ? LIMIT 1", (key[0],)).fetchone():
+            refusals.append("%s is the person of faces: unname them first (or merge it into the person they are)"
+                            % _named(edit.table, key))
             continue
         change = RowChange("delete", edit.table, key, row, None, edit.kind)
         top.append(change)
@@ -601,7 +590,7 @@ def _write(conn, changes):
                 [change.new[c] for c in columns])
             if change.key is None:
                 change.key = (cursor.lastrowid,)
-            change.new = _read(conn, table, change.key, _columns(conn, table))
+            change.new = _read(conn, table, change.key, schema.table_columns(conn, table))
         elif change.action == "update":
             columns = list(change.new)
             conn.execute('UPDATE "%s" SET %s WHERE %s' % (table, ", ".join('"%s" = ?' % c for c in columns),
@@ -614,7 +603,7 @@ def _write(conn, changes):
 def _record(conn, change_id, changes):
     rows = []
     for change in changes:
-        key = _key_text(change.key)
+        key = schema.row_key(change.key)
         if change.action == "update":
             rows += [(change_id, "update", change.table, key, c, change.old[c], change.new[c]) for c in change.new]
         elif change.action == "delete":
@@ -681,9 +670,9 @@ def _not_as_left(conn, change_id, changes):
         if row is None:
             reasons.append("%s is gone" % _named(change.table, change.key))
             continue
-        derived = DERIVED_COLUMNS.get(change.table, ())
+        derived = DERIVED_COLUMNS.get(change.table, ()) + cache_columns(change.table, change.new)
         differs = [c for c in change.new if c not in derived
-                   and not _same(_canonical_value(roots, change.table, change.key, c, row[c]), change.new[c])]
+                   and not schema.same_stored(_canonical_value(roots, change.table, change.key, c, row[c]), change.new[c])]
         if differs:
             reasons.append("%s is not what change %d left: %s changed"
                            % (_named(change.table, change.key), change_id, ", ".join(differs)))
@@ -696,6 +685,12 @@ def _not_as_left(conn, change_id, changes):
                 if conn.execute('SELECT 1 FROM "%s" WHERE "%s" = ? LIMIT 1' % (child, column),
                                 (change.new[KEYS[parent][0]],)).fetchone():
                     reasons.append("%s has rows in %s made since" % (_named(change.table, change.key), child))
+            if change.table == "tag_taxonomy" and conn.execute(
+                    "SELECT 1 FROM faces WHERE tag_id = ? LIMIT 1", (change.key[0],)).fetchone():
+                # A face named by it, by hand or by a guess, is that person's: the node is not taken from under it (the trigger
+                # person_tag_not_deleted_while_named would refuse the delete; this says so first, as _resolve does).
+                reasons.append("%s is the person of faces: unname them first (or merge it into the person they are)"
+                               % _named(change.table, change.key))
     return reasons
 
 
@@ -749,6 +744,23 @@ def _touched(conn, changes):
     return photo_ids, dated, nodes, listed, node_ids
 
 
+def _face_photos(conn, changes):
+    """The photos whose face rows `changes` wrote: inserted, updated, deleted -- or put back or taken away by an
+    undo, which is the same changes the other way."""
+    found = set()
+    for change in changes:
+        if change.table != "faces":
+            continue
+        values = [d for d in (change.old, change.new) if d]
+        here = {d["photo_id"] for d in values if "photo_id" in d}
+        if not here and change.key is not None:
+            row = _read(conn, "faces", change.key, ["photo_id"])
+            if row:
+                here.add(row["photo_id"])
+        found |= here
+    return found
+
+
 def _derive(conn, changes):
     """Rebuild what `changes` touched of the derived data: the people of each photo whose
     keywords or faces changed or whose keywords a changed node names, the dates of each photo
@@ -759,6 +771,9 @@ def _derive(conn, changes):
     The generations move by their triggers. Returns how many photos' people changed."""
     photo_ids, dated, nodes, listed, _node_ids = _touched(conn, changes)
     changed = 0
+    # A photo left with no face row is no longer one whose faces were detected: Suggest detects it again
+    # (docs/findings.md, #779; the one owner is tagpup.store.faces_detected, as for tagpup.store.faces).
+    faces_detected.forget_faceless(conn, sorted(_face_photos(conn, changes)))
     if nodes:
         changed += people.follow_nodes(conn, nodes)
     if photo_ids:
@@ -835,6 +850,62 @@ def record(conn, operation, changes, summary=None, schema_version=None):
     return change_id
 
 
+def record_rows(conn, change_id, changes):
+    """Add `changes` (RowChanges of tables in KEYS) to the rows of change `change_id`, in the caller's transaction: a change of photo
+    files that also writes rows (tagpup.store.face_batches) records them as the plan reads them. The rows are written by the caller,
+    when the file's step is done, not here."""
+    for change in changes:
+        if change.table not in KEYS:
+            raise ValueError("%s is not a table a change records" % change.table)
+    _record(conn, change_id, changes)
+
+
+#: What the journal calls the face rows a tree edit changed (taxonomy.delete_branch with force; people.merge_person).
+PERSON_DELETED = "person deleted (force): faces unnamed"
+PERSON_MERGED = "person merged: faces renamed"
+
+#: What History says of those two changes: honest about what an undo gives back (the tree rows are not journaled): nothing, since
+#: the person's node is gone and a face is named by a node only (an undo is refused: _unfiled).
+PERSON_NOTES = {
+    PERSON_DELETED: "the deleted person is not kept, so the faces cannot be given back to them: name them again",
+    PERSON_MERGED: "the merged person is not kept, so the faces cannot be given back to them: name them again",
+}
+
+#: Rows a face costs the journal when a person is deleted with force or merged: name, name_source and tag_id.
+ROWS_A_FACE = 3
+
+
+def read_faces(conn, face_ids):
+    """{face id: (name, name_source, tag_id)} of `face_ids` as they stand, to be handed to record_faces after the write. Chunked."""
+    found = {}
+    ids = sorted(face_ids)
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        found.update((face_id, (name, source, person)) for face_id, name, source, person in conn.execute(
+            "SELECT id, name, name_source, tag_id FROM faces WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
+def record_faces(conn, operation, before):
+    """Record, in the caller's transaction, the face rows a tree edit has just changed -- `before` is read_faces' answer from
+    before the write -- as ONE applied change `operation` (counts only in its summary), so History can put the faces' names and
+    who decided them back as they were. The person's id is recorded with them (cache_columns): an undo puts the id back, and when the
+    node is gone (a force delete, a merge) the undo is refused (_unfiled): a face is never left with a name and no node. The tree rows
+    themselves are not journaled (as before). Nothing when no face changed. Returns the change's id or None. The caller commits."""
+    if not before:
+        return None
+    now = read_faces(conn, before)
+    changes = []
+    columns = ("name", "name_source", "tag_id")
+    for face_id, was in sorted(before.items()):
+        left = now.get(face_id)
+        if left is None or left == was:
+            continue
+        changes.append(RowChange("update", "faces", (face_id,), dict(zip(columns, was)), dict(zip(columns, left)),
+                                 "face identity"))
+    return record(conn, operation, changes, {"faces": len(changes), "note": PERSON_NOTES.get(operation, "")}) if changes else None
+
+
 def apply(db_path, operation, edits, summary=None):
     """Apply `edits` to the library at `db_path` as one change named `operation`, with
     `summary` (counts, never names) kept with it. Refusal, with nothing written, when a
@@ -869,20 +940,22 @@ def apply(db_path, operation, edits, summary=None):
 
 
 def _writes_files(conn, change_id):
-    return file_journal.has_table(conn) and conn.execute(
-        "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
+    return conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
 
 
 def schema_gap_blocker(version, current):
     """Why a change made at schema `version` may not mean what it did in a library at `current`:
     a sentence naming the first migration in between that could have changed it, or None when none
     could. A migration cannot have if it is ADDITIVE and touches no table a change can name or the
-    journal keys (KEYS): adding the roots table, the runs of jobs, a folder list, the derived tables, moves
-    no row a journaled change recorded. Every other migration blocks, and so does one that is not
-    in the list: what cannot be classified is never exempt. A change made at a schema NEWER than
-    the library's blocks too (an older version of the app opened it)."""
+    journal keys (KEYS): adding a table, an index or a trigger moves no row a journaled change recorded.
+    Every other migration blocks, and so does one that is not in the list: what cannot be classified is
+    never exempt. A change made at a schema NEWER than the library's blocks too (an older version of the
+    app opened it), and so does one made BELOW the baseline (schema.BASELINE): its steps are gone."""
     if version > current:
         return "migration %d is not applied here" % version
+    if version < schema.BASELINE:
+        # The steps below the baseline are deleted (owner, 2026-10-15): what they did to this change's rows is not known.
+        return "it was made before the baseline, schema %d, whose steps TagPup no longer has" % schema.BASELINE
     known = {migration.version: migration for migration in schema.MIGRATIONS}
     # Not DERIVED: every undo rebuilds the derived tables from the rows it wrote (_derive), so a
     # migration that makes or fills one changes nothing an older change's rows mean.
@@ -893,9 +966,7 @@ def schema_gap_blocker(version, current):
             return "migration %d is not known" % number
         if migration.kind != schema.ADDITIVE:
             return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
-        derived_only = {table for table, columns in schema.ADDS_DERIVED_COLUMNS.get(number, {}).items()
-                        if set(columns) <= set(DERIVED_COLUMNS.get(table, ()))}
-        touched = sorted(set(migration.touches) & journaled - derived_only)
+        touched = sorted(set(migration.touches) & journaled)
         if touched:
             return "migration %d, %s, touches %s" % (number, migration.name, ", ".join(touched))
     return None
@@ -908,7 +979,7 @@ def refusal(conn, change_id):
     (tagpup.services.file_changes) are refused by it, and the history lists by it which
     changes can be undone (tagpup.services.journal.undo_refusals).
 
-    No such change; pruned; not finished; not applied. A change of files: a newer change
+    No such change; not finished; not applied. A change of files: a newer change
     not undone wrote one of its files (file_journal.newer_overlapping). A change of rows:
     made at another schema version, or a newer change not undone wrote one of its rows.
     The caller's connection."""
@@ -917,16 +988,11 @@ def refusal(conn, change_id):
     if row is None:
         return ["there is no change %d" % change_id]
     _operation, status, version = row
-    if _operation.startswith(MIGRATION) and conn.execute(
-            "SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is None:
+    if _operation.startswith(MIGRATION):
         # The journal's record that a migration ran, with no rows to put back (schema._Run._record):
-        # a schema is not undone. A data migration's record holds its rows and is undone, by the
-        # rule below, while it is the newest.
+        # a schema is not undone.
         return ["change %d (%s): a migration is not undone" % (change_id, _operation)]
     files = _writes_files(conn, change_id)
-    if status == "pruned":
-        return ["change %d was pruned: %s gone, so it cannot be undone"
-                % (change_id, "what its files held is" if files else "its values are")]
     if status in ("derived_pending", "planned"):
         return ["change %d is not finished; it is, the next time the library is opened" % change_id]
     if status != "applied":
@@ -940,46 +1006,34 @@ def refusal(conn, change_id):
         if blocking is not None:
             return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
                     " what they did (%s)" % (change_id, version, current, blocking)]
-    if _operation.startswith(ADOPTION):
-        from tagpup.store import adoption   # adoption imports this module
-        return adoption.undo_refusals(conn, change_id)
     return ["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
             for other, name in _newer_overlapping(conn, change_id)]
 
 
 def refusals(db_path, change_ids):
     """{change id: refusal(...)} of each of `change_ids`, read on one connection. Reads
-    only; {} for a library without a journal."""
+    only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_journal(conn):
-            return {}
         return {change_id: refusal(conn, change_id) for change_id in change_ids}
     finally:
         conn.close()
 
 
-class _Undone(list):
-    """The rows an undo wrote, and `converted`: how many paths the undo of an adoption
-    converted back, which are rows of tables the journal does not key, and what it says of
-    them (`notes`)."""
-    converted = 0
-    notes = ()
-
-
-def _adoption_note(conn, change_id, converted):
-    name = json.loads(conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()[0]
-                      or "{}").get("root", "")
-    recorded = converted.get("recorded values", 0)
-    tables = sum(n for table, n in converted.items() if table != "recorded values")
-    remaining = [each for each, _address in store_roots._rows(conn)]
-    keeps = ("the library keeps %s, whose rows are not touched" % ", ".join("root " + each for each in remaining)
-             if remaining else "the library holds no root")
-    return ["Undoing the adoption of root %s returns %d path(s) in the library's tables, and %d path(s) recorded in "
-            "later changes' values, from %s's row form to the native path this machine's map gives them, in one "
-            "step, so those changes can still be undone afterwards. No row moves to another root, and a value that "
-            "is not a path of %s (a title, an address, another root's row) is left exactly as it is; when it is "
-            "done %s." % (name, tables, recorded, name, name, keeps)]
+def _unfiled(conn, writes):
+    """Why writing `writes` would leave a face, or a listed person, naming a person whose node is not in the tag tree (a person
+    deleted or merged away since): [] when it would not. A person is the id of a node and no other way (owner, 2026-10-11), so
+    such a row is not given back. A node the same writes insert counts as there. Names no one. Reads only."""
+    wanted = {(change.new or {}).get("tag_id") for change in writes
+              if change.table in person_ids.TABLES and change.action != "delete"}
+    wanted.discard(None)
+    if not wanted:
+        return []
+    known = person_ids.read(conn).node_names
+    inserted = {change.key[0] for change in writes if change.table == "tag_taxonomy" and change.action == "insert" and change.key}
+    gone = [person for person in wanted if person not in known and person not in inserted]
+    return ["%d person(s) the rows to put back are named after are no longer in the tag tree: the faces are not given back to them; "
+            "name them again" % len(gone)] if gone else []
 
 
 def _undo_in(conn, change_id):
@@ -1001,18 +1055,11 @@ def _undo_rows(conn, change_id):
     reasons = refusal(conn, change_id)
     if reasons:
         raise Refusal(reasons)
-    converted, notes = 0, ()
-    if conn.execute("SELECT 1 FROM changes WHERE id = ? AND substr(operation, 1, ?) = ?",
-                    (change_id, len(ADOPTION), ADOPTION)).fetchone():
-        from tagpup.store import adoption   # adoption imports this module
-        counted = adoption.undo_in(conn, change_id)
-        converted = sum(counted.values())
-        notes = _adoption_note(conn, change_id, counted)
     changes = _load(conn, change_id)
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]
     if not reasons:
-        reasons = _blocked(conn, inverse)
+        reasons = _blocked(conn, inverse) + _unfiled(conn, inverse)
     if reasons:
         raise Refusal(reasons)
     try:
@@ -1020,10 +1067,7 @@ def _undo_rows(conn, change_id):
     except sqlite3.IntegrityError as e:
         raise _integrity(e) from e
     conn.execute("UPDATE changes SET status = 'derived_pending', undone = ? WHERE id = ?", (_now(), change_id))
-    undone = _Undone(changes)
-    undone.converted = converted
-    undone.notes = notes
-    return undone
+    return changes
 
 
 def undo(db_path, change_id):
@@ -1043,8 +1087,8 @@ def undo(db_path, change_id):
                 raise
             _reached("undo committed")
             settled = _settle_change(conn, change_id, changes)
-            logger.info("%s: change %d undone, %d row(s)", db_path, change_id, len(changes) + changes.converted)
-            return Undone(change_id, len(changes) + changes.converted, settled)
+            logger.info("%s: change %d undone, %d row(s)", db_path, change_id, len(changes))
+            return Undone(change_id, len(changes), settled)
         finally:
             conn.close()
 
@@ -1057,14 +1101,14 @@ def _snapshot(conn, changes):
         if change.key is None:
             continue
         if change.table not in columns:
-            columns[change.table] = _columns(conn, change.table)
+            columns[change.table] = schema.table_columns(conn, change.table)
         rows[(change.table, change.key)] = _read(conn, change.table, change.key, columns[change.table])
     photo_ids, _dated, nodes, kept, node_ids = _touched(conn, changes)
     photo_ids = sorted(photo_ids | set(people.photos_named_by(conn, nodes) if nodes else ()))
     listed = []
     for start in range(0, len(photo_ids), CHUNK):
         chunk = photo_ids[start:start + CHUNK]
-        listed += conn.execute("SELECT photo_id, position, name, source FROM photo_people WHERE photo_id IN (%s)"
+        listed += conn.execute("SELECT photo_id, position, tag_id, name, source FROM photo_people WHERE photo_id IN (%s)"
                                " ORDER BY photo_id, position" % ",".join("?" * len(chunk)), chunk).fetchall()
     return rows, (listed, derived.listing(conn, set(photo_ids) | kept, node_ids))
 
@@ -1078,7 +1122,7 @@ def _differences(before, after):
         if was is None or now is None:
             found.append("%s: %s" % (_named(table, key), "still there" if was is None else "not put back"))
             continue
-        differs = [c for c in was if not _same(was[c], now.get(c))]
+        differs = [c for c in was if not schema.same_stored(was[c], now.get(c))]
         if differs:
             found.append("%s: %s" % (_named(table, key), ", ".join(differs)))
     return found
@@ -1153,14 +1197,13 @@ def rehearse_undo(db_path, change_id):
             db.begin(conn, immediate=True)
             try:
                 try:
-                    changes = _load(conn, change_id) if has_journal(conn) else []
+                    changes = _load(conn, change_id)
                 except paths.RootsError as e:
                     return Rehearsal(refused=str(e))
                 stale = _derive(conn, changes)
                 before = _snapshot(conn, changes)
                 try:
-                    undone = _undo_in(conn, change_id)
-                    converted = undone.converted
+                    _undo_in(conn, change_id)
                 except Refusal as e:
                     return Rehearsal(refused=str(e))
                 _derive(conn, changes)
@@ -1170,8 +1213,6 @@ def rehearse_undo(db_path, change_id):
                     _derive(conn, changes)
 
                 rehearsal = _rehearsed(conn, before, changes, again, len(changes), stale)
-                rehearsal.rows += converted
-                rehearsal.notes = list(undone.notes)
                 return rehearsal
             finally:
                 conn.rollback()
@@ -1186,8 +1227,6 @@ def settle(db_path):
     it touched and mark it applied, or undone. Returns how many were finished."""
     conn = db.connect(db_path)
     try:
-        if not has_journal(conn):
-            return 0
         pending = [change_id for (change_id,) in conn.execute(
             "SELECT id FROM changes WHERE status = 'derived_pending' ORDER BY id")]
         finished = 0
@@ -1207,7 +1246,7 @@ _settled_guard = threading.Lock()
 
 def settle_once(db_path):
     """settle, the first time this process opens the library at `db_path`: at start."""
-    key = db._key(db_path)
+    key = db.key(db_path)
     with _settled_guard:
         if key in _settled:
             return 0
@@ -1221,11 +1260,9 @@ def _shown(value):
 
 def operation(db_path, change_id):
     """The name change `change_id` was applied under, or None for a change the library
-    at `db_path` has not (or a library without a journal)."""
+    at `db_path` has not."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_journal(conn):
-            return None
         row = conn.execute("SELECT operation FROM changes WHERE id = ?", (change_id,)).fetchone()
         return row[0] if row else None
     finally:
@@ -1238,11 +1275,9 @@ def history(db_path, limit=20, change_id=None, values=False):
     of each table it inserted, updated and deleted, and how many photo files it planned
     in each state (tagpup.store.file_journal). One change also lists its row keys,
     and with `values` each column's old and new value (a BLOB by its size): these can
-    hold names. [] for a library without a journal."""
+    hold names."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_journal(conn):
-            return []
         query = ("SELECT id, operation, status, schema_version, created, applied, undone, summary FROM changes")
         if change_id is None:
             found = conn.execute(query + " ORDER BY id DESC LIMIT ?", (max(0, limit),)).fetchall()
@@ -1283,79 +1318,3 @@ def history(db_path, limit=20, change_id=None, values=False):
         return entries
     finally:
         conn.close()
-
-
-def _cutoff(days, now):
-    return time.strftime(TIME, time.localtime((time.time() if now is None else now) - days * 86400))
-
-
-def _eligible(conn, cutoff):
-    """[(id, operation)] of the changes pruning at `cutoff` could take the values of: applied or undone, and no newer than the
-    newest made before it. A newer change is never pruned before an older one, so an undo's check of the changes after it sees
-    every one that kept its rows."""
-    last = conn.execute("SELECT MAX(id) FROM changes WHERE created <= ?", (cutoff,)).fetchone()[0]
-    if last is None:
-        return []
-    return conn.execute(
-        "SELECT id, operation FROM changes WHERE id <= ? AND status IN ('applied', 'undone') ORDER BY id", (last,)).fetchall()
-
-
-def _prunable(conn, cutoff, keep):
-    """The ids of the changes pruning at `cutoff` takes the values of: the eligible ones (_eligible) except those named by an
-    operation in `keep`. THE ONE PLACE this is decided: a prune of any age leaves `keep`'s changes whole. The caller says what
-    to keep (a bulk time shift that can be resumed needs its changes to tell which photos a chunk shifted), and there is no
-    default, so a new caller must decide."""
-    return [cid for cid, operation in _eligible(conn, cutoff) if operation not in keep]
-
-
-def prunable(db_path, days=RETENTION_DAYS, now=None, *, keep):
-    """(changes, values) pruning after `days` would take away, leaving the changes named by the operations in `keep`. Reads only."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        if not has_journal(conn):
-            return 0, 0
-        ids = _prunable(conn, _cutoff(days, now), keep)
-        values = 0
-        for start in range(0, len(ids), CHUNK):
-            chunk = ids[start:start + CHUNK]
-            values += conn.execute("SELECT COUNT(*) FROM change_rows WHERE change_id IN (%s)"
-                                   % ",".join("?" * len(chunk)), chunk).fetchone()[0]
-        return len(ids), values
-    finally:
-        conn.close()
-
-
-def held_back(db_path, days=RETENTION_DAYS, now=None, *, keep):
-    """{operation: changes} that pruning after `days` would take but for `keep`. Reads only."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        if not has_journal(conn):
-            return {}
-        held = {}
-        for _cid, operation in _eligible(conn, _cutoff(days, now)):
-            if operation in keep:
-                held[operation] = held.get(operation, 0) + 1
-        return held
-    finally:
-        conn.close()
-
-
-def prune(db_path, days=RETENTION_DAYS, now=None, *, keep):
-    """Take the values of every change older than `days` out of the journal: its summary
-    stays, and it becomes `pruned`, no longer undoable. The changes named by the operations in `keep` are
-    left whole. `keep` may be a function, called INSIDE the write transaction, after the lock is taken, so that what it names
-    cannot be stale by the time the cutoff and the eligible changes are read. Returns (changes pruned, values deleted)."""
-    schema.ensure(db_path)
-
-    def work(conn):
-        ids = _prunable(conn, _cutoff(days, now), keep() if callable(keep) else keep)
-        deleted = 0
-        for start in range(0, len(ids), CHUNK):
-            chunk = ids[start:start + CHUNK]
-            marks = ",".join("?" * len(chunk))
-            deleted += conn.execute("DELETE FROM change_rows WHERE change_id IN (%s)" % marks, chunk).rowcount
-            deleted += file_journal.prune(conn, chunk)
-            conn.execute("UPDATE changes SET status = 'pruned' WHERE id IN (%s)" % marks, chunk)
-        return len(ids), deleted
-
-    return db.write_with_connection(db_path, work, label="prune the journal")

@@ -2,7 +2,7 @@
 docs/ARCHITECTURE.md, phase 9, the owner's review: #672 the navigator's rows selected together, #671 the sort).
 
 A union (`any_of`) is the photos of any of a list of sources -- the rows a person selected in the navigator -- in one
-statement: a photo in two of them is one photo, counted once; it pages by the keyset, its order is a source's, and a
+statement: a photo in two of them is one photo, counted once; its order is a source's, and a
 selection by source (Select all, the tally, a bulk edit) takes it as it takes any source. The orders are Date Taken or
 file name, either way, ties by id; photos with no Date Taken come after the dated ones in both directions.
 
@@ -26,18 +26,7 @@ from tagpup.store import db  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
 
 WREN, ROWAN = "Wren Halloway", "Rowan Thackeray"
-
-
-def walk(vl, kind, value=None, order=None, limit=2):
-    """Every id in the order the keyset pages gave them, and the totals they said."""
-    token, ids, totals = None, [], set()
-    while True:
-        found = library_view.view(vl.library, kind, value, False, token, limit, order)
-        ids += found["ids"]
-        totals.add(found["total"])
-        token = found["next"]
-        if token is None:
-            return ids, totals
+PEOPLE = "People/"   # a person is named by the path of their node (owner, 2026-10-11)
 
 
 def union(*members):
@@ -70,9 +59,6 @@ class TheUnion(Library):
         self.assertEqual([self.july_20, self.july_21, self.july_22], found["ids"])
         self.assertEqual(3, found["total"])
         self.assertEqual(["any_of"] + ["month"] * 12, [found["source"]["kind"]] + [m["kind"] for m in found["source"]["value"]])
-        ids, totals = walk(self.vl, "any_of", months)
-        self.assertEqual(found["ids"], ids, "the keyset pages are the list")
-        self.assertEqual({3}, totals)
 
     def test_a_photo_in_two_selected_keywords_is_one_photo_counted_once(self):
         found = self.ids("any_of", union(("keyword", "Trips", False), ("keyword", "Activity/Sailing", False)))
@@ -81,9 +67,9 @@ class TheUnion(Library):
         self.assertEqual(len(found["ids"]), len(set(found["ids"])))
 
     def test_kinds_mix_and_a_folder_with_its_subfolders_takes_every_folder_under_it(self):
-        found = self.ids("any_of", union(("folder", self.folder, True), ("person", WREN.upper(), False)))
+        found = self.ids("any_of", union(("folder", self.folder, True), ("person", PEOPLE + WREN.upper(), False)))
         self.assertEqual({self.july_20, self.july_21, self.june_21, self.july_22, self.dashed}, set(found["ids"]))
-        alone = self.ids("any_of", union(("folder", self.folder, False), ("person", ROWAN, False)))
+        alone = self.ids("any_of", union(("folder", self.folder, False), ("person", PEOPLE + ROWAN, False)))
         self.assertEqual({self.july_21, self.june_21, self.dashed, self.july_22}, set(alone["ids"]))
         only = self.ids("any_of", union(("folder", self.folder, False), ("month", "2099-01", False)))
         self.assertEqual({self.july_21, self.june_21, self.dashed}, set(only["ids"]), "the folder alone, not Later under it")
@@ -169,58 +155,9 @@ class TheOrders(Library):
         self.assertEqual([self.undated_a, self.june_21, self.july_20, twin, self.july_21, self.dashed, self.july_22,
                           self.undated_b], self.ids("all", order="name-desc")["ids"])
 
-    def test_every_order_pages_by_its_keyset_as_its_list(self):
-        sources = (("all", None), ("folder", self.folder), ("keyword", "Trips"), ("any_of", union(("month", "2020-07", False),
-                   ("folder", os.path.join(self.vl.pictures, "Misc"), False))))
-        for order in store.ORDERS:
-            for kind, value in sources:
-                with self.subTest(order=order, kind=kind):
-                    listed = library_view.ids(self.vl.library, kind, value, recursive=kind == "folder", order=order)
-                    token, paged = None, []
-                    while True:
-                        page = library_view.view(self.vl.library, kind, value, kind == "folder", token, 2, order)
-                        paged += page["ids"]
-                        token = page["next"]
-                        if token is None:
-                            break
-                    self.assertEqual(listed["ids"], paged)
-                    self.assertEqual(order, page["order"])
-
-    def test_without_the_name_index_the_order_by_name_is_the_same(self):
-        with_index = self.ids("any_of", union(("year", "2021", False), ("month", "2020-07", False)), order="name")["ids"]
-        conn = db.connect(self.vl.path)
-        conn.execute("DROP INDEX %s" % store.NAME_INDEX)
-        conn.commit()
-        conn.close()
-        self.assertEqual(with_index, self.ids("any_of", union(("year", "2021", False), ("month", "2020-07", False)),
-                                              order="name")["ids"])
-
-    def test_a_token_is_read_only_in_its_own_order_and_an_unknown_order_is_refused(self):
-        first = library_view.view(self.vl.library, "all", limit=2, order="name")
-        with self.assertRaises(Refused):
-            library_view.view(self.vl.library, "all", after=first["next"], limit=2)
-        with self.assertRaises(Refused):
-            library_view.view(self.vl.library, "all", after=first["next"], limit=2, order="taken-desc")
+    def test_an_unknown_order_is_refused(self):
         with self.assertRaises(Refused):
             self.ids("all", order="size")
-        dated = library_view.view(self.vl.library, "all", limit=2)
-        self.assertEqual(dated["next"], library_view.encode(library_view.decode(dated["next"])), "the old token is the same")
-
-
-class TheNameOrdersToken(unittest.TestCase):
-    def test_a_long_file_name_that_is_not_ascii_pages_on(self):
-        # Found building #714: the page token was refused over 400 characters, and a name's key in JSON is up to twelve
-        # characters for each one that is not ASCII -- a page after a photo named in Cyrillic or Greek, 50 letters or so.
-        vl = ViewLibrary(self)
-        named = [vl.photo("Trips", chr(0x416) * 120 + "%d.jpg" % n) for n in range(3)]
-        token, paged = None, []
-        while True:
-            page = library_view.view(vl.library, "all", None, False, token, 1, "name")
-            paged += page["ids"]
-            token = page["next"]
-            if token is None:
-                break
-        self.assertEqual(named, paged)
 
 
 class ThePlans(Library):
@@ -231,20 +168,23 @@ class ThePlans(Library):
                                                   order or store.TAKEN)
         finally:
             conn.close()
-        return "\n".join("\n".join(lines) for _sql, lines in statements)
+        # The tree is read whole once (person_ids.read: a few hundred nodes, a DISTINCT of their parents): not the search.
+        return "\n".join("\n".join(lines) for sql, lines in statements
+                         if "SELECT DISTINCT parent_id FROM tag_taxonomy" not in sql and "FROM sqlite_master" not in sql
+                         and not sql.startswith("SELECT id, name, has_face, tag FROM tag_taxonomy"))
 
     def test_a_union_seeks_an_index_for_each_kind_and_scans_no_table(self):
-        text = self.plans("any_of", union(("keyword", "Trips", False), ("person", WREN, False), ("year", "2021", False),
+        text = self.plans("any_of", union(("keyword", "Trips", False), ("person", PEOPLE + WREN, False), ("year", "2021", False),
                                           ("month", "2020-07", False), ("folder", self.folder, True)))
         self.assertIn("idx_photo_tags_tag (tag_id=?)", text)
-        self.assertIn("idx_photo_people_name (name=?)", text)
+        self.assertIn("idx_photo_people_tag (tag_id=?)", text)
         self.assertIn("idx_photo_folder_folder (folder_id=?)", text)
         self.assertNotIn("SCAN p\n", text + "\n")
         self.assertNotRegex(text, r"SCAN (p|photos)( |$)(?!USING COVERING INDEX)")
 
     def test_by_name_the_name_index_is_walked_in_order_and_nothing_sorted(self):
         for kind, value in (("all", None), ("keyword", "Trips"), ("any_of", union(("month", "2020-07", False),
-                                                                                    ("person", ROWAN, False)))):
+                                                                                    ("person", PEOPLE + ROWAN, False)))):
             for order in ("name", "name-desc"):
                 with self.subTest(kind=kind, order=order):
                     text = self.plans(kind, value, order)
@@ -279,8 +219,6 @@ class TheRoutes(unittest.TestCase):
         posted = client.post("/library/api/library/ids", json={"kind": "any_of", "value": members, "order": "name"})
         self.assertEqual(200, posted.status_code, posted.get_data(as_text=True))
         self.assertEqual(3, posted.get_json()["total"])
-        page = client.post("/library/api/library/view", json={"kind": "any_of", "value": members, "limit": 2})
-        self.assertEqual((200, 2, 3), (page.status_code, len(page.get_json()["ids"]), page.get_json()["total"]))
         folder = client.post("/library/api/library/ids", json={"kind": "folder", "folder": os.path.join(vl.pictures, "A"),
                                                                 "recursive": True, "order": "taken-desc"})
         self.assertEqual(3, folder.get_json()["total"])

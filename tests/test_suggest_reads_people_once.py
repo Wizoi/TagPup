@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import _root  # noqa: E402,F401
 from tagpup.core import clustering  # noqa: E402
+from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.ml import clip as clip_model  # noqa: E402
 from tagpup.ml import faces as face_model  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -31,34 +32,19 @@ from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
+from face_rows import person_of  # noqa: E402
+
 
 def unit(vector):
     vector = np.asarray(vector, dtype=np.float32)
     return vector / np.linalg.norm(vector)
 
 
-class FakeTaxonomy:
-    paths = ["People/Rowan Thackeray", "Activity/Running"]
-
-    def expand_tag(self, tag):
-        return [tag]
-
-    def find_person_path(self, name):
-        return "People/" + name
-
-    def person_paths(self, name):
-        return ["People/" + name]
-
-    def find_by_leaf(self, leaf):
-        return None
-
-    def people_roots(self):
-        # The roots the library's tree flags as holding faces (docs/findings.md, #66).
-        return {"people"}
-
-
 class Index:
-    """A library with no neighbours and no faces on file."""
+    """A library with no neighbours, no faces on file and no tree (its file is not there): a run over it is handed the
+    suggester model_for_run makes (tests/stand_in_models.py)."""
     conn = None
     db_path = "no such library.db"
 
@@ -66,8 +52,11 @@ class Index:
         return []
 
 
-class FakeFaceProcessor:
-    def detect_and_embed_faces(self, path):
+class FakeFaceProcessor(stand_in_models.Faces):
+    def ready(self):
+        """The run's turn on the graphics card (tagpup.runtime._OnTheCard): nothing to wait for here."""
+
+    def detect_and_embed_faces(self, path, *, max_side):
         return [{"box": [0, 0, 100, 100], "embedding": unit([1, 0, 0]).tolist(), "prob": 0.99}]
 
 
@@ -77,12 +66,13 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
 
         def known_faces(db_path):
             known_reads.append(db_path)
-            return clustering.KnownFaces.of([("Rowan Thackeray", unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg")])
+            return clustering.KnownFaces.of([(7, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg", Ref(7, "Rowan Thackeray"))])
 
-        run = TagSuggester(Index(), FakeTaxonomy(), faces=FakeFaceProcessor())
         with mock.patch.object(face_records, "known_faces", side_effect=known_faces), \
+                mock.patch.object(TagSuggester, "_tags_by_id", return_value={7: "People/Rowan Thackeray"}), \
                 mock.patch.object(face_records, "record_detected", return_value=0), \
                 mock.patch.object(store_faces, "for_clustering", side_effect=AssertionError("read every face")):
+            run = stand_in_models.run_for(Index(), FakeFaceProcessor(), dim=3).suggester
             results = [run.suggest_for_photo(r"D:\Pictures\Run\%02d.jpg" % n, [1.0, 0.0, 0.0])
                        for n in range(3)]
         self.assertEqual(len(known_reads), 1)
@@ -107,9 +97,10 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
         index.conn.execute("INSERT INTO photos (path) VALUES (?)", (r"D:\Pictures\a.jpg",))
         for name, excluded, emb in rows:
             index.conn.execute(
-                "INSERT INTO faces (photo_id, box, embedding, name, excluded) VALUES ((SELECT id FROM photos WHERE path = ?),?,?,?,?)",
+                "INSERT INTO faces (photo_id, box, embedding, name, tag_id, excluded)"
+                " VALUES ((SELECT id FROM photos WHERE path = ?),?,?,?,?,?)",
                 (r"D:\Pictures\a.jpg", "[0,0,1,1]", np.asarray(emb, dtype=np.float32).tobytes(),
-                 name, excluded))
+                 name, person_of(index.conn, name) if name else None, excluded))
         index.conn.commit()
         self.index = index
 
@@ -119,33 +110,28 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
 
     def test_named_faces_only_excluded_left_out(self):
         known = face_records.known_faces(self.db)
-        self.assertEqual(sorted(known.names()), ["Imogen Vale", "Rowan Thackeray"])
+        self.assertEqual(sorted(person.name for person in known.labels.values()), ["Imogen Vale", "Rowan Thackeray"])
         # Rowan's closest face to each of their two named ones is itself; the excluded
         # face is not among them.
-        self.assertAlmostEqual(1.0, known.likeness("Rowan Thackeray", unit([0.8, 0.6, 0])), places=5)
-        self.assertAlmostEqual(0.0, known.likeness("Rowan Thackeray", unit([0, 0, 1])), places=5)
+        # Keyed by person (the id of their node), the Ref each is in `labels`.
+        rowan = next(key for key, person in known.labels.items() if person.name == "Rowan Thackeray")
+        self.assertAlmostEqual(1.0, known.likeness(rowan, unit([0.8, 0.6, 0])), places=5)
+        self.assertAlmostEqual(0.0, known.likeness(rowan, unit([0, 0, 1])), places=5)
 
 
 class FaceModelsLoadOnce(unittest.TestCase):
-    def test_warm_up_actually_loads_the_models(self):
-        loaded = []
-
-        class Faces:
-            def load(self):
-                loaded.append(True)
-
-        Runtime(clip=mock.Mock(), faces=Faces()).warm_up()
-        self.assertEqual(loaded, [True])
-
-    def test_warm_up_builds_each_model_once_from_the_settings(self):
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    def library(self):
         import own_home
         from tagpup.core.library import Library
         from tagpup.services import libraries as library_actions
-        from tagpup.services import settings as library_settings
         home = own_home.for_test(self)
         library_actions.create(home.library("harbour.db"))
-        library = Library(home.library("harbour.db"))
+        return Library(home.library("harbour.db"))
+
+    def test_warm_up_builds_each_model_once_from_the_settings_and_loads_them(self):
+        """The warm-up that was meant to load the face models only built them; each load is counted here."""
+        from tagpup.services import settings as library_settings
+        library = self.library()
         with mock.patch.object(clip_model, "ClipModel") as clip, \
                 mock.patch.object(face_model, "FaceModel") as faces:
             runtime = Runtime()
@@ -161,10 +147,11 @@ class FaceModelsLoadOnce(unittest.TestCase):
         """The warm-up made a PhotoIndex on the startup library and kept it open until
         the process ended; a thread starting after the file had gone made an empty
         library in its place (docs/findings.md, #99). The models are the process's."""
+        library = self.library()
         opened = []
         with mock.patch.object(search, "PhotoIndex", side_effect=lambda *a, **k: opened.append(a)), \
                 self.assertNoLogs("tagpup.runtime", level="ERROR"):
-            Runtime(clip=mock.Mock(), faces=mock.Mock()).warm_up()
+            Runtime(build_clip=lambda settings: mock.Mock(), build_faces=lambda settings: mock.Mock()).warm_up([library])
         # The warm-up catches what a model raises, and logs it: a patch that raised was
         # swallowed there, so the library it opened is counted instead.
         self.assertEqual([], opened)
@@ -186,6 +173,32 @@ class FaceModelsLoadOnce(unittest.TestCase):
             for worker in workers:
                 worker.join()
         self.assertEqual(len(loads), 1)
+
+
+class FourWorkersShareEveryonesFaces(unittest.TestCase):
+    """Suggest's pool workers ask most_like of the one KnownFaces the run read, at once: everyone's faces are put in one
+    matrix once, not once a worker (about 72 MB each on photo_index, the last one kept)."""
+
+    def test_four_workers_asking_together_make_everyones_faces_once(self):
+        known = clustering.KnownFaces.of([(person, unit([1, 0, 0]) if person == 1 else unit([0, 1, 0]), 2020, None)
+                                          for person in (1, 2, 3)])
+        real, made = clustering.KnownFaces._build_table, []
+
+        def slow_build(self):
+            made.append(threading.get_ident())
+            time.sleep(0.05)
+            return real(self)
+
+        answers = []
+        with mock.patch.object(clustering.KnownFaces, "_build_table", slow_build):
+            workers = [threading.Thread(target=lambda: answers.append(known.most_like(unit([1, 0, 0]), 2020)))
+                       for _ in range(4)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+        self.assertEqual(1, len(made))
+        self.assertEqual([1] * 4, [person for person, _likeness in answers])
 
 
 if __name__ == "__main__":

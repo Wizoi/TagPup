@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, openFolder, pageModules, APPS, REPO_ROOT } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, openFolder, pageModules, APPS, REPO_ROOT, PEOPLE_ROUTE } from "./harness.mjs";
 import path from "node:path";
 import { api, libraryIn } from "../../web/common/api.js";
 
@@ -30,7 +30,7 @@ afterEach(() => {
 const baseRoutes = (server) =>
   server
     .on("/api/tags", ["Activity", "Trips/Texas"])
-    .on("/api/people", ["Jane Doe"])
+    .on(PEOPLE_ROUTE, [])                   // an empty tree: nobody
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["photo_index", "kr-track"], selected: "kr-track" })
     .on("/api/folder/suggest-status", { status: "idle" })
@@ -46,7 +46,7 @@ for (const app of ["tagpup", "tagtuner"]) {
       assert.ok(apiCalls.length > 0, "the app made no absolute API calls");
       for (const url of apiCalls) {
         assert.ok(
-          url.startsWith("/kr-track/api/"),
+          url.startsWith("/kr-track/api/") || url.startsWith("/api/activity/"),     // the batches of every library: the strip
           `request escaped the database prefix: ${url}`
         );
       }
@@ -58,7 +58,7 @@ for (const app of ["tagpup", "tagtuner"]) {
 
       for (const url of server.urls().filter((u) => u.startsWith("/"))) {
         assert.ok(
-          url.startsWith("/photo_index/api/"),
+          url.startsWith("/photo_index/api/") || url.startsWith("/api/activity/"),
           `request went to the wrong database: ${url}`
         );
       }

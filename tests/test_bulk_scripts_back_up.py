@@ -2,15 +2,12 @@
 plan allows one.
 
 The rule in CLAUDE.md: bulk operations dry-run by default, --apply to write, and back
-up first. Every script here dry-runs; six of them wrote without a backup, among them
-dedupe_faces and relink_renamed_photos, which delete and re-point face rows. Three had
-their own copy of a backup function.
-
-Phase 7.5 (docs/ARCHITECTURE.md) replaced the copy -- 1.4 GB of photo_index for each
-apply, five kept -- with the library's journal: a service on the maintenance scaffold
+up first. Phase 7.5 (docs/ARCHITECTURE.md) replaced the copy -- 1.4 GB of photo_index for
+each apply, five kept -- with the library's journal: a service on the maintenance scaffold
 (tagpup.services.maintenance) records each apply as one change, rehearsed first and
 undoable after, and copies nothing. A full copy stays only where the plan keeps one
-(FULL_COPIES), and this holds every --apply script to one or the other.
+(FULL_COPIES). No script in scripts/ writes a database with --apply now; the operations
+are services run by the CLI and the MCP server.
 """
 import os
 import re
@@ -21,18 +18,11 @@ import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import shipped_sources  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 
-
-#: A script that opens a database, in any of the ways the codebase imports db.
-OPENS_A_DATABASE = re.compile(r"\bimport db\b|from tagpup\.store import db\b|\btagpup_db\b")
-
-#: The services a script imports: `from tagpup.services import refresh_rows`.
-IMPORTS_SERVICES = re.compile(r"^from tagpup\.services import ([\w, ]+)", re.M)
 
 #: A full copy of the library, taken by the one function that makes them.
 TAKES_A_COPY = re.compile(r"\b(?:db|tagpup_db)\.backup\(")
@@ -42,13 +32,9 @@ FULL_COPIES = {
     # Until phase 7.5's migrations stage: then only a migration that destroys
     # information copies the library, and one that changes data records its rows.
     os.path.join("tagpup", "store", "schema.py"): "a migration that rewrites data",
-    # `roots adopt --apply` rewrites every path of the library in one transaction: a copy is taken first
-    # (or the one made within the quarter hour before is kept), though the journal can undo it
-    # (docs/ARCHITECTURE.md, "Roots and machines"; the owner asked for it, 2026-10-02).
-    os.path.join("tagpup", "store", "adoption.py"): "a library whose every path is rewritten",
     # `index --reset` deletes the library; `compact` rewrites the whole file.
     "tagpup_cli.py": "a library deleted or rewritten whole",
-    # backfill_document_ids and relink_renamed_photos copied it too, until phase 7.5's
+    # The bulk scripts copied it too, until phase 7.5's
     # photo-file stage (docs/findings.md, #193): each records changes of the journal now,
     # the photo files it writes among them (tagpup.services.file_changes).
 }
@@ -59,37 +45,7 @@ def read(*parts):
         return handle.read()
 
 
-def maintenance_services(source):
-    """The services a script imports that run on the maintenance scaffold."""
-    names = [name.strip() for found in IMPORTS_SERVICES.findall(source) for name in found.split(",")]
-    return [name for name in names
-            if os.path.exists(os.path.join(WORKSPACE_DIR, "tagpup", "services", name + ".py"))
-            and re.search(r"\bmaintenance\.run\(", read("tagpup", "services", name + ".py"))]
-
-
-def bulk_scripts():
-    """Scripts that write with --apply and open a database. (install_app.py writes with
-    --apply too, but files, not a database.)"""
-    folder = os.path.join(WORKSPACE_DIR, "scripts")
-    for name in sorted(os.listdir(folder)):
-        if not name.endswith(".py"):
-            continue
-        with open(os.path.join(folder, name), encoding="utf-8") as handle:
-            source = handle.read()
-        if '"--apply"' in source and (OPENS_A_DATABASE.search(source) or maintenance_services(source)):
-            yield name, source
-
-
-class EveryBulkScriptRecordsAChange(unittest.TestCase):
-    def test_there_are_bulk_scripts_to_check(self):
-        self.assertGreaterEqual(len(list(bulk_scripts())), 5)
-
-    def test_each_one_records_a_change_or_may_copy_the_library(self):
-        missing = [name for name, source in bulk_scripts()
-                   if not maintenance_services(source)
-                   and not (os.path.join("scripts", name) in FULL_COPIES and TAKES_A_COPY.search(source))]
-        self.assertEqual([], missing, "these write with --apply, record no change and take no copy")
-
+class BulkOperationsRecordAChange(unittest.TestCase):
     def test_the_scaffold_records_a_change_and_copies_nothing(self):
         source = read("tagpup", "services", "maintenance.py")
         self.assertRegex(source, r"\bjournal\.apply\(")
@@ -102,15 +58,9 @@ class EveryBulkScriptRecordsAChange(unittest.TestCase):
         self.assertEqual(set(FULL_COPIES), copying,
                          "a full copy of the library outside FULL_COPIES, or one listed there that takes none")
 
-    def test_none_keeps_its_own_copy(self):
-        own = [name for name, source in bulk_scripts() if re.search(r"^def backup\(", source, re.M)]
-        self.assertEqual([], own)
-
     def test_index_reset_backs_up_before_it_deletes(self):
         # `index --reset` deletes the database, every hand-named face with it, one
-        # flag away from an ordinary run. (`cluster-faces --reset` clears only the
-        # names clustering gave, which clustering gives again; it keeps hand-given
-        # ones, and needs no copy of the library each time.)
+        # flag away from an ordinary run.
         import ast
         with open(os.path.join(WORKSPACE_DIR, "tagpup_cli.py"), encoding="utf-8") as handle:
             tree = ast.parse(handle.read())

@@ -10,21 +10,19 @@ raw, downloaded) show background work. What it asks:
   runs now -- each library's index queue and Suggest runs, the recurring jobs running in
   any process (their `running` rows), the folder watcher's sync, and whether the server
   takes work or waits to move onto a new version. Cheap: memory, and one small read of
-  each library's `job_runs`.
+  each library's `job_runs`. Each library also lists its batches of photo files, running or
+  waiting (tagpup.services.batches), with the counts of their files.
+- GET /api/activity/batches: those batches alone, of every library; POST
+  /api/activity/batches/cancel stops one of this process's at its chunk, or never starts it.
 - GET /api/activity/jobs: each recurring job, why it is scheduled, and for each library
   its last runs, what each changed as counts and why a failed one failed, and when it is
   due; POST /api/activity/jobs/run runs one now, on the recurring jobs' runner.
+- POST /api/activity/models/unload: Unload models now (the server's section); /server says
+  what is loaded.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
-  watched folders, its snapshots, the always-on process, and one timeline of what was done.
-- GET /api/activity/attention: what needs the owner -- each library's photos found damaged
-  (tagpup.services.damaged_photos), with their paths and TagPup's page on each folder;
-  POST /api/activity/attention/check reads them again now (Check again).
+  watched folders, its snapshots, the server, and one timeline of what was done.
 - GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
   data/logs, read from the end and never whole (tagpup.logs.read).
-- GET /api/file-access/check: which other programs (Windows Defender's real-time scanning,
-  the Search indexer, a cloud-sync client, another antivirus) can interfere with TagPup's
-  folders, as findings with the commands the owner may run; read-only, remembered ten minutes
-  (tagpup.services.file_access; `refresh=1` asks again).
 
 It answers this PC alone: a request from any other address is refused 403 whatever
 address the server listens on (it listens on loopback: tagpup.web.app.bind). What it
@@ -38,21 +36,17 @@ import urllib.parse
 
 from flask import Blueprint, Response, abort, current_app, jsonify, request, send_file
 
-from tagpup import config as tagpup_config
 from tagpup import logs
 from tagpup import runtime as runtimes
-from tagpup import supervisor
 from tagpup.core import library as libraries
 from tagpup.core import paths, runs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.services import activity
-from tagpup.services import damaged_photos
-from tagpup.services import file_access
+from tagpup.services import activity, batches
 from tagpup.services import indexing
 from tagpup.services import job_runs
-from tagpup.services import roots as roots_service
+from tagpup.web import lifecycle as lifecycles
 from tagpup.web import responses, security
 
 logger = logging.getLogger(__name__)
@@ -63,9 +57,6 @@ routes = Blueprint(PAGE, __name__)
 PAGE_FILES = {"index.html": "text/html; charset=utf-8", "style.css": "text/css; charset=utf-8"}
 SCRIPT_TYPE = "application/javascript; charset=utf-8"
 NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"}
-
-#: The background tasks the page asks (tagpup.runtime.BACKGROUND).
-WATCHER, JOBS = "folder watcher", "recurring jobs"
 
 #: A job's runs listed when the page asks for no number, and the most; the same for the timeline.
 RUNS, MOST_RUNS = 10, 50
@@ -159,30 +150,11 @@ def _task(name):
 def is_syncing(library):
     """Is this process's folder watcher syncing `library` right now? False when it runs none (a test server, a
     TagPup started without its jobs): the answer is what this process knows, not the library's."""
-    watcher = _task(WATCHER)
-    syncing = watcher.status().get("syncing") if watcher is not None and hasattr(watcher, "status") else None
-    return bool(syncing and str(syncing.get("library", "")).lower() == library.name.lower())
+    return any(work.kind == lifecycles.SYNC for work in _lifecycle().under_way(library))
 
 
 def _stamp(seconds):
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(seconds)) if seconds else None
-
-
-def _supervisor_state():
-    """What the always-on process says in data/supervisor.json, less its server's token;
-    `alive` whether it runs now. None when none has run in this home."""
-    try:
-        state = supervisor.last_state()
-    except Exception:
-        state = None
-    if not state:
-        return None
-    shown = {key: value for key, value in state.items() if key not in ("server_token", "started")}
-    try:
-        shown["alive"] = supervisor.running() is not None
-    except Exception:
-        shown["alive"] = False
-    return shown
 
 
 def _int_arg(name, default, most):
@@ -255,16 +227,37 @@ def now():
             logger.warning("Could not read the running jobs of %s: %s", library.name, e)
         found.append({"name": library.name, "indexing": indexed,
                       "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
-                      "jobs": running})
-    watcher = _task(WATCHER)
-    watching = watcher.status() if watcher is not None and hasattr(watcher, "status") else None
+                      "jobs": running, "batches": batches.listing(library)})
+    watcher = _lifecycle().watcher()
+    watching = watcher.status() if watcher is not None else None
     status = _lifecycle().status()
     return jsonify({"at": _stamp(time.time()), "libraries": found,
                     "syncing": watching["syncing"] if watching else None,
                     "watching": bool(watching and watching["running"]),
                     "server": {"version": status["version"], "taking_work": status["taking_work"],
-                               "requests": status["requests"], "busy": status["busy"]},
-                    "supervisor": _supervisor_state()})
+                               "requests": status["requests"], "busy": status["busy"]}})
+
+
+@routes.get("/api/activity/batches")
+def batches_now():
+    """The batches of photo files running or waiting in every library, whichever process runs them."""
+    return jsonify({"batches": [row for library in _libraries() for row in batches.listing(library)]})
+
+
+@routes.post("/api/activity/batches/cancel")
+def cancel_batch():
+    """Stop a batch of this process, by the `ticket` /api/activity/batches gives it: a running one ends after its chunk with what
+    it wrote applied (History can undo it), a waiting one never starts."""
+    body = request.get_json(silent=True) or {}
+    library = _library_named(body.get("library"))
+    if library is None:
+        return responses.error(404, "There is no library called %s" % (body.get("library"),))
+    ticket = body.get("ticket")
+    if type(ticket) is not int:
+        return responses.error(400, "ticket must be a whole number")
+    if not batches.cancel(library, ticket):
+        return responses.error(404, "This server has no such batch (it may have finished, or another program runs it)")
+    return jsonify({"success": True})
 
 
 # ---- The recurring jobs ------------------------------------------------------------------
@@ -272,7 +265,7 @@ def now():
 @routes.get("/api/activity/jobs")
 def jobs():
     limit = _int_arg("runs", RUNS, MOST_RUNS)
-    runner = _task(JOBS)
+    runner = _task(runtimes.RECURRING_JOBS)
     children = _index_runs_of()
     listed = []
     for library in _libraries():
@@ -293,10 +286,10 @@ def run_job():
     """Run a recurring job now for a library, on the runner of this process's recurring
     jobs: answered once the run has started or been refused (a run holds it already)."""
     body = request.get_json(silent=True) or {}
-    runner = _task(JOBS)
+    runner = _task(runtimes.RECURRING_JOBS)
     if runner is None:
         return responses.error(409, "This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS "
-                                    "is set); run it with the CLI: tagpup_cli.py jobs run NAME --db LIBRARY")
+                                    "is set)")
     job = runner.registry.get(body.get("job") or "")
     if job is None:
         return responses.error(404, "There is no recurring job called %s" % (body.get("job"),))
@@ -320,8 +313,8 @@ def run_job():
 
 @routes.get("/api/activity/sync")
 def sync_state():
-    watcher = _task(WATCHER)
-    watching = watcher.status() if watcher is not None and hasattr(watcher, "status") else None
+    watcher = _lifecycle().watcher()
+    watching = watcher.status() if watcher is not None else None
     children = _index_runs_of()
     listed = []
     for library in _libraries():
@@ -342,98 +335,12 @@ def sync_state():
         for root in (watching or {}).get("roots", []):
             if library.name in root["libraries"]:
                 watched[paths.key(root["path"])] = root
-        entry["roots"] = [{"path": root, "there": os.path.isdir(root),
-                           "watched": bool(watched.get(paths.key(root), {}).get("watched"))} for root in roots]
+        entry["roots"] = [dict(each, watched=bool(watched.get(paths.key(each["path"]), {}).get("watched")))
+                          for each in activity.roots_there(roots)]
         entry["watches"] = sorted({root["path"] for root in watched.values() if root["watched"]}, key=paths.key)
         entry["watcher"] = (watching or {}).get("libraries", {}).get(library.name)
         listed.append(entry)
     return jsonify({"watching": bool(watching and watching["running"]), "libraries": listed})
-
-
-# ---- Needs attention ---------------------------------------------------------------------
-
-@routes.get("/api/activity/attention")
-def attention():
-    """Every library's photos found damaged and not replaced since, with their paths: the
-    files the owner is to restore, and TagPup's page on the folder of each."""
-    listed, totals = [], {"unreadable": 0, "incomplete": 0}
-    for library in _libraries():
-        try:
-            photos = damaged_photos.listed(library)
-        except Exception as e:
-            logger.warning("Could not read the damaged photos of %s: %s", library.name, e)
-            listed.append({"name": library.name, "photos": [], "error": str(e)})
-            continue
-        for photo in photos:
-            photo["folder_url"] = _app_url("tagpup", library.name, "?path=" + urllib.parse.quote(photo["folder"]))
-            totals["incomplete" if photo["indexed"] else "unreadable"] += 1
-        try:
-            to_detect = damaged_photos.faces_to_detect_count(library)
-        except Exception as e:
-            logger.warning("Could not count the photos of %s whose faces are to be detected: %s", library.name, e)
-            to_detect = 0
-        listed.append({"name": library.name, "photos": photos, "faces_to_detect": to_detect})
-    return jsonify({"libraries": listed, **totals})
-
-
-@routes.post("/api/activity/attention/check")
-def attention_check():
-    """Check again: read the photos recorded damaged again now, whatever their stamp -- of
-    `library`, or of every library; only `path`, when given (tagpup.runtime.check_damaged).
-    One that reads whole is forgotten and indexed again for real."""
-    body = request.get_json(silent=True) or {}
-    name, path = body.get("library"), body.get("path")
-    if path is not None and not isinstance(path, str):
-        return responses.error(400, "path is a photo's path")
-    if name is not None:
-        library = _library_named(name)
-        if library is None:
-            return responses.error(404, "There is no library called %s" % (name,))
-        every = [library]
-    else:
-        every = _libraries()
-    listed = []
-    for library in every:
-        try:
-            done = runtimes.check_damaged(library, [path] if path else None)
-            listed.append({"name": library.name, **damaged_photos.checked_counts(done)})
-        except Exception as e:
-            logger.warning("Could not check the damaged photos of %s again: %s", library.name, e)
-            listed.append({"name": library.name, "error": str(e)})
-    return jsonify({"success": True, "libraries": listed})
-
-
-# ---- File access ---------------------------------------------------------------------------
-
-def _places_of(library):
-    """The folders this machine keeps `library`'s roots at, the first place of each; [] when it cannot say."""
-    try:
-        machine = roots_service.Machine(tagpup_config.machine_roots, tagpup_config.add_machine_root,
-                                        tagpup_config.machine_roots_path)
-        found = roots_service.listing(library, machine)["roots"]
-    except Exception as e:
-        logger.warning("Could not read the places of the roots of %s: %s", library.name, e)
-        return []
-    return [entry["locations"][0] for entry in found if entry.get("locations")]
-
-
-@routes.get("/api/file-access/check")
-def file_access_check():
-    """Which other programs can interfere with TagPup's files: the data folder and, for `library` (every
-    library when none is named), the places its roots are kept at. Reads only; never changes a setting."""
-    name = request.args.get("library")
-    if name:
-        library = _library_named(name)
-        if library is None:
-            return responses.error(404, "There is no library called %s" % (name,))
-        every = [library]
-    else:
-        every = _libraries()
-    places = []
-    for library in every:
-        places += _places_of(library)
-    refresh = request.args.get("refresh") in ("1", "true")
-    return jsonify(file_access.check(tagpup_config.data_dir(), places, refresh=refresh))
 
 
 # ---- Snapshots ----------------------------------------------------------------------------
@@ -449,34 +356,66 @@ def snapshot_list():
     return jsonify({"libraries": listed, "bytes": sum(each["bytes"] for each in listed)})
 
 
-# ---- The always-on process ------------------------------------------------------------------
+# ---- The server ----------------------------------------------------------------------------
+
+def _models():
+    """What the server has loaded, for the page: names, whether a run uses them, and since when."""
+    runtime = current_app.config.get("RUNTIME")
+    if runtime is None:
+        return None
+    state = runtime.models_state()
+    after = state["release_after"]
+    if state["loaded"]:
+        used = state["last_used"]
+        text = "Loaded: %s." % " and ".join(state["loaded"])
+        if state["in_use"]:
+            text += " In use by %s." % " and ".join(state["held_by"])
+        elif used is not None:
+            text += " Last used %s ago." % _span(used)
+            if after:
+                text += " Let go after %d minutes unused." % round(after / 60)
+    else:
+        text = "Not loaded; loads when Suggest or indexing needs it."
+    return {"loaded": state["loaded"], "in_use": state["in_use"], "held_by": state["held_by"],
+            "last_used_seconds": state["last_used"],
+            "release_after_minutes": round(after / 60, 2) if after else None, "text": text}
+
+
+def _span(seconds):
+    if seconds < 90:
+        return "%d seconds" % round(seconds)
+    return "%d minutes" % round(seconds / 60)
+
+
+@routes.post("/api/activity/models/unload")
+def unload_models():
+    """Unload models now: every model let go and the graphics card given up at once, unless
+    a run is using them (a Suggest, the startup warm-up), which is named in a sentence and nothing touched."""
+    runtime = current_app.config.get("RUNTIME")
+    if runtime is None:
+        return responses.error(409, "This server keeps no models.")
+    done = runtime.unload_models_now()
+    if done["busy"]:
+        return responses.error(409, "In use by %s: they are let go when it ends." % " and ".join(done["held_by"]),
+                               unloaded=[])
+    names = done["unloaded"]
+    return jsonify({"success": True, "unloaded": names, "models": _models(),
+                    "message": ("Unloaded %s; the graphics card is free." % " and ".join(names)) if names
+                    else "Nothing was loaded."})
+
 
 @routes.get("/api/activity/server")
 def server():
     lifecycle = _lifecycle()
     status = lifecycle.status()
     background = lifecycle.background
-    return jsonify({"version": status["version"], "supervised": status["supervised"],
+    return jsonify({"models": _models(), "version": status["version"],
                     "taking_work": status["taking_work"], "busy": status["busy"],
                     "running_since": _stamp(lifecycle.started), "pid": os.getpid(),
-                    "background": background.names() if background is not None else [],
-                    "supervisor": _supervisor_state()})
+                    "background": background.names() if background is not None else []})
 
 
 # ---- What was done ---------------------------------------------------------------------------
-
-def _updates(limit):
-    """The always-on process's moves onto a new version, from the end of its log."""
-    found = logs.read("supervisor.log", limit=limit, text="moving it from")
-    if not found:
-        return []
-    entries = []
-    for record in found["records"]:
-        entries.append({"kind": "update", "library": None, "time": record["time"], "finished": None,
-                        "seconds": None, "what": record["message"].split("\n")[0], "outcome": "moved",
-                        "counts": {}, "id": None, "run": None, "error": None})
-    return entries
-
 
 @routes.get("/api/activity/timeline")
 def timeline():
@@ -495,10 +434,6 @@ def timeline():
                                                        if run["folders"] > 1 else ""),
                             "outcome": run["outcome"], "counts": {"folders": run["folders"]}, "id": None,
                             "run": run["run"], "error": run["message"] if run["outcome"] == "failed" else None})
-    try:
-        entries += _updates(limit)
-    except Exception as e:
-        logger.warning("Could not read the supervisor's log: %s", e)
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
     children = _index_runs_of()
     for entry in entries[:limit]:

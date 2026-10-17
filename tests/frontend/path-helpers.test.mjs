@@ -232,16 +232,4 @@ describe("TagPup: a folder typed two ways is one folder", () => {
     await openFolder(ctx, "D:\\Training\\Pictures\\Meet 3");
     assert.equal(scans(ctx), 2, "the cached scan was missed because of the spelling");
   });
-
-  test("a cache entry stored under the typed path is still read once", async (t) => {
-    // Entries written before pathKey were keyed by the path as typed. Dropping them
-    // would cost one rescan per folder; reading them costs one fallback lookup.
-    const ctx = await load(t);
-    ctx.window.localStorage.setItem(
-      `tagpup_cache_${FOLDER}`,
-      JSON.stringify({ timestamp: Date.now(), photos: [photoRecord({ filename: "a.jpg" })] })
-    );
-    await openFolder(ctx, FOLDER);
-    assert.equal(scans(ctx), 0, "the existing cache entry was ignored");
-  });
 });

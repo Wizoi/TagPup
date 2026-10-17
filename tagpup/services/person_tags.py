@@ -15,7 +15,7 @@ libraries, a flat leaf. Rewriting those rows only made the database disagree wit
 file until the next index put it back. photos.people is left alone for the same reason:
 leaf names are its correct content.
 
-scripts/merge_duplicate_person_tags.py and the MCP server's tool both call
+The MCP server's tool calls
 `merge_duplicate_person_tags`, on the maintenance scaffold (tagpup.services.maintenance).
 """
 from tagpup.core import vocabulary
@@ -59,8 +59,6 @@ def find_duplicates(conn):
 def _plan(library):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        if not store_taxonomy.tree_exists(conn):
-            return maintenance.Plan(refused="no tag_taxonomy table in the library %s" % library.name)
         duplicates = find_duplicates(conn)
         node_ids = store_taxonomy.node_ids(conn)
         # Reported for information only; these rows are not changed.
@@ -77,15 +75,6 @@ def _plan(library):
         reveal={"duplicates": [(tag, duplicates[tag]) for tag in bare],
                 "affected_photos": [photo_path for _id, photo_path in affected]},
         work=[(node_ids[tag], tag) for tag in bare])
-
-
-def remove_nodes(library, tags):
-    """Take the nodes `tags` out of the tree, under the library's write lock. Returns how
-    many were removed, not how many were asked for."""
-    def delete(conn):
-        return sum(store_taxonomy.remove_node(conn, tag) for tag in tags)
-
-    return db.write_with_connection(library.path, delete, label="merge duplicate person tags")
 
 
 def _edits(planned):

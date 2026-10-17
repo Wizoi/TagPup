@@ -1,7 +1,6 @@
 """The photos table.
 
-Recording what a write did to a file -- its tags, or only its new mtime and size -- or
-what was read back from it, moving renamed photos' rows, forgetting a deleted photo,
+Recording what a write did to a file or what was read back from it, moving renamed photos' rows, forgetting a deleted photo,
 and what PhotoIndex reads and records when it indexes. The servers' queries move here
 in phase 3 (docs/ARCHITECTURE.md).
 
@@ -17,9 +16,9 @@ import os
 
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
-from tagpup.store import added_folders, damaged_files, db, derived, embeddings, faces, folders, people
+from tagpup.store import added_folders, db, derived, embeddings, face_tags, faces, folders, people
 from tagpup.store import roots as store_roots
-from tagpup.store.people import PEOPLE_JSON
+from tagpup.store.people import PEOPLE_IDS_JSON, PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +64,19 @@ def _dated_paths(conn, photo_paths):
 MTIME_TOLERANCE = 0.1
 
 
+def same_mtime(row_mtime, file_mtime):
+    """Are a row's modified time and its file's the same (within MTIME_TOLERANCE)? The one rule: the scan, refresh
+    and the MCP's comparison of a row with its file go by it. None for either is no."""
+    return row_mtime is not None and file_mtime is not None and abs(row_mtime - file_mtime) < MTIME_TOLERANCE
+
+
 def describes(row_mtime, row_size, stamp):
     """Does a row stamped (`row_mtime`, `row_size`) describe the file whose stamp is
     `stamp`, (mtime, size)? What the folder scan trusts a row by; None for any of them
     is no."""
     if row_mtime is None or row_size is None or not stamp or None in stamp:
         return False
-    return row_size == stamp[1] and abs(row_mtime - stamp[0]) < MTIME_TOLERANCE
+    return row_size == stamp[1] and same_mtime(row_mtime, stamp[0])
 
 
 def _describes_before(row_mtime, row_size, before):
@@ -88,54 +93,6 @@ def _describes_before(row_mtime, row_size, before):
     unstamped, either is read at the next scan.
     """
     return describes(row_mtime, row_size, before)
-
-
-def _stamp(conn, photo_path, mtime, size, looks_different=False, before=None, whole=False):
-    """Record the stamp a write of the app's own left on a photo's file, and bring its
-    vectors with it (tagpup.store.embeddings): carried forward from `before`, the
-    file's stamp just before the write (embeddings.stamp_of), when only metadata
-    changed; taken away when the photo `looks_different` -- a rotation, whose
-    Orientation the embedder applies. Without `before` they stay as they are, and a
-    vector the write left behind is computed again.
-
-    The row is stamped only where it described the file just before the write
-    (_describes_before), or where the caller records the `whole` file as read back after
-    the write; otherwise its stamp stays as it is, and the next scan reads the file.
-    Returns (the photo's id, whether the row was stamped), or (None, False) without a
-    row. The caller commits."""
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
-    row = conn.execute("SELECT id, mtime, size FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
-    if row is None:
-        return None, False
-    photo_id = row[0]
-    stamped = whole or _describes_before(row[1], row[2], before)
-    if stamped:
-        conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE id = ?", (mtime, size, photo_id))
-    if looks_different:
-        conn.execute("DELETE FROM embeddings WHERE photo_id = ?", (photo_id,))
-    else:
-        embeddings.restamp(conn, photo_id, before, (mtime, size))
-    return photo_id, stamped
-
-
-def record_file_stat(db_path, photo_path, looks_different=False, before=None):
-    """Record a photo's current mtime and size in its index row. Returns rows stamped.
-
-    For a write that changes the file but not what the index describes: a caption, or
-    a rotation, which changes only the Orientation tag -- and so how the photo looks to
-    the embedder, `looks_different`, which takes its vectors away. `before` is the
-    file's stamp just before the write (_stamp). Left stale, the folder scan would
-    distrust the row and re-read the photo with ExifTool on every scan. A row that did
-    not describe the file before the write, or without `before`, is left unstamped
-    (_describes_before).
-    """
-    stat = os.stat(photo_path)
-
-    def store(conn):
-        return 1 if _stamp(conn, photo_path, stat.st_mtime, stat.st_size, looks_different, before)[1] else 0
-
-    return db.write_with_connection(
-        db_path, store, label="file stat for %s" % os.path.basename(photo_path))
 
 
 def forget_photo(db_path, photo_path):
@@ -159,39 +116,25 @@ def forget_photo(db_path, photo_path):
     return removed
 
 
-def move_rows(db_path, renames):
-    """Move index rows from each old path to its new one. Its faces point at the row by
-    id, so they go with it.
-
-    `renames` maps old path to new path, in any spelling. Returns (moved, skipped):
-    how many photo rows actually changed, and the (old, new) pairs left where they
-    were because the new path already had rows. Re-pointing rows at a path that
-    already has them is how 233 duplicate faces were made, so a destination is
-    checked first and an occupied one is reported rather than merged into.
-
-    A destination is free when nothing is there, when it is the same file (a rename
-    that only changes case), or when whatever is there is itself moving away in this
-    same call -- a rename that shuffles numbered files among themselves, or the
-    occupant of a name that was moved aside to make room. The rows are moved in one
-    transaction, by id, through a placeholder, so a shuffle never collides with itself
-    on the way.
-    """
-    moved, skipped = db.write_with_connection(
-        db_path, lambda conn: move_rows_in(conn, renames), label="index rows for %d renamed photo(s)" % len(renames))
-    for old_path, new_path in skipped:
-        logger.warning("Renamed %s to %s, but the index already has rows for the new "
-                       "name; left both as they were.", old_path, new_path)
-    return moved, skipped
-
-
 def _ids_at(cursor, path):
     where, params = store_roots.sql_equals(cursor.connection, "path", path)
     return [r[0] for r in cursor.execute("SELECT id FROM photos WHERE " + where, params)]
 
 
 def move_rows_in(conn, renames):
-    """move_rows on the caller's connection, in the caller's transaction: the file journal
-    marks a rename done in the transaction that moves its row. Returns (moved, skipped)."""
+    """Move index rows from each old path to its new one, in the caller's transaction: the file
+    journal marks a rename done in the transaction that moves its row. Its faces and vectors point
+    at the row by id, so they go with it.
+
+    `renames` maps old path to new path, in any spelling. Returns (moved, skipped): how many photo
+    rows actually changed, and the (old, new) pairs left where they were because the new path
+    already had rows. Re-pointing rows at a path that already has them is how 233 duplicate faces
+    were made, so a destination is checked first and an occupied one is reported rather than merged
+    into. A destination is free when nothing is there, when it is the same file (a rename that
+    only changes case), or when whatever is there is itself moving away in this same call -- a
+    rename that shuffles numbered files among themselves, or the occupant of a name moved aside to
+    make room. The rows are moved by id, through a placeholder, so a shuffle never collides with
+    itself on the way."""
     cursor = conn.cursor()
     plan = dict(renames)
     skipped = []
@@ -251,27 +194,32 @@ def rows_of(conn, photo_paths):
     return found
 
 
-def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None):
+def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None, whole=None):
     """Make a photo's row say what the file journal just left in its file: `written` is
     {field: value} of the fields written, forward, again after a crash, or back in an
     undo (tagpup.services.file_changes). The caller commits, in the transaction that marks
     the file done.
 
-    As record_tags does for a keyword write, and for every field: raw_metadata takes each
-    field the scan reads (fields.scan_reads; under its bare name too, where the scan
+    For every field: raw_metadata takes each field the scan reads (fields.scan_reads; under its bare name too, where the scan
     stored one), a cleared field taken out; the tags are derived again when a keyword
     field was written, the captions when a caption field was, document_id follows the
-    identity. With `stat`, the file's new mtime and size, its vectors carried over
+    identity written. With `stat`, the file's new mtime and size, its vectors carried over
     `before`, its stamp just before the write (_stamp). Without it -- a file read and not
     written -- the stamp stays, so the scan still reads what the row does not say. The
     photo's people and dates are rebuilt. Returns the photo's id, or None without a row.
 
     Only the fields written are recorded, so a row that did not describe the file just
     before the write -- one Suggest made, or one the file has moved on from -- is not
-    stamped (_describes_before), as record_tags does not stamp one: it would claim to
-    match a file whose other fields, its Date Taken first, it never held. Its vectors
+    stamped (_describes_before): it would claim to match a file whose other fields, its
+    Date Taken first, it never held. Its vectors
     still follow the file's new stamp. A loop of them hands every call one derived.Batch (the tag
-    tree read once for the loop, not once a photo)."""
+    tree read once for the loop, not once a photo).
+
+    `whole` is the file read back whole after the write (every field the scan reads, in the
+    indexer's shape: tagpup.files.metadata.raw_metadata), as a save reads it: it is the row's
+    raw_metadata, its tags and captions are derived from it, its document_id is the DocumentID it holds
+    (one holding none keeps the row's, as record_indexed does), and the row is stamped with `stat`
+    whatever it described before, since everything it says was just read."""
     where, params = store_roots.sql_equals(conn, "path", photo_path)
     row = conn.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where + " LIMIT 1",
                        params).fetchone()
@@ -282,12 +230,14 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None)
         raw = json.loads(raw_json) if raw_json else {}
     except (TypeError, ValueError):
         raw = {}
-    keywords = captions = False
+    keywords = captions = whole is not None
     identity = None
+    if whole is not None:
+        raw = dict(whole)
     for field, value in written.items():
         key = fields.read_key(field)
         texts = fields.field_values(value)
-        if fields.scan_reads(key):
+        if whole is None and fields.scan_reads(key):
             bare = key.split(":", 1)[1]
             for name in (key, bare):
                 if name != key and name not in raw:
@@ -300,9 +250,13 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None)
                     raw[name] = texts[0]
         keywords = keywords or key in vocabulary.KEYWORD_FIELDS + vocabulary.HIERARCHY_FIELDS
         captions = captions or key in vocabulary.CAPTION_FIELDS
-        if key.endswith(":DocumentID"):
+        if key in fields.DOCUMENT_ID_KEYS:
             identity = (texts[0] if texts else None,)
-    columns, values = ["raw_metadata"], [json.dumps(raw)]
+    held = fields.read_document_id(whole) if whole is not None else None
+    if held:
+        identity = (held,)
+    raw_text = json.dumps(raw)
+    columns, values = ["raw_metadata"], [raw_text if whole is None else store_roots.raw_to_row(raw_text, store_roots.roots_for(conn))]
     if keywords:
         columns.append("tags")
         values.append(json.dumps(vocabulary.extract_tags(raw)))
@@ -312,7 +266,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None)
     if identity is not None:
         columns.append("document_id")
         values.append(identity[0])
-    if stat is not None and _describes_before(row_mtime, row_size, before):
+    if stat is not None and (whole is not None or _describes_before(row_mtime, row_size, before)):
         columns += ["mtime", "size"]
         values += [stat.st_mtime, stat.st_size]
     conn.execute("UPDATE photos SET %s WHERE id = ?" % ", ".join("%s = ?" % c for c in columns),
@@ -320,79 +274,10 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None)
     if stat is not None:
         embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
     people.rebuild(conn, [photo_id])
+    face_tags.name_photos(conn, [photo_id])
     date_photos(conn, [photo_id])
     derived.refresh_photos(conn, [photo_id], batch)
     return photo_id
-
-
-def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=None):
-    """Tell the index what a photo's keywords now are.
-
-    Saving one photo has always done this; the bulk writers did not, so tagging fifty
-    photos left fifty index rows describing what they used to hold. Nothing in the app
-    showed the difference -- the folder cache was updated, so the screen was right --
-    which is how it went unnoticed until a repair script, planning from the index,
-    reported nothing to do on a folder that had just been tagged wholesale.
-
-    `flat` and `hierarchical` are what was actually written to the file, as
-    write_keyword_fields returns them, so raw_metadata keeps agreeing with the photo.
-    Left out, they are what write_keyword_fields would have written for `tags`.
-
-    The file's new mtime and size are recorded too. Writing keywords changes both, and
-    the folder scan only trusts a row whose mtime and size match the file; without
-    them every photo tagged in bulk was re-read with ExifTool on every scan after.
-    `before` is the file's stamp just before the write, over which its vectors are
-    carried (_stamp); without it, as when nothing was written, they are left alone.
-
-    Only the keyword fields are recorded, so a row that did not describe the file just
-    before the write -- one Suggest made, or one the file has moved on from, or without
-    `before` -- is not stamped (_describes_before): it would claim to match a file whose
-    other fields, its Date Taken first, it never held.
-    """
-    if flat is None and hierarchical is None:
-        flat, hierarchical = fields.expand_tag_fields(tags)
-    try:
-        stat = os.stat(photo_path)
-    except OSError:
-        stat = None
-
-    def store(conn):
-        cursor = conn.cursor()
-        where, where_params = store_roots.sql_equals(conn, "path", photo_path)
-        cursor.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where, where_params)
-        row = cursor.fetchone()
-        if not row:
-            return False   # never indexed; adding it here would be an index, not an edit
-        photo_id, raw_json, row_mtime, row_size = row
-
-        try:
-            raw_meta = json.loads(raw_json) if raw_json else {}
-        except Exception:
-            raw_meta = {}
-        fields.record_keyword_fields(raw_meta, flat or [], hierarchical or [])
-
-        if stat is None or not _describes_before(row_mtime, row_size, before):
-            cursor.execute("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?",
-                           (json.dumps(tags), json.dumps(raw_meta), photo_id))
-        else:
-            cursor.execute("UPDATE photos SET tags = ?, raw_metadata = ?, mtime = ?, size = ? WHERE id = ?",
-                           (json.dumps(tags), json.dumps(raw_meta), stat.st_mtime, stat.st_size, photo_id))
-        if stat is not None:
-            embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
-        changed = cursor.rowcount > 0
-        people.rebuild(conn, [photo_id])
-        date_photos(conn, [photo_id])
-        derived.refresh_photos(conn, [photo_id])
-        return changed
-
-    try:
-        return db.write_with_connection(
-            db_path, store, label="index row for %s" % os.path.basename(photo_path)
-        )
-    except Exception as e:
-        # The file is already written and correct; a stale index row is recoverable.
-        logger.warning("Could not update the index for %s: %s", photo_path, e)
-        return False
 
 
 def read_tags(db_path, photo_paths):
@@ -455,78 +340,20 @@ def tag_usage(db_path):
     Once per photo: a photo carrying two tags under a node counted twice toward it and
     toward everything above it (docs/findings.md, #41).
 
-    From `photo_tags` (migration 19) when the library has it: one pass of an index rolled up the tree's
-    parents (store.library_view.keyword_counts), 40 ms on photo_index's scale where reading and parsing every
-    photo's tags JSON was 350 ms, which held the Python process at page start and made every other first request
-    wait behind it (docs/findings.md, #534). A library without the derived tables is counted from the JSON as it
-    always was. The same counts, node for node (tests/test_tag_usage_from_photo_tags.py).
+    From `photo_tags`: one pass of an index rolled up the tree's parents (store.library_view.keyword_counts), 40 ms on
+    photo_index's scale where reading and parsing every photo's tags JSON was 350 ms, which held the Python process at
+    page start and made every other first request wait behind it (docs/findings.md, #534). A library that cannot be read
+    raises: the tree is not shown with every count 0.
     """
-    counts = {}
-    if not os.path.exists(db_path):
-        return counts
+    from tagpup.store import library_view   # library_view imports this module's neighbours
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        conn = db.connect(db.readonly_uri(db_path), uri=True)
-        try:
-            if derived.present(conn):
-                from tagpup.store import library_view   # library_view imports this module's neighbours
-                return {node["tag"]: node["count"] for node in library_view.keyword_counts(conn) if node["count"]}
-            for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL"):
-                try:
-                    levels = {level for tag in json.loads(tags_json) for level in vocabulary.lineage(tag)}
-                except Exception:
-                    continue
-                for level in levels:
-                    counts[level] = counts.get(level, 0) + 1
-        finally:
-            conn.close()
-    except Exception:
-        pass
-    return counts
-
-
-def record_saved(db_path, photo_path, tags, captions, raw_meta, before=None):
-    """Record what saving one photo left in its file, and the file's mtime and size; its
-    people are rebuilt from what the file now says. `before` is the file's stamp just
-    before the save wrote it (_stamp). Returns rows changed.
-
-    A photo the index has never seen is not added here: that would be a row with no
-    embedding and no faces, which is an index entry in name only.
-    """
-    stat = os.stat(photo_path)
-
-    def update_row(conn):
-        # The save read the file back whole (raw_meta): the row describes it now.
-        photo_id = _stamp(conn, photo_path, stat.st_mtime, stat.st_size, before=before, whole=True)[0]
-        where, where_params = store_roots.sql_equals(conn, "path", photo_path)
-        changed = conn.execute(
-            "UPDATE photos SET tags = ?, captions = ?, raw_metadata = ? WHERE " + where,
-            (json.dumps(tags), json.dumps(captions),
-             store_roots.raw_to_row(json.dumps(raw_meta), store_roots.roots_for(conn))) + where_params).rowcount
-        if photo_id is not None:
-            people.rebuild(conn, [photo_id])
-            date_photos(conn, [photo_id])
-            derived.refresh_photos(conn, [photo_id])
-        return changed
-
-    return db.write_with_connection(
-        db_path, update_row, label="index row for %s" % os.path.basename(photo_path))
+        return {node["tag"]: node["count"] for node in library_view.keyword_counts(conn) if node["count"]}
+    finally:
+        conn.close()
 
 
 # ---- What PhotoIndex reads and writes ---------------------------------------------------
-
-#: A photo row as the index holds it, and its vector under one model: float32 bytes,
-#: or None.
-INDEX_COLUMNS = ("path", "mtime", "size", "tags", "people", "captions", "raw_metadata", "year", "vector")
-
-
-def index_rows(conn, model):
-    """Every photo row, INDEX_COLUMNS each, with its vector under `model`: the whole
-    library, as the indexer compares it with the files."""
-    return store_roots.natives(conn, conn.execute(
-        "SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, p.year, e.vector"
-        " FROM photos p LEFT JOIN embeddings e ON e.photo_id = p.id AND e.model = ?", (model,)).fetchall(),
-        0, raw=(6,))
-
 
 def vectors(conn, model):
     """(photo id, vector bytes) of every photo holding a vector under `model`, by id: all
@@ -551,11 +378,14 @@ RECORD_COLUMNS = ("id", "path", "mtime", "size", "tags", "people", "captions", "
 CHUNK = 500
 
 
-def records(conn, model, photo_ids=None):
+def records(conn, model, photo_ids=None, people_ids=False):
     """RECORD_COLUMNS of the photos `photo_ids` (in no particular order; an id with no row
     is left out), or of every photo: what a search answers with, read for its results
-    alone. The vector is not read, only whether there is one."""
-    select = ("SELECT p.id, p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata,"
+    alone. The vector is not read, only whether there is one. With `people_ids` the people
+    column holds the ids of the nodes each photo lists (PEOPLE_IDS_JSON) instead of their
+    names, read in the same statement as the rest of the row."""
+    select = ("SELECT p.id, p.path, p.mtime, p.size, p.tags, " + (PEOPLE_IDS_JSON if people_ids else PEOPLE_JSON)
+              + ", p.captions, p.raw_metadata,"
               " p.year, EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?) FROM photos p")
     if photo_ids is None:
         return store_roots.natives(conn, conn.execute(select + " ORDER BY p.id", (model,)).fetchall(),
@@ -620,7 +450,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
     raw_metadata (as values), embedding (bytes) and document_id; the embedding is kept
     under `model`, stamped with the row's mtime and size, and the photo's people are
-    rebuilt. The caller commits.
+    rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits.
 
     A photo indexed before is updated in place, under the spelling its row already has.
     faces.photo_id references photos.id ON DELETE CASCADE, so anything that deletes
@@ -636,7 +466,8 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """
     store_roots.begin_write(conn)
     roots = store_roots.roots_for(conn)
-    stored = stored_spelling(conn, photo_path) or paths.stored(photo_path)
+    held = stored_spelling(conn, photo_path)
+    stored = held or paths.stored(photo_path)
     row_path = paths.to_row(stored, roots)
     conn.execute(
         "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id)"
@@ -645,36 +476,24 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
         " captions = excluded.captions, raw_metadata = excluded.raw_metadata,"
         " document_id = COALESCE(excluded.document_id, photos.document_id)",
-        (row_path, row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
+        (row_path, row.get("mtime"), row.get("size"), json.dumps(row.get("tags", [])),
          json.dumps(row.get("captions", [])),
          store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id")))
+    if not (batch is not None and batch.prepared) and derived.make_nodes(conn, [row.get("tags", [])], batch):
+        known = None   # the vocabulary the caller read holds none of the people just made
     people.rebuild_photos(conn, [stored], known)
     _dated_paths(conn, [stored])
     photo_id = _row_id(conn, stored)
-    derived.record(conn, photo_id, row_path, row.get("tags", []), row.get("raw_metadata", {}), batch)
+    if held:
+        # A photo read again: its faces are there, and its keywords may have changed. A new
+        # photo has none yet; the faces recorded for it name themselves (services.faces).
+        face_tags.name_photos(conn, [photo_id], vocabulary=known, batch=batch)
+    derived.record(conn, photo_id, row_path, row.get("tags", []), batch)
     if row.get("embedding") is not None:
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
             raise ValueError("An embedding is kept under the model that made it; none was named.")
-        embeddings.put(conn, stored, model, row.get("mtime", 0.0), row.get("size", 0), row["embedding"])
-
-
-def remove(conn, photo_paths):
-    """Delete the rows of `photo_paths` and their faces, whether or not the connection
-    enforces foreign keys. Returns photo rows deleted. The caller commits."""
-    store_roots.begin_write(conn)
-    removed = 0
-    for photo_path in photo_paths:
-        faces.remove_for_photo(conn, photo_path)
-        clause, params = store_roots.sql_equals(conn, "path", photo_path)
-        removed += conn.execute("DELETE FROM photos WHERE " + clause, params).rowcount
-    derived.prune(conn)
-    return removed
-
-
-def clear_embeddings(conn):
-    """Forget every photo's CLIP vectors. Returns rows deleted. The caller commits."""
-    return embeddings.clear(conn)
+        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"])
 
 
 def remove_under(conn, folder):
@@ -699,7 +518,6 @@ def remove_under(conn, folder):
     # Out of the library: what was asked to be added there goes too, or a Suggest would
     # make it the library's again unasked.
     added_folders.forget_under(conn, folder)
-    damaged_files.forget_under(conn, folder)
     return dict(photos_removed=photos_removed, faces_removed=faces_removed,
                 manual_lost=manual, excluded_lost=excluded)
 
@@ -707,9 +525,8 @@ def remove_under(conn, folder):
 # ---- What the thumbnail cache reads -----------------------------------------------------
 
 #: A photo as the thumbnail cache asks for it: its id, its path as the row holds it (what the cache's
-#: entry is keyed by, so that a library moved to another place keeps its entries), its native path and its
-#: damaged_files record, if any.
-ThumbRow = collections.namedtuple("ThumbRow", "id row_path path damaged")
+#: entry is keyed by, so that a library moved to another place keeps its entries), and its native path.
+ThumbRow = collections.namedtuple("ThumbRow", "id row_path path")
 
 
 def thumb_row(conn, photo_id):
@@ -719,7 +536,7 @@ def thumb_row(conn, photo_id):
     if row is None:
         return None
     native = store_roots.from_row(conn, row[0])
-    return ThumbRow(photo_id, row[0], native, damaged_files.one(conn, native))
+    return ThumbRow(photo_id, row[0], native)
 
 
 def thumb_rows(conn, folder=None, after=0, limit=1000):
@@ -801,22 +618,12 @@ def rows_under(conn, folder):
         " p.raw_metadata FROM photos p WHERE " + where, params).fetchall(), 0, raw=(6,))
 
 
-def set_captions(conn, photo_path, captions):
-    """Record a photo's captions, and its words for a search (derived). Returns rows changed. The caller commits."""
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
-    changed = conn.execute("UPDATE photos SET captions = ? WHERE " + where,
-                           (json.dumps(captions),) + params).rowcount
-    derived.refresh_photos(conn, [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)])
-    return changed
-
-
 # ---- What refresh_rows_from_files reads and writes --------------------------------------
 
 def rows_to_check(conn, folder=None):
-    """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, people JSON, id)
-    of every photo, or of those under `folder`: what is compared with the files."""
-    query = ("SELECT p.path, p.mtime, p.size, p.tags, p.captions, p.raw_metadata, " + PEOPLE_JSON
-             + ", p.id FROM photos p")
+    """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, id) of every photo, or of those under
+    `folder`: what is compared with the files."""
+    query = "SELECT p.path, p.mtime, p.size, p.tags, p.captions, p.raw_metadata, p.id FROM photos p"
     params = ()
     if folder:
         where, params = store_roots.sql_under(conn, "path", folder)
@@ -824,13 +631,20 @@ def rows_to_check(conn, folder=None):
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 0, raw=(5,))
 
 
-def stamps(conn, folder=None):
-    """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what
-    sync compares with the disk (tagpup.services.sync). Nothing else of the row is read."""
-    query, params = "SELECT id, path, mtime, size FROM photos", ()
+def stamps(conn, folder=None, with_vectors=None):
+    """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what sync
+    (tagpup.services.sync) and the indexer (services.search.PhotoIndex) compare with the disk. With
+    `with_vectors`, a model's name, each also says whether the photo holds a vector under it. Nothing else
+    of the row is read, none of its JSON."""
+    columns, params = "p.id, p.path, p.mtime, p.size", []
+    if with_vectors is not None:
+        columns += ", EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
+        params.append(with_vectors)
+    query = "SELECT " + columns + " FROM photos p"
     if folder:
-        where, params = store_roots.sql_under(conn, "path", folder)
+        where, under = store_roots.sql_under(conn, "p.path", folder)
         query += " WHERE " + where
+        params += list(under)
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 1)
 
 
@@ -843,13 +657,7 @@ def row_as_recorded(conn, stored_path):
         raw=(3,))
 
 
-# ---- What relink_renamed_photos reads ---------------------------------------------------
-
-def all_paths(conn):
-    """Every photo's path, as stored."""
-    roots = store_roots.roots_for(conn)
-    return [paths.from_row(path, roots) for (path,) in conn.execute("SELECT path FROM photos")]
-
+# ---- What pairing a missing row with a file reads ---------------------------------------------------
 
 def identities(conn):
     """{path as stored: document_id} for every photo whose identity is recorded."""
@@ -869,25 +677,3 @@ def tags_by_photo(conn):
         except (TypeError, ValueError):
             continue
     return found
-
-
-# ---- What backfill_document_ids reads and writes ----------------------------------------
-
-def without_identity(conn):
-    """The paths, as stored, of photos with no document_id recorded. Raises on a library
-    from before the column."""
-    roots = store_roots.roots_for(conn)
-    return [paths.from_row(path, roots) for (path,) in conn.execute(
-        "SELECT path FROM photos WHERE document_id IS NULL OR document_id = ''") if path]
-
-
-def record_identity(conn, photo_path, document_id, stat=None, before=None):
-    """Record a photo's document_id; with `stat`, the mtime and size the file has now it
-    was written to, where the row described the file at `before`, its stamp just before
-    the write (_describes_before), over which its vectors are carried. Returns rows
-    changed. The caller commits."""
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
-    if stat is not None:
-        _stamp(conn, photo_path, stat.st_mtime, stat.st_size, before=before)
-    return conn.execute("UPDATE photos SET document_id = ? WHERE " + where,
-                        (document_id,) + params).rowcount

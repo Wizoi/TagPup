@@ -30,10 +30,31 @@ def add_people(conn, photo_path, names, source="keyword"):
     what reads a photo's people; a test of what writes them goes through the store. The
     photo's row is made if it has none. The caller commits."""
     photo = photo_id(conn, photo_path)
+    ids = [person_of(conn, name) for name in names]   # first: making a node lists the people its photos' keywords name
     start = conn.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM photo_people WHERE photo_id = ?",
                          (photo,)).fetchone()[0]
-    conn.executemany("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, ?)",
-                     [(photo, start + n, name, source) for n, name in enumerate(names)])
+    rows = []
+    for n, name in enumerate(names):
+        rows.append((photo, start + n, name, source, ids[n]))
+    conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)", rows)
+
+
+def person_of(conn, name):
+    """The id of the person a name is: the one person called it, or -- for a name no node is called -- a person made at the top
+    of the tree, as the tree's New tag makes one there (tagpup.services.tags.create with has_face; the store's face writers make no
+    node). Raises ValueError for a name no writer can give a node (two people have it, a group's, a tag's path): such a row is a
+    shape nothing real makes."""
+    from tagpup.store import person_ids, taxonomy   # a test helper reads the tree as the writers do
+    conn = getattr(conn, "connection", conn)   # a test may hold a cursor
+    try:
+        found = person_ids.target(conn, name)[0]
+    except person_ids.PersonProblem as problem:
+        raise ValueError("no writer lists %r as a person: %s" % (name, problem)) from problem
+    if found is None:
+        found = taxonomy.add_node(conn, name.strip(), root_has_face=1) if "/" not in name else None
+    if found is None:
+        raise ValueError("no writer can make a node of %r" % (name,))
+    return found
 
 
 def people_of(conn, photo_path):
@@ -65,12 +86,33 @@ def add_vector(conn, photo_path, vector, model=None, mtime=None, size=None):
                  (photo, model or configured_model(), mtime, size, vector))
 
 
+def give_their_person(conn, face_id):
+    """A face a test has just given a `name` by SQL is given the person the tree says it is, as every writer that names a face does
+    (tagpup.store.person_ids.target: the one node called so; none for a name no node, or two, is called). Unresolved names are no
+    longer linked by whatever rebuilds the photo next (person_ids.People.settle): a fixture that names a face states who. The
+    caller commits."""
+    from tagpup.store import person_ids   # a test helper reads the tree as the writers do
+    row = conn.execute("SELECT name, tag_id FROM faces WHERE id = ?", (face_id,)).fetchone()
+    if row is None or not row[0] or row[1] is not None:
+        return
+    try:
+        found, name = person_ids.target(conn, row[0])
+    except person_ids.PersonProblem:
+        return
+    if found is not None:
+        conn.execute("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", (found, name, face_id))
+
+
 def add_face(conn, photo_path, box=(0, 0, 10, 10), **columns):
     """Insert a face into the photo at `photo_path`; `columns` are any others of faces
     (embedding, name, prob, name_source, excluded, excluded_reason, id). A box that is
-    not a string is written as JSON. Returns the face's id. The caller commits."""
+    not a string is written as JSON. A face given a `name` is given the person the tree says it is, as every writer that names a
+    face does (tagpup.store.person_ids.target: the id of the one node called so; none for a name no node, or two, is called).
+    Returns the face's id. The caller commits."""
     values = dict(columns, photo_id=photo_id(conn, photo_path),
                   box=box if isinstance(box, str) else json.dumps(list(box)))
+    if values.get("name") and "tag_id" not in values:
+        values["tag_id"] = person_of(conn, values["name"])
     names = sorted(values)
     return conn.execute("INSERT INTO faces (%s) VALUES (%s)" % (", ".join(names), ", ".join("?" * len(names))),
                         [values[name] for name in names]).lastrowid

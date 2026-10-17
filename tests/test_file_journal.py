@@ -4,12 +4,10 @@ undone where each file still holds what the edit left (docs/ARCHITECTURE.md, pha
 
 Real JPEGs, made here in a home of the test's own, written by the real ExifTool; the
 test is skipped only where ExifTool is not installed. Rows are seeded as the indexer
-stores them, with SQL, never through the recorder under test. A crash is a
+stores them (tests/photo_rows.add_read, #309), never through the recorder under test. A crash is a
 BaseException raised at a step of the write (file_changes.STEPS), as tests/test_journal.py
 does for the journal of rows; `settle` then finishes what it left.
 """
-import contextlib
-import io
 import json
 import os
 import socket
@@ -23,6 +21,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -95,13 +94,12 @@ class FilesCase(unittest.TestCase):
             values["XMP-xmpMM:PreservedFileName"] = preserved
         write_outside(path, values)
         if row:
-            raw = {"XMP:Subject": list(tags), "IPTC:Keywords": list(tags)}
-            if taken:
-                raw["EXIF:DateTimeOriginal"] = taken
-            stat = os.stat(path)
-            self.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
-                         (path, stat.st_mtime, stat.st_size, json.dumps(list(tags)),
-                          json.dumps([caption] if caption else []), json.dumps(raw)))
+            conn = db.connect(self.library.path)
+            try:
+                photo_rows.add_read(conn, path, values)
+                conn.commit()
+            finally:
+                conn.close()
         return path
 
     def execute(self, sql, params=()):
@@ -301,13 +299,13 @@ class Crashes(FilesCase):
 
     def test_a_change_a_live_process_is_writing_is_left_to_it(self):
         change = self.crash("plan committed")
-        for owner in (file_journal.owner(), "another-machine:4242"):
+        for owner in (file_journal.owner(), "another-machine:4242:1"):
             self.execute("UPDATE changes SET owner = ? WHERE id = ?", (owner, change))
             self.assertEqual(self.settle(), 0, owner)
         self.assertEqual(self.states(change), ["planned"] * 3)
         # A process that has gone -- no process has id 0x7FFFFFF0 -- leaves it to whoever
         # opens the library next.
-        self.execute("UPDATE changes SET owner = ? WHERE id = ?", ("%s:%d" % (socket.gethostname(), 0x7FFFFFF0),
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", ("%s:%d:1" % (socket.gethostname(), 0x7FFFFFF0),
                                                                       change))
         self.assert_finished(change)
 
@@ -421,67 +419,6 @@ class TimeShift(FilesCase):
         self.assertIn("10:00", self.rows("SELECT taken FROM photos WHERE path = ?", (a,))[0][0])
         raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
         self.assertEqual(raw["EXIF:DateTimeOriginal"], TAKEN)
-
-
-class TheScripts(FilesCase):
-    """The two scripts that copied the whole library before they wrote: each now records
-    changes of the journal instead, and each can be undone."""
-
-    def run_script(self, module, *arguments):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            module.main(["--db", self.library.path, "--exiftool", EXIFTOOL] + list(arguments))
-        return out.getvalue()
-
-    def test_backfill_document_ids(self):
-        import backfill_document_ids as script
-
-        holds = self.make("holds.jpg")
-        write_outside(holds, {"XMP-xmpMM:DocumentID": "xmp.did:held-already"})
-        lacks = self.make("lacks.jpg")
-        dry = self.run_script(script)
-        self.assertIn("Nothing was changed", dry)
-        self.assertIsNone(field_of(lacks, "XMP-xmpMM:DocumentID"))
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM changes")[0][0], 0)
-
-        applied = self.run_script(script, "--apply")
-        self.assertNotIn("backed up", applied)
-        self.assertFalse(os.path.isdir(os.path.join(self.home.data, "backups")), "a copy of the library was taken")
-        minted = field_of(lacks, "XMP-xmpMM:DocumentID")
-        self.assertTrue(minted and minted.startswith("xmp.did:"))
-        identities = dict(self.rows("SELECT path, document_id FROM photos"))
-        self.assertEqual((identities[holds], identities[lacks]), ("xmp.did:held-already", minted))
-        changes = self.rows("SELECT id, operation, status FROM changes ORDER BY id")
-        self.assertEqual([(op, status) for _id, op, status in changes],
-                         [("backfill_document_ids", "applied"), ("backfill_document_ids: mint", "applied")])
-
-        for change_id, _op, _status in reversed(changes):
-            self.assertFalse(self.undo(change_id).errors)
-        self.assertIsNone(field_of(lacks, "XMP-xmpMM:DocumentID"))
-        self.assertEqual(field_of(holds, "XMP-xmpMM:DocumentID"), "xmp.did:held-already")
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM photos WHERE document_id IS NOT NULL")[0][0], 0)
-
-    def test_relink_renamed_photos(self):
-        import relink_renamed_photos as script
-
-        dead = os.path.join(self.folder, "IMG_0421.jpg")
-        self.execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')", (dead,))
-        renamed = self.make("Regatta - 01.jpg", row=False)
-        write_outside(renamed, {"XMP-xmpMM:PreservedFileName": "IMG_0421.CR3"})
-        photo_id = self.photo_id(dead)
-
-        self.assertIn("the undo restored every one exactly", self.run_script(script))
-        self.assertEqual(self.rows("SELECT path FROM photos WHERE id = ?", (photo_id,)), [(dead,)])
-        applied = self.run_script(script, "--apply")
-        self.assertNotIn("backed up", applied)
-        self.assertIn("Recorded as change", applied)
-        self.assertEqual(self.rows("SELECT path FROM photos WHERE id = ?", (photo_id,)), [(renamed,)])
-
-        change = self.last_change()
-        self.assertEqual(self.rows("SELECT operation FROM changes WHERE id = ?", (change,)),
-                         [("relink_renamed_photos",)])
-        self.assertEqual(self.undo(change).changed, 1)
-        self.assertEqual(self.rows("SELECT path FROM photos WHERE id = ?", (photo_id,)), [(dead,)])
 
 
 if __name__ == "__main__":

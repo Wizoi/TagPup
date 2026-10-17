@@ -12,7 +12,6 @@ photos and faces carry a salt made of the library's roots and where this machine
 nothing, 0, for a library with no roots -- and every cache keyed by them is built again when the
 map moves, the Identify Faces grids, the folders the watcher watches and the index's.
 """
-import sqlite3
 import threading
 import zlib
 
@@ -42,18 +41,14 @@ def _salt(conn):
 
 
 def value(conn, name):
-    """One generation, or 0 on a library that does not count it yet."""
+    """One generation."""
     return values(conn, (name,))[0]
 
 
 def values(conn, names=NAMES):
-    """The generations `names`, in that order; 0 for any not counted yet."""
-    try:
-        found = dict(conn.execute(
-            "SELECT name, value FROM generations WHERE name IN (%s)" % ",".join("?" * len(names)),
-            tuple(names)).fetchall())
-    except sqlite3.OperationalError:
-        found = {}
+    """The generations `names`, in that order."""
+    found = dict(conn.execute(
+        "SELECT name, value FROM generations WHERE name IN (%s)" % ",".join("?" * len(names)), tuple(names)).fetchall())
     salt = _salt(conn) if any(name in WITH_PATHS for name in names) else 0
     return tuple(found.get(name, 0) + (salt if name in WITH_PATHS else 0) for name in names)
 

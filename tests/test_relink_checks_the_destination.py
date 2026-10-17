@@ -1,10 +1,10 @@
-"""relink_renamed_photos leaves a row where it is when the new name already has one.
+"""relink_photos.edits_for leaves a row where it is when the new name already has one.
 
-It re-pointed each dead row at the renamed file with UPDATE ... WHERE path = ?, and
+The relink re-pointed each dead row at the renamed file with UPDATE ... WHERE path = ?, and
 never looked at what the new name already held. A renamed photo browsed in TagPup under
 its new name has faces saved there; re-pointing the old row brought its faces too, and
 every face showed twice -- which is how 233 duplicate faces were made. Smart Rename
-already moved rows through move_photo_rows, which checks; relink now does as well.
+already moved rows through move_photo_rows, which checks; edits_for (sync's pairing) does as well.
 """
 import os
 import shutil
@@ -13,10 +13,10 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
 from tagpup.store import db as tagpup_db  # noqa: E402
-import relink_renamed_photos  # noqa: E402
+from tagpup.services import relink_photos  # noqa: E402
+from tagpup.store import journal  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +24,19 @@ from face_rows import add_face  # noqa: E402
 
 OLD = r"D:\Pictures\Regatta\IMG_0001.jpg"
 NEW = r"D:\Pictures\Regatta\Regatta - 01.jpg"
+
+
+class Library:
+    def __init__(self, path):
+        self.path = path
+
+
+def apply_moves(path, moves):
+    """What sync does with a pairing: the edits, applied as one change; (rows moved, left where they were)."""
+    edits, skipped = relink_photos.edits_for(Library(path), moves)
+    if not edits:
+        return 0, skipped
+    return journal.apply(path, "relink", edits, {"counts": {"planned": len(moves)}}).changed, skipped
 
 
 class RelinkChecksTheDestination(unittest.TestCase):
@@ -64,7 +77,7 @@ class RelinkChecksTheDestination(unittest.TestCase):
         # Faces there mean a row there: a face points at its photo's row.
         self.add_face(NEW)
 
-        moved, skipped = relink_renamed_photos.apply_moves(self.db, [{"from": OLD, "to": NEW}])
+        moved, skipped = apply_moves(self.db, [{"from": OLD, "to": NEW}])
 
         self.assertEqual(0, moved)
         self.assertEqual([(OLD, NEW)], skipped)
@@ -72,7 +85,7 @@ class RelinkChecksTheDestination(unittest.TestCase):
                          "the old row's faces were added to the ones already there")
 
     def test_a_free_destination_takes_the_row_and_its_faces(self):
-        moved, skipped = relink_renamed_photos.apply_moves(self.db, [{"from": OLD, "to": NEW}])
+        moved, skipped = apply_moves(self.db, [{"from": OLD, "to": NEW}])
         self.assertEqual((1, []), (moved, skipped))
         self.assertEqual(1, self.count("SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?) AND name IS NOT NULL", (NEW,)))
 

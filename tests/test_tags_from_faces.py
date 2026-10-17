@@ -1,0 +1,307 @@
+"""docs/findings.md, #861: `tagpup_cli.py tags-from-faces` -- the faces named before a photo's tag followed them, mended.
+
+A face named by TagTuner's strip, Match or AutoMatch All, by Identify Faces or by clustering left the photo listing the person
+from the face alone (`photo_people` source 'face'): a green box and "No people tags". The command counts them (a dry run,
+never a name) and with --apply writes the keyword into each photo's FILE, 25 photos to a journaled change. The doctor counts
+the same.
+
+ExifTool is a table of files (tests/fake_exiftool.py); the photos are real small JPEGs and rows as the indexer records them.
+"""
+import os
+import sys
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test_organize_faces import Case, ODA, WREN  # noqa: E402
+
+from click.testing import CliRunner  # noqa: E402
+
+import tagpup_cli  # noqa: E402
+from tagpup.core import paths  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
+from tagpup.services import batches, file_changes, tags_from_faces  # noqa: E402
+from tagpup.store import checks, db  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+import doctor  # noqa: E402
+
+PEOPLE = "People/"
+
+
+class Mending(Case):
+    def drifted(self, name, who=WREN, **picture):
+        """A photo whose face was named and whose keywords do not say so."""
+        photo = self.photo(name, **picture)
+        self.files.keep_tags(photo, [])
+        self.face(photo, name=who, name_source="manual")
+        return photo
+
+    def run_cli(self, *arguments):
+        with mock.patch.object(tagpup_cli, "get_exiftool_path", return_value="exiftool"):
+            return CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "tags-from-faces", *arguments])
+
+    def operations(self):
+        return [row[0] for row in self.look("SELECT operation FROM changes ORDER BY id") if row[0] == tags_from_faces.OPERATION]
+
+
+class TheDryRun(Mending):
+    def test_it_counts_and_writes_nothing(self):
+        for n in range(3):
+            self.drifted("drift_%d.jpg" % n)
+        self.photo("fine.jpg", [PEOPLE + ODA])
+        said = self.run_cli()
+        self.assertEqual(0, said.exit_code, said.output)
+        self.assertIn("3 photo(s) list a person from a face alone (3 people)", said.output)
+        self.assertIn("3 photo file(s) would be written", said.output)
+        self.assertIn("Nothing changed", said.output)
+        self.assertEqual(0, self.files.writes)
+        self.assertEqual([], self.operations())
+
+    def test_it_never_names_anyone(self):
+        self.drifted("drift_x.jpg")
+        said = self.run_cli()
+        self.assertNotIn(WREN, said.output)
+        self.assertNotIn("drift_x", said.output)
+
+    def test_a_library_in_step_has_nothing_to_do(self):
+        self.photo("fine.jpg", [PEOPLE + WREN])
+        said = self.run_cli("--apply")
+        self.assertEqual(0, said.exit_code)
+        self.assertIn("Nothing to write", said.output)
+
+
+class AKeywordOfTheSameLeafIsNobody(Mending):
+    def under_another_root(self, name="other_root.jpg"):
+        # The photo's keyword is the person's leaf under a root the tree does not file people under: it names nobody (the person
+        # is the id of their node, DECISIONS 2026-10-11), so the person is written beside it. It was skipped as "already named"
+        # and counted as a tree question (docs/findings.md, #1394).
+        photo = self.photo(name, ["Parkrunner/" + WREN])
+        self.files.keep_tags(photo, ["Parkrunner/" + WREN])
+        self.face(photo, name=WREN, name_source="manual")
+        return photo
+
+    def test_the_person_is_written_beside_it_and_a_second_run_finds_none(self):
+        photo = self.under_another_root()
+        self.drifted("drift_b.jpg", who=ODA)
+        said = self.run_cli()
+        self.assertIn("2 photo(s) list a person from a face alone", said.output)
+        self.assertIn("2 photo file(s) would be written", said.output)
+        self.assertNotIn(WREN, said.output)
+        self.assertNotIn("Parkrunner", said.output)
+        dry = tags_from_faces.plan(self.library)
+        wrote = self.run_cli("--apply")
+        self.assertEqual(0, wrote.exit_code, wrote.output)
+        self.assertIn("Wrote %d photo file(s)" % dry.details["counts"]["photos_to_write"], wrote.output)
+        self.assertEqual(["Parkrunner/" + WREN, PEOPLE + WREN], self.files.tags_of(photo))
+        again = self.run_cli()
+        self.assertIn("0 photo file(s) would be written", again.output)
+
+
+class GuessesAreLeftUnlessAsked(Mending):
+    def guessed(self, name="guess.jpg"):
+        photo = self.photo(name)
+        self.files.keep_tags(photo, [])
+        self.face(photo, name=WREN)             # no name_source: a guess of clustering or automatch
+        return photo
+
+    def test_a_person_only_a_guess_backs_is_skipped_and_counted(self):
+        guess = self.guessed()
+        self.drifted("drift_c.jpg", who=ODA)
+        said = self.run_cli()
+        self.assertIn("1 of the people: from a guess only", said.output)
+        self.assertIn("1 photo file(s) would be written", said.output)
+        applied = self.run_cli("--apply")
+        self.assertEqual(0, applied.exit_code, applied.output)
+        self.assertEqual([], self.files.tags_of(guess), "a guess was written into a photo file")
+
+    def test_a_face_named_by_hand_beside_a_guess_of_the_same_person_counts_as_decided(self):
+        photo = self.photo("both.jpg")
+        self.files.keep_tags(photo, [])
+        self.face(photo, name=WREN, name_source="manual")
+        self.face(photo, box=(70, 10, 110, 60), name=WREN)
+        self.assertEqual(1, tags_from_faces.plan(self.library).details["counts"]["people_to_write"])
+
+    def test_guesses_asks_for_them_with_a_warning(self):
+        guess = self.guessed("guess_b.jpg")
+        said = self.run_cli("--guesses")
+        self.assertIn("WARNING: --guesses", said.output)
+        self.assertIn("decided reference", said.output)
+        self.assertIn("1 photo file(s) would be written", said.output)
+        applied = self.run_cli("--apply", "--guesses")
+        self.assertEqual(0, applied.exit_code, applied.output)
+        self.assertEqual([PEOPLE + WREN], self.files.tags_of(guess))
+
+
+class TheApply(Mending):
+    def test_it_writes_the_keyword_into_the_files_and_the_library_follows(self):
+        photos = [self.drifted("drift_%d.jpg" % n) for n in range(3)]
+        said = self.run_cli("--apply")
+        self.assertEqual(0, said.exit_code, said.output)
+        self.assertIn("Wrote 3 photo file(s) in 1 change(s)", said.output)
+        for photo in photos:
+            self.assertEqual([PEOPLE + WREN], self.files.tags_of(photo))
+        self.assertEqual([(WREN, "keyword")] * 3, self.look("SELECT name, source FROM photo_people ORDER BY photo_id"))
+        self.assertEqual((0, 0), checks.people_on_faces_alone(self.conn()))
+
+    def test_more_than_a_chunk_is_one_batch_and_one_change_of_the_journal(self):
+        """The repair writes through the one batch model (file_changes.write_fields, #1474): more than batches.CHUNK photos
+        claim a batch, written a chunk at a time, and are one change of the journal; it kept its own chunks, each a change."""
+        for n in range(batches.CHUNK + 1):
+            self.drifted("drift_%d.jpg" % n)
+        with mock.patch.object(batches, "Batch", wraps=batches.Batch) as batch:
+            said = self.run_cli("--apply")
+        self.assertIn("%d photo file(s) in 1 change(s)" % (batches.CHUNK + 1), said.output)
+        self.assertEqual([tags_from_faces.OPERATION], self.operations())
+        self.assertEqual(1, batch.call_count, "one batch, its turn taken once")
+
+    def stopped_by_ctrl_c_at(self, step, on_disk):
+        """#1493, #1507: the repair is one change; Ctrl+C on the third file, at `step` of its write, leaves `on_disk` files written.
+        What the journal holds done is exactly the files changed on disk, the CLI says that many, the change is applied and
+        `undo` takes it back at once; the files not reached are taken out, not written by whatever opens the library next."""
+        photos = [self.drifted("drift_%d.jpg" % n) for n in range(batches.CHUNK + 1)]
+        seen = []
+
+        def reached(at):
+            if at == step:
+                seen.append(at)
+                if len(seen) == 3:
+                    raise KeyboardInterrupt
+        with mock.patch.object(file_changes, "_reached", side_effect=reached):
+            said = self.run_cli("--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        on_disk_now = {paths.key(photo) for photo in photos if self.files.tags_of(photo)}
+        self.assertEqual(on_disk, len(on_disk_now))
+        self.assertIn("Stopped: %d photo file(s) written" % on_disk, said.output)
+        rows = self.look("SELECT c.id, c.status, f.path, f.state FROM changes c JOIN change_files f ON f.change_id = c.id"
+                         " WHERE c.operation = ?", (tags_from_faces.OPERATION,))
+        self.assertEqual({"applied"}, {status for _id, status, _path, _state in rows})
+        self.assertEqual(on_disk_now, {paths.key(path) for _id, _status, path, state in rows if state == "done"})
+        self.assertEqual({"done"}, {state for _id, _status, _path, state in rows}, "the files not written are taken out")
+        self.assertIn("%d photo file(s) would be written" % (batches.CHUNK + 1 - on_disk), self.run_cli().output,
+                      "the photos not reached are still to do")
+        with mock.patch.object(tagpup_cli, "get_exiftool_path", return_value="exiftool"):
+            undone = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "undo", str(rows[0][0]), "--apply"])
+        self.assertEqual(0, undone.exit_code, undone.output)
+        self.assertIn("%d file(s) written back" % on_disk, undone.output)
+        self.assertEqual([], [photo for photo in photos if self.files.tags_of(photo)])
+
+    def test_ctrl_c_before_a_file_is_written_takes_it_out(self):
+        self.stopped_by_ctrl_c_at("file writing", on_disk=2)
+
+    def test_ctrl_c_after_a_file_is_written_before_it_is_recorded_keeps_it(self):
+        self.stopped_by_ctrl_c_at("file written", on_disk=3)
+
+    def test_ctrl_c_after_a_file_is_recorded_keeps_it(self):
+        self.stopped_by_ctrl_c_at("file recorded", on_disk=3)
+
+    def stopped_with_exiftool_gone_at(self, step, on_disk):
+        """#1508: Ctrl+C in the CLI reaches ExifTool too (one console), so the session the stop would read the file under way
+        through is often gone. That file is left `writing` and the change unfinished, never a conflict of a read that could not
+        be made; the CLI says only what the journal holds done, and the next open settles the file as a crash leaves it:
+        holding what it was to hold, done; holding what it held, written (the person asked --apply). Undo then puts all back."""
+        photos = [self.drifted("drift_%d.jpg" % n) for n in range(batches.CHUNK + 1)]
+        seen, gone = [], []
+        real = field_values.read_one
+
+        def read_one(et, path, wanted):
+            if gone:
+                raise field_values.NotAnswered("ExifTool did not answer in 300 s")
+            return real(et, path, wanted)
+
+        def reached(at):
+            if at == step:
+                seen.append(at)
+                if len(seen) == 3:
+                    gone.append(at)
+                    raise KeyboardInterrupt
+        with mock.patch.object(file_changes, "_reached", side_effect=reached), \
+                mock.patch.object(field_values, "read_one", side_effect=read_one):
+            said = self.run_cli("--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        self.assertEqual(on_disk, sum(1 for photo in photos if self.files.tags_of(photo)))
+        self.assertIn("Stopped: 2 photo file(s) written", said.output)
+        self.assertIn("1 more is settled the next time the library is opened", said.output)
+        query = ("SELECT c.id, c.status, f.state FROM changes c JOIN change_files f ON f.change_id = c.id"
+                 " WHERE c.operation = ? ORDER BY f.id")
+        rows = self.look(query, (tags_from_faces.OPERATION,))
+        self.assertEqual(["done", "done", "writing"], [state for _id, _status, state in rows])
+        self.assertEqual({"planned"}, {status for _id, status, _state in rows}, "the change is left for the next open")
+        file_changes._settled.clear()
+        self.assertEqual(1, file_changes.settle_once(self.library, "exiftool"))
+        rows = self.look(query, (tags_from_faces.OPERATION,))
+        self.assertEqual([("applied", "done")] * 3, [(status, state) for _id, status, state in rows])
+        self.assertEqual(3, sum(1 for photo in photos if self.files.tags_of(photo)))
+        with mock.patch.object(tagpup_cli, "get_exiftool_path", return_value="exiftool"):
+            undone = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "undo", str(rows[0][0]), "--apply"])
+        self.assertEqual(0, undone.exit_code, undone.output)
+        self.assertIn("3 file(s) written back", undone.output)
+        self.assertEqual([], [photo for photo in photos if self.files.tags_of(photo)])
+
+    def test_ctrl_c_that_ends_exiftool_after_a_file_is_written_leaves_it_to_the_next_open(self):
+        self.stopped_with_exiftool_gone_at("file written", on_disk=3)
+
+    def test_ctrl_c_that_ends_exiftool_before_a_file_is_written_leaves_it_to_the_next_open(self):
+        self.stopped_with_exiftool_gone_at("file writing", on_disk=2)
+
+    def test_it_can_be_run_again_and_finds_nothing_more(self):
+        self.drifted("drift_a.jpg")
+        self.run_cli("--apply")
+        writes = self.files.writes
+        said = self.run_cli("--apply")
+        self.assertIn("Nothing to write", said.output)
+        self.assertEqual(writes, self.files.writes)
+
+    def test_a_photo_that_cannot_be_written_is_counted_and_the_others_are_written(self):
+        bad = self.drifted("drift_bad.jpg")
+        good = self.drifted("drift_good.jpg", who=ODA)
+        self.files.unreadable.add(paths.key(bad))
+        said = self.run_cli("--apply")
+        self.assertEqual(1, said.exit_code)
+        self.assertIn("1 photo(s) could not be written", said.output)
+        self.assertEqual([PEOPLE + ODA], self.files.tags_of(good))
+        self.assertEqual(1, self.run_cli().output.count("1 photo file(s) would be written"), "the one left is still to do")
+        self.assertNotIn("drift_bad", said.output)
+
+    def test_a_file_changed_meanwhile_is_not_overwritten(self):
+        photo = self.drifted("drift_race.jpg")
+        self.files.on_read = lambda path, n: self.files.keep_tags(photo, ["Regatta"]) if n == 2 else None
+        said = self.run_cli("--apply")
+        self.assertEqual(["Regatta"], self.files.tags_of(photo), "the other program's change was overwritten")
+        self.assertNotEqual(0, said.exit_code)
+
+    def test_a_photo_with_another_person_by_keyword_keeps_it(self):
+        photo = self.photo("two.jpg", [PEOPLE + ODA, "Regatta"])
+        self.files.keep_tags(photo, [PEOPLE + ODA, "Regatta"])
+        self.face(photo, name=WREN, name_source="manual")
+        self.run_cli("--apply")
+        self.assertEqual(sorted([PEOPLE + ODA, PEOPLE + WREN, "Regatta"]), sorted(self.files.tags_of(photo)))
+
+    def conn(self):
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        self.addCleanup(conn.close)
+        return conn
+
+
+class TheDoctor(Mending):
+    def test_it_counts_the_drift_and_does_not_call_it_broken(self):
+        for n in range(2):
+            self.drifted("drift_%d.jpg" % n)
+        lines = []
+        doctor.report(self.path, out=lines.append)
+        said = "\n".join(lines)
+        self.assertIn("photos listing a person from a face alone: 2, 2 people", said)
+        self.assertIn("tags-from-faces", said)
+        self.assertNotIn(WREN, said)
+        # Reported, not a rule: mending it writes the owner's photo files, which only --apply does.
+        self.assertNotIn("people_on_faces_alone", [rule.__name__ for rule in checks.RULES])
+
+    def test_it_says_nothing_when_the_library_is_in_step(self):
+        self.photo("fine.jpg", [PEOPLE + WREN])
+        lines = []
+        doctor.report(self.path, out=lines.append)
+        self.assertNotIn("from a face alone", "\n".join(lines))
+
+
+if __name__ == "__main__":
+    unittest.main()

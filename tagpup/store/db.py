@@ -35,15 +35,13 @@ moment its paths were converted and the moment it commits.
 
 Never call `sqlite3.connect` directly; `tests/test_db_access.py` fails if you do.
 """
-import json
 import logging
 import os
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
 
-from tagpup.core import paths, processes
+from tagpup.core import paths
 from tagpup.core.library import Library
 
 logger = logging.getLogger("tagpup_cli.db")
@@ -57,8 +55,9 @@ _locks = {}
 _locks_guard = threading.Lock()
 
 
-def _key(target):
-    """The database a connection target refers to, as a comparable key.
+def key(target):
+    """The database a connection target refers to, as a comparable key: the one the write lock, schema's record of the
+    libraries found current and being migrated, and the journal key a library by.
 
     Accepts a plain path or a `file:` URI, since read-only connections are opened as
     `file:...?mode=ro`. Two spellings of one file must map to one lock, or the lock
@@ -89,10 +88,6 @@ class Connection(sqlite3.Connection):
     #: What tagpup.store.roots keeps here, or None before the connection first needs it.
     roots_state = None
 
-    #: Whether tagpup.store.derived has found the library's derived tables there (migration 19):
-    #: remembered once true, so a write does not ask the schema each time.
-    derived_ready = False
-
 
 def _is_readonly(target, kwargs):
     return kwargs.get("uri") and "mode=ro" in str(target)
@@ -100,13 +95,13 @@ def _is_readonly(target, kwargs):
 
 def lock_for(target):
     """The write lock for a database, shared by every connection to it."""
-    key = _key(target)
+    held = key(target)
     with _locks_guard:
-        lock = _locks.get(key)
+        lock = _locks.get(held)
         if lock is None:
             # Reentrant: a write path may call into another one.
             lock = threading.RLock()
-            _locks[key] = lock
+            _locks[held] = lock
         return lock
 
 
@@ -120,7 +115,7 @@ def configure(conn, readonly=False):
     except Exception as e:
         # A read-only connection to a database another process has locked can refuse
         # even these. Worth knowing about, not worth failing over.
-        logger.debug("Could not configure connection to %s: %s", _key(conn), e)
+        logger.debug("Could not configure connection to %s: %s", key(conn), e)
     return conn
 
 
@@ -167,63 +162,10 @@ def retry_when_busy(operation, attempts=4, first_delay=0.25, label="database wri
             delay *= 2
 
 
-#: How long a note that the library is busy for a reason stays believed: a process that crashed
-#: holding it leaves the file behind.
-BUSY_NOTE_SECONDS = 15 * 60
-
-
-def _busy_file(target):
-    return str(target) + ".busy"
-
-
-def mark_busy(target, why):
-    """Say, beside the library at `target`, why a write may have to wait: a maintenance step
-    holds the write lock for a long time (a backup copy under a root's adoption). A write that
-    then fails as locked says it (`write`), where it was a bare "database is locked". Cleared
-    with clear_busy."""
-    try:
-        with open(_busy_file(target), "w", encoding="utf-8") as handle:
-            json.dump({"why": why, "since": time.time(), "pid": os.getpid()}, handle)
-    except OSError:
-        pass
-
-
-def clear_busy(target):
-    try:
-        os.remove(_busy_file(target))
-    except OSError:
-        pass
-
-
-def busy_note(target):
-    """Why the library at `target` is busy, if a maintenance step said so recently and the process
-    that said it is still there, else None. A note whose process has gone -- killed during its
-    copy -- is removed: its lock is gone with it, and any lock failure after it is an ordinary one."""
-    try:
-        with open(_busy_file(target), encoding="utf-8") as handle:
-            found = json.load(handle)
-        if time.time() - float(found["since"]) >= BUSY_NOTE_SECONDS:
-            return None
-        if not processes.is_alive(int(found["pid"])):
-            clear_busy(target)
-            return None
-        return str(found["why"])
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return None
-
-
 def write(target, operation, label="database write"):
-    """Run a write with this process's other writes to the same database held back. A write
-    that fails for the lock when a step said it holds it for a reason (mark_busy) says why."""
+    """Run a write with this process's other writes to the same database held back."""
     with lock_for(target):
-        try:
-            return retry_when_busy(operation, label=label)
-        except sqlite3.OperationalError as problem:
-            note = busy_note(target) if "locked" in str(problem).lower() else None
-            if note:
-                raise sqlite3.OperationalError("%s: %s" % (problem, note)) from problem
-            raise
+        return retry_when_busy(operation, label=label)
 
 
 def write_with_connection(target, operation, label="database write"):
@@ -266,17 +208,6 @@ def write_with_connection(target, operation, label="database write"):
     return write(target, attempt, label=label)
 
 
-@contextmanager
-def writing(target, label="database write"):
-    """Hold the write lock for a block that writes.
-
-    Use `write()` where the work fits in a callable -- it retries, and this cannot,
-    since a block that has already half-run is not safe to run again.
-    """
-    with lock_for(target):
-        yield
-
-
 def copy_database(source_path, target, then=None):
     """Copy the database at `source_path` to `target`, a new file, in one step of the backup
     API from a read-only connection -- one read transaction, so the copy is the database as
@@ -316,7 +247,6 @@ def backup(db_path, reason, into=None):
     own copy of it and six had none. tests/test_bulk_scripts_back_up.py holds them
     to it.
     """
-    import os
 
     into = into or Library(db_path).backups
     os.makedirs(into, exist_ok=True)
@@ -363,19 +293,18 @@ def compact(db_path):
 #: *(owner, 2026-09-24)*.
 KEEP_BACKUPS = 5
 
-
 def prune_backups(folder, library_name, keep=KEEP_BACKUPS):
-    """Delete all but the newest `keep` backups of `library_name` in `folder`, with the
-    -wal and -shm files beside them. Newest by the time in the name. Returns the paths
-    deleted."""
-    import os
+    """Delete all but the newest `keep` backups of `library_name` in `folder`, with the -wal
+    and -shm files beside them. Newest by the time in the name; a backup never expires by
+    age (owner, 2026-10-15). Returns the paths deleted."""
     import re
 
     stamped = re.compile(r"^%s\.before-.*-(\d{8}_\d{6})\.db$" % re.escape(library_name))
     copies = sorted((match.group(1), name) for name in os.listdir(folder)
                     for match in [stamped.match(name)] if match)
+    doomed = [each for index, each in enumerate(copies) if not keep or index < len(copies) - keep]
     deleted = []
-    for _stamp, name in copies[:-keep] if keep else copies:
+    for _stamp, name in doomed:
         for suffix in ("", "-wal", "-shm"):
             path = os.path.join(folder, name + suffix)
             if os.path.exists(path):

@@ -1,4 +1,4 @@
-"""A launch of another version replaces the server running, without the always-on process
+"""A launch of another version replaces the server running
 (tagpup.launcher; docs/findings.md, #726).
 
 The owner installed a new version and still saw the old page: TagPup.cmd installed it, but
@@ -6,9 +6,7 @@ tagpup_web.py --open found a server answering on the port -- one started hours b
 the version before -- and only opened its page. They ended server processes by hand.
 
 Here: what a launcher decides about each server it finds (make_way, with what it asks
-the server stood in for); who may drain a server (a launcher on this machine with the
-token of the server's record, nobody else); the version on every response; the records,
-a stale one among them; and, for real, servers on ports of the test's own, in a home of
+the server stood in for); the records, a stale one among them; and, for real, servers on ports of the test's own, in a home of
 its own: one run from a checkout replaced by an installed version, two launches at once,
 and a server that hangs.
 """
@@ -31,10 +29,6 @@ from free_port import free_port  # noqa: E402
 import tagpup_web  # noqa: E402
 from tagpup import launcher  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.web import app as web  # noqa: E402
-from tagpup.web import lifecycle as lifecycles  # noqa: E402
-from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 OLD, NEW = "20261004-100000-aaaaaaa", "20261004-110000-bbbbbbb"
 TOKEN = "the-token-in-the-record"
@@ -60,7 +54,7 @@ class Way(unittest.TestCase):
         self.answers = []          # what each GET /api/server says, in turn (the last repeats)
         self.drains = []           # what each drain answers, in turn
         self.found = {"pid": 4242, "started": 1, "ports": {"tagpup": 5, "tuner": 6}, "version": OLD,
-                      "token": TOKEN, "supervised": False}
+                      "token": TOKEN}
         self.port_held = True
 
         def ask(port):
@@ -84,8 +78,8 @@ class Way(unittest.TestCase):
         return launcher.make_way(5, version, say=self.said.append, open_page=lambda: self.opened.append(1),
                                  answering=lambda port: self.port_held, sleep=self.clock.sleep, clock=self.clock)
 
-    def status(self, version=OLD, supervised=False, busy=()):
-        return {"version": version, "supervised": supervised, "taking_work": True, "requests": 0, "busy": list(busy)}
+    def status(self, version=OLD, busy=()):
+        return {"version": version, "taking_work": True, "requests": 0, "busy": list(busy)}
 
     def test_nothing_answering_is_served(self):
         self.port_held = False
@@ -128,11 +122,6 @@ class Way(unittest.TestCase):
         self.assertEqual([4242], self.ended, "ended before the drain said it was done")
         self.assertEqual(4, len(self.drained))
 
-    def test_the_always_on_processs_server_is_left_to_it(self):
-        self.answers = [self.status(OLD, supervised=True)]
-        self.assertEqual(launcher.OPEN, self.way()[0])
-        self.assertEqual([], self.drained)
-
     def test_one_with_no_record_is_not_replaced_and_the_owner_is_told(self):
         """A version from before the records, another user's (their records are in their own
         folder), another home's: nothing to drain it with."""
@@ -154,14 +143,6 @@ class Way(unittest.TestCase):
         self.assertEqual(launcher.SERVE, self.way()[0])
         self.assertEqual([4242], self.ended)
         self.assertTrue(any("has not answered" in line for line in self.said), self.said)
-
-    def test_a_hung_server_the_always_on_process_runs_is_left_to_it(self):
-        """#745: the hung path read no `supervised`; a launcher ended the supervisor's child."""
-        self.answers = [None]
-        self.found["supervised"] = True
-        self.assertEqual(launcher.OPEN, self.way()[0])
-        self.assertEqual([], self.ended)
-        self.assertTrue(any("always-on process" in line for line in self.said), self.said)
 
     def test_a_page_in_use_is_not_cut_until_the_patience_runs_out(self):
         """#746: the drain waits for QUIET seconds with no request -- a save under way is not
@@ -195,8 +176,7 @@ class Records(unittest.TestCase):
     def test_a_server_says_where_it_answers_and_forgets_only_its_own(self):
         launcher.say_where({"tagpup": 7, "tuner": 8}, OLD, TOKEN)
         found = launcher.record(8)
-        self.assertEqual((os.getpid(), OLD, TOKEN, False), (found["pid"], found["version"], found["token"],
-                                                            found["supervised"]))
+        self.assertEqual((os.getpid(), OLD, TOKEN), (found["pid"], found["version"], found["token"]))
         self.assertEqual({OLD}, launcher.versions_running())
         launcher.forget({"tagpup": 7, "tuner": 8})
         self.assertIsNone(launcher.record(7))
@@ -270,107 +250,6 @@ class Records(unittest.TestCase):
             self.assertEqual(os.path.join(r"C:\Users\someone\AppData\Local", "TagPup", "servers"), launcher.folder())
 
 
-class WhoMayDrain(unittest.TestCase):
-    """POST /api/server/drain: the supervisor's token, or a launcher's from this machine."""
-
-    def setUp(self):
-        self.home = own_home.for_test(self, prefix="launcher_drain_")
-        path = self.home.library("harbour.db")
-        library_actions.create(path)
-        self.lifecycle = Lifecycle(version=OLD, launcher_token=TOKEN, work=lambda: [])
-        self.app = web.create_app("tagpup", lifecycle=self.lifecycle)
-        self.app.testing = True
-
-    def drain(self, token=TOKEN, remote="127.0.0.1"):
-        return self.app.test_client().post("/api/server/drain", json={"seconds": 5},
-                                           headers={launcher.HEADER: token}, environ_base={"REMOTE_ADDR": remote})
-
-    def test_a_launcher_on_this_machine_with_the_token_drains_it(self):
-        reply = self.drain()
-        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
-        self.assertTrue(reply.get_json()["drained"])
-        self.assertFalse(self.lifecycle.status()["taking_work"])
-
-    def test_over_ipv6_loopback_too(self):
-        self.assertEqual(200, self.drain(remote="::1").status_code)
-
-    def test_another_machine_is_refused_whatever_it_sends(self):
-        reply = self.drain(remote="192.168.1.20")
-        self.assertEqual(403, reply.status_code)
-        self.assertTrue(self.lifecycle.status()["taking_work"])
-
-    def test_a_wrong_token_or_none_is_refused(self):
-        self.assertEqual(403, self.drain(token="guessed").status_code)
-        self.assertEqual(403, self.drain(token="").status_code)
-        resume = self.app.test_client().post("/api/server/resume", headers={launcher.HEADER: "guessed"})
-        self.assertEqual(403, resume.status_code)
-        self.assertTrue(self.lifecycle.status()["taking_work"])
-
-    def test_a_server_with_no_launcher_token_refuses_every_launcher(self):
-        app = web.create_app("tagpup", lifecycle=Lifecycle(version=OLD, work=lambda: []))
-        reply = app.test_client().post("/api/server/drain", json={"seconds": 5}, headers={launcher.HEADER: ""})
-        self.assertEqual(403, reply.status_code)
-
-    def test_a_lease_not_ended_gives_the_server_back_its_work(self):
-        """#747: a launcher's window closed between its drain and the end left the server
-        turning every request away for LEFT_DRAINED (180 s), past the pages' two minutes."""
-        clock = [1000.0]
-        lifecycle = Lifecycle(version=OLD, launcher_token=TOKEN, work=lambda: [], clock=lambda: clock[0])
-        client = web.create_app("tagpup", lifecycle=lifecycle).test_client()
-        reply = client.post("/api/server/drain", json={"seconds": 5, "lease": 20}, headers={launcher.HEADER: TOKEN})
-        self.assertTrue(reply.get_json()["drained"], reply.get_json())
-        self.assertEqual(503, client.get("/harbour/api/tags").status_code)
-        clock[0] += 21
-        self.assertEqual(200, client.get("/harbour/api/tags").status_code, "still drained past its lease")
-
-    def test_a_drain_with_no_lease_keeps_the_supervisors_wait(self):
-        clock = [1000.0]
-        lifecycle = Lifecycle(version=OLD, launcher_token=TOKEN, work=lambda: [], clock=lambda: clock[0])
-        client = web.create_app("tagpup", lifecycle=lifecycle).test_client()
-        client.post("/api/server/drain", json={"seconds": 5}, headers={launcher.HEADER: TOKEN})
-        clock[0] += 21
-        self.assertEqual(503, client.get("/harbour/api/tags").status_code)
-        clock[0] += lifecycles.LEFT_DRAINED
-        self.assertEqual(200, client.get("/harbour/api/tags").status_code)
-
-    def test_a_lease_out_of_range_is_refused(self):
-        for lease in (0, -1, lifecycles.LEFT_DRAINED + 1, "20", True):
-            reply = self.app.test_client().post("/api/server/drain", json={"seconds": 5, "lease": lease},
-                                                headers={launcher.HEADER: TOKEN})
-            self.assertEqual(400, reply.status_code, lease)
-        self.assertTrue(self.lifecycle.status()["taking_work"])
-
-    def test_a_launchers_drain_waits_for_the_startup_migrations(self):
-        """The startup migration thread is long work (#664): the drain is refused while it runs."""
-        lifecycle = Lifecycle(version=OLD, launcher_token=TOKEN)
-        app = web.create_app("tagpup", lifecycle=lifecycle)
-        with mock.patch.object(lifecycles.library_actions, "bringing_up_to_date", return_value=1):
-            reply = app.test_client().post("/api/server/drain", json={"seconds": 5}, headers={launcher.HEADER: TOKEN})
-        self.assertEqual({"drained": False, "success": True,
-                          "waiting_for": ["bringing 1 library(ies) up to date"]}, reply.get_json())
-        self.assertTrue(lifecycle.status()["taking_work"])
-
-
-class TheVersionOnEveryResponse(unittest.TestCase):
-    def setUp(self):
-        self.home = own_home.for_test(self, prefix="launcher_version_")
-        library_actions.create(self.home.library("harbour.db"))
-
-    def test_each_response_names_the_version_answering(self):
-        lifecycle = Lifecycle(version=NEW, launcher_token=TOKEN, work=lambda: [])
-        client = web.create_app("tagpup", lifecycle=lifecycle).test_client()
-        for path in ("/api/server", "/harbour/api/tags", "/"):
-            self.assertEqual(NEW, client.get(path).headers.get(launcher.VERSION_HEADER), path)
-        client.post("/api/server/drain", json={"seconds": 5}, headers={launcher.HEADER: TOKEN})
-        refused = client.get("/harbour/api/tags")
-        self.assertEqual(503, refused.status_code)
-        self.assertEqual(NEW, refused.headers.get(launcher.VERSION_HEADER))
-
-    def test_one_run_from_a_checkout_says_so(self):
-        client = web.create_app("tuner", lifecycle=Lifecycle(version=None)).test_client()
-        self.assertEqual(launcher.FROM_A_CHECKOUT, client.get("/api/server").headers.get(launcher.VERSION_HEADER))
-
-
 class TheLaunchersMain(unittest.TestCase):
     """tagpup_web.main as a launcher, with the server it would run stood in for."""
 
@@ -438,7 +317,6 @@ class ForReal(unittest.TestCase):
         self.env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1", TAGPUP_WEB_NO_WARMUP="1",
                         # The browser opens only on a first start: a test's never does.
                         TAGPUP_WEB_RELOADED="1")
-        self.env.pop("TAGPUP_SUPERVISOR_TOKEN", None)
 
     def install(self, name):
         import install_app

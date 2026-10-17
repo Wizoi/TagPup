@@ -58,6 +58,14 @@ class FileRow:
     note: Optional[str] = None
     #: (mtime, size) of the file just before its write, or None.
     stamp: Optional[tuple] = None
+    #: Not stored: what recording the file made of its photo's rows besides the fields, as the writer reports it (the face
+    #: boxes a rotation turned, tagpup.services.rotation).
+    followed: int = 0
+    #: Not stored: the quarter turn of face boxes this process made for the file, (direction, width, height) of the picture before it
+    #: (tagpup.services.rotation), so that taking the file out of its change after it was done turns them back exactly.
+    turned: Optional[tuple] = None
+    #: Not stored: the faces an undo of this file left as they were because they had changed since (tagpup.store.face_batches).
+    faces_left: int = 0
 
     @property
     def is_rename(self):
@@ -93,33 +101,29 @@ def owner():
     """This process, as `changes.owner` names it: "host:pid:start", its host, its id and
     when it started (tagpup.core.processes.started). Windows reuses an id soon after its
     process ends, and an id alone took a change a crash left for one a live process was
-    carrying out (docs/findings.md, #275). Libraries written before name "host:pid", as
-    does a process whose start cannot be read."""
+    carrying out (docs/findings.md, #275). A process that cannot read its own start is
+    refused (RuntimeError): an owner without one cannot be told from the next process given its id."""
     global _owner
     if _owner is None or _owner[0] != os.getpid():
-        named = "%s:%d" % (socket.gethostname(), os.getpid())
         started = processes.started(os.getpid())
-        _owner = (os.getpid(), named if started is None else "%s:%d" % (named, started))
+        if started is None:
+            raise RuntimeError("This process cannot read when it started, so it cannot own a change; nothing was written")
+        _owner = (os.getpid(), "%s:%d:%d" % (socket.gethostname(), os.getpid(), started))
     return _owner[1]
 
 
 def owner_parts(named):
-    """(host, pid, start) of an owner `named` by owner(); start is None for one named the
-    old way, "host:pid", and pid None for a name that is neither."""
-    parts = str(named).split(":")
-    numbers = []
-    while parts and len(numbers) < 2 and parts[-1].isdigit():
-        numbers.insert(0, int(parts.pop()))
-    if not numbers or not parts:
+    """(host, pid, start) of an owner `named` by owner(), "host:pid:start"; pid and start
+    None for a name that is not."""
+    host, _sep, rest = str(named).rpartition(":")
+    host, _sep, pid = host.rpartition(":")
+    if not host or not pid.isdigit() or not rest.isdigit():
         return str(named), None, None
-    if len(numbers) == 1:
-        return ":".join(parts), numbers[0], None
-    return ":".join(parts), numbers[0], numbers[1]
+    return host, int(pid), int(rest)
 
 
 def owner_alive(named):
-    """Is the process `named` by owner() ("host:pid:start", or "host:pid" as libraries
-    written before name it) still running? One on another machine is taken to be: this
+    """Is the process `named` by owner() ("host:pid:start") still running? One on another machine is taken to be: this
     one cannot tell. So is this process: what it holds is being carried out on another
     thread. A process with the id but another start is one that had the id before, and
     has ended (docs/findings.md, #275). Whoever takes over what a process left -- a
@@ -130,8 +134,6 @@ def owner_alive(named):
         return True
     if pid is None:
         return False
-    if start is None:
-        return pid == os.getpid() or processes.is_alive(pid)
     if pid == os.getpid():
         return named == owner()
     now = processes.started(pid)
@@ -143,11 +145,6 @@ def owner_alive(named):
 
 def _now():
     return time.strftime(TIME)
-
-
-def has_table(conn):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'change_files'"
-                        ).fetchone() is not None
 
 
 def _row(found, roots):
@@ -166,10 +163,12 @@ def _row(found, roots):
 _FILE_COLUMNS = "id, change_id, photo_id, path, new_path, fields_before, fields_after, state, note, stamp"
 
 
-def plan(db_path, operation, files, summary=None):
+def plan(db_path, operation, files, summary=None, also=None):
     """Commit a plan: a change named `operation`, `planned`, owned by this process, and a
     row `planned` for each of `files` -- dicts of photo_id, path, new_path, before and
-    after. Returns (change id, [FileRow]) in the order given."""
+    after. Returns (change id, [FileRow]) in the order given. `also(conn, change id)` writes
+    what else the plan holds (a bulk assignment's faces, tagpup.store.face_batches), in the
+    same transaction."""
     schema.ensure(db_path)
 
     def work(conn):
@@ -188,6 +187,8 @@ def plan(db_path, operation, files, summary=None):
                  json.dumps(before, sort_keys=True), json.dumps(after, sort_keys=True))).lastrowid
             rows.append(FileRow(file_id, change_id, planned.get("photo_id"), planned["path"],
                                 planned.get("new_path"), dict(before), dict(after)))
+        if also is not None:
+            also(conn, change_id)
         return change_id, rows
 
     return db.write_with_connection(db_path, work, label="plan of %s" % operation)
@@ -251,23 +252,9 @@ def files_of(db_path, change_id):
     """The files of change `change_id`, in the order they were planned."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return []
         roots = store_roots.roots_for(conn)
         return [_row(found, roots) for found in conn.execute(
             "SELECT " + _FILE_COLUMNS + " FROM change_files WHERE change_id = ? ORDER BY id", (change_id,))]
-    finally:
-        conn.close()
-
-
-def highest(db_path):
-    """The highest change id the journal holds (0 for none): a record of a job names the change it last saw, and a journal now
-    below it has lost that change (a snapshot restored). Reads only."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        if not has_table(conn):
-            return 0
-        return conn.execute("SELECT MAX(id) FROM changes").fetchone()[0] or 0
     finally:
         conn.close()
 
@@ -276,8 +263,6 @@ def change(db_path, change_id):
     """Change `change_id` (Change), or None."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return None
         found = conn.execute("SELECT id, operation, status, undone, owner, summary FROM changes WHERE id = ?",
                              (change_id,)).fetchone()
     finally:
@@ -287,46 +272,11 @@ def change(db_path, change_id):
     return Change(found[0], found[1], found[2], found[3], found[4], json.loads(found[5] or "{}"))
 
 
-def files_of_operation(db_path, operation, state):
-    """The files, as FileRow, that the changes named exactly `operation` hold in `state` (a bulk job's changes are named after
-    it): a resume asks which of its files a command that stalled left 'conflict', to read them and decide. Driven from `changes`
-    as photo_ids_done is. Reads only."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        if not has_table(conn):
-            return []
-        roots = store_roots.roots_for(conn)
-        columns = ", ".join("f." + each.strip() for each in _FILE_COLUMNS.split(","))
-        return [_row(found, roots) for found in conn.execute(
-            "SELECT " + columns + " FROM changes c CROSS JOIN change_files f ON f.change_id = c.id"
-            " WHERE c.operation = ? AND f.state = ? ORDER BY f.id", (operation, state))]
-    finally:
-        conn.close()
-
-
-def photo_ids_done(db_path, operation):
-    """The ids of the photos whose files a change named exactly `operation` wrote and left done: what a bulk job that
-    names each of its changes after itself asks, to tell which photos it has already changed (a time shift is not safe to
-    repeat). A change undone since leaves its files `undone`, and they are not in it. Reads only."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        if not has_table(conn):
-            return set()
-        # Driven from `changes` (a few thousand rows, filtered by name), each one's files found by idx_change_files_change.
-        # Left to the planner, which has no statistics, the 68,000 rows of a library-wide change were scanned and each looked
-        # up in `changes` (the CROSS JOIN fixes the order).
-        return {photo_id for (photo_id,) in conn.execute(
-            "SELECT f.photo_id FROM changes c CROSS JOIN change_files f ON f.change_id = c.id"
-            " WHERE c.operation = ? AND f.state = 'done' AND f.photo_id IS NOT NULL", (operation,))}
-    finally:
-        conn.close()
-
-
 def writes_files(db_path, change_id):
     """Did change `change_id` plan photo files?"""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        return has_table(conn) and conn.execute(
+        return conn.execute(
             "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
     finally:
         conn.close()
@@ -340,8 +290,6 @@ def unfinished(db_path):
     #274), and finishing it marks it failed."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return []
         found = conn.execute(
             "SELECT id, operation, status, undone, owner, summary FROM changes"
             " WHERE status = 'planned' ORDER BY id").fetchall()
@@ -390,8 +338,6 @@ def newer_overlapping(conn, change_id):
     under its new name included. An undo of `change_id` would take back part of a file
     the newer change planned from, as an undo of rows would rows a newer change wrote
     over (tagpup.store.journal). The caller's connection."""
-    if not has_table(conn):
-        return []
     return conn.execute(
         "SELECT DISTINCT c.id, c.operation FROM change_files mine"
         " JOIN change_files theirs ON theirs.change_id > mine.change_id"
@@ -405,8 +351,6 @@ def newer_overlapping(conn, change_id):
 def counts(conn, change_ids):
     """{change id: {state: files}} of `change_ids`. The caller's connection."""
     found = {}
-    if not has_table(conn):
-        return found
     change_ids = list(change_ids)
     for start in range(0, len(change_ids), CHUNK):
         chunk = change_ids[start:start + CHUNK]
@@ -417,17 +361,21 @@ def counts(conn, change_ids):
     return found
 
 
-def finish(db_path, change_id):
+def finish(db_path, change_id, also=None):
     """Mark change `change_id` applied -- or undone, when it was being undone -- now that
     every file is done, undone or a conflict; its summary takes the files' counts. A change
     every file was taken out of again wrote nothing, and is `failed`. Returns the counts,
-    or None when files are left to write."""
+    or None when files are left to write. `also(conn, change id)` runs in the same
+    transaction when a forward change finishes (the records of faces whose photo was never written go:
+    tagpup.store.face_batches.tidy); an undo keeps everything the change recorded."""
     def work(conn):
         states = counts(conn, [change_id]).get(change_id, {})
         undoing = conn.execute("SELECT undone FROM changes WHERE id = ?", (change_id,)).fetchone()[0] is not None
         left = states.get("planned", 0) + states.get("writing", 0) + (states.get("done", 0) if undoing else 0)
         if left:
             return None
+        if also is not None and not undoing:
+            also(conn, change_id)
         summary = json.loads(conn.execute("SELECT summary FROM changes WHERE id = ?",
                                           (change_id,)).fetchone()[0] or "{}")
         summary["undone_files" if undoing else "files"] = dict(sorted(states.items()))
@@ -444,16 +392,3 @@ def finish(db_path, change_id):
         return states
 
     return db.write_with_connection(db_path, work, label="finish change %d" % change_id)
-
-
-def prune(conn, change_ids):
-    """Delete the files of pruned changes. The caller's transaction."""
-    if not has_table(conn):
-        return 0
-    deleted = 0
-    change_ids = list(change_ids)
-    for start in range(0, len(change_ids), CHUNK):
-        chunk = change_ids[start:start + CHUNK]
-        deleted += conn.execute("DELETE FROM change_files WHERE change_id IN (%s)" % ",".join("?" * len(chunk)),
-                                chunk).rowcount
-    return deleted

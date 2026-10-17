@@ -91,21 +91,175 @@ export function samePerson(a, b) {
     return Boolean(left) && left === leafOf(b).toLowerCase();
 }
 
+// ---- How a person is shown -----------------------------------------------------------------
+//
+// A person is the whole tag path and their name is its leaf: shown, never compared. Two people called alike are told apart by
+// the tag in the title and in the "which one?" question (person-choice.js), not by a group joined to the name.
+
+/** The full tag of a person, for the element's title and the screen reader: where they are filed. */
+export function personTitle(person) {
+    if (!person) return '';
+    return String(person.tag || person.name || '');
+}
+
+/** What to show for the person a row names: the name of its `person` (the nested {id, name, tag} the server sends), else the
+ *  name it holds under `field`. */
+export function personLabelOf(row, field = 'name') {
+    if (!row) return '';
+    return row.person ? String(row.person.name ?? '') : String(row[field] ?? '');
+}
+
+/** The hover and the screen reader's text for the same: the full tag when the row's person has one, else the name. */
+export function personTitleOf(row, field = 'name') {
+    if (!row) return '';
+    return row.person ? personTitle(row.person) : String(row[field] ?? '');
+}
+
 /**
- * Does this photo already carry this tag, or this same person under another name?
+ * How a request names a person: the id of their node when the page has one (the only way to name one of two people called alike),
+ * else the name they are known by (a name no tag has; an open page the server has not told). `person` is a {id, name} or a bare name.
+ */
+export function personFields(person) {
+    if (person && typeof person === 'object') {
+        if (person.id !== undefined && person.id !== null) return { person_id: person.id };
+        return { person_name: String(person.name ?? '') };
+    }
+    return { person_name: String(person ?? '') };
+}
+
+// ---- The people of a library, by id --------------------------------------------------------
+//
+// /api/people answers every person with a tag as {id, name, tag}. The pages hold them in a PeopleDirectory and ask it
+// who a text is -- a tag path names exactly one person, a bare name names one only when nobody else is called it -- and compare
+// people by id, never by leaf. A name two people have is `shared`: a page asks which one, and never picks one for the owner. tests/frontend/person-directory.test.mjs holds it to the owner's real case: a pet
+// and a friend of one name.
+
+const textKey = (text) => String(text ?? '').trim().toLowerCase();
+
+export class PeopleDirectory {
+    /** `records`: the answer of /api/people (anything else in the list -- a name, a failed lookup's object -- is let go). */
+    constructor(records = []) {
+        this.records = (Array.isArray(records) ? records : [])
+            .filter(each => each && typeof each === 'object' && each.id !== undefined && each.id !== null && each.tag);
+        this.byId = new Map();
+        this.byTag = new Map();
+        this.byName = new Map();
+        for (const each of this.records) {
+            this.byId.set(each.id, each);
+            this.byTag.set(textKey(each.tag), each);
+            const key = textKey(each.name);
+            if (!this.byName.has(key)) this.byName.set(key, []);
+            this.byName.get(key).push(each);
+        }
+    }
+
+    get size() {
+        return this.records.length;
+    }
+
+    ofId(id) {
+        return (id !== undefined && id !== null && this.byId.get(id)) || null;
+    }
+
+    /** The person filed at exactly this tag path, or null. */
+    ofTag(tag) {
+        return this.byTag.get(textKey(tag)) || null;
+    }
+
+    /** Everyone called `name` (without case): one, two, or none. */
+    called(name) {
+        return (this.byName.get(textKey(name)) || []).slice();
+    }
+
+    /** The one person called `name`, or null when nobody is or when two or more are (a name alone cannot say which). */
+    only(name) {
+        const found = this.byName.get(textKey(name));
+        return found && found.length === 1 ? found[0] : null;
+    }
+
+    /**
+     * The person a text names: a tag path exactly, a bare name when it is one person's. Null for neither. A bare text that is a
+     * person's own tag (a person at the top of the tree) is that person, whoever else is called alike (#1408).
+     */
+    ofText(text) {
+        const value = String(text ?? '').trim();
+        if (!value) return null;
+        return value.includes('/') ? this.ofTag(value) : (this.ofTag(value) || this.only(value));
+    }
+
+    /**
+     * What typed text means, for a picker that offers people by name:
+     *   { kind: 'person', person } -- a tag path, or a name one person has;
+     *   { kind: 'choose', people } -- a name two or more people have: the owner is asked which, never given the first;
+     *   { kind: 'new', name } -- a name nobody has; { kind: 'none' } -- nothing was typed.
+     */
+    match(text) {
+        const value = String(text ?? '').trim();
+        if (!value) return { kind: 'none' };
+        const filed = this.ofTag(value);
+        if (filed) return { kind: 'person', person: filed };
+        const called = this.called(value);
+        if (called.length === 1) return { kind: 'person', person: called[0] };
+        if (called.length > 1) return { kind: 'choose', people: called };
+        return { kind: 'new', name: value };
+    }
+
+    /** Every person, by name and then tag (the order the server sends them in), as a copy. */
+    all() {
+        return this.records.slice();
+    }
+}
+
+/** Are these two the same person? By the id of their node, and only so: a record with no id is nobody. Never by label or name. */
+export function sameRecord(a, b) {
+    if (!a || !b) return false;
+    const left = a.id ?? null, right = b.id ?? null;
+    return left !== null && left === right;
+}
+
+/**
+ * Do these two tags -- a path or a bare name each -- name the same person? By the id of the node each is, in the library's people
+ * (`directory`): two people called Sam are two, a bare name two people have is neither of them, and a text no person has is
+ * nobody (#1394).
+ */
+export function sameTagPerson(a, b, directory) {
+    return sameRecord(directory.ofText(a), directory.ofText(b));
+}
+
+/**
+ * Do two rows that each name someone -- a face and a match, `{name, person?}` -- name the same person? By the id of their nodes
+ * (two people called Sam are two); a row with none names nobody.
+ */
+export function sameNamed(a, b) {
+    return !!a && !!b && sameRecord(a.person, b.person);
+}
+
+/**
+ * Does the list of names a photo lists (photo.people: leaves, no ids) name this person? Not when two people have the name: a
+ * name alone names neither of them for certain, so the list cannot say the photo has THIS one.
+ */
+export function peopleListHas(names, text, directory = null) {
+    const leaf = leafOf(text);
+    if (!leaf || (directory && directory.called(leaf).length > 1)) return false;
+    return (names || []).some(each => samePerson(each, leaf));
+}
+
+/**
+ * Does this photo already carry this tag, or this same person under another spelling?
  *
  * A plain `tags.includes()` compared "Hazel Brookmire" against
  * "People/Hazel Brookmire", found no match, and wrote the person in a second
- * time. Identity is the leaf; the path is only where they are filed.
+ * time. A tag path names exactly one person; a bare name is one only when nobody else is called it,
+ * so with the library's people (`directory`) two people called Sam are two (`sameTagPerson`).
  *
  * `isPersonTag` is the page's own answer to whether a tag names a person: which
  * roots hold people is the tag tree's, and only the page has the tree loaded.
  */
-export function photoAlreadyHas(photo, tag, isPersonTag) {
+export function photoAlreadyHas(photo, tag, isPersonTag, directory) {
     const tags = (photo && photo.tags) || [];
     if (tags.includes(tag)) return true;
     if (!isPersonTag(tag)) return false;
-    return tags.some(t => isPersonTag(t) && samePerson(t, tag));
+    return tags.some(t => isPersonTag(t) && sameTagPerson(t, tag, directory));
 }
 
 /**

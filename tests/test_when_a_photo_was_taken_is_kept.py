@@ -7,6 +7,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.store import db, photos  # noqa: E402
@@ -25,7 +26,7 @@ class Kept(unittest.TestCase):
 
     def test_a_rename_to_a_dated_name_gives_it_a_year(self):
         renamed = os.path.join(self.lib.photos, "2018 Heats.jpg")
-        photos.move_rows(self.lib.library.path, {self.photo: renamed})
+        photo_rows.move(self.lib.library.path, {self.photo: renamed})
         self.assertEqual((None, 2018), self.dates(renamed))
 
     def test_indexing_records_it(self):

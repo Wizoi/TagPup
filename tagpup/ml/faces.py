@@ -24,8 +24,16 @@ from tagpup.files import images  # noqa: E402
 
 logger = logging.getLogger("tagpup_cli.faces")
 
-#: The settings a model is made from: tagpup.services.settings.LibrarySettings.faces' keys.
-SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
+def detection_picture(img, max_side):
+    """(the picture the detector is handed, (x, y) scale from it back to `img`): `img` itself and (1, 1) when there is
+    no cap or its long side is within it; else `img` scaled so that its long side is `max_side` (docs/AI_PIPELINE.md,
+    phase 1a). Only the detector sees it: crops and vectors come from `img`."""
+    width, height = img.size
+    longest = max(width, height)
+    if not max_side or longest <= max_side:
+        return img, (1.0, 1.0)
+    size = (round(width * max_side / longest), round(height * max_side / longest))
+    return img.resize(size, Image.BILINEAR, reducing_gap=3.0), (width / size[0], height / size[1])
 
 
 class NotDetected(list):
@@ -54,6 +62,10 @@ class FaceModel:
     def load(self):
         """Load the models now, if they are not loaded yet."""
         self._init_models()
+
+    def loaded(self):
+        """Are the weights in memory now?"""
+        return self.mtcnn is not None or self.resnet is not None
 
     def unload(self):
         """Let the weights go, and the GPU memory they held (tagpup.runtime drops a model
@@ -95,19 +107,16 @@ class FaceModel:
         if self.device == "cuda":
             self.resnet = self.resnet.half()
 
-        # Conditionally compile model for CUDA acceleration (disabled on Windows due to lack of Triton support)
-        if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
-            try:
-                logger.info("Compiling InceptionResnetV1 model for CUDA acceleration...")
-                self.resnet = torch.compile(self.resnet)
-            except Exception as compile_err:
-                logger.warning(f"Failed to compile InceptionResnetV1 model: {compile_err}. Using standard model.")
-
         logger.info("Face models loaded successfully.")
 
-    def detect_and_embed_faces(self, img_path):
-        """Detect all faces in an image and generate 512-dimensional embeddings for each."""
+    def detect_and_embed_faces(self, img_path, *, max_side):
+        """Detect all faces in an image and generate 512-dimensional embeddings for each. `max_side` is the longest
+        side of the picture the detector looks at, or None for the picture as it is: the library's
+        (LibrarySettings.detect_max_side), given with each call, so one model serves libraries of any cap."""
         self._init_models()
+        # The models as they are now: an unload (the idle release) nulls the attributes, and this call finishes
+        # with the ones it started with.
+        mtcnn, resnet = self.mtcnn, self.resnet
 
         if not os.path.exists(img_path):
             return NotDetected()
@@ -117,11 +126,15 @@ class FaceModel:
             img = images.opened(img_path, upright=False)
             width, height = img.size
 
-            # Detect bounding boxes and probability scores
-            boxes, probs = self.mtcnn.detect(img)
+            # Detect bounding boxes and probability scores, on a smaller picture when the library caps it, the boxes
+            # then scaled back to the picture as stored.
+            picture, (scale_x, scale_y) = detection_picture(img, max_side)
+            boxes, probs = mtcnn.detect(picture)
 
             if boxes is None or len(boxes) == 0:
                 return []
+            if picture is not img:
+                boxes = boxes * np.array([scale_x, scale_y, scale_x, scale_y])
 
             detected_faces = []
             face_crops_info = []
@@ -163,8 +176,8 @@ class FaceModel:
                     batch_tensors = batch_tensors.half()
 
                 # Generate 512-dimensional embeddings in a single forward pass
-                with torch.no_grad():
-                    emb_tensors = self.resnet(batch_tensors)
+                with torch.inference_mode():
+                    emb_tensors = resnet(batch_tensors)
                     emb_tensors /= emb_tensors.norm(dim=-1, keepdim=True)
                     embeddings = emb_tensors.cpu().numpy().tolist()
 

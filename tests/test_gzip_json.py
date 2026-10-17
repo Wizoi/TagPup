@@ -56,6 +56,14 @@ class Gzipping(unittest.TestCase):
         self.assertEqual(404, photo.status_code)
         self.assertNotIn("Content-Encoding", photo.headers)
 
+    def test_the_hook_honours_quality_values(self):
+        """Lifted from test_unreachable_is_not_missing (#566): q=0 means no gzip."""
+        accepts = web._accepts_gzip
+        for header in ("gzip, deflate, br", "GZIP", "deflate, gzip;q=0.5", "x-gzip"):
+            self.assertTrue(accepts(header), header)
+        for header in ("gzip;q=0", "identity;q=1, gzip;q=0", "gzip;q=0.0", "br", "", "gzip;q=nonsense"):
+            self.assertFalse(accepts(header), header)
+
     def test_the_threshold_is_a_hundred_kilobytes(self):
         self.assertEqual(100_000, web.GZIP_FROM)
 

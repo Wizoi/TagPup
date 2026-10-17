@@ -39,6 +39,31 @@ class VerifyWorkflowIsSandboxed(unittest.TestCase):
             with open(os.path.join(self.folder, name), "wb") as handle:
                 handle.write(b"a photo")
 
+    def test_the_run_and_its_server_have_a_home_of_their_own_deleted_after(self):
+        """#817: not the owner's checkout: no records, logs, Downloads or recurring jobs there."""
+        from sandbox import environment
+        seen = {}
+
+        def run_checks(report, work_db, args):
+            seen["home"] = verify_workflow.tagpup_config.home()
+            seen["work_db"] = work_db
+            seen["server_env"] = environment(verify_workflow.SANDBOX_HOME, TAGPUP_NO_JOBS="1")
+
+        argv = ["verify_workflow.py", "--source", self.source, "--no-index"]
+        owner = verify_workflow.tagpup_config.home()
+        with patch.object(sys, "argv", argv), \
+                patch.object(verify_workflow, "run_checks", run_checks), \
+                patch.object(verify_workflow, "indexers_running", lambda: []), \
+                patch.object(verify_workflow.time, "sleep", lambda s: None), \
+                patch.object(verify_workflow, "start_servers", lambda work_db: None):
+            verify_workflow.main()
+        self.assertNotEqual(os.path.normcase(owner), os.path.normcase(seen["home"]))
+        self.assertTrue(os.path.normcase(seen["work_db"]).startswith(os.path.normcase(seen["home"])))
+        for name in ("TAGPUP_SERVERS", "TAGPUP_DOWNLOADS"):
+            self.assertTrue(seen["server_env"][name].startswith(seen["home"]), name)
+        self.assertEqual("1", seen["server_env"]["TAGPUP_NO_JOBS"])
+        self.assertFalse(os.path.exists(seen["home"]), "the sandbox home was left behind")
+
     def test_the_checks_are_given_a_copy_of_the_folder_and_free_ports(self):
         seen = {}
 

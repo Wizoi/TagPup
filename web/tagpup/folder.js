@@ -12,10 +12,11 @@ import {
 } from './elements.js';
 import { flagField } from './status.js';
 import { clearSelection, keepOnly } from './selected.js';
-import { CACHE_TTL_MS, folderCacheKey, saveToLocalStorageCache } from './cache.js';
+import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { libraryPosition } from './library-source.js';
+import { replaceAddress } from './history-entries.js';
 
 export function wireChangeDogPark() {
     if (btnChangeDb) {
@@ -56,11 +57,10 @@ export function closeFolderForDogPark() {
     state.folderPhotos = [];
     state.folderSuggestions = {};
     upper.checkFolderMembership(null);
-    upper.checkDamagedPhotos(null);
     folderPathInput.value = '';
     const url = new URL(window.location);
     url.searchParams.delete('path');
-    window.history.replaceState({}, '', url);
+    replaceAddress(url);
     updateCurrentFolderLabel();
     // Close the photo too, and the list: both still showed the folder just
     // closed, editable and clickable. Edits were settled before this ran.
@@ -231,15 +231,12 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
 
     // Cache lookup if not forcing refresh
     if (!forceRefresh) {
-        // Falls back once to the key as typed, which is how entries were stored
-        // before pathKey; the next save moves it to the shared key.
-        const rawCache = localStorage.getItem(folderCacheKey(path))
-            || localStorage.getItem(`tagpup_cache_${path}`);
+        const rawCache = localStorage.getItem(folderCacheKey(path));
         if (rawCache) {
             try {
                 const cacheEntry = JSON.parse(rawCache);
                 const age = Date.now() - cacheEntry.timestamp;
-                if (age < CACHE_TTL_MS) {
+                if (age < CACHE_TTL_MS && cacheEntry.version === CACHE_VERSION) {
                     const previous = state.scannedFolder;
                     state.scannedFolder = path;
                     updateCurrentFolderLabel();
@@ -267,11 +264,10 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
                     // Update URL
                     const url = new URL(window.location);
                     url.searchParams.set('path', path);
-                    window.history.replaceState({}, '', url);
+                    replaceAddress(url);
                     
                     upper.checkSuggestionsStatus(path);
                     upper.checkFolderMembership(path);
-                    upper.checkDamagedPhotos(path);
                     
                     // If active photo path is set, reload its data
                     if (state.activePhotoPath) {
@@ -353,7 +349,7 @@ export function showScannedFolder(path, data) {
     // Update URL search path parameter
     const url = new URL(window.location);
     url.searchParams.set('path', path);
-    window.history.replaceState({}, '', url);
+    replaceAddress(url);
 
     // Save to cache
     saveToLocalStorageCache();
@@ -376,8 +372,6 @@ export function showScannedFolder(path, data) {
     upper.checkSuggestionsStatus(path);
     // Does the library hold it? If not, ask before anything is added (membership.js).
     upper.checkFolderMembership(path);
-    // Which of its photos were found damaged (damaged.js).
-    upper.checkDamagedPhotos(path);
 
     // If active photo path is set, reload its data
     if (state.activePhotoPath) {
@@ -610,6 +604,8 @@ export function openFolderView() {
     upper.renderThumbnails();
     upper.updateSelectedThumbnailsCount();
     updatePhotoPosition();
-    // A move from a library view lands on the photo it was made from (library-moves.js).
+    // The view of the library as it was left when a photo was opened over it (view-left.js), then a move from a view lands
+    // on the photo it was made from (library-moves.js).
+    upper.restoreViewAsLeft();
     upper.landOnAnchor();
 }

@@ -1,0 +1,95 @@
+/* The library picker's list (web/common/library-picker.js, #909): a button and a listbox of the page's own, dark from
+   the page's variables, so no operating-system popup (and no blank block under its last option) is involved. The
+   list hangs under the button without moving anything, and is no wider than the window. */
+
+.lib-picker {
+    position: relative;
+    display: inline-block;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.lib-picker-source {
+    display: none !important;
+}
+
+.lib-picker-button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 120px;
+    max-width: 100%;
+    height: 32px;
+    padding: 4px 8px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.lib-picker-button:focus-visible,
+.lib-picker-list:focus-visible {
+    outline: 2px solid var(--accent, #6ea8fe);
+    outline-offset: 1px;
+}
+
+.lib-picker-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.lib-picker-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lib-picker-list {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    z-index: 1000;
+    box-sizing: border-box;
+    min-width: 100%;
+    max-width: min(360px, calc(100vw - 16px));
+    max-height: min(320px, 60vh);
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+    list-style: none;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    font-family: var(--font-body);
+    font-size: 13px;
+}
+
+.lib-picker-list.hidden {
+    display: none;
+}
+
+.lib-picker-option {
+    padding: 6px 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.lib-picker-option.active,
+.lib-picker-option:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.lib-picker-option[aria-selected="true"] {
+    font-weight: 600;
+}

@@ -1,5 +1,5 @@
 """A SELECTION of photos, by id, and what is made of one: the photos it holds, in order (docs/ARCHITECTURE.md, phase
-9d-1). The one reading and the one resolver of the bulk edits (tagpup.jobs.bulk_edits) and of the selection panel's tally.
+9d-1). The one reading and the one resolver of the bulk edits (tagpup.services.bulk_edit) and of the selection panel's tally.
 
 A selection is one of two shapes, sent by a page that never holds 68,000 ids to send:
 
@@ -10,7 +10,7 @@ A selection is one of two shapes, sent by a page that never holds 68,000 ids to 
   (at most MAX_LISTED; ids not in the source are no matter). The ids are those of `/api/library/ids` for the same
   source, in the same order, read here, on the server, in one transaction: the page sends the source, not its list.
 
-A selection holds at most MAX_SELECTED photos; a larger one is Refused, with how many it was. Reads only, on a read-only
+A selection holds at most batches.MAX_BATCH photos; a larger one is Refused, with how many it was. Reads only, on a read-only
 connection; a root this machine does not place raises paths.RootsError (the web layer's gate answers that first).
 """
 import collections
@@ -20,15 +20,13 @@ import os
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import Refused
 from tagpup.files import recycle_bin
-from tagpup.services import library_view
+from tagpup.services import batches, file_changes, library_view
 from tagpup.store import library_view as store
+from tagpup.store import person_ids
 from tagpup.store import selection_folders as store_folders
 
 #: The most ids a selection lists (`ids`, or `excluded`).
 MAX_LISTED = 20_000
-
-#: The most photos a selection holds, however it is named.
-MAX_SELECTED = 200_000
 
 #: The most tags, and the most people, a tally lists; the rest are counted in `more`.
 MAX_TALLIED = 500
@@ -80,14 +78,15 @@ MAX_FOLDERS_LISTED = 10
 
 def tally(library, selection):
     """What the photos of `selection` hold: {"total" (the photos that exist), "tags": [{"tag", "count"}], "people":
-    [{"name", "count"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
+    [{"name", "count", "has_node", "person"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
     folders the selection is in, counted, and named (native path, the folder's own name, its photos selected) only when
     there are MAX_FOLDERS_LISTED or fewer, by name (#675: what the panel offers to open in Organize; 68,000 photos are
     one grouped read of photo_folder, never 68,000 paths); and the tags and people the selection carries, each with the number of
     its photos, tags alphabetically by the shared order (vocabulary.tag_sort_key) and people by it too, at most MAX_TALLIED
     of each (the rest are counted in `more_*`, the most used kept). From photo_tags and photo_people, one grouped read over
     the selection: a source is joined in SQL and its excluded ids taken out there, so 68,000 photos are no list in
-    Python and no request of that size. A tag no node of the tree holds is not in photo_tags and so not in it (the
+    Python and no request of that size. A tag that is a person's node is a person and is left out of "tags" before they are cut
+    (#865); a person's `has_node` says whether the tree has one node of that name (no: a branch, two nodes, none; #866). A tag no node of the tree holds is not in photo_tags and so not in it (the
     navigator's counts leave it out too). Refused as `resolve` refuses a selection, but NOT for being larger than a job
     takes: the panel may tally a whole library."""
     conn = library_view.opened(library)
@@ -95,13 +94,18 @@ def tally(library, selection):
         found = store.tally(conn, selection.ids, selection.source, selection.excluded)
         # In the tally's read transaction: the folders are of the photos just counted.
         folders = _folders(conn, selection)
+        everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
-    tags = _kept([(tag, count) for tag, count in found["tags"]])
-    people = _kept(found["people"])
+    tags = _kept([(tag, count) for tag, count in found["tags"]], lambda each: each[0])
+    people = _kept(found["people"], lambda each: each[0].name)
+    nameless = set(found["nameless"])
     return {"total": found["total"],
             "tags": [{"tag": tag, "count": count} for tag, count in tags[0]], "more_tags": tags[1],
-            "people": [{"name": name, "count": count} for name, count in people[0]], "more_people": people[1],
+            "people": [{"name": person.name, "count": count, "has_node": person not in nameless,
+                        "person": everyone.of_id(person.id), "person_id": person.id}
+                       for person, count in people[0]],
+            "more_people": people[1],
             "folders": folders}
 
 
@@ -117,16 +121,16 @@ def _folders(conn, selection):
     return {"count": len(counted), "listed": listed}
 
 
-def _kept(counted):
-    """([(name, count)] at most MAX_TALLIED of them -- the most used, then in the shared alphabetical order --, how many
-    were left out)."""
+def _kept(counted, name_of):
+    """([(thing, count)] at most MAX_TALLIED of them -- the most used, then in the shared alphabetical order of `name_of(each)`
+    --, how many were left out)."""
     if len(counted) > MAX_TALLIED:
-        counted = sorted(counted, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0])))
+        counted = sorted(counted, key=lambda each: (-each[1], vocabulary.tag_sort_key(name_of(each))))
         left = len(counted) - MAX_TALLIED
         counted = counted[:MAX_TALLIED]
     else:
         left = 0
-    return sorted(counted, key=lambda each: vocabulary.tag_sort_key(each[0])), left
+    return sorted(counted, key=lambda each: vocabulary.tag_sort_key(name_of(each))), left
 
 
 def token_of(photo_ids):
@@ -147,7 +151,7 @@ def where_deleted(library, selection):
     Windows now, #703, #706: nothing is to be asked then)}; the reasons as recycle_bin says them ("on a network share").
     Asked once a folder, never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped
     drive are told by their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over
-    MAX_SELECTED."""
+    batches.MAX_BATCH."""
     resolved = resolve(library, selection)
     conn = library_view.opened(library)
     try:
@@ -175,29 +179,35 @@ def where_deleted(library, selection):
             "no_room": recycle_bin.can_copy_here(copy_bytes, largest, fresh=True) if through else None}
 
 
+def paths_of(library, photo_ids):
+    """{photo id: its path, as this machine places it} of the photos of `photo_ids` the library has (ids and paths only): what a
+    resolved selection's photos are written as (tagpup.services.bulk_edit)."""
+    conn = library_view.opened(library)
+    try:
+        return store.paths_of(conn, photo_ids)
+    finally:
+        conn.close()
+
+
 def _too_long(library, photo_ids, binless, named):
     """How many photos of `photo_ids` in the folders `binless` would have a copy's path too long for the Recycle Bin (#704): their
     paths read (ids and paths only), only when some go through this PC."""
     folders = {paths.key(named[folder_id][0]) for folder_id in binless}
-    conn = library_view.opened(library)
-    try:
-        found = store.paths_of(conn, photo_ids)
-    finally:
-        conn.close()
+    found = paths_of(library, photo_ids)
     root = recycle_bin.mirror_root()
     return sum(1 for path in found.values()
                if paths.key(os.path.dirname(path)) in folders and recycle_bin.too_long(recycle_bin.mirror_of(path, root)))
 
 
 def _refuse_if_large(count):
-    if count > MAX_SELECTED:
-        raise Refused("That selects %s photos; a bulk edit takes at most %s. Narrow the selection."
-                      % ("{:,}".format(count), "{:,}".format(MAX_SELECTED)))
+    why = file_changes.too_many(count, "are selected")     # the one cap and its sentence
+    if why:
+        raise Refused(why)
 
 
 def resolve(library, selection):
     """The photos `selection` holds, as Resolved: those that exist now, in order -- an ids selection in the order named, a
-    source in `/api/library/ids`'s order -- each once, at most MAX_SELECTED (else Refused). The photo that exists is decided
+    source in `/api/library/ids`'s order -- each once, at most batches.MAX_BATCH once the excluded are out (else Refused). The photo that exists is decided
     here, by the library's own rows; a source is read in one transaction, so a library changing meanwhile gives a list that
     was true at one moment."""
     conn = library_view.opened(library)
@@ -207,10 +217,11 @@ def resolve(library, selection):
             there = store.existing_ids(conn, selection.ids)
             ids = [photo_id for photo_id in selection.ids if photo_id in there]
             return Resolved(ids, len(selection.ids), len(selection.ids) - len(ids), 0)
-        found, total = store.source_ids(conn, selection.source, MAX_SELECTED)
-        _refuse_if_large(total)
+        # The limit is of the photos left once the excluded are out ("everything but these 63,500" is 4,500 photos).
+        found, total = store.source_ids(conn, selection.source, batches.MAX_BATCH + len(selection.excluded))
     finally:
         conn.close()
     left_out = set(selection.excluded)
     ids = [photo_id for photo_id in dict.fromkeys(found) if photo_id not in left_out]
+    _refuse_if_large(total - len(found) + len(ids))
     return Resolved(ids, total, 0, len(found) - len(ids))

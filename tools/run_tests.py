@@ -3,6 +3,22 @@
     .venv/Scripts/python.exe tools/run_tests.py                 # every tests/test_*.py
     .venv/Scripts/python.exe tools/run_tests.py test_schema tests/test_doctor.py
     .venv/Scripts/python.exe tools/run_tests.py --jobs 4
+    .venv/Scripts/python.exe tools/run_tests.py --fast          # the edit loop: tests/tiers.py's fast tier
+    .venv/Scripts/python.exe tools/run_tests.py --no-slow       # fast and scenario; --all is every tier
+    .venv/Scripts/python.exe tools/run_tests.py --owner people  # every Python file of a domain owner (tests/owners.py)
+    .venv/Scripts/python.exe tools/run_tests.py --scenarios files   # only that owner's scenario files
+
+The whole suite is the default and is what a commit and a merge run; --all says so. Each
+file is in one of three tiers (tests/tiers.py): fast, scenario and slow. --fast and --no-slow
+leave tiers out for the loop, never for the gate. The report ends with each tier's files,
+tests and seconds, and each owner's (tests/owners.py gives every test file one owner). --owner and --scenarios
+run one owner's files, and print the `node --test` command for that owner's page tests, which this runner does not run.
+
+A file that fails is run once more, alone, after the others have ended: a file that passes
+then is reported "flaky: passed alone" with the first run's output kept in the log, and does
+not fail the run; a file that fails twice fails. --no-retry turns that off. The line is
+never left out: a test that fails under load is told of each time it does, and the log of
+the first failure is kept for finding its cause.
 
 Each test file runs as its own process: `python -m unittest tests.<file>`, as the suite
 has always been run, so a file sees nothing of another's state -- and with a TAGPUP_HOME
@@ -12,7 +28,11 @@ config.ini. The tests' libraries were in data/ under fixed names, so the files t
 it ran one after another in a lane of their own (docs/findings.md, #14). None does now,
 and tests/test_tests_have_homes_of_their_own.py keeps it so; a file that named the
 checkout's data/ or config.ini would still get the lane. Each file's time is kept in
-tests/.durations.json (not in git), and the longest start first next time.
+tests/.durations.json (not in git), and the longest start first next time. The same file
+keeps how many tests each file ran when it passed: a file that passes having run fewer than
+that fails, naming both counts (a run that counted 1,427 where the last counted 1,469 was the
+shape of the original flake, #101; #290). Tests removed on purpose: `--accept-fewer` records
+the new count.
 
 Prints each file that failed, with its output, and one line of totals, and keeps the
 same in data/logs/run_tests-<time>.log (not in git; the last ten failed runs), naming
@@ -36,6 +56,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from tagpup.core import processes  # noqa: E402
+from tests import owners, tiers  # noqa: E402
 TESTS = os.path.join(ROOT, "tests")
 DURATIONS = os.path.join(TESTS, ".durations.json")
 
@@ -108,6 +129,28 @@ def load_durations():
         return {}
 
 
+#: The key of tests/.durations.json that holds how many tests each file ran: {module: count}.
+COUNTS = "_tests"
+
+
+def check_counts(results, counts, accept_fewer=False):
+    """(results, counts): a passing file that ran fewer tests than `counts` says it did last time becomes a
+    failure, and keeps the count it fell from; every other passing file's count is recorded."""
+    counts = dict(counts)
+    checked = []
+    for result in results:
+        module, passed, ran, seconds, output = result
+        before = counts.get(module, 0)
+        if passed and ran < before and not accept_fewer:
+            result = (module, False, ran, seconds, output + (
+                "\n[run_tests] ran %d tests where the last passing run ran %d: a file that stopped early, or tests "
+                "removed (--accept-fewer records the new count) (#290)" % (ran, before)))
+        elif passed:
+            counts[module] = ran
+        checked.append(result)
+    return checked, counts
+
+
 def save_durations(durations):
     try:
         with open(DURATIONS, "w", encoding="utf-8") as handle:
@@ -174,10 +217,10 @@ def keep_failed_run(text):
 #: Files that run in a lane of their own, one at a time, beside the pool and not in it: their deadlines are real
 #: time -- they start server processes and wait for them -- and a pool slot's share of a loaded machine made two
 #: of them fail that wait (docs/findings.md, #476). Beside the pool, the suite takes no longer than it did.
-ALONE = ("test_supervisor",)
+ALONE = ()   # none now; the supervisor's tests were the two that needed it
 
 
-def run(modules, jobs):
+def run(modules, jobs, accept_fewer=False):
     """Run `modules`; returns [(module, passed, tests run, seconds, output)]."""
     durations = load_durations()
     order = sorted(modules, key=lambda m: -durations.get(m, 1.0))
@@ -215,8 +258,66 @@ def run(modules, jobs):
             record(future.result())
         lane_thread.join()
         solo_thread.join()
+    failed_already = {r[0] for r in results if not r[1]}
+    results, durations[COUNTS] = check_counts(results, durations.get(COUNTS, {}), accept_fewer)
+    for module, passed, _ran, _seconds, _output in results:
+        if not passed and module not in failed_already:
+            print("FAILED  %s (fewer tests than last time)" % module, flush=True)
     save_durations(durations)
     return results
+
+
+def rerun_alone(results, accept_fewer=False):
+    """Run each failed file once more, one at a time, now that the pool has ended.
+    Returns (results with a pass in place of the failure, [(module, first output)]).
+    A rerun that passes having run fewer tests than the last passing run did is still
+    a failure (#290): a file that stops early is the flake this must not hide."""
+    counts = load_durations().get(COUNTS, {})
+    flaky = []
+    again = []
+    for result in results:
+        module, passed, _ran, seconds, first = result
+        if passed:
+            again.append(result)
+            continue
+        print("RERUN   %s alone" % module, flush=True)
+        second = check_counts([run_one(module)], counts, accept_fewer)[0][0]
+        if second[1]:
+            flaky.append((module, first))
+            again.append((module, True, second[2], seconds + second[3], second[4]))
+        else:
+            again.append((module, False, second[2], seconds + second[3],
+                          first.rstrip() + "\n\n[run_tests] failed again, alone:\n" + second[4]))
+    return again, flaky
+
+
+def tier_lines(results, jobs):
+    """One line per tier that ran: files, tests, summed seconds and that over the processes."""
+    lines = []
+    for tier in tiers.TIERS:
+        mine = [r for r in results if tiers.tier_of(r[0]) == tier]
+        if mine:
+            total = sum(r[3] for r in mine)
+            lines.append("  %-8s %3d file(s) %5d test(s) %6.0fs of file time (about %.0fs across %d processes)" % (
+                tier, len(mine), sum(r[2] for r in mine), total, total / jobs, jobs))
+    return lines
+
+
+def owner_lines(results):
+    """One line per owner that ran: files, tests and summed seconds (tests/owners.py)."""
+    lines = []
+    for owner in owners.OWNERS:
+        mine = [r for r in results if owners.FILES.get(r[0], ("",))[0] == owner]
+        if mine:
+            lines.append("  %-8s %3d file(s) %5d test(s) %6.0fs of file time" % (
+                owner, len(mine), sum(r[2] for r in mine), sum(r[3] for r in mine)))
+    return lines
+
+
+def node_command(owner, scenarios_only=False):
+    """The command for an owner's page tests (tests/frontend/*.test.mjs): they run under node, not here."""
+    names = [n for n in owners.page_files_of(owner) if not scenarios_only or owners.FILES[n][1] == "scenario"]
+    return "node --test " + " ".join("tests/frontend/" + n for n in names) if names else None
 
 
 def main(argv=None):
@@ -224,19 +325,55 @@ def main(argv=None):
     parser.add_argument("files", nargs="*", help="test files to run (default: all)")
     parser.add_argument("--jobs", type=int, default=max(2, (os.cpu_count() or 2) // 2),
                         help="processes at once (default: half the cores)")
+    parser.add_argument("--all", action="store_true",
+                        help="every tier (the default: the whole suite is what a commit runs)")
+    parser.add_argument("--fast", action="store_true", help="the fast tier only, for the edit loop")
+    parser.add_argument("--no-slow", action="store_true", help="the fast and scenario tiers")
+    parser.add_argument("--owner", choices=owners.OWNERS, help="every Python test file of this domain owner")
+    parser.add_argument("--scenarios", choices=owners.OWNERS, help="only this owner's scenario files")
+    parser.add_argument("--no-retry", action="store_true",
+                        help="do not run a failed file again alone")
+    parser.add_argument("--accept-fewer", action="store_true",
+                        help="record the count of a file that ran fewer tests than last time (tests removed on purpose)")
     args = parser.parse_args(argv)
-    modules = test_files(args.files)
+    if sum([args.all, args.fast, args.no_slow]) > 1:
+        parser.error("--all, --fast and --no-slow are one choice")
+    if args.owner and args.scenarios and args.owner != args.scenarios:
+        parser.error("--owner and --scenarios name one owner")
+    chosen = args.owner or args.scenarios
+    if chosen and args.files:
+        parser.error("--owner and --scenarios take the place of file names")
+    modules = owners.files_of(chosen, "scenario" if args.scenarios else None) if chosen else test_files(args.files)
+    node = node_command(chosen, bool(args.scenarios)) if chosen else None
+    left_out = ()
+    if not args.files and (args.fast or args.no_slow):
+        left_out = ("scenario", "slow") if args.fast else ("slow",)
+        modules = [m for m in modules if tiers.tier_of(m) not in left_out]
     started = time.time()
-    results = run(modules, args.jobs)
+    results = run(modules, args.jobs, args.accept_fewer)
+    flaky = []
+    if not args.no_retry and any(not r[1] for r in results):
+        results, flaky = rerun_alone(results, args.accept_fewer)
     failed = [r for r in results if not r[1]]
     report = []
+    for module, first in flaky:
+        report.append("\n" + "=" * 70 + "\nflaky: passed alone: " + module + "\n" + "=" * 70)
+        report.append(first.rstrip())
     for module, _passed, _ran, _seconds, output in sorted(failed):
         report.append("\n" + "=" * 70 + "\n" + module + "\n" + "=" * 70)
         report.append(output.rstrip())
     report.append("\n%d file(s), %d test(s), %d file(s) failed, in %.0fs with %d processes" % (
         len(results), sum(r[2] for r in results), len(failed), time.time() - started, args.jobs))
+    report.append("Tiers run (tests/tiers.py)%s:" % (", without " + " and ".join(left_out) if left_out else ""))
+    report.extend(tier_lines(results, args.jobs))
+    report.append("Owners run (tests/owners.py):")
+    report.extend(owner_lines(results))
+    if node:
+        report.append("Page tests of %s (run beside this): %s" % (chosen, node))
+    for module, _first in flaky:
+        report.append("flaky: passed alone: %s (failed in the pool; its first output is above and in the log)" % module)
     print("\n".join(report))
-    if failed:
+    if failed or flaky:
         kept = keep_failed_run("\n".join(report) + "\n")
         if kept:
             print("This run's failures are kept in %s" % kept)

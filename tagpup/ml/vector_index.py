@@ -1,7 +1,8 @@
 """Nearest neighbours among the photos' CLIP embeddings, in memory, by cosine similarity.
 
 Built from the vectors and the items they belong to, which the caller reads from the
-library; this module never sees the database. On a GPU when FAISS has one.
+library; this module never sees the database. Always on the CPU: a flat search of the library's
+vectors takes ten milliseconds, and the graphics card has one owner (tagpup.ml.gpu).
 """
 import logging
 
@@ -17,19 +18,6 @@ logger = logging.getLogger(__name__)
 SEARCH_THREADS = 1
 
 
-def _flat_index(dim):
-    """A flat inner-product index: on the GPU when there is one, else on the CPU."""
-    if hasattr(faiss, "get_num_gpus"):
-        try:
-            if faiss.get_num_gpus() > 0:
-                index = faiss.index_cpu_to_gpu(faiss.StandardGpuResources(), 0, faiss.IndexFlatIP(dim))
-                logger.info("Initialized GPU-accelerated FAISS index.")
-                return index
-        except Exception as e:
-            logger.warning("Failed to initialize GPU FAISS index: %s. Falling back to CPU index.", e)
-    return faiss.IndexFlatIP(dim)
-
-
 class VectorIndex:
     """`items[i]` is what `vectors[i]` belongs to; `search` returns the items nearest a
     query. Vectors are scaled to unit length, so the inner product is the cosine."""
@@ -39,7 +27,7 @@ class VectorIndex:
         norms = np.linalg.norm(matrix, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         self.items = list(items)
-        self._index = _flat_index(matrix.shape[1])
+        self._index = faiss.IndexFlatIP(matrix.shape[1])
         self._index.add(matrix / norms)
 
     @property

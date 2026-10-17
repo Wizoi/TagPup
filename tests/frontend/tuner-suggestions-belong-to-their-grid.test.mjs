@@ -9,7 +9,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, click, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, click, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 function face(id, suggestion) {
   return {
@@ -41,7 +41,7 @@ describe("suggestions belong to the grid they were drawn with", () => {
       .on("/api/unmatched-faces/person-matches", (url) =>
         decodeURIComponent(url).includes("Kira Bao") ? grid([face(1, null)]) : grid([face(1, "Rory Olwen")]))
       .on("/api/people-with-counts", [])
-      .on("/api/people", ["Rory Olwen", "Kira Bao"]);
+      .on(PEOPLE_ROUTE, [{ id: 21, name: "Rory Olwen", tag: "People/Rory Olwen" }, { id: 22, name: "Kira Bao", tag: "People/Kira Bao" }]);
     const { window, document } = await loadApp("tagtuner", {
       t, server,
       url: "http://localhost:8080/kr-track/?mode=unmatched-faces&person=Unknown%20Faces",

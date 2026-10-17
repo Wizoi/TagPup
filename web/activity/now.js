@@ -1,6 +1,6 @@
 // Now: what runs this moment -- each library's indexing (the folders being indexed and how
 // far, those waiting), its Suggest runs and a recurring job running, the folder watcher's
-// sync, and the always-on process (an update waiting, the server draining, an update
+// sync, and the server (an update waiting, the server draining, an update
 // refused). Asked every few seconds while the page is in view (/api/activity/now).
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
@@ -17,6 +17,34 @@ export function loadNow() {
         const stamp = document.getElementById('updated');
         if (stamp) stamp.textContent = data.at ? `Updated ${data.at.slice(11)}` : '';
         return data;
+    });
+}
+
+/** Stop a batch of photo files of this server at its chunk (or never start it, if it waits). */
+function cancelBatch(library, batch) {
+    return api.site.json('/api/activity/batches/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ library: library.name, ticket: batch.ticket }),
+    }).then(() => loadNow());
+}
+
+/** A batch of photo files, running or waiting: how far, and Cancel when this server runs it. */
+function batchLines(library) {
+    return (library.batches || []).map(batch => {
+        const detail = batch.state === 'queued'
+            ? `${batch.photos} photos, ${batch.position} ahead; a restart drops it before anything is written`
+            : `${batch.done} of ${batch.photos} photos written${batch.conflict ? `, ${batch.conflict} changed outside` : ''}`
+              + `${batch.state === 'stopping' ? ', stopping after this chunk' : ''}${batch.here ? '' : ' (another program runs it)'}`;
+        const button = batch.ticket === null ? null : buildElement('button', {
+            className: 'btn cancel-batch', text: 'Cancel', attrs: { type: 'button', disabled: batch.state === 'stopping' } });
+        if (button) button.addEventListener('click', () => { if (!button.disabled) { button.disabled = true; cancelBatch(library, batch); } });
+        return buildElement('div', { className: 'activity' }, [
+            badge(batch.state, batch.state === 'queued' ? 'quiet' : 'busy'),
+            buildElement('span', { className: 'what', text: batch.operation }),
+            buildElement('span', { className: 'detail', text: detail }),
+            button,
+        ]);
     });
 }
 
@@ -61,36 +89,17 @@ function indexingLines(library) {
             ...runLinks(job.run, job.logs),
         ]));
     }
+    lines.push(...batchLines(library));
     return lines;
 }
 
 function serverLines(data) {
     const lines = [];
     const server = data.server || {};
-    const supervisor = data.supervisor;
     if (server.taking_work === false) {
         lines.push(buildElement('div', { className: 'activity' }, [
             badge('draining', 'busy'),
             buildElement('span', { className: 'detail', text: 'The server takes no new work while it moves onto a new version.' }),
-        ]));
-    }
-    if (supervisor && supervisor.state === 'moving') {
-        lines.push(buildElement('div', { className: 'activity' }, [
-            badge('update waiting', 'busy'),
-            buildElement('span', { className: 'detail',
-                                   text: `Moving ${supervisor.why || 'to a new version'} at the next quiet moment` }),
-        ]));
-    }
-    if (supervisor && supervisor.update_refused) {
-        lines.push(buildElement('div', { className: 'activity' }, [
-            badge('update refused', 'bad'),
-            buildElement('span', { className: 'detail', text: supervisor.update_refused.said || '' }),
-        ]));
-    }
-    if (supervisor && ['gave up', 'restarting', 'waiting for the ports'].includes(supervisor.state)) {
-        lines.push(buildElement('div', { className: 'activity' }, [
-            badge(supervisor.state, 'bad'),
-            buildElement('span', { className: 'detail', text: supervisor.why || '' }),
         ]));
     }
     if (data.syncing) {

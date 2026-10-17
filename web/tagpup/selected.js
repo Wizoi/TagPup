@@ -23,12 +23,10 @@ import { state } from './state.js';
 
 /** A bulk write over more photos than this names itself and asks first (selection.js). */
 export const BULK_CONFIRM_ABOVE = 200;
-/** The most photos one bulk write may name: the server refuses more (tagpup.web.tagpup_routes.BULK_LIMIT). */
+/** The most photos one bulk write may name: the server refuses more (tagpup.services.batches.MAX_BATCH). */
 export const BULK_LIMIT = 5000;
 /** The most ids, or excluded ids, a request may list (tagpup.services.selection.MAX_LISTED). */
 export const LIST_LIMIT = 20000;
-/** The most photos one bulk edit may hold, however they are named (tagpup.services.selection.MAX_SELECTED). */
-export const JOB_LIMIT = 200000;
 
 /** Is this photo selected? O(1), whatever its spelling of the path. */
 export function isSelected(path) {
@@ -219,8 +217,8 @@ function planRequest({ job = true } = {}) {
     if (!lib) return { how: null, sentence: 'No library view is open.' };
     const count = selectionCount();
     if (count <= 0) return { how: null, sentence: '' };
-    if (job && count > JOB_LIMIT) {
-        return { how: null, sentence: `${count.toLocaleString()} photos are selected; a bulk edit takes at most ${JOB_LIMIT.toLocaleString()}. Narrow the selection.` };
+    if (job && count > BULK_LIMIT) {
+        return { how: null, sentence: `Select up to ${BULK_LIMIT.toLocaleString()} photos at a time (${count.toLocaleString()} are selected).` };
     }
     const sel = lib.sel;
     // The other way round is exact only when the page holds the whole order.
@@ -235,7 +233,7 @@ function planRequest({ job = true } = {}) {
     return { how: null, sentence: tooScattered(count, sel.excluded.size) };
 }
 
-/** The selection as the tally's request names it: as selectionRequest, but a tally is not limited to what a job takes. */
+/** The selection as the tally's request names it: as selectionRequest, but a tally is not limited to what an edit takes. */
 export function tallyRequest() {
     return selectionRequest({ job: false });
 }

@@ -13,7 +13,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, APPS, loadApp, FakeServer, photoRecord, flush, openFolder, click, closeAllApps } from "./harness.mjs";
+import { REPO_ROOT, APPS, loadApp, FakeServer, photoRecord, flush, openFolder, click, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -48,7 +48,7 @@ async function tagpup(t, server = new FakeServer()) {
     .on("/api/apps", APP_URLS)
     .on("/api/taxonomy/tree", TREE)
     .on("/api/tags", ["Activity"])
-    .on("/api/people", ["Hazel Brookmire"])
+    .on(PEOPLE_ROUTE, peopleRecordsOf(TREE))
     .on("/api/databases", { databases: [LIBRARY] })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
@@ -66,7 +66,7 @@ async function tuner(t, server = new FakeServer()) {
     .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
     .on("/api/databases", { databases: [LIBRARY] })
     .on("/api/people-with-counts", [])
-    .on("/api/people", ["Hazel Brookmire"])
+    .on(PEOPLE_ROUTE, peopleRecordsOf(TREE))
     .on("/api/photos", []);
   const ctx = await loadApp("tagtuner", { t, url: `http://localhost:8080/${LIBRARY}/`, server });
   await flush(ctx.window, 6);
@@ -250,7 +250,7 @@ describe("TagTuner's gear", () => {
     assert.ok(button.closest(".app-header"), "the gear is not in the header");
     click(window, button);
     await flush(window);
-    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "History...", "Folders to review...", "Roots...", "Activity...", "Open in TagPup"]);
+    assert.deepEqual(items(menu).map((i) => i.textContent.trim()), ["Tag editor", "Library settings", "History...", "Name faces from tags...", "Folders to review...", "Roots...", "Activity...", "Open in TagPup"]);
     const settings = menu.querySelector('[data-action="library-settings"]');
     assert.equal(settings.getAttribute("aria-disabled"), null, "Library settings is still disabled");
     click(window, settings);

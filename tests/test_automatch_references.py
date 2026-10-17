@@ -20,7 +20,7 @@ from face_rows import add_face  # noqa: E402
 from tagpup.jobs import identify as identify_jobs  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.services import identify  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 
 
@@ -36,6 +36,12 @@ class Case(unittest.TestCase):
     def setUp(self):
         self.lib = TempLibrary(self)
         self.cache = identify_jobs.GridCache()
+
+        def people(conn):   # the tree the people are filed in: a face is named by the node it files
+            taxonomy.add_path(conn, "People", root_has_face=1)
+            for name in ("Wren Halloway", "Ada Pembrook"):
+                taxonomy.add_path(conn, "People/" + name)
+        db.write_with_connection(self.lib.library.path, people)
 
     def photo(self, name, keywords=()):
         path = self.lib.photo(name)
@@ -64,7 +70,8 @@ class Case(unittest.TestCase):
         return faces.automatch_photo(self.lib.library, photo, self.matrix())
 
     def references(self):
-        return identify_jobs.decided_faces(self.lib.library, self.cache)[1]
+        """The names of the people of the decided faces (the matrix holds each as a Ref, the node's id and the name)."""
+        return [person.name for person in identify_jobs.decided_faces(self.lib.library, self.cache)[1]]
 
 
 class WhatIsAReference(Case):
@@ -107,8 +114,8 @@ class WhatIsAReference(Case):
 
     def test_the_matrix_the_other_screens_use_still_holds_every_named_face(self):
         self.face(self.photo("a.jpg"), at(0), name="Wren Halloway")
-        _stamp, (_ids, names, _matrix) = identify.named_faces(self.lib.library)
-        self.assertEqual(names, ["Wren Halloway"])
+        _stamp, (_ids, people, _matrix) = identify.named_faces(self.lib.library)
+        self.assertEqual([each.name for each in people], ["Wren Halloway"])
 
 
 class TheMatrixFollowsTheKeywords(Case):

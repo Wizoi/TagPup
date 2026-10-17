@@ -1,5 +1,5 @@
 /**
- * The always-on process moves onto a new version between requests (docs/ARCHITECTURE.md,
+ * The server moves onto a new version between requests (docs/ARCHITECTURE.md,
  * phase 8, "Updating itself"; tagpup.web.lifecycle). While it drains, a request is
  * answered 503 with X-TagPup-Updating and nothing done with it; then, while the server
  * restarts, nothing answers. A page waits that out and sends the request again
@@ -109,7 +109,7 @@ describe("the gear says which version answers", () => {
 
   test("below the items, and not one of them", async (t) => {
     const server = new FakeServer()
-      .on("/api/server", { version: "20260926-101500-dc32868", supervised: true, taking_work: true })
+      .on("/api/server", { version: "20260926-101500-dc32868", taking_work: true })
       .on("/api/databases", { databases: ["kr-track"] })
       .on("/api/folder/suggest-status", { status: "idle" })
       .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" });

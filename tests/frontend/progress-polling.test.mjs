@@ -132,8 +132,8 @@ describe("suggestion progress polling", () => {
     assert.equal(ctx.server.statusCalls, settled, "poller kept running after an error");
     assert.match(
       ctx.document.getElementById("status-text").textContent,
-      /error/i,
-      "the user was not told the job failed"
+      /boom/,
+      "the user was not told why the job failed"
     );
   });
 

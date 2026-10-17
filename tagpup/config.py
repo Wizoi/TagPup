@@ -1,9 +1,8 @@
-"""Where TagPup's libraries are, which ExifTool the machine has, and -- once, for each
-library that has no settings of its own yet -- what the old config.ini said.
+"""Where TagPup's libraries are and which ExifTool the machine has.
 
 config.ini was read in 26 places, each with its own idea of where the file is and what
-a missing value means, and then by this module alone. Its settings are each library's
-now (tagpup.services.settings; docs/ARCHITECTURE.md, phase 7.6): the CLIP model a
+a missing value means, and then by this module alone. Now nothing reads it; an old file
+may sit in a home, ignored. Its settings are each library's (tagpup.services.settings; docs/ARCHITECTURE.md, phase 7.6): the CLIP model a
 library's vectors were made with, the face thresholds, Suggest's words, the rename
 format and the ExifTool it names. What is left here is the machine's:
 
@@ -15,15 +14,12 @@ format and the ExifTool it names. What is left here is the machine's:
   A library may name another.
 - Which folder on this machine holds each root of the libraries (machine_roots.json in the
   home; docs/ARCHITECTURE.md, "Roots and machines"). Absent means nothing is mapped.
+- `own_home_environment`, what makes a folder a home of its own -- a test's
+  (tests/own_home.py) or a measurement's sandbox (scripts/sandbox.py): TAGPUP_HOME, and the
+  folders of the user's own a process reads or writes beside the home, each moved into it.
 - `code_version`, the installed version the code is (scripts/install_app.py writes its
   name beside it), or None for a checkout: what the pages say answers them.
-- `config_ini`, what a home's config.ini says, which tagpup.runtime hands to the
-  one-time stamping of a library holding no settings (tagpup.services.settings.of), so
-  a library in use keeps the settings it was made with. Nothing else reads the file
-  (tests/test_config_single_owner.py); once every library has been stamped it is unused,
-  and can be deleted.
 """
-import configparser
 import contextlib
 import json
 import os
@@ -51,6 +47,30 @@ def home():
 def data_dir():
     """The folder the libraries are in: data/ in the home."""
     return os.path.join(home(), DATA)
+
+
+def own_home_environment(root):
+    """The environment variables that make `root` a home of its own: TAGPUP_HOME, and each
+    folder of the user's own that a TagPup process reads or writes beside its home, moved
+    into `root`, so that nothing run in it touches the owner's (docs/findings.md, #796):
+
+    - TAGPUP_SERVERS, the records of where each server answers (tagpup.launcher): the
+      owner's, in %LOCALAPPDATA%\\TagPup\\servers, are what a launch or an install hands
+      over; a sandbox's server wrote its own among them and left them there.
+    - TAGPUP_GPU_LOCK, the turns on the graphics card (tagpup.ml.gpu): a test never waits
+      for the owner's index, nor holds it up. A sandbox that loads models takes it out
+      again (scripts/sandbox.py, #810) and shares the owner's line.
+    - TAGPUP_DOWNLOADS, the folder a delete from a share is copied through, and
+      TAGPUP_RECYCLE_BIN, the Recycle Bin's size and settings: a large empty Bin's
+      (tagpup.files.recycle_bin), so nothing reads or fills the owner's.
+
+    Both tests/own_home.py and scripts/sandbox.py use this, so a folder added to the one
+    is the other's too."""
+    return {"TAGPUP_HOME": root,
+            "TAGPUP_SERVERS": os.path.join(root, "servers"),
+            "TAGPUP_GPU_LOCK": os.path.join(root, "gpu"),
+            "TAGPUP_DOWNLOADS": os.path.join(root, "Downloads"),
+            "TAGPUP_RECYCLE_BIN": "1000000,0,0"}
 
 
 def code_version(code_root=None):
@@ -87,37 +107,6 @@ def exiftool_path(named=""):
     if os.path.exists(path):
         return path
     return shutil.which("exiftool") or path
-
-
-def _same_file(a, b):
-    """Are `a` and `b` one program on this machine? Asked of the file system, not the
-    spelling (tagpup.core.paths spells photo paths; this is neither)."""
-    try:
-        return os.path.samefile(a, b)
-    except OSError:
-        return False
-
-
-def config_ini(folder=None):
-    """What the config.ini of this home (or of `folder`) says, as {"section.key": value},
-    or None when there is none: for stamping a library that holds no settings yet, and
-    for nothing else.
-
-    An ExifTool it names that is the one the installer put where it puts it is given as
-    "" -- found on each machine, rather than this machine's profile folder written into
-    the library.
-    """
-    path = os.path.join(folder or home(), "config.ini")
-    if not os.path.exists(path):
-        return None
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read(path, encoding="utf-8")
-    found = {"%s.%s" % (section, key): value for section in parser.sections()
-             for key, value in parser.items(section)}
-    exiftool = found.get("paths.exiftool", "").strip()
-    if exiftool and _same_file(os.path.expandvars(exiftool), default_exiftool()):
-        found["paths.exiftool"] = ""
-    return found
 
 
 #: The file in a home that says where this machine keeps each root of the libraries.
@@ -398,7 +387,7 @@ def _write_map(merged, path):
 def set_location(name, new_location, path=None, expected=None, must_exist=True):
     """Move root `name` on this machine to `new_location`: the new place first -- where a path is
     put from now on -- and the old places kept after it, so that every path stays recognised and
-    `change_back` is the reverse. Returns {"changed", "places", "previous"} (the places listed
+    Returns {"changed", "places", "previous"} (the places listed
     after and before, native); `changed` False, nothing written, when the root is at
     `new_location` already (a second click, a second tab that came after the first).
 
@@ -435,33 +424,6 @@ def set_location(name, new_location, path=None, expected=None, must_exist=True):
         merged[folded] = places
         _write_map(merged, path)
         return {"changed": True, "places": places, "previous": before}
-
-
-def change_back(name, path=None, expected=None):
-    """Put root `name` back at the place it was before the last `set_location`: the first two
-    places swap. Returns what set_location does. Refused, nothing written, for a root with only
-    one place, and for the map having changed since the caller looked (`expected`: the first
-    place it saw). The disk is the caller's to ask (it may be away)."""
-    path = path or machine_roots_path()
-    folded = paths.root_name(name)
-    with _edit_lock(path):
-        held = _parse(_read_whole(path), path)
-        before = list(held.get(folded, ()))
-        if len(before) < 2:
-            raise MachineMapError("%s has no previous place on this machine to go back to" % folded)
-        if expected is not None and paths.key(before[0]) != paths.key(expected):
-            raise MachineMapError("The map has changed since you looked: %s is now at %s, not %s. Nothing was changed."
-                                  % (folded, before[0], expected))
-        places = [before[1], before[0]]
-        merged = {each: list(listed) for each, listed in held.items()}
-        merged[folded] = places
-        _write_map(merged, path)
-        return {"changed": True, "places": places, "previous": before}
-
-
-def describe_machine(library_roots, path=None):
-    """Each of a library's roots with where this machine keeps it, for TagTuner's gear."""
-    return roots_of(library_roots, path).describe()
 
 
 def propose_row(native_path, library_roots, path=None):

@@ -29,8 +29,6 @@ export const NAV_MAX_ROWS = 1500;
  */
 export const NAV_MAX_LIST_ROWS = 5000;
 
-/** Years outside this range (to the current year + 1) are grouped as 'Other years': scanned dates gone wrong. */
-export const NAV_FIRST_YEAR = 1970;
 
 const NAV_MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
     'October', 'November', 'December'];
@@ -132,7 +130,6 @@ export const UNFILED_ID = 'g:';
  */
 export function indexPeople(list, groups = [], unfiled = 0) {
     const people = [];
-    const byLower = new Map();
     const byTag = new Map();
     for (const each of Array.isArray(groups) ? groups : []) {
         if (!each || typeof each.tag !== 'string' || byTag.has(each.tag)) continue;
@@ -143,10 +140,19 @@ export function indexPeople(list, groups = [], unfiled = 0) {
     }
     for (const each of Array.isArray(list) ? list : []) {
         if (!each || typeof each.name !== 'string') continue;
-        people.push({ id: `p:${each.name}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [] });
+        // A person is the id of their node (two people called alike are two rows): the route sends every row with one
+        // (tagpup.services.library_view.navigator). `tag` is the person's path.
+        const record = each.person && typeof each.person === 'object' ? each.person : {};
+        people.push({
+            id: `p:${each.person_id}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [],
+            personId: each.person_id, tag: typeof record.tag === 'string' ? record.tag : null,
+        });
     }
-    people.sort((a, b) => compareTagNames(a.name, b.name));
-    for (const person of people) if (!byLower.has(person.name.toLowerCase())) byLower.set(person.name.toLowerCase(), person);
+    people.sort((a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag || '', b.tag || ''));
+    const byPersonTag = new Map();
+    for (const person of people) {
+        if (person.tag) byPersonTag.set(person.tag.toLowerCase(), person);
+    }
     const alphabetical = (a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag, b.tag);
     const tops = [];
     for (const group of [...byTag.values()].sort(alphabetical)) {
@@ -168,16 +174,23 @@ export function indexPeople(list, groups = [], unfiled = 0) {
             unfiled: true, subgroups: [], people: loose, children: loose,
         });
     }
-    return { people, byLower, groups: byTag, tops: grouped ? tops : loose, grouped, size: people.length };
+    return { people, byPersonTag, groups: byTag, tops: grouped ? tops : loose, grouped, size: people.length };
+}
+
+/** What a view or a chip of this person asks for: their tag path, which names exactly them (the library's views read a person by
+ *  the id of their node; the leaf is never identity). */
+export function personSource(person) {
+    return person.tag;
 }
 
 function navPersonRow(person, level = 1) {
+    const shown = person.name;
     return {
-        id: person.id, level, label: person.name, count: person.count,
-        title: `${person.name}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
-        aria: `${person.name}, ${navPlural(person.count, 'photo', 'photos')}`,
+        id: person.id, level, label: shown, count: person.count,
+        title: `${person.tag}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
+        aria: `${shown}, ${navPlural(person.count, 'photo', 'photos')}`,
         hint: '', expandable: false, expanded: false,
-        spec: { kind: 'person', value: person.name, recursive: false },
+        spec: { kind: 'person', value: personSource(person), recursive: false },
     };
 }
 
@@ -210,10 +223,11 @@ export function peopleGroupIds(index) {
 
 /**
  * The years of the route's { years: [{ year, count, months: [{ month, count }], other }], undated }: newest
- * first, and those outside NAV_FIRST_YEAR .. `thisYear` + 1 apart, as 'Other years' (a date a camera's clock got
- * wrong, or a scan's): still reachable, collapsed, at the end.
+ * first, and those the route calls `implausible` (before 1900 or after next year: a date a camera's clock got wrong, or a
+ * number in a file name) apart, as 'Other years': still reachable, collapsed, at the end. The rule is the server's
+ * (tagpup.store.library_view.plausible_year); the page shows what it is told (#510).
  */
-export function indexDates(data, thisYear = new Date().getFullYear()) {
+export function indexDates(data) {
     const years = [];
     for (const each of data && Array.isArray(data.years) ? data.years : []) {
         if (!each || !Number.isFinite(each.year)) continue;
@@ -221,11 +235,12 @@ export function indexDates(data, thisYear = new Date().getFullYear()) {
             .filter(m => m && typeof m.month === 'string' && /^\d{4}-\d{2}$/.test(m.month))
             .map(m => ({ month: m.month, number: Number(m.month.slice(5)), count: Number(m.count) || 0 }))
             .sort((a, b) => a.number - b.number);
-        years.push({ year: each.year, count: Number(each.count) || 0, other: Number(each.other) || 0, months });
+        years.push({ year: each.year, count: Number(each.count) || 0, other: Number(each.other) || 0, months,
+            implausible: each.implausible === true });
     }
     years.sort((a, b) => b.year - a.year);
-    const usual = years.filter(each => each.year >= NAV_FIRST_YEAR && each.year <= thisYear + 1);
-    const odd = years.filter(each => !usual.includes(each));
+    const usual = years.filter(each => !each.implausible);
+    const odd = years.filter(each => each.implausible);
     const byYear = new Map(years.map(each => [each.year, each]));
     return {
         usual, odd, byYear, size: years.length,
@@ -301,7 +316,8 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
     const out = [];
     if (section === 'people') {
         if (!needle) {
-            navWalk(index.tops, 1, expanded, navPeopleRow, out);
+            // In a tree the branch above a person says which; in a flat list the row does.
+            navWalk(index.tops, 1, expanded, (node, depth, open) => navPeopleRow(node, depth, open), out);
             return navCapped(out, index.grouped ? treeCap : cap, out.length);
         }
         for (const group of index.groups.values()) {
@@ -313,7 +329,7 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
         }
         for (const person of index.people) {
             if (!navMatches(person.name, needle)) continue;
-            const row = navPersonRow(person);
+            const row = navPersonRow(person, 1);
             row.hint = person.groupTag || '';
             out.push(row);
         }
@@ -377,7 +393,7 @@ function navDateRows(index, expanded, needle, cap) {
         const open = expanded.has(OTHER_YEARS_ID);
         out.push({
             id: OTHER_YEARS_ID, level: 1, label: `Other years (${index.odd.length.toLocaleString()})`, count: index.oddPhotos,
-            title: `Years before ${NAV_FIRST_YEAR} or after next year, from dates that are probably wrong`,
+            title: 'Years that are probably not when a photo was taken: a camera clock gone wrong, or a number in a file name',
             aria: `Other years, ${navPlural(index.odd.length, 'year', 'years')}, ${navPlural(index.oddPhotos, 'photo', 'photos')}`,
             hint: '', expandable: true, expanded: open, spec: null,
         });
@@ -426,7 +442,8 @@ export function locate(section, index, spec) {
         return { id, open };
     }
     if (section === 'people' && spec.kind === 'person') {
-        const person = index.byLower.get(String(spec.value).toLowerCase());
+        const wanted = String(spec.value).toLowerCase();
+        const person = index.byPersonTag && index.byPersonTag.get(wanted);   // by the person's tag: the leaf is never identity
         if (!person) return null;
         const open = [];
         for (let tag = person.groupTag; tag && index.groups && index.groups.has(tag) && open.length < 64; tag = index.groups.get(tag).parentTag) {
@@ -525,7 +542,7 @@ export function rowTree(section, index) {
                 add(node.id, node.children.map(c => c.id), null, null);
                 node.children.forEach(visit);
             } else {
-                const spec = { kind: 'person', value: node.name, recursive: false };
+                const spec = { kind: 'person', value: personSource(node), recursive: false };
                 add(node.id, [], spec, spec);
             }
         };

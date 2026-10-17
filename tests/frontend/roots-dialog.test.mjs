@@ -1,14 +1,14 @@
 /**
  * TagTuner's Roots, from the gear (web/tuner/roots.js; docs/ARCHITECTURE.md, "Roots and machines").
  *
- * A row for each root of the library with where this computer keeps it, which place writes go to,
- * and the last check; Verify (a sample, answered at once; "all" a job whose progress is followed
- * and can be cancelled); Change location (a place named or browsed to, checked first, then
- * confirmed -- once); Change back. Plain sentences for each refusal. And a library whose root this
+ * A row for each root of the library with where this computer keeps it and which place writes go to;
+ * Change location (a place named or browsed to, checked first, then confirmed -- once). Plain
+ * sentences for each refusal. The Verify buttons and Change back are gone (2026-10-11). And a library whose root this
  * computer does not place shows a banner, from any request the server answers 409 for that reason.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
 import { OPEN_DIALOG } from "../../web/common/dialog.js";
 
@@ -20,8 +20,8 @@ const NEW = "//idziserver/Pictures/Pictures";
 const SHARE = "\\\\idziserver\\Pictures\\Pictures";
 
 const VERIFY = {
-  root: "pictures", location: OLD, mode: "sample", reachable: true, state: "ok", message: "", rows: 68466,
-  checked: 2000, matches: 1998, differs: 2, missing: 0, unreadable: 0, folders: 412, not_in_library: null,
+  root: "pictures", location: OLD, reachable: true, state: "ok", message: "", rows: 68466,
+  checked: 2000, matches: 1998, differs: 2, missing: 0, unreadable: 0, folders: 412,
   outside_rows: 0, outside: [], native_inside: 0, poor: false, poor_why: [],
   summary: "Looked at a sample of 2000 of 68466 rows covering 412 folder(s): 1998 match, 2 differ (changed since indexed; sync settles them), 0 are missing.",
 };
@@ -30,13 +30,13 @@ function entry(overrides = {}) {
   return {
     name: "pictures", address: SHARE, added: "2026-10-02 09:00:00", places: [OLD], active: OLD, previous: null,
     writes_to: `Tags and renames are written to files at ${OLD}.`, mapped: true, rows: 68466,
-    last_verify: null, verifying: null, ...overrides,
+    // The server's own field: where files are written, the first place of the map, which is the active one.
+    writes_to_place: overrides.active === undefined ? OLD : overrides.active, ...overrides,
   };
 }
 
 function listing(roots, extra = {}) {
-  return { library: LIBRARY, map: "C:/TagPup/machine_roots.json", problem: null, busy: [], poll_ms: 10,
-           adopt_hint: 'TagPup CLI.cmd --db <library> roots adopt --name pictures --address "..." --location "..."',
+  return { library: LIBRARY, map: "C:/TagPup/machine_roots.json", problem: null, busy: [],
            roots, ...extra };
 }
 
@@ -68,7 +68,6 @@ async function openFromGear(ctx) {
 }
 
 const text = (element) => element.textContent.replace(/\s+/g, " ").trim();
-const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 describe("the Roots dialog", () => {
   test("the gear opens it, and a root says where it is kept and where writes go", async (t) => {
@@ -81,26 +80,61 @@ describe("the Roots dialog", () => {
     assert.match(text(row.querySelector(".roots-rows")), /68,466 photos/);
     assert.equal(text(row.querySelector(".roots-place")), `Kept at ${OLD}`);
     assert.equal(text(row.querySelector(".roots-writes")), `Tags and renames are written to files at ${OLD}.`);
-    assert.equal(text(row.querySelector(".roots-last")), "Not checked yet.");
-    assert.ok(row.querySelector(".roots-back").disabled, "no earlier place to go back to");
+    assert.equal(row.querySelector(".roots-last"), null, "no Verify, so no last check");
+    assert.equal(row.querySelector(".roots-verify"), null);
+    assert.equal(row.querySelector(".roots-back"), null, "Change back is gone");
   });
 
-  test("it carries one quiet line linking to the Activity page's File access, and asks nothing for it", async (t) => {
+  test("it carries no line about other programs scanning the files, and asks nothing about them", async (t) => {
     const ctx = await tuner(t);
     const dialog = await openFromGear(ctx);
-    const note = dialog.querySelector(".file-access-note");
-    assert.equal(text(note), "Other programs may be scanning these files: see Activity > File access");
-    assert.equal(note.querySelector("a").getAttribute("href"), "/activity/#file-access");
+    assert.equal(dialog.querySelector(".file-access-note"), null);
+    assert.equal(dialog.querySelector('a[href*="file-access"]'), null);
     assert.equal(ctx.server.calls.filter((c) => c.url.includes("file-access")).length, 0);
   });
 
-  test("a root with an earlier place says it is a separate copy, and Change back is there", async (t) => {
+  test("after a Change location the root names its place once, the earlier place stays in the open, the rest is folded (#915)", async (t) => {
+    // The shape the server makes after a move: the new place first, the old kept, writes to the first.
+    const ctx = await tuner(t, { roots: [entry({ places: [NEW, OLD], active: NEW, previous: OLD,
+      writes_to: `Tags and renames are written to files at ${NEW}.` })] });
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    const more = row.querySelector("details.roots-more");
+    assert.ok(more, "where files are written is folded away");
+    assert.equal(more.hasAttribute("open"), false, "closed while the writes go where the root is kept");
+    assert.ok(more.querySelector(".roots-writes"));
+    const previous = row.querySelector(".roots-previous");
+    assert.ok(previous && !previous.closest("details"), "the separate-copy sentence is not folded away");
+    assert.match(text(previous), /separate copy.*Moving again forgets it/);
+    const open = [...row.children].filter((child) => child !== more).map(text).join(" ");
+    assert.equal(open.split(NEW).length - 1, 1, "the place is named once outside the fold");
+    assert.equal(open.includes("Tags and renames"), false);
+  });
+
+  test("the fold compares the server's two places as paths, not as text", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ writes_to_place: "d:\\training\\pictures\\" })] });
+    const more = (await openFromGear(ctx)).querySelector(".roots-root details.roots-more");
+    assert.equal(more.hasAttribute("open"), false, "the same folder in another spelling is the same place");
+  });
+
+  test("the fold opens when the server says files are written elsewhere than the root is kept", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ writes_to_place: NEW,
+      writes_to: `Tags and renames are written to files at ${NEW}.` })] });
+    const more = (await openFromGear(ctx)).querySelector(".roots-root details.roots-more");
+    assert.equal(more.hasAttribute("open"), true);
+    assert.match(text(more.querySelector("summary")), /elsewhere/);
+  });
+
+  test("the dialog gives way on a narrow window", async () => {
+    const css = readFileSync(new URL("../../web/tuner/style.css", import.meta.url), "utf8");
+    assert.match(css, /@media \(max-width: 600px\) \{[^@]*\.roots-title \{ flex-wrap: wrap/);
+  });
+
+  test("a root with an earlier place says it is a separate copy", async (t) => {
     const ctx = await tuner(t, { roots: [entry({ places: [NEW, OLD], active: NEW, previous: OLD,
       writes_to: `Tags and renames are written to files at ${NEW}.` })] });
     const dialog = await openFromGear(ctx);
     const row = dialog.querySelector(".roots-root");
     assert.match(text(row.querySelector(".roots-previous")), new RegExp(`Before that: ${OLD}.*separate copy`));
-    assert.equal(row.querySelector(".roots-back").disabled, false);
   });
 
   test("a root another library uses too says that moving it moves it for them", async (t) => {
@@ -109,36 +143,18 @@ describe("the Roots dialog", () => {
     assert.equal(text(row.querySelector(".roots-shared")), "kr-track also uses this root: moving it moves it for them too.");
   });
 
-  test("the last check is a sentence with its counts", async (t) => {
-    const ctx = await tuner(t, { roots: [entry({ last_verify: { when: "2026-10-02 10:00:00", mode: "sample",
-      checked: 2000, matches: 1998, differs: 2, missing: 0, outcome: "done" } })] });
-    const row = (await openFromGear(ctx)).querySelector(".roots-root");
-    assert.equal(text(row.querySelector(".roots-last")),
-      "Last checked 2026-10-02 10:00:00, a sample of 2,000 rows: 1,998 match, 2 changed since they were indexed, 0 missing.");
-  });
-
-  test("the last check adds up to its sample: never read and unreadable are said too (#488)", async (t) => {
-    const ctx = await tuner(t, { roots: [entry({ last_verify: { when: "2026-10-02 10:00:00", mode: "sample",
-      checked: 2000, matches: 1990, differs: 2, unread: 5, unreadable: 3, missing: 0, outcome: "done" } })] });
-    const row = (await openFromGear(ctx)).querySelector(".roots-root");
-    assert.equal(text(row.querySelector(".roots-last")),
-      "Last checked 2026-10-02 10:00:00, a sample of 2,000 rows: 1,990 match, 2 changed since they were indexed, 0 missing, 5 never read by the index, 3 could not be read.");
-  });
-
-  test("a library with no roots says so, and shows the command", async (t) => {
+  test("a library with no roots says so", async (t) => {
     const ctx = await tuner(t, { roots: [] });
     const dialog = await openFromGear(ctx);
     assert.equal(text(dialog.querySelector(".roots-empty")),
-      "This library has not adopted a root yet; nothing to change here.");
-    assert.match(text(dialog.querySelector(".roots-command")), /roots adopt/);
+      "This library has no roots; nothing to change here.");
     assert.equal(dialog.querySelectorAll(".roots-root").length, 0);
   });
 
-  test("a root this computer does not place offers Change location and no Verify", async (t) => {
+  test("a root this computer does not place offers Change location", async (t) => {
     const ctx = await tuner(t, { roots: [entry({ places: [], active: null, mapped: false, writes_to: null, rows: null })] });
     const row = (await openFromGear(ctx)).querySelector(".roots-root");
     assert.match(text(row.querySelector(".roots-place")), /does not place this root yet/);
-    assert.ok(row.querySelector(".roots-verify").disabled);
     assert.equal(row.querySelector(".roots-move").disabled, false);
   });
 
@@ -154,142 +170,6 @@ describe("the Roots dialog", () => {
     const dialog = await openFromGear(ctx);
     ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     assert.ok(dialog.classList.contains("hidden"));
-  });
-});
-
-describe("Verify", () => {
-  test("a sample is asked for and its summary shown", async (t) => {
-    const ctx = await tuner(t);
-    ctx.server.first("/api/roots/verify", { success: true, started: false, verify: VERIFY });
-    const dialog = await openFromGear(ctx);
-    click(ctx.window, dialog.querySelector(".roots-verify"));
-    await flush(ctx.window, 6);
-    assert.deepEqual(ctx.posted("/api/roots/verify"), [{ root: "pictures" }]);
-    assert.match(text(dialog.querySelector(".roots-result")), /a sample of 2000 of 68466 rows.*1998 match/);
-  });
-
-  test("a place that cannot be reached is said as that, not as missing rows", async (t) => {
-    const ctx = await tuner(t);
-    const away = { ...VERIFY, reachable: false, state: "away", checked: 0, matches: 0, poor: true,
-      message: "This location cannot be reached: D:/x did not answer within 15 seconds, so nothing is counted as missing. Try again when it is back.",
-      poor_why: ["This location cannot be reached: D:/x did not answer within 15 seconds, so nothing is counted as missing. Try again when it is back."],
-      summary: "This location cannot be reached: D:/x did not answer within 15 seconds, so nothing is counted as missing. Try again when it is back." };
-    ctx.server.first("/api/roots/verify", { success: true, started: false, verify: away });
-    const dialog = await openFromGear(ctx);
-    click(ctx.window, dialog.querySelector(".roots-verify"));
-    await flush(ctx.window, 6);
-    const shown = text(dialog.querySelector(".roots-result"));
-    assert.match(shown, /cannot be reached/);
-    assert.doesNotMatch(shown, /are missing\./);
-  });
-
-  test("a refusal from the server is shown as its sentence", async (t) => {
-    const ctx = await tuner(t);
-    ctx.server.first("/api/roots/verify", { success: false, error: "A verify of pictures is under way already; wait for it, or cancel it." }, { status: 409 });
-    const dialog = await openFromGear(ctx);
-    click(ctx.window, dialog.querySelector(".roots-verify"));
-    await flush(ctx.window, 6);
-    assert.match(text(dialog.querySelector(".roots-result")), /under way already/);
-  });
-
-  test("all rows is a job: progress is followed, and the result is shown when it ends", async (t) => {
-    const ctx = await tuner(t);
-    let polls = 0;
-    let finished = false;
-    ctx.server.routes.length = 0;
-    ctx.server
-      .on("/api/roots/verify", { success: true, started: true,
-        status: { root: "pictures", state: "running", checked: 0, rows: 68466, folders: 0, cancelling: false } })
-      .on("/api/roots", () => {
-        polls += 1;
-        const running = !finished;
-        return listing([entry({ verifying: running
-          ? { root: "pictures", state: "running", checked: polls * 20000, rows: 68466, folders: polls * 100, cancelling: false }
-          : { root: "pictures", state: "done", checked: 68466, rows: 68466, folders: 411, result: { ...VERIFY, mode: "all",
-            checked: 68466, matches: 68466, differs: 0, not_in_library: 3,
-            summary: "Looked at 68466 of 68466 rows: 68466 match, 0 differ, 0 are missing. 3 photo(s) at the location have no row." } } })]);
-      });
-    const dialog = await openFromGear(ctx);
-    click(ctx.window, dialog.querySelector(".roots-verify-all"));
-    await flush(ctx.window, 4);
-    assert.deepEqual(ctx.posted("/api/roots/verify"), [{ root: "pictures", all: true }]);
-    const progress = dialog.querySelector(".roots-progress");
-    assert.ok(!progress.classList.contains("hidden"));
-    await wait(ctx.window, 60);
-    assert.ok(polls >= 3, "it asked how the run was going, again and again");
-    assert.match(text(progress), /Looking at every row: [\d,]+ of 68,466/);
-    finished = true;
-    for (let i = 0; i < 60 && !progress.classList.contains("hidden"); i++) await wait(ctx.window, 20);
-    assert.ok(progress.classList.contains("hidden"), "the progress went away");
-    assert.match(text(dialog.querySelector(".roots-result")), /68466 match.*3 photo\(s\) at the location have no row/);
-    const settled = polls;
-    await wait(ctx.window, 80);
-    assert.equal(polls, settled, "it asked again after the job ended");
-  });
-
-  test("Cancel asks the server to stop the run", async (t) => {
-    const ctx = await tuner(t, { roots: [entry({ verifying: { root: "pictures", state: "running", checked: 5, rows: 100,
-      folders: 1, cancelling: false } })] });
-    let cancelled = false;
-    ctx.server.first("/api/roots", () => listing([entry({ verifying: { root: "pictures", state: "running", checked: 5,
-      rows: 100, folders: 1, cancelling: cancelled } })]));
-    ctx.server.first("/api/roots/verify-cancel", () => {
-      cancelled = true;
-      return { success: true, cancelled: true };
-    });
-    const dialog = await openFromGear(ctx);
-    assert.ok(!dialog.querySelector(".roots-progress").classList.contains("hidden"), "a run begun before is shown");
-    click(ctx.window, dialog.querySelector(".roots-cancel-verify"));
-    await flush(ctx.window, 4);
-    assert.deepEqual(ctx.posted("/api/roots/verify-cancel"), [{ root: "pictures" }]);
-    assert.match(text(dialog.querySelector(".roots-progress-text")), /stopping/i);
-  });
-
-  test("an answer that arrives after the dialog was closed and opened again is let go", async (t) => {
-    // The library switched, or the dialog reopened, while a poll was in flight: its answer is for the
-    // dialog that asked, and must not put that run's progress in this one.
-    const running = entry({ verifying: { root: "pictures", state: "running", checked: 5, rows: 100, folders: 1, cancelling: false } });
-    const ctx = await tuner(t, { roots: [running] });
-    let release;
-    const late = new Promise((resolve) => { release = resolve; });
-    let slow = false;
-    ctx.server.first("/api/roots", () => (slow ? late : listing([running])));
-    const dialog = await openFromGear(ctx);
-    await wait(ctx.window, 40);
-    slow = true;
-    await wait(ctx.window, 40);              // a poll is now waiting on `late`
-    click(ctx.window, dialog.querySelector(".btn.btn-secondary:not(.btn-sm)"));   // Close
-    slow = false;
-    ctx.server.first("/api/roots", () => listing([entry()]));
-    await openFromGear(ctx);
-    assert.ok(dialog.querySelector(".roots-progress").classList.contains("hidden"));
-    release(listing([running]));
-    await wait(ctx.window, 60);
-    assert.ok(dialog.querySelector(".roots-progress").classList.contains("hidden"), "an old answer drew progress in the new dialog");
-    assert.equal(ctx.consoleErrors.length > 0 ? ctx.consoleErrors.filter((e) => /roots/i.test(String(e))).length : 0, 0);
-  });
-
-  test("a run that is gone when the server restarted is said so, and the progress goes away (#471)", async (t) => {
-    const running = entry({ verifying: { root: "pictures", state: "running", checked: 5, rows: 100, folders: 1, cancelling: false } });
-    const ctx = await tuner(t, { roots: [running] });
-    const dialog = await openFromGear(ctx);
-    assert.ok(!dialog.querySelector(".roots-progress").classList.contains("hidden"));
-    ctx.server.first("/api/roots", () => listing([entry({ verifying: null })]));   // the server restarted: no run in memory
-    for (let i = 0; i < 40 && !dialog.querySelector(".roots-progress").classList.contains("hidden"); i++) await wait(ctx.window, 20);
-    assert.ok(dialog.querySelector(".roots-progress").classList.contains("hidden"), "it kept saying it was looking");
-    assert.match(text(dialog.querySelector(".roots-result")), /The check stopped \(the server restarted\); run it again\./);
-  });
-
-  test("closing the dialog stops asking how the run is going", async (t) => {
-    const ctx = await tuner(t, { roots: [entry({ verifying: { root: "pictures", state: "running", checked: 5, rows: 100,
-      folders: 1, cancelling: false } })] });
-    await openFromGear(ctx);
-    await wait(ctx.window, 60);
-    const before = ctx.server.urls().filter((u) => u.includes("/api/roots")).length;
-    assert.ok(before >= 2, "it was polling while open");
-    click(ctx.window, ctx.document.querySelector("#roots-modal .btn.btn-secondary:not(.btn-sm)"));
-    await wait(ctx.window, 80);
-    assert.equal(ctx.server.urls().filter((u) => u.includes("/api/roots")).length, before);
   });
 });
 
@@ -428,6 +308,20 @@ describe("Change location", () => {
     assert.equal(ctx.posted("/api/roots/change-location").pop().override, true);
   });
 
+  test("a place that is refused is shown with its sentence", async (t) => {
+    const { ctx, dialog, type } = await panelOn(t);
+    const why = "30 of the 40 rows looked at (75%) are not there: this looks like another folder, or another copy.";
+    ctx.server.routes.unshift({ match: "/api/roots/change-location", status: 400, headers: {}, body: () => ({
+      success: false, error: `Not changed: ${why} Say override to change it anyway.`, would_refuse: why,
+      verify: { ...VERIFY, poor: true, poor_why: [why] } }) });
+    type("D:/Other");
+    click(ctx.window, dialog.querySelector(".roots-look"));
+    await flush(ctx.window, 6);
+    const shown = text(dialog.querySelector(".roots-check"));
+    assert.match(shown, /another folder, or another copy/);
+    assert.ok(!dialog.querySelector(".roots-override").classList.contains("hidden"));
+  });
+
   test("a refusal at confirm -- a run under way, the map moved by another tab -- is its sentence, and it can be tried again", async (t) => {
     const { ctx, dialog, type } = await panelOn(t);
     let answers = 0;
@@ -467,42 +361,6 @@ describe("Change location", () => {
     click(ctx.window, dialog.querySelector(".roots-look"));
     await flush(ctx.window, 6);
     assert.match(text(dialog.querySelector(".roots-check")), /already; nothing to change/);
-    assert.ok(dialog.querySelector(".roots-confirm").disabled);
-  });
-});
-
-describe("Change back", () => {
-  const BACK = { success: true, dry_run: true, changed: 0, root: "pictures", location: OLD,
-    verify: { ...VERIFY }, writes_to: `Tags and renames are written to files at ${OLD}.` };
-
-  async function backOn(t, answer) {
-    const roots = [entry({ places: [NEW, OLD], active: NEW, previous: OLD, writes_to: `Tags and renames are written to files at ${NEW}.` })];
-    const ctx = await tuner(t, { roots });
-    ctx.server.routes.unshift({ match: "/api/roots/change-back", status: 200, headers: {}, body: () => {
-      const asked = ctx.server.calls[ctx.server.calls.length - 1].body;
-      return answer(asked);
-    } });
-    const dialog = await openFromGear(ctx);
-    click(ctx.window, dialog.querySelector(".roots-back"));
-    await flush(ctx.window, 6);
-    return { ctx, dialog };
-  }
-
-  test("it checks the earlier place at once, and moves back on the second press", async (t) => {
-    const { ctx, dialog } = await backOn(t, (asked) => asked.dry_run ? BACK
-      : { ...BACK, dry_run: false, changed: 1, message: `moved back root pictures to ${OLD} (was ${NEW})` });
-    assert.deepEqual(ctx.posted("/api/roots/change-back"), [{ root: "pictures", dry_run: true, from: NEW }]);
-    assert.match(text(dialog.querySelector(".roots-check")), new RegExp(`written to files at ${OLD.replace(/[/.]/g, "\\$&")}`));
-    click(ctx.window, dialog.querySelector(".roots-confirm"));
-    await flush(ctx.window, 8);
-    assert.deepEqual(ctx.posted("/api/roots/change-back").pop(), { root: "pictures", dry_run: false, from: NEW });
-    assert.match(dialog.querySelector(".roots-status").textContent, /moved back root pictures/);
-  });
-
-  test("when the earlier place has been deleted it says so and offers nothing", async (t) => {
-    const { dialog } = await backOn(t, () => ({ success: false,
-      error: `The previous place, ${OLD}, is not there any more. Nothing was changed. Choose a place with Change location.` }));
-    assert.match(text(dialog.querySelector(".roots-check")), /is not there any more/);
     assert.ok(dialog.querySelector(".roots-confirm").disabled);
   });
 });

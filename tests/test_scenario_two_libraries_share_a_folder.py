@@ -5,7 +5,7 @@ drive of an event both cover, each having indexed it on its own. Nothing about a
 in one, or the watcher's or sync's re-reading of the shared files in the other, should
 let one library's tags, rows or tree reach the other's; a library that does not hold a
 folder is refused Suggest there, and refused a write there too (test_rows_only_in_folders_added.py,
-test_writes_only_in_folders_held.py already cover that half of this story).
+test_roots_scenarios.py (AFolderTheLibraryDoesNotHold) already cover that half of this story).
 
 ExifTool is stood in for, as test_service_change_tags.py and test_sync.py do; the
 photo files and both libraries' rows are real.
@@ -37,7 +37,7 @@ class Reads:
 
     def batch_read(self, extractor, file_paths, people=None):
         return [MetadataExtractor._structure(extractor, path, dict(self.truth.get(os.path.basename(path), {})),
-                                             people) for path in file_paths]
+                                             people, MetadataExtractor._stamp(path)) for path in file_paths]
 
     def session(self, *args, **kwargs):
         reads = self
@@ -49,7 +49,7 @@ class Reads:
             def __exit__(self, *exc):
                 return False
 
-            def get_tags(self, batch, tags=None):
+            def get_tags(self, batch, tags=None, params=None):
                 return [{"SourceFile": path.replace(os.sep, "/"), **reads.truth.get(os.path.basename(path), {})}
                         for path in batch]
 

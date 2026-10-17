@@ -22,9 +22,9 @@ claim left by a process that has ended is taken over. A library behind this vers
 schema is left alone until an app opens it and migrates it: running a job never
 migrates a library.
 
-Only the web server -- the always-on process -- runs them: it looks every CHECK_EVERY on
-a thread of its own (Runner.start), stopped at shutdown (owner, 2026-09-26). The CLI
-lists them and runs one by hand (`jobs`, `jobs run NAME`); neither it nor the MCP server
+Only the web server runs them: it looks every CHECK_EVERY on
+a thread of its own (Runner.start), stopped at shutdown (owner, 2026-09-26). The Activity page
+lists them and runs one by hand; neither the CLI nor the MCP server
 runs what is due as it starts. No Windows Task Scheduler. A server the tests started
 runs none, unless a test asks (tagpup.runtime.runs_recurring_jobs).
 """
@@ -37,7 +37,6 @@ from typing import Any, Callable, Dict, Optional
 from tagpup.core import runs
 from tagpup.core.result import Result
 from tagpup.services import job_runs
-from tagpup.services import journal as journal_service
 from tagpup.services import snapshots as snapshot_service
 
 logger = logging.getLogger(__name__)
@@ -65,10 +64,9 @@ def every_hours(hours):
 #: Why a job runs on a schedule. Work that follows an event is done when the event
 #: happens, never left for a schedule to find (docs/ARCHITECTURE.md, phase 8, "Event-driven
 #: first"); a schedule is only for what no event announces -- the library's safety (the
-#: snapshots), the retention of what it keeps (the journal), and a catch-up in case an
-#: event was missed (sync). A job that names none of these is refused as it is registered.
-SAFETY, RETENTION, CATCH_UP = "safety", "retention", "catch-up"
-REASONS = (SAFETY, RETENTION, CATCH_UP)
+#: snapshots) and a catch-up in case an event was missed (sync). A job that names none of these is refused as it is registered.
+SAFETY, CATCH_UP = "safety", "catch-up"
+REASONS = (SAFETY, CATCH_UP)
 
 #: How much sooner than its period a job of a day or more is due. The server looks every
 #: CHECK_EVERY, not on the second: a daily that started at 09:00 was not due at 08:55 the
@@ -101,7 +99,7 @@ class Job:
 class Run:
     """What a job is called with beside its library."""
     now: float
-    #: Asked for now (`jobs run`), not found due.
+    #: Asked for now (the Activity page's Run now), not found due.
     forced: bool = False
     given: Dict[str, Any] = field(default_factory=dict)
 
@@ -144,12 +142,6 @@ def _snapshots(library, run):
     """A daily snapshot of the library, and from it the weekly and the monthly when theirs
     are due (tagpup.services.snapshots)."""
     return snapshot_service.take(library, now=run.now, force=run.forced)
-
-
-@JOBS.job("prune-journal", WEEKLY, reason=RETENTION)
-def _prune_journal(library, run):
-    """Let the journal's changes older than its retention go (tagpup.services.journal.prune)."""
-    return journal_service.prune(library, apply=True)
 
 
 @JOBS.job("sync", DAILY, reason=CATCH_UP)

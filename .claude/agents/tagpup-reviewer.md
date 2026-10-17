@@ -61,7 +61,7 @@ nothing, for three months. Look for:
 - anything persisted (JSON cache files, localStorage) whose key format the change
   alters: are old entries re-keyed or silently orphaned?
 The project owns these conversions in one place each (`tagpup/core/paths.py`,
-`taxonomy.find_person_path`, `leafOf`/`samePerson` in `web/common/vocabulary.js`,
+`taxonomy.person_paths`, `leafOf`/`samePerson` in `web/common/vocabulary.js`,
 `pathKey`/`samePath` in `web/common/paths.js`, `/api/` URLs in `web/common/api.js`). Any
 conversion done by hand elsewhere is a finding.
 
@@ -120,8 +120,8 @@ function.
   one tested (bulk tag writes skipped the index while single saves updated it).
 
 ### 7. Project rules (CLAUDE.md)
-No `sqlite3.connect`; no hand conversion between names and tags; bulk writes call
-`record_tags_in_index()`; nothing placed below the startup block of
+No `sqlite3.connect`; no hand conversion between names and tags; every photo-file write goes through
+`file_changes.write_fields`, which records each file in its row (`store.photos.follow_fields`); nothing placed below the startup block of
 `web/tagpup/main.js`; no real names in tests, fixtures, comments or commit messages
 (the library is photographs of real people, many of them minors); bulk operations
 dry-run by default with `--apply`; new routes and schema documented.
@@ -131,6 +131,12 @@ Windows specifics (case-insensitive filesystem, file handles held after a proces
 exits, `subprocess` quoting, MAX_PATH); errors swallowed on paths where losing data is
 silent; a return value ignored; a status dict that can be left at "running" forever
 on an exception; unbounded growth of an in-memory cache keyed per folder/per db.
+
+### 9. A case nobody can produce
+For every new or kept fallback, compatibility arm, 'old row' branch or defensive path ask: which user action, through the
+real writers, makes this case, and how many rows of it are in the live libraries (counted read-only)? None of either is a
+finding (low, or wrong if it adds a second rule for the same value): delete the branch and refuse the write at the source.
+A test that builds the case by hand is not an instance. An owner decision that rules the class out ends the question.
 
 ## Report
 

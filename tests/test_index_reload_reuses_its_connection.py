@@ -1,6 +1,6 @@
 """Reloading the index keeps the connection it has.
 
-remove_paths() and build_or_update() reload the index, and every reload opened a new
+load() rebuilds the index, and every load opened a new
 connection and dropped the old one unclosed. On Windows an unclosed handle keeps the
 database file locked, which is how test directories and sandboxes could not be
 deleted afterwards.
@@ -28,7 +28,7 @@ class ReloadReusesItsConnection(unittest.TestCase):
     def test_reload_keeps_the_same_connection(self):
         self.index.load()
         first = self.index.conn
-        self.index.remove_paths({os.path.join(self.dir, "gone.jpg")})
+        self.index.load()
         self.assertIs(self.index.conn, first)
 
     def test_after_close_the_file_can_be_deleted(self):

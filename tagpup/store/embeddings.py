@@ -56,6 +56,13 @@ def put(conn, photo_path, model, mtime, size, vector):
                  " VALUES (?, ?, ?, ?, ?)", (photo_id, model, mtime, size, vector))
 
 
+def get_by_id(conn, photo_id, model):
+    """The Stored vector of the photo with this id under `model`, or None."""
+    row = conn.execute("SELECT mtime, size, vector FROM embeddings WHERE photo_id = ? AND model = ?",
+                       (photo_id, model)).fetchone()
+    return Stored(*row) if row else None
+
+
 def stamps_by_path(conn, photo_paths):
     """{paths.key(path): {(mtime, size)}} of the vectors kept for `photo_paths`, under any
     model: the files as they were when each was made. One indexed lookup a photo, as
@@ -99,9 +106,18 @@ def forget(conn, photo_path):
     return conn.execute("DELETE FROM embeddings WHERE " + where, params).rowcount
 
 
-def clear(conn):
-    """Forget every photo's vectors. Returns rows deleted. The caller commits."""
-    return conn.execute("DELETE FROM embeddings").rowcount
+def models_of(conn, photo_id):
+    """The models a photo has a vector under, by photo id."""
+    return {model for (model,) in conn.execute("SELECT model FROM embeddings WHERE photo_id = ?", (photo_id,))}
+
+
+def lacking(conn, photo_id, held):
+    """[(model, mtime, size, vector)] of a photo's vectors under a model not in `held`, by photo id: the vectors
+    another photo of the same file has none of. Only those are read."""
+    held = sorted(held)
+    where = " AND model NOT IN (%s)" % ",".join("?" * len(held)) if held else ""
+    return conn.execute("SELECT model, mtime, size, vector FROM embeddings WHERE photo_id = ?" + where,
+                        (photo_id,) + tuple(held)).fetchall()
 
 
 def count(conn, model):

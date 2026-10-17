@@ -29,10 +29,8 @@ from handler_harness import Library  # noqa: E402
 
 from tagpup.core.fields import keyword_fields  # noqa: E402
 from tagpup.core.vocabulary import extract_tags  # noqa: E402
-from tagpup.files.keywords import write_keywords  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
-from tagpup.store.photos import record_tags  # noqa: E402
 
 KEYWORDS = ["Beach", "Cross Country", "People/Rowan Thackeray"]
 HIERARCHICAL = ["People/Rowan Thackeray"]
@@ -147,14 +145,6 @@ class IndexCase(unittest.TestCase):
 
 
 class TestARemovedTagStaysRemoved(IndexCase):
-    def test_re_deriving_from_raw_metadata_does_not_bring_it_back(self):
-        stored = self.photo()
-        kept = ["Beach", "People/Rowan Thackeray"]
-        record_tags(self.db_path, stored, kept, kept, HIERARCHICAL)
-
-        self.assertNotIn("Cross Country", extract_tags(self.row(stored)["raw"]),
-                         "raw_metadata still carries the removed tag")
-
     def test_a_bulk_remove_survives_renaming_another_tag(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
@@ -171,21 +161,12 @@ class TestARemovedTagStaysRemoved(IndexCase):
         self.assertNotIn("Cross Country", tags, "the renamed photo got its removed tag back")
         self.assertEqual(recorded, 1)
 
-    def test_clearing_every_tag_leaves_no_keyword_field_behind(self):
-        stored = self.photo()
-        record_tags(self.db_path, stored, [], [], [])
-        self.assertEqual(extract_tags(self.row(stored)["raw"]), [])
-
     def test_the_writer_and_the_recorder_name_the_same_fields(self):
-        # One list, two consumers: whatever write_keywords writes is what the index is
+        # One list, two consumers: whatever the journaled keyword write sets is what the index is
         # told, so a field added to one cannot be missing from the other.
-        et = MagicMock()
-        write_keywords(et, "photo.jpg", ["Beach"])
-        written = set(et.set_tags.call_args.kwargs["tags"])
-        cleared = {arg[1:-1] for arg in et.execute.call_args.args
-                   if arg.startswith("-") and arg.endswith("=")}
-        self.assertEqual(written | cleared, set(keyword_fields(["Beach"], [])))
-        self.assertEqual(cleared, {"XMP:HierarchicalSubject"})
+        planned = tagging._keywords_plan(["Beach"]).after
+        self.assertEqual(set(planned), set(keyword_fields(["Beach"], [])))
+        self.assertEqual(planned["XMP:HierarchicalSubject"], [])
 
 
 class TestTheRowKeepsTheFilesNewStat(IndexCase):
@@ -225,7 +206,7 @@ class TestBulkWritersTellTheIndex(IndexCase):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper), \
-                patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
+                patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             self.call("/api/photo/save-metadata", {"path": stored, "title": "", "tags": ["Beach"]})
 
         row = self.row(stored)
@@ -234,13 +215,13 @@ class TestBulkWritersTellTheIndex(IndexCase):
 
     def test_no_tuner_handler_writes_keyword_fields_its_own_way(self):
         # The guard. Each of these built its own ExifTool parameters, and each went
-        # wrong in its own way; write_keywords is the one writer.
+        # wrong in its own way; the journaled write is the one writer.
         for relative in (os.path.join("tagpup", "web", "tuner_routes.py"), os.path.join("tagpup", "services", "faces.py")):
             with open(os.path.join(WORKSPACE_DIR, relative), encoding="utf-8") as f:
                 source = f.read()
             for field in ('["XMP:Subject"]', '["IPTC:Keywords"]', '["XMP:HierarchicalSubject"]'):
                 self.assertFalse("params" + field in source,
-                                 "%s writes %s itself instead of through write_keywords" % (relative, field))
+                                 "%s writes %s itself instead of through the journaled write" % (relative, field))
 
 
 if __name__ == "__main__":

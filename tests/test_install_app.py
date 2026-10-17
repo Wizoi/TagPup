@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import install_app  # noqa: E402
 sys.path.insert(0, WORKSPACE_DIR)
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import byte_lock, processes  # noqa: E402
 from measure_identify_faces import free_port, remove_sandbox  # noqa: E402
 
 
@@ -53,7 +53,7 @@ class WhatAnInstallIs(InstallCase):
         name, _ = self.install()
         folder = os.path.join(self.dest, "versions", name)
         for part in ("scripts", "tagpup", os.path.join("web", "tagpup"), os.path.join("web", "tuner"), "tagpup_web.py",
-                     "tagpup_cli.py", "runner.py", "VERSION.txt"):
+                     "tagpup_cli.py", "VERSION.txt"):
             self.assertTrue(os.path.exists(os.path.join(folder, part)), part)
         # The libraries and the settings stay in the home.
         self.assertFalse(os.path.exists(os.path.join(folder, "data")))
@@ -72,6 +72,31 @@ class WhatAnInstallIs(InstallCase):
             # It installs a new commit first, then reads which version to run.
             self.assertLess(text.index("--if-changed"), text.index("set /p TAGPUP_VERSION"))
             self.assertNotIn("\n", text.replace("\r\n", ""), "cmd.exe wants CRLF throughout")
+
+    def test_the_retired_runner_launcher_is_removed_when_this_installer_wrote_it(self):
+        path = os.path.join(self.dest, "TagPup Runner.cmd")
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write("@echo off\r\nrem Written by scripts/install_app.py. Runs the installed runner.py.\r\n")
+        self.install()
+        self.assertFalse(os.path.exists(path))
+        self.assertNotIn("TagPup Runner.cmd", install_app.LAUNCHERS)
+        self.assertTrue(any("removed" in line and "Runner.cmd" in line for line in self.said), self.said)
+        self.assertTrue(os.path.exists(os.path.join(self.dest, "TagPup.cmd")))
+
+    def test_a_file_of_that_name_the_installer_did_not_write_stays(self):
+        path = os.path.join(self.dest, "TagPup Runner.cmd")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("my own script\n")
+        self.install()
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(any("left alone" in line for line in self.said), self.said)
+
+    def test_a_dry_run_leaves_the_retired_launcher(self):
+        path = os.path.join(self.dest, "TagPup Runner.cmd")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("rem Written by scripts/install_app.py.\n")
+        self.install(apply=False)
+        self.assertTrue(os.path.exists(path))
 
     def test_a_version_is_named_for_when_and_which_commit(self):
         name = install_app.version_name(datetime.datetime(2026, 9, 23, 20, 5, 0))
@@ -100,7 +125,7 @@ class InstallingANewCommitAtStart(InstallCase):
 
     def test_an_older_or_unrelated_commit_is_never_installed(self):
         """A checkout moved back (a branch switched, a bisect) is not newer than what is
-        installed, and the always-on process installs unattended."""
+        installed, and a launch installs unattended."""
         first = self.install(name="20260925-115722-0dd8402")[0]
         self.assertIsNone(self.update("bfeb9b7", False, newer=False))
         self.assertEqual(first, install_app.read_current(self.dest))
@@ -178,24 +203,6 @@ class KeepingVersions(InstallCase):
         self.assertEqual(install_app.versions(self.dest), names[1:])
         self.assertEqual(install_app.read_current(self.dest), names[-1])
 
-    def test_the_versions_the_always_on_process_runs_are_never_removed(self):
-        """A server running an old version while an update waits (a long index) had its
-        code deleted from under it by the installs after."""
-        from tagpup import supervisor
-        names = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c"]
-        for name in names:
-            self.install(name=name)
-        me = {"pid": os.getpid(), "started": processes.started(os.getpid())}
-        data = os.path.join(self.home, "data")
-        supervisor.write_json(os.path.join(data, supervisor.SERVER_FILE), dict(me, version=names[0], ports={}))
-        supervisor.write_json(os.path.join(data, supervisor.STATE_FILE),
-                              dict(me, state="running", version=names[1], server_version=names[0]))
-        self.install(name="20260104-000000-d")
-        self.install(name="20260105-000000-e")
-        kept = install_app.versions(self.dest)
-        self.assertIn(names[0], kept, "the server's version was removed")
-        self.assertIn(names[1], kept, "the supervisor's version was removed")
-
     def test_the_version_being_replaced_is_never_removed(self):
         # It is what the running apps were started from.
         self.assertEqual(install_app.to_remove(["a", "b", "c", "d"], "e", "a"), ["b"])
@@ -205,6 +212,59 @@ class KeepingVersions(InstallCase):
         second, _ = self.install(name="20260101-000000-a")
         self.assertNotEqual(first, second)
         self.assertEqual(len(install_app.versions(self.dest)), 2)
+
+
+class AVersionARunningPythonHasOpen(InstallCase):
+    """docs/findings.md, #756: the first launch after the hand-over merged removed the version folder the owner's running
+    server served its pages from -- a server started before records existed, so none named it -- and left it empty. An
+    install also asks what python programs run, by their command lines."""
+
+    NAMES = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c"]
+
+    def installed(self):
+        for name in self.NAMES:
+            self.install(name=name)
+
+    def command_line(self, name):
+        return '"%s" "%s" --port 8765' % (sys.executable, os.path.join(self.dest, "versions", name, "tagpup_web.py"))
+
+    def test_a_version_a_python_without_a_record_runs_from_is_kept(self):
+        self.installed()
+        with mock.patch.object(install_app.processes, "python_command_lines",
+                               return_value=[self.command_line(self.NAMES[0])]):
+            self.install(name="20260104-000000-d")
+            self.install(name="20260105-000000-e")
+        self.assertIn(self.NAMES[0], install_app.versions(self.dest), "a running program's folder was removed")
+        self.assertTrue(any("keeping" in line and self.NAMES[0] in line for line in self.said), self.said)
+
+    def test_the_spelling_of_the_path_does_not_matter(self):
+        lines = ['python "%s"' % os.path.join(self.dest, "versions", "20260101-000000-A", "x.py").replace("\\", "/")]
+        self.assertEqual({"20260101-000000-a"}, install_app.open_by_running_pythons(
+            self.dest, ["20260101-000000-a", "20260102-000000-b"], lines))
+
+    def test_a_version_whose_name_only_starts_alike_is_not_kept(self):
+        lines = [self.command_line("20260101-000000-a+")]
+        self.assertEqual(set(), install_app.open_by_running_pythons(self.dest, ["20260101-000000-a"], lines))
+
+    def test_when_the_running_programs_cannot_be_listed_nothing_is_removed(self):
+        self.installed()
+        with mock.patch.object(install_app.processes, "python_command_lines", return_value=None):
+            self.install(name="20260104-000000-d")
+            self.install(name="20260105-000000-e")
+        self.assertEqual(5, len(install_app.versions(self.dest)))
+        self.assertTrue(any("could not be listed" in line for line in self.said), self.said)
+
+    def test_what_nothing_has_open_is_removed_as_before(self):
+        self.installed()
+        with mock.patch.object(install_app.processes, "python_command_lines", return_value=["python other.py"]):
+            self.install(name="20260104-000000-d")
+        self.assertNotIn(self.NAMES[0], install_app.versions(self.dest))
+
+    def test_the_listing_finds_this_python(self):
+        lines = processes.python_command_lines()
+        self.assertIsNotNone(lines)
+        self.assertTrue(any(os.path.basename(sys.argv[0]) in line or "unittest" in line or "python" in line.lower()
+                            for line in lines))
 
 
 class AServerOfAnotherVersionRunning(InstallCase):
@@ -232,7 +292,7 @@ class AServerOfAnotherVersionRunning(InstallCase):
         self.assertTrue(any(line.startswith("running") for line in self.said))
 
     def test_the_version_a_launched_server_runs_is_never_removed(self):
-        """Not only the always-on process's: a server started by TagPup.cmd runs from its
+        """A server started by TagPup.cmd runs from its
         version until the next launch replaces it."""
         from tagpup import launcher
         names = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c"]
@@ -247,9 +307,8 @@ class AServerOfAnotherVersionRunning(InstallCase):
     def test_a_launcher_waiting_for_another_install_says_so_first(self):
         """#749: the second window was blank for as long as the first install took."""
         import threading
-        from tagpup import supervisor
         self.install(name="20260925-115722-0dd8402")
-        held = supervisor.Lock(os.path.join(self.dest, install_app.INSTALL_LOCK))
+        held = byte_lock.Lock(os.path.join(self.dest, install_app.INSTALL_LOCK))
         self.assertTrue(held.acquire())
         self.addCleanup(held.release)   # a failure leaves no thread waiting on it
         answers = {"rev-parse": "0dd8402", "status": ""}

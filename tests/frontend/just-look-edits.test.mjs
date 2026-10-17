@@ -13,7 +13,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -33,7 +33,7 @@ const photos = () => [photoRecord({ path: A, filename: "IMG_0001.jpg", tags: ["B
 function server(scanned = photos) {
   return new FakeServer()
     .on("/api/tags", [])
-    .on("/api/people", [])
+    .on(PEOPLE_ROUTE, [])        // an empty tree: nobody
     .on("/api/taxonomy/tree", [])
     .on("/api/taxonomy/create", { success: true })
     .on("/api/databases", { databases: ["kr-track", "photo_index"] })
@@ -346,7 +346,7 @@ describe("Suggest while just looking", () => {
 
   test("Apply All on the selection goes to the files, with no taxonomy write", async (t) => {
     const s = server()
-      .first("/api/folder/auto-apply", { success: true, written: {}, skipped_damaged: 0, skipped: [], file_only: 1, with_rows: 0 })
+      .first("/api/folder/auto-apply", { success: true, written: {}, file_only: 1, with_rows: 0 })
       .first("/api/folder/suggest-status", offered);
     const ctx = await looking(t, s);
     click(ctx.window, ctx.$("btn-suggest-tags"));

@@ -106,8 +106,14 @@ class TestAStalledCommandFailsLoudly(unittest.TestCase):
     will not open.
     """
 
+    # Only the command that stalls has the short deadline. Starting ExifTool -- Perl, and the -ver it asks at once --
+    # took more than 3 s on a busy machine, and the session's start, or the fresh one after the kill, timed out
+    # instead (#721). A healthy command's deadline is still below the watchdog's, so a hang is told apart.
+    STALL = 3
+    HEALTHY = 45
+
     def setUp(self):
-        self.et = ExifToolSession(executable=EXIFTOOL, timeout=3)
+        self.et = ExifToolSession(executable=EXIFTOOL, timeout=self.HEALTHY)
         self.et.run()
         self.addCleanup(self._stop)
 
@@ -115,10 +121,18 @@ class TestAStalledCommandFailsLoudly(unittest.TestCase):
         if self.et.running:
             self.et.terminate()
 
+    def stall(self):
+        """The command that never finishes, with a deadline of STALL seconds."""
+        self.et.timeout = self.STALL
+        try:
+            return _within(WATCHDOG, self.et, lambda: self.et.execute("-j", "-"))
+        finally:
+            self.et.timeout = self.HEALTHY
+
     def test_it_raises_after_the_timeout_and_kills_the_process(self):
         process = self.et._process
         started = time.monotonic()
-        outcome = _within(WATCHDOG, self.et, lambda: self.et.execute("-j", "-"))
+        outcome = self.stall()
 
         self.assertNotIn("hung", outcome, "the timeout never fired")
         self.assertIsInstance(outcome.get("error"), ExifToolTimeout)
@@ -128,7 +142,7 @@ class TestAStalledCommandFailsLoudly(unittest.TestCase):
         self.assertFalse(self.et.running)
 
     def test_the_next_call_starts_a_fresh_process(self):
-        _within(WATCHDOG, self.et, lambda: self.et.execute("-j", "-"))
+        self.assertIsInstance(self.stall().get("error"), ExifToolTimeout)
         outcome = _within(WATCHDOG, self.et, lambda: self.et.execute("-ver"))
         self.assertNotIn("hung", outcome)
         self.assertRegex(outcome.get("value", ""), r"^\d+\.\d+")
@@ -138,9 +152,8 @@ class TestTheBatchReadersUseIt(unittest.TestCase):
     """The places that hand ExifTool a hundred files at a time."""
 
     def test_no_batch_reader_builds_a_bare_helper(self):
-        # backfill_document_ids.py's and relink_renamed_photos.py's readers are services
-        # now (phase 7.5).
-        for name in ("document_ids.py", "relink_photos.py", "file_changes.py"):
+        # Sync's pairing and the file writers are services (phase 7.5).
+        for name in ("relink_photos.py", "file_changes.py"):
             with open(os.path.join(WORKSPACE_DIR, "tagpup", "services", name), encoding="utf-8") as f:
                 source = f.read()
             self.assertNotIn("ExifToolHelper(", source, name)
@@ -149,7 +162,7 @@ class TestTheBatchReadersUseIt(unittest.TestCase):
         # The reader itself; its callers hand it the library's people.
         with open(os.path.join(WORKSPACE_DIR, "tagpup", "files", "metadata.py"), encoding="utf-8") as f:
             source = f.read()
-        for method in ("batch_read", "_read_one_by_one"):
+        for method in ("batch_read",):
             body = source.split("def %s(" % method, 1)[1].split("\n    def ", 1)[0]
             self.assertNotIn("ExifToolHelper(", body, method)
             self.assertIn("ExifToolSession(", body, method)

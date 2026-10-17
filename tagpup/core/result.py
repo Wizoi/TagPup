@@ -48,14 +48,7 @@ class Result:
         return "; ".join(error for _, error in self.errors)
 
 
-#: The detail a Result carries when it was refused because the library does not hold
-#: the folder of a photo it was asked to write (tagpup.services.libraries.refuse_writes):
-#: the folders, which a web route answers with 409.
-NOT_IN_LIBRARY = "not_in_library"
 
-#: Where a Result refused for photos found damaged (tagpup.services.libraries.refuse_writes)
-#: names them: nothing is written into a photo recorded damaged or possibly incomplete.
-DAMAGED_PHOTOS = "damaged_photos"
 
 #: What a Result refused because the file is no longer the one the page built its record from (the stamp the
 #: page sent differs from the file's) carries: a web route answers 409, and the page reads the file again.
