@@ -143,9 +143,9 @@ class TheCounts(unittest.TestCase):
 
 class ThePhotoStages(unittest.TestCase):
     def test_each_stage_is_read_from_the_marks_and_a_load_is_not_a_decode(self):
-        record = {"t0": 0.0, "decoded": 12.1, "clip_load": 12.0, "clip_in": 12.2, "clip_end": 12.5,
-                  "identity write": 0.05, "f0": 12.6, "detect_in": 12.7, "detect_out": 13.2, "encode": 0.04,
-                  "resnet_in": 13.3, "f_end": 13.35}
+        record = {"t0": 0.0, "decoded": 12.1, "clip_load": 12.0, "prepared": 12.2, "clip_start": 12.2,
+                  "clip_end": 12.5, "identity write": 0.05, "f0": 0.0, "f_read": 0.1, "detect_in": 12.7,
+                  "detect_out": 13.2, "encode": 0.04, "resnet_in": 13.3, "f_end": 13.35}
         found = stages.stages_of(record)
         self.assertAlmostEqual(0.1, found["decode for CLIP"])
         self.assertAlmostEqual(0.1, found["pad and resize"])
@@ -157,8 +157,8 @@ class ThePhotoStages(unittest.TestCase):
         self.assertAlmostEqual(0.05, found["recogniser forward"])
 
     def test_a_photo_with_no_face_has_no_recogniser_stage(self):
-        found = stages.stages_of({"t0": 0, "decoded": 0.1, "clip_in": 0.2, "clip_end": 0.3, "f0": 0.3,
-                                  "detect_in": 0.4, "detect_out": 0.6, "f_end": 0.6})
+        found = stages.stages_of({"t0": 0, "decoded": 0.1, "prepared": 0.2, "clip_start": 0.2, "clip_end": 0.3,
+                                  "f0": 0.0, "f_read": 0.1, "detect_in": 0.4, "detect_out": 0.6, "f_end": 0.6})
         self.assertNotIn("recogniser forward", found)
         self.assertAlmostEqual(0.0, found["crop and tensor"])
 
@@ -169,6 +169,63 @@ class ThePhotoStages(unittest.TestCase):
         self.assertEqual(2, table["all"]["photos"])
         self.assertEqual(1.0, table["all"]["total"]["max"])
         self.assertEqual(0.4, table["1-3"]["MTCNN"]["mean"])
+
+
+class TheHooksReachTheModelsAsTheIndexCallsThem(unittest.TestCase):
+    """The stages run's hooks wrap the models' own methods by name: a method renamed in tagpup.ml left the run timing
+    nothing (the processor/card split, phase 1b). Each hook is put on a real model, its weights stood in for, and a
+    photo is taken through it the way the index takes it -- the processor's half, then the card's."""
+
+    def setUp(self):
+        from PIL import Image
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.photo = os.path.join(folder.name, "quay.jpg")
+        Image.new("RGB", (64, 48), "navy").save(self.photo, "JPEG")
+        self.timeline = stages.Timeline(lambda: None)
+
+    def test_clip_is_timed_from_its_decode_to_its_forward(self):
+        import torch
+        from tagpup.ml import clip
+        from tagpup.services import search
+        model = clip.ClipModel("ViT-B-32", "openai", True, 1.4, None, device="cpu")
+
+        def load():
+            model.model = type("Weights", (), {"encode_image": lambda self, batch: torch.ones(1, 4)})()
+            model.preprocess = lambda picture: torch.zeros(3, 2, 2)
+        model._init_model = load
+        stages._watch_clip(model, self.timeline)
+        made = search.PhotoEmbeddings.made
+        self.addCleanup(setattr, search.PhotoEmbeddings, "made", made)
+        stages._watch_made(search.PhotoEmbeddings, self.timeline)
+        embeddings = search.PhotoEmbeddings(model, remember=False)
+        self.assertEqual(4, len(embeddings.made(self.photo, embeddings.prepared(self.photo))))
+        found = stages.stages_of(self.timeline.record(self.photo))
+        for stage in ("decode for CLIP", "pad and resize", "CLIP forward"):
+            self.assertIn(stage, found)
+        self.assertEqual([64, 48], self.timeline.record(self.photo)["upright"])
+
+    def test_faces_are_timed_from_their_decode_to_the_detector(self):
+        import torch
+        from tagpup.ml import faces
+        model = faces.FaceModel(20, 0.85, [0.6, 0.7, 0.7], device="cpu")
+
+        class Detector:
+            def detect(self, pixels):
+                return None, None
+
+        def load():
+            if model.mtcnn is None:
+                model.mtcnn, model.resnet = Detector(), torch.nn.Identity()
+        model._init_models = load
+        stages._watch_faces(model, self.timeline)
+        self.assertEqual([], model.detect_and_embed(model.picture(self.photo, max_side=None)))
+        record = self.timeline.record(self.photo)
+        self.assertEqual([64, 48], record["stored"])
+        self.assertEqual(0, record["faces_found"])
+        found = stages.stages_of(record)
+        for stage in ("decode for faces", "MTCNN"):
+            self.assertIn(stage, found)
 
 
 class WhatACapLoses(unittest.TestCase):

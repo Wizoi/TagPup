@@ -19,12 +19,15 @@ deleted is said. The graphics card is taken in the owner's line (tagpup.ml.gpu, 
 * `stages` (the default): a sample of 200 to 500 photos drawn in strata (none, 1-3, 4-9, 10 or more, the worst), a
   third or more at 10 or more, spread over megapixels, copied into a new folder under a root of the copy, and indexed
   by tagpup_cli's own `index` in a child process with a timer around each stage. The timers are hooks on the real
-  objects, not copies of the code: the `seen` callback of ClipModel.embed_image (decode for CLIP), a forward hook on
-  CLIP's visual tower (pad and resize before it, the forward after it), a wrapper on the MTCNN object's `detect`
-  (decode for faces before it, MTCNN inside it), forward hooks on the recogniser, Pillow's save and thumbnail while
-  faces run (the crop's JPEG), and wrappers on PhotoIndex.build_or_update and services.faces.record_batch (the
-  database writes), MetadataExtractor.batch_read and IdentityWriter.give (as tagpup_cli holds them). Each GPU stage
-  ends in torch.cuda.synchronize(). The first photo is the warm-up, reported apart.
+  objects, not copies of the code, each noting on the photo's own record (by its path), so that a stage run on a
+  thread of the index's read-ahead is timed as well as one on the thread that has the card: ClipModel.input_of and
+  its `seen` callback (decode for CLIP, then pad and resize), PhotoEmbeddings.made with a forward hook on CLIP's
+  visual tower (the forward), FaceModel.picture (decode for faces), a wrapper on the MTCNN object's `detect` inside
+  FaceModel.detect_and_embed (MTCNN), forward hooks on the recogniser, Pillow's save and thumbnail while faces run
+  (the crop's JPEG), and wrappers on PhotoIndex.build_or_update and services.faces.record_batch (the database
+  writes), MetadataExtractor.batch_read and IdentityWriter.give (as tagpup_cli holds them). Each GPU stage ends in
+  torch.cuda.synchronize(). A photo's total is the sum of its stages; read ahead, they overlap, and the run's wall
+  time is the measure. The first photo is the warm-up, reported apart.
 * `event`: one folder of a library (kr-track; `--folder-number`, by the size order of services.inspect.folders, else
   the one nearest 60 photos) copied into a new folder of the copy and indexed by the snapshot's tagpup_cli.py, as the
   owner's index runs: wall time and seconds a photo.
@@ -56,6 +59,7 @@ import shutil  # noqa: E402
 import subprocess  # noqa: E402
 import sys  # noqa: E402
 import tempfile  # noqa: E402
+import threading  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -86,36 +90,44 @@ STAGES = ("decode for CLIP", "pad and resize", "CLIP forward", "identity write",
 # ---- The child: the CLI's index, timed -------------------------------------------------------------------------
 
 class Timeline:
-    """What the hooks saw: a record a photo, the calls of each timed function, and the fixed costs."""
+    """What the hooks saw: a record a photo, by its path's key (a read-ahead thread and the card's thread each note on
+    the photo they are on), the calls of each timed function, and the fixed costs."""
 
     def __init__(self, sync):
         self.sync = sync
         self.photos = []
+        self.by_key = {}
         self.calls = {}
-        self.current = None
+        self.current = None      # the photo the card's thread is on
         self.in_faces = False
         self.encoding = 0.0
+        self.lock = threading.Lock()
 
-    def begin(self, path):
-        self.current = {"key": paths.key(path)}
-        self.photos.append(self.current)
-        return self.current
+    def record(self, path):
+        key = paths.key(path)
+        with self.lock:
+            if key not in self.by_key:
+                self.by_key[key] = {"key": key}
+                self.photos.append(self.by_key[key])
+            return self.by_key[key]
 
     def mark(self, name):
+        """A mark on the photo the card's thread is on, after the card's work so far has finished."""
         self.sync()
         if self.current is not None:
             self.current[name] = time.perf_counter()
 
     def note(self, label, seconds):
-        self.calls.setdefault(label, []).append(seconds)
+        with self.lock:
+            self.calls.setdefault(label, []).append(seconds)
 
     def total(self, label):
-        return sum(self.calls.get(label, ()))
+        with self.lock:
+            return sum(self.calls.get(label, ()))
 
 
-def _timed(owner, name, label, timeline, per_photo=False):
-    """Replace `owner.name` with a wrapper noting each call's seconds under `label` (and, with `per_photo`, on the
-    photo being indexed)."""
+def _timed(owner, name, label, timeline):
+    """Replace `owner.name` with a wrapper noting each call's seconds under `label`."""
     original = getattr(owner, name)
 
     def timed(*args, **kwargs):
@@ -123,16 +135,29 @@ def _timed(owner, name, label, timeline, per_photo=False):
         try:
             return original(*args, **kwargs)
         finally:
-            seconds = time.perf_counter() - started
-            timeline.note(label, seconds)
-            if per_photo and timeline.current is not None:
-                timeline.current[label] = timeline.current.get(label, 0.0) + seconds
+            timeline.note(label, time.perf_counter() - started)
     setattr(owner, name, timed)
 
 
+def _watch_identity(writer_class, timeline):
+    """IdentityWriter.give, timed on the photo it writes (meta's path)."""
+    give = writer_class.give
+
+    def timed(self, meta, *args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return give(self, meta, *args, **kwargs)
+        finally:
+            seconds = time.perf_counter() - started
+            timeline.note("identity write", seconds)
+            timeline.record(meta["path"])["identity write"] = seconds
+    writer_class.give = timed
+
+
 def _watch_clip(model, timeline):
-    """Hooks on one CLIP model the runtime built: its load, its decode (embed_image's `seen`) and its visual tower."""
-    load, embed = model._init_model, model.embed_image
+    """Hooks on one CLIP model the runtime built: its load, what it is shown of a photo (input_of, its decode by the
+    `seen` callback), and its visual tower."""
+    load, look, forward = model._init_model, model.input_of, model.embed_input
 
     def init_model():
         if model.model is not None:
@@ -141,11 +166,16 @@ def _watch_clip(model, timeline):
         load()
         timeline.sync()
         timeline.note("CLIP load", time.perf_counter() - started)
-        model.model.visual.register_forward_pre_hook(lambda _m, _i: timeline.mark("clip_in"))
-        model.model.visual.register_forward_hook(lambda _m, _i, _o: timeline.mark("clip_out"))
 
-    def embed_image(file_path, seen=None):
-        record = timeline.begin(file_path)
+    def embed_input(image_input):
+        timeline.mark("clip_start")
+        try:
+            return forward(image_input)
+        finally:
+            timeline.mark("clip_end")
+
+    def input_of(file_path, seen=None):
+        record = timeline.record(file_path)
         loaded = timeline.total("CLIP load")
         record["t0"] = time.perf_counter()
 
@@ -154,17 +184,27 @@ def _watch_clip(model, timeline):
             record["upright"] = list(picture.size)
             if seen is not None:
                 seen(picture)
-        vector = embed(file_path, seen=looked)
-        timeline.sync()
-        record["clip_end"] = time.perf_counter()
+        image_input = look(file_path, seen=looked)
+        record["prepared"] = time.perf_counter()
         record["clip_load"] = timeline.total("CLIP load") - loaded
-        return vector
-    model._init_model, model.embed_image = init_model, embed_image
+        return image_input
+    model._init_model, model.input_of, model.embed_input = init_model, input_of, embed_input
+
+
+def _watch_made(embeddings_class, timeline):
+    """PhotoEmbeddings.made: the photo the card's thread is on, for the forward pass's marks (embed_input)."""
+    made = embeddings_class.made
+
+    def on_the_card(self, file_path, prepared):
+        timeline.current = timeline.record(file_path)
+        return made(self, file_path, prepared)
+    embeddings_class.made = on_the_card
 
 
 def _watch_faces(model, timeline):
-    """Hooks on the face models the runtime built: their load, MTCNN's detect, the recogniser's forward."""
-    load, find = model._init_models, model.detect_and_embed_faces
+    """Hooks on the face models the runtime built: their load, the picture made ready (picture), MTCNN's detect and
+    the recogniser's forward inside detect_and_embed."""
+    load, ready, find = model._init_models, model.picture, model.detect_and_embed
 
     def init_models():
         if model.mtcnn is not None:
@@ -175,27 +215,35 @@ def _watch_faces(model, timeline):
         timeline.note("face models load", time.perf_counter() - started)
         detect = model.mtcnn.detect
 
-        def detect_timed(picture, *args, **kwargs):
+        def detect_timed(pixels, *args, **kwargs):
             timeline.mark("detect_in")
-            if timeline.current is not None:
-                timeline.current["stored"] = list(picture.size)
             try:
-                return detect(picture, *args, **kwargs)
+                return detect(pixels, *args, **kwargs)
             finally:
                 timeline.mark("detect_out")
         model.mtcnn.detect = detect_timed
         model.resnet.register_forward_pre_hook(lambda _m, _i: timeline.mark("resnet_in"))
         model.resnet.register_forward_hook(lambda _m, _i, _o: timeline.mark("resnet_out"))
 
-    def detect_and_embed_faces(img_path, *, max_side):
-        if timeline.current is None or timeline.current["key"] != paths.key(img_path):
-            timeline.begin(img_path)
-        record = timeline.current
+    def picture(img_path, *, max_side):
+        record = timeline.record(img_path)
+        record["f0"] = time.perf_counter()
+        made = ready(img_path, max_side=max_side)
+        record["f_read"] = time.perf_counter()
+        stored = getattr(made, "stored", None)
+        if stored is not None:
+            record["stored"] = list(stored.size)
+        made.measured_path = img_path
+        return made
+
+    def detect_and_embed(made):
+        record = timeline.current = timeline.record(made.measured_path)
         loaded = timeline.total("face models load")
         timeline.encoding, timeline.in_faces = 0.0, True
-        record["f0"] = time.perf_counter()
+        timeline.sync()
+        record["f_start"] = time.perf_counter()
         try:
-            found = find(img_path, max_side=max_side)
+            found = find(made)
         finally:
             timeline.in_faces = False
         timeline.sync()
@@ -206,17 +254,17 @@ def _watch_faces(model, timeline):
         record["boxes"] = [list(face["box"]) for face in found]
         record["detection_failed"] = bool(getattr(found, "failed", False))
         return found
-    model._init_models, model.detect_and_embed_faces = init_models, detect_and_embed_faces
+    model._init_models, model.picture, model.detect_and_embed = init_models, picture, detect_and_embed
 
 
 def _watch_pillow(timeline):
-    """Pillow's save and thumbnail, timed while faces run: the crop's JPEG (images.crop_jpeg)."""
+    """Pillow's save and thumbnail, timed while faces run on the card's thread: the crop's JPEG (images.crop_jpeg)."""
     from PIL import Image
     for name in ("save", "thumbnail"):
         original = getattr(Image.Image, name)
 
         def wrapped(self, *args, _original=original, **kwargs):
-            if not timeline.in_faces:
+            if not timeline.in_faces or threading.current_thread() is not threading.main_thread():
                 return _original(self, *args, **kwargs)
             started = time.perf_counter()
             try:
@@ -236,10 +284,10 @@ def stages_of(record):
             return max(0.0, record[end] - record[start] - minus)
         return None
     found["decode for CLIP"] = span("t0", "decoded", record.get("clip_load", 0.0))
-    found["pad and resize"] = span("decoded", "clip_in")
-    found["CLIP forward"] = span("clip_in", "clip_end")
+    found["pad and resize"] = span("decoded", "prepared")
+    found["CLIP forward"] = span("clip_start", "clip_end")
     found["identity write"] = record.get("identity write")
-    found["decode for faces"] = span("f0", "detect_in", record.get("faces_load", 0.0))
+    found["decode for faces"] = span("f0", "f_read")
     found["MTCNN"] = span("detect_in", "detect_out")
     after = "resnet_in" if "resnet_in" in record else "f_end"
     found["crop and tensor"] = span("detect_out", after, record.get("encode", 0.0))
@@ -287,12 +335,13 @@ def child(plan_path):
         return model
     Runtime.clip, Runtime.faces = clip, faces
     _watch_pillow(timeline)
+    _watch_made(search.PhotoEmbeddings, timeline)
+    _watch_identity(tagpup_cli.IdentityWriter, timeline)
     _timed(search.PhotoIndex, "build_or_update", "photo rows write", timeline)
     _timed(face_records, "record_batch", "faces write", timeline)
     _timed(search.PhotoIndex, "open", "library open", timeline)
     _timed(Runtime, "gpu_turn", "wait for the card", timeline)
     _timed(tagpup_cli.MetadataExtractor, "batch_read", "metadata read", timeline)
-    _timed(tagpup_cli.IdentityWriter, "give", "identity write", timeline, per_photo=True)
     _timed(tagpup_cli, "_cluster_after_index", CLUSTERING, timeline)
 
     began = time.perf_counter()
@@ -316,18 +365,19 @@ def child(plan_path):
     for record in timeline.photos:
         label = labels.get(record["key"], {})
         upright, stored = record.get("upright"), record.get("stored")
+        stages = stages_of(record)
         photos.append({"stratum": label.get("stratum"), "stored_faces": label.get("faces"),
                        "number": label.get("number"), "boxes": record.get("boxes"), "stored": label.get("stored"),
                        "megapixels": label.get("megapixels"), "faces_found": record.get("faces_found"),
                        "detection_failed": record.get("detection_failed"),
                        "sideways": bool(upright and stored and upright != stored and upright == stored[::-1]),
-                       "total": (record.get("f_end", record.get("clip_end", 0)) - record["t0"]) if "t0" in record
-                       else None, "stages": stages_of(record)})
+                       "total": sum(stages.values()) if stages else None, "stages": stages})
     result = {"error": error, "fixed": fixed, "calls": timeline.calls, "photos": photos, "versions": sandbox.versions(),
               "cli": {"start": clock + began, "end": clock + ended, "seconds": ended - began,
                       "clustering": timeline.total(CLUSTERING),
                       "index_seconds": ended - began - timeline.total(CLUSTERING)},
-              "loop": {"start": clock + timeline.photos[0]["t0"] if timeline.photos else None,
+              "loop": {"start": clock + min((r.get("t0", r.get("f0", 0)) for r in timeline.photos), default=0)
+                       if timeline.photos else None,
                        "end": clock + max((r.get("f_end", r.get("clip_end", 0)) for r in timeline.photos), default=0)}}
     with open(plan["result"], "w", encoding="utf-8") as handle:
         json.dump(result, handle)
