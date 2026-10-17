@@ -11,6 +11,11 @@ and the server is a separate process on a free port with the sandbox as its home
 the library has never seen -- so nothing is cached for them, which is the situation
 the report describes.
 
+A folder the library does not hold makes the page ask "Add this folder to <library>?" (web/tagpup/membership.js). The
+script answers Just look, as a person who only wants suggestions does: nothing is added or indexed, so the timing is
+Suggest's own and not an index run's. The question is answered before the click on Start Photo Analysis (the dialog
+covers it), and what answering takes counts as part of opening the folder.
+
 Two timings are taken in one sandbox, each on its own fresh copy of the photos:
 
 * **cold** -- the server has just been launched and the folder is chosen at once,
@@ -128,7 +133,21 @@ def wait_for_log(log_path, pattern, timeout):
     return False
 
 
-def open_folder_and_suggest(page, url, folder, timeout):
+def answer_add_folder_question(page, timeout):
+    """Click Just look on the Add folder dialog, which the page raises once the library has said it does not hold the
+    folder (`/api/folder/membership`). Returns whether it was asked: a folder the library holds is never asked about,
+    so a dialog that does not come within `timeout` seconds is not an error."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    try:
+        page.wait_for_selector("#add-folder-modal.active", timeout=timeout * 1000)
+    except PlaywrightTimeout:
+        return False
+    page.click("#btn-just-look")
+    page.wait_for_selector("#add-folder-modal.active", state="hidden", timeout=timeout * 1000)
+    return True
+
+
+def open_folder_and_suggest(page, url, folder, timeout, question_timeout=30):
     """The click sequence. Returns (folder->cards, click->suggestions usable)."""
     page.goto(url, wait_until="domcontentloaded")
     page.wait_for_selector("#folder-path-input")
@@ -140,6 +159,7 @@ def open_folder_and_suggest(page, url, folder, timeout):
     page.wait_for_function(
         "() => !document.querySelector('#btn-suggest-tags').disabled",
         timeout=timeout * 1000)
+    answer_add_folder_question(page, question_timeout)
     opened = time.time() - started
 
     started = time.time()
