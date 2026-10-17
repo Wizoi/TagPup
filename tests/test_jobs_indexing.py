@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tagpup.core import paths  # noqa: E402
+from tagpup.core import paths, runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing  # noqa: E402
@@ -333,6 +333,57 @@ class FilesArrivingDuringAnIndex(QueueTest):
         indexing.queue_for(other).wait()
         self.assertEqual((len(ran["one"]), len(ran["other"])), (2, 1))
 
+    def test_a_folder_cancelled_while_it_was_asked_for_again_runs_once(self):
+        # The owner presses Cancel queue (or cancels the folder by name) while the watcher's
+        # sync has asked for the running folder again: cancel drops what has not started,
+        # and the run that was to follow had not.
+        for how in ("everything", "by name"):
+            with self.subTest(how=how):
+                self.queue = IndexQueue()
+                folder = os.path.join(self.root, how)
+                os.makedirs(folder)
+                runs_ = []
+                index, started, release = self.hold(folder, runs_)
+                self.queue.start([folder], index)
+                self.assertTrue(started.wait(10))
+                self.queue.start([folder], index)
+                if how == "everything":
+                    cancelled = self.queue.cancel(everything=True)
+                else:
+                    cancelled = self.queue.cancel([folder])
+                self.assertEqual(cancelled.details["rerun_dropped"], [folder])
+                self.assertEqual(cancelled.details["cancelled"], [])
+                self.assertEqual(cancelled.changed, 1)
+                release.set()
+                self.wait_until_idle()
+                self.assertEqual(runs_, [folder])
+                self.assertEqual(self.queue.status(folder)["status"], "completed")
+
+    def test_the_rerun_is_part_of_the_sync_that_asked_and_says_why(self):
+        # The Activity page shows the re-run under the sync that asked for it, not as an
+        # index nobody asked for, and its status says why the folder is indexed again.
+        folder = self.folders(1)[0]
+        seen = []
+        started, release = threading.Event(), threading.Event()
+
+        def index(folder_, report):
+            seen.append((runs.held(), report.status["message"]))
+            if len(seen) == 1:
+                started.set()
+                release.wait(10)
+            return Result(changed=1)
+        self.queue.start([folder], index)
+        self.assertTrue(started.wait(10))
+        with runs.running("sync-kr-track-20261016-2200"):
+            self.queue.start([folder], index)
+        release.set()
+        self.wait_until_idle()
+        self.assertEqual(len(seen), 2)
+        held, message = seen[1]
+        self.assertEqual(held[0], "sync-kr-track-20261016-2200")
+        self.assertIn("arrived", message)
+        self.assertEqual(self.queue.history()[0]["parents"], ["sync-kr-track-20261016-2200"])
+
 
 class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
     """Lifted from test_index_queue_is_locked and test_index_queue_active_is_one_read (#750's branch). index-start,
@@ -342,7 +393,8 @@ class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
     first test); active() reading the running folders apart from the waiting ones (the second)."""
 
     #: A write of the waiting list or the worker.
-    WRITE = re.compile(r"self\._(pending|runner)\s*=[^=]|self\._pending\.(append|pop|insert|remove|clear)\(")
+    WRITE = re.compile(r"self\._(pending|runner)\s*=[^=]|self\._pending\.(append|pop|insert|remove|clear)\("
+                       r"|self\._missed\[.*\]\s*=[^=]|self\._missed\.(pop|clear)\(")
 
     def test_the_waiting_list_and_the_worker_are_only_written_under_the_lock(self):
         with open(inspect.getsourcefile(indexing), encoding="utf-8") as handle:
