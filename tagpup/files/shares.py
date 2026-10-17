@@ -146,12 +146,13 @@ def folder_state(folder, seconds=None):
 
 
 def _stat_state(photo_path, on_a_share):
-    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError, and for a file "not found"
-    on a network share that does not answer (it is not known to be gone)."""
+    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError; UNANSWERED for a file "not
+    found" on a network share that does not answer (a server asleep, WinError 53: not known to be gone, and the share
+    is away, not the file unreadable; #1543)."""
     try:
         stat = os.stat(photo_path)
     except (FileNotFoundError, NotADirectoryError):
-        return CANNOT_READ if on_a_share and not _share_answers(photo_path) else None
+        return UNANSWERED if on_a_share and not _share_answers(photo_path) else None
     except OSError:
         return CANNOT_READ
     return (stat.st_mtime, stat.st_size)
@@ -167,4 +168,31 @@ def stamp_of(photo_path):
     if not on_a_network_drive(photo_path):
         return _stat_state(photo_path, False)
     state, found = bounded(photo_path, lambda: _stat_state(photo_path, True), SHARE_WAIT, AWAY_SECONDS)
+    if state == "ok" and found is UNANSWERED:   # it answered at once that it is not there: the share is away all the same
+        with _guard:
+            _away[share_of(photo_path)] = time.monotonic()
     return found if state == "ok" else UNANSWERED
+
+
+class Walk:
+    """One pass over many photos (a warm, a repair): each share found away is asked ONCE, its photos counted as
+    skipped, not asked again and never counted as unreadable. The one owner of this rule; the passes used to write it
+    each (#1543). `away` names the shares found away, in the order found; `skipped` counts their photos."""
+
+    def __init__(self):
+        self.away = []
+        self.skipped = 0
+        self._shares = set()
+
+    def stamp_of(self, photo_path):
+        """`stamp_of(photo_path)`, except UNANSWERED at once, unasked, for a share this walk found away."""
+        share = share_of(photo_path) if on_a_network_drive(photo_path) else None
+        if share is not None and share in self._shares:
+            self.skipped += 1
+            return UNANSWERED
+        stamp = stamp_of(photo_path)
+        if stamp is UNANSWERED:
+            self._shares.add(share)
+            self.away.append(photo_path.split("\\")[2] if photo_path.startswith("\\\\") else share)
+            self.skipped += 1
+        return stamp

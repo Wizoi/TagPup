@@ -402,8 +402,56 @@ class ADriveThatSaysNotFound(unittest.TestCase):
             with mock.patch("tagpup.files.shares.os.stat", side_effect=FileNotFoundError(2, "not found")), \
                     mock.patch("tagpup.files.shares.os.path.exists", return_value=drive_answers), \
                     mock.patch.object(shares, "on_a_network_drive", return_value=network):
+                shares.forget()   # the share found away by the case before is not the one asked now
                 present, left_out = tagging.leave_out_missing([path])
             self.assertEqual((not gone, gone), (present == [path], left_out != []), (path, network, drive_answers))
+
+
+class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
+    """A server asleep answers WinError 53 at once, not by hanging (#1543): the share is away, not its files unreadable.
+    Counted 2026-10-17: 1,309 photos of one live library sit on a UNC root. Break: _stat_state answering CANNOT_READ."""
+
+    PHOTOS = ["Q:\\Pictures\\p%d.jpg" % n for n in range(4)]
+
+    def setUp(self):
+        shares.forget()
+        self.addCleanup(shares.forget)
+        self.reads = []
+        self.server_up = False
+        self.file_there = False
+
+        def stat(path, *args, **kwargs):
+            self.reads.append(path)
+            if self.server_up and self.file_there:
+                return os.stat_result((0, 0, 0, 1, 0, 0, 7, 0, 5, 0))
+            raise FileNotFoundError(53, "The network path was not found")
+        for patcher in (mock.patch("tagpup.files.shares.os.stat", stat),
+                        mock.patch("tagpup.files.shares.os.path.exists", lambda path: self.server_up),
+                        mock.patch.object(shares, "on_a_network_drive", return_value=True)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_a_walk_over_a_share_asleep_reports_it_away_once_and_reads_none_of_the_other_photos(self):
+        walk = shares.Walk()
+        found = [walk.stamp_of(path) for path in self.PHOTOS]
+        self.assertEqual([shares.UNANSWERED] * 4, found)
+        self.assertEqual((1, 1, 4), (len(walk.away), len(self.reads), walk.skipped))
+        self.assertIs(shares.UNANSWERED, shares.stamp_of(self.PHOTOS[0]), "a look outside the walk is answered at once")
+        self.assertEqual(1, len(self.reads))
+
+    def test_a_server_that_answers_and_a_file_really_missing_is_still_gone_not_away(self):
+        self.server_up = True
+        walk = shares.Walk()
+        self.assertEqual([None] * 4, [walk.stamp_of(path) for path in self.PHOTOS])
+        self.assertEqual(([], 0, 4), (walk.away, walk.skipped, len(self.reads)))
+
+    def test_a_share_that_comes_back_is_asked_again_by_the_next_walk(self):
+        self.assertIs(shares.UNANSWERED, shares.Walk().stamp_of(self.PHOTOS[0]))
+        self.server_up = self.file_there = True
+        shares.forget()   # what Retry does, or AWAY_SECONDS passing
+        again = shares.Walk()
+        self.assertEqual([(5, 7)] * 2, [tuple(again.stamp_of(path)) for path in self.PHOTOS[:2]])
+        self.assertEqual(([], 0), (again.away, again.skipped))
 
 
 class OneWalkAtATime(unittest.TestCase):

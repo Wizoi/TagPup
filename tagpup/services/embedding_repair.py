@@ -49,7 +49,8 @@ def _turned(library, model, progress):
     counts = {"photos": 0, "missing": 0, "failed": 0, "away": [], "skipped_away": 0, "no_header": 0, "turned": 0,
               "no_vector": 0, "stale_stamp": 0, "to_recompute": 0}
     found = []
-    away = set()
+    walk = shares.Walk()
+    counts["away"] = walk.away
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         after = 0
@@ -60,15 +61,9 @@ def _turned(library, model, progress):
             after = batch[-1][0]
             for photo_id, _row_path, path in batch:
                 counts["photos"] += 1
-                share = shares.share_of(path) if shares.on_a_network_drive(path) else None
-                if share is not None and share in away:
-                    counts["skipped_away"] += 1   # asked once: not asked again for each of its photos
-                    continue
-                stamp = shares.stamp_of(path)
+                stamp = walk.stamp_of(path)   # a share found away is asked once, its photos skipped
                 if stamp is shares.UNANSWERED:
-                    away.add(share)
-                    counts["away"].append(share)
-                    counts["skipped_away"] += 1
+                    counts["skipped_away"] = walk.skipped
                     continue
                 if stamp is shares.CANNOT_READ:
                     counts["failed"] += 1
