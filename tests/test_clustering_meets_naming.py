@@ -443,6 +443,56 @@ class ARunRewritesTheGuessesOfAPhoto(FaceClusteringTestBase):
         self.assertEqual(([], [], [first, second]), (written, unnamed, sorted(left)), "a person merged away was given")
         self.assertEqual((mara, pell), (self.carried()[first], self.carried()[second]))
 
+    def test_a_merge_the_owner_makes_as_the_write_reads_the_tree_waits_for_it_and_no_guess_is_lost(self):
+        """The owner merges Tobin into Pell in TagTuner just as the run's write reads the People tree. The write reads the tree
+        inside its own transaction, so the merge cannot land between that read and the first UPDATE: it waits (here: is
+        refused at once and made after), and the faces end as a merge after the run leaves them. Before, the merge landed in
+        the gap: the write still took Tobin for a person, took Mara off the first face and was then refused Tobin, so the face
+        lost its guess."""
+        from unittest import mock
+        import sqlite3
+        from tagpup.store import person_ids
+        first, second = self.guessed("pair.jpg", "Mara Quill", "Tobin Ash")
+        mara, tobin, pell = self.person("Mara Quill"), self.person("Tobin Ash"), self.person("Pell Varga")
+        as_read = self.carried()
+        real = person_ids.read
+        waited, asked = [], []
+
+        def merge(conn):
+            tobin_tag, pell_tag = (conn.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (node,)).fetchone()[0]
+                                   for node in (tobin, pell))
+            taxonomy.move_branch(conn, tobin_tag, pell_tag)
+
+        def read_then_the_owner_merges(conn, *args, **kwargs):
+            known = real(conn, *args, **kwargs)
+            if not asked:   # once: the merge reads the tree too
+                asked.append(True)
+                owner = db.connect(self.db_path)
+                try:
+                    owner.execute("PRAGMA busy_timeout = 0")
+                    try:
+                        merge(owner)
+                        owner.commit()
+                        waited.append(False)
+                    except sqlite3.OperationalError:
+                        owner.rollback()
+                        waited.append(True)
+                finally:
+                    owner.close()
+            return known
+
+        with mock.patch.object(person_ids, "read", read_then_the_owner_merges):
+            written, unnamed, left = db.write_with_connection(
+                self.db_path, lambda conn: store_faces.set_names(conn, {first: tobin, second: mara},
+                                                                 {first: as_read[first], second: as_read[second]}),
+                label="the run writes its guesses")
+        if waited == [True]:
+            db.write_with_connection(self.db_path, merge, label="the owner's merge, after the write")
+
+        self.assertEqual([], unnamed, "a face lost its guess to a merge in the gap")
+        self.assertEqual((pell, mara), (self.carried()[first], self.carried()[second]))
+        self.assertEqual([True], waited, "the merge landed between the write's read of the tree and its first UPDATE")
+
 
 if __name__ == "__main__":
     unittest.main()

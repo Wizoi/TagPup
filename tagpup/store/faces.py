@@ -396,12 +396,18 @@ def set_names(conn, persons_by_id, as_read):
     (#1582). A face taken off whose person is then refused (a face outside the plan carries them now) stays unnamed, not
     with the guess the run rejected: what the run's propagation does with a guess it no longer bears (identities.resolve).
 
+    The tree that says who is gone is read inside the write's transaction, opened here with the write lock (BEGIN
+    IMMEDIATE), so the read, the guards and both passes see one library: a merge the owner makes meanwhile lands before it or
+    waits for its commit, never between the read and the first UPDATE, where a person still read as known would be taken off
+    a face and then refused. `conn` holds no transaction when called.
+
     Returns (the ids written as planned, the ids taken off and left unnamed, the ids left as they were). The caller
     commits."""
     named_otherwise = [person for person in persons_by_id.values()
                        if person is not None and (isinstance(person, bool) or not isinstance(person, int))]
     if named_otherwise:
         raise TypeError("a face is given the id of a person here, not %r" % (named_otherwise[0],))
+    db.begin(conn, immediate=True)
     known = person_ids.read(conn)
     gone = set()
     for person in set(persons_by_id.values()):
