@@ -465,6 +465,11 @@ class _OnTheCard:
         self._turn.ensure()
         return self._model.detect_and_embed_faces(*args, **kwargs)
 
+    def detect_and_embed(self, *args, **kwargs):
+        # The card's half of a detection; its other half, `picture`, uses no model and takes no turn.
+        self._turn.ensure()
+        return self._model.detect_and_embed(*args, **kwargs)
+
 
 class _Lease:
     """One run's hold on a photo index and a set of models: `what` the run is ("Suggest Regatta (harbour)"), `models`

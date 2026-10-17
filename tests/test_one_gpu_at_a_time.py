@@ -340,6 +340,13 @@ class TheRuntimesTurns(_Folder):
             self.used += 1
             return [0.0]
 
+        def picture(self, path, *, max_side):
+            return path
+
+        def detect_and_embed(self, picture):
+            self.used += 1
+            return []
+
     def test_a_run_takes_its_turn_when_it_first_uses_a_model(self):
         from tagpup import runtime as runtimes
         card, clip = self.card(), self.Model()
@@ -352,6 +359,20 @@ class TheRuntimesTurns(_Folder):
         self.assertEqual(1, clip.used)
         turn.close()
         self.assertFalse(card.holds())
+
+    def test_a_run_takes_its_turn_for_the_card_half_of_a_face_detection_and_not_for_the_picture(self):
+        """The face models' halves (tagpup.ml.faces): `picture` uses no model and runs on the processor, so it takes
+        no turn; `detect_and_embed` runs the detector and the recogniser on the card, and takes the run's turn."""
+        from tagpup import runtime as runtimes
+        card, faces = self.card(), self.Model()
+        turn = runtimes._RunTurn(card, "Suggest Harbour Wall (harbour)", (faces,))
+        proxy = runtimes._OnTheCard(faces, turn)
+        picture = proxy.picture("quay.jpg", max_side=None)
+        self.assertFalse(card.holds(), "a picture made ready took the card")
+        proxy.detect_and_embed(picture)
+        self.assertTrue(card.holds())
+        self.assertEqual(1, faces.used)
+        turn.close()
 
     def test_a_model_off_the_card_waits_for_no_one(self):
         from tagpup import runtime as runtimes
