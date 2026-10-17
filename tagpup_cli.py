@@ -534,10 +534,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 def _cluster_after_index(runtime, db_path):
     """Cluster the library's faces after an index (`cluster-faces`'s work), said on stdout first as the server's index
     queue reads it (tagpup.services.indexing.CLUSTERING_STARTS: it refuses writes of faces until this process ends). A
-    failure is said and exits with EXIT_CLUSTERING_FAILED: the photos indexed stay indexed."""
+    failure is said and exits with EXIT_CLUSTERING_FAILED: the photos indexed stay indexed. The library's roots changed
+    by another process meanwhile is the index's one roots stop (_holds_the_roots), not a failure."""
     console.print(indexing_service.CLUSTERING_STARTS, markup=False, soft_wrap=True)
     try:
         _resolve_identities(runtime, db_path)
+    except library_roots.RootsChanged:
+        raise
     except Exception as e:
         logger.exception("Resolving face identities after the index failed")
         console.print("The photos are indexed, but resolving face identities failed: %s: %s" % (type(e).__name__, e),

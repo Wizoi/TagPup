@@ -28,6 +28,10 @@ from tagpup.services import roots as roots_service
 CLUSTERING_BUTTON = "Name faces from tags"
 CLUSTER_ELSEWHERE = "%s in TagTuner's header" % CLUSTERING_BUTTON
 
+#: How a clustering after an index that failed or stopped is run again: the command alone clusters (Name faces from
+#: tags names faces from tags, and an index again of photos already read clusters nothing).
+CLUSTER_AGAIN = "cluster-faces in the TagPup CLI"
+
 #: Set while a library's faces are being clustered after an index this process runs, or named from tags
 #: (tagpup.web.name_faces_routes): writes of faces are refused meanwhile (tagpup.web.tuner_routes.clustering_refusal),
 #: since clustering rewrites the names they would be setting. Here, beside the one runner of the indexer, so that
@@ -168,6 +172,9 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         return result
     env = os.environ.copy()
     env["TAGPUP_DB_PATH"] = library.path
+    # Lines compared whole (CLUSTERING_STARTS) arrive as printed: rich colours a line's "..." when told the pipe is a
+    # terminal (FORCE_COLOR), and no colour is wanted on a progress bar.
+    env.update(NO_COLOR="1", TERM="dumb")
     # The indexer logs to a file of its run's own in data/logs as well as to this pipe, each
     # line carrying the tags of the run it is part of (tagpup.core.runs).
     runs.child_environment(env, log_to=INDEXER_LOG)
@@ -213,17 +220,20 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         result.skip(", ".join(folders), CANCELLED_WAITING)
         result.details.update(percent=0, cancelled=True, message=CANCELLED_WAITING)
         return result
+    if clustered and code != 0:
+        # EXIT_CLUSTERING_FAILED, the roots' stop, or the process ended otherwise once its index was done: the photos
+        # are indexed.
+        why = ("stopped: the library's roots were changed by another process" if code == roots_service.EXIT_ROOTS_CHANGED
+               else "failed (exit code %s)" % code)
+        result.fail(", ".join(folders), "Folder indexed, but resolving face identities %s. To try again, run %s."
+                    % (why, CLUSTER_AGAIN))
+        result.details["percent"] = 100
+        return result
     if code == roots_service.EXIT_ROOTS_CHANGED:
         # The indexer holds the library's roots for its whole run (tagpup.services.roots.pinned) and
         # stopped: another process changed them. Said as it is, not as an exit code.
         result.fail(", ".join(folders), roots_service.STOPPED)
         result.details["percent"] = 0
-        return result
-    if clustered and code != 0:
-        # EXIT_CLUSTERING_FAILED, or the process ended otherwise once its index was done: the photos are indexed.
-        result.fail(", ".join(folders), "Folder indexed, but resolving face identities failed (exit code %s). "
-                                        "To try again, use %s." % (code, CLUSTER_ELSEWHERE))
-        result.details["percent"] = 100
         return result
     if code != 0:
         result.fail(", ".join(folders), "Indexing failed with exit code %s." % code)

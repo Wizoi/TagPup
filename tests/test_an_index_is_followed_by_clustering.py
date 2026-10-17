@@ -9,11 +9,14 @@ and the owner runs it by hand for long indexes:
 - after an index that recorded a photo, it clusters the library's faces, once its turn on the graphics card is let go
   (clustering is the processor's work: another library's index waiting for the card is not held up by it);
 - an index that recorded nothing (a sync or a folder added again that found every photo current) clusters nothing;
-- a clustering that fails leaves the photos indexed, and says so (the folder's status in the queue, the CLI's exit);
+- a clustering that fails leaves the photos indexed, and says so (the folder's status in the queue, the CLI's exit),
+  and says how to try again (`cluster-faces`, not Name faces from tags, which does not cluster);
+- the library's roots changed by another process while it clusters: the one roots stop (exit 75), and the folder is
+  still said to be indexed, its bar at 100;
 - stopped while it waited for the card, it indexed nothing and clusters nothing;
-- while it clusters, writes of faces in this server are refused from both apps, whichever entry point started the index
-  (tagpup.services.indexing.while_clustering; a face named meanwhile in another process is kept by clustering itself,
-  tests/test_clustering_meets_naming.py).
+- while it clusters, and not before, writes of faces in this server are refused from both apps, whichever entry point
+  started the index (tagpup.services.indexing.while_clustering; a face named meanwhile in another process is kept by
+  clustering itself, tests/test_clustering_meets_naming.py), however the server's environment asks for colour.
 
 The server's half stands in for the CLI's process (its stdout is the interface, contract row 16); the CLI's half is the
 real command in this process with its models stood in for (nothing loads) and the real ExifTool.
@@ -23,6 +26,7 @@ three clustering tests (asked-for clustering, its failure, its guard), from the 
 Each test here was run against the code before this change and failed there, except the cancelled one, which holds a
 rule the old code kept by never clustering.
 """
+import io
 import os
 import sys
 import unittest
@@ -35,6 +39,7 @@ import photo_rows  # noqa: E402
 
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
+from rich.console import Console  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.core import gpu_turns, paths  # noqa: E402
@@ -45,6 +50,7 @@ from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import identities  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import roots  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 
@@ -53,15 +59,16 @@ THEN = 1_700_000_000
 
 
 class _TheCli:
-    """A stand-in for the CLI's process: prints `lines`, exits with `code`; `during()` is called as the line after
-    the clustering began is read -- what a person clicking meanwhile meets."""
+    """A stand-in for the CLI's process: prints `lines`, exits with `code`; `during(began)` is called as each line is
+    read, `began` whether the clustering's line was read before it -- what a person clicking meanwhile meets."""
 
     def __init__(self, lines, code=0, during=None):
         self.lines, self.code, self.during = list(lines), code, during
-        self.commands = []
+        self.commands, self.environments = [], []
 
-    def __call__(self, command, **_kwargs):
+    def __call__(self, command, **kwargs):
         self.commands.append(command)
+        self.environments.append(kwargs.get("env"))
         proc = MagicMock()
         proc.returncode = self.code
         remaining = iter(self.lines + [""])
@@ -69,8 +76,8 @@ class _TheCli:
 
         def readline():
             line = next(remaining)
-            if began and line and self.during:
-                self.during()
+            if line and self.during:
+                self.during(bool(began))
             if line.strip() == indexing.CLUSTERING_STARTS:
                 began.append(True)
             return line
@@ -128,8 +135,9 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
         return queue.status(self.folder)
 
     def writes_of_faces_meanwhile(self, seen):
-        def during():
-            seen.append((indexing.clustering.of(self.library).is_set(),
+        """(began, flag up, TagTuner's answer to a write of a face, TagPup's) as each line is read."""
+        def during(began):
+            seen.append((began, indexing.clustering.of(self.library).is_set(),
                          self.apps["tuner"].post("/harbour/api/face/unmatch", json={"face_id": 1}).status_code,
                          self.apps["tagpup"].post("/harbour/api/face/unmatch", json={"face_id": 1}).status_code))
         return during
@@ -146,9 +154,15 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
                 self.assertEqual("Folder indexed and face identities resolved.", status["message"])
                 # One process: the CLI's index, which clustered after itself; no second command.
                 self.assertEqual([["index"]], [[c[2]] for c in cli.commands], cli.commands)
-                self.assertTrue(seen, "nothing was read after the clustering began")
-                self.assertTrue(all(each == (True, 409, 409) for each in seen),
-                                "(flag up, TagTuner's answer, TagPup's answer) while clustering: %s" % seen)
+                during = [each[1:] for each in seen if each[0]]
+                before = [each[1:] for each in seen if not each[0]]
+                self.assertTrue(during, "nothing was read after the clustering began")
+                self.assertTrue(all(each == (True, 409, 409) for each in during),
+                                "(flag up, TagTuner's answer, TagPup's answer) while clustering: %s" % during)
+                # The index itself takes no write of a face away: the flag is down until the clustering's line.
+                self.assertTrue(before, "nothing was read before the clustering began")
+                self.assertTrue(all(not flag and 409 not in answers for flag, *answers in before),
+                                "(flag up, TagTuner's answer, TagPup's answer) while indexing: %s" % before)
                 self.assertFalse(indexing.clustering.of(self.library).is_set(), "the flag stayed up after the run")
 
     def test_the_bar_stands_at_95_while_the_faces_are_clustered(self):
@@ -167,7 +181,8 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
         self.assertEqual("completed", status["status"], status)
         self.assertIn("faces were not clustered again", status["message"])
         self.assertIn(indexing.CLUSTERING_BUTTON, status["message"])
-        self.assertEqual([], seen)
+        self.assertTrue(seen)
+        self.assertEqual([(False, False)], sorted({(began, flag) for began, flag, *_ in seen}))
 
     def test_a_failed_clustering_is_the_folders_error_and_the_index_stays(self):
         for code in (indexing.EXIT_CLUSTERING_FAILED, 1):
@@ -178,8 +193,33 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
                 self.assertEqual("failed", status["status"], status)
                 self.assertIn("Folder indexed, but resolving face identities failed (exit code %d)" % code,
                               status["message"])
+                # How to try again is the command that clusters; Name faces from tags names faces from tags.
+                self.assertIn("cluster-faces", status["message"])
+                self.assertNotIn(indexing.CLUSTERING_BUTTON, status["message"])
                 self.assertEqual(100, status["percent"], "the index was done: its bar is not put back to 0")
                 self.assertFalse(indexing.clustering.of(self.library).is_set())
+
+    def test_the_roots_changed_while_the_faces_are_clustered_and_the_folder_is_still_indexed(self):
+        with mock.patch("subprocess.Popen", side_effect=_TheCli(INDEXED[:2] + [roots.STOPPED + "\n"],
+                                                               code=roots.EXIT_ROOTS_CHANGED)):
+            status = self.ask("tuner", "/harbour/api/folder/index-start", "folder_paths")
+        self.assertEqual("failed", status["status"], status)
+        self.assertIn("Folder indexed, but resolving face identities stopped", status["message"])
+        self.assertIn("roots were changed by another process", status["message"])
+        self.assertIn("cluster-faces", status["message"])
+        self.assertEqual(100, status["percent"], "the index was done: its bar is not put back to 0")
+        self.assertFalse(indexing.clustering.of(self.library).is_set())
+
+    def test_the_clustering_is_seen_when_the_servers_environment_asks_for_colour(self):
+        """rich colours the line's "..." when it takes the pipe for a terminal (FORCE_COLOR), and a coloured line is
+        not the clustering's: writes of faces would be taken while the faces are clustered."""
+        cli = _TheCli(NOTHING_NEW)
+        with mock.patch.dict(os.environ, {"FORCE_COLOR": "1"}), mock.patch("subprocess.Popen", side_effect=cli):
+            indexing.index_folder(self.library, self.folder, self.home.root)
+        printed = io.StringIO()
+        Console(file=printed, _environ=cli.environments[0]).print(indexing.CLUSTERING_STARTS, markup=False,
+                                                                   soft_wrap=True)
+        self.assertEqual(indexing.CLUSTERING_STARTS, indexing.summarize_indexer_line(printed.getvalue()))
 
 
 class _Hold:
@@ -261,6 +301,13 @@ class TheCliIndexByHand(unittest.TestCase):
         self.assertEqual(indexing.EXIT_CLUSTERING_FAILED, result.exit_code, result.output)
         self.assertIn("The photos are indexed, but resolving face identities failed: RuntimeError: out of memory",
                       result.output)
+        self.assertEqual(2, self.photos())
+
+    def test_the_roots_changed_while_it_clusters_is_the_one_roots_stop_and_the_photos_stay(self):
+        self.failing = roots.RootsChanged("the library's roots were changed while this run held them")
+        result = self.index()
+        self.assertEqual(roots.EXIT_ROOTS_CHANGED, result.exit_code, result.output)
+        self.assertIn(roots.STOPPED, result.output)
         self.assertEqual(2, self.photos())
 
     def test_stopped_while_it_waits_for_the_card_it_clusters_nothing(self):
