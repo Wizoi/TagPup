@@ -99,7 +99,10 @@ def bounded(location, call, seconds, away_seconds=None):
             _away[share] = time.monotonic()
         return "away", None
     with _guard:
-        _away.pop(share, None)
+        # The share answered: an away taken before this look is over, but not one the look itself learned (a server
+        # that said "not found" at once, _share_answers).
+        if share in _away and _away[share] == since:
+            del _away[share]
         if _reading.get(share) is thread:
             del _reading[share]
     if "error" in box:
@@ -119,11 +122,21 @@ def _share_answers(photo_path):
     (WinError 53), a share name that is not there (67) and a mapped drive that is not connected, the same words it
     uses for a file that was deleted: a file on a share is gone only when the share is there. Asked of a network path
     alone: a local drive letter that is not connected is a drive gone, and what was on it gone (owner, 2026-10-15: no
-    USB drives; #1387)."""
+    USB drives; #1387). The one place that learns a share is away from a quick "not found": one that does not answer
+    is taken as away for AWAY_SECONDS from now, as one that did not answer in time is, so the next look -- at a file
+    (stamp_of) or a folder (folder_state) -- is answered at once without asking it (#1543)."""
     root = os.path.splitdrive(photo_path)[0]
     if not root:
         return True
-    return os.path.exists(root + os.sep)
+    if os.path.exists(root + os.sep):
+        return True
+    share, now = share_of(root), time.monotonic()
+    with _guard:
+        since = _away.get(share)
+        if since is None or now - since >= AWAY_SECONDS:   # the window runs from when it was found away: it never slides
+            _away[share] = now
+            logger.info("%s said it is not there; its share is taken as away for %s s.", root, AWAY_SECONDS)
+    return False
 
 
 def _folder_state(folder, on_a_share):
@@ -168,9 +181,6 @@ def stamp_of(photo_path):
     if not on_a_network_drive(photo_path):
         return _stat_state(photo_path, False)
     state, found = bounded(photo_path, lambda: _stat_state(photo_path, True), SHARE_WAIT, AWAY_SECONDS)
-    if state == "ok" and found is UNANSWERED:   # it answered at once that it is not there: the share is away all the same
-        with _guard:
-            _away[share_of(photo_path)] = time.monotonic()
     return found if state == "ok" else UNANSWERED
 
 

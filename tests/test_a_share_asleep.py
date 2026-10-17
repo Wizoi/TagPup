@@ -420,7 +420,7 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         self.reads = []
         self.server_up = False
         self.file_there = False
-        real_stat, real_exists = os.stat, os.path.exists
+        real_stat, real_exists, real_isdir = os.stat, os.path.exists, os.path.isdir
 
         def on_the_server(path):
             return str(path).upper().startswith(self.SERVER)
@@ -432,8 +432,14 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
             if self.server_up and self.file_there:
                 return os.stat_result((0, 0, 0, 1, 0, 0, 7, 0, 5, 0))
             raise FileNotFoundError(53, "The network path was not found")
+
+        def isdir(path):
+            if not on_the_server(path):
+                return real_isdir(path)
+            self.reads.append(path)
+            return self.server_up
         # Only the server's paths are stood in for: the test's own library, in a home of its own, is on the disk.
-        for patcher in (mock.patch.object(os, "stat", stat),
+        for patcher in (mock.patch.object(os, "stat", stat), mock.patch.object(os.path, "isdir", isdir),
                         mock.patch.object(os.path, "exists",
                                           lambda path: self.server_up if on_the_server(path) else real_exists(path)),
                         mock.patch.object(shares, "on_a_network_drive", on_the_server)):
@@ -453,6 +459,26 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         walk = shares.Walk()
         self.assertEqual([None] * 4, [walk.stamp_of(path) for path in self.PHOTOS])
         self.assertEqual(([], 0, 4), (walk.away, walk.skipped, len(self.reads)))
+
+    def test_a_file_found_away_answers_a_folder_of_the_server_at_once_and_the_reverse_for_thirty_seconds(self):
+        """One place learns that a server saying not found at once is away (_share_answers), so a look at a file (a page of
+        cards, a write) and a look at a folder (a sync, each folder it walks) share it: the second is answered without
+        asking the server, until AWAY_SECONDS from when it was FOUND away -- the looks answered meanwhile do not slide
+        the window. Break: the share marked in stamp_of alone (a folder look asks again), or bounded clearing what its
+        own look learned."""
+        folder, clock = "Q:\\Pictures", [1000.0]
+        with mock.patch.object(shares, "time", mock.Mock(monotonic=lambda: clock[0])):
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(self.PHOTOS[0]))
+            self.assertEqual(["unanswered", 1], [shares.folder_state(folder), len(self.reads)], "the folder asked again")
+            clock[0] += 20
+            self.assertEqual([shares.UNANSWERED, 1], [shares.stamp_of(self.PHOTOS[1]), len(self.reads)])
+            clock[0] += 11   # 31 s after it was found away, 11 after the last look answered
+            self.assertEqual(["unanswered", 2], [shares.folder_state(folder), len(self.reads)], "the window slid")
+            shares.forget()   # what Retry does
+            del self.reads[:]
+            self.assertEqual("unanswered", shares.folder_state(folder))
+            self.assertEqual([shares.UNANSWERED, 1], [shares.stamp_of(self.PHOTOS[2]), len(self.reads)],
+                             "a file of the server found away by a folder look was asked")
 
     def test_a_tag_write_to_its_photos_stats_once_reads_none_and_touches_no_row_or_journal(self):
         """The journaled write (file_changes.write_fields; here a TagTuner face write, face_people.write_tags, the path
