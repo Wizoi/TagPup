@@ -121,6 +121,12 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
 
 ## History
 
+- 2026-10-17, AI pipeline 1b: each photo's model work is split into a processor half and a card half
+  (`ClipModel.input_of` / `embed_input`, `FaceModel.picture` / `detect_and_embed`, `PhotoEmbeddings.prepared` /
+  `made`), and the CLI's index reads the next photos ahead on two threads (`tagpup.core.read_ahead`); a read never loads
+  a model, and a run takes its turn for each card half. 1.94 to 1.68 s a photo on an event folder, 1.22 to 1.05 on the
+  many-face sample, the rows identical (docs/AI_PIPELINE.md, phase 1b).
+
 - 2026-10-15, the domain pass: the warm-up holds a run's lease, and `begin` drops another set only once its own are made
   (#1423, #1424); the runtime takes test models one way; the suggester is always given both models (#1420, #1425); the
   unreadable-setting and no-id-person arms gone; a page test over every member kind; an index with nothing to do imports

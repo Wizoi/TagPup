@@ -5,11 +5,12 @@ was spread over (the research report, the owner's decisions of 2026-10-07 and th
 stay as the record, this is what is followed. Owner for the domain: Views, search and AI (models, GPU turn, Suggest,
 vectors), with People for faces and Data for the schema ([OWNERS.md](OWNERS.md)).
 
-Status (2026-10-16): **phase 0 done** (measured, section 7); the plan below is reordered by what it showed (owner
+Status (2026-10-17): **phase 0 done** (measured, section 7); the plan below is reordered by what it showed (owner
 accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again) and
 2a (`cluster-faces` 2,113 s to 202 s, names unchanged). **Built, off:** 1a (the detector downscale, the setting
-`faces.detect_max_side`, measured below; turning it on is the owner's). **Next:** 1b and 1c, 2b and 2c. Update a
-phase's status here when it merges.
+`faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
+ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Next:** 1c, 2b and 2c. Update a phase's status
+here when it merges.
 
 ## 1. Where this comes from
 
@@ -164,12 +165,18 @@ same scripts.
   already knows up front. `cudnn.benchmark` for the fixed-size recogniser batch.
   *Built 2026-10-17: the read-ahead only.* Each photo's model work is split into its processor half and its card
   half (`PhotoEmbeddings.prepared` / `made`, `FaceModel.picture` / `detect_and_embed`), and `tagpup.core.read_ahead`
-  runs the processor halves of the next photos on two threads, three ahead, within 1 GiB (a larger photo is read
-  alone); the card, the identity write and every library write stay on the CLI's thread in the old order. Measured
-  the same day on the same samples, other programs holding 1.0 to 1.7 GB of the card: the event folder (61 photos)
-  1.94 to 1.68 s a photo, the many-face sample (299) 1.22 to 1.05; card busy 20.9 to 23.8% and 31.2 to 37.4%; peak
-  card memory unchanged (8,920 and 9,937 / 9,902 MiB); the 299 photos' rows identical (5,724 faces, every box the
-  same, photo and face vectors at cosine 1.000000). Not built, because they cannot pay: batching CLIP's images (its
+  runs the processor halves of the next photos on two threads, three ahead; the card, the identity write and every
+  library write stay on the CLI's thread in the old order. The pictures read ahead are reserved within an estimate of
+  1 GiB, each half saying what it holds (`ClipModel.input_bytes`, `FaceModel.picture_bytes`), and a photo larger than
+  that is read alone; process memory is not capped (the file's bytes during each decode, the card thread's crops and
+  tensors are outside the estimate). Measured the same day on the same samples, other programs holding 1.0 to 1.7 GB
+  of the card, before to after: the event folder (61 photos) 1.94 to 1.68 s a photo, card busy 20.9 to 23.8%, peak
+  card memory 8,920 to 8,920 MiB; the many-face sample (299) 1.22 to 1.05 s a photo, card busy 31.2 to 37.4%, peak
+  card memory 9,937 to 9,902 MiB; the 299 photos' rows identical (5,724 faces, every box the same, photo and face
+  vectors at cosine 1.000000). It adds more named things than it takes away (the read-ahead, `Prepared`,
+  `DetectionPicture`, each model's two halves and their sizes, against `embed_image`, `embed_picture`, the unused
+  `embed=` and `shown_size`): the split of each photo's work into a processor half and a card half is what the phase
+  is, and each half is named where its model is. Not built, because they cannot pay: batching CLIP's images (its
   forward pass is 0.058 s in all) and `cudnn.benchmark` (the recogniser is 0.032 s, and the flag is process-wide, so
   MTCNN would re-tune for every photo size). Suggest's tag prompts are embedded one at a time
   (`suggester._precompute_candidates`), but each is kept after its first use: left as it is.

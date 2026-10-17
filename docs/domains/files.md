@@ -68,6 +68,12 @@ exceptions, each unjournaled by decision:
 
 ## By design (each row closed `decided:`)
 
+- **The indexer's per-photo reads have no deadline** (the header for the read-ahead's estimate, the decodes, the stamp,
+  the zero tail; review of AI pipeline 1b, 2026-10-17): a share that sleeps mid-index holds the run until it answers,
+  or until Cancel or Ctrl+C. Nothing becomes missing and nothing is written meanwhile. A full decode cannot be bounded
+  without giving the photo up as unread, which the next index reads again anyway, and `shares.bounded` is for deciding
+  "not looked at" before a write or a report, which an index in progress does not do.
+
 - **#1215**: an undo of a rotation leaves the XMP `tiff:Orientation` the turn set. No instance: `raw_metadata` records no
   Orientation in the three libraries (counted 2026-10-15) and nothing has been reported.
 - **#1216**: a TIFF's box turn needs Pillow and the mirrored values are untested; the sideways-photo face-box

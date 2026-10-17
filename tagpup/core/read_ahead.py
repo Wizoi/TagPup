@@ -1,5 +1,5 @@
 """Reading ahead: the next items read on a few threads while the caller works on the current one, handed back in
-their order, within a bound on the bytes the reads hold (docs/AI_PIPELINE.md, phase 1b).
+their order, within a bound on the bytes the reads say they hold (docs/AI_PIPELINE.md, phase 1b).
 
 The indexer (tagpup_cli.py's index) decodes each photo on the processor and then runs the models on the graphics
 card; one after the other, the card waited for every decode. Here the decodes of the next photos run on threads of
@@ -12,7 +12,9 @@ back as it is when its turn comes. Its read runs on a worker (`read(item, begun,
 once, with the bytes it is about to hold, before it holds them. Reservations are granted in the items' order, and one
 is always granted when nothing else is held: the item the caller waits for never waits behind a later one, and a
 single item larger than the bound is read alone. What an item reserved is given back when the caller asks for the
-next one, so the reads ahead and the item in the caller's hands hold at most `budget` bytes together, or one item.
+next one, so what the reads ahead and the item in the caller's hands reserved is at most `budget` bytes together, or
+one item. The bound is on those reservations -- each read's own estimate of what it holds --, not on the process's
+memory: what a read holds beyond its estimate, and what the caller makes of an item, are outside it.
 
 The threads are daemons: closed (the `with` block left, Ctrl+C, an error), the window is given up, a read under way
 finishes on its own and is thrown away, and nothing waits for it. A read writes nothing: what a read made is the
