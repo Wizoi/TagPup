@@ -411,6 +411,7 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
     """A server asleep answers WinError 53 at once, not by hanging (#1543): the share is away, not its files unreadable.
     Counted 2026-10-17: 1,309 photos of one live library sit on a UNC root. Break: _stat_state answering CANNOT_READ."""
 
+    SERVER = "Q:\\"
     PHOTOS = ["Q:\\Pictures\\p%d.jpg" % n for n in range(4)]
 
     def setUp(self):
@@ -419,15 +420,23 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         self.reads = []
         self.server_up = False
         self.file_there = False
+        real_stat, real_exists = os.stat, os.path.exists
+
+        def on_the_server(path):
+            return str(path).upper().startswith(self.SERVER)
 
         def stat(path, *args, **kwargs):
+            if not on_the_server(path):
+                return real_stat(path, *args, **kwargs)
             self.reads.append(path)
             if self.server_up and self.file_there:
                 return os.stat_result((0, 0, 0, 1, 0, 0, 7, 0, 5, 0))
             raise FileNotFoundError(53, "The network path was not found")
-        for patcher in (mock.patch("tagpup.files.shares.os.stat", stat),
-                        mock.patch("tagpup.files.shares.os.path.exists", lambda path: self.server_up),
-                        mock.patch.object(shares, "on_a_network_drive", return_value=True)):
+        # Only the server's paths are stood in for: the test's own library, in a home of its own, is on the disk.
+        for patcher in (mock.patch.object(os, "stat", stat),
+                        mock.patch.object(os.path, "exists",
+                                          lambda path: self.server_up if on_the_server(path) else real_exists(path)),
+                        mock.patch.object(shares, "on_a_network_drive", on_the_server)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -444,6 +453,30 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         walk = shares.Walk()
         self.assertEqual([None] * 4, [walk.stamp_of(path) for path in self.PHOTOS])
         self.assertEqual(([], 0, 4), (walk.away, walk.skipped, len(self.reads)))
+
+    def test_a_tag_write_to_its_photos_stats_once_reads_none_and_touches_no_row_or_journal(self):
+        """The journaled write (file_changes.write_fields; here a TagTuner face write, face_people.write_tags, the path
+        a bulk tag, rename, rotate and delete share): each photo of the server that said not found at once is left out
+        with AWAY_WHY after ONE stat for the whole selection -- no ExifTool read, no row touched, no change journaled.
+        Break: _stat_state answering CANNOT_READ for it (the trunk before #1543: each photo stat'ed and read)."""
+        from tagpup.services import face_people, file_changes
+        vl = ViewLibrary(self)
+        for path in self.PHOTOS:
+            vl.photo("", "", taken="2024:06:01 10:00:00", tags=["Trips/Harbour"], at=path)
+        before = vl.rows("SELECT * FROM photos ORDER BY id")
+        journal = vl.rows("SELECT id, status FROM changes ORDER BY id")   # the new library's settings stamp
+        del self.reads[:]   # the seeding's own stamps
+        session = mock.MagicMock()
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
+            done = face_people.write_tags(vl.library, {path: (["Trips/Coast"], ()) for path in self.PHOTOS},
+                                          face_people.Writer("exiftool"), "person added for a named face",
+                                          stop_at_first_error=False)
+        self.assertEqual(1, len(self.reads), "the server was asked more than once")
+        self.assertEqual(0, session.return_value.__enter__.return_value.get_tags.call_count, "a photo was read")
+        self.assertEqual(0, done.changed)
+        self.assertEqual([file_changes.AWAY_WHY] * 4, [str(why) for _, why in done.errors])
+        self.assertEqual(before, vl.rows("SELECT * FROM photos ORDER BY id"), "a row was touched")
+        self.assertEqual(journal, vl.rows("SELECT id, status FROM changes ORDER BY id"), "a change was journaled")
 
     def test_a_share_that_comes_back_is_asked_again_by_the_next_walk(self):
         self.assertIs(shares.UNANSWERED, shares.Walk().stamp_of(self.PHOTOS[0]))
