@@ -29,6 +29,26 @@ from shipped_sources import python_sources  # noqa: E402
 
 OWNER = os.path.join("tagpup", "store", "db.py")
 
+#: Calls to sqlite3.connect that a test must keep bare, a count per test file, each for a reason: the test
+#: opens a second connection with no settings on purpose. Lower a count when one goes; never raise one.
+BARE_IN_TESTS = {
+    # A writer that is not db's: it must see "database is locked" at once (timeout=0.2), not wait out db's busy timeout.
+    "test_identify_cache_keeps_others_writes.py": 1,
+    # Two plain connections: the test proves roots_for treats a connection that is not db.connect's as unmarked.
+    "test_roots_store.py": 2,
+}
+SQLITE_CONNECT = re.compile(r"\bsqlite3\.connect\s*\(")
+
+
+def test_sources():
+    """Every test module, helper and fixture under tests/ that is Python."""
+    tests_dir = os.path.join(WORKSPACE_DIR, "tests")
+    for folder, dirs, names in os.walk(tests_dir):
+        dirs[:] = sorted(d for d in dirs if d not in ("__pycache__", "node_modules"))
+        for name in sorted(names):
+            if name.endswith(".py"):
+                yield os.path.join(folder, name)
+
 
 def source_files():
     for relative in python_sources():
@@ -51,6 +71,25 @@ class TestNobodyConnectsDirectly(unittest.TestCase):
             "these open a connection without the WAL mode, busy timeout and write "
             "lock that db.connect() applies: " + ", ".join(offenders)
         )
+
+    def test_tests_connect_through_db_too(self):
+        """A test's connection with no busy timeout or WAL mode failed under load as a lock error and hid what the
+        test meant (#1575); the few that must stay bare are counted in BARE_IN_TESTS, each with its reason."""
+        found = {}
+        for path in test_sources():
+            name = os.path.basename(path)
+            if name == os.path.basename(__file__):
+                continue
+            with open(path, encoding="utf-8") as f:
+                count = sum(1 for line in f if SQLITE_CONNECT.search(line))
+            if count:
+                found[name] = count
+        self.assertEqual(
+            {}, {n: c for n, c in found.items() if c > BARE_IN_TESTS.get(n, 0)},
+            "open the connection with tagpup.store.db.connect(), or list it in BARE_IN_TESTS with the reason")
+        self.assertEqual(
+            [], sorted(n for n in BARE_IN_TESTS if found.get(n, 0) < BARE_IN_TESTS[n]),
+            "these have fewer bare connections than listed: lower or remove them in BARE_IN_TESTS")
 
     def test_db_itself_is_allowed_to(self):
         """The check above is worthless if it matches nothing anywhere."""
