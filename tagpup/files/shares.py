@@ -132,10 +132,8 @@ def _share_answers(photo_path):
         return True
     share, now = share_of(root), time.monotonic()
     with _guard:
-        since = _away.get(share)
-        if since is None or now - since >= AWAY_SECONDS:   # the window runs from when it was found away: it never slides
-            _away[share] = now
-            logger.info("%s said it is not there; its share is taken as away for %s s.", root, AWAY_SECONDS)
+        _away[share] = now   # a look answered from the memo never gets here (bounded), so the window runs from this look
+    logger.info("%s said it is not there; its share is taken as away for %s s.", root, AWAY_SECONDS)
     return False
 
 

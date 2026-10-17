@@ -464,8 +464,8 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
     def test_a_file_found_away_answers_a_folder_of_the_server_at_once_and_the_reverse_for_thirty_seconds(self):
         """One place learns that a server saying not found at once is away (_share_answers), so a look at a file (a page of
         cards, a write) and a look at a folder (a sync, each folder it walks) share it: the second is answered without
-        asking the server, until AWAY_SECONDS from when it was FOUND away -- the looks answered meanwhile do not slide
-        the window. Break: the share marked in stamp_of alone (a folder look asks again), or bounded clearing what its
+        asking the server, until AWAY_SECONDS from when it was FOUND away -- the looks answered meanwhile come from the
+        memo (bounded) and never reach the mark, so they do not slide the window. Break: the share marked in stamp_of alone (a folder look asks again), or bounded clearing what its
         own look learned."""
         folder, clock = "\\\\Nas\\Pictures\\2019", [1000.0]
         with mock.patch.object(shares, "time", mock.Mock(monotonic=lambda: clock[0])):
