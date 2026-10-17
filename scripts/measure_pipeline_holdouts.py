@@ -15,7 +15,7 @@ or a person.
   by any recogniser and is counted apart.
 * `vectors` (a): the stratified sample of scripts/measure_pipeline_stages.py, copied at the paths its rows have into
   a sandbox's copy of the library, embedded again by the runtime's CLIP model one photo at a time (the indexer's
-  way, ClipModel.embed_image) and in batches of 8 and 16 (the picture the model saw, captured by a hook on its visual
+  way, ClipModel.input_of and embed_input) and in batches of 8 and 16 (the picture the model saw, captured by a hook on its visual
   tower, stacked and run at fp16): the cosine of each against the vector the library holds. Expected 0.999 or more.
 * `size` (b): a sandbox's copy of the library given a second set of vectors at image size 224 (a model key of its
   own, in the copy only; the library's own are at its setting), and a held-out set of its tagged photos, weighted to
@@ -200,7 +200,7 @@ def vectors_check(source, rows, size, seed, report):
                     skipped["no vector held"] = skipped.get("no vector held", 0) + 1
                     continue
                 try:
-                    vector = clip.embed_image(copies[row["path"]])
+                    vector = clip.embed_input(clip.input_of(copies[row["path"]]))
                 except OSError as problem:   # images.Unreadable, or a read that failed
                     skipped[type(problem).__name__] = skipped.get(type(problem).__name__, 0) + 1
                     seen.clear()
@@ -334,7 +334,7 @@ def size_check(source, rows, holdout, seed, report):
                 started = time.perf_counter()
                 try:
                     stat = os.stat(row["path"])
-                    vector = clip.embed_image(row["path"])
+                    vector = clip.embed_input(clip.input_of(row["path"]))
                 except OSError as problem:
                     skipped[type(problem).__name__] = skipped.get(type(problem).__name__, 0) + 1
                     continue

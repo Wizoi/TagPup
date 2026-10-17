@@ -166,7 +166,7 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 ```
 tagpup/                config (where the libraries are), logs, runtime (composition root), launcher
   core/                pure rules: paths, vocabulary, validation, clustering, dates, fields, renaming, library,
-                       machine, result, per_library, processes, byte_lock, idle, runs, gpu_turns, photo_meta
+                       machine, result, per_library, processes, byte_lock, idle, runs, gpu_turns, photo_meta, read_ahead
   store/               the only SQL. db (connections, locks), schema (migrations), one module per table or
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, face_batches, settings, roots + roots_check + root_rows, derived, search_index, folders,

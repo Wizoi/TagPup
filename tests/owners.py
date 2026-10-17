@@ -95,7 +95,7 @@ _SCENARIO_FILES = {
         "test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
         "test_tag_a_photo_read_it_back_and_undo test_time_shift"
     ),
-    "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added",
+    "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_an_index_reads_the_next_photos_ahead",
     "F3": (
         "test_batches test_bulk_edits test_bulk_edits_real_exiftool test_bulk_edits_stalled_exiftool "
         "test_bulk_writes_start_from_the_file"
@@ -110,7 +110,7 @@ _SCENARIO_FILES = {
     ),
     "F9": "test_roots_old_place test_roots_pinned_runs",
     "F10": "test_one_photo_whatever_its_spelling",
-    "F11": "test_index_progress_end_to_end test_an_index_is_followed_by_clustering",
+    "F11": "test_index_progress_end_to_end test_an_index_is_followed_by_clustering test_an_index_reads_the_next_photos_ahead",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",

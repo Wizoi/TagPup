@@ -17,6 +17,19 @@ class Faces:
     (tagpup.services.faces.detector_of): a test's face model is one of these, and says what it detects."""
     min_face_size, confidence_threshold, mtcnn_thresholds = 40, 0.9, [0.6, 0.7, 0.7]
 
+    def picture(self, path, *, max_side):
+        """The processor's half, as the CLI's index asks it (tagpup.ml.faces.FaceModel.picture): what the test's
+        detect_and_embed_faces is handed then."""
+        return path, max_side
+
+    def picture_bytes(self, width, height, *, max_side):
+        """What the processor's half holds, as the read-ahead asks it: nothing decoded here."""
+        return 0
+
+    def detect_and_embed(self, picture):
+        path, max_side = picture
+        return self.detect_and_embed_faces(path, max_side=max_side)
+
 
 class Clip:
     """CLIP as the runtime hands it to a run: the library's default settings, a word embedded to a zero vector `dim` long
@@ -35,7 +48,7 @@ class Clip:
         self.prompts.append(prompt)
         return [0.0] * self.dim
 
-    def embed_image(self, path, seen=None):
+    def input_of(self, path, seen=None, load=True):
         raise AssertionError("a photo was embedded: the test gives its vector")
 
 

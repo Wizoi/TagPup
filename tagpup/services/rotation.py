@@ -7,7 +7,7 @@ never leave a turned file with boxes of the old picture, or the reverse (docs/IN
 
 - the photo's vectors go, since the embedder applies the Orientation and they describe the photo before the turn;
 - for a TIFF, which Pillow shows already turned, the face boxes turn with it and their cached crops are dropped. For
-  every other format the boxes are in the stored pixels, which do not move (tagpup.files.images.shown_size).
+  every other format the boxes are in the stored pixels, which do not move (tagpup.files.images.shown_shape).
 
 The direction of the turn is not stored beside the file: it is what the journaled Orientation says (the value before and
 the value after), and the picture's size before it is the size the file shows now, swapped.
@@ -75,7 +75,7 @@ def follower(row, state):
         turn = ("right" if done == "left" else "left", height, width)
     elif direction:
         try:
-            width, height, oriented = images.shown_size(row.path)
+            width, height, oriented, _orientation = images.shown_shape(row.path)
         except Exception as problem:
             # A file Pillow cannot open has no boxes worth turning; the Orientation is recorded all the same.
             logger.warning("%s: could not tell whether its face boxes turn: %s", row.named(), problem)

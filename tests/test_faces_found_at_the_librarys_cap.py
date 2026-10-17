@@ -51,17 +51,19 @@ ORIENTATION = 0x0112
 
 class Detector:
     """MTCNN stood in for: one face at `box` in a picture of `full` size, answered in the coordinates of the picture
-    it is handed, with each picture's size noted."""
+    it is handed (its RGB bytes as an array, as tagpup.ml.faces.FaceModel.picture makes it), with each picture's size
+    (width, height) noted."""
 
     def __init__(self, full, box=None):
         self.full, self.box = full, box
         self.handed = []
 
     def detect(self, picture):
-        self.handed.append(picture.size)
+        height, width = picture.shape[:2]
+        self.handed.append((width, height))
         if self.box is None:
             return None, None
-        across, down = picture.size[0] / self.full[0], picture.size[1] / self.full[1]
+        across, down = width / self.full[0], height / self.full[1]
         x1, y1, x2, y2 = self.box
         return np.array([[x1 * across, y1 * down, x2 * across, y2 * down]], dtype=np.float32), np.array([0.99])
 
@@ -253,13 +255,15 @@ class TheCommandLineIndexReadsTheCapToo(ALibrary):
         detection was handed."""
         handed = []
 
-        def detect(model, path, max_side=None):
+        def picture(model, path, *, max_side):
             handed.append(max_side)
-            return []
+            return face_models.NotDetected()
         with mock.patch.object(clip.ClipModel, "_init_model"), \
-                mock.patch.object(clip.ClipModel, "embed_picture", return_value=[0.1] * 8), \
+                mock.patch.object(clip.ClipModel, "picture_input"), \
+                mock.patch.object(clip.ClipModel, "embed_input", return_value=[0.1] * 8), \
                 mock.patch.object(face_models.FaceModel, "_init_models"), \
-                mock.patch.object(face_models.FaceModel, "detect_and_embed_faces", detect):
+                mock.patch.object(face_models.FaceModel, "picture", picture), \
+                mock.patch.object(face_models.FaceModel, "detect_and_embed", return_value=[]):
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", library.path, "index", folder])
         self.assertEqual(0, result.exit_code, result.output)
         return handed

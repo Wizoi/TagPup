@@ -231,7 +231,7 @@ SHAPE_AWAY = 30.0
 
 def box_shape(photo_path):
     """What a page needs to draw a face's box over the photo: {"size": [width, height] of the
-    pixels the boxes are in (the file as stored; images.shown_size), or None when the file
+    pixels the boxes are in (the file as stored; images.shown_shape), or None when the file
     cannot be read -- no size, no box, rather than a box on the wrong face (#787) --, "turned":
     does the file declare an Orientation (2 to 8) that the picture is shown by, so that a box
     drawn over it in the stored pixels is not where the face is. Only the header is read, once (a

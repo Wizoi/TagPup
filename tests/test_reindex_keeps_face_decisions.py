@@ -127,18 +127,19 @@ class FaceDecisionCase(unittest.TestCase):
 
 @patch("tagpup.ml.faces.FaceModel", lambda **settings: FakeFaceProcessor())
 @patch("tagpup.ml.clip.ClipModel._init_model")
-@patch("tagpup.ml.clip.ClipModel.embed_image")
+@patch("tagpup.ml.clip.ClipModel.picture_input")
+@patch("tagpup.ml.clip.ClipModel.embed_input")
 @patch("tagpup_cli.MetadataExtractor.batch_read")
 class TestReindexingAChangedPhoto(FaceDecisionCase):
-    def reindex(self, batch_read, embed_image):
-        embed_image.return_value = [0.2] * expected_dim()
+    def reindex(self, batch_read, embed_input):
+        embed_input.return_value = [0.2] * expected_dim()
         batch_read.side_effect = lambda files, *a, **k: [fake_meta(f) for f in files]
         # What the index's write keeps: the clustering that follows an index re-derives the automatic names by its own
         # rules (the photo here names nobody, so it takes the automatic one back; tests/test_clustering_meets_naming.py).
         with patch("tagpup_cli._cluster_after_index") as clustered:
             result = self.run_cli(["index", self.library])
         self.assertEqual(result.exit_code, 0, result.output)
-        embed_image.assert_called_once()  # the change was seen and the photo re-indexed
+        embed_input.assert_called_once()  # the change was seen and the photo re-indexed
         clustered.assert_called_once()    # and, a photo recorded, the faces are clustered after the index
 
     def assert_curation_kept(self, ids):
@@ -149,10 +150,10 @@ class TestReindexingAChangedPhoto(FaceDecisionCase):
         self.assertEqual(len(faces), len(CURATED),
                          "the detector's faces were added beside the kept ones: %r" % faces)
 
-    def test_names_nobodies_and_exclusions_survive(self, batch_read, embed_image, _init):
+    def test_names_nobodies_and_exclusions_survive(self, batch_read, embed_input, _picture, _init):
         ids = self.seed()
         self.change_file()
-        self.reindex(batch_read, embed_image)
+        self.reindex(batch_read, embed_input)
 
         self.assert_curation_kept(ids)
         rows = self.photo_rows()
@@ -161,11 +162,11 @@ class TestReindexingAChangedPhoto(FaceDecisionCase):
 
     @unittest.skipUnless(paths.CASE_INSENSITIVE, "two case spellings are two files here")
     def test_a_row_under_another_spelling_is_updated_not_duplicated(
-            self, batch_read, embed_image, _init):
+            self, batch_read, embed_input, _picture, _init):
         other = os.path.join(os.path.dirname(self.library), swap_case("Harbour Walk"), "jetty.jpg")
         ids = self.seed(stored_as=other)
         self.change_file()
-        self.reindex(batch_read, embed_image)
+        self.reindex(batch_read, embed_input)
 
         self.assert_curation_kept(ids)
         rows = self.photo_rows()

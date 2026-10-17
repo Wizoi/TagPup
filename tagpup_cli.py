@@ -59,6 +59,7 @@ from tagpup.files.metadata import IdentityWriter, MetadataExtractor
 from tagpup.store.taxonomy import TagTaxonomy
 from tagpup.core import gpu_turns
 from tagpup.core import paths
+from tagpup.core import read_ahead
 from tagpup.store import db as tagpup_db
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
@@ -93,6 +94,25 @@ def get_runtime():
 def library_index(runtime, db_path):
     """The library's photos, with their vectors under its CLIP model."""
     return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)))
+
+
+#: The index's read-ahead (tagpup.core.read_ahead; docs/AI_PIPELINE.md, phase 1b): the photos after the one the
+#: graphics card is on are decoded and made ready for the models by this many threads, this many photos ahead, the
+#: decoded pictures of them all and of the photo in hand within this many bytes (a larger photo is read alone).
+READ_THREADS = 2
+READ_AHEAD = 3
+READ_AHEAD_BYTES = 1 << 30
+
+
+def read_ahead_bytes(width, height, clip=None, faces=None, max_side=None):
+    """What a photo of `width` x `height` is reserved while it is read ahead: the larger of what each half it goes
+    through holds at once -- CLIP's (`clip`, when its vector is to be made: ClipModel.input_bytes), whose pictures
+    are let go before the faces' are made, and the faces' (`faces`: FaceModel.picture_bytes), held until the card
+    has detected them. Each half says its own; this only takes the larger."""
+    halves = [faces.picture_bytes(width, height, max_side=max_side)] if faces is not None else []
+    if clip is not None:
+        halves.append(clip.input_bytes(width, height))
+    return max(halves, default=0)
 
 
 def get_exiftool_path(db_path, read_only=False) -> str:
@@ -352,7 +372,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     # The index queue's Cancel, while this waits for the graphics card (tagpup.jobs.indexing).
     stop_file = os.environ.get(indexing_service.STOP_FILE)
-    turn = None
+    turn = photos = bar = None
     total_new_indexed = 0
     try:
         # One process at a time has a model on the graphics card (tagpup.ml.gpu): its turn is
@@ -384,32 +404,65 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         total_new_indexed = 0
         locked_out = []
 
-        for meta in tqdm(to_index_meta, desc="Generating embeddings"):
+        def begin(meta):
+            """As a photo enters the read-ahead, in this thread: its lock, and the vector the library keeps of it.
+            None when another live process has the photo: it is passed over, and said below. A skip here used to be
+            silent, which is how 348 photos held by long-dead runs stayed out of the index for three months without
+            anyone noticing."""
             path = meta["path"]
-            
-            # Acquire path-level lock to prevent duplicate concurrent work.
-            # A skip here means another live process has the photo. It used to be
-            # silent, which is how 348 photos held by long-dead runs stayed out of
-            # the index for three months without anyone noticing.
             if not locker.acquire(path):
                 locked_out.append(path)
+                return None
+            kept = None if force_reembed else embeddings.cached(path)
+            if kept is None:
+                # Loaded here, on the thread that has the graphics card: a read makes CLIP's input with the loaded
+                # model's preprocessing.
+                embeddings.clip.load()
+            return {"vector": kept}
+
+        def read(meta, begun, reserve):
+            """On a thread of the read-ahead: the photo decoded and made ready for the models, nothing written and
+            nothing on the graphics card. A picture that does not decode raises images.Unreadable, handed to the
+            loop below in the photo's turn."""
+            path = meta["path"]
+            width, height = image_files.picture_size(path)
+            reserve(read_ahead_bytes(width, height, embeddings.clip if begun["vector"] is None else None,
+                                     face_processor, detect_max_side))
+            looked = {}
+            prepared = None
+            if begun["vector"] is None:
+                # Reads the file once and decodes the whole picture; a vector kept from the file as it is was made
+                # by such a decode.
+                # Never loading CLIP: it was loaded in begin, on the thread that has the card, and a read still under
+                # way when the index stops must not load it again after the turn is given back.
+                prepared = embeddings.prepared(path, load=False, seen=lambda picture: looked.update(
+                    zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0)))
+            zeros = looked["zeros"] if "zeros" in looked else image_files.zero_tail_of(path)
+            picture = face_processor.picture(path, max_side=detect_max_side) if face_processor else None
+            return prepared, zeros, picture
+
+        # The photos are read ahead and handed back in their order; the graphics card, the identity written into a
+        # file and every write of the library stay on this thread, one photo after the other, as before.
+        photos = read_ahead.ReadAhead(to_index_meta, begin, read, threads=READ_THREADS, ahead=READ_AHEAD,
+                                      budget=READ_AHEAD_BYTES)
+        # The bar is moved by hand: tqdm iterating `photos` kept the last photo it handed on, and its pictures, while
+        # it waited for the next one -- outside what the read-ahead counts.
+        bar = tqdm(total=len(to_index_meta), desc="Generating embeddings")
+        for meta, begun, result in photos:
+            bar.update(1)
+            if begun is None:
                 continue
-                
+            path = meta["path"]
             try:
-                read = {}
                 try:
-                    # Reads the file once and decodes the whole picture; a vector kept from
-                    # the file as it is was made by such a decode.
-                    emb = embeddings.of(path, force_recompute=force_reembed,
-                                        seen=lambda picture: read.update(
-                        zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0)))
+                    prepared, zeros, picture = result.result()
                 except image_files.Unreadable as damaged:
                     # Nothing is written into it: no identity, no row.
                     unreadable.append((path, damaged))
                     logger.info(f"Not indexed, and not written to: {path} does not decode: {damaged}")
                     locker.release(path)
                     continue
-                zeros = read["zeros"] if "zeros" in read else image_files.zero_tail_of(path)
+                emb = begun["vector"] if prepared is None else embeddings.made(path, prepared)
                 if zeros >= image_files.ZERO_TAIL:
                     # It decodes, perhaps grey below a line: indexed, and left as it is.
                     incomplete.append((path, zeros))
@@ -419,26 +472,26 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     # Decoded: only now may the photo be written to. The row recorded below
                     # takes the stamp the write left, and the vector with it.
                     identity_writer.give(meta, decoded=True)
-                
+
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
-                    faces = face_processor.detect_and_embed_faces(path, max_side=detect_max_side)
+                    faces = face_processor.detect_and_embed(picture)
                     batch_faces[path] = faces
-                
+
                 # A photo already indexed is not removed first: build_or_update
                 # updates its row in place. Deleting the row cascaded to its faces
                 # and took every name given by hand, and every exclusion, with it.
 
                 batch_embeddings.append(emb)
                 batch_metas.append(meta)
-                
+
                 # The nodes of the tags and people a photo names are made where the batch is recorded
                 # (derived.make_nodes, taxonomy.ensure_node): the one writer of them.
-                
+
                 # Save progress incrementally in batches of 100
                 if len(batch_embeddings) >= 100:
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
-                    
+
                     # Save faces for the batch in a single transaction
                     if batch_faces:
                         # --force-reembed means redo the work; without it the
@@ -446,18 +499,21 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                         face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
                                                   detector=face_records.detector_of(face_processor, detect_max_side))
                         batch_faces.clear()
-                    
 
                     # Release locks for saved images
                     for saved_meta in batch_metas:
                         locker.release(saved_meta["path"])
-                        
+
                     total_new_indexed += len(batch_embeddings)
                     batch_embeddings = []
                     batch_metas = []
             except Exception as e:
                 logger.error(f"Error indexing {path}: {e}")
                 locker.release(path)
+            finally:
+                # The decoded pictures go with the photo: what the read-ahead counts as held is given back when the
+                # next photo is asked for, and nothing here keeps them past that.
+                result = prepared = picture = None
 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
@@ -512,6 +568,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             if len(incomplete) > 5:
                 console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
     finally:
+        if bar is not None:
+            bar.close()
+        if photos is not None:
+            photos.close()
         if turn is not None:
             turn.release()
         identity_writer.close()

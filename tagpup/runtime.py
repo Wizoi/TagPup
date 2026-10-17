@@ -448,13 +448,14 @@ class _OnTheCard:
         self._turn.ensure()
         return self._model.load(*args, **kwargs)
 
-    def embed_image(self, *args, **kwargs):
+    def input_of(self, *args, **kwargs):
+        # The processor's half, but it reads the loaded model's preprocessing, and the model loads on first use.
         self._turn.ensure()
-        return self._model.embed_image(*args, **kwargs)
+        return self._model.input_of(*args, **kwargs)
 
-    def embed_picture(self, *args, **kwargs):
+    def embed_input(self, *args, **kwargs):
         self._turn.ensure()
-        return self._model.embed_picture(*args, **kwargs)
+        return self._model.embed_input(*args, **kwargs)
 
     def embed_text(self, *args, **kwargs):
         self._turn.ensure()
@@ -463,6 +464,11 @@ class _OnTheCard:
     def detect_and_embed_faces(self, *args, **kwargs):
         self._turn.ensure()
         return self._model.detect_and_embed_faces(*args, **kwargs)
+
+    def detect_and_embed(self, *args, **kwargs):
+        # The card's half of a detection; its other half, `picture`, uses no model and takes no turn.
+        self._turn.ensure()
+        return self._model.detect_and_embed(*args, **kwargs)
 
 
 class _Lease:

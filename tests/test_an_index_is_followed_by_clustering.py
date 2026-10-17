@@ -245,9 +245,10 @@ class TheCliIndexByHand(unittest.TestCase):
         for name in ("one.jpg", "two.jpg"):
             Image.new("RGB", (64, 64), "navy").save(os.path.join(self.folder, name), "JPEG")
         for patcher in (mock.patch.object(clip.ClipModel, "_init_model"),
-                        mock.patch.object(clip.ClipModel, "embed_picture", return_value=[0.1] * 8),
+                        mock.patch.object(clip.ClipModel, "picture_input"),
+                        mock.patch.object(clip.ClipModel, "embed_input", return_value=[0.1] * 8),
                         mock.patch.object(faces.FaceModel, "_init_models"),
-                        mock.patch.object(faces.FaceModel, "detect_and_embed_faces", return_value=[])):
+                        mock.patch.object(faces.FaceModel, "detect_and_embed", return_value=[])):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.holds, self.resolved = [], []

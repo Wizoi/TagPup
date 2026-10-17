@@ -34,17 +34,15 @@ class PhotoEmbeddings:
     was when its vector was made, else made by `clip` and kept.
 
     `photo_index` is the library's (PhotoIndex): its connection is read, and a vector is
-    written on a connection of its own. Without one, nothing is kept. `embed` makes a
-    vector of a photo, `clip.embed_image` unless given.
+    written on a connection of its own. Without one, nothing is kept.
     """
 
-    def __init__(self, clip, photo_index=None, embed=None, remember=True):
+    def __init__(self, clip, photo_index=None, remember=True):
         self.clip = clip
         self.photo_index = photo_index
         #: False: the library's vectors are read, and none is ever written (a Just look run,
         #: tagpup.jobs.suggestions: a vector is a row of the library).
         self.remember = remember
-        self.embed = embed or clip.embed_image
         #: The name its vectors are kept under in a library (tagpup.store.embeddings).
         self.model_key = store_embeddings.model_key(**clip.settings)
 
@@ -97,10 +95,8 @@ class PhotoEmbeddings:
         except Exception as e:
             logger.warning(f"Failed to write cache for {file_path}: {e}")
 
-    def of(self, file_path, force_recompute=False, seen=None):
-        """A photo's vector: the one kept, unless `force_recompute`; else made and kept.
-        Made, the picture decoded to make it is handed to `seen` when given
-        (ClipModel.embed_image): what the indexer knows of the file from that read."""
+    def of(self, file_path, force_recompute=False):
+        """A photo's vector: the one kept, unless `force_recompute`; else made and kept (made(prepared))."""
         if not force_recompute:
             cached = self.cached(file_path)
             if cached is not None:
@@ -114,11 +110,32 @@ class PhotoEmbeddings:
                 cached = self.cached(file_path)
                 if cached is not None:
                     return cached
-        # Before the file is opened: see keep.
+        return self.made(file_path, self.prepared(file_path))
+
+    def prepared(self, file_path, seen=None, load=True):
+        """The processor's half of making a photo's vector (Prepared): the file's stamp, taken before it is opened
+        (see keep), and what CLIP is shown of the picture decoded from it (ClipModel.input_of, which hands the
+        decoded picture to `seen` when given: what the indexer knows of the file from that read). Nothing is kept and
+        nothing runs on the graphics card: the indexer prepares the next photos on threads of their own while the card
+        is on this one (tagpup_cli.py's index; docs/AI_PIPELINE.md, phase 1b), with `load` False: a read never loads
+        the model (ClipModel.picture_input). Raises images.Unreadable for a picture that does not decode."""
         stamp = store_embeddings.stamp_of(file_path)
-        embedding = self.embed(file_path, seen=seen) if seen is not None else self.embed(file_path)
-        self.keep(file_path, embedding, stamp)
+        return Prepared(stamp, self.clip.input_of(file_path, seen=seen, load=load))
+
+    def made(self, file_path, prepared):
+        """The vector of a photo `prepared` (Prepared), made on the model's device and kept, stamped with the file as
+        it was opened."""
+        embedding = self.clip.embed_input(prepared.image_input)
+        self.keep(file_path, embedding, prepared.stamp)
         return embedding
+
+
+class Prepared:
+    """A photo made ready for CLIP on the processor (PhotoEmbeddings.prepared): `stamp`, the file's (mtime, size) before
+    it was opened, and `image_input`, what the model is shown."""
+
+    def __init__(self, stamp, image_input):
+        self.stamp, self.image_input = stamp, image_input
 
 
 def _record(row, people="people"):

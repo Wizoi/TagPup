@@ -176,7 +176,8 @@ class TheIndexer(unittest.TestCase):
 
     def index(self, folder=None):
         with mock.patch("tagpup.ml.clip.ClipModel._init_model"), \
-                mock.patch("tagpup.ml.clip.ClipModel.embed_picture", return_value=vector()) as embed:
+                mock.patch("tagpup.ml.clip.ClipModel.picture_input"), \
+                mock.patch("tagpup.ml.clip.ClipModel.embed_input", return_value=vector()) as embed:
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder or self.folder,
                                                          "--skip-faces"])
         self.assertEqual(0, result.exit_code, result.output)
