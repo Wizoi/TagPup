@@ -7,7 +7,6 @@ and assertions can be about *which* identity ranks first rather than about a thr
 """
 import os
 import sys
-import json
 import time
 import shutil
 import sqlite3
@@ -134,18 +133,10 @@ class TunerAPITestBase(unittest.TestCase):
         """A photo row listing `people` as its own, for what reads them. A test of what
         writes them seeds their sources and calls rebuild."""
         conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                path,
-                os.path.getmtime(path) if os.path.exists(path) else 1.0,
-                os.path.getsize(path) if os.path.exists(path) else 1,
-                json.dumps(list(tags)),
-                json.dumps([caption] if caption else []),
-                json.dumps({}),
-            ),
-        )
+        fields = {"XMP:Subject": list(tags)}
+        if caption:
+            fields["XMP:Description"] = caption
+        photo_rows.add_read(conn, path, fields)
         face_rows.add_people(conn, path, list(people))
         conn.commit()
         conn.close()

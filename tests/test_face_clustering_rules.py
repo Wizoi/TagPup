@@ -31,6 +31,7 @@ from tagpup.services.search import PhotoIndex
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
+import photo_rows  # noqa: E402
 
 FACE_DIM = 512
 DBSCAN_EPS = 0.48
@@ -73,16 +74,12 @@ class FaceClusteringTestBase(unittest.TestCase):
     # ---------- fixture helpers ----------
 
     def add_photo(self, name, people=(), year=None):
-        path = os.path.join(self.tmpdir, name).replace("\\", "/")
-        raw_meta = {}
+        path = os.path.abspath(os.path.join(self.tmpdir, name))   # as the indexer stores it
+        fields = {}
         if year is not None:
-            raw_meta["EXIF:DateTimeOriginal"] = f"{year}:06:15 12:00:00"
+            fields["EXIF:DateTimeOriginal"] = f"{year}:06:15 12:00:00"
         conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (path, 1.0, 1, json.dumps([]), json.dumps([]), json.dumps(raw_meta)),
-        )
+        photo_rows.add_read(conn, path, fields)
         face_rows.add_people(conn, path, list(people))
         conn.commit()
         conn.close()

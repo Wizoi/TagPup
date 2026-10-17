@@ -6,7 +6,6 @@ clear, Date Taken, a deep tag whole), test_suggest_then_apply_all.py (Apply All)
 test_service_page_images.py (a photo's faces, a face's crop), test_service_indexing.py (the indexer's progress text); the pages
 against the real routes are test_pages_against_the_real_server.py's.
 """
-import json
 import os
 import sys
 import tempfile
@@ -20,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from handler_harness import Library  # noqa: E402
 from test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool  # noqa: E402
 
+import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -69,19 +69,10 @@ class TagPupAPITestBase(unittest.TestCase):
             with ExifToolSession(executable=EXIFTOOL) as et:
                 et.set_tags([path], tags=params, params=["-overwrite_original"])
 
-        raw_meta = {"XMP:Subject": flat, "XMP:HierarchicalSubject": hierarchical}
-        self.lib.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                path,
-                os.path.getmtime(path),
-                os.path.getsize(path),
-                json.dumps(list(tags)),
-                json.dumps([title] if title else []),
-                json.dumps(raw_meta),
-            ),
-        )
+        fields = {"XMP:Subject": flat, "XMP:HierarchicalSubject": hierarchical}
+        if title:
+            fields["XMP:Description"] = title
+        db.write_with_connection(self.lib.db_path, lambda conn: photo_rows.add_read(conn, path, fields))
         return path
 
 

@@ -28,6 +28,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 from face_rows import add_face, add_people, give_their_person, people_of  # noqa: E402
 from handler_harness import Library  # noqa: E402
 
@@ -106,19 +107,8 @@ class TaxonomyTestBase(unittest.TestCase):
                     params=["-overwrite_original"],
                 )
 
-        raw_meta = {"XMP:Subject": flat, "XMP:HierarchicalSubject": hierarchical}
-        self.lib.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                path,
-                os.path.getmtime(path),
-                os.path.getsize(path),
-                json.dumps(tags),
-                json.dumps([]),
-                json.dumps(raw_meta),
-            ),
-        )
+        fields = {"XMP:Subject": flat, "XMP:HierarchicalSubject": hierarchical}
+        tagpup_db.write_with_connection(self.lib.db_path, lambda conn: photo_rows.add_read(conn, path, fields))
         # A photo's keywords are in photo_tags as the writers keep them (the tree's counts read it, #534).
         tagpup_db.write_with_connection(self.lib.db_path, derived.rebuild_all, label="test: derived tables")
         return path
