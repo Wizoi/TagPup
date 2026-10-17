@@ -162,6 +162,17 @@ same scripts.
 - **1b Overlap.** A thread pool decodes and prepares the next photos while the card runs the current one (Pillow
   releases the GIL; a Windows `DataLoader` would spawn processes). Batch CLIP images and the tag prompts Suggest
   already knows up front. `cudnn.benchmark` for the fixed-size recogniser batch.
+  *Built 2026-10-17: the read-ahead only.* Each photo's model work is split into its processor half and its card
+  half (`PhotoEmbeddings.prepared` / `made`, `FaceModel.picture` / `detect_and_embed`), and `tagpup.core.read_ahead`
+  runs the processor halves of the next photos on two threads, three ahead, within 1 GiB (a larger photo is read
+  alone); the card, the identity write and every library write stay on the CLI's thread in the old order. Measured
+  the same day on the same samples, other programs holding 1.0 to 1.7 GB of the card: the event folder (61 photos)
+  1.94 to 1.68 s a photo, the many-face sample (299) 1.22 to 1.05; card busy 20.9 to 23.8% and 31.2 to 37.4%; peak
+  card memory unchanged (8,920 and 9,937 / 9,902 MiB); the 299 photos' rows identical (5,724 faces, every box the
+  same, photo and face vectors at cosine 1.000000). Not built, because they cannot pay: batching CLIP's images (its
+  forward pass is 0.058 s in all) and `cudnn.benchmark` (the recogniser is 0.032 s, and the flag is process-wide, so
+  MTCNN would re-tune for every photo size). Suggest's tag prompts are embedded one at a time
+  (`suggester._precompute_candidates`), but each is kept after its first use: left as it is.
 - **1c Decode once, `draft`, resize before padding.** One decode per photo, the upright copy for CLIP and the
   stored-orientation copy for faces (face boxes stay in stored-orientation coordinates); `draft()` at twice the target
   for JPEG. The damage check must still run: a truncated or zero-tailed file raises `Unreadable` as before, tested
@@ -370,8 +381,8 @@ clustering's seconds apart, so the rows below are measured again like for like; 
 
 | Measure | Today | After | Notes |
 |---|---|---|---|
-| Index, an event folder, seconds a photo | **1.87** (kr-track folder of 61 photos, 114.1 s) | | Matches 1.9 of 2026-09-27; that log is gone, so the folder was the one nearest 60 photos. |
-| Index, many-face sample, seconds a photo | **1.24** whole CLI run (299 photos, 369.5 s) | | By stratum (mean s): none 0.60, 1 to 3 0.74, 4 to 9 0.91, 10 or more 1.55, worst 10 photos 3.79. |
+| Index, an event folder, seconds a photo | **1.87** (kr-track folder of 61 photos, 114.1 s) | **1.68** (1b; 1.94 before on the same day, the index alone) | Matches 1.9 of 2026-09-27; that log is gone, so the folder was the one nearest 60 photos. |
+| Index, many-face sample, seconds a photo | **1.24** whole CLI run (299 photos, 369.5 s) | **1.05** (1b; 1.22 before on the same day, the index alone) | By stratum (mean s): none 0.60, 1 to 3 0.74, 4 to 9 0.91, 10 or more 1.55, worst 10 photos 3.79. |
 | Per stage, mean s a photo | decode for CLIP 0.071; pad and resize 0.072; CLIP forward 0.058; identity write 0.037; decode for faces 0.061; **MTCNN 0.784**; crop and tensor 0.011; crop JPEG 0.004; recogniser 0.032; faces write 0.021; photo rows 0.003 | | MTCNN is 69%. The 759-face photo 8.97 s (7.0 MTCNN); a 193 MP photo 30.7 s (27.4 MTCNN). |
 | Fixed cost of an index run | **about 15 s** plus the metadata read (10.1 s for 299 photos) | | Process start 0.14, imports 4.7, CLIP load 9.8, face models 0.36. First CLIP forward 0.26 s against 0.058 steady. Suggest's vector load is a separate 8.2 s. |
 | `cluster-faces`, whole library | **2,060 s (34.3 min)** | **202 s** (2a; 2,113 s before on the same copy, the same day) | Before: 132 s grouping (DBSCAN, every core), 76 s the five rounds, about 1,896 s the last pass, card idle (#1530). After: 132 s grouping, 48 s the rounds, 12 s the last pass, 4 s reading and saving; the names identical face by face on the three libraries. |
