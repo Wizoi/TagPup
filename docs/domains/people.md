@@ -55,6 +55,12 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
 
 ## By design (each row closed `decided:`)
 
+- **The clustering trace's fourth decimal** (2026-10-16, phase 2a): the last pass reads its likenesses from one float32
+  product of a block of faces with everyone's faces (`KnownFaces.likeness_table`), not one product a person, so a likeness
+  can differ in its last bits (at most 4.2e-07 on kr-track) and the trace prints 89 of photo_index's 187,757 similarities
+  one apart at the fourth decimal. The names are the result, and they are identical face by face on the three libraries;
+  `likeness_many` already blocked faces so.
+
 - **#1209**, a tree rename stopped half way: the photos written hold the new tag while the tree keeps the old node. One
   place orders a tree edit against its files (`tags._retag`): the tree moves only once every photo is rewritten, the reply
   says "stays in the tag tree until every photo is rewritten: make the same edit again to finish the rest", and making it
