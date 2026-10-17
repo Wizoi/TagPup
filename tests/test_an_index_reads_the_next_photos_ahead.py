@@ -438,6 +438,43 @@ class ThePhotosReadAhead(unittest.TestCase):
         self.assertGreater(max(used for item, size, used in held if item != 5), self.reserved(self.TEN),
                            "the ordinary photos were not read ahead at all")
 
+    def test_a_photo_shown_to_clip_is_reserved_what_its_read_holds_at_once(self):
+        """CLIP is shown a photo upright: its read holds the picture decoded and the upright copy made of it at once
+        (every photo, turned or not), and then the copy and the square it is padded to. With the faces off
+        (--skip-faces) or under a cap, CLIP's half is what a photo is reserved, so it must cover that peak: a 3:2
+        photo, wider than the live libraries' 1.4 and so not padded, was reserved half of it."""
+        folder = own_home.for_test(self, prefix="read_ahead_sizes_").root
+        transpose, pad = images.ImageOps.exif_transpose, images.pad_to_square
+        held = []
+
+        def size_of(picture):
+            return picture.size[0] * picture.size[1] * len(picture.getbands())
+
+        def transposed(picture, **kwargs):
+            upright = transpose(picture, **kwargs)
+            held.append(size_of(picture) + size_of(upright))
+            return upright
+
+        def padded(picture, *args):
+            square = pad(picture, *args)
+            held.append(size_of(picture) + size_of(square))
+            return square
+        shapes = {"three by two": ((300, 200), None), "four by three": ((300, 225), None),
+                  "turned three by two": ((300, 200), 6), "turned four by three": ((300, 225), 8)}
+        with mock.patch.object(images.ImageOps, "exif_transpose", transposed), \
+                mock.patch.object(images, "pad_to_square", padded), \
+                mock.patch.object(clip.ClipModel, "picture_input", PICTURE_INPUT), \
+                mock.patch.object(self.CLIP, "model", object(), create=True), \
+                mock.patch.object(self.CLIP, "preprocess", lambda img: img.size, create=True):
+            for name, (size, orientation) in shapes.items():
+                with self.subTest(photo=name):
+                    held.clear()
+                    path = photo(os.path.join(folder, name + ".jpg"), (90, 120, 150), size=size,
+                                 orientation=orientation)
+                    width, height = images.picture_size(path)
+                    self.CLIP.input_of(path, load=False)
+                    self.assertGreaterEqual(tagpup_cli.read_ahead_bytes(width, height, self.CLIP, None), max(held))
+
     def test_a_photo_gone_before_its_read_is_its_own_error_and_the_rest_come_in_order(self):
         def read(item):
             if item == 2:

@@ -141,15 +141,17 @@ class ClipModel:
         return self.picture_input(img, load=load)
 
     def input_bytes(self, width, height):
-        """The bytes input_of holds at once for a photo of `width` x `height`: the picture decoded (RGB) and, when the
-        settings keep the full frame, the square it is padded to. What the index's read-ahead reserves for this half
-        (tagpup_cli.read_ahead_bytes); said here, beside what it counts, so that a change in how CLIP is shown a photo
-        changes it too. 0 for a picture whose size is not known (a damaged file's header)."""
+        """The most bytes input_of holds at once for a photo of `width` x `height` (RGB): the picture decoded and the
+        upright copy exif_transpose makes of it (a copy for every photo, turned or not), and then, when the settings
+        keep the full frame, that copy and the square it is padded to. What the index's read-ahead reserves for this
+        half (tagpup_cli.read_ahead_bytes); said here, beside what it counts, so that a change in how CLIP is shown a
+        photo changes it too. 0 for a picture whose size is not known (a damaged file's header)."""
         if not width or not height:
             return 0
-        held = 3 * width * height
+        picture = 3 * width * height
+        held = 2 * picture
         if self.preserve_full_frame and max(width, height) / min(width, height) <= self.max_aspect_ratio:
-            held += 3 * max(width, height) ** 2
+            held = max(held, picture + 3 * max(width, height) ** 2)
         return held
 
     def picture_input(self, img, load=True):
