@@ -257,12 +257,34 @@ def transcript_files(folder):
     return sorted(found)
 
 
+WORKTREE_FOLDER = re.compile(r"/\.claude/worktrees/agent-([0-9a-f]+)$")
+
+
+def worktree_branch_of(path):
+    """The branch of the worktree a subagent ran in, from its transcript's `cwd` (a meta field, not text): a folder
+    `.claude/worktrees/agent-<hex>` holds branch `worktree-agent-<hex>`. None when the run was in the main checkout
+    (on 2026-10-17, 144 of 146 reviewer runs were) or the cwd is anything else; the cwd itself is never kept."""
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if '"cwd"' not in line:
+                continue
+            try:
+                cwd = json.loads(line).get("cwd")
+            except ValueError:
+                continue
+            if isinstance(cwd, str):
+                found = WORKTREE_FOLDER.search(cwd.replace(chr(92), "/"))
+                return "worktree-agent-" + found.group(1) if found else None
+    return None
+
+
 def agent_meta(path):
     """Of the meta file beside a subagent's transcript (every one has one: 438 of 438 on 2026-10-16) only its facts:
-    {agent_type, branch, stopped}. Its text fields (the description, the request) are never taken."""
+    {agent_type, branch, stopped}. Its text fields (the description, the request) are never taken. A run whose meta
+    names no worktree branch (a reviewer or owner, or a worker the harness did not tag) is tied to one by its cwd."""
     with open(path[:-len(".jsonl")] + ".meta.json", encoding="utf-8") as handle:
         meta = json.load(handle)
-    branch = meta.get("worktreeBranch")
+    branch = meta.get("worktreeBranch") or worktree_branch_of(path)
     return {"agent_type": AGENT_TYPES.get(meta.get("agentType"), "other"),
             "branch": (branch if WORKTREE_BRANCH.match(str(branch)) else OTHER_BRANCH) if branch else None,
             "stopped": meta.get("stoppedByUser") is True}
@@ -388,7 +410,9 @@ def agents_section(records, compactions, repo, rev):
         if r["branch"] and r["branch"] != OTHER_BRANCH:
             started[r["branch"]] = min(r["at"], started.get(r["branch"], r["at"]))
     states = dict(branch_states(repo, rev, started), **{OTHER_BRANCH: "not a worktree branch"})
-    by_branch = {b: dict(tally([r for r in records if r["branch"] == b]), state=states[b])
+    by_branch = {b: dict(tally([r for r in records if r["branch"] == b]), state=states[b],
+                         review_runs=len({r["agent_file"] for r in records
+                                          if r["branch"] == b and r["agent_type"] in REVIEW_TYPES}))
                  for b in {r["branch"] for r in records if r["branch"]}}
     per_state = {s: dict(tally([r for r in records if r["branch"] and states[r["branch"]] == s]),
                          branches=sum(1 for b in by_branch.values() if b["state"] == s))
@@ -603,9 +627,8 @@ def markdown(r):
         out.append("\nCost per merge into the trunk: %.0f..%.0f USD (the priced total over %d merges).\n"
                    % (u["cost_low"] / k["merges_into_the_trunk"]["count"],
                       u["cost_high"] / k["merges_into_the_trunk"]["count"], k["merges_into_the_trunk"]["count"]))
-    out.append("\nNot counted: how many branches were reviewed before their merge and review rounds per branch (a "
-               "reviewer's or owner's meta file names no branch: only workers run in a worktree), escapes to the owner, "
-               "the time a person spent, and the cost billed.\n")
+    out.append("\nNot counted: review rounds of a branch whose reviewer ran in the main checkout (its transcript's cwd "
+               "names no worktree), escapes to the owner, the time a person spent, and the cost billed.\n")
     return "".join(out)
 
 
@@ -636,8 +659,12 @@ def agents_markdown(a, split, other_merges):
                "named), open (its ref is kept, unmerged), no merge found (no ref and no merge names "
                "it: never merged, or merged under another branch name, so an upper bound; %d trunk merges in the window "
                "name another branch).\n\n" % other_merges)
-    out.append(table(["branch", "state"] + head[1:],
-                     [[b, v["state"]] + row(b, v)[1:] for b, v in list(a["by_branch"].items())[:15]]))
+    out.append(table(["branch", "state", "review runs"] + head[1:],
+                     [[b, v["state"], v["review_runs"]] + row(b, v)[1:] for b, v in list(a["by_branch"].items())[:15]]))
+    out.append("\nA run in a worktree is tied to its branch by the meta file's `worktreeBranch`, else by its "
+               "transcript's `cwd` (`.claude/worktrees/agent-<hex>`); a reviewer or owner run in the main checkout "
+               "names no branch, so its review rounds are not counted (most of them: see `worktree_branch_of`). "
+               "Review runs: reviewer, quick reviewer and owner runs tied to the branch.\n")
     out.append("\n" + table(["state", "branches"] + head[1:],
                              [[s, v["branches"]] + row(s, v)[1:] for s, v in a["branches_per_state"].items()]))
     stopped = a["stopped_by_the_owner"]
