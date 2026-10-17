@@ -182,9 +182,8 @@ class IdentityWriter:
     A path is a bad name for a photo: rename it and the index describes something that
     no longer exists, while the photo looks unindexed. DocumentID is the XMP standard's
     per-document identifier and most photos already carry one, so this writes to few
-    files. Only the indexer mints, because it records what it read -- the identity, and
-    the file's new mtime and size -- in the index; opening a folder once wrote into its
-    photos and the rows then looked out of date.
+    files. Only the indexer mints, because it records the identity in the index; opening a
+    folder once wrote into its photos and the rows then looked out of date.
 
     Never into a photo whose picture did not decode in full (`decoded`: the caller's to
     say, and false for a file that may be an incomplete copy, tagpup.files.images.
@@ -210,10 +209,12 @@ class IdentityWriter:
 
     def give(self, record, decoded):
         """Write an identity into the photo of `record` (MetadataExtractor's) if it has
-        none, it `decoded`, and ExifTool read it without an error; update the record --
-        its identity, and the file's mtime and size after the write, or the next pass
-        would see a modified file and index it again for a write this pass made. The
-        identity minted, or None."""
+        none, it `decoded`, and ExifTool read it without an error, and put it in the record.
+        The record keeps the stamp from before its read: the file is changed by the write, so
+        the next index reads it once more -- and, the photo having its identity then, writes
+        nothing. Stamped after the write, the row claimed a keyword saved into the file since
+        its batch was read (contract 5), and the next index skipped the file as unchanged.
+        The identity minted, or None."""
         if record.get("document_id") or not decoded or record.get("read_error"):
             return None
         et = self._session()
@@ -225,11 +226,6 @@ class IdentityWriter:
         self.minted += 1
         record["document_id"] = minted
         record.setdefault("raw_metadata", {})["XMP:DocumentID"] = minted
-        try:
-            stat = os.stat(record["path"])
-            record["mtime"], record["size"] = stat.st_mtime, stat.st_size
-        except OSError:
-            pass
         return minted
 
     def _session(self):

@@ -118,6 +118,8 @@ class FaceDecisionCase(unittest.TestCase):
         make_jpeg(self.photo, color="blue")
         later = time.time() + 60
         os.utime(self.photo, (later, later))
+        #: The stamp the re-index reads it under: its row keeps it, the identity written after the read aside.
+        self.read_mtime = os.stat(self.photo).st_mtime
 
     def run_cli(self, args):
         runner = CliRunner()
@@ -158,7 +160,7 @@ class TestReindexingAChangedPhoto(FaceDecisionCase):
         self.assert_curation_kept(ids)
         rows = self.photo_rows()
         self.assertEqual(len(rows), 1, rows)
-        self.assertEqual(rows[0][1], os.stat(self.photo).st_mtime, "the row was not updated")
+        self.assertEqual(rows[0][1], self.read_mtime, "the row was not updated")
 
     @unittest.skipUnless(paths.CASE_INSENSITIVE, "two case spellings are two files here")
     def test_a_row_under_another_spelling_is_updated_not_duplicated(
@@ -172,7 +174,7 @@ class TestReindexingAChangedPhoto(FaceDecisionCase):
         rows = self.photo_rows()
         self.assertEqual([r[0] for r in rows], [other],
                          "the row keeps the spelling its faces point at")
-        self.assertEqual(rows[0][1], os.stat(self.photo).st_mtime, "the row was not updated")
+        self.assertEqual(rows[0][1], self.read_mtime, "the row was not updated")
 
 
 class TestBuildOrUpdateWritesInPlace(FaceDecisionCase):

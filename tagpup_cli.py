@@ -469,8 +469,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     logger.info(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
                                 f"{zeros} zero bytes")
                 else:
-                    # Decoded: only now may the photo be written to. The row recorded below
-                    # takes the stamp the write left, and the vector with it.
+                    # Decoded: only now may the photo be written to. The row recorded below keeps the
+                    # stamp from before its read, so the next index reads a photo given its identity once more.
                     identity_writer.give(meta, decoded=True)
 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)

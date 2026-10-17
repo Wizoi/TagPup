@@ -143,6 +143,15 @@ def recorded(library_path):
         conn.close()
 
 
+def tags_of(library_path):
+    """{file name: its row's tags, as stored}."""
+    conn = db.connect(db.readonly_uri(library_path), uri=True)
+    try:
+        return {os.path.basename(path): tags for path, tags in conn.execute("SELECT path, tags FROM photos")}
+    finally:
+        conn.close()
+
+
 @unittest.skipIf(own_home.installed_exiftool() is None, "ExifTool not installed")
 class AnIndexReadingAhead(unittest.TestCase):
     def setUp(self):
@@ -264,6 +273,34 @@ class AnIndexReadingAhead(unittest.TestCase):
         for name, (given_one, vector, found, _detected) in rows.items():
             self.assertTrue(given_one)
             self.assertEqual(vector[2:5], found[0][1], "%s took a neighbour's picture" % name)
+
+    def test_a_tag_saved_while_its_batch_waits_is_read_by_the_next_index_and_only_that_one(self):
+        """Another program saves a keyword into a photo after the index read its batch and before the photo is given
+        its identity: the row holds what was read, so it may not take the stamp the file has after the identity write
+        -- the next index skipped the photo as unchanged and the keyword was never read (contract 5). The next index
+        reads each photo given an identity once more, and the one after reads none."""
+        library = self.library("quay.db")
+        folder = self.folder("Quay", count=4)
+        give, saved = tagpup_cli.IdentityWriter.give, []
+
+        def saved_meanwhile(writer, meta, *args, **kwargs):
+            if os.path.basename(meta["path"]) == "p02.jpg":
+                with ExifToolSession(executable=own_home.installed_exiftool()) as et:
+                    et.set_tags([meta["path"]], tags={"XMP:Subject": ["Quayside"]}, params=["-overwrite_original"])
+                saved.append(meta["path"])
+            return give(writer, meta, *args, **kwargs)
+        with mock.patch.object(tagpup_cli.IdentityWriter, "give", saved_meanwhile):
+            self.index(library, folder)
+        self.assertEqual(1, len(saved))
+        self.assertNotIn("Quayside", tags_of(library)["p02.jpg"], "the row holds a keyword it never read")
+
+        self.index(library, folder)
+        rows = recorded(library)
+        self.assertIn("Quayside", tags_of(library)["p02.jpg"], "the keyword saved meanwhile was never read")
+        self.assertTrue(all(given for given, _vector, _found, _detected in rows.values()))
+
+        self.assertIn("All images are up to date", self.index(library, folder).output,
+                      "a photo given its identity is read again on every index")
 
     def test_a_read_still_under_way_when_the_index_stops_loads_no_model_after_the_turn_is_given_back(self):
         """Ctrl+C at the fourth photo while the photos after it decode slowly: the index gives its turn on the card

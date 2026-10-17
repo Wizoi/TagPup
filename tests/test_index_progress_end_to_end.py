@@ -48,7 +48,7 @@ mock.patch.object(faces.FaceModel, "detect_and_embed", return_value=[]).start()
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 class TheBarReachesTheEnd(unittest.TestCase):
-    def test_the_scraped_percent_reaches_100_the_final_message_is_the_cli_runs_and_an_index_again_reads_nothing(self):
+    def test_the_scraped_percent_reaches_100_the_final_message_is_the_cli_runs_and_a_third_index_reads_nothing(self):
         home = own_home.for_test(self, "index_progress_")
         shim = os.path.join(home.root, "shim")
         os.makedirs(shim)
@@ -93,6 +93,11 @@ class TheBarReachesTheEnd(unittest.TestCase):
         # The per-photo write locks are beside the library, not under the working directory: a server's indexer and one
         # started by hand from anywhere else must lock in one place (the child runs from the code's folder, not the home).
         self.assertTrue(os.path.isdir(os.path.join(os.path.dirname(library.path), "locks")))
+        # The second index reads once more the photos the first gave their identity: each row keeps the stamp from
+        # before its read (IdentityWriter.give). The third reads nothing.
+        again, heard_again = index()
+        self.assertTrue(again.ok, (again.errors, heard_again))
+        self.assertTrue(any("Generating embeddings: 100% (3/3)" == message for message, _p in heard_again), heard_again)
         again, heard_again = index()
         self.assertTrue(again.ok, (again.errors, heard_again))
         self.assertIn("All images are up to date! Index is current.", [message for message, _p in heard_again], heard_again)
