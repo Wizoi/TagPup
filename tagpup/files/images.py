@@ -190,6 +190,20 @@ def shown_shape(photo_path):
     return width, height, oriented, (orientation if orientation in range(1, 9) else 1)
 
 
+def picture_size(photo_path):
+    """(width, height) of a photo's picture read from its header alone, nothing decoded: what the indexer reserves
+    memory by before it decodes a photo ahead (tagpup.core.read_ahead). (0, 0) for a file whose header does not
+    parse -- an empty file, one of zeros, one that is no picture --: its decode, next, says how it is damaged
+    (opened). A file that cannot be opened raises what the system raised."""
+    try:
+        with Image.open(photo_path) as img:
+            return img.size
+    except Exception as error:
+        if not _decoder_failed(error):
+            raise
+        return 0, 0
+
+
 def is_photo(path):
     """Does `path` name a photo, by its extension (PHOTO_EXTENSIONS)?"""
     return os.path.splitext(str(path).lower())[1] in PHOTO_EXTENSIONS
