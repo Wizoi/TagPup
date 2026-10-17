@@ -175,5 +175,31 @@ class FaceModelsLoadOnce(unittest.TestCase):
         self.assertEqual(len(loads), 1)
 
 
+class FourWorkersShareEveryonesFaces(unittest.TestCase):
+    """Suggest's pool workers ask most_like of the one KnownFaces the run read, at once: everyone's faces are put in one
+    matrix once, not once a worker (about 72 MB each on photo_index, the last one kept)."""
+
+    def test_four_workers_asking_together_make_everyones_faces_once(self):
+        known = clustering.KnownFaces.of([(person, unit([1, 0, 0]) if person == 1 else unit([0, 1, 0]), 2020, None)
+                                          for person in (1, 2, 3)])
+        real, made = clustering.KnownFaces._build_table, []
+
+        def slow_build(self):
+            made.append(threading.get_ident())
+            time.sleep(0.05)
+            return real(self)
+
+        answers = []
+        with mock.patch.object(clustering.KnownFaces, "_build_table", slow_build):
+            workers = [threading.Thread(target=lambda: answers.append(known.most_like(unit([1, 0, 0]), 2020)))
+                       for _ in range(4)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+        self.assertEqual(1, len(made))
+        self.assertEqual([1] * 4, [person for person, _likeness in answers])
+
+
 if __name__ == "__main__":
     unittest.main()

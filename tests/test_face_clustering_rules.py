@@ -457,15 +457,8 @@ class TestManualOverridesSurviveClustering(FaceClusteringTestBase):
             "a hand-matched face did not propagate to the person's other photos",
         )
 
-    def test_the_trace_records_that_a_decision_was_preserved(self):
-        jane = identity_vector(1)
-        photo = self.add_photo("a.jpg", people=["Jane Doe"])
-        face = self.add_face(photo, jane, manual_name="Jane Doe")
-
-        self.resolve()
-        self.assertEqual(
-            self.traces()[face]["resolution_method"], "manual_override_preserved"
-        )
+    # The trace's "manual_override_preserved", with the name kept through every round:
+    # test_cluster_faces_on_a_crowded_library.
 
     def test_automatic_assignments_are_still_revised(self):
         """Only manual decisions are protected; inferred ones stay revisable."""

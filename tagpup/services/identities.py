@@ -615,6 +615,9 @@ def resolve(photo_index, on_step=None):
         
     refined_resolved_names = current_resolved_names
 
+    # Its own line: without it the log put this pass's time under the loop's, and the 32 minutes it took were looked for
+    # in the loop (#1530).
+    logger.info("Matching the faces left unnamed against everyone named (the last pass)...")
     # Step 4: Build database updates and calculate final statistics
     # Compute mean embeddings for the final resolved names to classify remaining unassigned faces
     # Prioritize direct anchors to build unpolluted centroids
@@ -649,26 +652,34 @@ def resolve(photo_index, on_step=None):
         if name:
             assigned_names_by_photo.setdefault(face["photo_path"], set()).add(name)
 
+    def tags_of(face):
+        meta = meta_by_path.get(face["photo_path"])
+        return set(meta.get("people_ids", [])) if meta else set()
+
+    likenesses = {}
     for number, face in enumerate(all_faces):
         if number % STEP == 0:
             step("matching", number, len(all_faces))
+            # The likeness of every face of the next STEP that this pass asks about -- one left unnamed, in a photo tagged
+            # with people -- to everyone, in one go (KnownFaces.likeness_table): it asked a face and a person at a time,
+            # and the faces of untagged photos too, whose answer it never used (#1530).
+            asked = [f for f in all_faces[number:number + STEP]
+                     if refined_resolved_names.get(f["id"]) is None and tags_of(f)]
+            table, columns = final_known.likeness_table([(f["embedding"], photo_years.get(f["photo_path"]), f["photo_path"])
+                                                for f in asked])
+            likenesses = {f["id"]: row for f, row in zip(asked, table)}
         final_name = refined_resolved_names.get(face["id"])
 
         if final_name is None:
             p_path = face["photo_path"]
             names_taken_here = assigned_names_by_photo.setdefault(p_path, set())
-
-            # If unresolved, check similarity to all known resolved people, skipping
-            # anyone already matched to another face in this same photo.
-            best_name, best_sim = final_known.most_like(
-                face["embedding"], photo_years.get(p_path), p_path, skip=names_taken_here)
-            best_sim = -1.0 if best_sim is None else best_sim
-
-            # Check parent photo metadata for people tags
-            meta = meta_by_path.get(p_path)
-            photo_tags = set(meta.get("people_ids", [])) if meta else set()
+            photo_tags = tags_of(face)
 
             if photo_tags:
+                # Check similarity to all known resolved people, skipping anyone already matched to another face in this
+                # same photo.
+                best_name, best_sim = final_known.best(likenesses[face["id"]], columns, skip=names_taken_here)
+                best_sim = -1.0 if best_sim is None else best_sim
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
                 # The tag bears the name out, so the face is named from where it is worth offering
                 # (tagpup.core.clustering.is_offered), not only from where it is named with no one

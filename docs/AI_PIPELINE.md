@@ -48,7 +48,8 @@ runtime for the face models.
 - **Photo vectors are already at 512**, and 224 lost nothing on the one library tested (kr-track, coarse tags).
 - **Batching is safe** (cosine 0.999998 or more against one at a time).
 - **`cluster-faces` takes 34 minutes**, of which 2 are the pair pass and 32 are "Resolving multi-face photo
-  conflicts": processor work, card idle (#1530).
+  conflicts": processor work, card idle (#1530). Phase 2a found the 32 minutes in the last matching pass, which logged
+  no line of its own (the rounds take 76 s); after it, 202 s.
 - **A defect:** the stored vectors of photos turned by their Orientation are stale (4 of 4 in the sample, cosine 0.81
   to 0.94; photo_index holds 223 turned photos; #1529).
 - **A margin over the second-best person separates right from wrong far better than likeness**: with FaceNet today,
@@ -168,7 +169,8 @@ added lines. Owner: Views-AI, with Files for the indexer loop.
 conflicts on the processor, not the pair pass (#1530). And the baseline shows the margin over the second-best person
 is the strong signal (precision 99.8% at margin 0.04, with FaceNet's vectors today).
 
-- **2a The conflict stage.** Find what the 32 minutes do (a per-photo loop with a query each time? one query that
+- **2a The conflict stage.** *Done 2026-10-16: the last pass asked a likeness a face and a person at a time; 2,113 s
+  to 202 s on one copy, the names unchanged.* Find what the 32 minutes do (a per-photo loop with a query each time? one query that
   could sit outside it? counted on the real data first, `EXPLAIN QUERY PLAN` on a copy) and make it per-run, not
   per-item. The pair pass (about 2 minutes) is left alone unless 2a leaves it the largest part.
 - **2b The margin rule.** A suggested or automatic name requires a margin over the second-best person, with the
@@ -330,7 +332,7 @@ worker that ran it. The column "After" is filled as each phase merges.
 | Index, many-face sample, seconds a photo | **1.24** whole CLI run (299 photos, 369.5 s) | | By stratum (mean s): none 0.60, 1 to 3 0.74, 4 to 9 0.91, 10 or more 1.55, worst 10 photos 3.79. |
 | Per stage, mean s a photo | decode for CLIP 0.071; pad and resize 0.072; CLIP forward 0.058; identity write 0.037; decode for faces 0.061; **MTCNN 0.784**; crop and tensor 0.011; crop JPEG 0.004; recogniser 0.032; faces write 0.021; photo rows 0.003 | | MTCNN is 69%. The 759-face photo 8.97 s (7.0 MTCNN); a 193 MP photo 30.7 s (27.4 MTCNN). |
 | Fixed cost of an index run | **about 15 s** plus the metadata read (10.1 s for 299 photos) | | Process start 0.14, imports 4.7, CLIP load 9.8, face models 0.36. First CLIP forward 0.26 s against 0.058 steady. Suggest's vector load is a separate 8.2 s. |
-| `cluster-faces`, whole library | **2,060 s (34.3 min)** | | About 2 min for the pairs, 32 in the conflict stage; single process, card idle (#1530). |
+| `cluster-faces`, whole library | **2,060 s (34.3 min)** | **202 s** (2a; 2,113 s before on the same copy, the same day) | Before: 132 s grouping (DBSCAN, every core), 76 s the five rounds, about 1,896 s the last pass, card idle (#1530). After: 132 s grouping, 48 s the rounds, 12 s the last pass, 4 s reading and saving; the names identical face by face on the three libraries. |
 | Suggest, a folder, cold / warm | **not measured** | | The script is stale (#1531). |
 | Identify Faces / New Person | Ignore Cluster: first faces on screen 36.5 s, then click to usable median 0.09 s. New Person: first faces 35.5 s, first click 2.46 s, then median 0.51 s | | Headless browser, sandbox copy; the first-faces wait is a start-up cost the owner meets on opening the page. |
 | Card use during an index | many-face sample: 13.6% of samples at 0%, 23.4% under 10%, mean 30.9%. Event run: 13.8%, 21.8%, mean 20.3% | | `nvidia-smi` every 500 ms. The indexing process used 18.9% of 16 logical processors (about 3 cores). |

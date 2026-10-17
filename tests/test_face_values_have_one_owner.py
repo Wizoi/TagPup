@@ -47,6 +47,12 @@ class KnownFacesCompareWithTheClosestFace(unittest.TestCase):
         self.assertEqual("Oda Castellane", self.known.most_like(face(1, 0))[0])
         self.assertEqual("Wren Halloway", self.known.most_like(face(1, 0), skip={"Oda Castellane"})[0])
 
+    def test_a_row_is_read_by_the_people_it_was_made_for(self):
+        self.known.add("Oda Castellane", face(1, 0), None, "a.jpg")
+        table, columns = self.known.likeness_table([(face(0, 1), None, "c.jpg")])
+        self.known.add("Wren Halloway", face(0, 1), None, "b.jpg")   # added after the row was made
+        self.assertEqual("Oda Castellane", self.known.best(table[0], columns)[0])
+
     def test_nobody_to_compare_with(self):
         self.assertEqual((None, None), self.known.most_like(face(1, 0)))
         self.assertIsNone(self.known.likeness("Nobody Known", face(1, 0)))
