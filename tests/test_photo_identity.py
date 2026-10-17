@@ -140,38 +140,6 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
         for reader in readers:
             self.assertEqual([], minting_calls(reader), reader)
 
-    def test_a_minted_identity_refreshes_the_change_stamps(self):
-        """Writing the identity changes the file, so mtime and size must be re-read.
-
-        Otherwise the next pass sees a photo modified since it was indexed and
-        re-indexes it -- for a write this pass made. That is an infinite loop of
-        expensive work, and it would look like the indexer never finishing.
-        """
-        import tempfile
-        from tagpup.files.metadata import IdentityWriter
-
-        fd, path = tempfile.mkstemp(suffix=".jpg")
-        os.write(fd, b"not really a jpeg")
-        os.close(fd)
-        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
-
-        record = {"path": path, "mtime": 0.0, "size": 0, "raw_metadata": {}}
-
-        class GrowingExifTool(FakeExifTool):
-            def set_tags(self, paths, tags=None, params=None):
-                super().set_tags(paths, tags=tags, params=params)
-                with open(path, "ab") as f:
-                    f.write(b"  ")   # the write an identity would cause
-
-        writer = IdentityWriter("exiftool")
-        writer._session = GrowingExifTool
-        writer.give(record, decoded=True)
-
-        self.assertTrue(record["document_id"].startswith("xmp.did:"))
-        self.assertEqual(record["size"], os.path.getsize(path),
-                         "the size recorded predates the identity write")
-        self.assertGreater(record["mtime"], 0.0)
-
     def test_a_photo_that_already_has_one_is_left_alone(self):
         from tagpup.files.metadata import IdentityWriter
 

@@ -77,6 +77,7 @@ from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
 from tagpup.core.result import NotFound
 from tagpup.services import maintenance
+from tagpup.services import refresh_rows
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoIndex
 from tagpup.store.locks import PathLocker
@@ -401,6 +402,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         batch_embeddings = []
         batch_metas = []
         batch_faces = {}  # Map path -> faces list
+        given = set()  # The paths of the photos given their identity, read again before their batch is recorded
         total_new_indexed = 0
         locked_out = []
 
@@ -469,9 +471,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     logger.info(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
                                 f"{zeros} zero bytes")
                 else:
-                    # Decoded: only now may the photo be written to. The row recorded below
-                    # takes the stamp the write left, and the vector with it.
-                    identity_writer.give(meta, decoded=True)
+                    # Decoded: only now may the photo be written to. Its record keeps the stamp from before its
+                    # read, and the batch reads it again before it is recorded (_read_again).
+                    if identity_writer.give(meta, decoded=True):
+                        given.add(path)
 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
@@ -490,6 +493,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
                 # Save progress incrementally in batches of 100
                 if len(batch_embeddings) >= 100:
+                    _read_again(photo_index.conn, batch_metas, given, exiftool_path)
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
 
                     # Save faces for the batch in a single transaction
@@ -518,6 +522,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
             # Not reloaded: nothing below searches this index, and a reload reads every vector again.
+            _read_again(photo_index.conn, batch_metas, given, exiftool_path)
             photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
             
             # Save the remaining face embeddings
@@ -592,6 +597,23 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # the processor's work and holds no turn while another library's index waits for the card.
     if total_new_indexed:
         _cluster_after_index(runtime, db_path)
+
+
+def _read_again(conn, metas, given, exiftool_path):
+    """The fields of each photo of `metas` that was `given` its identity, read from the file again (refresh_rows.
+    read_files, stamped before its own read), so its row is recorded as the file is after the write: the next index
+    finds it current and reads nothing, and its vector and faces are kept. The batch read was up to 500 photos
+    earlier, and a keyword saved into the file since then is read here (docs/findings.md, #1599). A photo left unread
+    now (no stamp: a share gone away mid-run, tests/test_a_share_asleep.py) keeps the record of the batch read, stamped
+    before that read: the next index reads it once more. One ExifTool refuses is recorded as batch_read records it."""
+    again = [meta["path"] for meta in metas if meta["path"] in given]
+    if not again:
+        return
+    records = refresh_rows.read_files(conn, again, exiftool_path)
+    for meta in metas:
+        record = records.get(meta["path"])
+        if record is not None and record["mtime"] is not None:
+            meta.update(record)
 
 
 def _cluster_after_index(runtime, db_path):

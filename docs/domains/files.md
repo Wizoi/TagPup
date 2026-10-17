@@ -103,6 +103,11 @@ exceptions, each unjournaled by decision:
   whole-library sync asks for again while it runs is run again whole, N folders scanned once more; the stamp rule
   skips the unchanged files. It is once, not a loop (a re-run repeats only when something asks during it), and
   splitting the batch would need the sync to say which folder received files, which nothing records.
+- **The index's re-read of the photos it gives an identity** (#1599's review): `tagpup_cli._read_again` starts an
+  ExifTool session for each batch of 100 and asks `face_refs` once for each such photo (`refresh_rows.read_files`). If
+  every photo without a DocumentID is indexed (58,973 of photo_index's 59,519, the Files owner's count, 2026-10-17),
+  that is about 590 session starts and about 59,000 indexed queries, against a second CLIP and face-detection pass for
+  each of those photos, which is what the next index did without the re-read.
 
 ## Known, and closed
 
