@@ -98,6 +98,10 @@ library for a run that has nothing to do.
   library first, reporting what changed and not what was attempted.
 - **GPU work takes its turn** through `tagpup.runtime` (`begin`, `gpu_turn`); no phase loads a model on the card
   itself (`tagpup/ml/gpu.py`). Plan for 10 GB of card with the owner's desktop apps holding up to 6 GB of it.
+- **A phase ends with the findings it raised closed** (owner, 2026-10-17): each is fixed, or closed `decided:` by
+  design with its reason written in a document, before the next phase starts; the open count in `docs/findings.md` is
+  counted from the file and said in the merge report. A defect gets a row; a method caveat or a risk goes in the
+  phase's report or section 8, not in `findings.md`. Running the real library finds old defects too: budget for them.
 - **A phase is a branch of about 1,200 added lines or fewer, one concern**; a larger piece is cut into merges that each
   leave the trunk whole. At most two review rounds, the ownership question in the second.
 - **Real data shapes:** every brief names the scenarios the owner works in: an index interrupted half way, two indexes
