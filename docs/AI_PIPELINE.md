@@ -9,7 +9,7 @@ Status (2026-10-17): **phase 0 done** (measured, section 7); the plan below is r
 accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again) and
 2a (`cluster-faces` 2,113 s to 202 s, names unchanged). **Built, off:** 1a (the detector downscale, the setting
 `faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
-ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Next:** 1c, 2b and 2c. Update a phase's status
+ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Next:** 2b and 2c. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
@@ -180,7 +180,12 @@ same scripts.
   forward pass is 0.058 s in all) and `cudnn.benchmark` (the recogniser is 0.032 s, and the flag is process-wide, so
   MTCNN would re-tune for every photo size). Suggest's tag prompts are embedded one at a time
   (`suggester._precompute_candidates`), but each is kept after its first use: left as it is.
-- **1c Decode once, `draft`, resize before padding.** One decode per photo, the upright copy for CLIP and the
+- **1c Decode once, `draft`, resize before padding. Measured 2026-10-17, not built.** After 1b the card's thread waits for
+  its next photo 5.4 s of 333.6 s on the many-face sample (1.6%; 3.7 s of it is the one 193 MP photo, read alone by design,
+  so about 0.5% without it) and 0.2 s of 102.1 s on the event folder (0.2%); decode, pad and resize are off the critical
+  path, so the 5% rule stops the phase. Same-day index alone: 1.12 s a photo (sample) and 1.67 (event). What decoding once
+  could still buy is less competition with MTCNN's host side, which only building step 1 and an A/B run would show;
+  reopen only if a later phase makes the processor side the bottleneck. The plan as written: One decode per photo, the upright copy for CLIP and the
   stored-orientation copy for faces (face boxes stay in stored-orientation coordinates); `draft()` at twice the target
   for JPEG. The damage check must still run: a truncated or zero-tailed file raises `Unreadable` as before, tested
   with the three damaged shapes of the 2026-10-15 decision. Worth about 0.15 s of 1.14 a photo; do it after 1a and 1b
