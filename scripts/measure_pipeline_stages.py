@@ -26,6 +26,10 @@ deleted is said. The graphics card is taken in the owner's line (tagpup.ml.gpu, 
 * `event`: one folder of a library (kr-track; `--folder-number`, by the size order of services.inspect.folders, else
   the one nearest 60 photos) copied into a new folder of the copy and indexed by the snapshot's tagpup_cli.py, as the
   owner's index runs: wall time and seconds a photo.
+
+`index` clusters the whole library's faces after an index that recorded a photo (about 200 s on photo_index): `stages`
+and `event` time the index alone, to the clustering's line (tagpup.services.indexing.CLUSTERING_STARTS; `stages` by a
+timer on tagpup_cli's _cluster_after_index), and say the clustering's seconds apart.
 * `cluster`: the snapshot's `tagpup_cli.py cluster-faces` on the copy, timed.
 
 While the child runs, nvidia-smi is read every 0.5 s and the processors' use (the machine's and the child's) with it:
@@ -53,9 +57,16 @@ from sandbox import environment  # noqa: E402
 import _root  # noqa: E402,F401
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.services import inspect as inspect_service  # noqa: E402
 
 MODULES_IMPORTED = time.time()
+
+#: The timer's label for the clustering `index` runs after itself: not the index's time.
+CLUSTERING = "clustering after the index"
+
+#: How often the parent looks at an event run's log for the clustering's line.
+LOG_POLL = 0.25
 
 #: The stages of one photo, in the order the indexer runs them.
 STAGES = ("decode for CLIP", "pad and resize", "CLIP forward", "identity write", "decode for faces", "MTCNN",
@@ -271,6 +282,7 @@ def child(plan_path):
     _timed(Runtime, "gpu_turn", "wait for the card", timeline)
     _timed(tagpup_cli.MetadataExtractor, "batch_read", "metadata read", timeline)
     _timed(tagpup_cli.IdentityWriter, "give", "identity write", timeline, per_photo=True)
+    _timed(tagpup_cli, "_cluster_after_index", CLUSTERING, timeline)
 
     began = time.perf_counter()
     error = None
@@ -300,7 +312,9 @@ def child(plan_path):
                        "total": (record.get("f_end", record.get("clip_end", 0)) - record["t0"]) if "t0" in record
                        else None, "stages": stages_of(record)})
     result = {"error": error, "fixed": fixed, "calls": timeline.calls, "photos": photos, "versions": sandbox.versions(),
-              "cli": {"start": clock + began, "end": clock + ended, "seconds": ended - began},
+              "cli": {"start": clock + began, "end": clock + ended, "seconds": ended - began,
+                      "clustering": timeline.total(CLUSTERING),
+                      "index_seconds": ended - began - timeline.total(CLUSTERING)},
               "loop": {"start": clock + timeline.photos[0]["t0"] if timeline.photos else None,
                        "end": clock + max((r.get("f_end", r.get("clip_end", 0)) for r in timeline.photos), default=0)}}
     with open(plan["result"], "w", encoding="utf-8") as handle:
@@ -361,21 +375,53 @@ def run_child(sandbox_dir, plan, sampler, timeout):
         return json.load(handle)
 
 
+class ClusteringLine:
+    """A CLI's log, read as it grows, for the line `index` prints as it begins to cluster the library's faces
+    (tagpup.services.indexing.CLUSTERING_STARTS), as the server's index queue reads it."""
+
+    def __init__(self, path):
+        self.path, self.offset, self.rest = path, 0, ""
+
+    def seen(self):
+        """Has the line been written since the last look?"""
+        with open(self.path, encoding="utf-8", errors="replace", newline="") as handle:
+            handle.seek(self.offset)
+            text = handle.read()
+            self.offset = handle.tell()
+        lines = (self.rest + text).split("\n")
+        self.rest = lines.pop()
+        return any(indexing.summarize_indexer_line(line) == indexing.CLUSTERING_STARTS for line in lines)
+
+
 def run_cli(sandbox_dir, arguments, sampler, timeout):
-    """The snapshot's tagpup_cli.py with `arguments`, as the owner runs it: (wall seconds, exit code, start, end)."""
-    with open(os.path.join(sandbox_dir, "cli.log"), "w", encoding="utf-8") as log:
+    """The snapshot's tagpup_cli.py with `arguments`, as the owner runs it: (wall seconds, exit code, start, end,
+    when its clustering began or None). An index's own time ends where its clustering began (ClusteringLine, read
+    every LOG_POLL seconds)."""
+    path = os.path.join(sandbox_dir, "cli.log")
+    with open(path, "w", encoding="utf-8") as log:
+        line, clustering = ClusteringLine(path), None
         started = time.time()
         process = processes.start([sys.executable, os.path.join(sandbox_dir, "tagpup_cli.py")] + arguments,
                                   cwd=sandbox_dir, stdout=log, stderr=subprocess.STDOUT,
                                   env=environment(sandbox_dir, TAGPUP_NO_JOBS="1"))
         sampler.watch(None)   # the venv's launcher, not the interpreter: the machine's use alone is read
         try:
-            code = process.wait(timeout=timeout)
+            while True:
+                try:
+                    code = process.wait(timeout=LOG_POLL)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.time() - started > timeout:
+                        raise
+                    if clustering is None and line.seen():
+                        clustering = time.time()
         finally:
             if process.poll() is None:
                 processes.kill_tree(process.pid)
         ended = time.time()
-    return ended - started, code, started, ended
+    if clustering is None and line.seen():
+        clustering = ended   # begun in the last look's window: under LOG_POLL seconds of clustering
+    return ended - started, code, started, ended, clustering
 
 
 def build(sandbox_dir, source):
@@ -472,20 +518,27 @@ def main():
                 output["table"] = stage_table(result["photos"])
                 start, end = result["loop"]["start"], result["loop"]["end"]
                 print_table(output["table"])
+                cli = result["cli"]
+                print("  index alone: %.1f s, %.2f s a photo; then clustering %.1f s" % (
+                    cli["index_seconds"], cli["index_seconds"] / max(len(result["photos"]), 1), cli["clustering"]))
             elif args.mode == "event":
                 photos, output["folder_number"] = event_photos(library, args.folder_number, print)
                 folder = new_folder(placed, "pipeline-event")
                 for path in photos:
                     shutil.copy2(path, folder)
-                seconds, code, start, end = run_cli(sandbox_dir, ["--db", db_path, "index", folder], sampler,
-                                                    args.timeout)
+                whole, code, start, ended, clustering = run_cli(sandbox_dir, ["--db", db_path, "index", folder],
+                                                                sampler, args.timeout)
+                # The index alone: its clustering of the whole library is not the folder's cost.
+                end = clustering or ended
+                seconds = end - start
                 output["index"] = {"photos": len(photos), "seconds": seconds, "exit": code,
-                                   "seconds_a_photo": seconds / len(photos) if photos else None}
-                print("  index: %d photos in %.1f s, %.2f s a photo (exit %d)" % (
-                    len(photos), seconds, output["index"]["seconds_a_photo"] or 0, code))
+                                   "seconds_a_photo": seconds / len(photos) if photos else None,
+                                   "clustering": ended - end, "whole_run": whole}
+                print("  index: %d photos in %.1f s, %.2f s a photo (exit %d); then clustering %.1f s" % (
+                    len(photos), seconds, output["index"]["seconds_a_photo"] or 0, code, ended - end))
             else:
-                seconds, code, start, end = run_cli(sandbox_dir, ["--db", db_path, "cluster-faces"], sampler,
-                                                    args.timeout)
+                seconds, code, start, end, _ = run_cli(sandbox_dir, ["--db", db_path, "cluster-faces"], sampler,
+                                                       args.timeout)
                 output["cluster_faces"] = {"seconds": seconds, "exit": code}
                 print("  cluster-faces: %.1f s (exit %d)" % (seconds, code))
             sampler.stop()

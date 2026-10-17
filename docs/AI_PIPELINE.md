@@ -331,6 +331,13 @@ Measured in sandboxes on copies of the libraries, on the owner's RTX 3080 (10 GB
 1.2 GB of it, 2.4 to 7.4% processor busy. Raw JSON (counts and numbers only) is kept outside the repository by the
 worker that ran it. The column "After" is filled as each phase merges.
 
+**The index rows are the index alone.** Since 2026-10-16 `index` clusters the whole library's faces after an index that
+recorded a photo (DECISIONS 2026-10-16, #1544; 202 s on photo_index), so a whole run's time carries those seconds
+whatever the folder's size. `scripts/measure_pipeline_stages.py` times the index to the clustering's line
+(`tagpup.services.indexing.CLUSTERING_STARTS`; in `stages` a timer on the CLI's `_cluster_after_index`) and gives the
+clustering's seconds apart, so the rows below are measured again like for like; the clustering's own row is
+`cluster-faces`.
+
 | Measure | Today | After | Notes |
 |---|---|---|---|
 | Index, an event folder, seconds a photo | **1.87** (kr-track folder of 61 photos, 114.1 s) | | Matches 1.9 of 2026-09-27; that log is gone, so the folder was the one nearest 60 photos. |
