@@ -100,12 +100,21 @@ class LibrarySettings:
 
     @property
     def faces(self):
-        """The face models' settings: tagpup.ml.faces.FaceModel's keyword arguments."""
+        """The face models' settings: tagpup.ml.faces.FaceModel's keyword arguments, what one set of face models is
+        told apart by (tagpup.runtime). The cap a detection looks at is not one of them: detect_max_side."""
         return {
             "min_face_size": int(_trim(self.values["faces.min_face_size"])),
             "confidence_threshold": _float(self.values["faces.confidence_threshold"]),
             "mtcnn_thresholds": [_float(x) for x in self.values["faces.mtcnn_thresholds"].split(",")],
         }
+
+    @property
+    def detect_max_side(self):
+        """The longest side of the picture the face detector looks at (faces.detect_max_side), or None when the library
+        sets no cap (the default): an argument of each detection (tagpup.ml.faces.FaceModel.detect_and_embed_faces),
+        so libraries differing only in it share one set of face models (docs/AI_PIPELINE.md, phase 1a)."""
+        cap = _trim(self.values["faces.detect_max_side"])
+        return int(cap) if cap else None
 
     @property
     def candidate_words(self):

@@ -342,6 +342,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
     face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
+    # The library's cap on the picture the detector looks at, as the run began: one argument of each detection, not
+    # part of the model (two libraries differing only in it share one).
+    detect_max_side = settings.detect_max_side
     # The indexer records what it reads, so it may give a photo its identity -- after the
     # photo's picture has decoded in full, never before (IdentityWriter).
     identity_writer = IdentityWriter(exiftool_path)
@@ -419,7 +422,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
-                    faces = face_processor.detect_and_embed_faces(path)
+                    faces = face_processor.detect_and_embed_faces(path, max_side=detect_max_side)
                     batch_faces[path] = faces
                 
                 # A photo already indexed is not removed first: build_or_update
@@ -441,7 +444,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                         # --force-reembed means redo the work; without it the
                         # existing face rows, and the curation on them, are kept.
                         face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
-                                                  detector=face_records.detector_of(face_processor))
+                                                  detector=face_records.detector_of(face_processor, detect_max_side))
                         batch_faces.clear()
                     
 
@@ -464,7 +467,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             # Save the remaining face embeddings
             if batch_faces:
                 face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
-                                          detector=face_records.detector_of(face_processor))
+                                          detector=face_records.detector_of(face_processor, detect_max_side))
                 batch_faces.clear()
             
             for saved_meta in batch_metas:

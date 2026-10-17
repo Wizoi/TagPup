@@ -280,7 +280,8 @@ def _scored(runtime, library, settings, index, held, report):
     clip = runtime.clip(library, settings)
     with runtime.gpu_turn("Suggest at one image size (AI pipeline phase 0)", (clip,)):
         model = suggester.model_for_run(index, clip, runtime.faces(library, settings),
-                                        runtime.candidate_words(library), remember=False)
+                                        runtime.candidate_words(library), detect_max_side=settings.detect_max_side,
+                                        remember=False)
         leaving = LeavingOut(index)
         model.suggester.index = leaving
         offered, top5, truths = [], [], []

@@ -7,9 +7,11 @@ The sample a person relies on: a third or more at 10 faces or more, the worst ph
 its smallest picture to its largest, a sideways photo when there is one. The hold-out by photo: a face is never
 matched with its own photo's faces, and a person with no face elsewhere is counted apart, not as a miss.
 """
+import json
 import os
 import random
 import sys
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -167,6 +169,49 @@ class ThePhotoStages(unittest.TestCase):
         self.assertEqual(2, table["all"]["photos"])
         self.assertEqual(1.0, table["all"]["total"]["max"])
         self.assertEqual(0.4, table["1-3"]["MTCNN"]["mean"])
+
+
+class WhatACapLoses(unittest.TestCase):
+    """Phase 1a: a capped run against the one without a cap, photo by photo by its number in the sample."""
+
+    def photo(self, number, boxes, stored=(), stratum="10+"):
+        return {"number": number, "stratum": stratum, "boxes": [list(b) for b in boxes], "stored": [list(s) for s in stored]}
+
+    def test_a_face_is_one_face_at_half_overlap_each_paired_once(self):
+        self.assertAlmostEqual(1.0, stages.iou([0, 0, 10, 10], [0, 0, 10, 10]))
+        self.assertEqual(0.0, stages.iou([0, 0, 10, 10], [20, 20, 30, 30]))
+        self.assertEqual({0: 1}, stages.pairs([[0, 0, 10, 10]], [[40, 40, 50, 50], [1, 0, 11, 10]]))
+        # Two boxes over one face: only one keeps it.
+        self.assertEqual(1, len(stages.pairs([[0, 0, 10, 10], [1, 1, 10, 10]], [[0, 0, 10, 10]])))
+
+    def test_lost_faces_are_named_by_the_stored_face_they_match_and_gained_ones_are_counted(self):
+        named, unnamed, excluded = [100, 100, 140, 150], [300, 300, 312, 316], [500, 500, 540, 550]
+        off = {"photos": [self.photo(0, [named, unnamed, excluded],
+                                     stored=[(named, True, False), (unnamed, False, False), (excluded, True, True)]),
+                          self.photo(1, [[0, 0, 30, 30]], stratum="1-3")]}
+        capped = {"photos": [self.photo(0, [excluded, [700, 700, 760, 770]]),
+                             self.photo(1, [[1, 1, 30, 30]], stratum="1-3")]}
+        table = stages.compared(off, capped)
+        row = table["10+"]
+        self.assertEqual((3, 1, 2), (row["found_off"], row["named_off"], row["found"]))
+        # An excluded face is nobody: lost, it would count as unnamed.
+        self.assertEqual((1, 1, 1), (row["lost_named"], row["lost_unnamed"], row["gained"]))
+        self.assertEqual(50, row["lost_sides"]["max"])
+        self.assertEqual((2, 1, 1), (table["all"]["photos"], table["all"]["lost_named"], table["all"]["gained"]))
+
+    def test_a_run_without_its_faces_is_refused_not_compared_into_an_empty_table(self):
+        """The run without a cap ran without faces (no boxes on any photo): compare says so."""
+        with tempfile.TemporaryDirectory(prefix="pipeline_compare_") as folder:
+            files, rest = [], {"table": {}, "cli": {"seconds": 1.0}, "card": {}}
+            for name, run in (("off", dict(rest, photos=[{"number": 0, "stratum": "10+", "boxes": None}])),
+                              ("cap", dict(rest, detect_max_side=2048, photos=[self.photo(0, [[0, 0, 30, 30]])]))):
+                files.append(os.path.join(folder, name + ".json"))
+                with open(files[-1], "w", encoding="utf-8") as handle:
+                    json.dump(run, handle)
+            with self.assertRaises(SystemExit) as refused:
+                stages.compare(files, folder)
+            self.assertIn("nothing to compare", str(refused.exception))
+            self.assertEqual(["cap.json", "off.json"], sorted(os.listdir(folder)), "a comparison was written")
 
 
 class TheNamedFaceHoldOut(unittest.TestCase):

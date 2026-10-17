@@ -1,7 +1,7 @@
 # Views, search and AI: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-views-ai.md` (its Scope, its contract, its guards, the scenario list
-V1 to V9). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its
+V1 to V10). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its
 evidence and date, and what is so by design. A condition not met is the domain's queue.
 
 ## What the domain is (counted 2026-10-15, read-only)
@@ -30,7 +30,7 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
 | Reads only; ids and cards separate reads; caps `MAX_IDS`, `MAX_CARDS`, `MAX_MEMBERS` | V1, `tests/test_library_view.py`, `tests/test_library_view_plans.py` |
 | A search ANDs its terms and never ranks; nothing typed is FTS5 syntax | `tests/test_library_search.py` (V2), `tests/test_camera_words.py` |
 | One process on the card at a time, taken through `Runtime.begin` / `gpu_turn`; a waiter told who holds it; one set of models in a process (#761), the startup warm-up included (#1423) | `tests/test_one_gpu_at_a_time.py`, `tests/test_one_gpu_jobs.py` (V4), `tests/test_gpu_single_owner.py` |
-| Models built once per settings by the runtime, released when idle; the page names what holds them | `tests/test_models_released_when_idle.py` (V6), `tests/test_the_runtime_keeps_models_by_settings.py` |
+| Models built once per settings by the runtime, released when idle; the page names what holds them; the detector cap is each detection's argument, not a model setting | `tests/test_models_released_when_idle.py` (V6), `tests/test_the_runtime_keeps_models_by_settings.py`, `tests/test_faces_found_at_the_librarys_cap.py` (V10) |
 | Vectors and suggestions follow their photo; a looking run keeps nothing | `tests/test_suggest_then_apply_all.py` (V3, V9), `tests/test_analyse_only_suggest.py` (V3: a looking run forced to remember fails 16 of 24) |
 | A view kind moves in every layer: store `KINDS`, `_source_of`, `library-source.js`, `navigator-model.js`, `search-model.js` | `tests/test_view_rules_follow_the_server.py`, `tests/test_chip_keys_follow_the_server.py`, `tests/frontend/search-page.test.mjs` (every member kind has a section, a chip-key pair and labels of its own) |
 
@@ -56,7 +56,7 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
    suggester that turned a failed read or write into "nothing" are gone: a run's read that fails fails the run with its
    sentence, a photo's fails the photo (V3). The warm-up's refusal beside a run of another set has a user action: the
    server starts and the owner clicks Suggest in a library on another set before the warm-up runs.
-6. **Scenario tests, each file owned and mapped.** Met: V1 to V9 each have a file in tests/owners.py. Unit tests that
+6. **Scenario tests, each file owned and mapped.** Met: V1 to V10 each have a file in tests/owners.py. Unit tests that
    restated a scenario were lifted and deleted, each with a mutation that fails the scenario: `test_library_view`'s
    EqualDates and dated-then-undated order (V1), `test_selection`'s source-is-the-ids-route and excluded tests (V7),
    `test_embeddings_follow_their_photo`'s rename and folder removal (V9). The unit files that stay hold a rule no

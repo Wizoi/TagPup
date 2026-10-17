@@ -83,7 +83,7 @@ class ARuntime(unittest.TestCase):
         self.addCleanup(runtime.forget, self.library)
         asked = []
         with mock.patch("tagpup.services.suggester.model_for_run",
-                        side_effect=lambda index, clip, faces, words, remember: asked.append(words)):
+                        side_effect=lambda index, clip, faces, words, detect_max_side, remember: asked.append(words)):
             runtime.begin(self.library).end()
             library_settings.change(self.library, {"candidates.tags": "Kayak, Canoe"})
             runtime.begin(self.library).end()

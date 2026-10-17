@@ -6,6 +6,8 @@
     .venv/Scripts/python.exe scripts/measure_pipeline_stages.py --mode event --source data/kr-track.db --out <folder>
     .venv/Scripts/python.exe scripts/measure_pipeline_stages.py --mode cluster --source data/photo_index.db --out <folder>
     .venv/Scripts/python.exe scripts/measure_pipeline_stages.py --mode census --source data/photo_index.db --out <folder>
+    .venv/Scripts/python.exe scripts/measure_pipeline_stages.py --source data/photo_index.db --out <folder> --detect-max-side 2048
+    .venv/Scripts/python.exe scripts/measure_pipeline_stages.py --mode compare --out <folder> <off.json> <capped.json> ...
 
 Each run is in a sandbox (scripts/sandbox.py): the library copied through SQLite's backup API (the original opened
 read-only), the code snapshotted, the copy's roots placed inside the sandbox, a separate process with the sandbox as
@@ -31,6 +33,13 @@ deleted is said. The graphics card is taken in the owner's line (tagpup.ml.gpu, 
 and `event` time the index alone, to the clustering's line (tagpup.services.indexing.CLUSTERING_STARTS; `stages` by a
 timer on tagpup_cli's _cluster_after_index), and say the clustering's seconds apart.
 * `cluster`: the snapshot's `tagpup_cli.py cluster-faces` on the copy, timed.
+* `--detect-max-side N` (stages, event): the copy's faces.detect_max_side set to N first (a journaled change of the
+  copy alone; phase 1a), so the index detects at that cap. A stages run keeps each photo's boxes and the source's
+  stored faces of it (box, named, excluded: numbers only), by its number in the sample (the seed draws the same one).
+* `compare`: reads stages runs of one sample (one without a cap, others with), and says per stratum the faces each
+  finds, which faces the run without a cap finds and a capped run loses (IoU under 0.5 with every capped box), named
+  or not by the stored face they match, with their longest side, the faces a capped run finds that the other does
+  not, MTCNN's and the photo's seconds, the whole run's seconds a photo and the card's peak memory.
 
 While the child runs, nvidia-smi is read every 0.5 s and the processors' use (the machine's and the child's) with it:
 the card's idle share is read from that, and the memory and load before the child starts are the other programs'.
@@ -59,6 +68,7 @@ from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 from tagpup.services import inspect as inspect_service  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
 
 MODULES_IMPORTED = time.time()
 
@@ -177,7 +187,7 @@ def _watch_faces(model, timeline):
         model.resnet.register_forward_pre_hook(lambda _m, _i: timeline.mark("resnet_in"))
         model.resnet.register_forward_hook(lambda _m, _i, _o: timeline.mark("resnet_out"))
 
-    def detect_and_embed_faces(img_path):
+    def detect_and_embed_faces(img_path, *, max_side):
         if timeline.current is None or timeline.current["key"] != paths.key(img_path):
             timeline.begin(img_path)
         record = timeline.current
@@ -185,7 +195,7 @@ def _watch_faces(model, timeline):
         timeline.encoding, timeline.in_faces = 0.0, True
         record["f0"] = time.perf_counter()
         try:
-            found = find(img_path)
+            found = find(img_path, max_side=max_side)
         finally:
             timeline.in_faces = False
         timeline.sync()
@@ -193,6 +203,7 @@ def _watch_faces(model, timeline):
         record["encode"] = timeline.encoding
         record["faces_load"] = timeline.total("face models load") - loaded
         record["faces_found"] = len(found)
+        record["boxes"] = [list(face["box"]) for face in found]
         record["detection_failed"] = bool(getattr(found, "failed", False))
         return found
     model._init_models, model.detect_and_embed_faces = init_models, detect_and_embed_faces
@@ -306,6 +317,7 @@ def child(plan_path):
         label = labels.get(record["key"], {})
         upright, stored = record.get("upright"), record.get("stored")
         photos.append({"stratum": label.get("stratum"), "stored_faces": label.get("faces"),
+                       "number": label.get("number"), "boxes": record.get("boxes"), "stored": label.get("stored"),
                        "megapixels": label.get("megapixels"), "faces_found": record.get("faces_found"),
                        "detection_failed": record.get("detection_failed"),
                        "sideways": bool(upright and stored and upright != stored and upright == stored[::-1]),
@@ -424,13 +436,141 @@ def run_cli(sandbox_dir, arguments, sampler, timeout):
     return ended - started, code, started, ended, clustering
 
 
-def build(sandbox_dir, source):
-    """The code and the library's copy, its roots placed in the sandbox: (the copy's path, {root: place})."""
+def build(sandbox_dir, source, detect_max_side=None):
+    """The code and the library's copy, its roots placed in the sandbox, its detector capped at `detect_max_side` when
+    given (a journaled change of the copy alone): (the copy's path, {root: place})."""
     os.makedirs(os.path.join(sandbox_dir, "data"))
     copy_code(sandbox_dir, REPO_ROOT, launchers=True)
     target = os.path.join(sandbox_dir, "data", "measured.db")
     sandbox.copy_library(source, target)
+    if detect_max_side:
+        changed = library_settings.change(Library(target), {"faces.detect_max_side": str(detect_max_side)},
+                                          acknowledged=["faces"])
+        if changed.refused or not changed.changed:
+            raise SystemExit("the copy's cap was not set: %s" % (changed.refused or "nothing changed"))
     return target, sandbox.place_roots(target, sandbox_dir)
+
+
+def stored_faces(library, photo_ids):
+    """{photo id: [[x1, y1, x2, y2], named, excluded]} of `library`'s faces of `photo_ids`, read-only, through the
+    service the MCP tool answers with (services.inspect.faces_in_photo: no name, no BLOB); a photo at a time, for the
+    sample's few hundred."""
+    return {photo_id: [[face["box"], face["named"], face["excluded"]]
+                       for face in inspect_service.faces_in_photo(library, photo_id)["faces"]]
+            for photo_id in photo_ids}
+
+
+# ---- Compare: the faces a cap loses and gains, against the run without one ----------------------------------------
+
+#: Two boxes are one face at this overlap or more (docs/AI_PIPELINE.md, phase 3's carrying rule).
+SAME_FACE = 0.5
+
+
+def iou(a, b):
+    """The overlap of two boxes (x1, y1, x2, y2): their intersection over their union, 0 for none."""
+    across = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    down = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    shared = across * down
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - shared
+    return shared / union if union > 0 else 0.0
+
+
+def pairs(boxes, others):
+    """{index in boxes: index in others}: each box paired once with the other it overlaps most, the largest overlaps
+    first, at SAME_FACE or more."""
+    candidates = sorted(((iou(a, b), i, j) for i, a in enumerate(boxes) for j, b in enumerate(others)), reverse=True)
+    paired, taken = {}, set()
+    for overlap, i, j in candidates:
+        if overlap < SAME_FACE:
+            break
+        if i not in paired and j not in taken:
+            paired[i] = j
+            taken.add(j)
+    return paired
+
+
+def compared(off, capped):
+    """{stratum and "all": counts} of a capped run's photos against the run without a cap, photo by photo by number:
+    faces found by each, lost (named, unnamed, their longest side), gained."""
+    by_number = {photo["number"]: photo for photo in off["photos"]}
+    table = {}
+    for photo in capped["photos"]:
+        before = by_number.get(photo["number"])
+        if before is None or before["stratum"] != photo["stratum"] or photo["boxes"] is None or before["boxes"] is None:
+            continue
+        named = [face[0] for face in before.get("stored") or () if face[0] and face[1] and not face[2]]
+        named_off = set(pairs(before["boxes"], named))
+        kept = pairs(before["boxes"], photo["boxes"])
+        gained = len(photo["boxes"]) - len(kept)
+        for name in (photo["stratum"], "all"):
+            row = table.setdefault(name, {"photos": 0, "found_off": 0, "named_off": 0, "found": 0, "lost_named": 0,
+                                          "lost_unnamed": 0, "gained": 0, "lost_sides": []})
+            row["photos"] += 1
+            row["found_off"] += len(before["boxes"])
+            row["named_off"] += len(named_off)
+            row["found"] += len(photo["boxes"])
+            row["gained"] += gained
+            for i, box in enumerate(before["boxes"]):
+                if i in kept:
+                    continue
+                row["lost_named" if i in named_off else "lost_unnamed"] += 1
+                row["lost_sides"].append(max(box[2] - box[0], box[3] - box[1]))
+    for row in table.values():
+        row["lost_sides"] = sandbox.summary(row["lost_sides"])
+    return table
+
+
+def run_numbers(run):
+    """{stratum and "all": {"mtcnn", "total"}} mean seconds a photo (the warm-up left out), and the run's own."""
+    numbers = {name: {"mtcnn": row["MTCNN"].get("mean"), "total": row["total"].get("mean")}
+               for name, row in run["table"].items()}
+    photos = len(run["photos"])
+    numbers["run"] = {"seconds_a_photo": run["cli"]["seconds"] / photos if photos else None,
+                      "peak_memory_mib": run["card"].get("peak_memory_mib"),
+                      "before_memory_mib": (run.get("before") or {}).get("card", {}).get("peak_memory_mib")}
+    return numbers
+
+
+def compare(files, out):
+    """Print and write the comparison of stages runs `files` of one sample: the one without a cap against each."""
+    runs = []
+    for path in files:
+        with open(path, encoding="utf-8") as handle:
+            run = json.load(handle)
+        # A run of the script before phase 1a, or one without faces, has no photo's number and boxes: every row of
+        # the table would be empty, and an empty table reads as "nothing lost".
+        if not any(photo.get("number") is not None and photo.get("boxes") is not None for photo in run.get("photos") or ()):
+            raise SystemExit("%s holds no photo's number and faces found, so there is nothing to compare: run that "
+                             "sample again with this script, faces on." % path)
+        runs.append(run)
+    off = [run for run in runs if not run.get("detect_max_side")]
+    if len(off) != 1:
+        raise SystemExit("compare takes one run without a cap and any with one")
+    off = off[0]
+    output = {"mode": "compare", "off": run_numbers(off), "caps": {}}
+    for run in sorted((r for r in runs if r.get("detect_max_side")), key=lambda r: r["detect_max_side"]):
+        output["caps"][str(run["detect_max_side"])] = {"faces": compared(off, run), "numbers": run_numbers(run)}
+    print("%-6s %-7s %6s %11s %7s %6s %6s %6s %6s %8s %7s %7s" % (
+        "cap", "stratum", "photos", "found", "named", "lost_n", "lost_u", "gained", "side50", "mtcnn_s", "total_s",
+        "run_s"))
+    for cap, entry in output["caps"].items():
+        for name, row in entry["faces"].items():
+            numbers = entry["numbers"].get(name, {})
+            print("%-6s %-7s %6d %11s %7d %6d %6d %6d %6s %8.3f %7.3f %7s" % (
+                cap, name, row["photos"], "%d/%d" % (row["found"], row["found_off"]), row["named_off"], row["lost_named"],
+                row["lost_unnamed"], row["gained"], row["lost_sides"].get("median", "-"),
+                numbers.get("mtcnn") or 0, numbers.get("total") or 0,
+                "%.3f" % entry["numbers"]["run"]["seconds_a_photo"] if name == "all" else ""))
+        print("%-6s peak card %s MiB (before the run %s)" % (
+            cap, entry["numbers"]["run"]["peak_memory_mib"], entry["numbers"]["run"]["before_memory_mib"]))
+    print("off    by stratum mtcnn/total: %s; run %.3f s a photo, peak card %s MiB (before %s)" % (
+        {name: (round(v["mtcnn"] or 0, 3), round(v["total"] or 0, 3)) for name, v in output["off"].items() if name != "run"},
+        output["off"]["run"]["seconds_a_photo"], output["off"]["run"]["peak_memory_mib"],
+        output["off"]["run"]["before_memory_mib"]))
+    path = os.path.join(out, "pipeline-compare-%s.json" % time.strftime("%Y%m%dT%H%M%S"))
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(output, handle, indent=1)
+    print("written %s" % path)
 
 
 def new_folder(placed, name):
@@ -456,7 +596,9 @@ def event_photos(library, number, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--child", help=argparse.SUPPRESS)
-    parser.add_argument("--mode", choices=("census", "stages", "event", "cluster"), default="stages")
+    parser.add_argument("--mode", choices=("census", "stages", "event", "cluster", "compare"), default="stages")
+    parser.add_argument("--detect-max-side", type=int, help="stages, event: the copy's detector capped at this long side")
+    parser.add_argument("runs", nargs="*", help="compare: the stages runs' JSON, one without a cap")
     parser.add_argument("--source", help="the library, opened read-only and never written")
     parser.add_argument("--out", help="the folder for the JSON, outside the repository")
     parser.add_argument("--sample", type=int, default=300, help="photos in the sample (200 to 500)")
@@ -470,13 +612,16 @@ def main():
     args = parser.parse_args()
     if args.child:
         return child(args.child)
+    if args.mode == "compare":
+        return compare(args.runs, sandbox.outside_the_repository(args.out or "."))
     if not args.source or not args.out:
         parser.error("--source and --out are needed")
     out = sandbox.outside_the_repository(args.out)
     source = os.path.abspath(args.source)
     library = Library(source)
     stamp = time.strftime("%Y%m%dT%H%M%S")
-    output = {"mode": args.mode, "library": os.path.splitext(os.path.basename(source))[0], "at": stamp}
+    output = {"mode": args.mode, "library": os.path.splitext(os.path.basename(source))[0], "at": stamp,
+              "detect_max_side": args.detect_max_side}
 
     print("census of %s (read-only)" % output["library"])
     rows, counts = sandbox.census(library, deep=args.deep or args.mode == "census")
@@ -493,7 +638,7 @@ def main():
         if args.mode != "census" and "stopped" not in output:
             sandbox_dir = tempfile.mkdtemp(prefix="tagpup_pipeline_")
             print("sandbox %s" % sandbox_dir)
-            db_path, placed = build(sandbox_dir, source)
+            db_path, placed = build(sandbox_dir, source, args.detect_max_side)
             sampler = sandbox.Sampler().start()
             time.sleep(10)   # the card and the processors before the child: the other programs' share
             output["before"] = {"card": sandbox.window(sampler.gpu, 0, time.time()),
@@ -503,12 +648,14 @@ def main():
                 random.Random(args.seed).shuffle(chosen)   # the warm-up photo of any stratum
                 folder = new_folder(placed, "pipeline-sample")
                 labels = {}
+                stored = stored_faces(library, [row["id"] for row in chosen])
                 for number, row in enumerate(chosen):
                     target = os.path.join(folder, "%04d" % number, os.path.basename(row["path"]))
                     os.makedirs(os.path.dirname(target))
                     shutil.copy2(row["path"], target)
                     labels[paths.key(target)] = {"stratum": row["stratum"], "faces": row["faces"],
-                                                 "megapixels": row["megapixels"]}
+                                                 "megapixels": row["megapixels"], "number": number,
+                                                 "stored": stored.get(row["id"], [])}
                 output["sample"] = sandbox.census_counts(chosen, {"photos": len(chosen)})
                 output["sample"]["by_stratum"] = {name: sum(1 for r in chosen if r["stratum"] == name)
                                                   for name in sandbox.STRATA}
@@ -555,7 +702,8 @@ def main():
                 print("sandbox left at %s" % sandbox_dir)
             else:
                 output["sandbox_deleted"] = sandbox.remove_sandbox(sandbox_dir)
-        path = os.path.join(out, "pipeline-%s-%s-%s.json" % (args.mode, output["library"], stamp))
+        capped = "-cap%d" % args.detect_max_side if args.detect_max_side else ""
+        path = os.path.join(out, "pipeline-%s-%s%s-%s.json" % (args.mode, output["library"], capped, stamp))
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(output, handle, indent=1)
         print("written %s" % path)

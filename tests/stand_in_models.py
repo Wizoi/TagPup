@@ -41,4 +41,4 @@ class Clip:
 
 def run_for(photo_index, faces, dim, words=()):
     """What a Suggest run over `photo_index` is handed (model_for_run), CLIP stood in for and `faces` the face model."""
-    return suggester.model_for_run(photo_index, Clip(dim), faces, list(words))
+    return suggester.model_for_run(photo_index, Clip(dim), faces, list(words), detect_max_side=None)

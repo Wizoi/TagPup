@@ -343,7 +343,7 @@ The photos whose faces were detected (`tagpup.store.faces_detected`; findings #7
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `photo_id` | INTEGER | PRIMARY KEY | The photo (`photos.id`). No foreign key: a row whose photo is gone is read as none. |
-| `detector` | TEXT | NOT NULL | The detector that ran: its settings as JSON with sorted keys (`min_face_size`, `confidence_threshold`, `mtcnn_thresholds`). |
+| `detector` | TEXT | NOT NULL | The detector that ran: its settings as JSON with sorted keys (`min_face_size`, `confidence_threshold`, `mtcnn_thresholds`, and `detect_max_side` only when the library caps the picture the detector looks at: with no cap the name is the one every row was written under before the cap existed, so nothing is detected again). |
 | `mtime` | REAL | | The file's modified time when it was recorded. Kept, not compared: a metadata write changes it and not the picture. |
 | `size` | INTEGER | | The file's size then, in bytes. |
 | `found` | INTEGER | NOT NULL | How many faces it found. |

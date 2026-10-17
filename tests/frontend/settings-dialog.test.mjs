@@ -110,7 +110,8 @@ describe("the settings dialog", () => {
 
   test("locked settings show their value and cannot be edited; the others can", async (t) => {
     const { field } = await tunerWithSettings(t);
-    assert.deepEqual(LOCKED.sort(), ["faces.confidence_threshold", "faces.min_face_size", "faces.mtcnn_thresholds",
+    assert.deepEqual(LOCKED.sort(), ["faces.confidence_threshold", "faces.detect_max_side", "faces.min_face_size",
+                                     "faces.mtcnn_thresholds",
                                      "model.force_image_size", "model.max_aspect_ratio", "model.name",
                                      "model.preserve_full_frame", "model.pretrained", "paths.exiftool"]);
     for (const key of LOCKED) {

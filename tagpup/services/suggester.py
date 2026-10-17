@@ -156,7 +156,7 @@ class TagSuggester:
     """
 
     def __init__(self, index, taxonomy, *, embedder, faces, candidate_tags: List[str] = None,
-                 remember=True, text_cache=None):
+                 remember=True, text_cache=None, detect_max_side=None):
         self.index = index
         #: Where a prompt's embedding is kept when `remember` is False (TextEmbeddingCache).
         self.text_cache = text_cache
@@ -167,6 +167,8 @@ class TagSuggester:
         self.taxonomy = taxonomy
         self.embedder = embedder
         self.faces = faces
+        #: The cap on the picture `faces` detects in (LibrarySettings.detect_max_side; None, the default, is none).
+        self.detect_max_side = detect_max_side
 
         user_candidates = candidate_tags or []
         # Exclude face-matched folders/people names from candidate tags
@@ -439,7 +441,7 @@ class TagSuggester:
                 # Detected before and none found: as good as faces on file (#773).
                 if not has_rows:
                     has_rows = store_faces_detected.detected(
-                        self.index.conn, photo_path, face_records.detector_of(self.faces))
+                        self.index.conn, photo_path, face_records.detector_of(self.faces, self.detect_max_side))
             return has_rows, detected
 
         # Check database cache first
@@ -454,7 +456,7 @@ class TagSuggester:
 
         # If not in database, detect and embed on-the-fly
         if not has_face_rows:
-            detected_faces = self.faces.detect_and_embed_faces(photo_path)
+            detected_faces = self.faces.detect_and_embed_faces(photo_path, max_side=self.detect_max_side)
 
             # Keep what we just computed. Detection and embedding are the expensive
             # part of this whole pipeline, and they were previously discarded when the
@@ -465,7 +467,7 @@ class TagSuggester:
             # rows are left untouched, so manual names and exclusions are safe.
             if self.remember:
                 saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces,
-                                                     detector=face_records.detector_of(self.faces))
+                                                     detector=face_records.detector_of(self.faces, self.detect_max_side))
                 if saved:
                     logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
 
@@ -753,12 +755,12 @@ class SuggestionModel:
         return notes
 
 
-def model_for_run(photo_index, clip, faces, configured_words, remember=True):
+def model_for_run(photo_index, clip, faces, configured_words, *, detect_max_side, remember=True):
     """Ready the suggester for one run over a library, on the run's thread: its tag tree,
     the words CLIP is asked about -- `configured_words`, the library's, and the tree's, but
     no one's name (tagpup.core.suggesting) -- and their embeddings, before the parallel
     photos need them. `photo_index` is the library's, loaded; `clip` and `faces` the
-    models (tagpup.runtime). Not `remember`: nothing computed is kept in the library -- no
+    models (tagpup.runtime), `detect_max_side` the library's cap on what `faces` detects in. Not `remember`: nothing computed is kept in the library -- no
     vector, no face, no candidate word's embedding -- and what it reads of it is what it
     holds (a Just look run)."""
     taxonomy = TagTaxonomy(photo_index.db_path)
@@ -766,7 +768,7 @@ def model_for_run(photo_index, clip, faces, configured_words, remember=True):
     candidates = suggesting.zero_shot_words(configured_words, taxonomy.paths, taxonomy.people_roots())
     text_cache = None if remember else looking_text_embeddings(photo_index.db_path)
     suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces,
-                             remember=remember, text_cache=text_cache)
+                             remember=remember, text_cache=text_cache, detect_max_side=detect_max_side)
     suggester._precompute_candidates()
     # Who is known, read once for the run, now: a read that fails fails the run's start, with its sentence.
     suggester.knows_named_faces()

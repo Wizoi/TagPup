@@ -90,7 +90,7 @@ class FakeFaces(stand_in_models.Faces):
     def __init__(self):
         self.detected = []
 
-    def detect_and_embed_faces(self, path):
+    def detect_and_embed_faces(self, path, *, max_side):
         self.detected.append(path)
         name = os.path.splitext(os.path.basename(path))[0]
         if name.endswith(("01", "02")):

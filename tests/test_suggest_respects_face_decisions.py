@@ -34,7 +34,7 @@ class CountingFaceProcessor(stand_in_models.Faces):
     def ready(self):
         """The run's turn on the graphics card (tagpup.runtime._OnTheCard): nothing to wait for here."""
 
-    def detect_and_embed_faces(self, path):
+    def detect_and_embed_faces(self, path, *, max_side):
         self.calls += 1
         return [{"box": [0, 0, 100, 100], "embedding": ROWAN, "prob": 0.99}]
 

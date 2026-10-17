@@ -57,7 +57,7 @@ class FaceModel:
     def ready(self):
         self.readied += 1
 
-    def detect_and_embed_faces(self, path):
+    def detect_and_embed_faces(self, path, *, max_side):
         self.detected += 1
         return []
 
@@ -89,14 +89,14 @@ class Case(unittest.TestCase):
         """Record a detection as the indexer does, at the end of a batch."""
         conn = db.connect(self.db_path)
         try:
-            face_records.record_batch(conn, {self.photo: found}, detector=face_records.detector_of(model))
+            face_records.record_batch(conn, {self.photo: found}, detector=face_records.detector_of(model, None))
         finally:
             conn.close()
 
     def recorded(self, model):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
-            return faces_detected.detected(conn, self.photo, face_records.detector_of(model))
+            return faces_detected.detected(conn, self.photo, face_records.detector_of(model, None))
         finally:
             conn.close()
 
