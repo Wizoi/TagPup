@@ -133,7 +133,9 @@ same scripts.
   owner's word, once the counts are shown.
   *Built 2026-10-16, off.* The setting `faces.detect_max_side` (Face detection, "Look at most"; empty is off): the
   detector looks at the picture scaled to the cap, the boxes are scaled back, crops and vectors come from the full
-  picture. The cap enters the `faces_detected` detector name only when set, so off nothing is detected again; on, only
+  picture. The cap is an argument of each detection (`LibrarySettings.detect_max_side`), not a setting of the face
+  models: libraries differing only in it share one set, and a Suggest in one is not refused beside a run in the other.
+  The cap enters the `faces_detected` detector name only when set, so off nothing is detected again; on, only
   photos with no face whose detection was recorded are detected again by Suggest (kr-track 1, renton_parkrun 9,
   photo_index 0; a photo with faces keeps them, and a stored box moves only under a forced re-index). Measured on the
   phase 0 sample (299 photos, 5,724 faces found without a cap, 206 of them named):
@@ -148,8 +150,9 @@ same scripts.
   Most of the loss is in the 10 most crowded photos (887, 1,818 and 2,337 of their 3,234 faces). A cap is a larger
   smallest face on a large photo: MTCNN's smallest face becomes `min_face_size` x long side / cap at full size, so the
   faces lost are the small ones (90% under 75 px). Over the whole of photo_index, the named faces under that size are
-  5, 8 and 23 of 35,425 at 3,000, 2,048 and 1,600 (counted from each photo's header, read-only); unnamed 10,777,
-  24,584 and 35,491 of 152,325. The resize adds 0.04 to 0.06 s a photo to the decode for faces.
+  5, 8 and 23 of 35,425 at 3,000, 2,048 and 1,600 by the box's longer side, 5, 27 and 53 by its shorter (counted from
+  each photo's header, read-only, 2026-10-16); unnamed 10,777, 24,584 and 35,491 of 152,325.
+  The resize adds 0.04 to 0.06 s a photo to the decode for faces.
 - **1b Overlap.** A thread pool decodes and prepares the next photos while the card runs the current one (Pillow
   releases the GIL; a Windows `DataLoader` would spawn processes). Batch CLIP images and the tag prompts Suggest
   already knows up front. `cudnn.benchmark` for the fixed-size recogniser batch.
@@ -332,7 +335,7 @@ the desktop-to-server flow), comes first. Whatever it writes goes through `file_
 
 | Decision | When | Who |
 |---|---|---|
-| Turn the detector downscale on (1a), and at which cap? | Now: the counts are in phase 1a | Owner (the person) |
+| Turn the detector downscale on (1a), and at which cap? | Now: the counts are in phase 1a. On, a forced re-index (`--force-reembed`, which replaces a photo's faces in any case) does not find again a named face smaller than the cap's smallest face: on photo_index 5, 8 and 23 of 35,425 named faces at 3,000, 2,048 and 1,600 (5, 27 and 53 by the box's shorter side). photo_index holds no `faces_detected` row at all, so each of its photos with no face is detected again by the first Suggest that looks at it (which records it), with a cap or without (pre-existing, a finding of its own) | Owner (the person) |
 | Does a failed file still cost a run (1d), and is a skip-list needed? | Phase 1, counted | Owner of Files |
 | Is the warm indexer worth it (1e)? | After 1b is timed | Views-AI and Integration owners |
 | How the 223 turned photos' vectors are repaired (1f) and how a stale one is found | Phase 1 | Views-AI and Data owners |
