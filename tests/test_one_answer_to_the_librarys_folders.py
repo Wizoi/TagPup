@@ -67,7 +67,7 @@ class AnAddedFolder(unittest.TestCase):
         self.queued = []
 
         def index_folder(library, subfolders=True):
-            def index(folder, cluster, report):
+            def index(folder, report):
                 self.queued.extend([folder] if isinstance(folder, str) else list(folder))
                 return Result(attempted=1, changed=1)
             return index

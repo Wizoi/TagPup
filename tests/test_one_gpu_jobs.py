@@ -112,7 +112,7 @@ class SuggestWaitsForTheFoldersIndex(_Library):
         self.addCleanup(self.release.set)
         self.indexed_at = []
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             report("Generating embeddings: 33% (1/3)", 30)
             self.release.wait(DEADLINE)
             self.indexed_at.append(time.monotonic())
@@ -292,7 +292,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
             handle.write(FAKE_INDEXER)
         queue = indexing_jobs.queue_for(self.library)
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             return indexing_service.index_folder(self.library, folder, code, report=report)
         queue.start([self.folder], index)
         self.assertTrue(until(lambda: gpu_turns.is_waiting(queue.status(self.folder).get("message"))),
@@ -311,7 +311,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
         release = threading.Event()
         self.addCleanup(release.set)
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             report("Generating embeddings: 33% (1/3)", 30)
             report.stop_file = os.path.join(self.home.root, "stop")
             release.wait(DEADLINE)

@@ -8,7 +8,9 @@ run for three small generated photos in a home of its own, its models stood in f
 sitecustomize the child imports (the weights refuse under test; the protocol -- arguments,
 environment, exit code, stdout -- is the real one).
 
-Then the same folder is added again: nothing changed on disk, so the CLI reads no file and says the index is current.
+The index recorded photos, so the CLI clusters the library's faces after it, saying so on the line the server reads
+(owner, DECISIONS 2026-10-16). Then the same folder is added again: nothing changed on disk, so the CLI reads no file,
+says the index is current, and clusters nothing.
 
 Lifted: test_functional_cli (which built exiftool.ExifToolHelper and called sqlite3.connect itself, against the rules, and
 tested the same two runs): every photo is indexed, tagged or not (three untagged photos), and an index again reads nothing.
@@ -78,7 +80,8 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertIn(90, percents, heard)
         self.assertTrue(any("Generating embeddings: 100% (3/3)" == message for message, _p in heard), heard)
         self.assertEqual(100, result.details["percent"])
-        self.assertIn("Folder indexed.", result.details["message"])
+        self.assertIn((indexing.CLUSTERING_STARTS, indexing.CLUSTERING_PERCENT), heard)
+        self.assertEqual("Folder indexed and face identities resolved.", result.details["message"])
         conn = db.connect(library.path)
         try:
             # Every scanned photo is indexed, tagged or not, and as genuinely untagged (no borrowed metadata).
@@ -93,6 +96,7 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertTrue(again.ok, (again.errors, heard_again))
         self.assertIn("All images are up to date! Index is current.", [message for message, _p in heard_again], heard_again)
         self.assertFalse(any("Generating embeddings" in (message or "") for message, _p in heard_again), heard_again)
+        self.assertFalse(again.details["clustered"], heard_again)
 
 
 if __name__ == "__main__":

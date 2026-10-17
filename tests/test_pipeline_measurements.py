@@ -107,6 +107,27 @@ class TheCounts(unittest.TestCase):
             import shutil
             shutil.rmtree(folder, True)
 
+    def test_an_index_is_timed_to_its_clusterings_line(self):
+        """`index` clusters the whole library after itself (about 200 s on photo_index): an event run's seconds a photo
+        end at the clustering's line, read from the log as it grows, a line cut by a read included."""
+        import shutil
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="tagpup_cli_log_test_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "cli.log")
+        line = stages.ClusteringLine(path)
+
+        def write(text):
+            with open(path, "a", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+        write("Generating embeddings:  50%|#####     | 1/2 [00:01<00:01]\rGenerating embeddings: 100%|")
+        self.assertFalse(line.seen())
+        write("##########| 2/2 [00:02<00:00]\nIndexing successfully completed!\nResolving and matching")
+        self.assertFalse(line.seen(), "half the line is not the line")
+        write(" face identities...\nResolving face identities:  10%|#")
+        self.assertTrue(line.seen())
+        self.assertFalse(line.seen(), "seen once")
+
     def test_output_goes_outside_the_repository(self):
         with self.assertRaises(SystemExit):
             sandbox.outside_the_repository(os.path.join(ROOT, "measurements"))

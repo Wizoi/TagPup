@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 
@@ -41,7 +42,7 @@ def forget(db_path):
     library = Library(db_path)
     tuner_routes.identify_cache.forget(library)
     tuner_routes.identify_progress.forget(library)
-    tuner_routes.clustering.forget(library)
+    indexing.clustering.forget(library)
     indexing_jobs.forget(library)
 
 

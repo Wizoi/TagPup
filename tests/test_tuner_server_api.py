@@ -31,6 +31,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 FACE_DIM = 512
@@ -759,7 +760,7 @@ class TestClusteringLock(TunerAPITestBase):
         photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
         face_id = self.add_face(photo, unit_vector(99), name="Jane Doe")
 
-        being_clustered = tuner_routes.clustering.of(Library(self.TEST_DB))
+        being_clustered = indexing.clustering.of(Library(self.TEST_DB))
         being_clustered.set()
         try:
             status, _ = self.post("/api/face/unmatch", {"face_id": face_id})
@@ -936,11 +937,11 @@ class TestQueueRunner(TestFolderQueue):
         folders = self.make_folders(3)
         seen = []
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             seen.append(folder)
             return Result(changed=1)
 
-        with patch.object(tuner_routes, "folder_indexer", return_value=index):
+        with patch.object(tuner_routes.runtimes, "index_folder", return_value=index):
             self.post_start(folders, block_runner=False)
             self.wait_until_idle()
         self.assertEqual(seen, folders)
@@ -1077,31 +1078,6 @@ class TestTunerFolderIndexing(TunerAPITestBase):
 
         self.assertEqual(final.get("status"), "completed", final)
         self.assertTrue(popen.called, "the indexer subprocess never started")
-
-    def test_indexing_does_not_cluster_unless_asked(self):
-        """Clustering rewrites every name in the database, so it is never implicit."""
-        from unittest.mock import patch, MagicMock
-        import tempfile
-
-        folder = tempfile.mkdtemp(prefix="tuner_idx_")
-        proc = MagicMock()
-        proc.returncode = 0
-        proc.stdout.readline.side_effect = ["done\n", ""]
-
-        with patch("subprocess.Popen", return_value=proc) as popen:
-            self.post("/api/folder/index-start", {"folder_path": folder})
-            q = urllib.parse.quote(folder)
-            deadline = time.time() + 20
-            while time.time() < deadline:
-                if self.get(f"/api/folder/index-status?path={q}").get("status") != "running":
-                    break
-                time.sleep(0.1)
-
-        commands = [call.args[0] for call in popen.call_args_list]
-        self.assertFalse(
-            any("cluster-faces" in c for c in commands),
-            f"indexing clustered without being asked: {commands}",
-        )
 
 
 class TestTunerFolderRemoval(TunerAPITestBase):
@@ -1389,11 +1365,11 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
         folders = self.make_folders(2)
         seen = []
 
-        def look(folder, cluster, report):
+        def look(folder, report):
             seen.append(self.get("/api/folder/index-active"))
             return Result(changed=1)
 
-        with patch.object(tuner_routes, "folder_indexer", return_value=look):
+        with patch.object(tuner_routes.runtimes, "index_folder", return_value=look):
             status, body = self.post_start([forward_slashes(f) for f in folders])
         self.assertEqual(status, 200, body)
         self.assertEqual(body["queued"], folders)

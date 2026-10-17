@@ -168,9 +168,10 @@ added lines. Owner: Views-AI, with Files for the indexer loop.
 ### Phase 2: Clustering and the margin rule (no schema)
 
 **Why.** `cluster-faces` took 34 minutes, 32 of them in the last matching pass, on the processor, not in the pair pass
-(#1530; fixed by 2a, 202 s now). It is run by hand: the apps never run it, though DECISIONS 2026-10-15 says the indexer
-does (#1544, the owner's decision; so the live photo_index has had no run since at least 2026-09-23, and one run would
-name 21,225 faces, unname 1,434 and rename 669, counted on a copy). And the baseline shows the margin over the second-best person
+(#1530; fixed by 2a, 202 s now). It runs after every index that recorded a photo, from every entry point (the CLI's
+`index` decides; DECISIONS 2026-10-16, #1544). Until then the apps never ran it, though DECISIONS 2026-10-15 said the
+indexer did, so the live photo_index has had no run since at least 2026-09-23, and one run would name 21,225 faces,
+unname 1,434 and rename 669, counted on a copy. And the baseline shows the margin over the second-best person
 is the strong signal (precision 99.8% at margin 0.04, with FaceNet's vectors today).
 
 - **2a The conflict stage.** *Done 2026-10-16: the last pass asked a likeness a face and a person at a time; 2,113 s
@@ -329,6 +330,13 @@ the desktop-to-server flow), comes first. Whatever it writes goes through `file_
 Measured in sandboxes on copies of the libraries, on the owner's RTX 3080 (10 GB) with other programs holding 0.9 to
 1.2 GB of it, 2.4 to 7.4% processor busy. Raw JSON (counts and numbers only) is kept outside the repository by the
 worker that ran it. The column "After" is filled as each phase merges.
+
+**The index rows are the index alone.** Since 2026-10-16 `index` clusters the whole library's faces after an index that
+recorded a photo (DECISIONS 2026-10-16, #1544; 202 s on photo_index), so a whole run's time carries those seconds
+whatever the folder's size. `scripts/measure_pipeline_stages.py` times the index to the clustering's line
+(`tagpup.services.indexing.CLUSTERING_STARTS`; in `stages` a timer on the CLI's `_cluster_after_index`) and gives the
+clustering's seconds apart, so the rows below are measured again like for like; the clustering's own row is
+`cluster-faces`.
 
 | Measure | Today | After | Notes |
 |---|---|---|---|

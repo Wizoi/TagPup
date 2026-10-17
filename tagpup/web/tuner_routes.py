@@ -15,12 +15,11 @@ error pages, as send_error sent them.
 """
 import logging
 import os
-import threading
-from contextlib import contextmanager
 
 from flask import Blueprint, abort, jsonify, request
 
 from tagpup import config as tagpup_config
+from tagpup import runtime as runtimes
 from tagpup.core import paths
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import identify as identify_jobs
@@ -89,34 +88,6 @@ def _used(name):
         runtime.idle.used(name)
 
 
-#: Set while a library's faces are being clustered. Assignments are refused meanwhile:
-#: clustering rewrites the names they would be setting.
-clustering = state.PerLibrary(lambda library: threading.Event())
-
-@contextmanager
-def while_clustering(library):
-    """Refuse assignments in `library` while this is held. The library is named, not
-    taken from the request, so it holds on a thread no request set up."""
-    flag = clustering.of(library)
-    flag.set()
-    try:
-        yield
-    finally:
-        flag.clear()
-
-
-def folder_indexer(library):
-    """How this server adds a folder to `library`: through the CLI
-    (tagpup.services.indexing.index_folder), refusing assignments while cluster-faces
-    runs, since it rewrites the names they would be setting. The queue once ran it
-    unguarded."""
-    def index(folder, cluster, report):
-        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT,
-                                     cluster=cluster, report=report,
-                                     while_clustering=lambda: while_clustering(library))
-    return index
-
-
 _refuse = face_routes.refuse
 
 
@@ -140,7 +111,7 @@ def clustering_refusal(library, only_naming=False):
     the flag clustering from an index run holds."""
     if library is not None and naming_faces.writing(library):
         return responses.error(409, NAMING_REFUSAL)
-    if not only_naming and library is not None and clustering.of(library).is_set():
+    if not only_naming and library is not None and indexing.clustering.of(library).is_set():
         return responses.error(409, "The server is clustering faces; this waits until it finishes.")
     return None
 
@@ -564,8 +535,8 @@ def folder_index_status():
 @routes.post("/api/folder/index-start")
 def folder_index_start():
     """Queue one or more folders to be added to this library (tagpup.jobs.indexing).
-    Accepts `folder_path` (one) or `folder_paths` (several). Clustering is opt-in: it
-    re-derives every name in the library, not only the folders being added."""
+    Accepts `folder_path` (one) or `folder_paths` (several). Each index is followed by clustering when it recorded a
+    photo, as every index is (tagpup.services.indexing.index_folder)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     requested = body.get("folder_paths")
@@ -573,10 +544,9 @@ def folder_index_start():
         requested = [body.get("folder_path")] if body.get("folder_path") else []
     if not isinstance(requested, list):
         _refuse(400, "folder_paths must be a list")
-    cluster = bool(body.get("cluster", False))
     # Adding a folder, as TagPup's Add does (tagpup.services.libraries.add).
     result = library_actions.add(library, requested, lambda folders: indexing_jobs.queue_for(library).start(
-        folders, folder_indexer(library), cluster=cluster))
+        folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, requested)
     if result.refused:
         _refuse(400, result.message())

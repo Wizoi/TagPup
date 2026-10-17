@@ -397,7 +397,7 @@ class WhatALongRunIs(unittest.TestCase):
         self.addCleanup(self.go.set)
 
     def test_an_index_under_way(self):
-        def index(folder, cluster, report):
+        def index(folder, report):
             self.go.wait(30)
             from tagpup.core.result import Result
             return Result()

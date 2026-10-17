@@ -54,7 +54,7 @@ class TheWorker(QueueTest):
         seen, running, most = [], [0], [0]
         lock = threading.Lock()
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             with lock:
                 running[0] += 1
                 most[0] = max(most[0], running[0])
@@ -73,7 +73,7 @@ class TheWorker(QueueTest):
     def test_one_folder_that_fails_does_not_cost_the_others(self):
         folders = self.folders(3)
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             if folder == folders[1]:
                 raise RuntimeError("that folder is unreadable")
             return Result(changed=1)
@@ -86,7 +86,7 @@ class TheWorker(QueueTest):
     def test_a_failed_result_is_recorded_with_what_it_said(self):
         folder = self.folders(1)[0]
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             result = Result(attempted=1)
             result.fail(folder, "Indexing failed with exit code 3.")
             result.details["percent"] = 0
@@ -100,7 +100,7 @@ class TheWorker(QueueTest):
 
     def test_a_folder_indexed_says_what_indexing_said(self):
         folder = self.folders(1)[0]
-        self.queue.start([folder], lambda f, c, report: Result(
+        self.queue.start([folder], lambda f, report: Result(
             changed=1, details={"percent": 100, "message": "Folder indexed."}))
         self.wait_until_idle()
         self.assertEqual(self.queue.status(folder)["message"], "Folder indexed.")
@@ -109,7 +109,7 @@ class TheWorker(QueueTest):
         folder = self.folders(1)[0]
         reported, release = threading.Event(), threading.Event()
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             report("Generating embeddings: 42% (21/50)", 37)
             reported.set()
             release.wait(10)
@@ -128,27 +128,19 @@ class TheWorker(QueueTest):
             release.set()
         self.wait_until_idle()
 
-    def test_it_is_told_whether_to_cluster(self):
-        folder = self.folders(1)[0]
-        asked = []
-        self.queue.start([folder], lambda f, cluster, report: asked.append(cluster) or Result(),
-                         cluster=True)
-        self.wait_until_idle()
-        self.assertEqual(asked, [True])
-
     def test_it_stops_when_the_queue_empties_and_a_later_start_starts_another(self):
         first, second = self.folders(2)
-        self.queue.start([first], lambda f, c, r: Result(changed=1))
+        self.queue.start([first], lambda f, r: Result(changed=1))
         self.wait_until_idle()
         self.assertIsNone(self.queue._runner)
-        self.queue.start([second], lambda f, c, r: Result(changed=1))
+        self.queue.start([second], lambda f, r: Result(changed=1))
         self.wait_until_idle()
         self.assertEqual(self.statuses([first, second]), ["completed", "completed"])
 
     def test_a_folder_whose_status_went_missing_is_still_recorded(self):
         folder = self.folders(1)[0]
         self.queue._ensure_runner = lambda: None
-        self.queue.start([folder], lambda f, c, r: Result(changed=1))
+        self.queue.start([folder], lambda f, r: Result(changed=1))
         self.queue._statuses.clear()
         self.queue.run_pending()
         self.assertEqual(self.queue.status(folder)["status"], "completed")
@@ -161,7 +153,7 @@ class WhatIsQueued(QueueTest):
         self.queue._ensure_runner = lambda: None
 
     def start(self, folders, **options):
-        return self.queue.start(folders, lambda f, c, r: Result(changed=1), **options)
+        return self.queue.start(folders, lambda f, r: Result(changed=1), **options)
 
     def test_each_folder_waits_in_the_order_given_spelled_as_stored(self):
         folders = self.folders(2)

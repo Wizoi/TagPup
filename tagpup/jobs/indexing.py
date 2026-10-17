@@ -91,7 +91,7 @@ class IndexQueue:
         #: The library's name: what its runs' tags and the Activity page name it by.
         self.library = library
         self._lock = threading.RLock()
-        #: {"folder", "cluster", "index"}, in the order they were asked for.
+        #: {"folder", "index"}, in the order they were asked for.
         self._pending = []
         self._runner = None
         #: Folder key -> where that folder has got.
@@ -105,8 +105,8 @@ class IndexQueue:
         self._current_folders = []
         self._progress = None
 
-    def start(self, folders, index, cluster=False, together=False):
-        """Queue folders to be indexed by `index(folder, cluster, report)`, which returns
+    def start(self, folders, index, together=False):
+        """Queue folders to be indexed by `index(folder, report)`, which returns
         a Result and calls `report(message, percent)` as it goes, and start the worker
         unless it is running. `together`: the folders queued are one job, and `index` is
         handed their list -- one run of the indexer for them all (sync's new files).
@@ -143,15 +143,14 @@ class IndexQueue:
                         result.skip(folder, "already waiting or being indexed")
                         continue
                     if not together:
-                        self._pending.append({"folder": folder, "cluster": cluster, "index": index,
-                                              "parents": parents})
+                        self._pending.append({"folder": folder, "index": index, "parents": parents})
                     waiting.add(key)
                     self._statuses[key] = {"status": "queued", "percent": 0,
                                            "message": "Waiting to be indexed...", "folder": folder}
                     queued.append(folder)
                 if together and queued:
-                    self._pending.append({"folder": queued[0], "folders": list(queued), "cluster": cluster,
-                                          "index": index, "parents": parents})
+                    self._pending.append({"folder": queued[0], "folders": list(queued), "index": index,
+                                          "parents": parents})
                 self._ensure_runner()
             pending = len(self._pending)
 
@@ -248,9 +247,9 @@ class IndexQueue:
             return bool(self._pending) or (self._runner is not None and self._runner.is_alive())
 
     def pending(self):
-        """The folders waiting, in order, as {"folder", "cluster"}."""
+        """The folders waiting, in order, as {"folder"}."""
         with self._lock:
-            return [{"folder": job["folder"], "cluster": job["cluster"]} for job in self._pending]
+            return [{"folder": job["folder"]} for job in self._pending]
 
     def active(self):
         """What is being indexed now, and what waits behind it.
@@ -375,7 +374,7 @@ class IndexQueue:
     def _index(job, report):
         status = report.status
         try:
-            result = job["index"](job["folders"] if "folders" in job else job["folder"], job["cluster"], report)
+            result = job["index"](job["folders"] if "folders" in job else job["folder"], report)
         except Exception as e:
             logger.exception("Indexing %s failed", job["folder"])
             status.update(status="failed", percent=0, message="Error: %s" % e)

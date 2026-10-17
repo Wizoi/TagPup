@@ -112,7 +112,6 @@ Python:
 - `test_people_representative_faces`, `test_person_face_samples`: the face shown for a person, and the four hovered.
 - `test_person_ids`: the id beside the name: written, settled, kept through renames.
 - `test_person_rename_reaches_the_files`: a person renamed reaches the files and says how many.
-- `test_queued_clustering_is_guarded`: assignments wait while clustering rewrites names.
 - `test_reindex_keeps_face_decisions`: re-indexing a photo keeps its faces' decisions.
 - `test_server_lists_are_alphabetical`, `test_tag_order`, `test_tag_sort_key_edges`: the order shared with the pages.
 - `test_service_faces`: the faces service's own refusals, fingerprints and the detection settings.

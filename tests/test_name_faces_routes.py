@@ -18,6 +18,7 @@ from test_faces_from_tags import ODA, WREN, Case, at, look  # noqa: E402
 
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import naming_faces  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import name_faces_routes, tuner_routes  # noqa: E402
 
@@ -142,7 +143,7 @@ class TwoClicksAndBusyLibraries(RoutesCase):
         self.assertIn("index run", answer.get_json()["error"])
 
     def test_faces_being_clustered_refuses_it(self):
-        with tuner_routes.while_clustering(self.library):
+        with indexing.while_clustering(self.library):
             answer = self.apps["tagpup"].post(START, json={})
         self.assertEqual(409, answer.status_code)
         self.assertIn("clustered", answer.get_json()["error"])
@@ -245,13 +246,13 @@ class TwoClicksAndBusyLibraries(RoutesCase):
         real = naming_faces.faces_from_tags.faces_from_tags
 
         def watching(*args, **more):
-            seen.append(tuner_routes.clustering.of(self.library).is_set())
+            seen.append(indexing.clustering.of(self.library).is_set())
             return real(*args, **more)
         with mock.patch.object(naming_faces.faces_from_tags, "faces_from_tags", watching):
             self.apps["tuner"].post(CONFIRM, json={"job": started["job"]})
             self.join(started["job"])
         self.assertEqual([True], seen)
-        self.assertFalse(tuner_routes.clustering.of(self.library).is_set(), "and let go after")
+        self.assertFalse(indexing.clustering.of(self.library).is_set(), "and let go after")
 
 
 class FolderRoutes(RoutesCase):

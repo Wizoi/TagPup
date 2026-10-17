@@ -75,6 +75,12 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
   today: 0 (no library on another set).
 - **A model load that hangs refuses Suggest on another set until the server restarts**: the run (or the warm-up) holding
   the hung load keeps its lease until it returns or the process ends. Cost today: 0 libraries on another set.
+- **Suggest of a folder just added waits through the clustering after its index** (`jobs/suggestions._get_ready` waits
+  while `IndexQueue.indexing(folder)` answers, to the end of the CLI's process; 2026-10-16): about 200 s on photo_index,
+  seconds on the small libraries. Suggest compares the folder's faces with the library's named faces, which the
+  clustering is rewriting, and the clustering names this folder's new faces from their tags: started before it ends, the
+  run would read names half rewritten and offer people the clustering is about to name. The wait says what it waits for
+  (its status line carries the clustering's progress), and Cancel stops it.
 
 ## Unit files that stay, and the rule each holds
 
