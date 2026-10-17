@@ -300,14 +300,15 @@ class KnownFaces:
     def most_like(self, embedding, year=None, photo=None, among=None, skip=()):
         """(name, likeness) of the person `embedding` is most like, of `among` (everyone,
         without) but those in `skip`; (None, None) with nobody to compare."""
-        return self.best(self.likeness_table([(embedding, year, photo)])[0], among, skip)
+        table, columns = self.likeness_table([(embedding, year, photo)])
+        return self.best(table[0], columns, among, skip)
 
-    def best(self, row, among=None, skip=()):
-        """(name, likeness) of the highest of `row`, a row of likeness_table, of `among` (everyone, without) but those in
-        `skip`; the first of a tie in `among`'s order, or names()'; (None, None) with nobody to compare."""
-        columns = self._table_columns()
-        names = list(self._faces) if among is None else [name for name in among if name in columns]
-        names = [name for name in names if name not in skip]
+    @staticmethod
+    def best(row, columns, among=None, skip=()):
+        """(name, likeness) of the highest of `row`, a row of likeness_table read by the `columns` it came with, of `among`
+        (everyone in it, without) but those in `skip`; the first of a tie in `among`'s order, or the columns'; (None, None)
+        with nobody to compare. The columns travel with the row, so a person added since cannot shift what it is read as."""
+        names = [name for name in (columns if among is None else among) if name in columns and name not in skip]
         values = row[[columns[name] for name in names]] if names else row[:0]
         if np.isnan(values).all():
             return (None, None)
@@ -315,16 +316,16 @@ class KnownFaces:
         return (names[first], float(values[first]))
 
     def likeness_table(self, faces):
-        """likeness of each of `faces`, [(embedding, year, photo)], against every person: an array, a row a face and a
-        column a person in names()' order, NaN where likeness is None. A block of faces against everyone's faces is one
+        """likeness of each of `faces`, [(embedding, year, photo)], against every person: (an array, a row a face and a
+        column a person, NaN where likeness is None; {person: their column}, for `best`). A block of faces against everyone's faces is one
         matrix product, and the faces of one year share each person's years around it (`_chosen`, worked out once a
         year); only a person with a face in the face's own photo is chosen again, without it. Clustering's last pass
         asked likeness once a face and a person: 96,000 faces by 281 people on photo_index, over half an hour
         (docs/findings.md, #1530)."""
-        names, matrix, starts, by_photo, eras, _columns = self._table()
+        names, matrix, starts, by_photo, eras, columns = self._table()
         table = np.full((len(faces), len(names)), np.nan, dtype=np.float32)
         if not names or not faces:
-            return table
+            return table, columns
         for start in range(0, len(faces), self.BLOCK):
             block = faces[start:start + self.BLOCK]
             similarities = np.stack([_unit(e) for e, _y, _p in block]) @ matrix.T
@@ -341,10 +342,7 @@ class KnownFaces:
                     picked = self._chosen(name, year, key)
                     segment = row[starts[column]:starts[column] + len(picked)]
                     out[column] = segment[picked].max() if picked.any() else np.nan
-        return table
-
-    def _table_columns(self):
-        return self._table()[5]
+        return table, columns
 
     def _table(self):
         """(names, everyone's faces in one matrix, where each person's rows start, {photo key: the columns of the people

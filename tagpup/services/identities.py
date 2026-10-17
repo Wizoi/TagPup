@@ -665,7 +665,7 @@ def resolve(photo_index, on_step=None):
             # and the faces of untagged photos too, whose answer it never used (#1530).
             asked = [f for f in all_faces[number:number + STEP]
                      if refined_resolved_names.get(f["id"]) is None and tags_of(f)]
-            table = final_known.likeness_table([(f["embedding"], photo_years.get(f["photo_path"]), f["photo_path"])
+            table, columns = final_known.likeness_table([(f["embedding"], photo_years.get(f["photo_path"]), f["photo_path"])
                                                 for f in asked])
             likenesses = {f["id"]: row for f, row in zip(asked, table)}
         final_name = refined_resolved_names.get(face["id"])
@@ -678,7 +678,7 @@ def resolve(photo_index, on_step=None):
             if photo_tags:
                 # Check similarity to all known resolved people, skipping anyone already matched to another face in this
                 # same photo.
-                best_name, best_sim = final_known.best(likenesses[face["id"]], skip=names_taken_here)
+                best_name, best_sim = final_known.best(likenesses[face["id"]], columns, skip=names_taken_here)
                 best_sim = -1.0 if best_sim is None else best_sim
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
                 # The tag bears the name out, so the face is named from where it is worth offering
