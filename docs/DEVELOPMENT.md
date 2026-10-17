@@ -280,9 +280,10 @@ that do not. That means a normal index pass *writes* to some files: only the ind
 does, through `IdentityWriter` (`tagpup/files/metadata.py`), and only into a photo whose
 picture has decoded in full and whose metadata ExifTool read without an error -- a
 truncated file took an identity, which changed its modified time, which queued it for
-indexing again (#407). `MetadataExtractor` only reads. A minted identity also re-reads
-the file's mtime and size, or the next pass would see a file modified since indexing and
-re-index it for a write the last pass made.
+indexing again (#407). `MetadataExtractor` only reads. A photo given an identity keeps
+the stamp from before its read, and the index reads the photo again before recording it
+(`tagpup_cli._read_again`), so its row holds the file as the write left it and the next
+pass finds it current (#1599).
 
 **ExifTool treats an empty list as "no change".** Clearing a photo's last keyword has to
 be an explicit `-TAG=` deletion, which is what `write_keyword_fields()` does. Assigning
