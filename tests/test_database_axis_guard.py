@@ -77,13 +77,14 @@ class TestNoLibraryIsResolvedImplicitly(unittest.TestCase):
         request, and the models it is handed (tagpup.jobs.suggestions.work_for)."""
         import inspect
 
+        from tagpup import runtime
         from tagpup.jobs import suggestions as suggestion_jobs
         from tagpup.web import tagpup_routes
 
         self.assertEqual(["library", "photos", "models", "looking", "held_now"],
                          list(inspect.signature(suggestion_jobs.work_for).parameters))
         self.assertEqual(["library", "folder", "force"], list(inspect.signature(tagpup_routes._folder_photos).parameters))
-        self.assertEqual(["library"], list(inspect.signature(tagpup_routes._folder_indexer).parameters))
+        self.assertEqual(["library", "subfolders"], list(inspect.signature(runtime.index_folder).parameters))
 
     def test_guard_detects_an_implicit_library(self):
         """The guard must actually fail on offending code, not pass vacuously."""

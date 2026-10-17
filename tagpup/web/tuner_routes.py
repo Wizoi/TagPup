@@ -88,12 +88,6 @@ def _used(name):
         runtime.idle.used(name)
 
 
-def folder_indexer(library):
-    """How this server adds a folder to `library`: as every folder of this process's index queue is
-    (tagpup.runtime.index_folder), assignments refused while the faces are clustered after it."""
-    return runtimes.index_folder(library)
-
-
 _refuse = face_routes.refuse
 
 
@@ -552,7 +546,7 @@ def folder_index_start():
         _refuse(400, "folder_paths must be a list")
     # Adding a folder, as TagPup's Add does (tagpup.services.libraries.add).
     result = library_actions.add(library, requested, lambda folders: indexing_jobs.queue_for(library).start(
-        folders, folder_indexer(library)))
+        folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, requested)
     if result.refused:
         _refuse(400, result.message())

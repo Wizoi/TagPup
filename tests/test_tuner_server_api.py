@@ -941,7 +941,7 @@ class TestQueueRunner(TestFolderQueue):
             seen.append(folder)
             return Result(changed=1)
 
-        with patch.object(tuner_routes, "folder_indexer", return_value=index):
+        with patch.object(tuner_routes.runtimes, "index_folder", return_value=index):
             self.post_start(folders, block_runner=False)
             self.wait_until_idle()
         self.assertEqual(seen, folders)
@@ -1369,7 +1369,7 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
             seen.append(self.get("/api/folder/index-active"))
             return Result(changed=1)
 
-        with patch.object(tuner_routes, "folder_indexer", return_value=look):
+        with patch.object(tuner_routes.runtimes, "index_folder", return_value=look):
             status, body = self.post_start([forward_slashes(f) for f in folders])
         self.assertEqual(status, 200, body)
         self.assertEqual(body["queued"], folders)

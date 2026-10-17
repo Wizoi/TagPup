@@ -285,7 +285,8 @@ def index_folder(library, subfolders=True):
     in a process of its own, from this code (tagpup.services.indexing.index_folder); with
     its subfolders unless not `subfolders`. The CLI clusters the library's faces after an index that recorded a photo,
     and the library's writes of faces are refused meanwhile (tagpup.services.indexing.while_clustering): the same for
-    both apps' queue and sync's."""
+    both apps' index routes, TagPup's Add and sync's. Runs on the queue's thread, with the library it was handed. The
+    rows it writes move the photos counter, which lets TagPup's cached scan of the folder go (FolderCache; #341)."""
     def index(folder, report):
         return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, report=report, subfolders=subfolders)
     return index

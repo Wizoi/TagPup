@@ -192,14 +192,6 @@ def _folder_photos(library, folder, force=False):
     return found
 
 
-def _folder_indexer(library):
-    """How this server adds a folder to a library: through the CLI
-    (tagpup.services.indexing.index_folder), as every folder of this process's index queue is (tagpup.runtime.
-    index_folder). Runs on the queue's thread, with the library it was handed. The rows it writes move the photos
-    counter, which lets the folder's cached scan go (FolderCache; #341)."""
-    return runtimes.index_folder(library)
-
-
 def _wanted_path():
     """The request's `path`, or None, as Flask decoded it. The old routes decoded it a
     second time, and a name holding "%41" became one holding "A" (docs/findings.md, #32)."""
@@ -303,7 +295,7 @@ def folder_index_start():
     library = state.require()
     body = request.get_json(silent=True) or {}
     result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(
-        library).start(folders, _folder_indexer(library)))
+        library).start(folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, [body.get("folder_path")])
     if result.refused:
         return responses.error(400, result.message())
@@ -321,7 +313,7 @@ def folder_add():
     if not folder or not isinstance(folder, str) or not os.path.isdir(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
-        folders, _folder_indexer(library)))
+        folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, [folder])
     if result.refused:
         return responses.error(400, result.message())
