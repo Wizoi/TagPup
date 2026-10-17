@@ -10,10 +10,13 @@ must be taken off the list, so it only shrinks.
 """
 import glob
 import os
+import re
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BARE = "INSERT INTO photos"
+#: Every spelling of a statement that makes a photo row: INSERT INTO, INSERT OR REPLACE / IGNORE INTO, REPLACE INTO, in
+#: any case and across a line break (#1546: the clustering fixtures' INSERT OR REPLACE was outside the count).
+BARE = re.compile(r"(?:INSERT\s+(?:OR\s+\w+\s+)?|REPLACE\s+)INTO\s+photos\b", re.IGNORECASE)
 
 #: The test files and helpers that still seed a photo row by hand: a count of such statements in each.
 STILL_BARE = {
@@ -40,7 +43,7 @@ class PhotoRowsAreMadeLikeTheIndexersTest(unittest.TestCase):
             if name == os.path.basename(__file__):
                 continue
             with open(path, encoding="utf-8") as handle:
-                count = handle.read().count(BARE)
+                count = len(BARE.findall(handle.read()))
             if count:
                 found[name] = count
         self.assertEqual({}, {name: count for name, count in found.items() if count > STILL_BARE.get(name, 0)},

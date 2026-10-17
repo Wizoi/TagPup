@@ -21,7 +21,6 @@ a path does not mean "this photo". The fourth brought a shared matrix with it, a
 tests below pin what sharing it must not change: a face is not a suggestion for
 itself, and naming somebody has to be visible in the next answer.
 """
-import json
 import os
 import shutil
 import sqlite3
@@ -39,6 +38,7 @@ from tagpup.services.search import PhotoIndex
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fake_exiftool  # noqa: E402
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 import tuner_client  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
@@ -151,12 +151,7 @@ class MatchingTestBase(unittest.TestCase):
         # As the indexer writes it: absolute, native separators.
         path = os.path.abspath(os.path.join(self.tmpdir, name))
         conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions,"
-            " raw_metadata) VALUES (?, 1.0, 1, ?, '[]', '{}')",
-            (path, json.dumps(["People/" + person for person in people])),
-        )
-        store_people.rebuild_photos(conn, [path])
+        photo_rows.add_read(conn, path, {"XMP:Subject": ["People/" + person for person in people]})
         conn.commit()
         conn.close()
         return path

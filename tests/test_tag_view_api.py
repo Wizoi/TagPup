@@ -9,7 +9,6 @@ These cover the two reads that make the question answerable, and the merge that 
 it fixable. The merge defaults to a dry run, and the tests below hold it to that: it
 rewrites photo files, and every destructive script in this repo has earned its dry run.
 """
-import json
 import os
 import sqlite3
 import sys
@@ -20,6 +19,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import photo_rows
 from test_tuner_server_api import TunerAPITestBase
 
 
@@ -29,11 +29,7 @@ class TagViewTestBase(TunerAPITestBase):
         conn = sqlite3.connect(self.TEST_DB)
         cur = conn.cursor()
         for path, tags in photos:
-            cur.execute(
-                "INSERT OR REPLACE INTO photos (path, mtime, size, tags, "
-                "captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
-                (path, 1000.0, 10, json.dumps(tags), json.dumps([]), json.dumps({})),
-            )
+            photo_rows.add_read(conn, path, {"XMP:Subject": list(tags)})
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tag_taxonomy'")
         if cur.fetchone():
             cur.execute("DELETE FROM tag_taxonomy")
@@ -228,7 +224,11 @@ class TestMergingATag(TagViewTestBase):
     def test_a_photo_that_could_not_be_rewritten_keeps_the_tag(self):
         # The merge reported the photos it planned to change and retired the tag
         # regardless, so a photo it could not write kept a tag nothing offered any more.
-        self.seed([("D:/gone.jpg", ["Regata"])],
+        # The file is there and cannot be written (a photo whose file is gone is skipped, not an error).
+        broken = os.path.join(self.tmpdir, "broken.jpg")
+        with open(broken, "wb") as handle:
+            handle.write(b"not a picture")
+        self.seed([(broken, ["Regata"])],
                   taxonomy=[("Regata", False)], embeddings=["Regata"])
         _status, body = self.plan(**{"from": "Regata", "into": "Regatta", "apply": True})
 
