@@ -10,7 +10,6 @@ The likeness of the faces of one photo is stood in for (0.75, between OFFER_A_NA
 vectors of the other clustering tests a face of a person's cluster is always far above it. The rest is the real rule.
 """
 import os
-import sqlite3
 import sys
 import unittest
 
@@ -21,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
 
 from tagpup.core import clustering  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 REAL = clustering.KnownFaces.likeness
 
@@ -136,7 +136,7 @@ class TheFinalMatchingPass(FaceClusteringTestBase):
 
     def test_a_name_given_by_hand_is_not_changed_by_it(self):
         face = self.a_face_like_jane(0.7331)
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         conn.execute("UPDATE faces SET name = 'Ada Marchetti', name_source = 'manual' WHERE id = ?", (face,))
         conn.commit()
         conn.close()

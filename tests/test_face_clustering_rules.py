@@ -15,7 +15,6 @@ import os
 import sys
 import json
 import shutil
-import sqlite3
 import tempfile
 import unittest
 
@@ -32,6 +31,7 @@ from tagpup.services.search import PhotoIndex
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 FACE_DIM = 512
 DBSCAN_EPS = 0.48
@@ -78,7 +78,7 @@ class FaceClusteringTestBase(unittest.TestCase):
         fields = {}
         if year is not None:
             fields["EXIF:DateTimeOriginal"] = f"{year}:06:15 12:00:00"
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         photo_rows.add_read(conn, path, fields)
         face_rows.add_people(conn, path, list(people))
         conn.commit()
@@ -90,7 +90,7 @@ class FaceClusteringTestBase(unittest.TestCase):
         """Add a face. `manual_name` / `manual_cleared` mark it as a human decision."""
         name = manual_name
         source = "manual" if (manual_name is not None or manual_cleared) else None
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         face_id = face_rows.add_face(conn, photo_path, box=box, embedding=embedding.tobytes(),
                                      name=name, prob=0.99, name_source=source)
         conn.commit()
@@ -105,7 +105,7 @@ class FaceClusteringTestBase(unittest.TestCase):
         return identities.resolve(self.index)
 
     def name_of(self, face_id):
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         row = conn.execute("SELECT name FROM faces WHERE id = ?", (face_id,)).fetchone()
         conn.close()
         return row[0] if row else None
@@ -465,7 +465,7 @@ class TestManualOverridesSurviveClustering(FaceClusteringTestBase):
 
         self.resolve()
         self.assertEqual(self.name_of(face), "Jane Doe")
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         source = conn.execute(
             "SELECT name_source FROM faces WHERE id = ?", (face,)
         ).fetchone()[0]

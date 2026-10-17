@@ -12,7 +12,6 @@ covered, including the database-backed ones using a temporary taxonomy.
 """
 import os
 import sys
-import sqlite3
 import shutil
 import tempfile
 import unittest
@@ -31,6 +30,7 @@ from tagpup.core.vocabulary import extract_captions, extract_people, extract_tag
 from tagpup.files.metadata import clean_metadata_value, sanitize_filename
 from tagpup.services.photos import page_record
 from tagpup.store.taxonomy import people_vocabulary
+from tagpup.store import db  # noqa: E402
 
 
 def derive_caption_from_tags(tags):
@@ -161,7 +161,7 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         os.close(fd)
         self.addCleanup(self._remove_db)
 
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         conn.execute(
             """CREATE TABLE tag_taxonomy (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -183,7 +183,7 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
 
     def add_tag(self, tag, name, has_face):
         """A node under its parent's node, as the tree files it (a path whose parent is not in the tree has none: 0 live)."""
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         parent = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag.rpartition("/")[0],)).fetchone()
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
@@ -244,7 +244,7 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
     def test_an_existing_connection_is_reused_instead_of_opening_another(self):
         """Opening a second connection inside a write transaction deadlocks SQLite."""
         self.add_tag("Crew", "Crew", has_face=1)
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         try:
             conn.execute("BEGIN EXCLUSIVE")
             conn.execute(
@@ -545,7 +545,7 @@ class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp(prefix="meta_people_once_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
         self.db_path = os.path.join(self.tmpdir, "library.db")
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         conn.execute("CREATE TABLE tag_taxonomy (id INTEGER PRIMARY KEY, tag TEXT UNIQUE,"
                      " parent_id INTEGER, name TEXT, has_face INTEGER DEFAULT 0)")
         conn.execute("INSERT INTO tag_taxonomy (id, tag, parent_id, name, has_face)"

@@ -10,7 +10,6 @@ Evidence is now the keyword people, and names somebody gave a face by hand.
 """
 import json
 import os
-import sqlite3
 import sys
 import unittest
 
@@ -36,7 +35,7 @@ class ClusteringDoesNotTrustItsOwnGuesses(FaceClusteringTestBase):
 
     def add_guessed_face(self, photo_path, embedding, name):
         """A face clustering named, as it leaves it: a name, no manual source."""
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         face_id = face_rows.add_face(conn, photo_path, box=(0, 0, 100, 100),
                                      embedding=embedding.tobytes(), name=name, prob=0.99)
         conn.commit()
@@ -44,7 +43,7 @@ class ClusteringDoesNotTrustItsOwnGuesses(FaceClusteringTestBase):
         return face_id
 
     def set_tags(self, photo_path, tags):
-        conn = sqlite3.connect(self.db_path)
+        conn = db.connect(self.db_path)
         conn.execute("UPDATE photos SET tags = ?, raw_metadata = ? WHERE path = ?",
                      (json.dumps(tags), json.dumps({"XMP:HierarchicalSubject": tags}), photo_path))
         conn.commit()
