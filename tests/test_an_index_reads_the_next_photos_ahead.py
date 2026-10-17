@@ -15,7 +15,7 @@ after the other. What a person lives through, and what must not change:
 * two libraries indexed at once each record their own folder;
 * a turned photo: CLIP is shown it upright, the detector as stored, and its boxes stay in the picture as stored;
 * a 193 MP photo among ordinary ones is read alone: what is read ahead never holds more than the bound, but for one
-  photo larger than it.
+  photo larger than it, and nothing holds a photo the card is done with while the next ones are read.
 
 CLIP and the face models are stood in for (no weights load under test, tests/test_no_test_loads_a_model.py): the
 stand-ins answer from the picture they are handed, so a photo given another photo's picture would show. Pillow and
@@ -301,6 +301,57 @@ class AnIndexReadingAhead(unittest.TestCase):
                     thread.join(10)
         self.assertEqual([threading.main_thread().name], loads, "CLIP was loaded again after the index stopped")
 
+    def test_a_photo_the_card_is_done_with_is_let_go_while_the_next_ones_are_read(self):
+        """What a read made is held until the index has it, and by the index until it asks for the next photo; past
+        that it is outside the bound, so nothing may keep it: a worker kept the picture of its last photo through the
+        whole of its next read, and the progress bar kept the last photo it handed on while the index waited for the
+        next -- each about 1.2 GB at 193 MP. The reads of p03 and p04 are held, one on each thread, once the card is
+        done with p02: no picture of p00 to p02 may be left alive."""
+        library = self.library("boathouse.db")
+        folder = self.folder("Boathouse", count=6)
+        made, blocked, released, done = {}, threading.Barrier(3), threading.Event(), threading.Event()
+        picture, opened, detect = face_models.FaceModel.picture, images.opened, face_models.FaceModel.detect_and_embed
+        alive = {}
+
+        def picture_noted(model, path, **kwargs):
+            made_one = picture(model, path, **kwargs)
+            made[os.path.basename(path)] = weakref.ref(made_one)
+            return made_one
+
+        def opened_held(path, upright):
+            if upright and os.path.basename(path) in ("p03.jpg", "p04.jpg"):
+                blocked.wait(10)
+                released.wait(10)
+            return opened(path, upright)
+
+        def detect_noted(model, made_one):
+            found = detect(model, made_one)
+            if made_one.path.endswith("p02.jpg"):
+                done.set()
+            return found
+
+        def look():
+            blocked.wait(10)
+            done.wait(10)
+            names = ("p00.jpg", "p01.jpg", "p02.jpg")
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                gc.collect()
+                alive["left"] = [name for name in names if made[name]() is not None]
+                if not alive["left"]:
+                    break
+                time.sleep(0.05)
+            released.set()
+        looker = threading.Thread(target=look)
+        looker.start()
+        with mock.patch.object(face_models.FaceModel, "picture", picture_noted), \
+                mock.patch.object(images, "opened", opened_held), \
+                mock.patch.object(face_models.FaceModel, "detect_and_embed", detect_noted):
+            self.index(library, folder)
+        looker.join(20)
+        self.assertEqual([], alive["left"], "a photo the card was done with was still held while the next were read")
+        self.assertEqual(6, len(recorded(library)))
+
     def has_identity(self, path):
         with ExifToolSession(executable=own_home.installed_exiftool()) as et:
             return bool(read_document_id(et.get_tags([path], tags=["XMP-xmpMM:DocumentID"])[0]))
@@ -386,36 +437,6 @@ class ThePhotosReadAhead(unittest.TestCase):
         self.assertEqual(big, next(used for item, size, used in held if item == 5), "the panorama shared the bound")
         self.assertGreater(max(used for item, size, used in held if item != 5), self.reserved(self.TEN),
                            "the ordinary photos were not read ahead at all")
-
-    def test_a_photo_handed_on_is_let_go_while_the_next_ones_are_read(self):
-        """What a read made is held by the window until the caller has it, and by the caller until it asks for the
-        next: a worker kept the picture of its last photo through the whole of its next read, outside the bound --
-        about two photos more, 1.2 GB each at 193 MP."""
-        class Picture:
-            def __init__(self, item):
-                self.item = item
-        made, blocked, released = {}, threading.Event(), threading.Event()
-
-        def read(item, begun, reserve):
-            reserve(1)
-            if item in (0, 1):
-                time.sleep(0.2)     # each thread reads one of the first two, and then one of the blocked ones
-            if item in (3, 4):
-                blocked.set()
-                released.wait(10)
-            picture = made[item] = Picture(item)
-            made[item] = weakref.ref(picture)
-            return picture
-        alive = None
-        with read_ahead.ReadAhead(range(6), lambda item: {}, read, threads=2, ahead=3, budget=100) as photos:
-            for item, _begun, result in photos:
-                result.result()
-                if item == 2:
-                    blocked.wait(10)
-                    gc.collect()
-                    alive = [number for number in (0, 1) if made[number]() is not None]
-                    released.set()
-        self.assertEqual([], alive, "a photo handed on was still held while the next ones were read")
 
     def test_a_photo_gone_before_its_read_is_its_own_error_and_the_rest_come_in_order(self):
         def read(item):

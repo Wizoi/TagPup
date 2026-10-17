@@ -372,7 +372,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     # The index queue's Cancel, while this waits for the graphics card (tagpup.jobs.indexing).
     stop_file = os.environ.get(indexing_service.STOP_FILE)
-    turn = photos = None
+    turn = photos = bar = None
     total_new_indexed = 0
     try:
         # One process at a time has a model on the graphics card (tagpup.ml.gpu): its turn is
@@ -445,7 +445,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # file and every write of the library stay on this thread, one photo after the other, as before.
         photos = read_ahead.ReadAhead(to_index_meta, begin, read, threads=READ_THREADS, ahead=READ_AHEAD,
                                       budget=READ_AHEAD_BYTES)
-        for meta, begun, result in tqdm(photos, total=len(to_index_meta), desc="Generating embeddings"):
+        # The bar is moved by hand: tqdm iterating `photos` kept the last photo it handed on, and its pictures, while
+        # it waited for the next one -- outside what the read-ahead counts.
+        bar = tqdm(total=len(to_index_meta), desc="Generating embeddings")
+        for meta, begun, result in photos:
+            bar.update(1)
             if begun is None:
                 continue
             path = meta["path"]
@@ -508,7 +512,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 locker.release(path)
             finally:
                 # The decoded pictures go with the photo: what the read-ahead counts as held is given back when the
-                # next photo is asked for.
+                # next photo is asked for, and nothing here keeps them past that.
                 result = prepared = picture = None
 
         # Rebuild or update the FAISS index for the final batch
@@ -564,6 +568,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             if len(incomplete) > 5:
                 console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
     finally:
+        if bar is not None:
+            bar.close()
         if photos is not None:
             photos.close()
         if turn is not None:
