@@ -400,9 +400,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 try:
                     # Reads the file once and decodes the whole picture; a vector kept from
                     # the file as it is was made by such a decode.
-                    emb = embeddings.of(path, force_recompute=force_reembed,
-                                        seen=lambda picture: read.update(
-                        zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0)))
+                    emb = None if force_reembed else embeddings.cached(path)
+                    if emb is None:
+                        emb = embeddings.made(path, embeddings.prepared(path, seen=lambda picture: read.update(
+                            zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0))))
                 except image_files.Unreadable as damaged:
                     # Nothing is written into it: no identity, no row.
                     unreadable.append((path, damaged))
@@ -422,7 +423,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
-                    faces = face_processor.detect_and_embed_faces(path, max_side=detect_max_side)
+                    faces = face_processor.detect_and_embed(face_processor.picture(path, max_side=detect_max_side))
                     batch_faces[path] = faces
                 
                 # A photo already indexed is not removed first: build_or_update

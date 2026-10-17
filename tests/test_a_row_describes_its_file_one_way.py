@@ -39,16 +39,17 @@ class SubSecondRounding(CliDatabaseCase):
         self.shift = lambda seconds: os.utime(self.photo, (os.stat(self.photo).st_mtime + seconds,) * 2)
 
     @patch("tagpup.ml.clip.ClipModel._init_model")
-    @patch("tagpup.ml.clip.ClipModel.embed_image")
+    @patch("tagpup.ml.clip.ClipModel.picture_input")
+    @patch("tagpup.ml.clip.ClipModel.embed_input")
     @patch("tagpup_cli.MetadataExtractor.batch_read")
-    def index(self, batch_read, embed_image, _init_model):
-        embed_image.return_value = [0.1] * expected_dim()
+    def index(self, batch_read, embed_input, _picture_input, _init_model):
+        embed_input.return_value = [0.1] * expected_dim()
         batch_read.side_effect = lambda files, *a, **k: [
             {"path": f, "tags": [], "people": [], "captions": [], "raw_metadata": {},
              "mtime": os.stat(f).st_mtime, "size": os.stat(f).st_size} for f in files]
         result = self.run_cli(["index", "--skip-faces", os.path.dirname(self.photo)])
         self.assertEqual(result.exit_code, 0, result.output)
-        return embed_image.call_count
+        return embed_input.call_count
 
     def test_the_index_command_skips_a_photo_whose_time_differs_by_rounding(self):
         self.shift(0.04)
@@ -62,8 +63,7 @@ class SubSecondRounding(CliDatabaseCase):
         self.shift(0.04)
         index = PhotoIndex(self.db_path, configured_model())
         index.open()
-        clip = types.SimpleNamespace(settings=settings.LibrarySettings(dict(settings.DEFAULTS)).embedder,
-                                     embed_image=None)
+        clip = types.SimpleNamespace(settings=settings.LibrarySettings(dict(settings.DEFAULTS)).embedder)
         try:
             self.assertIsNotNone(PhotoEmbeddings(clip, index).cached(self.photo))
             self.shift(5)

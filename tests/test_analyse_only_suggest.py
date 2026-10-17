@@ -73,11 +73,14 @@ class FakeClip:
         self.images = []
         self.fail = None
 
-    def embed_image(self, path, seen=None):
+    def input_of(self, path, seen=None):
         if self.fail:
             raise RuntimeError(self.fail)
         images.opened(path, upright=True)
         self.images.append(path)   # only a photo that decoded was analysed
+        return path
+
+    def embed_input(self, path):
         return vector_of(path)
 
     def embed_text(self, prompt):

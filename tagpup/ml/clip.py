@@ -124,41 +124,45 @@ class ClipModel:
                     return
         raise RuntimeError("The CLIP model was let go as often as it was loaded; try again.")
 
-    def embed_image(self, file_path, seen=None):
-        """Embed one photo as it is now. Nothing is kept: see PhotoEmbeddings.
+    def input_of(self, file_path, seen=None):
+        """What the model is shown of a photo as it is now, made on the processor (picture_input): nothing runs on the
+        graphics card, so the indexer makes it on a thread of its own ahead of the photo the card is on
+        (tagpup_cli.py's index; docs/AI_PIPELINE.md, phase 1b).
 
-        The picture is decoded in full first (tagpup.files.images.opened), and handed to
-        `seen` when given; a photo whose picture does not decode raises
-        images.Unreadable, as it is: the indexer writes nothing into a photo this has not
-        read (tagpup_cli.py's index)."""
-        self._init_model()
+        The picture is decoded in full first (tagpup.files.images.opened), and handed to `seen` when given; a photo
+        whose picture does not decode raises images.Unreadable, as it is: the indexer writes nothing into a photo
+        this has not read."""
         # Upright, as the photo is seen. A camera turned on its side stores the
         # pixels sideways with an Orientation tag, and so does Rotate now; CLIP
         # was describing the sideways picture.
         img = images.opened(file_path, upright=True)
         if seen is not None:
             seen(img)
-        try:
-            return self.embed_picture(img)
-        except Exception as e:
-            logger.error(f"Error embedding image {file_path}: {e}")
-            raise e
+        return self.picture_input(img)
 
-    def embed_picture(self, img):
-        """Embed a decoded picture: an RGB Pillow image, upright."""
+    def picture_input(self, img):
+        """What the model is shown of a decoded picture (an RGB Pillow image, upright): padded to a square when the
+        settings keep the full frame, then the model's own preprocessing (resized, cut, normalised), as a tensor on
+        the processor. The preprocessing is the loaded model's, read under its lock (_running) and run outside it:
+        the resize of a large photo no longer holds the model from another thread's forward pass."""
         # Pad to square to preserve full frame if configured and within aspect ratio limit
         if self.preserve_full_frame:
             width, height = img.size
             aspect = max(width, height) / min(width, height)
             if aspect <= self.max_aspect_ratio:
                 img = images.pad_to_square(img)
-
         with self._running():
-            image_input = self.preprocess(img).unsqueeze(0).to(self.device)
+            preprocess = self.preprocess
+        return preprocess(img)
+
+    def embed_input(self, image_input):
+        """The vector of what picture_input made, on the model's device: the graphics card's work for a photo."""
+        with self._running():
+            batch = image_input.unsqueeze(0).to(self.device)
             if self.device == "cuda":
-                image_input = image_input.half()
+                batch = batch.half()
             with torch.inference_mode():
-                image_features = self.model.encode_image(image_input)
+                image_features = self.model.encode_image(batch)
                 # L2 normalize the features
                 image_features /= image_features.norm(dim=-1, keepdim=True)
                 return image_features[0].cpu().numpy().tolist()

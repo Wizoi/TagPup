@@ -54,10 +54,13 @@ class StandInClip:
     def load(self):
         pass
 
-    def embed_image(self, path):
+    def input_of(self, path, seen=None):
         self.embedded.append(path)
         if self.during:
             self.during(path)
+        return path
+
+    def embed_input(self, image_input):
         return UPRIGHT.tolist()
 
 

@@ -73,7 +73,7 @@ class TheTextModelLetGoBetweenTheCheckAndTheLock(unittest.TestCase):
         model, load = a_clip(weights)
         with mock.patch.object(model, "_init_model", load):
             model.embed_text("a harbour at dusk")
-            model.embed_picture(Image.new("RGB", (8, 8)))
+            model.embed_input(model.picture_input(Image.new("RGB", (8, 8))))
         self.assertEqual([True, True], weights.modes)
 
     def test_a_model_let_go_every_time_it_is_loaded_says_so(self):

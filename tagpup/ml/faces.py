@@ -36,6 +36,17 @@ def detection_picture(img, max_side):
     return img.resize(size, Image.BILINEAR, reducing_gap=3.0), (width / size[0], height / size[1])
 
 
+class DetectionPicture:
+    """A photo made ready for the detector on the processor (FaceModel.picture): `stored`, the picture as stored --
+    the coordinates face boxes are kept in, and what crops are cut from --, `pixels`, the picture the detector looks
+    at as an array of its RGB bytes (the array MTCNN makes of a Pillow image itself, made here instead of on the
+    thread that has the card), `scale`, (x, y) from that picture back to `stored`, and `path`, the photo's, for the
+    log."""
+
+    def __init__(self, stored, pixels, scale, path):
+        self.stored, self.pixels, self.scale, self.path = stored, pixels, scale, path
+
+
 class NotDetected(list):
     """What detect_and_embed_faces returns when detection did not run to the end -- the file
     is gone, the picture did not decode, the model failed: no faces, as before, but not
@@ -113,27 +124,45 @@ class FaceModel:
         """Detect all faces in an image and generate 512-dimensional embeddings for each. `max_side` is the longest
         side of the picture the detector looks at, or None for the picture as it is: the library's
         (LibrarySettings.detect_max_side), given with each call, so one model serves libraries of any cap."""
+        return self.detect_and_embed(self.picture(img_path, max_side=max_side))
+
+    def picture(self, img_path, *, max_side):
+        """The photo made ready for the detector, on the processor alone (DetectionPicture): decoded as stored, scaled
+        to `max_side` when the library caps it. Nothing of the models is used, so the indexer makes it on a thread of
+        its own ahead of the photo the card is on (tagpup_cli.py's index; docs/AI_PIPELINE.md, phase 1b).
+        NotDetected when the file is gone or its picture does not decode."""
+        if not os.path.exists(img_path):
+            return NotDetected()
+        try:
+            # As stored: the coordinates face boxes are kept in (tagpup.files.images).
+            img = images.opened(img_path, upright=False)
+            # On a smaller picture when the library caps it, the boxes then scaled back to the picture as stored.
+            picture, scale = detection_picture(img, max_side)
+            return DetectionPicture(img, np.asarray(picture), scale, img_path)
+        except Exception as e:
+            logger.error(f"Error processing faces in {img_path}: {e}")
+            return NotDetected()
+
+    def detect_and_embed(self, picture):
+        """The faces of a picture `picture` made ready (DetectionPicture), each with its box in the picture as stored,
+        its crop and its vector: the graphics card's work for a photo. NotDetected handed in is handed back."""
         self._init_models()
         # The models as they are now: an unload (the idle release) nulls the attributes, and this call finishes
         # with the ones it started with.
         mtcnn, resnet = self.mtcnn, self.resnet
 
-        if not os.path.exists(img_path):
-            return NotDetected()
+        if isinstance(picture, NotDetected):
+            return picture
 
         try:
-            # As stored: the coordinates face boxes are kept in (tagpup.files.images).
-            img = images.opened(img_path, upright=False)
+            img = picture.stored
             width, height = img.size
-
-            # Detect bounding boxes and probability scores, on a smaller picture when the library caps it, the boxes
-            # then scaled back to the picture as stored.
-            picture, (scale_x, scale_y) = detection_picture(img, max_side)
-            boxes, probs = mtcnn.detect(picture)
+            boxes, probs = mtcnn.detect(picture.pixels)
 
             if boxes is None or len(boxes) == 0:
                 return []
-            if picture is not img:
+            scale_x, scale_y = picture.scale
+            if (scale_x, scale_y) != (1.0, 1.0):
                 boxes = boxes * np.array([scale_x, scale_y, scale_x, scale_y])
 
             detected_faces = []
@@ -192,5 +221,5 @@ class FaceModel:
 
             return detected_faces
         except Exception as e:
-            logger.error(f"Error processing faces in {img_path}: {e}")
+            logger.error(f"Error processing faces in {picture.path}: {e}")
             return NotDetected()
