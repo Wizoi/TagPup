@@ -29,6 +29,9 @@ READY = {"status": "completed", "percent": 100, "message": "Ready"}
 #: How many ended runs of the indexer each library's queue remembers.
 HISTORY = 50
 
+#: What a folder queued once more after a run that began before its files arrived says.
+AGAIN = "Indexing again: files arrived in it while it was being indexed..."
+
 _queues = {}
 _queues_lock = threading.Lock()
 
@@ -104,6 +107,11 @@ class IndexQueue:
         #: The folders of the run under way, and what it reports through (_Progress).
         self._current_folders = []
         self._progress = None
+        #: Folder key -> the start that was skipped because that folder was being indexed:
+        #: {"folder", "index", "together", "parents"}. Files that arrived after the run
+        #: looked at the folder are not in it; the run's end queues the folder once more,
+        #: unless a cancel dropped it meanwhile.
+        self._missed = {}
 
     def start(self, folders, index, together=False):
         """Queue folders to be indexed by `index(folder, report)`, which returns
@@ -111,16 +119,28 @@ class IndexQueue:
         unless it is running. `together`: the folders queued are one job, and `index` is
         handed their list -- one run of the indexer for them all (sync's new files).
 
-        A folder asked for twice, already waiting, or being indexed now is queued once;
-        one that is not a folder is reported, not queued. Refused when none is a folder.
+        A folder asked for twice, or already waiting, is queued once. One being indexed now
+        is not queued, but remembered: files that arrived in it after the run began are
+        not in that run, so when it ends completed the folder is queued once more (a
+        watcher's sync queues the folder of what arrived during an index, #1565). One that
+        is not a folder is reported, not queued. Refused when none is a folder.
 
         details: `queued`, `already_queued` and `invalid`, the folders; `pending`, how
         many wait now.
         """
+        # The runs this start is part of -- a sync queueing its new files' folders: the run
+        # of the indexer that indexes them carries their tags before its own.
+        return self._enqueue(folders, index, together, runs.held())
+
+    def _enqueue(self, folders, index, together, parents, message=None, looked=False):
+        """start's work, for `parents` (the runs the job is part of); `message`, what the
+        job's status says while it waits and as it starts, when it is not the usual. `looked`: the
+        folders were read by the run that just ended, so they are not asked of the disk again
+        (the caller holds the lock, and a share that is waking would hold it with the call)."""
         result = Result(attempted=len(folders))
         valid, invalid, seen = [], [], set()
         for folder in folders:
-            if not folder or not isinstance(folder, str) or not os.path.isdir(folder):
+            if not folder or not isinstance(folder, str) or not (looked or os.path.isdir(folder)):
                 invalid.append(str(folder))
                 continue
             key = paths.key(folder)
@@ -131,26 +151,27 @@ class IndexQueue:
                 valid.append((paths.stored(folder), key))
 
         queued, already = [], []
-        # The runs this start is part of -- a sync queueing its new files' folders: the run
-        # of the indexer that indexes them carries their tags before its own.
-        parents = runs.held()
         with self._lock:
             if valid:
                 waiting = {paths.key(each) for job in self._pending for each in _folders_of(job)}
                 for folder, key in valid:
                     if key in waiting or self._statuses.get(key, {}).get("status") == "running":
+                        if key not in waiting:
+                            self._missed[key] = {"folder": folder, "index": index, "together": together,
+                                                 "parents": parents}
                         already.append(folder)
                         result.skip(folder, "already waiting or being indexed")
                         continue
                     if not together:
-                        self._pending.append({"folder": folder, "index": index, "parents": parents})
+                        self._pending.append({"folder": folder, "index": index, "parents": parents,
+                                              "message": message})
                     waiting.add(key)
                     self._statuses[key] = {"status": "queued", "percent": 0,
-                                           "message": "Waiting to be indexed...", "folder": folder}
+                                           "message": message or "Waiting to be indexed...", "folder": folder}
                     queued.append(folder)
                 if together and queued:
                     self._pending.append({"folder": queued[0], "folders": list(queued), "index": index,
-                                          "parents": parents})
+                                          "parents": parents, "message": message})
                 self._ensure_runner()
             pending = len(self._pending)
 
@@ -174,11 +195,15 @@ class IndexQueue:
         "cancelled" then. Its indexer decides, so a run that took the card that same moment
         carries on (docs/findings.md, #750).
 
-        details: `cancelled`, the folders dropped; `stopping`, the folders of the run told
+        A folder being indexed that was asked for again (start) is to run once more when
+        its run ends; that run has not started either, and is dropped.
+
+        details: `cancelled`, the folders dropped; `rerun_dropped`, the folders being
+        indexed whose run once more was dropped; `stopping`, the folders of the run told
         to stop; `pending`, how many still wait.
         """
         targets = {paths.key(folder) for folder in folders if folder}
-        cancelled = []
+        cancelled, rerun_dropped = [], []
         stopping = self._stop_waiting_run(targets, everything)
         with self._lock:
             kept = []
@@ -194,8 +219,11 @@ class IndexQueue:
                     kept.append(job)
             self._pending = kept
             pending = len(kept)
-        result = Result(attempted=len(cancelled) if everything else len(targets), changed=len(cancelled))
-        result.details.update(cancelled=cancelled, stopping=stopping, pending=pending)
+            for key in list(self._missed) if everything else targets.intersection(self._missed):
+                rerun_dropped.append(self._missed.pop(key)["folder"])
+        dropped = len(cancelled) + len(rerun_dropped)
+        result = Result(attempted=dropped if everything else len(targets), changed=dropped)
+        result.details.update(cancelled=cancelled, rerun_dropped=rerun_dropped, stopping=stopping, pending=pending)
         return result
 
     def _stop_waiting_run(self, targets, everything):
@@ -323,7 +351,7 @@ class IndexQueue:
                         return
                     job = self._pending.pop(0)
                     status = {"status": "running", "percent": 0,
-                              "message": "Starting indexing...", "folder": job["folder"]}
+                              "message": job.get("message") or "Starting indexing...", "folder": job["folder"]}
                     self._current = {"run": runs.index_tag(self.library),
                                      "started": time.strftime("%Y-%m-%d %H:%M:%S"),
                                      "folders": len(_folders_of(job)), "name": os.path.basename(job["folder"]),
@@ -343,11 +371,33 @@ class IndexQueue:
                     with self._lock:
                         self._progress, self._current_folders = None, []
                 self._remember(job, status)
+                self._queue_what_was_missed(job, status)
         finally:
             # Only this worker's own entry: a newer one may have started already.
             with self._lock:
                 if self._runner is threading.current_thread():
                     self._runner = None
+
+    def _queue_what_was_missed(self, job, status):
+        """After a run: queue once more the folders that were asked for while it ran, if
+        it completed. A run that was cancelled or failed is not repeated: nothing says the
+        next would do better. The re-run is skipped from only when something asks again
+        during it, so the chain ends when the arrivals do.
+
+        Taken and queued in one hold of the (re-entrant) lock, so a cancel cannot fall
+        between them and miss the folder. The re-run is part of the runs that asked for it."""
+        with self._lock:
+            missed = [self._missed.pop(paths.key(each), None) for each in _folders_of(job)]
+            missed = [each for each in missed if each]
+            if status.get("status") != "completed":
+                return
+            batch = [each for each in missed if each["together"]]
+            for ask in missed:
+                if not ask["together"]:
+                    self._enqueue([ask["folder"]], ask["index"], False, ask["parents"], AGAIN, looked=True)
+            if batch:
+                parents = tuple(dict.fromkeys(tag for each in batch for tag in each["parents"]))
+                self._enqueue([each["folder"] for each in batch], batch[0]["index"], True, parents, AGAIN, looked=True)
 
     def _remember(self, job, status):
         """Keep what became of a run of the indexer, for the Activity page."""

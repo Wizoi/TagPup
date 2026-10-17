@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tagpup.core import paths  # noqa: E402
+from tagpup.core import paths, runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing  # noqa: E402
@@ -209,6 +209,182 @@ class WhatIsQueued(QueueTest):
         self.assertEqual(self.queue.status(self.root), indexing.READY)
 
 
+class FilesArrivingDuringAnIndex(QueueTest):
+    """The watcher's sync queues the folder of what arrived while that folder is being
+    indexed (#1565): the run began before the files came, so it is run again."""
+
+    def hold(self, folder, runs, release_first=True):
+        """An index that blocks in its first run until released; `runs` counts its runs."""
+        started, release = threading.Event(), threading.Event()
+
+        def index(folder_, report):
+            runs.append(folder_)
+            if len(runs) == 1:
+                started.set()
+                release.wait(10)
+            return Result(changed=1)
+        return index, started, release
+
+    def test_files_that_arrive_during_an_index_are_indexed_by_the_end(self):
+        folder = self.folders(1)[0]
+        runs = []
+        index, started, release = self.hold(folder, runs)
+        self.queue.start([folder], index)
+        self.assertTrue(started.wait(10))
+        skipped = self.queue.start([folder], index)
+        self.assertEqual(skipped.details["already_queued"], [folder])
+        release.set()
+        self.wait_until_idle()
+        self.assertEqual(runs, [folder, folder])
+        self.assertEqual(self.queue.status(folder)["status"], "completed")
+
+    def test_ten_rapid_skips_make_exactly_one_rerun(self):
+        folder = self.folders(1)[0]
+        runs = []
+        index, started, release = self.hold(folder, runs)
+        self.queue.start([folder], index)
+        self.assertTrue(started.wait(10))
+        for _ in range(10):
+            self.queue.start([folder], index)
+        release.set()
+        self.wait_until_idle()
+        self.assertEqual(len(runs), 2)
+
+    def test_a_cancelled_or_failed_run_is_not_repeated(self):
+        folder = self.folders(1)[0]
+        for outcome in ("cancelled", "failed", "raised"):
+            with self.subTest(outcome=outcome):
+                self.queue = IndexQueue()
+                runs, started, release = [], threading.Event(), threading.Event()
+
+                def index(folder_, report, outcome=outcome, runs=runs, started=started, release=release):
+                    runs.append(folder_)
+                    started.set()
+                    release.wait(10)
+                    if outcome == "raised":
+                        raise RuntimeError("unreadable")
+                    result = Result()
+                    if outcome == "cancelled":
+                        result.details["cancelled"] = True
+                    else:
+                        result.fail(folder_, "exit code 3")
+                    return result
+
+                self.queue.start([folder], index)
+                self.assertTrue(started.wait(10))
+                self.queue.start([folder], index)
+                release.set()
+                self.wait_until_idle()
+                self.assertEqual(len(runs), 1)
+                self.assertNotEqual(self.queue.status(folder)["status"], "completed")
+
+    def test_the_rerun_that_finds_nothing_ends_the_chain(self):
+        folder = self.folders(1)[0]
+        runs = []
+        index, started, release = self.hold(folder, runs)
+        self.queue.start([folder], index)
+        self.assertTrue(started.wait(10))
+        self.queue.start([folder], index)
+        release.set()
+        self.wait_until_idle()
+        time.sleep(0.1)
+        self.assertEqual(len(runs), 2)
+        self.assertFalse(self.queue.busy())
+
+    def test_a_folder_waiting_is_not_run_a_second_time(self):
+        running, waiting = self.folders(2)
+        runs = []
+        index, started, release = self.hold(running, runs)
+        self.queue.start([running], index)
+        self.assertTrue(started.wait(10))
+        self.queue.start([waiting], index)
+        self.queue.start([waiting], index)
+        release.set()
+        self.wait_until_idle()
+        self.assertEqual(sorted(runs), sorted([running, waiting]))
+
+    def test_each_library_requeues_in_its_own_queue_with_its_own_index(self):
+        root = tempfile.mkdtemp(prefix="index_queues_")
+        self.addCleanup(shutil.rmtree, root, True)
+        one = Library(os.path.join(root, "one.db"))
+        other = Library(os.path.join(root, "other.db"))
+        self.addCleanup(indexing.forget, one)
+        self.addCleanup(indexing.forget, other)
+        folder = self.folders(1)[0]
+        ran = {"one": [], "other": []}
+        started, release = threading.Event(), threading.Event()
+
+        def index_for(name):
+            def index(folder_, report):
+                ran[name].append(folder_)
+                if name == "one" and len(ran[name]) == 1:
+                    started.set()
+                    release.wait(10)
+                return Result(changed=1)
+            return index
+        queue_one = indexing.queue_for(one)
+        queue_one.start([folder], index_for("one"))
+        self.assertTrue(started.wait(10))
+        # The owner switches library: the same folder is asked for in the other, and again in the first.
+        indexing.queue_for(other).start([folder], index_for("other"))
+        queue_one.start([folder], index_for("one"))
+        release.set()
+        queue_one.wait()
+        indexing.queue_for(other).wait()
+        self.assertEqual((len(ran["one"]), len(ran["other"])), (2, 1))
+
+    def test_a_folder_cancelled_while_it_was_asked_for_again_runs_once(self):
+        # The owner presses Cancel queue (or cancels the folder by name) while the watcher's
+        # sync has asked for the running folder again: cancel drops what has not started,
+        # and the run that was to follow had not.
+        for how in ("everything", "by name"):
+            with self.subTest(how=how):
+                self.queue = IndexQueue()
+                folder = os.path.join(self.root, how)
+                os.makedirs(folder)
+                runs_ = []
+                index, started, release = self.hold(folder, runs_)
+                self.queue.start([folder], index)
+                self.assertTrue(started.wait(10))
+                self.queue.start([folder], index)
+                if how == "everything":
+                    cancelled = self.queue.cancel(everything=True)
+                else:
+                    cancelled = self.queue.cancel([folder])
+                self.assertEqual(cancelled.details["rerun_dropped"], [folder])
+                self.assertEqual(cancelled.details["cancelled"], [])
+                self.assertEqual(cancelled.changed, 1)
+                release.set()
+                self.wait_until_idle()
+                self.assertEqual(runs_, [folder])
+                self.assertEqual(self.queue.status(folder)["status"], "completed")
+
+    def test_the_rerun_is_part_of_the_sync_that_asked_and_says_why(self):
+        # The Activity page shows the re-run under the sync that asked for it, not as an
+        # index nobody asked for, and its status says why the folder is indexed again.
+        folder = self.folders(1)[0]
+        seen = []
+        started, release = threading.Event(), threading.Event()
+
+        def index(folder_, report):
+            seen.append((runs.held(), report.status["message"]))
+            if len(seen) == 1:
+                started.set()
+                release.wait(10)
+            return Result(changed=1)
+        self.queue.start([folder], index)
+        self.assertTrue(started.wait(10))
+        with runs.running("sync-kr-track-20261016-2200"):
+            self.queue.start([folder], index)
+        release.set()
+        self.wait_until_idle()
+        self.assertEqual(len(seen), 2)
+        held, message = seen[1]
+        self.assertEqual(held[0], "sync-kr-track-20261016-2200")
+        self.assertIn("arrived", message)
+        self.assertEqual(self.queue.history()[0]["parents"], ["sync-kr-track-20261016-2200"])
+
+
 class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
     """Lifted from test_index_queue_is_locked and test_index_queue_active_is_one_read (#750's branch). index-start,
     index-cancel and the worker each read the waiting list, changed it and wrote it back with no lock: a job the worker had
@@ -217,7 +393,8 @@ class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
     first test); active() reading the running folders apart from the waiting ones (the second)."""
 
     #: A write of the waiting list or the worker.
-    WRITE = re.compile(r"self\._(pending|runner)\s*=[^=]|self\._pending\.(append|pop|insert|remove|clear)\(")
+    WRITE = re.compile(r"self\._(pending|runner)\s*=[^=]|self\._pending\.(append|pop|insert|remove|clear)\("
+                       r"|self\._missed\[.*\]\s*=[^=]|self\._missed\.(pop|clear)\(")
 
     def test_the_waiting_list_and_the_worker_are_only_written_under_the_lock(self):
         with open(inspect.getsourcefile(indexing), encoding="utf-8") as handle:
