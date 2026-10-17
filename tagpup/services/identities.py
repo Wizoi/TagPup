@@ -173,19 +173,13 @@ def resolve(photo_index, on_step=None):
     # Euclidean eps = sqrt(2 * 0.15) = sqrt(0.3) ≈ 0.547.
     # Euclidean, at clustering's radius (tagpup.core.clustering.GROUPING, as a
     # distance). min_samples=1 so single faces can form their own cluster.
-    try:
-        # pyrefly: ignore [missing-import] The codebase is written defensively to support both GPU and CPU execution. It wraps the import in a standard Python try/except ImportError block
-        from cuml.cluster import DBSCAN as cuDBSCAN
-        db = cuDBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean')
-        labels = db.fit_predict(embeddings)
-        logger.info("Using GPU-accelerated cuML DBSCAN for clustering.")
-    except ImportError:
-        # Fallback to CPU DBSCAN. Imported here: scikit-learn takes a second to import,
-        # and the face records beside this need none of it.
-        from sklearn.cluster import DBSCAN
-        # n_jobs=-1 enables multi-threaded distance computation for large datasets.
-        db = DBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean', n_jobs=-1)
-        labels = db.fit_predict(embeddings)
+    # On the processor: clustering takes no turn of the graphics card (tagpup.ml.gpu), and runs after the indexer let
+    # its turn go. A cuML arm on the card, without a turn, was here; cuML was never installed (2026-10-16).
+    # Imported here: scikit-learn takes a second to import, and the face records beside this need none of it.
+    from sklearn.cluster import DBSCAN
+    # n_jobs=-1 enables multi-threaded distance computation for large datasets.
+    db = DBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean', n_jobs=-1)
+    labels = db.fit_predict(embeddings)
     
     # Group face index records by cluster ID
     clusters = {}
