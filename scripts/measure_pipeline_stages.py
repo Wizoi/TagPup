@@ -176,7 +176,7 @@ def _watch_faces(model, timeline):
         model.resnet.register_forward_pre_hook(lambda _m, _i: timeline.mark("resnet_in"))
         model.resnet.register_forward_hook(lambda _m, _i, _o: timeline.mark("resnet_out"))
 
-    def detect_and_embed_faces(img_path):
+    def detect_and_embed_faces(img_path, *, max_side):
         if timeline.current is None or timeline.current["key"] != paths.key(img_path):
             timeline.begin(img_path)
         record = timeline.current
@@ -184,7 +184,7 @@ def _watch_faces(model, timeline):
         timeline.encoding, timeline.in_faces = 0.0, True
         record["f0"] = time.perf_counter()
         try:
-            found = find(img_path)
+            found = find(img_path, max_side=max_side)
         finally:
             timeline.in_faces = False
         timeline.sync()

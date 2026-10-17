@@ -592,21 +592,23 @@ def _insert_detected(conn, photo_path, face):
                  crop=face.get("crop_image"), prob=face.get("prob"))
 
 
-#: What a face model is told apart by: the settings it detects with (tagpup.ml.faces.SETTINGS).
+#: What a face model is told apart by: the settings it detects with (tagpup.services.settings.LibrarySettings.faces).
 DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
 
-#: The cap on the picture the detector looks at (faces.detect_max_side): part of the name only when there is one, so a
-#: library that sets none keeps every photo recorded as detected under the name it had (docs/AI_PIPELINE.md, phase 1a).
+#: The cap on the picture the detector looks at (LibrarySettings.detect_max_side): part of the name only when there is
+#: one, so a library that sets none keeps every photo recorded as detected under the name it had (docs/AI_PIPELINE.md,
+#: phase 1a).
 DETECTOR_CAP = "detect_max_side"
 
 
-def detector_of(model):
-    """The name the detections of face model `model` are recorded under (tagpup.store.faces_detected): its settings, which a
-    tagpup.ml.faces.FaceModel always holds (a test's stand-in holds them too), the cap only when it is set."""
+def detector_of(model, max_side):
+    """The name the detections of face model `model` at cap `max_side` are recorded under (tagpup.store.faces_detected):
+    the model's settings, which a tagpup.ml.faces.FaceModel always holds (a test's stand-in holds them too), and the cap
+    the detection was given (LibrarySettings.detect_max_side) only when there is one. The one spelling of it, for the
+    write (the index, Suggest) and the read (Suggest's "detected before")."""
     values = {key: getattr(model, key) for key in DETECTOR_SETTINGS}
-    cap = getattr(model, DETECTOR_CAP)
-    if cap is not None:
-        values[DETECTOR_CAP] = cap
+    if max_side is not None:
+        values[DETECTOR_CAP] = max_side
     return faces_detected.detector({key: list(value) if isinstance(value, tuple) else value for key, value in values.items()})
 
 

@@ -4,8 +4,10 @@ Called directly on a temporary library. What the routes add -- parsing, and taki
 faces a write removed off TagTuner's cached grids -- is in test_tuner_server_api.py and
 test_identify_ignore_assign_restore_undo.py.
 """
+import json
 import os
 import sys
+import types
 import unittest
 from unittest import mock
 
@@ -258,12 +260,18 @@ class AnAccountedWrite(FacesCase):
 
 class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
     def test_the_settings_a_detection_is_told_apart_by_are_those_a_face_model_is_made_from(self):
-        """services.faces.DETECTOR_SETTINGS and DETECTOR_CAP spell the keys of LibrarySettings.faces again (importing
-        either owner from the other is an import cycle, or torch): a setting added to one and not the other would let a
-        changed setting reuse an old detection. Held equal here."""
+        """services.faces.detector_of names a detection by DETECTOR_SETTINGS, which spell the keys of
+        LibrarySettings.faces again (importing the owner is an import cycle), and by the cap, LibrarySettings.
+        detect_max_side: a setting added to one and not the other would let a changed setting reuse an old detection.
+        Held equal here, with a cap set and with none."""
         from tagpup.services import settings as library_settings
-        made_from = library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).faces
-        self.assertEqual(tuple(made_from), faces.DETECTOR_SETTINGS + (faces.DETECTOR_CAP,))
+        for cap in ("", "2048"):
+            with self.subTest(cap=cap):
+                made = library_settings.LibrarySettings(dict(library_settings.DEFAULTS, **{"faces.detect_max_side": cap}))
+                self.assertEqual(tuple(made.faces), faces.DETECTOR_SETTINGS)
+                name = json.loads(faces.detector_of(types.SimpleNamespace(**made.faces), made.detect_max_side))
+                expected = dict(made.faces, **({faces.DETECTOR_CAP: made.detect_max_side} if cap else {}))
+                self.assertEqual(expected, name)
 
 
 if __name__ == "__main__":

@@ -24,10 +24,6 @@ from tagpup.files import images  # noqa: E402
 
 logger = logging.getLogger("tagpup_cli.faces")
 
-#: The settings a model is made from: tagpup.services.settings.LibrarySettings.faces' keys.
-SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds", "detect_max_side")
-
-
 def detection_picture(img, max_side):
     """(the picture the detector is handed, (x, y) scale from it back to `img`): `img` itself and (1, 1) when there is
     no cap or its long side is within it; else `img` scaled so that its long side is `max_side`, each side at least
@@ -50,7 +46,7 @@ class NotDetected(list):
 class FaceModel:
     """The detector and the face embedder, loaded the first time either is used."""
 
-    def __init__(self, min_face_size, confidence_threshold, mtcnn_thresholds, detect_max_side=None, device=None):
+    def __init__(self, min_face_size, confidence_threshold, mtcnn_thresholds, device=None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.mtcnn = None
         self.resnet = None
@@ -62,8 +58,6 @@ class FaceModel:
         self.min_face_size = min_face_size
         self.confidence_threshold = confidence_threshold
         self.mtcnn_thresholds = mtcnn_thresholds
-        #: The longest side of the picture the detector looks at, or None for the picture as it is (detection_picture).
-        self.detect_max_side = detect_max_side
 
     def load(self):
         """Load the models now, if they are not loaded yet."""
@@ -115,8 +109,10 @@ class FaceModel:
 
         logger.info("Face models loaded successfully.")
 
-    def detect_and_embed_faces(self, img_path):
-        """Detect all faces in an image and generate 512-dimensional embeddings for each."""
+    def detect_and_embed_faces(self, img_path, *, max_side):
+        """Detect all faces in an image and generate 512-dimensional embeddings for each. `max_side` is the longest
+        side of the picture the detector looks at, or None for the picture as it is: the library's
+        (LibrarySettings.detect_max_side), given with each call, so one model serves libraries of any cap."""
         self._init_models()
         # The models as they are now: an unload (the idle release) nulls the attributes, and this call finishes
         # with the ones it started with.
@@ -132,7 +128,7 @@ class FaceModel:
 
             # Detect bounding boxes and probability scores, on a smaller picture when the library caps it, the boxes
             # then scaled back to the picture as stored.
-            picture, (scale_x, scale_y) = detection_picture(img, self.detect_max_side)
+            picture, (scale_x, scale_y) = detection_picture(img, max_side)
             boxes, probs = mtcnn.detect(picture)
 
             if boxes is None or len(boxes) == 0:

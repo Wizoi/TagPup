@@ -4,10 +4,14 @@ boxes come back in the picture as stored; crops and vectors are cut from the ful
 sizes embeds to the same vector. Off -- the default, and every live library -- the detector is handed the picture as
 before and every photo stays recorded under the detector name it was detected with.
 
+The cap is an argument of each detection, not part of the face models: two libraries differing only in it share one
+model, and a Suggest in one is not refused beside a run in the other, while each records its detections under its own
+name (tagpup.services.faces.detector_of).
+
 Phase 0 measured why (2026-10-16): MTCNN on the full picture is 69% of an index and peaked the card at 9,982 of
-10,240 MiB on the largest photos. The scenarios: an owner turns the cap on in one library and not another; the cap
-changes while an index runs (the run keeps the model it began with); a photo larger than the cap, one smaller, a turned
-photo (Orientation 6: boxes stay in the picture as stored), a face at the edge (clamped), a picture one pixel tall.
+10,240 MiB on the largest photos. The scenarios: an owner turns the cap on in one library and not another, and Suggests
+in both at once; the cap changes while a run is under way (the run keeps the cap it began with); a photo larger than
+the cap, one smaller, a turned photo (Orientation 6: boxes stay in the picture as stored), a face at the edge (clamped).
 
 The face model is tagpup.ml.faces.FaceModel as the runtime builds it from the library's settings; MTCNN and the
 recogniser are stood in for (no weights load under test): the detector knows where the face is in the full picture
@@ -16,7 +20,9 @@ and answers in the coordinates of the picture it is handed, as MTCNN does.
 import json
 import os
 import sys
+import types
 import unittest
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -96,15 +102,23 @@ class ALibrary(unittest.TestCase):
         self.assertEqual(1, library_actions.create(path).changed)
         library = Library(path)
         if cap is not None:
-            self.assertEqual(1, settings.change(library, {"faces.detect_max_side": str(cap)}, acknowledged=["faces"]).changed)
+            self.set_cap(library, cap)
         return library
 
-    def faces_of(self, library, detector):
-        """The face model the runtime builds from `library`'s settings, MTCNN and the recogniser stood in for."""
+    def set_cap(self, library, cap):
+        self.assertEqual(1, settings.change(library, {"faces.detect_max_side": str(cap)}, acknowledged=["faces"]).changed)
+
+    def detect(self, library, detector, photo):
+        """`photo` detected as the index detects it in `library`: the face model the runtime builds from its settings
+        (MTCNN and the recogniser stood in for), given the library's cap."""
         model = self.runtime.faces(library)
         model.device = "cpu"
         model.mtcnn, model.resnet = detector, recogniser
-        return model
+        return model.detect_and_embed_faces(photo, max_side=self.runtime.settings(library).detect_max_side)
+
+    def detector_name(self, library):
+        """The name `library` records a detection under, as the index and Suggest spell it."""
+        return face_records.detector_of(self.runtime.faces(library), self.runtime.settings(library).detect_max_side)
 
 
 class APhotoLargerThanTheCap(ALibrary):
@@ -116,14 +130,14 @@ class APhotoLargerThanTheCap(ALibrary):
 
     def test_off_the_detector_is_handed_the_picture_as_stored_and_its_box_is_kept(self):
         detector = Detector(self.FULL, self.FACE)
-        found = self.faces_of(self.library("harbour.db"), detector).detect_and_embed_faces(self.photo)
+        found = self.detect(self.library("harbour.db"), detector, self.photo)
         self.assertEqual([self.FULL], detector.handed)
         self.assertEqual([list(self.FACE)], [face["box"] for face in found])
 
     def test_on_it_is_detected_at_the_cap_and_the_face_comes_back_where_it_is_with_the_same_crop_and_vector(self):
-        off = self.faces_of(self.library("harbour.db"), Detector(self.FULL, self.FACE)).detect_and_embed_faces(self.photo)
+        off = self.detect(self.library("harbour.db"), Detector(self.FULL, self.FACE), self.photo)
         detector = Detector(self.FULL, self.FACE)
-        on = self.faces_of(self.library("meadow.db", cap=800), detector).detect_and_embed_faces(self.photo)
+        on = self.detect(self.library("meadow.db", cap=800), detector, self.photo)
         self.assertEqual([(800, 600)], detector.handed)
         self.assertEqual([list(self.FACE)], [face["box"] for face in on])
         # Cut from the full picture: a crop of the small one would be other pixels, and another vector.
@@ -132,7 +146,7 @@ class APhotoLargerThanTheCap(ALibrary):
 
     def test_a_face_at_the_edge_is_clamped_to_the_picture(self):
         detector = Detector(self.FULL, (1800, 1000, 2010, 1510))   # MTCNN's boxes run past the edge
-        found = self.faces_of(self.library("meadow.db", cap=800), detector).detect_and_embed_faces(self.photo)
+        found = self.detect(self.library("meadow.db", cap=800), detector, self.photo)
         self.assertEqual([[1800, 1000, 2000, 1500]], [face["box"] for face in found])
 
 
@@ -140,7 +154,7 @@ class OtherPictures(ALibrary):
     def test_a_photo_within_the_cap_is_left_as_it_is(self):
         photo = picture(os.path.join(self.folder, "small.jpg"), (600, 450), (100, 100, 200, 220))
         detector = Detector((600, 450), (100, 100, 200, 220))
-        found = self.faces_of(self.library("meadow.db", cap=800), detector).detect_and_embed_faces(photo)
+        found = self.detect(self.library("meadow.db", cap=800), detector, photo)
         self.assertEqual([(600, 450)], detector.handed)
         self.assertEqual([[100, 100, 200, 220]], [face["box"] for face in found])
 
@@ -148,7 +162,7 @@ class OtherPictures(ALibrary):
         face = (500, 250, 700, 500)
         photo = picture(os.path.join(self.folder, "turned.jpg"), (2000, 1500), face, orientation=6)
         detector = Detector((2000, 1500), face)
-        found = self.faces_of(self.library("meadow.db", cap=800), detector).detect_and_embed_faces(photo)
+        found = self.detect(self.library("meadow.db", cap=800), detector, photo)
         self.assertEqual([(800, 600)], detector.handed, "the detector saw the photo upright, not as stored")
         self.assertEqual([list(face)], [f["box"] for f in found])
 
@@ -157,8 +171,7 @@ class OtherPictures(ALibrary):
             with self.subTest(name):
                 photo = picture(os.path.join(self.folder, name + ".jpg"), size, None)
                 detector = Detector(size)
-                model = self.faces_of(self.library(name + ".db", cap=800), detector)
-                found = model.detect_and_embed_faces(photo)
+                found = self.detect(self.library(name + ".db", cap=800), detector, photo)
                 self.assertEqual([handed], detector.handed)
                 self.assertEqual([], found)
                 self.assertTrue(face_records.ran(found), "a picture one pixel tall failed its detection")
@@ -169,9 +182,9 @@ class TheDetectorName(ALibrary):
     under another name (tagpup.store.faces_detected)."""
 
     def test_off_the_name_is_the_one_the_live_libraries_hold(self):
-        model = self.runtime.faces(self.library("harbour.db"))
-        self.assertIsNone(model.detect_max_side)
-        self.assertEqual(LIVE_DETECTOR, face_records.detector_of(model))
+        library = self.library("harbour.db")
+        self.assertIsNone(self.runtime.settings(library).detect_max_side)
+        self.assertEqual(LIVE_DETECTOR, self.detector_name(library))
 
     def test_on_the_cap_is_in_the_name_and_a_photo_detected_without_it_is_detected_again(self):
         library = self.library("harbour.db")
@@ -181,11 +194,11 @@ class TheDetectorName(ALibrary):
             photo_rows.hold(conn, self.folder)
             photo_rows.add_read(conn, photo, {})
             conn.commit()
-            face_records.record_batch(conn, {photo: []}, detector=face_records.detector_of(self.runtime.faces(library)))
+            face_records.record_batch(conn, {photo: []}, detector=self.detector_name(library))
         finally:
             conn.close()
-        settings.change(library, {"faces.detect_max_side": "1600"}, acknowledged=["faces"])
-        capped = face_records.detector_of(self.runtime.faces(library))
+        self.set_cap(library, 1600)
+        capped = self.detector_name(library)
         self.assertEqual(dict(json.loads(LIVE_DETECTOR), detect_max_side=1600), json.loads(capped))
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
@@ -194,18 +207,47 @@ class TheDetectorName(ALibrary):
         finally:
             conn.close()
 
-    def test_two_libraries_each_detect_with_their_own_cap(self):
+
+class TwoLibrariesDifferingOnlyInTheCap(ALibrary):
+    """The owner turns the cap on in meadow and not in harbour, and Suggests in both: one set of face models serves
+    them (the cap is each detection's argument), each run is handed its own library's cap, and each records its
+    detections under its own name. A run keeps the cap it began with; the next run reads the new one."""
+
+    def setUp(self):
+        super().setUp()
+        # CLIP stood in for (its weights are not the question here); the face models are the runtime's own.
+        self.runtime = Runtime(build_clip=lambda given: types.SimpleNamespace())
+        self.handed = []
+        run = mock.patch("tagpup.services.suggester.model_for_run",
+                         lambda *args, **kwargs: self.handed.append(kwargs["detect_max_side"]) or object())
+        run.start()
+        self.addCleanup(run.stop)
+
+    def test_they_share_one_face_model_and_a_suggest_in_one_is_not_refused_beside_a_run_in_the_other(self):
         harbour, meadow = self.library("harbour.db"), self.library("meadow.db", cap=2048)
-        self.assertEqual((None, 2048), (self.runtime.faces(harbour).detect_max_side, self.runtime.faces(meadow).detect_max_side))
+        shared = self.runtime.faces(harbour)
+        self.assertIs(shared, self.runtime.faces(meadow))
+        running = self.runtime.begin(harbour)
+        try:
+            self.runtime.begin(meadow).end()        # before, refused: "face models with detect_max_side None"
+        finally:
+            running.end()
+        self.assertEqual([None, 2048], self.handed)
+        self.assertIs(shared, self.runtime.faces(harbour), "the face models were let go and built again on the switch")
+        self.assertEqual(LIVE_DETECTOR, self.detector_name(harbour))
+        self.assertEqual(dict(json.loads(LIVE_DETECTOR), detect_max_side=2048), json.loads(self.detector_name(meadow)))
 
     def test_a_run_keeps_the_cap_it_began_with_and_the_next_run_reads_the_new_one(self):
-        library = self.library("meadow.db", cap=1600)
-        running = self.runtime.faces(library)          # what an index holds from its start (tagpup_cli.index)
-        settings.change(library, {"faces.detect_max_side": "3000"}, acknowledged=["faces"])
-        self.assertEqual(1600, running.detect_max_side)
-        self.assertEqual(3000, self.runtime.faces(library).detect_max_side)
-        settings.change(library, {"faces.detect_max_side": ""}, acknowledged=["faces"])
-        self.assertEqual(LIVE_DETECTOR, face_records.detector_of(self.runtime.faces(library)))
+        meadow = self.library("meadow.db", cap=1600)
+        running = self.runtime.begin(meadow)
+        try:
+            self.set_cap(meadow, 3000)
+            self.runtime.begin(meadow).end()
+        finally:
+            running.end()
+        self.assertEqual([1600, 3000], self.handed)
+        self.assertEqual(1, settings.change(meadow, {"faces.detect_max_side": ""}, acknowledged=["faces"]).changed)
+        self.assertEqual(LIVE_DETECTOR, self.detector_name(meadow))
 
 
 if __name__ == "__main__":

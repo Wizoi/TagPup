@@ -928,7 +928,8 @@ class Runtime:
             self._end(lease)
         try:
             photo_index.reload_if_changed()
-            model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words, remember=remember)
+            model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words,
+                                            detect_max_side=settings.detect_max_side, remember=remember)
         except BaseException:
             end()
             raise
