@@ -9,7 +9,6 @@ import os
 import sys
 import time
 import shutil
-import sqlite3
 import tempfile
 import unittest
 import urllib.parse
@@ -74,7 +73,7 @@ class TunerAPITestBase(unittest.TestCase):
         # this one.
         tuner_client.forget(self.TEST_DB)
         self.requests = tuner_client.Requests(self.app)
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
         conn.execute("DELETE FROM tag_taxonomy")   # a name given to a face makes its node (2026-10-10): not for the next test
@@ -132,7 +131,7 @@ class TunerAPITestBase(unittest.TestCase):
     def add_photo(self, path, people=(), tags=(), caption=None):
         """A photo row listing `people` as its own, for what reads them. A test of what
         writes them seeds their sources and calls rebuild."""
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         fields = {"XMP:Subject": list(tags)}
         if caption:
             fields["XMP:Description"] = caption
@@ -143,7 +142,7 @@ class TunerAPITestBase(unittest.TestCase):
         return path
 
     def add_face(self, photo_path, embedding, name=None, box=(10, 10, 50, 50), prob=0.99):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         face_id = face_rows.add_face(conn, photo_path, box=box, embedding=embedding.tobytes(), name=name,
                                      prob=prob)
         conn.commit()
@@ -151,7 +150,7 @@ class TunerAPITestBase(unittest.TestCase):
         return face_id
 
     def face_name(self, face_id):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         row = conn.execute("SELECT name FROM faces WHERE id = ?", (face_id,)).fetchone()
         conn.close()
         return row[0] if row else None
@@ -159,13 +158,13 @@ class TunerAPITestBase(unittest.TestCase):
     def rebuild(self, photo_path):
         """The photo's people made by the rule from its keywords and faces, as the store
         makes them at every write."""
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         store_people.rebuild_photos(conn, [photo_path])
         conn.commit()
         conn.close()
 
     def photo_people(self, photo_path):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         listed = face_rows.people_of(conn, photo_path)
         conn.close()
         return listed
@@ -291,7 +290,7 @@ class TestFaceCrop(TunerAPITestBase):
 
         self.get_raw(f"/api/face-crop?id={face_id}")
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         row = conn.execute(
             "SELECT (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces WHERE id = ?", (face_id,)
         ).fetchone()
@@ -367,7 +366,7 @@ class TestFaceMatchesUnmatched(TunerAPITestBase):
         self.assertNotIn(seed_id, ids, "the seed face offered itself")
 
         # Only unmatched faces may be offered for bulk profile creation.
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         named = {
             r[0]
             for r in conn.execute("SELECT id FROM faces WHERE name IS NOT NULL").fetchall()
@@ -549,7 +548,7 @@ class TestPersonRename(TunerAPITestBase):
 
     def test_the_taxonomy_node_is_renamed_too(self):
         """A rename that leaves the tag tree behind puts the two out of step."""
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, 1)",
             ("People", "People"),
@@ -570,7 +569,7 @@ class TestPersonRename(TunerAPITestBase):
         )
         self.assertEqual(status, 200, body)
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         tags = {r[0] for r in conn.execute("SELECT tag FROM tag_taxonomy").fetchall()}
         names = {r[0] for r in conn.execute("SELECT name FROM tag_taxonomy").fetchall()}
         conn.close()
@@ -580,7 +579,7 @@ class TestPersonRename(TunerAPITestBase):
 
     def test_a_non_person_taxonomy_node_is_left_alone(self):
         """Only face categories are people; a keyword at another path that happens to end alike is not."""
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, 0)",
             ("Places/Jane Doe", "Jane Doe"),
@@ -592,7 +591,7 @@ class TestPersonRename(TunerAPITestBase):
         self.add_face(photo, unit_vector(201), name="Jane Doe")
         self.post("/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"})
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         tags = {r[0] for r in conn.execute("SELECT tag FROM tag_taxonomy").fetchall()}
         conn.close()
         self.assertIn("Places/Jane Doe", tags, "a non-person keyword tag was renamed")
@@ -1080,7 +1079,7 @@ class TestTunerFolderRemoval(TunerAPITestBase):
         Image.new("RGB", (16, 16)).save(photo, "JPEG")
 
         db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, photo, {}))
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         conn.execute(
             "INSERT INTO faces (photo_id, box, embedding, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?, 'manual')",
             (photo, unit_vector(500).tobytes(), "Jane Doe"),
@@ -1094,7 +1093,7 @@ class TestTunerFolderRemoval(TunerAPITestBase):
         return folder, photo
 
     def counts(self):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
         faces = conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
         conn.close()
@@ -1286,7 +1285,7 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         return folder, photo
 
     def count(self, sql, params=()):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         try:
             return conn.execute(sql, params).fetchone()[0]
         finally:

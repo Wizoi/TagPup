@@ -23,7 +23,6 @@ itself, and naming somebody has to be visible in the next answer.
 """
 import os
 import shutil
-import sqlite3
 import sys
 import tempfile
 import unittest
@@ -43,6 +42,7 @@ import tuner_client  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
 from tagpup.store import people as store_people  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 
 class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
@@ -60,7 +60,7 @@ class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
         self.db = os.path.join(self.tmpdir, "photo_index.db")
 
     def indexes_on_faces(self, db_path):
-        conn = sqlite3.connect(db_path)
+        conn = db.connect(db_path)
         try:
             names = [r[1] for r in conn.execute("PRAGMA index_list(faces)")]
             return {
@@ -91,7 +91,7 @@ class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
         pi.load()
         pi.close()
 
-        conn = sqlite3.connect(self.db)
+        conn = db.connect(self.db)
         try:
             plan = " ".join(
                 r[3] for r in conn.execute(
@@ -133,7 +133,7 @@ class MatchingTestBase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
         # Naming a face puts the person on its photo (#861): ExifTool is a table of files, the photos here rows.
         self.files = fake_exiftool.standing_in(self)
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
         conn.commit()
@@ -150,14 +150,14 @@ class MatchingTestBase(unittest.TestCase):
         """A photo whose keywords name `people`, its people rebuilt from them."""
         # As the indexer writes it: absolute, native separators.
         path = os.path.abspath(os.path.join(self.tmpdir, name))
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         photo_rows.add_read(conn, path, {"XMP:Subject": ["People/" + person for person in people]})
         conn.commit()
         conn.close()
         return path
 
     def add_face(self, photo, seed, name=None):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         fid = add_face(conn, photo, box="[0,0,10,10]", embedding=unit_vector(seed).tobytes(),
                        name=name, prob=0.99)
         store_people.rebuild_photos(conn, [photo])   # as the store does, inserting a named face
@@ -166,7 +166,7 @@ class MatchingTestBase(unittest.TestCase):
         return fid
 
     def name_of(self, face_id):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         try:
             row = conn.execute(
                 "SELECT name FROM faces WHERE id = ?", (face_id,)).fetchone()
@@ -191,7 +191,7 @@ class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
     """
 
     def unreadable_embedding_face(self, photo):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         # Not a whole number of float32s.
         fid = add_face(conn, photo, box="[0,0,10,10]", embedding=b"\x01\x02\x03", prob=0.99)
         conn.commit()
@@ -217,7 +217,7 @@ class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
         photo = self.add_photo("IMG_4343.jpg")
         self.add_face(photo, seed=12)
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         add_face(conn, photo, box="[0,0,10,10]", embedding=None, prob=0.99)
         conn.commit()
         conn.close()
@@ -332,7 +332,7 @@ class TestTheSharedNamedFaceMatrix(MatchingTestBase):
         second = self.add_photo("IMG_5152.jpg")
         vector = unit_vector(22)
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         for photo in (first, second):
             add_face(conn, photo, box="[0,0,10,10]", embedding=vector.tobytes(), name="Ines Okonkwo",
                      prob=0.99)

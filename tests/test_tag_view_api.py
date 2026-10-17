@@ -10,7 +10,6 @@ it fixable. The merge defaults to a dry run, and the tests below hold it to that
 rewrites photo files, and every destructive script in this repo has earned its dry run.
 """
 import os
-import sqlite3
 import sys
 import unittest
 
@@ -20,13 +19,14 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import photo_rows
+from tagpup.store import db  # noqa: E402
 from test_tuner_server_api import TunerAPITestBase
 
 
 class TagViewTestBase(TunerAPITestBase):
     def seed(self, photos, taxonomy=(), embeddings=()):
         """Put photos, a taxonomy and cached embeddings into the test database."""
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         cur = conn.cursor()
         for path, tags in photos:
             photo_rows.add_read(conn, path, {"XMP:Subject": list(tags)})
@@ -210,7 +210,7 @@ class TestMergingATag(TagViewTestBase):
         _status, body = self.plan(**{"from": "Regata", "retire": True, "apply": True})
         self.assertTrue(body["applied"])
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         try:
             left = conn.execute(
                 "SELECT COUNT(*) FROM tag_embeddings WHERE tag = 'Regata'").fetchone()[0]
@@ -236,7 +236,7 @@ class TestMergingATag(TagViewTestBase):
         self.assertEqual(body["photos"], 1)
         self.assertEqual(body["photos_rewritten"], 0)
         self.assertIn("error", body)
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         try:
             tax = conn.execute(
                 "SELECT COUNT(*) FROM tag_taxonomy WHERE tag = 'Regata'").fetchone()[0]
@@ -246,7 +246,7 @@ class TestMergingATag(TagViewTestBase):
 
     def tree(self):
         """Each node of the tree, and its parent's path."""
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         try:
             return dict(conn.execute("SELECT t.tag, p.tag FROM tag_taxonomy t"
                                      " LEFT JOIN tag_taxonomy p ON p.id = t.parent_id").fetchall())
