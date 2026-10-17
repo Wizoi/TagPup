@@ -326,7 +326,7 @@ def files_that_fail_to_open(library):
             if images.tail_check(path) >= images.ZERO_TAIL:
                 failed.append((photo_id, path, images.DAMAGE["zero-filled"]))
                 continue
-            images.shown_size(path)
+            images.shown_shape(path)
         except images.Unreadable as damage:
             failed.append((photo_id, path, images.DAMAGE.get(damage.kind, damage.kind)))
         except FileNotFoundError:

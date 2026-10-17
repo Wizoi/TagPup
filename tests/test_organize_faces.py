@@ -159,8 +159,7 @@ class TheFileIsLookedAtOnceAndNotForeverOnAShare(Case):
         self.face(photo)
         real = images.shown_shape
         opened = []
-        with unittest.mock.patch.object(images, "shown_shape", lambda path: opened.append(path) or real(path)), \
-                unittest.mock.patch.object(images, "shown_size", side_effect=AssertionError("a second open")):
+        with unittest.mock.patch.object(images, "shown_shape", lambda path: opened.append(path) or real(path)):
             answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
         self.assertEqual([photo], opened)
         self.assertEqual([60, 40], answer["size"])

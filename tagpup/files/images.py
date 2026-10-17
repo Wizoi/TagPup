@@ -157,27 +157,17 @@ def tail_check(photo_path):
     return zero_tail_of(photo_path)
 
 
-def shown_size(photo_path):
-    """(width, height, oriented): the size Pillow shows a photo at, and whether it
-    turned the picture by its Orientation as it loaded it.
-
-    Face boxes are in the coordinates Pillow shows a photo in. For most formats that is
-    the stored pixels, which an Orientation change leaves where they are; Pillow applies
-    a TIFF's Orientation as it loads it, so a TIFF's boxes turn with the photo.
-    """
-    with Image.open(photo_path) as img:
-        oriented = img.format == "TIFF"
-        if oriented:
-            img.load()
-        width, height = img.size
-    return width, height, oriented
-
-
 def shown_shape(photo_path):
-    """(width, height, oriented, orientation): `shown_size`, and the EXIF Orientation (1 to 8) the file
-    declares -- 1 when it declares none -- from the same open of the file. 2 to 8 turn or flip the
-    picture as it is shown, and a face's box stays in the stored pixels: the boxes of such a photo do not
-    sit on its faces when drawn over the picture as it is shown (the tabled orientation redesign)."""
+    """(width, height, oriented, orientation): the size Pillow shows a photo at, whether it turned the
+    picture by its Orientation as it loaded it, and the EXIF Orientation (1 to 8) the file declares -- 1
+    when it declares none -- from one open of the file.
+
+    Face boxes are in the coordinates Pillow shows a photo in. For most formats that is the stored
+    pixels, which an Orientation change leaves where they are; Pillow applies a TIFF's Orientation as it
+    loads it, so a TIFF's boxes turn with the photo. 2 to 8 turn or flip the picture as it is shown, and
+    a face's box stays in the stored pixels: the boxes of such a photo do not sit on its faces when drawn
+    over the picture as it is shown (the tabled orientation redesign). It was also `shown_size`, the
+    same open less the Orientation."""
     with Image.open(photo_path) as img:
         oriented = img.format == "TIFF"
         if oriented:
@@ -194,7 +184,8 @@ def picture_size(photo_path):
     """(width, height) of a photo's picture read from its header alone, nothing decoded: what the indexer reserves
     memory by before it decodes a photo ahead (tagpup.core.read_ahead). (0, 0) for a file whose header does not
     parse -- an empty file, one of zeros, one that is no picture --: its decode, next, says how it is damaged
-    (opened). A file that cannot be opened raises what the system raised."""
+    (opened). A file that cannot be opened raises what the system raised. Not shown_shape: that one decodes a
+    TIFF in full to learn its turned size and raises for a damaged header, and the read-ahead needs neither."""
     try:
         with Image.open(photo_path) as img:
             return img.size
@@ -367,7 +358,7 @@ def opened(photo_path, upright):
 
     `upright` turns it by its Orientation, as a person sees it -- what CLIP is shown.
     Without, it is the pixels as Pillow shows them, the coordinates face boxes are in
-    (shown_size).
+    (shown_shape).
 
     The file is read once, and decoded from what was read. Its `info[ZERO_TAIL_INFO]`
     is how many zero bytes the file ends in (zero_tail): ZERO_TAIL or more, and the
