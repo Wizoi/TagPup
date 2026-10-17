@@ -31,6 +31,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 FACE_DIM = 512
@@ -759,7 +760,7 @@ class TestClusteringLock(TunerAPITestBase):
         photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
         face_id = self.add_face(photo, unit_vector(99), name="Jane Doe")
 
-        being_clustered = tuner_routes.clustering.of(Library(self.TEST_DB))
+        being_clustered = indexing.clustering.of(Library(self.TEST_DB))
         being_clustered.set()
         try:
             status, _ = self.post("/api/face/unmatch", {"face_id": face_id})

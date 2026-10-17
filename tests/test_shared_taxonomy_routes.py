@@ -16,7 +16,8 @@ import web_client  # noqa: E402
 import tagpup_web  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.web import tagpup_routes, taxonomy_routes, tuner_routes  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
+from tagpup.web import tagpup_routes, taxonomy_routes  # noqa: E402
 
 TREE_ROUTES = ("/api/taxonomy/tree", "/api/taxonomy/create", "/api/taxonomy/update",
                "/api/taxonomy/delete-check", "/api/taxonomy/delete-confirm", "/api/taxonomy/rename")
@@ -85,9 +86,9 @@ class RefusedWhileClustering(unittest.TestCase):
         client = app.test_client()
         node = client.post("/library/api/taxonomy/create",
                            json={"name": "Places/Harbour", "parent_id": None, "has_face": 0}).get_json()
-        flag = tuner_routes.clustering.of(library)
+        flag = indexing.clustering.of(library)
         flag.set()
-        self.addCleanup(tuner_routes.clustering.forget, library)
+        self.addCleanup(indexing.clustering.forget, library)
         self.addCleanup(flag.clear)
         return client, node
 

@@ -1,7 +1,7 @@
 """Assignments wait while the clustering that adding folders runs rewrites names.
 
 Assignment requests are refused while a library is being clustered
-(tagpup.web.tuner_routes.clustering), because clustering rewrites every automatic face
+(tagpup.services.indexing.clustering), because clustering rewrites every automatic face
 name. Adding folders with face matching ran the same cluster-faces without setting it,
 so an assignment made then could be overwritten a moment later. TagTuner's indexer
 holds it while cluster-faces runs, and only then.
@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 
@@ -23,7 +24,7 @@ class QueuedClusteringIsGuarded(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         library = Library(os.path.join(tmp.name, "lib.db"))
-        self.addCleanup(tuner_routes.clustering.forget, library)
+        self.addCleanup(indexing.clustering.forget, library)
         seen = []
 
         def process():
@@ -34,7 +35,7 @@ class QueuedClusteringIsGuarded(unittest.TestCase):
             def readline():
                 line = next(lines)
                 if line:
-                    seen.append(tuner_routes.clustering.of(library).is_set())
+                    seen.append(indexing.clustering.of(library).is_set())
                 return line
 
             proc.stdout.readline.side_effect = readline
@@ -45,7 +46,7 @@ class QueuedClusteringIsGuarded(unittest.TestCase):
 
         self.assertTrue(result.ok, result.message())
         self.assertEqual([False, True], seen, "assignments were accepted while clustering ran")
-        self.assertFalse(tuner_routes.clustering.of(library).is_set())
+        self.assertFalse(indexing.clustering.of(library).is_set())
 
 
 if __name__ == "__main__":

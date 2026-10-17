@@ -15,8 +15,6 @@ error pages, as send_error sent them.
 """
 import logging
 import os
-import threading
-from contextlib import contextmanager
 
 from flask import Blueprint, abort, jsonify, request
 
@@ -89,22 +87,6 @@ def _used(name):
         runtime.idle.used(name)
 
 
-#: Set while a library's faces are being clustered. Assignments are refused meanwhile:
-#: clustering rewrites the names they would be setting.
-clustering = state.PerLibrary(lambda library: threading.Event())
-
-@contextmanager
-def while_clustering(library):
-    """Refuse assignments in `library` while this is held. The library is named, not
-    taken from the request, so it holds on a thread no request set up."""
-    flag = clustering.of(library)
-    flag.set()
-    try:
-        yield
-    finally:
-        flag.clear()
-
-
 def folder_indexer(library):
     """How this server adds a folder to `library`: through the CLI
     (tagpup.services.indexing.index_folder), refusing assignments while cluster-faces
@@ -113,7 +95,7 @@ def folder_indexer(library):
     def index(folder, cluster, report):
         return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT,
                                      cluster=cluster, report=report,
-                                     while_clustering=lambda: while_clustering(library))
+                                     while_clustering=lambda: indexing.while_clustering(library))
     return index
 
 
@@ -140,7 +122,7 @@ def clustering_refusal(library, only_naming=False):
     the flag clustering from an index run holds."""
     if library is not None and naming_faces.writing(library):
         return responses.error(409, NAMING_REFUSAL)
-    if not only_naming and library is not None and clustering.of(library).is_set():
+    if not only_naming and library is not None and indexing.clustering.of(library).is_set():
         return responses.error(409, "The server is clustering faces; this waits until it finishes.")
     return None
 

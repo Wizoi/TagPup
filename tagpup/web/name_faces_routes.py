@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request
 from tagpup.core import paths
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import naming_faces
+from tagpup.services import indexing
 from tagpup.web import lifecycle as lifecycles
 from tagpup.web import responses, security, state, tuner_routes
 
@@ -71,14 +72,14 @@ def _busy(library):
     (tagpup.web.lifecycle.running_for), and whatever is already clustering the library's faces (the flag TagTuner's writes
     honour)."""
     said = lifecycles.running_for(library)
-    if tuner_routes.clustering.of(library).is_set():
+    if indexing.clustering.of(library).is_set():
         said.append("the faces are being clustered")
     return said
 
 
 def _hold(library):
-    """The context held from the Yes to the end: writes of faces are refused meanwhile (tagpup.web.tuner_routes.while_clustering)."""
-    return lambda: tuner_routes.while_clustering(library)
+    """The context held from the Yes to the end: writes of faces are refused meanwhile (tagpup.services.indexing.while_clustering)."""
+    return lambda: indexing.while_clustering(library)
 
 
 def _reply(call):
