@@ -63,14 +63,6 @@ def get_by_id(conn, photo_id, model):
     return Stored(*row) if row else None
 
 
-def replace_current(conn, photo_id, model, held, vector):
-    """Replace the vector `held` (a Stored, as read) of a photo with `vector`, made from the same file: only while the
-    row still holds that stamp, so a file changed since is never given the vector of the picture before. Returns rows
-    changed. The caller commits."""
-    return conn.execute("UPDATE embeddings SET vector = ? WHERE photo_id = ? AND model = ? AND mtime = ? AND size = ?",
-                        (vector, photo_id, model, held.mtime, held.size)).rowcount
-
-
 def stamps_by_path(conn, photo_paths):
     """{paths.key(path): {(mtime, size)}} of the vectors kept for `photo_paths`, under any
     model: the files as they were when each was made. One indexed lookup a photo, as

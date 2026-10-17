@@ -143,9 +143,15 @@ same scripts.
   fixed cost is small next to the work after 1a to 1c.
 - **1f Repair the turned photos' vectors (#1529, `wrong`).** The vectors of photos turned by their Orientation were
   made before CLIP was shown the picture upright, and their stamps still match so they are never redone. Count first
-  in each library (photo_index 223, kr-track 0, renton_parkrun to count), then recompute those vectors through the
-  one path that owns them (a rotation deletes the vector for this reason): about 223 photos at 0.2 s. A doctor check
-  that finds a vector older than the upright rule, so it cannot come back. Not left to phase 5.
+  in each library (photo_index 223, kr-track 0, renton_parkrun 0, counted 2026-10-16), then recompute those vectors
+  through the one path that owns them (`PhotoEmbeddings`; a rotation deletes the vector for this reason): about 223
+  photos at 0.2 s, built as `repair-vectors` (dry run by default). No doctor check can find one: the row holds neither
+  the Orientation (0 of 59,519 rows of photo_index, counted 2026-10-16) nor the vector's age, so `repair-vectors`
+  reads each file's header and tells a vector stale by making it again (#1529). It cannot come back by the same road
+  once phase 6 puts how a photo is read into the key a vector is kept under; until then, a change in how CLIP is shown
+  a photo is reviewed as a change of model key. `repair-vectors` is deleted at phase 5's re-embed (delete:
+  embedding_repair.py, the CLI command, its tests and V9 entry, the SPEC heading, the DATABASE.md sentence, the 1f
+  note).
 
 **How it fails:** an index killed between the decode thread and the write (nothing half written: the existing
 transaction is unchanged); a decode thread raising on a damaged file (that photo is reported, the run goes on); two
@@ -346,7 +352,7 @@ worker that ran it. The column "After" is filled as each phase merges.
 | A name lost in a migration or a swap | 3 | Old vectors kept; boxes carried by IoU; unmatched named faces listed, never dropped; backup; copy first |
 | The new detector is no faster than MTCNN | 3 | The speed check comes before the design is fixed; the plan is re-read if it fails |
 | A threshold carried to a model it does not fit | 2, 3, 4, 5 | Thresholds read off the hold-out curve per model, on unnamed faces too |
-| A stale vector kept past a change in how photos are read | 1f, 5, 6 | A doctor check by age of rule; the fingerprint in phase 6 |
+| A stale vector kept past a change in how photos are read | 1f, 5, 6 | `repair-vectors` now; the fingerprint in the model key at phase 6 |
 | Two heavy jobs on one card | all | The GPU turn; no two test runs at once |
 | The migration is judged by feel | 3 | Phase 0 timings and counts before and after |
 | Scope creep into the files | 6 | Phase 6 opens only by the owner, with its own design |

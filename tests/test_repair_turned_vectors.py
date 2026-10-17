@@ -3,14 +3,16 @@ photos upright, and their stamps still match, so they were never redone. `repair
 
 Scenarios: the owner looks (a dry run writes nothing), repairs (only the turned photos' vectors change, a photo that
 is not turned is untouched to the byte), repairs again (nothing more), is interrupted (the next run resumes by what
-the table holds), turns or edits a photo between the look and the repair (that photo's conflict, never a vector of
-another picture), and has two libraries (each repaired by its own run). Rows through tests/photo_rows.py, vectors
+the table holds), turns or edits a photo between the look and the repair (embedded as it now is and stamped so, or left for
+the next look: never a vector of another picture), has a share that does not answer (named, its photos skipped), a
+failure that is not the file's (counted, the run goes on) and two libraries (each repaired by its own run). Rows through tests/photo_rows.py, vectors
 through the store that owns them, a real JPEG with an Orientation on disk; CLIP is a stand-in that answers the
 upright vector."""
 import contextlib
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -19,12 +21,15 @@ from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
-from tagpup.services import embedding_repair  # noqa: E402
+from tagpup.files import shares  # noqa: E402
+from tagpup.services import embedding_repair, search  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup_cli import cli  # noqa: E402
 
-MODEL = "stand-in|clip"
+SETTINGS = {"model_name": "stand-in", "pretrained": "clip", "preserve_full_frame": True, "max_aspect_ratio": 2.0,
+            "force_image_size": None}
+MODEL = store_embeddings.model_key(**SETTINGS)
 OLD = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)      # the sideways picture
 UPRIGHT = np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32)  # the picture as it is shown
 
@@ -39,6 +44,8 @@ def make_turned(path, orientation=8):
 
 class StandInClip:
     """What the runtime's CLIP answers for a photo: the upright vector, unless `during` is set to run first."""
+
+    settings = SETTINGS
 
     def __init__(self):
         self.embedded = []
@@ -64,6 +71,9 @@ class StandInRuntime:
 
     def clip(self, library):
         return self.clip_
+
+    def embeddings(self, library, photo_index):
+        return search.PhotoEmbeddings(self.clip_, photo_index)
 
     @contextlib.contextmanager
     def gpu_turn(self, what, models, **_):
@@ -102,7 +112,7 @@ class RepairTurnedVectors(unittest.TestCase):
 
     def test_the_turned_photos_vector_is_replaced_and_the_plain_one_is_untouched_to_the_byte(self):
         counts = self.repair()
-        self.assertEqual((1, 1), (counts["replaced"], counts["verified"]))
+        self.assertEqual((1, 0), (counts["replaced"], counts["not_kept"]))
         self.assertEqual(UPRIGHT.tobytes(), self.vector_of(self.vl, self.turned))
         self.assertEqual(OLD.tobytes(), self.vector_of(self.vl, self.plain))
         self.assertEqual(1, len(self.runtime.clip_.embedded))   # the plain photo was never embedded
@@ -132,7 +142,7 @@ class RepairTurnedVectors(unittest.TestCase):
         self.assertEqual((1, 1), (counts["replaced"], counts["already_upright"]))
         self.assertEqual({UPRIGHT.tobytes()}, {self.vector_of(self.vl, self.turned), self.vector_of(self.vl, second)})
 
-    def test_a_photo_edited_after_the_look_is_left_for_the_next_look(self):
+    def test_a_photo_edited_since_the_dry_run_is_left_for_the_next_look(self):
         self.repair(apply=False)
         path = self.vl.path_of(self.turned)
         make_turned(path, orientation=6)
@@ -141,12 +151,59 @@ class RepairTurnedVectors(unittest.TestCase):
         self.assertEqual((0, 0, 1), (counts["replaced"], counts["to_recompute"], counts["stale_stamp"]))
         self.assertEqual(OLD.tobytes(), self.vector_of(self.vl, self.turned))
 
-    def test_a_photo_that_changes_while_it_is_embedded_is_a_conflict_never_an_overwrite(self):
+    def test_a_photo_turned_between_the_look_and_the_embed_is_embedded_as_it_now_is_and_stamped_so(self):
+        path = self.vl.path_of(self.turned)
+        looked = embedding_repair._turned
+
+        def look_then_turn(*args):
+            found = looked(*args)
+            make_turned(path, orientation=6)
+            os.utime(path, (1_000_000_000, 1_000_000_000))
+            return found
+
+        with mock.patch.object(embedding_repair, "_turned", look_then_turn):
+            counts = self.repair()
+        self.assertEqual((1, 0), (counts["replaced"], counts["not_kept"]))
+        held = store_embeddings.get(self.vl.conn, path, MODEL)
+        self.assertEqual(store_embeddings.stamp_of(path), (held.mtime, held.size))
+        self.assertEqual(UPRIGHT.tobytes(), held.vector)
+
+    def test_a_photo_that_changes_while_it_is_embedded_keeps_a_vector_stamped_before_so_the_next_look_redoes_it(self):
         path = self.vl.path_of(self.turned)
         self.runtime.clip_.during = lambda _path: os.utime(path, (1_000_000_000, 1_000_000_000))
         counts = self.repair()
-        self.assertEqual((0, 1), (counts["replaced"], counts["conflict"]))
-        self.assertEqual(OLD.tobytes(), self.vector_of(self.vl, self.turned))
+        self.assertEqual((0, 1), (counts["replaced"], counts["not_kept"]))
+        held = store_embeddings.get(self.vl.conn, path, MODEL)
+        self.assertNotEqual(store_embeddings.stamp_of(path), (held.mtime, held.size))
+
+    def test_a_failure_that_is_not_the_files_is_counted_by_reason_and_the_run_goes_on(self):
+        second = self.photo(self.vl, "second.jpg", turned=True)
+        asked = []
+
+        def out_of_memory_once(path):
+            asked.append(path)
+            if len(asked) == 1:
+                raise MemoryError("CUDA out of memory")
+
+        self.runtime.clip_.during = out_of_memory_once
+        counts = self.repair()
+        self.assertEqual((1, 1, {"MemoryError": 1}), (counts["unreadable"], counts["replaced"], counts["reasons"]))
+        self.assertEqual({OLD.tobytes(), UPRIGHT.tobytes()},
+                         {self.vector_of(self.vl, self.turned), self.vector_of(self.vl, second)})
+
+    def test_a_share_that_does_not_answer_is_named_and_its_photos_are_skipped_not_dropped(self):
+        asked = []
+
+        def late(path):
+            asked.append(path)
+            return shares.UNANSWERED
+
+        with mock.patch.object(shares, "on_a_network_drive", return_value=True), \
+                mock.patch.object(shares, "share_of", return_value="server"), \
+                mock.patch.object(shares, "stamp_of", late):
+            counts = self.repair(apply=False)
+        self.assertEqual((2, 2, ["server"], 1), (counts["photos"], counts["skipped_away"], counts["away"], len(asked)))
+        self.assertEqual((0, 0, 0), (counts["missing"], counts["failed"], counts["no_header"]))
 
     def test_two_libraries_are_each_repaired_by_their_own_run(self):
         other = ViewLibrary(self, name="other", home=self.vl.home)
@@ -157,7 +214,6 @@ class RepairTurnedVectors(unittest.TestCase):
         self.assertEqual(UPRIGHT.tobytes(), self.vector_of(other, theirs))
 
     def test_the_command_says_what_it_would_do_and_what_it_did(self):
-        from unittest import mock
         with mock.patch("tagpup_cli.get_runtime", return_value=self.runtime):
             dry = CliRunner().invoke(cli, ["--db", self.vl.path, "repair-vectors"])
             self.assertEqual(0, dry.exit_code, dry.output)
@@ -166,7 +222,9 @@ class RepairTurnedVectors(unittest.TestCase):
             self.assertIn("--apply would make 1 vector(s) again. Nothing was written.", said)
             done = CliRunner().invoke(cli, ["--db", self.vl.path, "repair-vectors", "--apply"])
         self.assertEqual(0, done.exit_code, done.output)
-        self.assertIn("Replaced 1 (1 read back as written)", " ".join(done.output.split()))
+        said = " ".join(done.output.split())
+        self.assertIn("Replaced 1 (read back as written)", said)
+        self.assertIn("restart it to search by the new ones", said)
 
 
 if __name__ == "__main__":
