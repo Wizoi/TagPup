@@ -126,10 +126,10 @@ def resolve(photo_index, on_step=None):
     `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
     DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving", then "unpaired" (total: the faces
     left unnamed because their photo names people no face is known for and nothing tells which is whose, #1374, #1454;
-    done: how many of them carried a guess this run took back, #1455) and "left" (done: the faces not given what the run
-    found because the library changed under the run: a person named the face, or another face of its photo, or merged the
-    person away; total: how many of those lost the guess they carried and are unnamed, store_faces.set_names) -- and may
-    raise to stop it. Every stage before "saving" only reads; the names are written in one commit
+    done: how many of them carried a guess this run took back, #1455) and "left" (two counts of the faces not given what the
+    run found because the library changed under the run -- a person named the face, or another face of its photo, or merged
+    the person away -- not progress: done, those left as they were; total, those that lost the guess they carried and are
+    unnamed, store_faces.set_names) -- and may raise to stop it. Every stage before "saving" only reads; the names are written in one commit
     after it is announced, so a stop is nothing written or all of it, never part (the job behind the apps' button,
     tagpup.jobs.naming_faces).
     """
@@ -761,7 +761,7 @@ def resolve(photo_index, on_step=None):
                     len(left_unpaired), taken_back)
         step("unpaired", taken_back, len(left_unpaired))
     if left or unnamed:
-        step("left", left + len(unnamed), len(unnamed))
+        step("left", left, len(unnamed))
         
     # Save traces to JSON
     try:

@@ -166,6 +166,42 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         self.assertEqual((None, None), self.row(second))
         self.assertEqual([2], heard)
 
+    def test_the_cli_says_how_many_faces_it_left_and_how_many_of_them_lost_their_guess(self):
+        """The owner runs cluster-faces and, while it runs, names Jane by hand on a face of a photo an earlier run had guessed as
+        Bob's. The run takes the wrong guess off and is then refused Jane for that face (she is on the photo now): the face is
+        unnamed, and the CLI's last word says so, beside the face the owner named under it."""
+        import io
+        import types
+        from unittest import mock
+        from rich.console import Console
+        import tagpup_cli
+        from tagpup.services import identities
+        jane = identity_vector(1)
+        self.add_face(self.add_photo("one.jpg", people=["Jane Doe"]), jane)
+        photo = self.add_photo("two.jpg", people=["Jane Doe"])
+        wrong = self.add_face(photo, near(jane, 2), box=(0, 0, 50, 50))
+        chosen = self.add_face(photo, identity_vector(5), box=(60, 0, 110, 50))
+        db.write_with_connection(self.db_path, lambda conn: conn.execute(
+            "UPDATE faces SET name = 'Bob Roe', tag_id = ? WHERE id = ?", (face_rows.person_of(conn, "Bob Roe"), wrong)),
+            label="an earlier run guessed")
+        self.index.close()
+        real = identities.resolve
+
+        def resolve(photo_index, on_step=None):
+            def heard(stage, done=0, total=1):
+                if stage == "saving":
+                    db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [chosen], "Jane Doe"))
+                on_step(stage, done, total)
+            return real(photo_index, on_step=heard)
+        said = io.StringIO()
+        with mock.patch.object(identities, "resolve", resolve), \
+                mock.patch.object(tagpup_cli, "console", Console(file=said, width=400, color_system=None)):
+            tagpup_cli._resolve_identities(types.SimpleNamespace(model_key=lambda library: None), self.db_path)
+
+        self.assertEqual([(None, None), ("Jane Doe", "manual")], [self.row(wrong), self.row(chosen)])
+        self.assertIn("1 face(s) were not given what this run found: the library changed under them while it ran; 1 of them"
+                      " lost the guess they carried and are unnamed.", said.getvalue())
+
     def photo_tagged(self, name, people):
         """A photo whose keywords are People/<person> for each of `people`, as the index records a file it read: the tree's nodes,
         the keywords, the photo's people."""

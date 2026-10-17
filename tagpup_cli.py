@@ -1132,9 +1132,12 @@ def _resolve_identities(runtime, db_path):
 
         def heard(stage, done=0, total=1):
             if stage == "left":
-                # The causes set_names refuses for: a face or its photo named meanwhile, a person merged away (#1583).
-                console.print(f"[bold yellow]{done} face(s) were not given what this run found: the library changed under them "
-                              f"while it ran" + (f"; {total} of them lost the guess they carried and are unnamed" if total else "")
+                # The causes set_names refuses for: a face or its photo named meanwhile, a person merged away (#1583). Two
+                # counts: the faces left as they were, and those that lost their guess and are unnamed.
+                kept, unnamed_now = done, total
+                console.print(f"[bold yellow]{kept + unnamed_now} face(s) were not given what this run found: the library "
+                              f"changed under them while it ran" + (f"; {unnamed_now} of them lost the guess they carried and"
+                                                                   f" are unnamed" if unnamed_now else "")
                               + ".[/bold yellow]")
             if stage == "unpaired":
                 # The reason first, and short: the indexer's progress line shows 90 characters.
