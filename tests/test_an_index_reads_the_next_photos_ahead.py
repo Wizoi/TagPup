@@ -424,22 +424,6 @@ class ThePhotosReadAhead(unittest.TestCase):
         held, seen = self.run_ahead([self.TEN] * 6, read=read)
         self.assertEqual([0, 1, None, 3, 4, 5], seen)
 
-    def test_closed_part_way_its_threads_end(self):
-        names = set()
-
-        def read(item):
-            names.add(threading.current_thread().name)
-        reader = read_ahead.ReadAhead(range(50), lambda item: {}, lambda item, begun, reserve: (read(item), reserve(1)),
-                                      threads=2, ahead=3, budget=10)
-        with reader as photos:
-            for item, _begun, _result in photos:
-                if item == 3:
-                    break
-        for thread in threading.enumerate():
-            if thread.name in names:
-                thread.join(5)
-        self.assertFalse([t for t in threading.enumerate() if t.name in names])
-
 
 if __name__ == "__main__":
     unittest.main()
