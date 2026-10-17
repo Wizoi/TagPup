@@ -132,13 +132,15 @@ class IndexQueue:
         # of the indexer that indexes them carries their tags before its own.
         return self._enqueue(folders, index, together, runs.held())
 
-    def _enqueue(self, folders, index, together, parents, message=None):
+    def _enqueue(self, folders, index, together, parents, message=None, looked=False):
         """start's work, for `parents` (the runs the job is part of); `message`, what the
-        job's status says while it waits and as it starts, when it is not the usual."""
+        job's status says while it waits and as it starts, when it is not the usual. `looked`: the
+        folders were read by the run that just ended, so they are not asked of the disk again
+        (the caller holds the lock, and a share that is waking would hold it with the call)."""
         result = Result(attempted=len(folders))
         valid, invalid, seen = [], [], set()
         for folder in folders:
-            if not folder or not isinstance(folder, str) or not os.path.isdir(folder):
+            if not folder or not isinstance(folder, str) or not (looked or os.path.isdir(folder)):
                 invalid.append(str(folder))
                 continue
             key = paths.key(folder)
@@ -392,10 +394,10 @@ class IndexQueue:
             batch = [each for each in missed if each["together"]]
             for ask in missed:
                 if not ask["together"]:
-                    self._enqueue([ask["folder"]], ask["index"], False, ask["parents"], AGAIN)
+                    self._enqueue([ask["folder"]], ask["index"], False, ask["parents"], AGAIN, looked=True)
             if batch:
                 parents = tuple(dict.fromkeys(tag for each in batch for tag in each["parents"]))
-                self._enqueue([each["folder"] for each in batch], batch[0]["index"], True, parents, AGAIN)
+                self._enqueue([each["folder"] for each in batch], batch[0]["index"], True, parents, AGAIN, looked=True)
 
     def _remember(self, job, status):
         """Keep what became of a run of the indexer, for the Activity page."""
