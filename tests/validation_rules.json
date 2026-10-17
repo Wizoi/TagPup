@@ -1,5 +1,5 @@
 {
- "version": "20ef3ba3c82c",
+ "version": "265cf2f3402c",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -335,7 +335,7 @@
    "info": "The smallest face, in pixels, that indexing looks for. Smaller finds more faces in crowds, and more that are not faces.",
    "locked": true,
    "consequences": [
-    "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
+    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
     "Indexing a folder again applies it to that folder."
    ],
    "rules": [
@@ -359,7 +359,7 @@
    "info": "How sure the detector must be that it found a face before the face is kept, from 0 to 1.",
    "locked": true,
    "consequences": [
-    "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
+    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
     "Indexing a folder again applies it to that folder."
    ],
    "rules": [
@@ -383,7 +383,7 @@
    "info": "The face detector's (MTCNN's) threshold at each of its three stages, from 0 to 1.",
    "locked": true,
    "consequences": [
-    "Only photos indexed after the change are detected with it; the faces already found stay as they are.",
+    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
     "Indexing a folder again applies it to that folder."
    ],
    "rules": [
@@ -404,6 +404,33 @@
        "message": "Each threshold must be between 0 and 1."
       }
      ]
+    }
+   ]
+  },
+  "setting faces.detect_max_side": {
+   "group": "faces",
+   "label": "Look at most",
+   "type": "integer",
+   "default": "",
+   "info": "The longest side, in pixels, of the picture the face detector looks at: a larger photo is scaled down to it for finding faces, and each face found is cut from the full photo. Faster, and less of the graphics card, on large photos; the smallest faces in a large photo may be missed. Empty looks at the full photo.",
+   "locked": true,
+   "consequences": [
+    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
+    "Indexing a folder again applies it to that folder."
+   ],
+   "rules": [
+    {
+     "rule": "optional"
+    },
+    {
+     "rule": "integer",
+     "message": "Look at most is a whole number of pixels."
+    },
+    {
+     "rule": "range",
+     "min": 160,
+     "max": 20000,
+     "message": "Look at most must be between 160 and 20000."
     }
    ]
   },

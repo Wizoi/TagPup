@@ -258,12 +258,12 @@ class AnAccountedWrite(FacesCase):
 
 class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
     def test_the_settings_a_detection_is_told_apart_by_are_those_a_face_model_is_made_from(self):
-        """services.faces.DETECTOR_SETTINGS spells the keys of LibrarySettings.faces again (importing either owner from the
-        other is an import cycle, or torch): a setting added to one and not the other would let a changed setting reuse an old
-        detection. Held equal here."""
+        """services.faces.DETECTOR_SETTINGS and DETECTOR_CAP spell the keys of LibrarySettings.faces again (importing
+        either owner from the other is an import cycle, or torch): a setting added to one and not the other would let a
+        changed setting reuse an old detection. Held equal here."""
         from tagpup.services import settings as library_settings
         made_from = library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).faces
-        self.assertEqual(tuple(made_from), faces.DETECTOR_SETTINGS)
+        self.assertEqual(tuple(made_from), faces.DETECTOR_SETTINGS + (faces.DETECTOR_CAP,))
 
 
 if __name__ == "__main__":

@@ -100,11 +100,14 @@ class LibrarySettings:
 
     @property
     def faces(self):
-        """The face models' settings: tagpup.ml.faces.FaceModel's keyword arguments."""
+        """The face models' settings: tagpup.ml.faces.FaceModel's keyword arguments. `detect_max_side` is None
+        when the library sets no cap (the default)."""
+        cap = _trim(self.values["faces.detect_max_side"])
         return {
             "min_face_size": int(_trim(self.values["faces.min_face_size"])),
             "confidence_threshold": _float(self.values["faces.confidence_threshold"]),
             "mtcnn_thresholds": [_float(x) for x in self.values["faces.mtcnn_thresholds"].split(",")],
+            "detect_max_side": int(cap) if cap else None,
         }
 
     @property

@@ -15,7 +15,7 @@ from tagpup.services import suggester
 class Faces:
     """A face model's settings, which tagpup.ml.faces.FaceModel always holds and a detection is recorded under
     (tagpup.services.faces.detector_of): a test's face model is one of these, and says what it detects."""
-    min_face_size, confidence_threshold, mtcnn_thresholds = 40, 0.9, [0.6, 0.7, 0.7]
+    min_face_size, confidence_threshold, mtcnn_thresholds, detect_max_side = 40, 0.9, [0.6, 0.7, 0.7], None
 
 
 class Clip:

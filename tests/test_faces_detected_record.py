@@ -52,6 +52,7 @@ class FaceModel:
         self.min_face_size = min_face_size
         self.confidence_threshold = 0.9
         self.mtcnn_thresholds = [0.6, 0.7, 0.7]
+        self.detect_max_side = None
         self.readied = self.detected = 0
 
     def ready(self):

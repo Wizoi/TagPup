@@ -595,11 +595,18 @@ def _insert_detected(conn, photo_path, face):
 #: What a face model is told apart by: the settings it detects with (tagpup.ml.faces.SETTINGS).
 DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
 
+#: The cap on the picture the detector looks at (faces.detect_max_side): part of the name only when there is one, so a
+#: library that sets none keeps every photo recorded as detected under the name it had (docs/AI_PIPELINE.md, phase 1a).
+DETECTOR_CAP = "detect_max_side"
+
 
 def detector_of(model):
     """The name the detections of face model `model` are recorded under (tagpup.store.faces_detected): its settings, which a
-    tagpup.ml.faces.FaceModel always holds (a test's stand-in holds them too)."""
+    tagpup.ml.faces.FaceModel always holds (a test's stand-in holds them too), the cap only when it is set."""
     values = {key: getattr(model, key) for key in DETECTOR_SETTINGS}
+    cap = getattr(model, DETECTOR_CAP)
+    if cap is not None:
+        values[DETECTOR_CAP] = cap
     return faces_detected.detector({key: list(value) if isinstance(value, tuple) else value for key, value in values.items()})
 
 

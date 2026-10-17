@@ -25,7 +25,19 @@ from tagpup.files import images  # noqa: E402
 logger = logging.getLogger("tagpup_cli.faces")
 
 #: The settings a model is made from: tagpup.services.settings.LibrarySettings.faces' keys.
-SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
+SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds", "detect_max_side")
+
+
+def detection_picture(img, max_side):
+    """(the picture the detector is handed, (x, y) scale from it back to `img`): `img` itself and (1, 1) when there is
+    no cap or its long side is within it; else `img` scaled so that its long side is `max_side`, each side at least
+    one pixel (docs/AI_PIPELINE.md, phase 1a). Only the detector sees it: crops and vectors come from `img`."""
+    width, height = img.size
+    longest = max(width, height)
+    if not max_side or longest <= max_side:
+        return img, (1.0, 1.0)
+    size = (max(1, round(width * max_side / longest)), max(1, round(height * max_side / longest)))
+    return img.resize(size, Image.BILINEAR, reducing_gap=3.0), (width / size[0], height / size[1])
 
 
 class NotDetected(list):
@@ -38,7 +50,7 @@ class NotDetected(list):
 class FaceModel:
     """The detector and the face embedder, loaded the first time either is used."""
 
-    def __init__(self, min_face_size, confidence_threshold, mtcnn_thresholds, device=None):
+    def __init__(self, min_face_size, confidence_threshold, mtcnn_thresholds, detect_max_side=None, device=None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.mtcnn = None
         self.resnet = None
@@ -50,6 +62,8 @@ class FaceModel:
         self.min_face_size = min_face_size
         self.confidence_threshold = confidence_threshold
         self.mtcnn_thresholds = mtcnn_thresholds
+        #: The longest side of the picture the detector looks at, or None for the picture as it is (detection_picture).
+        self.detect_max_side = detect_max_side
 
     def load(self):
         """Load the models now, if they are not loaded yet."""
@@ -116,11 +130,15 @@ class FaceModel:
             img = images.opened(img_path, upright=False)
             width, height = img.size
 
-            # Detect bounding boxes and probability scores
-            boxes, probs = mtcnn.detect(img)
+            # Detect bounding boxes and probability scores, on a smaller picture when the library caps it, the boxes
+            # then scaled back to the picture as stored.
+            picture, (scale_x, scale_y) = detection_picture(img, self.detect_max_side)
+            boxes, probs = mtcnn.detect(picture)
 
             if boxes is None or len(boxes) == 0:
                 return []
+            if picture is not img:
+                boxes = boxes * np.array([scale_x, scale_y, scale_x, scale_y])
 
             detected_faces = []
             face_crops_info = []

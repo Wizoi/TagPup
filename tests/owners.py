@@ -65,6 +65,7 @@ SCENARIOS = {
     "V7": ("views", "Select all minus the excluded: the tally, the folders and a bulk edit read the same photos under the caps."),
     "V8": ("views", "A write elsewhere makes the open view and the cached scan read again."),
     "V9": ("views", "Vectors and suggestions follow their photo through rename, settle, rotate, delete and undo."),
+    "V10": ("views", "A photo's faces are found at its library's detector settings: boxes in the picture as stored, recorded under the settings that found them."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -140,6 +141,7 @@ _SCENARIO_FILES = {
     "V7": "test_selection_scenarios",
     "V8": "test_library_views_scenarios",
     "V9": "test_repair_turned_vectors test_suggest_then_apply_all",
+    "V10": "test_faces_found_at_the_librarys_cap",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
