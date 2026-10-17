@@ -21,12 +21,14 @@ CLIP and the face models are stood in for (no weights load under test, tests/tes
 stand-ins answer from the picture they are handed, so a photo given another photo's picture would show. Pillow and
 ExifTool are real, and the library is made by the picker's Create in a home of its own.
 """
+import gc
 import os
 import shutil
 import sys
 import threading
 import time
 import unittest
+import weakref
 from unittest import mock
 
 import numpy as np
@@ -378,6 +380,36 @@ class ThePhotosReadAhead(unittest.TestCase):
         self.assertEqual(big, next(used for item, size, used in held if item == 5), "the panorama shared the bound")
         self.assertGreater(max(used for item, size, used in held if item != 5), tagpup_cli.read_ahead_bytes(*self.TEN),
                            "the ordinary photos were not read ahead at all")
+
+    def test_a_photo_handed_on_is_let_go_while_the_next_ones_are_read(self):
+        """What a read made is held by the window until the caller has it, and by the caller until it asks for the
+        next: a worker kept the picture of its last photo through the whole of its next read, outside the bound --
+        about two photos more, 1.2 GB each at 193 MP."""
+        class Picture:
+            def __init__(self, item):
+                self.item = item
+        made, blocked, released = {}, threading.Event(), threading.Event()
+
+        def read(item, begun, reserve):
+            reserve(1)
+            if item in (0, 1):
+                time.sleep(0.2)     # each thread reads one of the first two, and then one of the blocked ones
+            if item in (3, 4):
+                blocked.set()
+                released.wait(10)
+            picture = made[item] = Picture(item)
+            made[item] = weakref.ref(picture)
+            return picture
+        alive = None
+        with read_ahead.ReadAhead(range(6), lambda item: {}, read, threads=2, ahead=3, budget=100) as photos:
+            for item, _begun, result in photos:
+                result.result()
+                if item == 2:
+                    blocked.wait(10)
+                    gc.collect()
+                    alive = [number for number in (0, 1) if made[number]() is not None]
+                    released.set()
+        self.assertEqual([], alive, "a photo handed on was still held while the next ones were read")
 
     def test_a_photo_gone_before_its_read_is_its_own_error_and_the_rest_come_in_order(self):
         def read(item):

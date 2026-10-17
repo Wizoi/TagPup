@@ -92,6 +92,9 @@ class ReadAhead:
                     while not result.done():
                         futures.wait([result], timeout=_WAIT)
                 yield item, begun, result
+                # Let go of what the caller has finished with before anything else is read: held here, it stayed
+                # alive outside the bound.
+                item = begun = result = None
                 if ticket is not None:
                     self._give_back(ticket)
         finally:
@@ -121,28 +124,38 @@ class ReadAhead:
                     self._cond.wait()
                 if self._closed:
                     return
-                ticket, item, begun, result = self._tasks.popleft()
-            reserved = []
+                task = self._tasks.popleft()
+            if not self._read_one(*task):
+                return
+            # Nothing of the read is held past here: its locals were _read_one's. Kept in this loop, a worker held its
+            # last photo's pictures through the whole of its next read, outside the bound.
+            task = None
 
-            def reserve(size, ticket=ticket):
-                self._reserve(ticket, size)
-                reserved.append(size)
+    def _read_one(self, ticket, item, begun, result):
+        """Read one item and hand what it gave, or raised, to its Future. False when the read-ahead was closed while
+        it waited for its turn."""
+        reserved = []
+
+        def reserve(size):
+            self._reserve(ticket, size)
+            reserved.append(size)
+        try:
+            value = self._read(item, begun, reserve)
+        except BaseException as error:   # handed to the caller, whatever it is
+            outcome = (False, error)
+        else:
+            outcome = (True, value)
+        if not reserved:
+            # A read that failed before it reserved still takes its turn, or the items after it wait for ever.
             try:
-                value = self._read(item, begun, reserve)
-            except BaseException as error:   # handed to the caller, whatever it is
-                outcome = (False, error)
-            else:
-                outcome = (True, value)
-            if not reserved:
-                # A read that failed before it reserved still takes its turn, or the items after it wait for ever.
-                try:
-                    reserve(0)
-                except Closed:
-                    return
-            if outcome[0]:
-                result.set_result(outcome[1])
-            else:
-                result.set_exception(outcome[1])
+                reserve(0)
+            except Closed:
+                return False
+        if outcome[0]:
+            result.set_result(outcome[1])
+        else:
+            result.set_exception(outcome[1])
+        return True
 
 
 _END = object()
