@@ -45,6 +45,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.ml import clip, faces as face_models  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -59,6 +60,11 @@ def colour_of(picture):
     return tuple(int(round(value)) for value in np.asarray(picture).reshape(-1, 3).mean(axis=0))
 
 
+#: ClipModel's own preprocessing step, before StandIns replaces it: a test that needs the model's lock and its loading
+#: as they are puts it back.
+PICTURE_INPUT = clip.ClipModel.picture_input
+
+
 class StandIns:
     """CLIP and the face models stood in for, on the real ClipModel and FaceModel: CLIP's input is the picture's size
     and colour, its vector those numbers; the detector finds one face at the top left of the picture as stored, its
@@ -69,7 +75,7 @@ class StandIns:
         self.lock = threading.Lock()
         stand_ins = self
 
-        def picture_input(model, img):
+        def picture_input(model, img, load=True):
             return img.size, colour_of(img)
 
         def embed_input(model, image_input):
@@ -256,6 +262,42 @@ class AnIndexReadingAhead(unittest.TestCase):
         for name, (given_one, vector, found, _detected) in rows.items():
             self.assertTrue(given_one)
             self.assertEqual(vector[2:5], found[0][1], "%s took a neighbour's picture" % name)
+
+    def test_a_read_still_under_way_when_the_index_stops_loads_no_model_after_the_turn_is_given_back(self):
+        """Ctrl+C at the fourth photo while the photos after it decode slowly: the index gives its turn on the card
+        back (the models unloaded, as Runtime's turn does on release), and a read that finishes after that must not
+        load CLIP again on its own thread -- the card is someone else's by then."""
+        library = self.library("slipway.db")
+        folder = self.folder("Slipway")
+        loads, opened, given = [], images.opened, []
+
+        def load(model):
+            if model.model is None:
+                loads.append(threading.current_thread().name)
+                model.model, model.preprocess = object(), lambda img: (img.size, colour_of(img))
+
+        def opened_slowly(path, upright):
+            if upright and os.path.basename(path) in ("p05.jpg", "p06.jpg", "p07.jpg"):
+                time.sleep(1.0)
+            return opened(path, upright)
+
+        def gpu_turn(runtime, what, models, cancelled=None, report=None):
+            return mock.Mock(release=runtime._unload_every_model)
+
+        def give_then_stop(writer, meta, *args, **kwargs):
+            if len(given) == 3:
+                raise KeyboardInterrupt()
+            given.append(meta["path"])
+        with mock.patch.object(clip.ClipModel, "_init_model", load), \
+                mock.patch.object(clip.ClipModel, "picture_input", PICTURE_INPUT), \
+                mock.patch.object(images, "opened", opened_slowly), \
+                mock.patch.object(Runtime, "gpu_turn", gpu_turn), \
+                mock.patch.object(tagpup_cli.IdentityWriter, "give", give_then_stop):
+            self.index(library, folder, code=1)
+            for thread in threading.enumerate():
+                if thread.name.startswith("read ahead"):
+                    thread.join(10)
+        self.assertEqual([threading.main_thread().name], loads, "CLIP was loaded again after the index stopped")
 
     def has_identity(self, path):
         with ExifToolSession(executable=own_home.installed_exiftool()) as et:

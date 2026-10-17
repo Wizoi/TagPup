@@ -54,7 +54,7 @@ class StandInClip:
     def load(self):
         pass
 
-    def input_of(self, path, seen=None):
+    def input_of(self, path, seen=None, load=True):
         self.embedded.append(path)
         if self.during:
             self.during(path)

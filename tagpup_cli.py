@@ -427,7 +427,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             if begun["vector"] is None:
                 # Reads the file once and decodes the whole picture; a vector kept from the file as it is was made
                 # by such a decode.
-                prepared = embeddings.prepared(path, seen=lambda picture: looked.update(
+                # Never loading CLIP: it was loaded in begin, on the thread that has the card, and a read still under
+                # way when the index stops must not load it again after the turn is given back.
+                prepared = embeddings.prepared(path, load=False, seen=lambda picture: looked.update(
                     zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0)))
             zeros = looked["zeros"] if "zeros" in looked else image_files.zero_tail_of(path)
             picture = face_processor.picture(path, max_side=detect_max_side) if face_processor else None

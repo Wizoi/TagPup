@@ -124,35 +124,46 @@ class ClipModel:
                     return
         raise RuntimeError("The CLIP model was let go as often as it was loaded; try again.")
 
-    def input_of(self, file_path, seen=None):
+    def input_of(self, file_path, seen=None, load=True):
         """What the model is shown of a photo as it is now, made on the processor (picture_input): nothing runs on the
         graphics card, so the indexer makes it on a thread of its own ahead of the photo the card is on
         (tagpup_cli.py's index; docs/AI_PIPELINE.md, phase 1b).
 
         The picture is decoded in full first (tagpup.files.images.opened), and handed to `seen` when given; a photo
         whose picture does not decode raises images.Unreadable, as it is: the indexer writes nothing into a photo
-        this has not read."""
+        this has not read. `load`: see picture_input."""
         # Upright, as the photo is seen. A camera turned on its side stores the
         # pixels sideways with an Orientation tag, and so does Rotate now; CLIP
         # was describing the sideways picture.
         img = images.opened(file_path, upright=True)
         if seen is not None:
             seen(img)
-        return self.picture_input(img)
+        return self.picture_input(img, load=load)
 
-    def picture_input(self, img):
+    def picture_input(self, img, load=True):
         """What the model is shown of a decoded picture (an RGB Pillow image, upright): padded to a square when the
         settings keep the full frame, then the model's own preprocessing (resized, cut, normalised), as a tensor on
-        the processor. The preprocessing is the loaded model's, read under its lock (_running) and run outside it:
-        the resize of a large photo no longer holds the model from another thread's forward pass."""
+        the processor. The preprocessing is the loaded model's, read under its lock and run outside it: the resize
+        of a large photo no longer holds the model from another thread's forward pass.
+
+        `load` False never loads the model: a thread that does not have the graphics card (the index's read-ahead,
+        which loads CLIP on the thread that has it) raises RuntimeError when the model is not loaded -- after the
+        index gave its turn back, a read still under way loaded CLIP onto a card that was no longer its own. True
+        (Suggest's PhotoEmbeddings.of) loads it on first use, as before (_running)."""
         # Pad to square to preserve full frame if configured and within aspect ratio limit
         if self.preserve_full_frame:
             width, height = img.size
             aspect = max(width, height) / min(width, height)
             if aspect <= self.max_aspect_ratio:
                 img = images.pad_to_square(img)
-        with self._running():
-            preprocess = self.preprocess
+        if load:
+            with self._running():
+                preprocess = self.preprocess
+        else:
+            with self.model_lock:
+                preprocess = self.preprocess
+            if preprocess is None:
+                raise RuntimeError("CLIP is not loaded, and a read ahead does not load it.")
         return preprocess(img)
 
     def embed_input(self, image_input):

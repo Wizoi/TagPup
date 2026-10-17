@@ -174,7 +174,7 @@ def _watch_clip(model, timeline):
         finally:
             timeline.mark("clip_end")
 
-    def input_of(file_path, seen=None):
+    def input_of(file_path, seen=None, load=True):
         record = timeline.record(file_path)
         loaded = timeline.total("CLIP load")
         record["t0"] = time.perf_counter()
@@ -184,7 +184,7 @@ def _watch_clip(model, timeline):
             record["upright"] = list(picture.size)
             if seen is not None:
                 seen(picture)
-        image_input = look(file_path, seen=looked)
+        image_input = look(file_path, seen=looked, load=load)
         record["prepared"] = time.perf_counter()
         record["clip_load"] = timeline.total("CLIP load") - loaded
         return image_input

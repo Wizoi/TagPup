@@ -73,7 +73,7 @@ class FakeClip:
         self.images = []
         self.fail = None
 
-    def input_of(self, path, seen=None):
+    def input_of(self, path, seen=None, load=True):
         if self.fail:
             raise RuntimeError(self.fail)
         images.opened(path, upright=True)

@@ -160,7 +160,7 @@ class _CudaClip:
         self.settings = library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).embedder
         self.embedded = []
 
-    def input_of(self, path, seen=None):
+    def input_of(self, path, seen=None, load=True):
         self.embedded.append(path)
         return path
 

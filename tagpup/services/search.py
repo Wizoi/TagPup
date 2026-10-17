@@ -112,15 +112,15 @@ class PhotoEmbeddings:
                     return cached
         return self.made(file_path, self.prepared(file_path))
 
-    def prepared(self, file_path, seen=None):
+    def prepared(self, file_path, seen=None, load=True):
         """The processor's half of making a photo's vector (Prepared): the file's stamp, taken before it is opened
         (see keep), and what CLIP is shown of the picture decoded from it (ClipModel.input_of, which hands the
         decoded picture to `seen` when given: what the indexer knows of the file from that read). Nothing is kept and
         nothing runs on the graphics card: the indexer prepares the next photos on threads of their own while the card
-        is on this one (tagpup_cli.py's index; docs/AI_PIPELINE.md, phase 1b). Raises images.Unreadable for a picture
-        that does not decode."""
+        is on this one (tagpup_cli.py's index; docs/AI_PIPELINE.md, phase 1b), with `load` False: a read never loads
+        the model (ClipModel.picture_input). Raises images.Unreadable for a picture that does not decode."""
         stamp = store_embeddings.stamp_of(file_path)
-        return Prepared(stamp, self.clip.input_of(file_path, seen=seen))
+        return Prepared(stamp, self.clip.input_of(file_path, seen=seen, load=load))
 
     def made(self, file_path, prepared):
         """The vector of a photo `prepared` (Prepared), made on the model's device and kept, stamped with the file as

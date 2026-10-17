@@ -44,7 +44,7 @@ class Clip:
         self.prompts.append(prompt)
         return [0.0] * self.dim
 
-    def input_of(self, path, seen=None):
+    def input_of(self, path, seen=None, load=True):
         raise AssertionError("a photo was embedded: the test gives its vector")
 
 
