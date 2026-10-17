@@ -74,7 +74,10 @@ count (gather that by hand, or say "not counted"):
   (count, average and largest context per call, compactions and the tokens before each).
 - **WORKERS**: lines ADDED per merge against the 1,200 budget (added plus removed beside it, the old measure), each
   trunk merge's lines; `--branch <ref>` is the guard before a merge (exit 1 when it adds over the budget, unless
-  `--allow-over`). Not counted: review rounds per branch (a reviewer's meta file names no branch).
+  `--allow-over`). Review rounds per branch are counted only for a review run whose transcript `cwd` is the branch's
+  worktree (the tool falls back to it when the meta file names no branch); 144 of 146 reviewer runs counted on
+  2026-10-17 started in the main checkout, so they tie to no branch (by design: say the branch in the brief, or start
+  the reviewer in its worktree, if a retro needs the rounds).
 
 Plus, by hand from the files: the lines and bytes of CLAUDE.md, each agent definition and MEMORY.md; rules with a
 named guard against rules without; numbers in CLAUDE.md that no longer hold.
