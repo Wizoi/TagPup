@@ -112,6 +112,10 @@ class IndexQueue:
         #: The folders of the run under way, and what it reports through (_Progress).
         self._current_folders = []
         self._progress = None
+        #: Folder key -> the start that was skipped because that folder was being indexed:
+        #: {"folder", "cluster", "index", "together"}. Files that arrived after the run
+        #: looked at the folder are not in it; the run's end queues the folder once more.
+        self._missed = {}
 
     def start(self, folders, index, cluster=False, together=False):
         """Queue folders to be indexed by `index(folder, cluster, report)`, which returns
@@ -119,8 +123,11 @@ class IndexQueue:
         unless it is running. `together`: the folders queued are one job, and `index` is
         handed their list -- one run of the indexer for them all (sync's new files).
 
-        A folder asked for twice, already waiting, or being indexed now is queued once;
-        one that is not a folder is reported, not queued. Refused when none is a folder.
+        A folder asked for twice, or already waiting, is queued once. One being indexed now
+        is not queued, but remembered: files that arrived in it after the run began are
+        not in that run, so when it ends completed the folder is queued once more (a
+        watcher's sync queues the folder of what arrived during an index, #1565). One that
+        is not a folder is reported, not queued. Refused when none is a folder.
 
         details: `queued`, `already_queued` and `invalid`, the folders; `pending`, how
         many wait now.
@@ -147,6 +154,9 @@ class IndexQueue:
                 waiting = {paths.key(each) for job in self._pending for each in _folders_of(job)}
                 for folder, key in valid:
                     if key in waiting or self._statuses.get(key, {}).get("status") == "running":
+                        if key not in waiting:
+                            self._missed[key] = {"folder": folder, "cluster": cluster, "index": index,
+                                                 "together": together}
                         already.append(folder)
                         result.skip(folder, "already waiting or being indexed")
                         continue
@@ -352,11 +362,30 @@ class IndexQueue:
                     with self._lock:
                         self._progress, self._current_folders = None, []
                 self._remember(job, status)
+                self._queue_what_was_missed(job, status)
         finally:
             # Only this worker's own entry: a newer one may have started already.
             with self._lock:
                 if self._runner is threading.current_thread():
                     self._runner = None
+
+    def _queue_what_was_missed(self, job, status):
+        """After a run: queue once more the folders that were asked for while it ran, if
+        it completed. A run that was cancelled or failed is not repeated: nothing says the
+        next would do better. The re-run is skipped from only when something asks again
+        during it, so the chain ends when the arrivals do."""
+        with self._lock:
+            missed = [self._missed.pop(paths.key(each), None) for each in _folders_of(job)]
+        missed = [each for each in missed if each]
+        if status.get("status") != "completed":
+            return
+        batch = [each for each in missed if each["together"]]
+        for ask in missed:
+            if not ask["together"]:
+                self.start([ask["folder"]], ask["index"], cluster=ask["cluster"])
+        if batch:
+            self.start([each["folder"] for each in batch], batch[0]["index"], cluster=batch[0]["cluster"],
+                       together=True)
 
     def _remember(self, job, status):
         """Keep what became of a run of the indexer, for the Activity page."""
