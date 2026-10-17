@@ -22,6 +22,10 @@ class Faces:
         detect_and_embed_faces is handed then."""
         return path, max_side
 
+    def picture_bytes(self, width, height, *, max_side):
+        """What the processor's half holds, as the read-ahead asks it: nothing decoded here."""
+        return 0
+
     def detect_and_embed(self, picture):
         path, max_side = picture
         return self.detect_and_embed_faces(path, max_side=max_side)
