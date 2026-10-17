@@ -227,6 +227,30 @@ class TheHooksReachTheModelsAsTheIndexCallsThem(unittest.TestCase):
         for stage in ("decode for faces", "MTCNN"):
             self.assertIn(stage, found)
 
+    def test_the_cards_wait_for_each_photo_is_timed_and_its_begin_apart(self):
+        """Phase 1c's question: what of the processor's work the read-ahead did not hide. The photos come back in
+        their order through the wrapped iteration, each with its wait and its `begin`'s share of it."""
+        from tagpup.core import read_ahead
+        iterate = read_ahead.ReadAhead.__iter__
+        self.addCleanup(setattr, read_ahead.ReadAhead, "__iter__", iterate)
+        stages._watch_read_ahead(read_ahead.ReadAhead, self.timeline)
+        metas = [{"path": self.photo + str(n)} for n in range(5)]
+        with read_ahead.ReadAhead(metas, lambda meta: {}, lambda meta, begun, reserve: reserve(1) or meta["path"],
+                                  threads=2, ahead=2, budget=10) as photos:
+            seen = [result.result() for _meta, _begun, result in photos]
+        self.assertEqual([meta["path"] for meta in metas], seen)
+        for meta in metas:
+            record = self.timeline.record(meta["path"])
+            self.assertGreaterEqual(record["read wait"], record["begin"])
+        self.assertEqual(5, len(self.timeline.calls["read-ahead begin"]))
+
+    def test_the_waits_leave_the_warm_up_out_and_are_a_share_of_the_index(self):
+        photos = [{"read_wait": 9.0, "begin": 1.0}, {"read_wait": 0.5, "begin": 0.1}, {"read_wait": 1.5, "begin": 0.1}]
+        found = stages.waits(photos, 20.0)
+        self.assertAlmostEqual(2.0, found["sum"])
+        self.assertAlmostEqual(0.1, found["share"])
+        self.assertEqual(2, found["read wait"]["n"])
+
 
 class WhatACapLoses(unittest.TestCase):
     """Phase 1a: a capped run against the one without a cap, photo by photo by its number in the sample."""
