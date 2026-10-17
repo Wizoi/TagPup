@@ -90,6 +90,10 @@ exceptions, each unjournaled by decision:
 - **#1438**: the doctor asks each row's stamp through the share's bound. Its whole report on photo_index took 111 s
   read-only (2026-10-15, 0 rules broken), of which the stamps part measured 3.1 s against 2.3 s over 59,519 rows. It is
   a check the owner runs by hand.
+- **The index queue's run once more of a sync's batch** (#1565's review): a sync's `together` batch of N folders that a
+  whole-library sync asks for again while it runs is run again whole, N folders scanned once more; the stamp rule
+  skips the unchanged files. It is once, not a loop (a re-run repeats only when something asks during it), and
+  splitting the batch would need the sync to say which folder received files, which nothing records.
 
 ## Known, and closed
 
