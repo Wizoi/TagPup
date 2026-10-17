@@ -210,11 +210,10 @@ class IdentityWriter:
     def give(self, record, decoded):
         """Write an identity into the photo of `record` (MetadataExtractor's) if it has
         none, it `decoded`, and ExifTool read it without an error, and put it in the record.
-        The record keeps the stamp from before its read: the file is changed by the write, so
-        the next index reads it once more -- and, the photo having its identity then, writes
-        nothing. Stamped after the write, the row claimed a keyword saved into the file since
-        its batch was read (contract 5), and the next index skipped the file as unchanged.
-        The identity minted, or None."""
+        The record keeps the stamp from before its read: stamped after the write, the row
+        claimed a keyword saved into the file since its batch was read (contract 5), and the
+        next index skipped the file as unchanged. The indexer reads a photo given its identity
+        again before recording it (tagpup_cli._read_again). The identity minted, or None."""
         if record.get("document_id") or not decoded or record.get("read_error"):
             return None
         et = self._session()

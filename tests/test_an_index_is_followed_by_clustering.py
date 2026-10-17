@@ -283,23 +283,18 @@ class TheCliIndexByHand(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_an_index_clusters_after_its_turn_on_the_card_and_one_that_records_nothing_does_not(self):
+    def test_an_index_clusters_after_its_turn_on_the_card_and_an_index_again_does_not(self):
         first = self.index()
         self.assertEqual(0, first.exit_code, first.output)
         self.assertEqual(2, self.photos())
         self.assertIn(indexing.CLUSTERING_STARTS, first.output)
         self.assertEqual([True], self.resolved, "clustered once, with the card's turn let go")
 
-        # The second index reads once more the photos the first gave their identity (IdentityWriter.give), and
-        # clusters what it recorded; the third records nothing.
-        again = self.index()
-        self.assertEqual(0, again.exit_code, again.output)
-        self.assertEqual([True, True], self.resolved)
         again = self.index()
         self.assertEqual(0, again.exit_code, again.output)
         self.assertIn("All images are up to date! Index is current.", again.output)
         self.assertNotIn(indexing.CLUSTERING_STARTS, again.output)
-        self.assertEqual([True, True], self.resolved, "an index that recorded nothing clustered")
+        self.assertEqual([True], self.resolved, "an index that recorded nothing clustered")
 
     def test_a_failed_clustering_exits_so_and_the_photos_stay_indexed(self):
         self.failing = RuntimeError("out of memory")
