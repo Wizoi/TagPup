@@ -168,9 +168,10 @@ added lines. Owner: Views-AI, with Files for the indexer loop.
 ### Phase 2: Clustering and the margin rule (no schema)
 
 **Why.** `cluster-faces` took 34 minutes, 32 of them in the last matching pass, on the processor, not in the pair pass
-(#1530; fixed by 2a, 202 s now). It is run by hand: the apps never run it, though DECISIONS 2026-10-15 says the indexer
-does (#1544, the owner's decision; so the live photo_index has had no run since at least 2026-09-23, and one run would
-name 21,225 faces, unname 1,434 and rename 669, counted on a copy). And the baseline shows the margin over the second-best person
+(#1530; fixed by 2a, 202 s now). It runs after every index that recorded a photo, from every entry point (the CLI's
+`index` decides; DECISIONS 2026-10-16, #1544). Until then the apps never ran it, though DECISIONS 2026-10-15 said the
+indexer did, so the live photo_index has had no run since at least 2026-09-23, and one run would name 21,225 faces,
+unname 1,434 and rename 669, counted on a copy. And the baseline shows the margin over the second-best person
 is the strong signal (precision 99.8% at margin 0.04, with FaceNet's vectors today).
 
 - **2a The conflict stage.** *Done 2026-10-16: the last pass asked a likeness a face and a person at a time; 2,113 s

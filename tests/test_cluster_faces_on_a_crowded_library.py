@@ -37,7 +37,7 @@ def like(reference, cosine, seed):
 
 class ClusterFacesOnACrowdedLibrary(FaceClusteringTestBase):
     def run_cluster_faces(self):
-        """cluster-faces as the indexer runs it; the steps it reported, in order."""
+        """cluster-faces as the CLI's index runs it after an index; the steps it reported, in order."""
         self.index.close()
         self.index = PhotoIndex(db_path=self.db_path)
         self.index.load()

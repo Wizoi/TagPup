@@ -82,7 +82,8 @@ run.bat index "D:\Photos\Tagged_Archive" --reset
 ---
 
 ## Scenario B: Self-Tuning Face Identity Resolution
-If you want the system to match face embeddings against specific family members, you must group them and resolve names after indexing.
+An index that recorded a photo is followed by this at once: `index` clusters the library's faces and resolves their names
+itself (Scenario A). The command is there to run it again by hand:
 
 ```cmd
 # Cluster and assign identities using photo-level tags (Self-Tuning)
