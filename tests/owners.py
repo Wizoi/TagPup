@@ -121,7 +121,8 @@ _SCENARIO_FILES = {
     "I9": "scenario-a-scan-kept-by-an-older-page",
     "P1": "test_people_by_id_at_once",
     "P2": (
-        "test_bulk_faces_and_tags test_clustering_meets_naming test_face_people_follow_file_changes "
+        "test_bulk_faces_and_tags test_cluster_faces_on_a_crowded_library test_clustering_meets_naming "
+        "test_face_people_follow_file_changes "
         "test_faces_and_tags_in_step test_faces_from_tags_in_a_folder test_person_filing_table "
         "test_tags_from_faces_in_a_folder"
     ),
