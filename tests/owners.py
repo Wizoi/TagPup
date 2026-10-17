@@ -138,7 +138,7 @@ _SCENARIO_FILES = {
     "V6": "test_models_released_when_idle",
     "V7": "test_selection_scenarios",
     "V8": "test_library_views_scenarios",
-    "V9": "test_suggest_then_apply_all",
+    "V9": "test_repair_turned_vectors test_suggest_then_apply_all",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
