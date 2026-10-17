@@ -133,9 +133,13 @@ class TestReindexingAChangedPhoto(FaceDecisionCase):
     def reindex(self, batch_read, embed_image):
         embed_image.return_value = [0.2] * expected_dim()
         batch_read.side_effect = lambda files, *a, **k: [fake_meta(f) for f in files]
-        result = self.run_cli(["index", self.library])
+        # What the index's write keeps: the clustering that follows an index re-derives the automatic names by its own
+        # rules (the photo here names nobody, so it takes the automatic one back; tests/test_clustering_meets_naming.py).
+        with patch("tagpup_cli._cluster_after_index") as clustered:
+            result = self.run_cli(["index", self.library])
         self.assertEqual(result.exit_code, 0, result.output)
         embed_image.assert_called_once()  # the change was seen and the photo re-indexed
+        clustered.assert_called_once()    # and, a photo recorded, the faces are clustered after the index
 
     def assert_curation_kept(self, ids):
         faces = self.faces()

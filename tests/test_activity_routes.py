@@ -140,7 +140,7 @@ class Now(Base):
         queue = indexing_jobs.queue_for(self.harbour)
         self.addCleanup(indexing_jobs.forget, self.harbour)
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             report("Indexing: 40% (4/10)", 40)
             release.wait(10)
             return Result(attempted=1, changed=1)
@@ -371,7 +371,7 @@ class SyncSnapshotsAndTheTimeline(Base):
     def test_the_index_queues_runs_are_in_the_timeline(self):
         queue = indexing_jobs.queue_for(self.harbour)
         self.addCleanup(indexing_jobs.forget, self.harbour)
-        queue.start([self.home.root], lambda folder, cluster, report: Result(attempted=1, changed=1))
+        queue.start([self.home.root], lambda folder, report: Result(attempted=1, changed=1))
         queue.wait()
         entries = [e for e in self.get("/api/activity/timeline")["entries"] if e["kind"] == "index"]
         self.assertEqual(1, len(entries))
@@ -391,7 +391,7 @@ class SyncSnapshotsAndTheTimeline(Base):
         self.addCleanup(indexing_jobs.forget, self.harbour)
         seen = {}
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             seen["tags"] = runs.current()
             return Result(attempted=1, changed=1)
 

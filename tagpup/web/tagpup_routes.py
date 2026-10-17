@@ -298,14 +298,12 @@ def folder_index_status():
 @routes.post("/api/folder/index-start")
 def folder_index_start():
     """Queue a folder to be added to this library (tagpup.services.libraries.add, through
-    tagpup.jobs.indexing). The page asks /api/folder/add instead. Clustering re-derives
-    every face name in the library, not only this folder's, and can discard manual
-    corrections, so it is opt-in."""
+    tagpup.jobs.indexing). The page asks /api/folder/add instead. The index is followed by clustering when it
+    recorded a photo, as every index is (tagpup.services.indexing.index_folder)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    cluster = bool(body.get("cluster", False))
     result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(
-        library).start(folders, _folder_indexer(library), cluster=cluster))
+        library).start(folders, _folder_indexer(library)))
     suggestion_jobs.dropped_by_add(library, [body.get("folder_path")])
     if result.refused:
         return responses.error(400, result.message())

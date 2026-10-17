@@ -103,7 +103,7 @@ class TheLookIsLetGoWhenTheFolderBecomesTheLibrarys(WithIndexing):
         self.assertTrue(self.status(extra)["in_memory"], "Extra is not the library's: it is looked at")
         # As sync queues a folder: the indexer is handed the folder, not the library.
         indexing_jobs.queue_for(self.library).start(
-            [self.regatta], lambda folder, cluster, report: self.index(self.library, folder, None), together=False)
+            [self.regatta], lambda folder, report: self.index(self.library, folder, None), together=False)
         indexing_jobs.queue_for(self.library).wait()
         self.assertTrue(self.status(extra)["in_memory"], "the index of the parent dropped its subfolder's look")
         self.assertIn(self.regatta, self.index.folders)

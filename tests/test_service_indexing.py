@@ -3,7 +3,8 @@
 The CLI is stood in for. What is checked is what it is asked to do, from where and for
 which library, and what the Result and the progress reports say.
 
-Contract row 16: the indexer's stdout is the interface, and `WhatTheProgressBarSays` is its table.
+Contract row 16: the indexer's stdout is the interface, and `WhatTheProgressBarSays` is its table. What follows an
+index -- clustering, its guard and its failure, from every entry point -- is tests/test_an_index_is_followed_by_clustering.py.
 
 Lifted: test_tagpup_server_api's TestIndexerNoiseFiltering and TestIndexerProgressText (22 tests, one per line shape).
 Broken in a scratch copy and the table fails: _INDEXER_NOISE emptied (every chatter row), _INDEXER_TQDM's percent group
@@ -13,14 +14,12 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.jobs.indexing import IndexQueue  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 
 
@@ -51,12 +50,11 @@ class AddingAFolder(unittest.TestCase):
         self.code = os.path.join(tmp.name, "code")
         self.reports = []
 
-    def index(self, *processes, cluster=False, while_clustering=None, folder=None):
+    def index(self, *processes, folder=None):
         with patch("subprocess.Popen", side_effect=list(processes)) as popen:
             result = indexing.index_folder(
-                self.library, folder or self.folder, self.code, cluster=cluster,
-                report=lambda message=None, percent=None: self.reports.append((message, percent)),
-                while_clustering=while_clustering)
+                self.library, folder or self.folder, self.code,
+                report=lambda message=None, percent=None: self.reports.append((message, percent)))
         return result, popen.call_args_list
 
     def test_the_cli_indexes_the_folder_into_this_library_from_the_code_running(self):
@@ -72,34 +70,12 @@ class AddingAFolder(unittest.TestCase):
         _, calls = self.index(process(), folder=self.folder.replace(os.sep, "/"))
         self.assertEqual(calls[0].args[0][3], paths.stored(self.folder))
 
-    def test_faces_are_clustered_only_when_asked(self):
-        _, calls = self.index(process(), process(), cluster=True)
-        self.assertEqual([call.args[0][2] for call in calls], ["index", "cluster-faces"])
-
-    def test_a_failed_index_is_an_error_and_nothing_is_clustered(self):
-        result, calls = self.index(process(2), cluster=True)
+    def test_a_failed_index_is_an_error(self):
+        result, calls = self.index(process(2))
         self.assertEqual(len(calls), 1)
         self.assertEqual((result.ok, result.changed), (False, 0))
         self.assertEqual(result.message(), "Indexing failed with exit code 2.")
         self.assertEqual(result.details["percent"], 0)
-
-    def test_a_failed_clustering_is_an_error_though_the_folder_was_indexed(self):
-        result, _ = self.index(process(), process(1), cluster=True)
-        self.assertFalse(result.ok)
-        self.assertIn("resolving face identities failed (exit code 1)", result.message())
-        self.assertEqual(result.details["percent"], 100)
-
-    def test_a_failed_clustering_is_in_the_folders_status_in_the_queue(self):
-        """Lifted from test_index_reports_failed_clustering: both apps had their own copy of the steps and neither read
-        cluster-faces' exit code ("identities resolved" after a crash). Break: index_folder ignoring that exit code."""
-        queue = IndexQueue()
-        with patch("subprocess.Popen", side_effect=[process(), process(1)]), patch.object(IndexQueue, "_ensure_runner"):
-            queue.start([self.folder], lambda folder, cluster, report: indexing.index_folder(
-                self.library, folder, self.code, cluster=cluster, report=report), cluster=True)
-            queue.run_pending()
-        status = queue.status(self.folder)
-        self.assertEqual("failed", status["status"], status)
-        self.assertIn("face identities failed", status["message"])
 
     def test_progress_is_reported_as_a_person_would_read_it(self):
         self.index(process(lines=(
@@ -109,26 +85,6 @@ class AddingAFolder(unittest.TestCase):
         )))
         self.assertEqual(self.reports, [("Generating embeddings: 50% (25/50)", 45),
                                         ("Found 50 image(s) total.", None)])
-
-    def test_the_guard_is_held_while_cluster_faces_runs_and_only_then(self):
-        held, seen = [False], []
-
-        @contextmanager
-        def guard():
-            held[0] = True
-            try:
-                yield
-            finally:
-                held[0] = False
-
-        def look():
-            seen.append(held[0])
-
-        result, _ = self.index(process(each_line=look), process(each_line=look), cluster=True,
-                               while_clustering=guard)
-        self.assertTrue(result.ok, result.message())
-        self.assertEqual(seen, [False, True])
-        self.assertFalse(held[0])
 
 
 class WhatTheProgressBarSays(unittest.TestCase):

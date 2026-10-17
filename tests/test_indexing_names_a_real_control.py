@@ -19,23 +19,24 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 
 
-def finished(returncode):
+def finished(returncode, lines=("done\n",)):
     proc = MagicMock()
     proc.returncode = returncode
-    proc.stdout.readline.side_effect = ["done\n", ""]
+    proc.stdout.readline.side_effect = list(lines) + [""]
     return proc
 
 
 class AddingAFolderNamesARealControl(unittest.TestCase):
     def messages(self):
-        """What adding a folder says when faces are left to cluster, and when
-        clustering them failed."""
+        """What adding a folder says when its index recorded nothing, so faces were not clustered, and when
+        clustering them after the index failed."""
         with tempfile.TemporaryDirectory() as folder:
             library = Library(os.path.join(folder, "library.db"))
             with patch("subprocess.Popen", side_effect=[finished(0)]):
                 indexed = indexing.index_folder(library, folder, WORKSPACE_DIR)
-            with patch("subprocess.Popen", side_effect=[finished(0), finished(1)]):
-                failed = indexing.index_folder(library, folder, WORKSPACE_DIR, cluster=True)
+            with patch("subprocess.Popen", side_effect=[finished(indexing.EXIT_CLUSTERING_FAILED,
+                                                                 (indexing.CLUSTERING_STARTS + "\n",))]):
+                failed = indexing.index_folder(library, folder, WORKSPACE_DIR)
         return [indexed.details["message"], failed.message()]
 
     def test_no_message_names_a_button_that_is_gone(self):

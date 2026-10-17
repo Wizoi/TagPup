@@ -253,7 +253,7 @@ class AfterAWriteElsewhere(Views):
                 for make in (runtime.index_folder(library, subfolders=False), tagpup_routes._folder_indexer(library)):
                     tagpup_routes.folders.of(library).put(self.folder, {"a": {"path": "a"}})
                     try:
-                        make(self.folder, False, None)
+                        make(self.folder, None)
                     except RuntimeError:
                         pass
                     self.assertIsNone(tagpup_routes.folders.of(library).get(self.folder), failing)

@@ -283,10 +283,11 @@ def exiftool(library, settings=None):
 def index_folder(library, subfolders=True):
     """How this process adds a folder to `library` from its index queue: the CLI's `index`
     in a process of its own, from this code (tagpup.services.indexing.index_folder); with
-    its subfolders unless not `subfolders`."""
-    def index(folder, cluster, report):
-        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
-                                     subfolders=subfolders)
+    its subfolders unless not `subfolders`. The CLI clusters the library's faces after an index that recorded a photo,
+    and the library's writes of faces are refused meanwhile (tagpup.services.indexing.while_clustering): the same for
+    both apps' queue and sync's."""
+    def index(folder, report):
+        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, report=report, subfolders=subfolders)
     return index
 
 

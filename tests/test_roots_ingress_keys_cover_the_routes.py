@@ -30,7 +30,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: Read by a route and no path: a flag, a number, an id, a tag or a person's name, text.
 NOT_A_PATH = frozenset({
     # flags, numbers, modes, text
-    "acknowledged", "action", "after", "all", "apply", "base", "before", "bulk", "camera_model", "cluster",
+    "acknowledged", "action", "after", "all", "apply", "base", "before", "bulk", "camera_model",
     "date_taken", "direction", "dry_run", "force", "group", "grouping", "has_face", "hidden_from_autocomplete",
     "include_hidden", "kind", "lease", "let_go", "level", "limit", "mode", "only_folder", "op", "order", "override",
     "page", "page_writes_tags", "quiet", "reason", "recursive", "retire", "run", "runs", "seconds", "section",

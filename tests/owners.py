@@ -55,7 +55,7 @@ SCENARIOS = {
     "F8": ("files", "Just look edits a file only, and delete, rename and the recycle bin keep their rules."),
     "F9": ("files", "A run holds one map of the roots; a root moved meanwhile stops a write with a sentence."),
     "F10": ("files", "One photo whatever its path's spelling."),
-    "F11": ("files", "Add a folder: it is queued, indexed by the CLI with progress, and a second run reads nothing."),
+    "F11": ("files", "Add a folder: it is queued, indexed by the CLI with progress, followed by clustering from every entry point when it recorded a photo, and a second run reads nothing."),
     "V1": ("views", "A view lists each photo once, in the owner's order, with its count."),
     "V2": ("views", "A typed search ANDs its words and ranks nothing."),
     "V3": ("views", "Suggest, and the analyse-only run, from start to end."),
@@ -109,7 +109,7 @@ _SCENARIO_FILES = {
     ),
     "F9": "test_roots_old_place test_roots_pinned_runs",
     "F10": "test_one_photo_whatever_its_spelling",
-    "F11": "test_index_progress_end_to_end",
+    "F11": "test_index_progress_end_to_end test_an_index_is_followed_by_clustering",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
@@ -178,7 +178,7 @@ _FILES = {
             "test_new_person_reads_the_pool_once test_organize_faces test_people_by_id_tree "
             "test_people_representative_faces "
             "test_person_face_samples test_person_ids "
-            "test_person_rename_reaches_the_files test_queued_clustering_is_guarded "
+            "test_person_rename_reaches_the_files "
             "test_reindex_keeps_face_decisions test_server_lists_are_alphabetical test_service_faces test_service_tags "
             "test_shared_taxonomy_routes test_store_taxonomy_add_path test_tag_order "
             "test_tag_sort_key_edges test_tag_view_api test_tags_are_checked_where_they_are_set test_tags_from_faces "

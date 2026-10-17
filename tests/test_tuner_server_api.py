@@ -937,7 +937,7 @@ class TestQueueRunner(TestFolderQueue):
         folders = self.make_folders(3)
         seen = []
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             seen.append(folder)
             return Result(changed=1)
 
@@ -1078,31 +1078,6 @@ class TestTunerFolderIndexing(TunerAPITestBase):
 
         self.assertEqual(final.get("status"), "completed", final)
         self.assertTrue(popen.called, "the indexer subprocess never started")
-
-    def test_indexing_does_not_cluster_unless_asked(self):
-        """Clustering rewrites every name in the database, so it is never implicit."""
-        from unittest.mock import patch, MagicMock
-        import tempfile
-
-        folder = tempfile.mkdtemp(prefix="tuner_idx_")
-        proc = MagicMock()
-        proc.returncode = 0
-        proc.stdout.readline.side_effect = ["done\n", ""]
-
-        with patch("subprocess.Popen", return_value=proc) as popen:
-            self.post("/api/folder/index-start", {"folder_path": folder})
-            q = urllib.parse.quote(folder)
-            deadline = time.time() + 20
-            while time.time() < deadline:
-                if self.get(f"/api/folder/index-status?path={q}").get("status") != "running":
-                    break
-                time.sleep(0.1)
-
-        commands = [call.args[0] for call in popen.call_args_list]
-        self.assertFalse(
-            any("cluster-faces" in c for c in commands),
-            f"indexing clustered without being asked: {commands}",
-        )
 
 
 class TestTunerFolderRemoval(TunerAPITestBase):
@@ -1390,7 +1365,7 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
         folders = self.make_folders(2)
         seen = []
 
-        def look(folder, cluster, report):
+        def look(folder, report):
             seen.append(self.get("/api/folder/index-active"))
             return Result(changed=1)
 

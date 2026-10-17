@@ -213,6 +213,7 @@ The `tagpup_cli.py` engine is accessed via `click` subcommands.
 
 #### 1. `index`
 Scans and indexes a photo library recursively: one or more directories, in one run (the models are loaded once; sync hands it every folder of new files at once). Indexing a folder adds it to the library: it is recorded as added (`tagpup.services.libraries.record_added`; with `--no-subfolders`, without its subfolders), as TagPup's Add and TagTuner's Add Folder record it, and each photo's row is made as it is read.
+**After an index that recorded a photo, it clusters the library's faces** (`cluster-faces`'s work; owner, DECISIONS 2026-10-16), once its turn on the graphics card is let go: this command is what both apps' queues and sync's run, so every index does it alike. It prints `Resolving and matching face identities...` first (the server refuses writes of faces from that line to the end of the process). A run that recorded no photo (everything current) clusters nothing. Stopped while it waits for the card (exit status 76), it indexed and clustered nothing. A clustering that fails leaves the photos indexed and exits with status 77, saying so. On photo_index the clustering takes about 200 s; on the small libraries a few seconds.
 - **Usage**: `run.bat [global-options] index <DIRECTORY> [<DIRECTORY> ...]`
 - **Options**:
   - `--force-reembed`: Force recreation of all CLIP visual embeddings.
@@ -221,7 +222,7 @@ Scans and indexes a photo library recursively: one or more directories, in one r
   - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
 #### 2. `cluster-faces`
-Internal: the indexer runs it after every index (`tagpup.services.indexing`), with no options; it is not run by hand. It clusters the face embeddings and names the faces from their photos' people (`tagpup.services.identities.resolve`). Names a person gave (`name_source = 'manual'`), their "nobody" decisions and exclusions are kept; a face is written only while it is still as the run read it, and a person is written by id. Two or more faces of a photo
+What `index` runs after an index that recorded a photo, with no options; it is not run by hand. It clusters the face embeddings and names the faces from their photos' people (`tagpup.services.identities.resolve`). Names a person gave (`name_source = 'manual'`), their "nobody" decisions and exclusions are kept; a face is written only while it is still as the run read it, and a person is written by id. Two or more faces of a photo
 whose keywords name as many people no face is known for stay unnamed (nothing tells which is whose; owner, 2026-10-15), and
 so does a face whose people tie in its votes; the run says how many faces it left so and how many earlier guesses it took
 back.

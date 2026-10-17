@@ -141,7 +141,7 @@ class TheRunsTagTheirLines(LinesTest):
         queue = indexing_jobs.IndexQueue("harbour")
         seen = {}
 
-        def index(folder, cluster, report):
+        def index(folder, report):
             seen["tags"] = runs.current()
             self.logger.info("indexing")
             return Result(attempted=1, changed=1)

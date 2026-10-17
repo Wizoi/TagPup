@@ -55,7 +55,7 @@ class Drifted:
         self.indexed, self.with_subfolders, self.runs = [], [], []
 
         def index_folder(library, subfolders=True):
-            def index(folder, cluster, report):
+            def index(folder, report):
                 # A batch is handed as a list: one run of the indexer.
                 folders = [folder] if isinstance(folder, str) else list(folder)
                 self.runs.append(folders)
@@ -227,7 +227,7 @@ class TheCli(Drifted, unittest.TestCase):
         os.makedirs(other)
         handed = []
 
-        def index(folders, cluster, report):
+        def index(folders, report):
             handed.append(folders)
             return Result(attempted=1, changed=1)
 
