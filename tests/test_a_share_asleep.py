@@ -409,10 +409,11 @@ class ADriveThatSaysNotFound(unittest.TestCase):
 
 class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
     """A server asleep answers WinError 53 at once, not by hanging (#1543): the share is away, not its files unreadable.
-    Counted 2026-10-17: 1,309 photos of one live library sit on a UNC root. Break: _stat_state answering CANNOT_READ."""
+    Counted 2026-10-17: 1,309 photos of one live library sit on a UNC root, the shape stood in for here. Break:
+    _stat_state answering CANNOT_READ."""
 
-    SERVER = "Q:\\"
-    PHOTOS = ["Q:\\Pictures\\p%d.jpg" % n for n in range(4)]
+    SERVER = "\\\\NAS\\PICTURES"
+    PHOTOS = ["\\\\Nas\\Pictures\\p%d.jpg" % n for n in range(4)]
 
     def setUp(self):
         shares.forget()
@@ -450,7 +451,7 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         walk = shares.Walk()
         found = [walk.stamp_of(path) for path in self.PHOTOS]
         self.assertEqual([shares.UNANSWERED] * 4, found)
-        self.assertEqual((1, 1, 4), (len(walk.away), len(self.reads), walk.skipped))
+        self.assertEqual(([shares.share_of(self.PHOTOS[0])], 1, 4), (walk.away, len(self.reads), walk.skipped))
         self.assertIs(shares.UNANSWERED, shares.stamp_of(self.PHOTOS[0]), "a look outside the walk is answered at once")
         self.assertEqual(1, len(self.reads))
 
@@ -466,7 +467,7 @@ class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
         asking the server, until AWAY_SECONDS from when it was FOUND away -- the looks answered meanwhile do not slide
         the window. Break: the share marked in stamp_of alone (a folder look asks again), or bounded clearing what its
         own look learned."""
-        folder, clock = "Q:\\Pictures", [1000.0]
+        folder, clock = "\\\\Nas\\Pictures\\2019", [1000.0]
         with mock.patch.object(shares, "time", mock.Mock(monotonic=lambda: clock[0])):
             self.assertIs(shares.UNANSWERED, shares.stamp_of(self.PHOTOS[0]))
             self.assertEqual(["unanswered", 1], [shares.folder_state(folder), len(self.reads)], "the folder asked again")

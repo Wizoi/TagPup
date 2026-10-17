@@ -187,7 +187,8 @@ def stamp_of(photo_path):
 class Walk:
     """One pass over many photos (a warm, a repair): each share found away is asked ONCE, its photos counted as
     skipped, not asked again and never counted as unreadable. The one owner of this rule; the passes used to write it
-    each (#1543). `away` names the shares found away, in the order found; `skipped` counts their photos."""
+    each (#1543). `away` names the shares found away (share_of: a drive, or \\\\server\\share), in the order found;
+    `skipped` counts their photos."""
 
     def __init__(self):
         self.away = []
@@ -203,6 +204,6 @@ class Walk:
         stamp = stamp_of(photo_path)
         if stamp is UNANSWERED:
             self._shares.add(share)
-            self.away.append(photo_path.split("\\")[2] if photo_path.startswith("\\\\") else share)
+            self.away.append(share)
             self.skipped += 1
         return stamp
