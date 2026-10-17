@@ -40,6 +40,7 @@ which is half of every correctly named face, and clustering unnamed below 0.80 o
 mean, a third of them.
 """
 import math
+import threading
 
 import numpy as np
 
@@ -189,6 +190,7 @@ class KnownFaces:
         self._faces = {}     # name -> [(unit embedding, year or None, photo key or None)]
         self._arrays = {}    # name -> (matrix, years, photos), made when first asked
         self._everyone = None   # everyone's faces in one matrix (likeness_table), made when first asked
+        self._building = threading.Lock()   # Suggest's workers share one KnownFaces: the matrix is made once (_table)
         self._photos = {}    # name -> the keys of the photos they have a face in, made when first asked
         self._eras = {}      # (name, year) -> _chosen for a photo they have no face in, made when first asked
         #: {name: what the caller calls that person}, for a caller that keys the people by something that is not what it shows
@@ -319,7 +321,7 @@ class KnownFaces:
         year); only a person with a face in the face's own photo is chosen again, without it. Clustering's last pass
         asked likeness once a face and a person: 96,000 faces by 281 people on photo_index, over half an hour
         (docs/findings.md, #1530)."""
-        names, matrix, starts, by_photo, eras = self._table()
+        names, matrix, starts, by_photo, eras, _columns = self._table()
         table = np.full((len(faces), len(names)), np.nan, dtype=np.float32)
         if not names or not faces:
             return table
@@ -342,28 +344,36 @@ class KnownFaces:
         return table
 
     def _table_columns(self):
-        if self._everyone is None:
-            self._table()
-        return self._everyone[5]
+        return self._table()[5]
 
     def _table(self):
         """(names, everyone's faces in one matrix, where each person's rows start, {photo key: the columns of the people
-        with a face in it}, {year: `_era`} as each year is first asked); each person's own arrays (`_of`) are made as views
-        of it, not copies. Made again after an `add`."""
-        if self._everyone is None:
-            names = list(self._faces)
-            for name in names:
-                self._of(name)
-            matrix = np.concatenate([self._arrays[name][0] for name in names]) if names else np.zeros((0, 0), np.float32)
-            starts = np.cumsum([0] + [len(self._faces[name]) for name in names[:-1]]).astype(np.intp)
-            by_photo = {}
-            for column, name in enumerate(names):
-                _matrix, years, photos = self._arrays[name]
-                self._arrays[name] = (matrix[starts[column]:starts[column] + len(photos)], years, photos)
-                for key in {p for p in photos if p}:
-                    by_photo.setdefault(key, []).append(column)
-            self._everyone = (names, matrix, starts, by_photo, {}, {name: column for column, name in enumerate(names)})
-        return self._everyone[:5]
+        with a face in it}, {year: `_era`} as each year is first asked, {name: column}); made again after an `add`.
+        Made under a lock: Suggest's workers ask most_like of one KnownFaces at once, and each made its own copy of
+        everyone's faces (about 72 MB on photo_index), the last one kept. The lock is here, where the matrix is made, so
+        every caller that shares a KnownFaces is covered, not only the suggester's."""
+        everyone = self._everyone
+        if everyone is None:
+            with self._building:
+                everyone = self._everyone
+                if everyone is None:
+                    everyone = self._everyone = self._build_table()
+        return everyone
+
+    def _build_table(self):
+        """_table, made: each person's own arrays (`_of`) become views of everyone's matrix, not copies."""
+        names = list(self._faces)
+        for name in names:
+            self._of(name)
+        matrix = np.concatenate([self._arrays[name][0] for name in names]) if names else np.zeros((0, 0), np.float32)
+        starts = np.cumsum([0] + [len(self._faces[name]) for name in names[:-1]]).astype(np.intp)
+        by_photo = {}
+        for column, name in enumerate(names):
+            _matrix, years, photos = self._arrays[name]
+            self._arrays[name] = (matrix[starts[column]:starts[column] + len(photos)], years, photos)
+            for key in {p for p in photos if p}:
+                by_photo.setdefault(key, []).append(column)
+        return names, matrix, starts, by_photo, {}, {name: column for column, name in enumerate(names)}
 
     def _era(self, names, starts, year):
         """(which of everyone's faces a face of `year` is compared with, from a photo none of them is in; whether each
