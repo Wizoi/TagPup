@@ -217,7 +217,7 @@ class FilesArrivingDuringAnIndex(QueueTest):
         """An index that blocks in its first run until released; `runs` counts its runs."""
         started, release = threading.Event(), threading.Event()
 
-        def index(folder_, cluster, report):
+        def index(folder_, report):
             runs.append(folder_)
             if len(runs) == 1:
                 started.set()
@@ -257,7 +257,7 @@ class FilesArrivingDuringAnIndex(QueueTest):
                 self.queue = IndexQueue()
                 runs, started, release = [], threading.Event(), threading.Event()
 
-                def index(folder_, cluster, report, outcome=outcome, runs=runs, started=started, release=release):
+                def index(folder_, report, outcome=outcome, runs=runs, started=started, release=release):
                     runs.append(folder_)
                     started.set()
                     release.wait(10)
@@ -315,7 +315,7 @@ class FilesArrivingDuringAnIndex(QueueTest):
         started, release = threading.Event(), threading.Event()
 
         def index_for(name):
-            def index(folder_, cluster, report):
+            def index(folder_, report):
                 ran[name].append(folder_)
                 if name == "one" and len(ran[name]) == 1:
                     started.set()

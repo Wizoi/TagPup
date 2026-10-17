@@ -105,7 +105,7 @@ class IndexQueue:
         self._current_folders = []
         self._progress = None
         #: Folder key -> the start that was skipped because that folder was being indexed:
-        #: {"folder", "cluster", "index", "together"}. Files that arrived after the run
+        #: {"folder", "index", "together"}. Files that arrived after the run
         #: looked at the folder are not in it; the run's end queues the folder once more.
         self._missed = {}
 
@@ -147,8 +147,7 @@ class IndexQueue:
                 for folder, key in valid:
                     if key in waiting or self._statuses.get(key, {}).get("status") == "running":
                         if key not in waiting:
-                            self._missed[key] = {"folder": folder, "cluster": cluster, "index": index,
-                                                 "together": together}
+                            self._missed[key] = {"folder": folder, "index": index, "together": together}
                         already.append(folder)
                         result.skip(folder, "already waiting or being indexed")
                         continue
@@ -373,10 +372,9 @@ class IndexQueue:
         batch = [each for each in missed if each["together"]]
         for ask in missed:
             if not ask["together"]:
-                self.start([ask["folder"]], ask["index"], cluster=ask["cluster"])
+                self.start([ask["folder"]], ask["index"])
         if batch:
-            self.start([each["folder"] for each in batch], batch[0]["index"], cluster=batch[0]["cluster"],
-                       together=True)
+            self.start([each["folder"] for each in batch], batch[0]["index"], together=True)
 
     def _remember(self, job, status):
         """Keep what became of a run of the indexer, for the Activity page."""
