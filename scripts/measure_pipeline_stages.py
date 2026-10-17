@@ -27,7 +27,10 @@ deleted is said. The graphics card is taken in the owner's line (tagpup.ml.gpu, 
   (the crop's JPEG), and wrappers on PhotoIndex.build_or_update and services.faces.record_batch (the database
   writes), MetadataExtractor.batch_read and IdentityWriter.give (as tagpup_cli holds them). Each GPU stage ends in
   torch.cuda.synchronize(). A photo's total is the sum of its stages; read ahead, they overlap, and the run's wall
-  time is the measure. The first photo is the warm-up, reported apart.
+  time is the measure. The first photo is the warm-up, reported apart. The card's thread's wait for each photo is
+  timed too (a wrapper on ReadAhead's iteration: what the read-ahead did not hide, and `begin`'s share of it apart):
+  the processor's work still on the critical path (phase 1c's question).
+  `--from-event` draws the sample from one event folder instead (as `event` chooses it, `--folder-number`).
 * `event`: one folder of a library (kr-track; `--folder-number`, by the size order of services.inspect.folders, else
   the one nearest 60 photos) copied into a new folder of the copy and indexed by the snapshot's tagpup_cli.py, as the
   owner's index runs: wall time and seconds a photo.
@@ -274,6 +277,53 @@ def _watch_pillow(timeline):
         setattr(Image.Image, name, wrapped)
 
 
+def _watch_read_ahead(read_ahead_class, timeline):
+    """ReadAhead's iteration, timed on the card's thread: how long each photo was waited for (`read wait`, on its
+    record), and of that the `begin` of the photos entering the window then (`begin`), the CLI's own work in this
+    thread. What is left is the read the card waited for."""
+    iterate = read_ahead_class.__iter__
+
+    def timed(self):
+        begin = self._begin
+
+        def timed_begin(item):
+            started = time.perf_counter()
+            try:
+                return begin(item)
+            finally:
+                timeline.note("read-ahead begin", time.perf_counter() - started)
+        self._begin = timed_begin
+        photos = iterate(self)
+        try:
+            while True:
+                begun = timeline.total("read-ahead begin")
+                started = time.perf_counter()
+                try:
+                    entry = next(photos)
+                except StopIteration:
+                    return
+                waited = time.perf_counter() - started
+                record = timeline.record(entry[0]["path"])
+                record["read wait"] = waited
+                record["begin"] = timeline.total("read-ahead begin") - begun
+                timeline.note("wait for the next photo", waited)
+                yield entry
+                entry = None   # held no longer than the caller holds it
+        finally:
+            photos.close()
+    read_ahead_class.__iter__ = timed
+
+
+def waits(photos, index_seconds):
+    """The card's thread's waits for its photos after the first (the warm-up): {"read wait", "begin": summary, "sum",
+    "share" of the index's seconds}."""
+    steady = photos[1:]
+    reads = [p.get("read_wait") for p in steady]
+    total = sum(r for r in reads if r is not None)
+    return {"read wait": sandbox.summary(reads), "begin": sandbox.summary([p.get("begin") for p in steady]),
+            "sum": total, "share": total / index_seconds if index_seconds else None}
+
+
 def stages_of(record):
     """{stage: seconds} of one photo's record (STAGES), from the marks the hooks left; a stage not reached is left
     out."""
@@ -315,6 +365,7 @@ def child(plan_path):
     sync = torch.cuda.synchronize if torch.cuda.is_available() else (lambda: None)
     timeline = Timeline(sync)
 
+    from tagpup.core import read_ahead
     from tagpup.runtime import Runtime
     from tagpup.services import faces as face_records
     from tagpup.services import search
@@ -335,6 +386,7 @@ def child(plan_path):
         return model
     Runtime.clip, Runtime.faces = clip, faces
     _watch_pillow(timeline)
+    _watch_read_ahead(read_ahead.ReadAhead, timeline)
     _watch_made(search.PhotoEmbeddings, timeline)
     _watch_identity(tagpup_cli.IdentityWriter, timeline)
     _timed(search.PhotoIndex, "build_or_update", "photo rows write", timeline)
@@ -370,6 +422,7 @@ def child(plan_path):
                        "number": label.get("number"), "boxes": record.get("boxes"), "stored": label.get("stored"),
                        "megapixels": label.get("megapixels"), "faces_found": record.get("faces_found"),
                        "detection_failed": record.get("detection_failed"),
+                       "read_wait": record.get("read wait"), "begin": record.get("begin"),
                        "sideways": bool(upright and stored and upright != stored and upright == stored[::-1]),
                        "total": sum(stages.values()) if stages else None, "stages": stages})
     result = {"error": error, "fixed": fixed, "calls": timeline.calls, "photos": photos, "versions": sandbox.versions(),
@@ -657,6 +710,8 @@ def main():
     parser.add_argument("--deep", action="store_true", help="also open every file's end and header (the doctor's "
                                                             "count of files that fail to open)")
     parser.add_argument("--folder-number", type=int, help="event: which folder, by services.inspect.folders' order")
+    parser.add_argument("--from-event", action="store_true", help="stages: the sample is one event folder's photos "
+                                                                  "(chosen as event chooses it)")
     parser.add_argument("--timeout", type=int, default=7200, help="seconds the child may take")
     parser.add_argument("--keep", action="store_true", help="leave the sandbox (it holds copies of photos)")
     args = parser.parse_args()
@@ -694,8 +749,15 @@ def main():
             output["before"] = {"card": sandbox.window(sampler.gpu, 0, time.time()),
                                 "processors": sampler.processor(0, time.time())}
             if args.mode == "stages":
-                chosen = sandbox.choose_sample(rows, args.sample, args.worst, random.Random(args.seed))
-                random.Random(args.seed).shuffle(chosen)   # the warm-up photo of any stratum
+                if args.from_event:
+                    # The folder's photos in its order, as the owner's index of it reads them.
+                    photos, output["folder_number"] = event_photos(library, args.folder_number, print)
+                    by_key = {paths.key(row["path"]): row for row in rows}
+                    chosen = [dict(by_key[paths.key(path)], stratum=sandbox.stratum(by_key[paths.key(path)]["faces"]))
+                              for path in photos if paths.key(path) in by_key]
+                else:
+                    chosen = sandbox.choose_sample(rows, args.sample, args.worst, random.Random(args.seed))
+                    random.Random(args.seed).shuffle(chosen)   # the warm-up photo of any stratum
                 folder = new_folder(placed, "pipeline-sample")
                 labels = {}
                 stored = stored_faces(library, [row["id"] for row in chosen])
@@ -718,6 +780,10 @@ def main():
                 cli = result["cli"]
                 print("  index alone: %.1f s, %.2f s a photo; then clustering %.1f s" % (
                     cli["index_seconds"], cli["index_seconds"] / max(len(result["photos"]), 1), cli["clustering"]))
+                output["waits"] = waits(result["photos"], cli["index_seconds"])
+                print("  the card's thread waited for its photos %.1f s (%.1f%% of the index), begin %.3f s a photo"
+                      % (output["waits"]["sum"], 100 * (output["waits"]["share"] or 0),
+                         output["waits"]["begin"].get("mean") or 0))
             elif args.mode == "event":
                 photos, output["folder_number"] = event_photos(library, args.folder_number, print)
                 folder = new_folder(placed, "pipeline-event")
