@@ -7,9 +7,11 @@ The sample a person relies on: a third or more at 10 faces or more, the worst ph
 its smallest picture to its largest, a sideways photo when there is one. The hold-out by photo: a face is never
 matched with its own photo's faces, and a person with no face elsewhere is counted apart, not as a miss.
 """
+import json
 import os
 import random
 import sys
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -175,6 +177,20 @@ class WhatACapLoses(unittest.TestCase):
         self.assertEqual((1, 1, 1), (row["lost_named"], row["lost_unnamed"], row["gained"]))
         self.assertEqual(50, row["lost_sides"]["max"])
         self.assertEqual((2, 1, 1), (table["all"]["photos"], table["all"]["lost_named"], table["all"]["gained"]))
+
+    def test_a_run_without_its_faces_is_refused_not_compared_into_an_empty_table(self):
+        """The run without a cap ran without faces (no boxes on any photo): compare says so."""
+        with tempfile.TemporaryDirectory(prefix="pipeline_compare_") as folder:
+            files, rest = [], {"table": {}, "cli": {"seconds": 1.0}, "card": {}}
+            for name, run in (("off", dict(rest, photos=[{"number": 0, "stratum": "10+", "boxes": None}])),
+                              ("cap", dict(rest, detect_max_side=2048, photos=[self.photo(0, [[0, 0, 30, 30]])]))):
+                files.append(os.path.join(folder, name + ".json"))
+                with open(files[-1], "w", encoding="utf-8") as handle:
+                    json.dump(run, handle)
+            with self.assertRaises(SystemExit) as refused:
+                stages.compare(files, folder)
+            self.assertIn("nothing to compare", str(refused.exception))
+            self.assertEqual(["cap.json", "off.json"], sorted(os.listdir(folder)), "a comparison was written")
 
 
 class TheNamedFaceHoldOut(unittest.TestCase):

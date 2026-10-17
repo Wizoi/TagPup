@@ -490,7 +490,13 @@ def compare(files, out):
     runs = []
     for path in files:
         with open(path, encoding="utf-8") as handle:
-            runs.append(json.load(handle))
+            run = json.load(handle)
+        # A run of the script before phase 1a, or one without faces, has no photo's number and boxes: every row of
+        # the table would be empty, and an empty table reads as "nothing lost".
+        if not any(photo.get("number") is not None and photo.get("boxes") is not None for photo in run.get("photos") or ()):
+            raise SystemExit("%s holds no photo's number and faces found, so there is nothing to compare: run that "
+                             "sample again with this script, faces on." % path)
+        runs.append(run)
     off = [run for run in runs if not run.get("detect_max_side")]
     if len(off) != 1:
         raise SystemExit("compare takes one run without a cap and any with one")
