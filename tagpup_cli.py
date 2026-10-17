@@ -104,11 +104,15 @@ READ_AHEAD = 3
 READ_AHEAD_BYTES = 1 << 30
 
 
-def read_ahead_bytes(width, height):
-    """What a photo of `width` x `height` may hold at once while it is read ahead: two RGB pictures of its longer side
-    squared -- the picture decoded upright and the square CLIP's input is cut from, then the picture as stored and the
-    detector's array of it."""
-    return 2 * 3 * max(width, height) ** 2
+def read_ahead_bytes(width, height, clip=None, faces=None, max_side=None):
+    """What a photo of `width` x `height` is reserved while it is read ahead: the larger of what each half it goes
+    through holds at once -- CLIP's (`clip`, when its vector is to be made: ClipModel.input_bytes), whose pictures
+    are let go before the faces' are made, and the faces' (`faces`: FaceModel.picture_bytes), held until the card
+    has detected them. Each half says its own; this only takes the larger."""
+    halves = [faces.picture_bytes(width, height, max_side=max_side)] if faces is not None else []
+    if clip is not None:
+        halves.append(clip.input_bytes(width, height))
+    return max(halves, default=0)
 
 
 def get_exiftool_path(db_path, read_only=False) -> str:
@@ -421,7 +425,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             nothing on the graphics card. A picture that does not decode raises images.Unreadable, handed to the
             loop below in the photo's turn."""
             path = meta["path"]
-            reserve(read_ahead_bytes(*image_files.picture_size(path)))
+            width, height = image_files.picture_size(path)
+            reserve(read_ahead_bytes(width, height, embeddings.clip if begun["vector"] is None else None,
+                                     face_processor, detect_max_side))
             looked = {}
             prepared = None
             if begun["vector"] is None:

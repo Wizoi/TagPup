@@ -344,6 +344,12 @@ class ThePhotosReadAhead(unittest.TestCase):
 
     TEN = (3648, 2736)
     PANORAMA = (17000, 11350)
+    #: The live libraries' models: CLIP keeping the full frame up to 1.4, the default face settings, no cap.
+    CLIP = clip.ClipModel("ViT-H-14", "laion2b_s32b_b79k", True, 1.4, 512, device="cpu")
+    FACES = face_models.FaceModel(20, 0.85, [0.6, 0.7, 0.7], device="cpu")
+
+    def reserved(self, size):
+        return tagpup_cli.read_ahead_bytes(*size, self.CLIP, self.FACES)
 
     def run_ahead(self, sizes, read=None, threads=2, ahead=3):
         held, seen = [], []
@@ -352,7 +358,7 @@ class ThePhotosReadAhead(unittest.TestCase):
         def read_one(item, begun, reserve):
             if read is not None:
                 read(item)
-            size = tagpup_cli.read_ahead_bytes(*sizes[item])
+            size = self.reserved(sizes[item])
             reserve(size)
             held.append((item, size, reader["it"]._used))
             return item
@@ -371,14 +377,14 @@ class ThePhotosReadAhead(unittest.TestCase):
         sizes = [self.TEN] * 5 + [self.PANORAMA] + [self.TEN] * 4
         held, seen = self.run_ahead(sizes)
         self.assertEqual(list(range(len(sizes))), seen)
-        big = tagpup_cli.read_ahead_bytes(*self.PANORAMA)
+        big = self.reserved(self.PANORAMA)
         self.assertGreater(big, tagpup_cli.READ_AHEAD_BYTES)
         for item, size, used in held:
             with self.subTest(photo=item):
                 self.assertTrue(used <= tagpup_cli.READ_AHEAD_BYTES or used == big,
                                 "%d bytes held at once" % used)
         self.assertEqual(big, next(used for item, size, used in held if item == 5), "the panorama shared the bound")
-        self.assertGreater(max(used for item, size, used in held if item != 5), tagpup_cli.read_ahead_bytes(*self.TEN),
+        self.assertGreater(max(used for item, size, used in held if item != 5), self.reserved(self.TEN),
                            "the ordinary photos were not read ahead at all")
 
     def test_a_photo_handed_on_is_let_go_while_the_next_ones_are_read(self):

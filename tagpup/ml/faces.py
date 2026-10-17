@@ -143,6 +143,18 @@ class FaceModel:
             logger.error(f"Error processing faces in {img_path}: {e}")
             return NotDetected()
 
+    def picture_bytes(self, width, height, *, max_side):
+        """The bytes `picture` holds for a photo of `width` x `height`: the picture as stored (RGB), and the detector's
+        array of it -- at the cap, with the scaled picture beside it while the array is made, when `max_side` scales
+        it. What the index's read-ahead reserves for this half (tagpup_cli.read_ahead_bytes); said here, beside what
+        it counts."""
+        stored = 3 * width * height
+        longest = max(width, height)
+        if not max_side or longest <= max_side:
+            return 2 * stored
+        scaled = 3 * round(width * max_side / longest) * round(height * max_side / longest)
+        return stored + 2 * scaled
+
     def detect_and_embed(self, picture):
         """The faces of a picture `picture` made ready (DetectionPicture), each with its box in the picture as stored,
         its crop and its vector: the graphics card's work for a photo. NotDetected handed in is handed back."""
