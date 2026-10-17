@@ -91,7 +91,9 @@ library for a run that has nothing to do.
 - **Thresholds belong to a model.** `OFFER_A_NAME` 0.70, `NAME_WITHOUT_ASKING` 0.80, the grouping cut 0.885 and
   Suggest's neighbour cut 0.35 are measured per model on the named faces (35,425 in photo_index, counted
   2026-10-16; recount in each brief), never carried over. Read a curve on the unnamed faces too, not only on the faces
-  already matched (#1532).
+  already matched (#1532): a recogniser's gate is read on the margin curve (over the second-best person) and on a
+  hand-checked sample of unnamed faces, not on the named-face curve alone (98.3% at every likeness cut, because
+  those faces are the ones already matched).
 - **Every bulk write on photos or rows is a dry run first**, `--apply` to write, a backup before, run on a copy of the
   library first, reporting what changed and not what was attempted.
 - **GPU work takes its turn** through `tagpup.runtime` (`begin`, `gpu_turn`); no phase loads a model on the card
@@ -262,7 +264,8 @@ file. Size: three merges (migration and readers; detector and recogniser behind 
 - **4b Incremental assignment.** A folder that arrives has its faces matched against known faces by neighbour query and
   joins a person within threshold, or waits; a full re-cluster is the exception, not the response to every event.
 
-**Gate.** The phase 3 curve, read per age gap where Date Taken allows; the owner's check of a sample folder. Owner:
+**Gate.** The phase 3 curve, read per age gap where Date Taken allows, on the margin curve and a hand-checked sample
+of unnamed faces too (#1532); the owner's check of a sample folder. Owner:
 People, with Views-AI for the vectors.
 
 ### Phase 5: The photo model (one re-embed)
@@ -390,6 +393,7 @@ clustering's seconds apart, so the rows below are measured again like for like; 
 | The new detector is no faster than MTCNN | 3 | The speed check comes before the design is fixed; the plan is re-read if it fails |
 | A threshold carried to a model it does not fit | 2, 3, 4, 5 | Thresholds read off the hold-out curve per model, on unnamed faces too |
 | A stale vector kept past a change in how photos are read | 1f, 5, 6 | `repair-vectors` now; the fingerprint in the model key at phase 6 |
+| Peak card memory 9,982 of 10,240 MiB on the phase 0 sample, MTCNN at full resolution on the largest photos, with the desktop apps holding up to 6 GB (#1533): by design until phase 3 | 1, 3 | The 1a cap exists and stays OFF (owner, DECISIONS 2026-10-16); 1b's prefetch bounds the bytes it holds; phase 3 replaces MTCNN. Until then the owner closes the desktop apps for a large index |
 | Two heavy jobs on one card | all | The GPU turn; no two test runs at once |
 | The migration is judged by feel | 3 | Phase 0 timings and counts before and after |
 | Scope creep into the files | 6 | Phase 6 opens only by the owner, with its own design |
