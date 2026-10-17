@@ -110,7 +110,7 @@ def repair(library, runtime, apply=False, progress=None, report=None):
     {"photos", "missing", "failed", "away" (the shares that did not answer), "skipped_away", "no_header", "turned",
     "no_vector", "stale_stamp", "to_recompute"} always, and with `apply` {"replaced": made again, different, and read
     back as written, "already_upright": made again and the same, "not_kept": made again and not read back (the file
-    changed meanwhile, or the write failed: the next look redoes it), "damaged": did not decode, "unreadable": any
+    changed meanwhile, or the write failed: run it again), "damaged": did not decode, "unreadable": any
     other failure (CUDA out of memory, a file gone) with "reasons" counting each by its name}. `runtime` gives the
     model and the turn on the card (tagpup.runtime.Runtime); `report` is told who holds the card while it waits."""
     model = runtime.model_key(library)

@@ -1013,7 +1013,7 @@ def repair_vectors(ctx, apply_):
                       markup=False, soft_wrap=True)
         return
     console.print("Replaced %d (read back as written), %d already matched, %d not kept (the file changed meanwhile or the "
-                  "write failed; the next look makes them), %d damaged, %d could not be made%s." % (
+                  "write failed; run it again), %d damaged, %d could not be made%s." % (
                       counts["replaced"], counts["already_upright"], counts["not_kept"], counts["damaged"],
                       counts["unreadable"], (": " + ", ".join("%s x%d" % item for item in counts["reasons"].items()))
                       if counts["reasons"] else ""), markup=False, soft_wrap=True)
