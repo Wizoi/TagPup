@@ -69,8 +69,11 @@ exceptions, each unjournaled by decision:
 ## By design (each row closed `decided:`)
 
 - **The indexer's per-photo reads have no deadline** (the header for the read-ahead's estimate, the decodes, the stamp,
-  the zero tail; review of AI pipeline 1b, 2026-10-17): a share that sleeps mid-index holds the run until it answers,
-  or until Cancel or Ctrl+C. Nothing becomes missing and nothing is written meanwhile. A full decode cannot be bounded
+  the zero tail; review of AI pipeline 1b, 2026-10-17): a share that sleeps mid-index holds the run until it answers.
+  Nothing becomes missing and nothing is written meanwhile. A run from the CLI stops at Ctrl+C. A run the page started
+  has no stop of its own: Cancel drops only folders not begun and a run still waiting for the graphics card
+  (`IndexQueue.cancel`), and a hand-over waits for an index under way (`Lifecycle.drain`); it ends when the share
+  answers, or with the server. A full decode cannot be bounded
   without giving the photo up as unread, which the next index reads again anyway, and `shares.bounded` is for deciding
   "not looked at" before a write or a report, which an index in progress does not do.
 
