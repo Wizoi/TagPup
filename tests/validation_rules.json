@@ -1,5 +1,5 @@
 {
- "version": "896ce25b745b",
+ "version": "b2f0e256d327",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -328,15 +328,15 @@
    ]
   },
   "setting faces.model": {
-   "group": "faces",
+   "group": "face-model",
    "label": "Face model",
    "type": "text",
    "default": "mtcnn-facenet",
-   "info": "The models indexing and Suggest find faces and make their vectors with: mtcnn-facenet (MTCNN and FaceNet, which made every face vector the library holds) or scrfd-adaface (SCRFD and AdaFace). The settings below are MTCNN's. A library keeps FaceNet's vectors alone until its faces are moved to the new schema (docs/AI_PIPELINE.md, phase 3): until then, set to scrfd-adaface, indexing and Suggest are refused and write nothing.",
+   "info": "The models indexing and Suggest find faces and make their vectors with: mtcnn-facenet (MTCNN and FaceNet, which made every face vector the library holds) or scrfd-adaface (SCRFD and AdaFace). The Face detection settings are MTCNN's. A library keeps FaceNet's vectors alone until its faces are moved to the new schema (docs/AI_PIPELINE.md, phase 3): until then, set to scrfd-adaface, indexing and Suggest are refused and write nothing.",
    "locked": true,
    "consequences": [
-    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
-    "Indexing a folder again applies it to that folder."
+    "Set to scrfd-adaface, every index and every Suggest in this library is refused and writes nothing until its faces are moved to the new schema (migration 33): it keeps FaceNet's face vectors alone. Identify still shows the faces it holds.",
+    "Set back to mtcnn-facenet, indexing and Suggest run as before; no face already found changes either way."
    ],
    "rules": [
     {

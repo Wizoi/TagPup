@@ -75,8 +75,8 @@ KEPT_FACE_MODELS = frozenset({validation.MTCNN_FACENET})
 FACE_MODEL_NOT_KEPT = (
     "This library is set to a face model whose vectors it cannot keep yet: it holds FaceNet's face vectors, and "
     "another model's would be compared with them as if they were alike, until its faces are moved to the new schema "
-    "(docs/AI_PIPELINE.md, phase 3). Set the face model (TagTuner's settings, Face detection) back to %s to index or "
-    "to suggest." % validation.MTCNN_FACENET)
+    "(docs/AI_PIPELINE.md, phase 3). Set the face model (TagTuner's settings, %s) back to %s to index or to "
+    "suggest." % (validation.SETTING_GROUPS["face-model"]["title"], validation.MTCNN_FACENET))
 
 
 class FaceModelNotReady(Exception):
@@ -321,8 +321,8 @@ def change(library, values, acknowledged=(), apply=True):
     the library's history and can be undone. Refused, with nothing written, for a key
     that is no setting, a value the validator refuses (its message), a library never
     stamped, or a setting changed by someone else since it was read -- and for a change
-    to a locked setting whose group (validation.SETTING_GROUPS: "clip", "faces",
-    "exiftool") `acknowledged` does not name: the refusal lists each such group and what
+    to a locked setting whose group (validation.SETTING_GROUPS: "clip", "face-model",
+    "faces", "exiftool") `acknowledged` does not name: the refusal lists each such group and what
     changing it means, and details["unacknowledged"] holds them. Every caller -- the
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;

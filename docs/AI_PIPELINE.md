@@ -316,7 +316,9 @@ Owners: Data (migration), People (identity), Views-AI (detector, recogniser, car
 file. Size: three merges (migration and readers; detector and recogniser behind the setting; the pass and calibration).
 
 **Merge 2b, as built (2026-10-18).** The setting `faces.model` (`mtcnn-facenet`, the default, or `scrfd-adaface`;
-locked, group "faces"; a library holding no value reads as the default). A library set to a model whose vectors it
+locked, in its own group "face-model", "The face model", whose consequences say what switching does -- the face
+detection group's are MTCNN's; the dialog offers it as a list of the rule's choices; a library holding no value reads as
+the default). A library set to a model whose vectors it
 cannot keep (`tagpup.services.settings.KEPT_FACE_MODELS`, FaceNet's alone) is refused every write of faces with one
 sentence (`FACE_MODEL_NOT_KEPT`): the CLI's index before it writes or imports anything (exit status 78; the server's
 queue says "Nothing was indexed: ..."), Suggest and Just look at `Runtime.begin` (`FaceModelNotReady`, nothing built),

@@ -146,9 +146,10 @@ class TheGearDialog(unittest.TestCase):
                 groups = {g["name"]: g for g in answer["groups"]}
                 if kind == "tuner":
                     self.assertEqual("40", shown["faces.min_face_size"]["value"])
-                    self.assertEqual({"clip", "faces", "exiftool", "library"}, set(groups))
+                    self.assertEqual({"clip", "face-model", "faces", "exiftool", "library"}, set(groups))
                     # The library's folders change nothing already made: not locked.
-                    self.assertEqual({"clip", "faces", "exiftool"}, {name for name, g in groups.items() if g["locked"]})
+                    self.assertEqual({"clip", "face-model", "faces", "exiftool"},
+                                     {name for name, g in groups.items() if g["locked"]})
                 else:
                     self.assertEqual({"suggest", "renaming"}, set(groups))
                     self.assertFalse(any(g["locked"] for g in groups.values()))

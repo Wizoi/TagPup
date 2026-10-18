@@ -133,7 +133,8 @@ class _Libraries(unittest.TestCase):
         self.home = own_home.for_test(self, prefix="new_face_model_")
         self.harbour, self.regatta = self.library("harbour.db", "Regatta")
         self.cove, self.jetty = self.library("cove.db", "Jetty")
-        changed = library_settings.change(self.cove, {"faces.model": validation.SCRFD_ADAFACE}, acknowledged=["faces"])
+        changed = library_settings.change(self.cove, {"faces.model": validation.SCRFD_ADAFACE},
+                                          acknowledged=["face-model"])
         self.assertEqual(1, changed.changed, changed.refused)
         self.built = []
         self.card = gpu.Card(os.path.join(self.home.root, "card"), poll=0.05)
@@ -191,6 +192,21 @@ class _Libraries(unittest.TestCase):
     def begin(self, library, **kwargs):
         with mock.patch.object(suggester_service, "model_for_run", self.model_for_run):
             return self.runtime.begin(library, **kwargs)
+
+
+class TheOwnerIsToldFirst(_Libraries):
+    """Before the switch: what the owner is asked to acknowledge says what switching does, and nothing that is not so."""
+
+    def test_the_consequences_say_it_is_refused(self):
+        before = rows_of(self.harbour.path)
+        refused = library_settings.change(self.harbour, {"faces.model": validation.SCRFD_ADAFACE},
+                                          acknowledged=["faces"])
+        self.assertEqual(0, refused.changed)
+        said = refused.refused
+        self.assertIn("every index and every Suggest in this library is refused and writes nothing", said)
+        # The face detection settings' consequences are MTCNN's: an index again does not apply the new model.
+        self.assertNotIn("Indexing a folder again applies it", said)
+        self.assertEqual(before, rows_of(self.harbour.path))
 
 
 class TheIndexIsRefused(_Libraries):
@@ -337,7 +353,7 @@ class SwitchedWhileSuggestRuns(_Libraries):
         run = self.begin(self.harbour, what="Suggest Regatta (harbour)")
         try:
             changed = library_settings.change(self.harbour, {"faces.model": validation.SCRFD_ADAFACE},
-                                              acknowledged=["faces"])
+                                              acknowledged=["face-model"])
             self.assertEqual(1, changed.changed, changed.refused)
             self.runtime.settings_changed(self.harbour)
             [faces] = self.handed

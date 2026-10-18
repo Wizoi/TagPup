@@ -248,6 +248,18 @@ SETTING_GROUPS = {
             "on a large library that takes hours.",
         ],
     },
+    # Its own group: the face detection settings' consequences are MTCNN's, and not what switching the model does.
+    "face-model": {
+        "app": "tuner",
+        "title": "The face model",
+        "consequences": [
+            "Set to %s, every index and every Suggest in this library is refused and writes nothing until its "
+            "faces are moved to the new schema (migration 33): it keeps FaceNet's face vectors alone. Identify "
+            "still shows the faces it holds." % SCRFD_ADAFACE,
+            "Set back to %s, indexing and Suggest run as before; no face already found changes either way."
+            % MTCNN_FACENET,
+        ],
+    },
     "faces": {
         "app": "tuner",
         "title": "Face detection",
@@ -316,12 +328,12 @@ SETTINGS = {
          {"rule": "integer", "message": "The image size is a whole number of pixels."},
          _between("The image size", 32, 2048)]),
     "faces.model": _setting(
-        "faces", "Face model", "text", MTCNN_FACENET,
+        "face-model", "Face model", "text", MTCNN_FACENET,
         "The models indexing and Suggest find faces and make their vectors with: %s (MTCNN and FaceNet, which made "
-        "every face vector the library holds) or %s (SCRFD and AdaFace). The settings below are MTCNN's. A library "
+        "every face vector the library holds) or %s (SCRFD and AdaFace). The %s settings are MTCNN's. A library "
         "keeps FaceNet's vectors alone until its faces are moved to the new schema (docs/AI_PIPELINE.md, phase 3): "
         "until then, set to %s, indexing and Suggest are refused and write nothing." % (
-            MTCNN_FACENET, SCRFD_ADAFACE, SCRFD_ADAFACE),
+            MTCNN_FACENET, SCRFD_ADAFACE, SETTING_GROUPS["faces"]["title"], SCRFD_ADAFACE),
         [{"rule": "one_of", "choices": list(FACE_MODELS),
           "message": "The face model is one of %s." % ", ".join(FACE_MODELS)}]),
     "faces.min_face_size": _setting(

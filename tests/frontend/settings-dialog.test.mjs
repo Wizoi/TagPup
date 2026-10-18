@@ -22,8 +22,8 @@ import { OPEN_DIALOG } from "../../web/common/dialog.js";
 afterEach(() => closeAllApps());
 
 const LIBRARY = "kr-track";
-const GROUP_TITLES = { clip: "The CLIP model", faces: "Face detection", exiftool: "ExifTool",
-                       library: "Library folders", suggest: "Suggest", renaming: "Smart Rename" };
+const GROUP_TITLES = { clip: "The CLIP model", "face-model": "The face model", faces: "Face detection",
+                       exiftool: "ExifTool", library: "Library folders", suggest: "Suggest", renaming: "Smart Rename" };
 
 /** What /api/settings answers for a library holding the defaults, from the declarations. */
 function settingsAnswer(values = {}) {
@@ -85,7 +85,8 @@ describe("the settings dialog", () => {
     assert.equal(document.getElementById("settings-title").textContent, `Library settings: ${LIBRARY}`);
     assert.deepEqual([...dialog.querySelectorAll("[data-setting]")].map((i) => i.dataset.setting), DECLARED);
     assert.deepEqual([...dialog.querySelectorAll(".settings-group h4")].map((h) => h.textContent),
-                     ["The CLIP model", "Face detection", "ExifTool", "Library folders", "Suggest", "Smart Rename"]);
+                     ["The CLIP model", "The face model", "Face detection", "ExifTool", "Library folders", "Suggest",
+                      "Smart Rename"]);
     assert.equal(field("model.name").value, "ViT-H-14");
     assert.equal(field("model.preserve_full_frame").type, "checkbox");
     assert.equal(field("model.preserve_full_frame").checked, true);
@@ -116,7 +117,8 @@ describe("the settings dialog", () => {
                                      "model.preserve_full_frame", "model.pretrained", "paths.exiftool"]);
     for (const key of LOCKED) {
       const input = field(key);
-      assert.ok(input.type === "checkbox" ? input.disabled : input.readOnly, `${key} is editable`);
+      assert.ok(input.type === "checkbox" || input.tagName === "SELECT" ? input.disabled : input.readOnly,
+                `${key} is editable`);
       assert.equal(input.getAttribute("aria-readonly"), "true");
     }
     for (const key of ["candidates.tags", "renaming.format"]) {
@@ -141,6 +143,29 @@ describe("the settings dialog", () => {
     assert.ok(!save().disabled, "Save stays disabled with every consequence ticked");
     click(window, consequences[0]);
     assert.ok(save().disabled, "unticking one left Save enabled");
+  });
+
+  test("the face model is one of the choices the rules publish, locked behind its own consequences", async (t) => {
+    const { window, field, save, changeButton, boxes, posted } = await tunerWithSettings(t);
+    const declared = PUBLISHED_RULES.kinds["setting faces.model"];
+    const select = field("faces.model");
+    // The server's list, not a copy of it: the rule's choices.
+    assert.equal(select.tagName, "SELECT");
+    assert.deepEqual([...select.options].map((o) => o.value), declared.rules.find((r) => r.choices).choices);
+    assert.equal(select.value, declared.default);
+    assert.ok(select.disabled, "the face model is editable before Change...");
+    click(window, changeButton("face-model"));
+    assert.ok(!select.disabled, "Change... left the face model locked");
+    assert.equal(boxes("face-model").length, declared.consequences.length);
+    select.value = "scrfd-adaface";
+    select.dispatchEvent(new window.Event("change", { bubbles: true }));
+    assert.ok(save().disabled, "Save is enabled before the consequences are ticked");
+    boxes("face-model").forEach((box) => click(window, box));
+    assert.ok(!save().disabled);
+    click(window, save());
+    await flush(window, 6);
+    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.model": "scrfd-adaface" },
+                                                     acknowledged: ["face-model"] }]);
   });
 
   test("the library's folders are one a line, and a whole drive is refused as it is typed", async (t) => {
