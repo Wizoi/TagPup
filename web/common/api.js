@@ -212,6 +212,23 @@ function apiJson(path, options) {
     return apiFetch(path, options).then(res => res.json());
 }
 
+/**
+ * A reply's JSON when the server answered 2xx; else a rejection whose message is the server's own sentence (its `error`,
+ * marked `said`, for the page to show as it is), or `fallback` when it gave none.
+ */
+async function apiAnswered(res, fallback) {
+    if (res.ok) return res.json();
+    let body = null;
+    try {
+        body = await res.json();
+    } catch (_) {
+        body = null;
+    }
+    const failure = new Error((body && body.error) || fallback);
+    failure.said = Boolean(body && body.error);
+    throw failure;
+}
+
 /** '/api/x' under no library: what covers every library. Anything but an /api/ path is refused. */
 function siteUrl(path) {
     const text = String(path);
@@ -301,6 +318,7 @@ export const api = Object.freeze({
     image: apiUrl,
     fetch: apiFetch,
     json: apiJson,
+    answered: apiAnswered,
     site: Object.freeze({
         url: siteUrl,
         fetch: siteFetch,

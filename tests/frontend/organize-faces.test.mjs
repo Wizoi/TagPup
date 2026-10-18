@@ -320,6 +320,16 @@ describe("the panel of a face", () => {
     assert.ok(ctx.panel().querySelector(".face-panel-input"));
   });
 
+  test("a face the library's face model has no vector of says so in the server's words, and still lets a name be typed", async (t) => {
+    const said = "This face has no vector under this library's face model, so it cannot be compared with anyone: the new model's pass makes its faces' vectors (docs/AI_PIPELINE.md, phase 3).";
+    const ctx = await openPhoto(t, { extra: (server) => server.first("/api/face-matches", { success: false, error: said }, { status: 400 }) });
+    ctx.show();
+    click(ctx.window, ctx.boxes()[0]);
+    await flush(ctx.window, 6);
+    assert.equal(ctx.panel().querySelector(".face-panel-suggestions").textContent, said);
+    assert.ok(ctx.panel().querySelector(".face-panel-input"));
+  });
+
   test("closes on Escape and gives the focus back to its box; it does not trap the keyboard", async (t) => {
     const ctx = await openPhoto(t);
     ctx.show();

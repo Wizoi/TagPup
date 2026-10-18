@@ -29,7 +29,7 @@ function face(id) {
     suggestion_strength: null };
 }
 
-async function open(t, { create = { success: true, id: 90, tag: "Pets/Sam" } } = {}) {
+async function open(t, { create = { success: true, id: 90, tag: "Pets/Sam" }, extra = null } = {}) {
   const server = new FakeServer()
     .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
     .on("/api/unmatched-faces/people", [{ name: "Unknown Faces", count: 2, unit: "face" }])
@@ -41,6 +41,7 @@ async function open(t, { create = { success: true, id: 90, tag: "Pets/Sam" } } =
     .on("/api/taxonomy/create", create)
     .on("/api/faces/match-bulk", { success: true, matched_ids: [1] })
     .on(PEOPLE_ROUTE, [SAM_FRIEND]);
+  if (extra) extra(server);
   const ctx = await loadApp("tagtuner", { t, server,
     url: "http://localhost:8080/kr-track/?mode=unmatched-faces&person=Unknown%20Faces" });
   await flush(ctx.window, 10);
@@ -65,6 +66,15 @@ async function open(t, { create = { success: true, id: 90, tag: "Pets/Sam" } } =
 }
 
 const wait = (window, ms = 50) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+describe("the faces like the seed", () => {
+  test("a seed the library's face model has no vector of says so in the server's words", async (t) => {
+    const said = "This face has no vector under this library's face model, so it cannot be compared with anyone: the new model's pass makes its faces' vectors (docs/AI_PIPELINE.md, phase 3).";
+    const ctx = await open(t, { extra: (server) => server.first("/api/face-matches-unmatched", { success: false, error: said }, { status: 400 }) });
+    await flush(ctx.window, 6);
+    assert.equal(ctx.document.getElementById("modal-matches-loading").textContent, said);
+  });
+});
 
 describe("the Group box", () => {
   test("offers the usual place, the face roots and the groups under them -- not a person, not a root that holds no faces", async (t) => {

@@ -339,10 +339,7 @@ function renderPhotoDetails(details) {
                 style: 'font-size:11px;color:var(--text-muted);font-style:italic;', text: 'Loading matches...',
             }));
             api.fetch(`/api/face-matches?id=${face.id}`)
-                .then(res => {
-                    if (!res.ok) throw new Error('Failed to load matches');
-                    return res.json();
-                })
+                .then(res => api.answered(res, 'Failed to load matches'))
                 .then(matches => {
                     suggestionsList.innerHTML = '';
                     if (!matches || matches.length === 0) {
@@ -370,7 +367,7 @@ function renderPhotoDetails(details) {
                 .catch(err => {
                     console.error('Error fetching face matches:', err);
                     replaceContent(suggestionsList, buildElement('span', {
-                        style: 'font-size:11px;color:#f87171;', text: 'Failed to load',
+                        style: 'font-size:11px;color:#f87171;', text: err && err.said ? err.message : 'Failed to load',
                     }));
                 });
         });

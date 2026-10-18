@@ -421,9 +421,7 @@ function suggestionButtons(face) {
     if (found === undefined || found === 'loading') {
         return [buildElement('span', { className: 'face-panel-muted', text: 'Looking...' })];
     }
-    if (found === 'failed') {
-        return [buildElement('span', { className: 'face-panel-muted', text: 'The suggestions could not be loaded.' })];
-    }
+    if (failed(found)) return [buildElement('span', { className: 'face-panel-muted', text: found.failed })];
     const elsewhere = namedElsewhere(face);
     // The same PERSON, by id: two people called Sam are two, and the one a face already is is not offered to it again.
     const offered = found.filter(match => !elsewhere.some(other => sameNamed(other, match))
@@ -448,23 +446,26 @@ function suggestionButtons(face) {
     });
 }
 
+/** Did asking who a face looks like fail? Then `found.failed` says why. */
+const failed = (found) => Boolean(found && typeof found === 'object' && !Array.isArray(found) && found.failed);
+
 /** Ask who a face looks like, once for the face while its panel is open. */
 function askSuggestions(faceId) {
     const box = state.faceBoxes;
-    if (box.matches[faceId] !== undefined && box.matches[faceId] !== 'failed') return;
+    if (box.matches[faceId] !== undefined && !failed(box.matches[faceId])) return;
     box.matches[faceId] = 'loading';
     const photoPath = box.path;
     api.fetch(`/api/face-matches?id=${encodeURIComponent(faceId)}`)
-        .then(res => {
-            if (!res.ok) throw new Error('face matches');
-            return res.json();
-        })
+        .then(res => api.answered(res, 'face matches'))
         .then(found => {
             if (!box.path || !samePath(box.path, photoPath)) return;   // another photo has opened since
             box.matches[faceId] = Array.isArray(found) ? found : [];
         })
-        .catch(() => {
-            if (box.path && samePath(box.path, photoPath)) box.matches[faceId] = 'failed';
+        .catch((err) => {
+            // The server's sentence when it gave one (a face with no vector under the library's face model).
+            if (box.path && samePath(box.path, photoPath)) {
+                box.matches[faceId] = { failed: err && err.said ? err.message : 'The suggestions could not be loaded.' };
+            }
         })
         .finally(() => {
             if (box.path && samePath(box.path, photoPath) && box.open === faceId) {

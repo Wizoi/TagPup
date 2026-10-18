@@ -121,7 +121,7 @@ export const state = {
     // The faces boxed on the open photo (face-boxes.js): `path` the photo, `faces` as /api/photo-faces gave them, `size`
     // the pixels their boxes are in, `turned` the photo is stored turned (its boxes may be off), `shown` the boxes are on
     // (kept from photo to photo), `open` the face whose panel is open, `matches` {face id: the people it looks like, or
-    // 'loading' | 'failed'}, `busy` a naming is under way, `note` the panel's last sentence, and `typed` the name being typed
+    // 'loading' | {failed: the sentence why}}, `busy` a naming is under way, `note` the panel's last sentence, and `typed` the name being typed
     // in the panel of face `typedFor`.
     faceBoxes: {
         path: null, faces: [], size: null, turned: false, shown: false, open: null, matches: {}, busy: false,
