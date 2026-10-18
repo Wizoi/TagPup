@@ -213,8 +213,10 @@ class ScrfdAdaFace:
         self.detectors = detectors
         logger.info("Face models loaded.")
 
-    def detect_and_embed_faces(self, img_path):
-        """The faces of the photo at `img_path` (detect_and_embed)."""
+    def faces_in(self, img_path):
+        """The faces of the photo at `img_path` (detect_and_embed): each its box, score, landmarks, vector and norm --
+        no crop, and no `max_side`, which tagpup.ml.faces.FaceModel's callers pass: nothing that writes faces is handed
+        this model before phase 3's pass (tagpup.runtime.Runtime.faces refuses it; Runtime.look_at_faces looks)."""
         return self.detect_and_embed(self.picture(img_path))
 
     def picture(self, img_path):
