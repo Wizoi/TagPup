@@ -111,11 +111,8 @@ class KnownFacesCompareWithTheClosestFace(unittest.TestCase):
 
 
 #: Where a shipped file other than clustering.py may order faces by likeness, and why: Identify's grid ranks the faces that
-#: grouped with nothing by their best likeness, faces and not people, and asks no margin (tagpup.services.identify). The
-#: phase 3 speed check's non-maximum suppression orders a detector's boxes by their score, before any face has a vector
-#: (scripts/measure_face_models.nms).
-RANKS_FACES = {os.path.join("tagpup", "services", "identify.py"): 2,
-               os.path.join("scripts", "measure_face_models.py"): 1}
+#: grouped with nothing by their best likeness, faces and not people, and asks no margin (tagpup.services.identify).
+RANKS_FACES = {os.path.join("tagpup", "services", "identify.py"): 2}
 
 #: Any spelling of taking the top of a row: the numpy ones, and the Python ones a second margin could as well be written in.
 TOP_OF_A_ROW = re.compile(r"\b(?:nan)?arg(?:max|sort|partition)\(|\.reduceat\(|\bnp\.(?:sort|partition)\(|\bnlargest\("

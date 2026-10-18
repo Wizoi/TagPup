@@ -442,7 +442,7 @@ clustering's seconds apart, so the rows below are measured again like for like; 
 
 ### The phase 3 spike: face detectors and recognisers (2026-10-18)
 
-`scripts/measure_face_models.py` on phase 0's sample drawn again from photo_index (299 photos, the 10 with the most
+The script `measure_face_models.py` (removed after the run: it built models and took the card's turn outside the runtime, which the guards forbid; it is in git at commit 33deed9d) on phase 0's sample drawn again from photo_index (299 photos, the 10 with the most
 faces among them as "worst"), each candidate in a process of its own in a sandbox venv (onnxruntime-gpu 1.22, OpenCV,
 onnx2torch beside the main venv's torch 2.5.1), one at a time, holding the card's turn; the same card, other programs
 holding 0.6 to 1.6 GB of it. Seconds are means a photo, the card synchronised, after an untimed warm-up photo; "card"
