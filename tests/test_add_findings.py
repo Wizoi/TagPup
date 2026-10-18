@@ -55,6 +55,23 @@ class AddFindings(unittest.TestCase):
             add_findings.add(TABLE, [], [(9, "fixed")])
 
 
+class OpenRows(unittest.TestCase):
+    def test_a_row_waiting_on_something_is_open_whatever_its_status_word(self):
+        text = MIXED + "| 253 | 2026-09-25 | wrong: A fault. | planned: DECISIONS 2026-09-25 |\n"
+        found = add_findings.open_rows(text)
+        self.assertEqual([2, 252, 253], [number for number, _, _ in found])
+        self.assertEqual("wrong", found[2][1])
+
+    def test_open_prints_the_rows_and_the_count_to_quote(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "findings.md")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(MIXED)
+            code, out = run(["--open", "--findings", path])
+        self.assertEqual(0, code)
+        self.assertTrue(out.endswith("2 open\n"), out)
+
+
 class Archive(unittest.TestCase):
     def test_closed_rows_go_to_the_archive_of_their_range_and_open_ones_stay(self):
         text, changed, moved = add_findings.archive(MIXED, {})

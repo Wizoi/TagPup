@@ -7,6 +7,7 @@ report them. Numbers are given from the highest across findings.md AND the archi
     .venv/Scripts/python.exe tools/add_findings.py rows.md
     .venv/Scripts/python.exe tools/add_findings.py --status 266 "fixed: 29f101a"
     .venv/Scripts/python.exe tools/add_findings.py --archive
+    .venv/Scripts/python.exe tools/add_findings.py --open     # the open rows and their count, to quote in a report
 
 A status replaces a row's last column, in findings.md or in the archive holding the row.
 `--archive` moves every closed row (status starting fixed, built, decided, closed,
@@ -59,6 +60,18 @@ def row_status(line):
 
 def is_closed(line):
     return bool(CLOSED.match(row_status(line)))
+
+
+def open_rows(text):
+    """[(number, severity, status)] of the numbered rows whose status is not a closed word, in order. A `planned:`
+    or `tabled` row is open: something is still waiting on it (retro 2026-10-18)."""
+    found = []
+    for line in text.splitlines():
+        match = re.match(r"^\| (\d+) \|", line)
+        if match and not is_closed(line):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            found.append((int(match.group(1)), cells[2].split(":", 1)[0][:12], row_status(line)[:60]))
+    return found
 
 
 def without_first_cell(row):
@@ -199,6 +212,8 @@ def main(argv=None):
     parser.add_argument("--status", nargs=2, action="append", default=[], metavar=("NUMBER", "TEXT"),
                         help="set a row's status (its last column)")
     parser.add_argument("--archive", action="store_true", help="move the closed rows to docs/history/")
+    parser.add_argument("--open", action="store_true",
+                        help="print the open rows and their count: the number a merge or phase-end report quotes")
     parser.add_argument("--branch-file", metavar="PATH", help="keep the rows (and statuses) in this file with B-n numbers")
     parser.add_argument("--take", metavar="PATH", help="number a branch's file into findings.md and remove it")
     parser.add_argument("--findings", default=FINDINGS, help=argparse.SUPPRESS)
@@ -209,6 +224,13 @@ def main(argv=None):
         rows = rows_in(_read(args.rows))
         if not rows:
             parser.error("no `| ? |` row in %s" % args.rows)
+
+    if args.open:
+        found = open_rows(_read(args.findings).replace("\r\n", "\n"))
+        for number, severity, status in found:
+            print("#%d %s: %s" % (number, severity, status))
+        print("%d open" % len(found))
+        return 0
 
     if args.branch_file:
         text = _read(args.branch_file).replace("\r\n", "\n") if os.path.exists(args.branch_file) else ""
