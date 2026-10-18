@@ -23,7 +23,7 @@ from tagpup.store import taxonomy  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
 import photo_rows  # noqa: E402
-from face_rows import add_face, person_of  # noqa: E402
+from face_rows import FACENET, add_face, person_of  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]
 
@@ -56,10 +56,13 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def add_face(self, path, name, name_source, excluded, vector=True, box="[0, 0, 100, 100]"):
+        """A face with its vector under the library's model (FaceNet's), or, not `vector`, under the new model's alone, as the
+        face pass leaves a face it made (tagpup.services.face_pass)."""
         conn = self.index.conn
         photo_rows.add_unread(conn, path)
-        add_face(conn, path, box, np.asarray(ROWAN, dtype=np.float32).tobytes() if vector else None, prob=0.99,
-                 name=name, tag_id=person_of(conn, name) if name else None, name_source=name_source, excluded=excluded)
+        add_face(conn, path, box, np.asarray(ROWAN, dtype=np.float32).tobytes(), model=FACENET if vector else "scrfd-adaface",
+                 prob=0.99, name=name, tag_id=person_of(conn, name) if name else None, name_source=name_source,
+                 excluded=excluded)
         conn.commit()
 
     def suggested(self, path):
@@ -86,7 +89,7 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
 
     def test_a_face_with_no_vector_under_the_model_is_on_file_but_compared_with_nobody(self):
         """Part-way through the new model's pass a photo holds a face with a vector under the library's model and one
-        without (the reader answers None for it). Suggest completes -- it raised on the None, failed the photo, and the
+        with the new model's alone (the reader answers None for it). Suggest completes -- it raised on the None, failed the photo, and the
         run tried it again for ever -- names the face it can compare, and detects nothing again."""
         self.add_face(r"D:\Pictures\half.jpg", None, None, 0)
         self.add_face(r"D:\Pictures\half.jpg", None, None, 0, vector=False, box="[200, 0, 300, 100]")
