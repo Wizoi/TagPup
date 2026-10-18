@@ -403,7 +403,7 @@ the desktop-to-server flow), comes first. Whatever it writes goes through `file_
 | Is the warm indexer worth it (1e)? | After 1b is timed | Views-AI and Integration owners |
 | How the 223 turned photos' vectors are repaired (1f) and how a stale one is found | Phase 1 | Views-AI and Data owners |
 | The margin and likeness thresholds for naming, interim (2b) | Phase 2, read off the curve | Owner (the person) |
-| Which detector and recogniser (3, after the speed check) | Phase 3 spike | Owner (the person), on the owners' evidence |
+| Which detector and recogniser (3, after the speed check) | DECIDED 2026-10-18 (owner): SCRFD 10g in torch at 1280 and 640, AdaFace IR-101, no second runtime (DECISIONS 2026-10-18) | Owner (the person) |
 | The owner's chosen precision for naming a face | Phase 3 gate | Owner (the person) |
 | Resolution, then photo model | Phase 5, with phase 0 numbers | Owner (the person), on the owners' evidence |
 | When to retire old vectors | After a model has run for a while | Owner (the person) |
