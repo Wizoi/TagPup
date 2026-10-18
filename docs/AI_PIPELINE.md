@@ -190,10 +190,10 @@ same scripts.
   for JPEG. The damage check must still run: a truncated or zero-tailed file raises `Unreadable` as before, tested
   with the three damaged shapes of the 2026-10-15 decision. Worth about 0.15 s of 1.14 a photo; do it after 1a and 1b
   show what is left.
-- **1d Wasted runs.** Counted first: does a failed file still cost a run (14 truncated files cost 7 runs in
+- **1d Wasted runs. Decided 2026-10-17, nothing to build:** the index already skips a file that does not decode, logs it, lists it at the end and tries it again next run; the owner wants no skip-list (DECISIONS 2026-10-17). As planned: Counted first: does a failed file still cost a run (14 truncated files cost 7 runs in
   2026-09-26 to 28, before #1089)? If yes, record what failed beside the file's stamp in an existing place; a new table
   waits for phase 3's migration.
-- **1e Warm indexer (decide after 1b).** Small indexes (1 to 50 photos) use a long-lived worker holding the models
+- **1e Warm indexer. Decided 2026-10-17, not built (the gain is small, owner).** As planned:** Small indexes (1 to 50 photos) use a long-lived worker holding the models
   instead of a 15 s start. Touches the GPU turn: the Views-AI and Integration owners both review. Skipped if the
   fixed cost is small next to the work after 1a to 1c.
 - **1f Repair the turned photos' vectors (#1529, `wrong`).** The vectors of photos turned by their Orientation were
