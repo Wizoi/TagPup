@@ -706,6 +706,36 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         self.db_path = os.path.join(self.tmpdir, "faces_test.db")
         self.assertEqual(("Mara Quill", None), self.row(cousins))
 
+    def test_a_round_settles_its_photos_alike_however_many_at_once(self):
+        """cluster-faces settles a round's photos a block at a time (identities.AHEAD): each up to its pairing, then the
+        block's faces read in one table, then each finished in order. One photo at a time, two, or all at once plan the
+        same names and the same traces. Mutation: a photo's pairing that reads the names its block gave before it."""
+        from unittest import mock
+        from tagpup.services import identities
+        self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
+        self.add_face(self.photo_tagged("tobin.jpg", ["Tobin Quill"]), at(120))
+        for number in range(4):   # the cousins together, each face well ahead of the other cousin, on no anchor's cluster
+            together = self.photo_tagged("together_%d.jpg" % number, ["Mara Quill", "Tobin Quill"])
+            self.add_face(together, at(31 + number), box=(0, 0, 200, 200))
+            self.add_face(together, at(89 - number), box=(300, 0, 500, 200))
+        self.add_face(self.photo_tagged("between.jpg", ["Mara Quill", "Tobin Quill"]), at(60), box=(0, 0, 200, 200))
+
+        def planned(ahead):
+            seen = []
+            self.index.close()
+            self.index = PhotoIndex(db_path=self.db_path)
+            self.index.load()
+            with mock.patch.object(identities, "AHEAD", ahead), mock.patch.object(
+                    identities, "_save_face_names", lambda index, updates, as_read: (seen.extend(sorted(updates)), ([], [], 0, {}))[1]):
+                identities.resolve(self.index)
+            return seen, {face: (trace["person_id"], trace["assignment_order"], trace["resolution_method"])
+                          for face, trace in self.traces().items()}
+        alone = planned(1)
+        # The two solo faces and the eight of the pairs; the face between the cousins is nobody's.
+        self.assertEqual(10, sum(1 for person, _face in alone[0] if person is not None), "the fixture's pairs were not named")
+        for ahead in (2, 2000):
+            self.assertEqual(alone, planned(ahead), "a block of %d photos settled otherwise than one at a time" % ahead)
+
     def test_new_person_gathers_by_the_margin_a_name_is_offered_at(self):
         """New Person on a face nobody is named for gathers the faces like it, for the owner to look over before they are
         named: an offer, so the margin it asks over everyone named is the offer's, 0.02 (owner, 2026-10-17). Mara, a
