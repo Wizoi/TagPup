@@ -261,12 +261,21 @@ class FaceRows(tuple):
     @property
     def by_person(self):
         """(FacesByPerson of the rows' people -- a person's id each --, the matrix in its `grouped` order, or None)."""
+        return self._grouped()[:2]
+
+    @property
+    def ids_grouped(self):
+        """The rows' face ids in `by_person`'s order, an array: to leave one face out of a product with the grouped matrix."""
+        return self._grouped()[2]
+
+    def _grouped(self):
         if self._grouping is None:
             with self._making:
                 if self._grouping is None:
-                    _ids, people, matrix = self
+                    ids, people, matrix = self
                     grouping = FacesByPerson([person.id for person in people])
-                    self._grouping = (grouping, grouping.grouped(matrix) if matrix is not None else None)
+                    self._grouping = (grouping, grouping.grouped(matrix) if matrix is not None else None,
+                                      grouping.grouped(np.asarray(ids)))
         return self._grouping
 
 

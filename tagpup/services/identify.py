@@ -365,13 +365,13 @@ def nearest_people(known, embedding, skip_id=None, limit=5):
     The face `skip_id` is skipped rather than excluded from the matrix, which is shared and cannot be rebuilt per
     face; a face is not a suggestion for itself."""
     known = face_rules.FaceRows.of(known)
-    known_ids, known_people, matrix = known
+    _known_ids, known_people, matrix = known
     if matrix is None:
         return []
     by_person, grouped = known.by_person   # made once for the matrix (clustering.FaceRows)
     similarities = np.dot(grouped, embedding).astype(np.float64)
     if skip_id is not None:
-        similarities[by_person.grouped(np.asarray(known_ids)) == skip_id] = -np.inf
+        similarities[known.ids_grouped == skip_id] = -np.inf
     return [(known_people[by_person.first[column]], similarity, margin)
             for column, similarity, margin in face_rules.ranked(by_person.table(similarities, grouped=True)[0], limit)]
 
