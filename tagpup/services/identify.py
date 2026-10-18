@@ -488,9 +488,9 @@ def unnamed_faces(library):
 
 def unnamed_like(library, face_id, unnamed=None, *, named):
     """{"matches": [...]}: the other nameless faces alike enough to be gathered for New
-    Person without a look at each (tagpup.core.clustering.names_unasked), best first: as like the face as naming unasked
-    allows, and by the margin of naming unasked more like it than like anyone named (`named()`, named_faces' matrix; the
-    face is the new person's one face, everyone named the others it could be, tagpup.core.clustering.margins).
+    Person without a look at each, best first (tagpup.core.clustering.gathers_for_a_new_person): as like the face as naming
+    unasked asks, and by the margin a name is offered at more like it than like anyone named (`named()`, named_faces'
+    matrix; the face is the new person's one face, everyone named the others it could be, tagpup.core.clustering.margins).
 
     `unnamed` gives the UnnamedFaces to look among, kept between requests
     (tagpup.jobs.identify.unnamed_faces); without it they are read now; `named` as face_matches'.
@@ -519,7 +519,7 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
     matches = []
     for (fid, photo_path, box_json, emb_bytes), margin in zip(faces_rows, margins):
         sim = float(np.dot(np.frombuffer(emb_bytes, dtype=np.float32), target_emb))
-        if fid != face_id and face_rules.names_unasked(sim, margin):
+        if fid != face_id and face_rules.gathers_for_a_new_person(sim, margin):
             matches.append({
                 "id": fid,
                 "photo_path": photo_path,

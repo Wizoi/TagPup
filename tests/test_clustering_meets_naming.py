@@ -695,22 +695,31 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         self.db_path = os.path.join(self.tmpdir, "faces_test.db")
         self.assertEqual(("Mara Quill", None), self.row(cousins))
 
-    def test_new_person_does_not_gather_a_face_as_like_someone_named(self):
-        """New Person on a face nobody is named for gathers the faces like it to be named with it, unasked. One is 0.805 like
-        it and 0.795 like Mara, who is named: it could as well be hers, and is left. One well apart is gathered."""
+    def test_new_person_gathers_by_the_margin_a_name_is_offered_at(self):
+        """New Person on a face nobody is named for gathers the faces like it, for the owner to look over before they are
+        named: an offer, so the margin it asks over everyone named is the offer's, 0.02 (owner, 2026-10-17). Mara, a
+        cousin, is named. One face is 0.851 like the chosen face and 0.83 like Mara (0.021 ahead: 0.02 itself is float32's
+        coin toss): gathered. One is 0.845 like it and 0.84
+        like Mara: it could as well be hers, and is left."""
         mara = self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
         db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [mara], "Mara Quill"))
-        to_the_side = math.degrees(math.acos(0.795))
-        target = self.add_face(self.add_photo("new.jpg"), at(to_the_side + math.degrees(math.acos(0.805))))
-        between = self.add_face(self.add_photo("between.jpg"), at(to_the_side))
-        apart = self.add_face(self.add_photo("apart.jpg"), at(to_the_side + 2 * math.degrees(math.acos(0.805))))
+        chosen_at = math.radians(60)
+        target = self.add_face(self.add_photo("new.jpg"), at(60))
+
+        def like(to_mara, to_chosen):
+            """A unit vector `to_mara` like Mara's face and `to_chosen` like the chosen one, out of their plane."""
+            across = (to_chosen - to_mara * math.cos(chosen_at)) / math.sin(chosen_at)
+            vector = np.zeros(512, dtype=np.float32)
+            vector[0], vector[1], vector[2] = to_mara, across, math.sqrt(1 - to_mara ** 2 - across ** 2)
+            return vector
+        ahead = self.add_face(self.add_photo("ahead.jpg"), like(0.83, 0.851))
+        between = self.add_face(self.add_photo("between.jpg"), like(0.84, 0.845))
 
         found = identify.unnamed_like(self.library(), target, named=self.named())
 
         gathered = [match["id"] for match in found["matches"]]
         self.assertNotIn(between, gathered, "a face as like Mara as the new person was gathered for them")
-        self.assertEqual([apart], gathered)
-
+        self.assertEqual([ahead], gathered, "a face 0.02 ahead of Mara was not offered for the new person")
 
 def face_service_automatch(library, folder, decided):
     """Re-examine's rehearsal of `folder`: what automatch would name, nothing written."""

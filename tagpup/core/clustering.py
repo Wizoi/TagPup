@@ -137,6 +137,13 @@ def names_unasked(similarity, margin):
     return similarity is not None and similarity >= NAME_WITHOUT_ASKING and margin >= NAME_MARGIN
 
 
+def gathers_for_a_new_person(similarity, margin):
+    """Is a nameless face `similarity`-like the face New Person was opened on, and `margin` more like it than like anyone
+    named, gathered for the new person? As like as naming unasked asks, since they are named together; but gathering is an
+    offer the owner looks over before naming, so the margin is the offer's (owner, 2026-10-17)."""
+    return similarity is not None and similarity >= NAME_WITHOUT_ASKING and margin >= OFFER_MARGIN
+
+
 def names_from_the_tag(similarity, margin):
     """May a face be given the name of a person its photo's keywords name, with no one looking? The keyword says the
     person is in the photo, so the likeness need only be one a name is offered at (#902); it does not say which face is

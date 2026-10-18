@@ -328,7 +328,11 @@ class TheOwnersValues(unittest.TestCase):
         self.assertTrue(clustering.names_unasked(0.80, math.inf))   # a name carried is asked no margin
         self.assertEqual(0.885, clustering.GROUPING)
         self.assertAlmostEqual(0.48, clustering.distance(clustering.GROUPING), places=2)
-        for decide in (clustering.is_offered, clustering.names_unasked, clustering.names_from_the_tag):
+        self.assertEqual((True, False, False), (clustering.gathers_for_a_new_person(0.80, 0.02),
+                                                clustering.gathers_for_a_new_person(0.79, 1),
+                                                clustering.gathers_for_a_new_person(0.9, 0.019)))
+        for decide in (clustering.is_offered, clustering.names_unasked, clustering.names_from_the_tag,
+                       clustering.gathers_for_a_new_person):
             self.assertFalse(decide(None, None))   # nothing is decided about nothing
         self.assertFalse(clustering.looks_wrong(None))
 
