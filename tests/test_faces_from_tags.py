@@ -449,9 +449,9 @@ class APassReadsAPersonsDecidedFacesOnce(Case):
         reads = []
         real = face_tags._decided_of
 
-        def counted(conn, name):
-            reads.append(name)
-            return real(conn, name)
+        def counted(conn, person, key):
+            reads.append(person)
+            return real(conn, person, key)
 
         def indexed(conn):
             batch = derived.Batch(conn)

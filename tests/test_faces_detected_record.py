@@ -44,7 +44,7 @@ from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import faces, faces_detected, journal  # noqa: E402
 
 
-class FaceModel:
+class FaceModel(stand_in_models.Faces):
     """A face model on the card: its settings, and what it was asked."""
     device = "cuda"
 
