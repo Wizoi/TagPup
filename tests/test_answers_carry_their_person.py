@@ -147,14 +147,15 @@ class TheAnswers(Library):
         self.assertEqual([(SAM_I, self.sam_i, True), (SAM_T, self.sam_t, True)], sams, "two people, two entries")
 
     def test_the_five_nearest(self):
+        # Every named face carries its person's id (0 without one in the three libraries, 2026-10-17; INVARIANTS).
         def named():
-            return ([1, 2], [Ref(self.wren, "Wren"), Ref(None, "Sam")],
+            return ([1, 2], [Ref(self.wren, "Wren"), Ref(self.sam_t, "Sam")],
                     np.array([[0, 1, 0, 0], [1, 0, 0, 0]], dtype=np.float32))
 
         found = identify.face_matches(self.library, self.stranger, named)
         self.assertEqual(["Wren", "Sam"], [each["name"] for each in found])
-        self.assertEqual([self.person(WREN), None], [each["person"] for each in found],
-                         "a face named for a person is that person; a bare 'Sam' is two people's name")
+        self.assertEqual([self.person(WREN), self.person(SAM_T)], [each["person"] for each in found],
+                         "a face named for a person is that person, whoever else is called alike")
         exact = identify.face_matches(self.library, self.stranger, lambda: ([1], [Ref(self.sam_i, "Sam")],
                                                                           np.array([[1, 0, 0, 0]], dtype=np.float32)))
         self.assertEqual([self.person(SAM_I)], [each["person"] for each in exact])

@@ -30,8 +30,11 @@ makes it a reference for later guesses (tagpup.services.identify.decided_faces, 
   `references` -- the decided faces as (ids, names, unit vectors), tagpup.services.identify.
   decided_faces -- a face is named only when exactly ONE person's decided face is as alike as
   naming unasked allows (clustering.names_unasked), that person is one the photo's keywords
-  name and no face of it carries, and no other face of the photo is proposed for them. A face
-  two people reach, or none, is left for Identify Faces. No new threshold: the owner's value.
+  name and no face of it carries, no other face of the photo is proposed for them, and the face is the margin of
+  naming unasked more like that person than the next of the people decided (clustering.margins; owner,
+  2026-10-17). A face two people reach, or none, or one between two people, is left for Identify Faces. The photo
+  with one face and one person is not asked a margin: the tag says whose the face is, and the likeness only that
+  it is not the other person in frame (#833).
 
 Called by the writes that change a photo's keywords or record its faces, after the photo's
 people are rebuilt (tagpup.store.photos, tagpup.services.faces), inside the writer's transaction;
@@ -40,6 +43,7 @@ tagpup.store.faces.name_unnamed, whose guards hold at the write, whatever was re
 """
 import collections
 import json
+import math
 
 import numpy as np
 
@@ -247,11 +251,12 @@ def _gated(conn, singles, result, cache, on_step=None):
                 result.counts["left"] += 1
                 continue
             best = float((decided @ (vec / norm)).max())
-            if not clustering.is_offered(best):
+            # One face, one person: the tag says whose the face is, so no margin over anyone else is asked (#833).
+            if not clustering.is_offered(best, math.inf):
                 result.counts["not_like_them"] += 1
                 result.counts["left"] += 1
                 continue
-            result.counts["like_them" if clustering.names_unasked(best) else "like_them_somewhat"] += 1
+            result.counts["like_them" if clustering.names_unasked(best, math.inf) else "like_them_somewhat"] += 1
         result.named.append(Choice(face_id, photo_id, person, "tag", source))
         result.counts["one_face_one_person"] += 1
 
@@ -265,18 +270,17 @@ BLOCK = 512
 
 
 def _reached(vectors, references, on_step=None):
-    """{face id: {the keys of the people some decided face of whom it is alike enough to}} for the
-    faces of `vectors` {face id: embedding bytes} that can be compared: compared a block at a
-    time, never a face at a time (a library's faces to place are tens of thousands). A person's key is the id of their
-    node."""
+    """{face id: ({the keys of the people some decided face of whom it is alike enough to name unasked}, (the key of its
+    best person, the likeness, the margin over the next person))} for the faces of `vectors` {face id: embedding bytes} that
+    can be compared and reach someone: compared a block at a time, never a face at a time (a library's faces to place are
+    tens of thousands). A person's key is the id of their node; a face's likeness to a person is to their closest decided
+    face (clustering.FacesByPerson)."""
     _ids, people, matrix = references
     if matrix is None or not len(people):
         return {}
     width = matrix.shape[1]
-    keys = [_key(person) for person in people]
-    order = list(dict.fromkeys(keys))
-    index = {key: n for n, key in enumerate(order)}
-    code = np.array([index[key] for key in keys])
+    by_person = clustering.FacesByPerson([_key(person) for person in people])
+    grouped = by_person.grouped(matrix)
     usable = [(face_id, blob) for face_id, blob in vectors.items() if blob and len(blob) == width * 4]
     reached = {}
     for start in range(0, len(usable), BLOCK):
@@ -286,25 +290,25 @@ def _reached(vectors, references, on_step=None):
         stacked = np.stack([np.frombuffer(blob, dtype=np.float32) for _face, blob in block])
         norms = np.linalg.norm(stacked, axis=1)
         stacked = stacked / np.where(norms == 0, 1, norms)[:, None]
-        rows, columns = np.nonzero(clustering.might_name_unasked(stacked @ matrix.T, 0.0))
-        pairs = np.unique(rows.astype(np.int64) * len(order) + code[columns])
-        for pair in pairs.tolist():
-            row, person = divmod(pair, len(order))
-            if norms[row]:
-                reached.setdefault(block[row][0], set()).add(order[person])
+        table, order = by_person.table(stacked @ grouped.T, grouped=True), by_person.keys
+        close = clustering.might_name_unasked(table, 0.0)
+        columns, likenesses, margins = clustering.best_of(table)
+        for row in np.nonzero(close.any(axis=1) & (norms > 0))[0].tolist():
+            reached[block[row][0]] = ({order[column] for column in np.nonzero(close[row])[0].tolist()},
+                                      (order[columns[row]], float(likenesses[row]), float(margins[row])))
     return reached
 
 
 def _matched(unnamed, free, reached):
     """[(face id, Ref)] among `unnamed` that exactly one person's decided faces are alike enough
-    to name unasked (`reached`), the person being one of `free`, and nobody else's face of the
-    photo is proposed for."""
+    to name unasked (`reached`), by a margin over the next person that names unasked too, the person being one of `free`,
+    and nobody else's face of the photo is proposed for."""
     wanted = {_key(person): person for person in free}
     proposed = collections.defaultdict(list)
     for face_id in unnamed:
-        people = reached.get(face_id, ())
-        if len(people) == 1 and next(iter(people)) in wanted:
-            proposed[next(iter(people))].append(face_id)
+        people, (best, likeness, margin) = reached.get(face_id, ((), (None, None, None)))
+        if len(people) == 1 and best in wanted and clustering.names_unasked(likeness, margin):
+            proposed[best].append(face_id)
     return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
 
 

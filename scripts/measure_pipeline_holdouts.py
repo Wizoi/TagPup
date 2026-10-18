@@ -40,7 +40,7 @@ import sandbox  # noqa: E402
 import _root  # noqa: E402,F401
 import numpy as np  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
-from tagpup.core import paths, vocabulary  # noqa: E402
+from tagpup.core import clustering, paths, vocabulary  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import identify  # noqa: E402
 
@@ -53,30 +53,26 @@ MARGIN_CUTS = tuple(round(0.02 * i, 2) for i in range(16))
 # ---- (c) the named faces ------------------------------------------------------------------------------------------
 
 def top_two(matrix, people, photos, block=1024):
-    """For each row of `matrix` (unit vectors): (its best person, that likeness, the second-best person's likeness,
-    whether its own person had a face to compare), each person's likeness being their closest face in another photo.
-    `people` and `photos` are an integer for each row. Rows are compared a block at a time."""
-    order = np.argsort(people, kind="stable")
-    matrix, people, photos = matrix[order], people[order], photos[order]
-    starts = np.flatnonzero(np.r_[True, people[1:] != people[:-1]])
-    names = people[starts]
-    best, first, second, reachable = (np.empty(len(people), dtype=names.dtype), np.empty(len(people)),
+    """For each row of `matrix` (unit vectors): (its best person, that likeness, its margin over the second-best person,
+    whether its own person had a face to compare), each person's likeness being their closest face in another photo: the
+    margin the gates ask, worked out where they work it out (tagpup.core.clustering.margins), so the curve is read off the
+    rule it sets. `people` and `photos` are an integer for each row. Rows are compared a block at a time."""
+    best, first, margin, reachable = (np.full(len(people), -1, dtype=people.dtype), np.empty(len(people)),
                                       np.empty(len(people)), np.empty(len(people), dtype=bool))
+    grouping = clustering.FacesByPerson(people)
+    grouped, grouped_photos = grouping.grouped(matrix), grouping.grouped(photos)
+    names = np.asarray(grouping.keys, dtype=people.dtype)
+    column_of = {name: column for column, name in enumerate(grouping.keys)}
     for start in range(0, len(people), block):
         rows = slice(start, start + block)
-        likeness = matrix[rows] @ matrix.T
-        likeness[photos[rows][:, None] == photos[None, :]] = -np.inf
-        by_person = np.maximum.reduceat(likeness, starts, axis=1)
-        top = np.argsort(-by_person, axis=1)[:, :2]
-        picked = np.take_along_axis(by_person, top, axis=1)
-        best[rows] = names[top[:, 0]]
-        first[rows] = picked[:, 0]
-        second[rows] = picked[:, 1] if picked.shape[1] > 1 else -np.inf
-        own = np.searchsorted(names, people[rows])
+        likeness = matrix[rows] @ grouped.T
+        likeness[photos[rows][:, None] == grouped_photos[None, :]] = -np.inf
+        by_person = grouping.table(likeness, grouped=True)
+        columns, first[rows], margin[rows] = clustering.best_of(by_person)
+        best[rows] = np.where(columns >= 0, names[columns], -1)
+        own = np.fromiter((column_of[person] for person in people[rows].tolist()), dtype=np.intp)
         reachable[rows] = np.isfinite(by_person[np.arange(len(own)), own])
-    back = np.empty_like(order)
-    back[order] = np.arange(len(order))
-    return best[back], first[back], second[back], reachable[back]
+    return best, first, margin, reachable
 
 
 def precision_curve(correct, likeness, margin):
@@ -97,11 +93,11 @@ def precision_curve(correct, likeness, margin):
 def hold_out(matrix, people, groups):
     """The curve and its counts for faces matched only against faces of another group (a photo, a folder): `people`
     and `groups` an integer a row."""
-    best, first, second, reachable = top_two(matrix, people, groups)
+    best, first, margin, reachable = top_two(matrix, people, groups)
     correct = best == people
     return {"faces": len(people), "own_person_only_in_this_group": int((~reachable).sum()),
             "evaluated": int(reachable.sum()), "top_right": int(correct[reachable].sum()),
-            "curve": precision_curve(correct[reachable], first[reachable], (first - second)[reachable])}
+            "curve": precision_curve(correct[reachable], first[reachable], margin[reachable])}
 
 
 def _numbered(keys):

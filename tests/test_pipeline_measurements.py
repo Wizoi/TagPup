@@ -302,12 +302,12 @@ class TheNamedFaceHoldOut(unittest.TestCase):
         matrix /= np.linalg.norm(matrix, axis=1, keepdims=True)
         people = np.array([1, 1, 2, 2, 3])
         photos = np.array([10, 10, 20, 21, 30])
-        best, first, second, reachable = holdouts.top_two(matrix, people, photos, block=2)
+        best, first, margin, reachable = holdouts.top_two(matrix, people, photos, block=2)
         self.assertEqual([False, False, True, True, False], [bool(r) for r in reachable])   # 3 has one face
         self.assertEqual(3, best[0])            # its own photo's twin left out: the stranger is nearest
         self.assertEqual(2, best[2])
         self.assertAlmostEqual(1.0, first[2], places=5)
-        self.assertLess(second[2], first[2])
+        self.assertGreater(margin[2], 0)   # clustering.margins: the margin the gates ask
 
     def test_a_face_held_out_by_folder_meets_none_of_its_events_faces(self):
         # A burst: person 1 twice in one folder, once in another; person 2 in a third folder.

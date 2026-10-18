@@ -364,7 +364,8 @@ def remove_folder(library, folder):
 
 def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     """Automatch the unnamed faces in a photo, or under a folder. A face is given the name of the named
-    face it most resembles, when it may be named unasked (clustering.names_unasked), unless that name is already
+    face it most resembles, when it may be named unasked (clustering.names_unasked: the likeness and the margin over the next
+    person), unless that name is already
     in its photo or proposed for two faces there.
 
     The faces are compared before the write lock is taken -- building the named matrix
@@ -503,19 +504,21 @@ def _closest_named(unnamed, people, matrix):
     width = matrix.shape[1]
     usable = [(face_id, blob, face_photo) for face_id, blob, face_photo in unnamed
               if blob and len(blob) == width * 4]
+    by_person = clustering.FacesByPerson([person.id for person in people])
+    grouped = by_person.grouped(matrix)
     proposed = {}
     for start in range(0, len(usable), COMPARE_BLOCK):
         block = usable[start:start + COMPARE_BLOCK]
         vectors = np.stack([np.frombuffer(blob, dtype=np.float32) for _fid, blob, _photo in block])
         # A row per unnamed face: the closest named face is found along a row, in memory
         # order. Down a column of the transposed product the argmax alone took 2.6 s.
-        similarities = vectors @ matrix.T
-        best = np.argmax(similarities, axis=1)
+        # Each face against each person's closest named face, and its best person's likeness and margin over the next.
+        columns, likenesses, margins = clustering.best_of(by_person.table(vectors @ grouped.T, grouped=True))
         for row, (face_id, _blob, face_photo) in enumerate(block):
-            closest = int(best[row])
-            # As alike as naming a face with no one looking allows (tagpup.core.clustering).
-            if clustering.names_unasked(float(similarities[row, closest])):
-                proposed.setdefault(face_photo, []).append((face_id, people[closest].id))
+            # As alike, and as far ahead of the next person, as naming a face with no one looking allows
+            # (tagpup.core.clustering).
+            if clustering.names_unasked(float(likenesses[row]), float(margins[row])):
+                proposed.setdefault(face_photo, []).append((face_id, by_person.keys[columns[row]]))
     return proposed
 
 
@@ -559,8 +562,8 @@ def panel(library, photo_path, named):
             box = []
         suggestion = suggested = similarity = None
         if emb and name is None and not excluded:
-            for suggested, alike in identify.nearest_people(named(), np.frombuffer(emb, dtype=np.float32), face_id, 1):
-                if clustering.is_offered(alike):
+            for suggested, alike, margin in identify.nearest_people(named(), np.frombuffer(emb, dtype=np.float32), face_id, 1):
+                if clustering.is_offered(alike, margin):
                     suggestion, similarity = suggested.name, round(alike, 4)
                 else:
                     suggested = None

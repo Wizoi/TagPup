@@ -356,7 +356,8 @@ class TestFaceMatchesUnmatched(TunerAPITestBase):
         seed_id = self.add_face(seed_photo, base, name=None)
         near_id = self.add_face(near_photo, blend(base, unit_vector(51), 0.05), name=None)
         self.add_face(far_photo, unit_vector(52), name=None)
-        self.add_face(named_photo, blend(base, unit_vector(53), 0.02), name="Jane")
+        # Like the seed, but not so like it that the near face could as well be Jane's (the margin, clustering.margins).
+        self.add_face(named_photo, blend(base, unit_vector(53), 0.3), name="Jane")
 
         payload = self.get(f"/api/face-matches-unmatched?id={seed_id}")
         results = payload["matches"]

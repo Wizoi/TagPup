@@ -198,7 +198,7 @@ class FourWorkersShareEveryonesFaces(unittest.TestCase):
             for worker in workers:
                 worker.join()
         self.assertEqual(1, len(made))
-        self.assertEqual([1] * 4, [person for person, _likeness in answers])
+        self.assertEqual([1] * 4, [person for person, _likeness, _margin in answers])
 
 
 if __name__ == "__main__":

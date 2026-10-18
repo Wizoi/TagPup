@@ -14,6 +14,7 @@ People are told apart by the id of their node: two people called alike are two.
 """
 import json
 import logging
+import math
 import os
 
 import numpy as np
@@ -350,13 +351,15 @@ def face_matches(library, face_id, named):
         conn.close()
 
     return [{"name": found.name, "person": everyone.of_id(found.id), "similarity": similarity,
-             "band": face_rules.band(similarity)}
-            for found, similarity in nearest_people(named(), target_emb, face_id)]
+             "band": face_rules.band(similarity, margin)}
+            for found, similarity, margin in nearest_people(named(), target_emb, face_id)]
 
 
 def nearest_people(known, embedding, skip_id=None, limit=5):
-    """[(person, similarity)], the `limit` people most like `embedding`, best first, one entry a person, from `known`
-    (named_faces' ids, people and matrix). The one place that says who a face looks like: the boxes' list
+    """[(person, similarity, margin)], the `limit` people most like `embedding`, best first, one entry a person, from `known`
+    (named_faces' ids, people and matrix): each person's similarity is to their closest named face, and the margin is how much
+    more like the face they are than the most alike of everyone else named (tagpup.core.clustering.margins: the best's over
+    the second, the rest's behind the best). The one place that says who a face looks like: the boxes' list
     (face_matches) and the strip's suggestion (tagpup.services.faces.panel) both read it.
 
     The face `skip_id` is skipped rather than excluded from the matrix, which is shared and cannot be rebuilt per
@@ -364,20 +367,12 @@ def nearest_people(known, embedding, skip_id=None, limit=5):
     known_ids, known_people, matrix = known
     if matrix is None:
         return []
-    similarities = np.dot(matrix, embedding)
-    found, seen = [], set()
-    for idx in np.argsort(similarities)[::-1]:
-        if known_ids[idx] == skip_id:
-            continue
-        person = known_people[idx]
-        key = person.id
-        if key in seen:
-            continue
-        seen.add(key)
-        found.append((person, float(similarities[idx])))
-        if len(found) >= limit:
-            break
-    return found
+    similarities = np.dot(matrix, embedding).astype(np.float64)
+    if skip_id is not None:
+        similarities[np.asarray(known_ids) == skip_id] = -np.inf
+    by_person = face_rules.FacesByPerson([person.id for person in known_people])
+    return [(known_people[by_person.first[column]], similarity, margin)
+            for column, similarity, margin in face_rules.ranked(by_person.table(similarities)[0], limit)]
 
 
 class UnnamedFaces:
@@ -491,13 +486,15 @@ def unnamed_faces(library):
         conn.close()
 
 
-def unnamed_like(library, face_id, unnamed=None):
+def unnamed_like(library, face_id, unnamed=None, *, named):
     """{"matches": [...]}: the other nameless faces alike enough to be gathered for New
-    Person without a look at each (tagpup.core.clustering.names_unasked), best first.
+    Person without a look at each (tagpup.core.clustering.names_unasked), best first: as like the face as naming unasked
+    allows, and by the margin of naming unasked more like it than like anyone named (`named()`, named_faces' matrix; the
+    face is the new person's one face, everyone named the others it could be, tagpup.core.clustering.margins).
 
     `unnamed` gives the UnnamedFaces to look among, kept between requests
-    (tagpup.jobs.identify.unnamed_faces); without it they are read now. Either way the
-    faces it finds are read again by id and scored from their rows."""
+    (tagpup.jobs.identify.unnamed_faces); without it they are read now; `named` as face_matches'.
+    Either way the faces it finds are read again by id and scored from their rows."""
     conn = _reading(library)
     try:
         target_emb = _embedding_of(conn, face_id)
@@ -513,10 +510,16 @@ def unnamed_like(library, face_id, unnamed=None):
     finally:
         conn.close()
 
+    _ids, known_people, known_matrix = named()
+    vectors = np.stack([np.frombuffer(row[3], dtype=np.float32) for row in faces_rows]) if faces_rows else None
+    margins = [math.inf] * len(faces_rows)   # nobody named: nobody else it could be
+    if vectors is not None and known_matrix is not None:
+        others = face_rules.FacesByPerson([person.id for person in known_people]).table(vectors @ known_matrix.T)
+        margins = face_rules.margins(np.column_stack([vectors @ target_emb, others]))[:, 0].tolist()
     matches = []
-    for fid, photo_path, box_json, emb_bytes in faces_rows:
+    for (fid, photo_path, box_json, emb_bytes), margin in zip(faces_rows, margins):
         sim = float(np.dot(np.frombuffer(emb_bytes, dtype=np.float32), target_emb))
-        if fid != face_id and face_rules.names_unasked(sim):
+        if fid != face_id and face_rules.names_unasked(sim, margin):
             matches.append({
                 "id": fid,
                 "photo_path": photo_path,
@@ -806,6 +809,9 @@ def grid(library, name, named, on_progress=None):
     # than help. The number is always shown, and its band says how sure it is.
     report("reading", 0.7, "Reading the faces already named")
     _known_ids, known_people, known_matrix = named()
+    # Every named face by person, the matrix in their order once for the products below (tagpup.core.clustering).
+    by_person = face_rules.FacesByPerson([person.id for person in known_people])
+    grouped = by_person.grouped(known_matrix) if known_matrix is not None else None
 
     def reference_faces(person_keys):
         """Every face already named as this person (or any of the people a shared name is); None when nobody has been named
@@ -827,7 +833,7 @@ def grid(library, name, named, on_progress=None):
         second when handed the whole batch. Chunked, because the full product is
         groups x named faces and nobody needs all of it at once -- only its row maxima.
         """
-        results = [(None, 0.0)] * len(centroids)
+        results = [(None, 0.0, None)] * len(centroids)
         if known_matrix is None or not len(centroids):
             return results
         block = np.asarray(centroids, dtype=np.float32)
@@ -837,16 +843,15 @@ def grid(library, name, named, on_progress=None):
         chunk = 512
         for start in range(0, len(block), chunk):
             stop = min(start + chunk, len(block))
-            sims = np.dot(block[start:stop], known_matrix.T)
-            best = np.argmax(sims, axis=1)
-            scores = sims[np.arange(stop - start), best]
+            # Each group against each person's closest named face: its best person, the likeness and the margin over the next.
+            columns, scores, margins = face_rules.best_of(by_person.table(np.dot(block[start:stop], grouped.T), grouped=True))
             for offset in range(stop - start):
                 i = start + offset
                 if not usable[i]:
                     continue
-                score = float(scores[offset])
-                results[i] = (known_people[int(best[offset])] if face_rules.is_offered(score) else None,
-                              score)
+                score, margin = float(scores[offset]), float(margins[offset])
+                results[i] = (known_people[by_person.first[columns[offset]]] if face_rules.is_offered(score, margin) else None,
+                              score, margin)
         return results
 
     def other_unaccounted_names(row):
@@ -909,7 +914,7 @@ def grid(library, name, named, on_progress=None):
     cluster_suggestions = suggest_for_all(cluster_centroids)
 
     def card(r, similarity, cluster_id, cluster_name, suggested, global_idx):
-        suggested_person, suggested_sim = suggested
+        suggested_person, suggested_sim, suggested_margin = suggested
         suggested_name = suggested_person.name if suggested_person else None
         return {
             "id": r[0],
@@ -926,7 +931,7 @@ def grid(library, name, named, on_progress=None):
             "suggested_name": suggested_name,
             "suggested_person_id": suggested_person.id if suggested_person else None,
             "suggested_similarity": round(suggested_sim, 3),
-            "suggestion_strength": face_rules.band(suggested_sim) if suggested_name else None,
+            "suggestion_strength": face_rules.band(suggested_sim, suggested_margin) if suggested_name else None,
             "_emb_idx": global_idx,
         }
 
@@ -980,19 +985,28 @@ def grid(library, name, named, on_progress=None):
     # can both be genuinely this person in different photos (measured here: 0.826 and
     # 0.822 for one), so a cutoff would discard a real match to tidy the list.
     if seeking is not None:
-        for face in cards:
+        # The band says how sure a card is the person: by its likeness to them and its margin over everyone else named,
+        # every card against everyone in one product a block (tagpup.core.clustering.margins).
+        sought = set(seeking_keys)
+        ahead = []
+        for start in range(0, len(cards), 512):
+            indexes = [face["_emb_idx"] for face in cards[start:start + 512]]
+            table = by_person.table(np.dot(embs[indexes], grouped.T), grouped=True)
+            margins = face_rules.margins(table)[:, [column for column, person in enumerate(by_person.keys) if person in sought]]
+            ahead += np.nanmax(margins, axis=1).tolist()   # a name two people share: the margin of the nearer
+        for face, margin in zip(cards, ahead):
             # Against the best of this person's faces, not their average: a candidate
             # matching any one of them well is a candidate worth looking at, and the
             # panel scores it the same way.
             face["person_similarity"] = round(
                 float(np.max(np.dot(seeking, embs[face.pop("_emb_idx")]))), 3)
-            face["band"] = face_rules.band(face["person_similarity"])
+            face["band"] = face_rules.band(face["person_similarity"], margin)
         cards.sort(key=lambda x: x["person_similarity"], reverse=True)
     else:
-        # Nobody named yet: how like its own group a face is, in the same bands.
+        # Nobody named yet: how like its own group a face is, in the same bands; nobody else it could be, so no margin.
         for face in cards:
             face.pop("_emb_idx", None)
-            face["band"] = face_rules.band(face["similarity"])
+            face["band"] = face_rules.band(face["similarity"], math.inf)
         cards.sort(key=lambda x: x["similarity"], reverse=True)
 
     return stamp, {

@@ -40,7 +40,7 @@ RULES = (
      r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']|(?<!ACTIVITY_PAGE = )[\"'](activity|school|trips)[\"']", ()),
     ("an unknown year is dates'", os.path.join("tagpup", "core", "dates.py"), r"[\"']Unknown[\"']", ()),
     ("the apps' ports are tagpup_web's", "tagpup_web.py", r"def find_available_port|\b80[89]0\b", ()),
-    ("a face decision's numbers are clustering's", CLUSTERING, r"\b(OFFER_A_NAME|NAME_WITHOUT_ASKING)\b", ()),
+    ("a face decision's numbers are clustering's", CLUSTERING, r"\b(OFFER_A_NAME|NAME_WITHOUT_ASKING|NAME_MARGIN|OFFER_MARGIN)\b", ()),
     ("the grouping radius is clustering's", CLUSTERING, r"eps\s*=\s*0\.\d|CLUSTER_EPS\s*=\s*0\.\d", ()),
     # A photo file's fields are written by the journaled path (file_changes.write_fields), and by the just-look path
     # (file_only, unjournaled by the owner's decision, #527) alone: a bulk write of its own once left rows describing
@@ -312,16 +312,25 @@ class TheOwnersValues(unittest.TestCase):
                               if re.search(r"[\"'](Unknown Camera|All Cameras)[\"']|get\([\"']EXIF:Model", read(p))])
 
     def test_the_decisions_about_a_face(self):
+        """The likeness and the margin over the next person each a gate (owner, 2026-09-24 and 2026-10-17): 0.70 and 0.02
+        to offer, 0.80 and 0.04 to name unasked, 0.70 and 0.04 when the photo's keywords name the person."""
+        import math
         from tagpup.core import clustering
-        self.assertEqual((True, False, True, False, True, False),
-                         (clustering.is_offered(0.70), clustering.is_offered(0.69), clustering.names_unasked(0.80),
-                          clustering.names_unasked(0.79), clustering.looks_wrong(0.69), clustering.looks_wrong(0.70)))
-        self.assertEqual(("likely", "possible", "possible", None, None),
-                         tuple(clustering.band(v) for v in (0.80, 0.79, 0.70, 0.69, None)))
+        self.assertEqual((True, False, False, True, False, False, True, False),
+                         (clustering.is_offered(0.70, 0.02), clustering.is_offered(0.69, 1), clustering.is_offered(0.9, 0.019),
+                          clustering.names_unasked(0.80, 0.04), clustering.names_unasked(0.79, 1),
+                          clustering.names_unasked(0.9, 0.039), clustering.looks_wrong(0.69), clustering.looks_wrong(0.70)))
+        self.assertEqual((True, False, False), (clustering.names_from_the_tag(0.70, 0.04), clustering.names_from_the_tag(0.69, 1),
+                                                clustering.names_from_the_tag(0.9, 0.03)))
+        self.assertEqual(("likely", "possible", "possible", "possible", None, None, None),
+                         tuple(clustering.band(v, m) for v, m in ((0.80, 0.04), (0.79, 1), (0.70, 0.02), (0.9, 0.03),
+                                                                   (0.69, 1), (0.9, 0.01), (None, None))))
+        self.assertTrue(clustering.names_unasked(0.80, math.inf))   # a name carried is asked no margin
         self.assertEqual(0.885, clustering.GROUPING)
         self.assertAlmostEqual(0.48, clustering.distance(clustering.GROUPING), places=2)
-        for decide in (clustering.is_offered, clustering.names_unasked, clustering.looks_wrong):
-            self.assertFalse(decide(None))   # nothing is decided about nothing
+        for decide in (clustering.is_offered, clustering.names_unasked, clustering.names_from_the_tag):
+            self.assertFalse(decide(None, None))   # nothing is decided about nothing
+        self.assertFalse(clustering.looks_wrong(None))
 
 
 class ThePagesKeepNoCopyOfTheirOwn(unittest.TestCase):

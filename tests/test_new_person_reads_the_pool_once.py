@@ -27,10 +27,12 @@ from tagpup.store import db  # noqa: E402
 ROUTE = "/library/api/face-matches-unmatched"
 
 
-def like(likeness):
-    """A unit vector `likeness`-like the seed's, [1, 0, ...]."""
+def like(likeness, towards=1):
+    """A unit vector `likeness`-like the seed's, [1, 0, ...], turned towards axis `towards` (a negative one the other way).
+    The faces gathered and the named face are turned apart: a face as like someone named as like the seed is not gathered
+    (the margin, tagpup.core.clustering.margins)."""
     vector = np.zeros(512, dtype=np.float32)
-    vector[0], vector[1] = likeness, np.sqrt(1 - likeness * likeness)
+    vector[0], vector[abs(towards)] = likeness, np.sign(towards) * np.sqrt(1 - likeness * likeness)
     return vector
 
 
@@ -48,17 +50,17 @@ class NewPerson(unittest.TestCase):
         conn = db.connect(self.db_path)
         try:
             self.ids = {}
-            for n, (label, likeness, columns) in enumerate([
+            for n, (label, likeness, columns, *towards) in enumerate([
                     ("seed", 1.0, {}),
                     ("close", 0.9, {}),
-                    ("just over", 0.8003, {}),
+                    ("just over", 0.8003, {}, -1),
                     ("just under", 0.7997, {}),
                     ("far", 0.5, {}),
-                    ("named", 0.95, {"name": "Imogen Vale", "name_source": "manual"}),
+                    ("named", 0.85, {"name": "Imogen Vale", "name_source": "manual"}, 2),
                     ("excluded", 0.95, {"excluded": 1, "excluded_reason": "stranger"})]):
                 photo = os.path.join(self.home.root, "Photos", "IMG_%04d.jpg" % n)
                 photo_rows.add_read(conn, photo, {"XMP:Subject": []})
-                self.ids[label] = face_rows.add_face(conn, photo, embedding=like(likeness).tobytes(), **columns)
+                self.ids[label] = face_rows.add_face(conn, photo, embedding=like(likeness, *towards).tobytes(), **columns)
             conn.commit()
         finally:
             conn.close()

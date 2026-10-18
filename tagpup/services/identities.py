@@ -16,10 +16,15 @@ they are written as those ids: a person renamed meanwhile is the same person, on
 (docs/findings.md, #1357: keyed by name, the two were pooled into one and neither was ever guessed). A face a person decided by
 hand is never written at all (docs/ARCHITECTURE.md, "People by id, stage 2"). The names are looked up only for what the run
 tells: its trace and its summary.
+
+A name resting on likeness alone -- the known people's pairing in a photo, the last pass -- needs a margin over the next person
+named as well as the likeness (tagpup.core.clustering.margins; owner, 2026-10-17). The margin gates names given from now on: a
+face that carries the person already is asked none (`margin_asked`), so a rerun takes away no name the margin would not give.
 """
 import collections
 import json
 import logging
+import math
 
 import numpy as np
 from tqdm import tqdm
@@ -113,6 +118,13 @@ STEP = 2000
 
 #: How many rounds the names propagate through the photos' people before the last matching.
 MAX_ITERATIONS = 5
+
+
+def margin_asked(face, person, margin):
+    """The margin a gate asks of `face` for `person`: `margin`, or none (math.inf) when the face carries the person already --
+    the margin gates names given from now on and never takes one away (owner, 2026-10-17: about 18,500 of photo_index's
+    55,088 names would go)."""
+    return math.inf if face["person_id"] == person else margin
 
 
 def resolve(photo_index, on_step=None):
@@ -469,7 +481,8 @@ def resolve(photo_index, on_step=None):
                 name = face_resolved.get(f["id"])
                 if name and name in resolved_by_name and name not in photo_tags:
                     similarity = closest_to(name, f["embedding"], f["photo_path"])
-                    if similarity is not None and not clustering.names_unasked(similarity):
+                    # A name kept is asked no margin: the margin never takes a name away (owner, 2026-10-17).
+                    if similarity is not None and not clustering.names_unasked(similarity, math.inf):
                         face_resolved[f["id"]] = None
 
             # A decision made by hand holds through every step below: its face keeps
@@ -540,12 +553,23 @@ def resolve(photo_index, on_step=None):
                     cost_matrix = np.array(cost_matrix)
                     row_ind, col_ind = linear_sum_assignment(cost_matrix)
                     
-                    # Assign matches as close as naming a face with no one looking
-                    # allows (tagpup.core.clustering).
-                    for r, c in zip(row_ind, col_ind):
-                        if clustering.names_unasked(-cost_matrix[r, c]):
-                            f = unassigned_faces[r]
-                            tag = known_unused[c]
+                    # Assign matches as close as naming a face with no one looking allows, by the likeness and the margin over
+                    # everyone else named but the people other faces of the photo hold (tagpup.core.clustering). The margin
+                    # needs the face against everyone: asked only of a pair the likeness lets through, and of a face that
+                    # does not carry the person already (margin_asked), in one table for the photo.
+                    pairs = [(unassigned_faces[r], known_unused[c], -cost_matrix[r, c]) for r, c in zip(row_ind, col_ind)]
+                    asked = [f for f, tag, similarity in pairs
+                             if f["person_id"] != tag and clustering.names_unasked(similarity, math.inf)]
+                    rows = {}
+                    if asked:
+                        table, columns = known.likeness_table(
+                            [(f["embedding"], photo_years.get(f["photo_path"]), f["photo_path"]) for f in asked])
+                        rows = {f["id"]: row for f, row in zip(asked, table)}
+                    for f, tag, similarity in pairs:
+                        # A pair not asked carries the person (no margin is asked of it) or is short of the likeness (refused
+                        # whatever the margin).
+                        margin = known.margin_of(rows[f["id"]], columns, tag, skip=assigned_names) if f["id"] in rows else math.inf
+                        if clustering.names_unasked(similarity, margin_asked(f, tag, margin)):
                             face_resolved[f["id"]] = tag
                             
                 # Refresh lists for unknown matching
@@ -674,16 +698,18 @@ def resolve(photo_index, on_step=None):
             if photo_tags:
                 # Check similarity to all known resolved people, skipping anyone already matched to another face in this
                 # same photo.
-                best_name, best_sim = final_known.best(likenesses[face["id"]], columns, skip=names_taken_here)
+                best_name, best_sim, margin = final_known.best(likenesses[face["id"]], columns, skip=names_taken_here)
                 best_sim = -1.0 if best_sim is None else best_sim
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
-                # The tag bears the name out, so the face is named from where it is worth offering
-                # (tagpup.core.clustering.is_offered), not only from where it is named with no one
+                # The tag bears the name out, so the face is named from the likeness a name is offered at
+                # (tagpup.core.clustering.names_from_the_tag), not only from where it is named with no one
                 # looking: the loop above keeps a tag-confirmed name whatever the likeness (#855), and a
                 # face that reaches this pass unnamed -- its cluster has no anchor -- was left unnamed at
-                # 0.73 and 0.78 (docs/findings.md, #902). A name already taken by another face of the photo
-                # is skipped (`skip`), to prevent false assignments in multi-face photos.
-                if best_name in photo_tags and clustering.is_offered(best_sim):
+                # 0.73 and 0.78 (docs/findings.md, #902). The tag does not say which face is theirs: the margin
+                # over the next person does, but for a face that carries them already (margin_asked). A name
+                # already taken by another face of the photo is skipped (`skip`), to prevent false assignments in
+                # multi-face photos.
+                if best_name in photo_tags and clustering.names_from_the_tag(best_sim, margin_asked(face, best_name, margin)):
                     final_name = best_name
                     names_taken_here.add(final_name)
                     traces[face["id"]] = {
@@ -691,7 +717,7 @@ def resolve(photo_index, on_step=None):
                         "photo_path": p_path,
                         "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
                         "person_id": final_name,
-                        "resolution_method": f"final_matching_tagged_photo (similarity={best_sim:.4f})",
+                        "resolution_method": f"final_matching_tagged_photo (similarity={best_sim:.4f}, margin={margin:.4f})",
                         "assignment_order": None,
                         "trigger_photos": []
                     }
@@ -702,7 +728,8 @@ def resolve(photo_index, on_step=None):
                         "photo_path": p_path,
                         "cluster_id": traces.get(face["id"], {}).get("cluster_id") if face["id"] in traces else None,
                         "person_id": None,
-                        "resolution_method": f"final_matching_tagged_photo_failed (max_similarity={best_sim:.4f})",
+                        "resolution_method": f"final_matching_tagged_photo_failed (max_similarity={best_sim:.4f}, "
+                                             f"margin={-1.0 if margin is None else margin:.4f})",
                         "assignment_order": None,
                         "trigger_photos": []
                     }
