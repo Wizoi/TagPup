@@ -9,6 +9,7 @@ bear out is the tag's own evidence; it stays whatever the likeness, as is every 
 The likeness of the faces of one photo is stood in for (0.75, between OFFER_A_NAME and 0.80), since with the synthetic
 vectors of the other clustering tests a face of a person's cluster is always far above it. The rest is the real rule.
 """
+import math
 import os
 import sys
 import unittest
@@ -45,7 +46,7 @@ class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
 
     def test_a_name_the_photos_keywords_confirm_is_kept_between_070_and_080(self):
         self.assertGreaterEqual(0.75, clustering.OFFER_A_NAME)
-        self.assertFalse(clustering.names_unasked(0.75))
+        self.assertFalse(clustering.names_unasked(0.75, math.inf))
         jane_face, bob_face = self.two_people_in_one_photo()
         with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.75, "crowd.jpg")):
             self.resolve()

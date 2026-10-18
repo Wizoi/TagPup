@@ -30,8 +30,11 @@ makes it a reference for later guesses (tagpup.services.identify.decided_faces, 
   `references` -- the decided faces as (ids, names, unit vectors), tagpup.services.identify.
   decided_faces -- a face is named only when exactly ONE person's decided face is as alike as
   naming unasked allows (clustering.names_unasked), that person is one the photo's keywords
-  name and no face of it carries, and no other face of the photo is proposed for them. A face
-  two people reach, or none, is left for Identify Faces. No new threshold: the owner's value.
+  name and no face of it carries, no other face of the photo is proposed for them, and the face is the margin of
+  naming unasked more like that person than the next of the people decided but those the photo's other faces carry
+  (KnownFaces.best's skip, as cluster-faces' pairing asks it; owner, 2026-10-17). A face two people reach, or none, or one between two people, is left for Identify Faces. The photo
+  with one face and one person is not asked a margin: the tag says whose the face is, and the likeness only that
+  it is not the other person in frame (#833).
 
 Called by the writes that change a photo's keywords or record its faces, after the photo's
 people are rebuilt (tagpup.store.photos, tagpup.services.faces), inside the writer's transaction;
@@ -40,6 +43,7 @@ tagpup.store.faces.name_unnamed, whose guards hold at the write, whatever was re
 """
 import collections
 import json
+import math
 
 import numpy as np
 
@@ -247,11 +251,12 @@ def _gated(conn, singles, result, cache, on_step=None):
                 result.counts["left"] += 1
                 continue
             best = float((decided @ (vec / norm)).max())
-            if not clustering.is_offered(best):
+            # One face, one person: the tag says whose the face is, so no margin over anyone else is asked (#833).
+            if not clustering.is_offered(best, math.inf):
                 result.counts["not_like_them"] += 1
                 result.counts["left"] += 1
                 continue
-            result.counts["like_them" if clustering.names_unasked(best) else "like_them_somewhat"] += 1
+            result.counts["like_them" if clustering.names_unasked(best, math.inf) else "like_them_somewhat"] += 1
         result.named.append(Choice(face_id, photo_id, person, "tag", source))
         result.counts["one_face_one_person"] += 1
 
@@ -265,18 +270,17 @@ BLOCK = 512
 
 
 def _reached(vectors, references, on_step=None):
-    """{face id: {the keys of the people some decided face of whom it is alike enough to}} for the
-    faces of `vectors` {face id: embedding bytes} that can be compared: compared a block at a
-    time, never a face at a time (a library's faces to place are tens of thousands). A person's key is the id of their
-    node."""
+    """({face id: ({the keys of the people some decided face of whom it is alike enough to name unasked}, its row: its
+    likeness to each person)}, {person's key: their column of the rows}) for the faces of `vectors` {face id: embedding bytes}
+    that can be compared and reach someone: compared a block at a time, never a face at a time (a library's faces to place
+    are tens of thousands). A person's key is the id of their node; a face's likeness to a person is to their closest
+    decided face (clustering.FacesByPerson)."""
+    references = clustering.FaceRows.of(references)
     _ids, people, matrix = references
     if matrix is None or not len(people):
-        return {}
+        return {}, {}
     width = matrix.shape[1]
-    keys = [_key(person) for person in people]
-    order = list(dict.fromkeys(keys))
-    index = {key: n for n, key in enumerate(order)}
-    code = np.array([index[key] for key in keys])
+    by_person, grouped = references.by_person   # made once for the matrix (clustering.FaceRows)
     usable = [(face_id, blob) for face_id, blob in vectors.items() if blob and len(blob) == width * 4]
     reached = {}
     for start in range(0, len(usable), BLOCK):
@@ -286,25 +290,27 @@ def _reached(vectors, references, on_step=None):
         stacked = np.stack([np.frombuffer(blob, dtype=np.float32) for _face, blob in block])
         norms = np.linalg.norm(stacked, axis=1)
         stacked = stacked / np.where(norms == 0, 1, norms)[:, None]
-        rows, columns = np.nonzero(clustering.might_name_unasked(stacked @ matrix.T, 0.0))
-        pairs = np.unique(rows.astype(np.int64) * len(order) + code[columns])
-        for pair in pairs.tolist():
-            row, person = divmod(pair, len(order))
-            if norms[row]:
-                reached.setdefault(block[row][0], set()).add(order[person])
-    return reached
+        table, order = by_person.table(stacked @ grouped.T, grouped=True), by_person.keys
+        close = clustering.might_name_unasked(table, 0.0)
+        for row in np.nonzero(close.any(axis=1) & (norms > 0))[0].tolist():
+            reached[block[row][0]] = ({order[column] for column in np.nonzero(close[row])[0].tolist()}, table[row])
+    return reached, {key: column for column, key in enumerate(by_person.keys)}
 
 
-def _matched(unnamed, free, reached):
+def _matched(unnamed, free, held, reached, columns):
     """[(face id, Ref)] among `unnamed` that exactly one person's decided faces are alike enough
-    to name unasked (`reached`), the person being one of `free`, and nobody else's face of the
-    photo is proposed for."""
+    to name unasked (`reached`, read by its `columns`), by a margin over the next person but those the photo's other faces
+    carry (`held`) that names unasked too, the person being one of `free`, and nobody else's face of the photo is proposed
+    for."""
     wanted = {_key(person): person for person in free}
     proposed = collections.defaultdict(list)
     for face_id in unnamed:
-        people = reached.get(face_id, ())
-        if len(people) == 1 and next(iter(people)) in wanted:
-            proposed[next(iter(people))].append(face_id)
+        if face_id not in reached:
+            continue
+        people, row = reached[face_id]
+        best, likeness, margin = clustering.KnownFaces.best(row, columns, skip=held)
+        if len(people) == 1 and best in wanted and clustering.names_unasked(likeness, margin):
+            proposed[best].append(face_id)
     return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
 
 
@@ -359,21 +365,22 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
             (face_id, source), = unnamed.items()
             singles.append((photo_id, face_id, free[0], source))
         elif references is not None:
-            open_ones.append((photo_id, unnamed, free))
+            held = {_key(person) for _id, person, _source, excluded, _box in here if person and not excluded}
+            open_ones.append((photo_id, unnamed, free, held))
         else:
             result.counts["left"] += 1
     if singles:
         _gated(conn, singles, result, {} if cache is None else cache, on_step)
     if open_ones:
-        vectors = _embeddings(conn, [face_id for _photo, unnamed, _free in open_ones for face_id in unnamed])
+        vectors = _embeddings(conn, [face_id for _photo, unnamed, _free, _held in open_ones for face_id in unnamed])
         if on_step is not None:
             on_step("comparing", 0, len(vectors))
         references = references() if callable(references) else references
-        reached = _reached(vectors, references, on_step)
+        reached, columns = _reached(vectors, references, on_step)
         if on_step is not None:
             on_step("deciding", 0, len(open_ones))
-        for photo_id, unnamed, free in open_ones:
-            found = _matched(unnamed, free, reached)
+        for photo_id, unnamed, free, held in open_ones:
+            found = _matched(unnamed, free, held, reached, columns)
             result.named += [Choice(face_id, photo_id, person, "match", unnamed[face_id]) for face_id, person in found]
             result.counts["matched" if found else "left"] += 1
     return result

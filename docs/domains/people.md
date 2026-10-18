@@ -55,6 +55,14 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
 
 ## By design (each row closed `decided:`)
 
+- **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
+  taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
+  keeps "exactly one person reaches 0.80" beside it, since the margin alone would name a face two people reach 0.04 apart, a
+  name the old rule never gave (phase 2's gate), and leaves out the people the photo's other faces hold, as the pairing does.
+  The photo with one face and one person is asked no margin at a save, where cluster-faces' last pass asks 0.04 over the
+  library: a save is the owner's own act on that photo's tag, and the tag says whose its one face is; the last pass guesses
+  among several faces of a photo whose keywords say only who is in it.
+
 - **The clustering trace's fourth decimal** (2026-10-16, phase 2a; #1548): the last pass read its likenesses from one float32
   product of a block of faces with everyone's faces, not one product a person, so a likeness differed in its last bits
   (at most 4.2e-07 on kr-track) and the trace printed 89 of photo_index's 187,757 similarities one apart at the fourth
@@ -147,6 +155,12 @@ shown, the tag where filed), `person-tag-form` (a person written as a tag path),
 
 ## History
 
+- 2026-10-17, phase 2b: a name resting on likeness alone needs a margin over the next person named as well
+  (`clustering.margins`, NAME_MARGIN 0.04, OFFER_MARGIN 0.02; owner): the pairing and the last pass of cluster-faces, a save's
+  tags naming one of several faces, Re-examine, New Person, Suggest, the strip, the boxes and the Identify grid. A name a face
+  carries or one given by hand is asked none; the photo with one face and one person is not asked one (the tag says whose
+  it is); a name already given is not flagged by it (`looks_wrong`). The flat matrices are grouped by person in one place
+  (`clustering.FacesByPerson`); `tests/test_face_values_have_one_owner.py` fails a top-of-a-row taken elsewhere.
 - 2026-10-15, the domain pass:
   - the vocabulary from `person_ids.People` (#1463); `wire` gone (#1482); one maker of a person (#1252);
   - clustering's people as ids under their own key, in one statement (#1372, #1373);

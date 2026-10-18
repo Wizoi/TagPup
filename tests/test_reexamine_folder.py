@@ -92,12 +92,14 @@ class ReexamineThroughTheRoute(ExclusionTestBase):
         self.assertIn(ROWAN, self.photo_people(self.first))
 
     def test_a_face_named_in_between_is_not_named_again_and_the_counts_say_so(self):
+        # The owner names the face Rowan by hand in between. (Named someone else, the other face of Rowan's would be as
+        # like that person as like him, and left for its margin: tagpup.core.clustering.margins.)
         self.assertEqual(self.reexamine(dry_run=True)["faces"], 3)
-        status, body = self.post("/api/face/match", {"face_id": self.rowan_two, "person_name": "Kit Morrow"})
+        status, body = self.post("/api/face/match", {"face_id": self.rowan_two, "person_name": ROWAN})
         self.assertEqual(status, 200, body)
         done = self.reexamine(dry_run=False)
         self.assertEqual((done["matched_count"], done["people"]), (2, {ROWAN: 1, WREN: 1}))
-        self.assertEqual(self.row(self.rowan_two)["name"], "Kit Morrow")
+        self.assertEqual(self.row(self.rowan_two)["name"], ROWAN)
 
     def test_an_excluded_face_is_in_neither_the_dry_run_nor_the_apply(self):
         status, body = self.post("/api/faces/exclude", {"face_ids": [self.wren_one]})

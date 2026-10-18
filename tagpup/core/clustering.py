@@ -38,6 +38,18 @@ clustering keeps a name it gave only while the face reaches NAME_WITHOUT_ASKING,
 value it named at *(owner, 2026-09-24)*. The grid flagged below 0.85 of the median,
 which is half of every correctly named face, and clustering unnamed below 0.80 of the
 mean, a third of them.
+
+A likeness is not enough on its own: a face 0.85 like one cousin and 0.84 like the other is either. The margin -- how
+much more like the face its person is than the next person named -- told right from wrong far better on photo_index's
+FaceNet vectors (docs/AI_PIPELINE.md, sections 3.1 and 7, held out by folder; #1532 for the curve's bias):
+
+    precision by likeness     0.9837 at 0.70     0.9846 at 0.80
+    precision by margin       0.9954 at 0.02     0.9983 at 0.04
+
+So a name resting on likeness alone needs both: the likeness, and the margin over the second-best of everyone named
+(`margins`). It gates the names given from now on and the names offered; it never takes away a name a face carries
+or one given by hand (owner, 2026-10-17: applied to the names already given it would unname about 18,500 of
+photo_index's 55,088).
 """
 import math
 import threading
@@ -59,6 +71,17 @@ OFFER_A_NAME = 0.70
 NAME_WITHOUT_ASKING = 0.80
 
 
+#: A face is given a name with no one looking only when it is at least this much more like that person than the
+#: next person named (`margins`), as well as NAME_WITHOUT_ASKING like them: precision 99.83% on photo_index's
+#: named faces, against 98.46% by the likeness alone. The owner chose it (2026-10-17). Interim, for FaceNet's
+#: vectors: phase 4 reads it again for the new model.
+NAME_MARGIN = 0.04
+
+#: A face is offered a name only when it is at least this much more like that person than the next one, as well
+#: as OFFER_A_NAME like them: precision 99.54%. The owner chose it (2026-10-17).
+OFFER_MARGIN = 0.02
+
+
 #: Faces at least this alike are grouped together before anyone is named: clustering's
 #: radius, and TagTuner's grouping of the nameless (DBSCAN, as a distance). Measured on
 #: `kr-track` (2026-09-24), each hand-named face against the nearest face of its own
@@ -76,15 +99,15 @@ NAME_WITHOUT_ASKING = 0.80
 GROUPING = 0.885
 
 
-def band(similarity):
-    """The band a face this alike a person is shown in: "likely" when it could be named
-    unasked, "possible" when it would be offered, else None. TagTuner's candidates,
+def band(similarity, margin):
+    """The band a face this alike a person, by this margin over the next person, is shown in: "likely" when it could
+    be named unasked, "possible" when it would be offered, else None. TagTuner's candidates,
     suggestions and diagnostics had four sets of numbers for this (0.75/0.60, 0.85,
     0.8/0.65, 0.8); the server now names the band and the page shows it *(owner,
     2026-09-24)*."""
-    if names_unasked(similarity):
+    if names_unasked(similarity, margin):
         return "likely"
-    if is_offered(similarity):
+    if is_offered(similarity, margin):
         return "possible"
     return None
 
@@ -101,15 +124,31 @@ def distance(similarity):
 # Callers ask these; the values above are this module's alone
 # (tests/test_face_values_have_one_owner.py).
 
-def is_offered(similarity):
-    """Is a face `similarity`-like the person worth offering as its name?"""
-    return similarity is not None and similarity >= OFFER_A_NAME
+def is_offered(similarity, margin):
+    """Is a face `similarity`-like the person, and `margin` more like them than the next person (`margins`), worth
+    offering as its name?"""
+    return similarity is not None and similarity >= OFFER_A_NAME and margin >= OFFER_MARGIN
 
 
-def names_unasked(similarity):
-    """May a face `similarity`-like the person be given their name with no one looking --
-    and keep a name clustering gave it?"""
-    return similarity is not None and similarity >= NAME_WITHOUT_ASKING
+def names_unasked(similarity, margin):
+    """May a face `similarity`-like the person, and `margin` more like them than the next person (`margins`), be given
+    their name with no one looking? A name the face carries is asked no margin -- the margin never takes a name away
+    (owner, 2026-10-17) --: its caller passes math.inf."""
+    return similarity is not None and similarity >= NAME_WITHOUT_ASKING and margin >= NAME_MARGIN
+
+
+def gathers_for_a_new_person(similarity, margin):
+    """Is a nameless face `similarity`-like the face New Person was opened on, and `margin` more like it than like anyone
+    named, gathered for the new person? As like as naming unasked asks, since they are named together; but gathering is an
+    offer the owner looks over before naming, so the margin is the offer's (owner, 2026-10-17)."""
+    return similarity is not None and similarity >= NAME_WITHOUT_ASKING and margin >= OFFER_MARGIN
+
+
+def names_from_the_tag(similarity, margin):
+    """May a face be given the name of a person its photo's keywords name, with no one looking? The keyword says the
+    person is in the photo, so the likeness need only be one a name is offered at (#902); it does not say which face is
+    theirs, which is what the margin says, so that is the margin of naming unasked (owner, 2026-10-17)."""
+    return similarity is not None and similarity >= OFFER_A_NAME and margin >= NAME_MARGIN
 
 
 def might_name_unasked(similarities, slack):
@@ -123,6 +162,129 @@ def looks_wrong(similarity):
     """Is a name on a face only `similarity`-like its person worth a second look? Below
     the value it would be offered at, it would not even have been suggested."""
     return similarity is not None and similarity < OFFER_A_NAME
+
+
+def margins(table):
+    """How much more like each face each person of `table` (a row a face, a column a person: a likeness, NaN or -inf
+    where there is none) is than the most alike of the others: for the face's best person, the margin over the
+    second-best; for anyone else, how far behind the best (negative, or 0 in a tie). NaN where there is no likeness; a
+    person with nobody else to be behind has an infinite margin. The one place a margin is worked out: every gate's
+    margin comes from here (tests/test_face_values_have_one_owner.py)."""
+    table = np.asarray(table, dtype=np.float64)
+    flat = table.ndim == 1
+    values = np.atleast_2d(table)
+    present = np.isfinite(values)
+    values = np.where(present, values, -np.inf)
+    found = np.full(values.shape, np.nan)
+    if not values.shape[1]:
+        return found[0] if flat else found
+    first = np.argmax(values, axis=1)
+    best = values[np.arange(len(values)), first]
+    second = (np.partition(values, values.shape[1] - 2, axis=1)[:, values.shape[1] - 2] if values.shape[1] > 1
+              else np.full(len(values), -np.inf))
+    others = np.where(np.arange(values.shape[1])[None, :] == first[:, None], second[:, None], best[:, None])
+    with np.errstate(invalid="ignore"):
+        found = np.where(present, values - others, np.nan)
+    return found[0] if flat else found
+
+
+def ranked(row, limit=None):
+    """[(column, likeness, margin)] of the people of `row` (one face's row of a table `margins` reads) that have a
+    likeness, the most alike first -- the first of a tie by column -- and at most `limit` of them."""
+    row = np.asarray(row, dtype=np.float64)
+    margin = margins(row)
+    order = [int(column) for column in np.argsort(-np.where(np.isfinite(row), row, -np.inf), kind="stable")
+             if np.isfinite(row[column])]
+    return [(column, float(row[column]), float(margin[column])) for column in order[:limit]]
+
+
+def best_of(table):
+    """(the column, likeness and margin of each face's best person) of `table`, as arrays a row a face: the column -1
+    and NaNs for a face with no likeness. For a block of faces at once, as `ranked` is for one."""
+    table = np.atleast_2d(np.asarray(table, dtype=np.float64))
+    if not table.shape[1]:
+        return np.full(len(table), -1), np.full(len(table), np.nan), np.full(len(table), np.nan)
+    present = np.isfinite(table)
+    columns = np.argmax(np.where(present, table, -np.inf), axis=1)
+    rows = np.arange(len(table))
+    found = present[rows, columns]
+    return (np.where(found, columns, -1), np.where(found, table[rows, columns], np.nan),
+            np.where(found, margins(table)[rows, columns], np.nan))
+
+
+class FacesByPerson:
+    """The faces of a matrix kept one row a face -- the named or decided faces of tagpup.services.identify -- grouped by
+    their person, so that a face's likeness to each person is to their closest face (`table`), in a table `margins` reads.
+    `people` is each row's person: a person's id, or any number that tells them apart. `keys` are the people of the
+    table's columns, in order of their id; `first` the row of each one's first face."""
+
+    def __init__(self, people):
+        people = np.asarray(people)
+        self.order = np.argsort(people, kind="stable")
+        ordered = people[self.order]
+        self.starts = np.flatnonzero(np.r_[True, ordered[1:] != ordered[:-1]]) if len(ordered) else np.zeros(0, np.intp)
+        self.keys = ordered[self.starts].tolist()
+        self.first = self.order[self.starts].tolist()
+        self.in_order = bool(np.array_equal(self.order, np.arange(len(self.order))))
+
+    def grouped(self, matrix):
+        """`matrix`'s rows (or a vector's entries) in the order `table` reads them as `grouped`: a matrix many blocks of
+        faces are compared with is put in order once, not each product (a product of 512 faces with 55,000 named ones
+        took 0.18 s to reorder, against 0.01 s to reduce, measured 2026-10-17). Rows already in that order are the
+        matrix itself, not a copy."""
+        return matrix if self.in_order else matrix[self.order]
+
+    def table(self, similarities, grouped=False):
+        """Each face's likeness to each person, from `similarities` (a row a face, a column a face of the matrix; in
+        `grouped`'s order when `grouped`): a person's is their closest face's; -inf where none of their faces is."""
+        similarities = np.atleast_2d(similarities)
+        if not len(self.keys):
+            return np.zeros((len(similarities), 0), dtype=similarities.dtype)
+        return np.maximum.reduceat(similarities if grouped else similarities[:, self.order], self.starts, axis=1)
+
+
+class FaceRows(tuple):
+    """(ids, people, matrix) of the faces kept one row a face (tagpup.services.identify.named_faces, decided_faces), as
+    their callers unpack them, holding their grouping by person (`by_person`): made once for the matrix, the first time it
+    is asked, and kept with it for as long as the matrix is kept (tagpup.jobs.identify's cache) -- the strip asked it once a
+    face, and each regrouped 55,000 named faces (about 0.34 s against 0.22 s for 40 faces). The rows are put in the order
+    of their people's ids when made, so the grouping's matrix is the matrix itself: one copy of it is kept, not two (about
+    110 MB on photo_index). Every caller reads a row's face and person from these same lists."""
+
+    def __new__(cls, ids, people, matrix):
+        if matrix is not None and len(people) > 1:
+            order = np.argsort(np.asarray([person.id for person in people]), kind="stable")
+            if not np.array_equal(order, np.arange(len(order))):
+                ids, people, matrix = [ids[n] for n in order], [people[n] for n in order], matrix[order]
+        rows = super().__new__(cls, (ids, people, matrix))
+        rows._grouping = None
+        rows._making = threading.Lock()
+        return rows
+
+    @classmethod
+    def of(cls, rows):
+        """`rows` as FaceRows: themselves, or a plain (ids, people, matrix) made into them."""
+        return rows if isinstance(rows, cls) else cls(*rows)
+
+    @property
+    def by_person(self):
+        """(FacesByPerson of the rows' people -- a person's id each --, the matrix in its `grouped` order, or None)."""
+        return self._grouped()[:2]
+
+    @property
+    def ids_grouped(self):
+        """The rows' face ids in `by_person`'s order, an array: to leave one face out of a product with the grouped matrix."""
+        return self._grouped()[2]
+
+    def _grouped(self):
+        if self._grouping is None:
+            with self._making:
+                if self._grouping is None:
+                    ids, people, matrix = self
+                    grouping = FacesByPerson([person.id for person in people])
+                    self._grouping = (grouping, grouping.grouped(matrix) if matrix is not None else None,
+                                      grouping.grouped(np.asarray(ids)))
+        return self._grouping
 
 
 def singled_out(votes):
@@ -287,22 +449,43 @@ class KnownFaces:
         return [value if value == value else None for value in table[:, columns[name]].tolist()]   # NaN is not itself
 
     def most_like(self, embedding, year=None, photo=None, among=None, skip=()):
-        """(name, likeness) of the person `embedding` is most like, of `among` (everyone,
-        without) but those in `skip`; (None, None) with nobody to compare."""
+        """(name, likeness, margin) of the person `embedding` is most like, of `among` (everyone,
+        without) but those in `skip`; (None, None, None) with nobody to compare."""
         table, columns = self.likeness_table([(embedding, year, photo)])
         return self.best(table[0], columns, among, skip)
 
     @staticmethod
     def best(row, columns, among=None, skip=()):
-        """(name, likeness) of the highest of `row`, a row of likeness_table read by the `columns` it came with, of `among`
-        (everyone in it, without) but those in `skip`; the first of a tie in `among`'s order, or the columns'; (None, None)
-        with nobody to compare. The columns travel with the row, so a person added since cannot shift what it is read as."""
-        names = [name for name in (columns if among is None else among) if name in columns and name not in skip]
-        values = row[[columns[name] for name in names]] if names else row[:0]
-        if np.isnan(values).all():
-            return (None, None)
-        first = int(np.nanargmax(values))   # the first of the highest, as a person by person look kept it
-        return (names[first], float(values[first]))
+        """(name, likeness, margin over the next of them, `margins`) of the highest of `row`, a row of likeness_table read
+        by the `columns` it came with, of `among` (everyone in it, without) but those in `skip`; the first of a tie in
+        `among`'s order, or the columns'; (None, None, None) with nobody to compare. The columns travel with the row, so a
+        person added since cannot shift what it is read as."""
+        if among is None:   # everyone: the skipped masked, not a list of everyone made a face (the last pass asks 96,000)
+            names, values = list(columns), KnownFaces._without(row, columns, skip)
+        else:
+            names = [name for name in among if name in columns and name not in skip]
+            values = row[[columns[name] for name in names]] if names else row[:0]
+        column, likeness, margin = (float(each[0]) for each in best_of(values))
+        if column < 0:
+            return (None, None, None)
+        return (names[int(column)], likeness, margin)
+
+    @staticmethod
+    def margin_of(row, columns, name, skip=()):
+        """The margin (`margins`) of `name` over everyone else of `row`, a row of likeness_table read by its `columns`, but
+        those in `skip`: NaN when `name` has no likeness in it."""
+        if name not in columns:
+            return float("nan")
+        return float(margins(KnownFaces._without(row, columns, skip, keep=name))[columns[name]])
+
+    @staticmethod
+    def _without(row, columns, skip, keep=None):
+        """`row` with the people of `skip` but `keep` left out (NaN, which `margins` reads as no likeness)."""
+        values = np.array(row, dtype=np.float64)
+        for name in skip:
+            if name != keep and name in columns:
+                values[columns[name]] = np.nan
+        return values
 
     def likeness_table(self, faces, among=None):
         """likeness of each of `faces`, [(embedding, year, photo)], against every person, or the people `among` that are

@@ -4,19 +4,25 @@ overwrite it, the photo's keyword and the face stay in step, and the run says ho
 A photo whose keywords name two people nobody's face is known for keeps its two faces unnamed, whether the two would be paired
 by elimination (#1374) or one face given the first of a tie of votes (#1454), and the run says how many earlier guesses it took
 back and how many faces it left so (#1455). A cluster holding as many anchors of two people names neither: its faces are named
-by likeness or elimination (#1468).
+by likeness or elimination (#1468). A face named on likeness alone needs a margin over the next person: a face between two
+cousins is neither named nor offered, a name it carries stays (AFaceBetweenTwoCousins; docs/AI_PIPELINE.md, phase 2b).
 """
 import json
+import math
 import os
 import sys
 import unittest
+
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
 
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import identify  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, face_tags  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
 
@@ -331,17 +337,18 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
 
     def two_look_alike_siblings_and_their_photo_together(self, by_hand):
         """Ivo and Ines Marsh look alike: a solo photo of each, tagged with them alone, and a photo tagged with both whose first
-        face is closer to Ines and whose second is like neither. The two solo faces and the first face of the pair group into
+        face is closer to Ines -- by more than the margin of naming unasked (about 0.05; AFaceBetweenTwoCousins for one
+        closer by less) -- and whose second is like neither. The two solo faces and the first face of the pair group into
         one cluster. `by_hand`: the owner also names each solo face in TagTuner."""
         ivo = identity_vector(41)
-        ines = near(ivo, 2, distance=0.2)
+        ines = near(ivo, 2, distance=0.35)
         solos = [self.add_face(self.photo_tagged("ivo.jpg", ["Ivo Marsh"]), ivo),
                  self.add_face(self.photo_tagged("ines.jpg", ["Ines Marsh"]), ines)]
         if by_hand:
             db.write_with_connection(self.db_path, lambda conn: (store_faces.name(conn, [solos[0]], "Ivo Marsh"),
                                                                   store_faces.name(conn, [solos[1]], "Ines Marsh")))
         shared = self.photo_tagged("both.jpg", ["Ivo Marsh", "Ines Marsh"])
-        look_alike = self.add_face(shared, near(ines, 3), box=(0, 0, 200, 200))
+        look_alike = self.add_face(shared, near(ines, 3, distance=0.1), box=(0, 0, 200, 200))
         other = self.add_face(shared, identity_vector(42), box=(300, 0, 500, 200))
         self.run_while(lambda conn: None)
         return solos, look_alike, other
@@ -528,6 +535,237 @@ class ARunRewritesTheGuessesOfAPhoto(FaceClusteringTestBase):
         self.assertEqual([], unnamed, "a face lost its guess to a merge in the gap")
         self.assertEqual((pell, mara), (self.carried()[first], self.carried()[second]))
         self.assertEqual([True], waited, "the merge landed between the write's read of the tree and its first UPDATE")
+
+
+def at(degrees):
+    """A unit vector `degrees` round a circle of the faces' space: two are as alike as the cosine of the angle between."""
+    vector = np.zeros(512, dtype=np.float32)
+    vector[0], vector[1] = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    return vector
+
+
+class AFaceBetweenTwoCousins(FaceClusteringTestBase):
+    """The margin rule (docs/AI_PIPELINE.md, phase 2b; owner, 2026-10-17). Mara and Tobin Quill are cousins, each with a solo
+    photo of their own; a photo of the two of them together holds one face that is `likeness` like Mara and `margin` less like
+    Tobin. A name resting on likeness alone needs both the likeness and the margin over the next person (0.04 to name with no
+    one looking, 0.02 to offer); a name the face already carries, or one given by hand, is never taken away by it. Each
+    screen that names or offers a face is asked of the same face. Mutation: the margin dropped from the gates (the old code)
+    names the face at 0.805 and a margin of 0.01 in every place below."""
+
+    photo_tagged = ClusteringMeetsNaming.photo_tagged
+    run_while = ClusteringMeetsNaming.run_while
+    row = ClusteringMeetsNaming.row
+
+    def cousins(self, likeness, margin, by_hand=False, carried=None):
+        """The three photos; the shared photo's face `carried` the person an earlier run gave it, if any. Returns its id."""
+        between = math.degrees(math.acos(likeness))
+        mara = self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
+        tobin = self.add_face(self.photo_tagged("tobin.jpg", ["Tobin Quill"]),
+                              at(between + math.degrees(math.acos(likeness - margin))))
+        if by_hand:
+            db.write_with_connection(self.db_path, lambda conn: (store_faces.name(conn, [mara], "Mara Quill"),
+                                                                  store_faces.name(conn, [tobin], "Tobin Quill")))
+        self.together = self.photo_tagged("together.jpg", ["Mara Quill", "Tobin Quill"])
+        face = self.add_face(self.together, at(between), box=(0, 0, 200, 200))
+        if carried:   # written as a run writes its guesses (store.faces.set_names)
+            written = db.write_with_connection(self.db_path, lambda conn: store_faces.set_names(
+                conn, {face: face_rows.person_of(conn, carried)}, {face: None})[0])
+            self.assertEqual([face], written)
+        return face
+
+    def library(self):
+        return Library(self.db_path)
+
+    def named(self):
+        return lambda: identify.named_faces(self.library())[1]
+
+    def offered(self, face):
+        """What the details panel's strip suggests for the face, and the band the boxes' list gives Mara."""
+        from tagpup.services import faces as face_service
+        strip = {each["id"]: each["suggestion"] for each in face_service.panel(self.library(), self.together, self.named())["faces"]}
+        bands = {match["name"]: match["band"] for match in identify.face_matches(self.library(), face, self.named())}
+        return strip[face], bands["Mara Quill"]
+
+    def test_a_face_a_hair_more_like_one_cousin_is_not_named_by_cluster_faces(self):
+        face = self.cousins(0.805, 0.01)
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual((None, None), self.row(face), "a face as like one cousin as the other was named for one")
+        self.assertIn("final_matching_tagged_photo_failed", self.traces()[face]["resolution_method"])
+
+    def test_the_same_face_well_ahead_of_the_other_cousin_is_named_as_before(self):
+        face = self.cousins(0.85, 0.06)
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual(("Mara Quill", None), self.row(face))
+
+    def decided(self):
+        return lambda: identify.decided_faces(self.library())[1]
+
+    def named_by_its_tags(self):
+        """The faces a save of the photos' tags would name (store.face_tags.plan: several faces, several people)."""
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            return [choice.face_id for choice in face_tags.plan(conn, references=self.decided()()).named]
+        finally:
+            conn.close()
+
+    def re_examined(self):
+        return face_service_automatch(self.library(), os.path.dirname(self.together), self.decided()).details["faces"]
+
+    def test_it_is_not_offered(self):
+        face = self.cousins(0.805, 0.01, by_hand=True)
+        self.assertEqual((None, None), self.offered(face), "the strip or the boxes offered one cousin of two")
+
+    def test_re_examine_does_not_name_it(self):
+        self.cousins(0.805, 0.01, by_hand=True)
+        self.assertEqual(0, self.re_examined(), "Re-examine would name the face for one cousin")
+
+    def test_its_photos_tags_do_not_name_it(self):
+        self.cousins(0.805, 0.01, by_hand=True)
+        self.assertEqual([], self.named_by_its_tags(), "the photo's tags named the face for one cousin")
+
+    def test_its_photos_tags_name_it_once_the_other_cousins_face_there_is_named(self):
+        """The owner names one of the photo's other faces Tobin; a third, a stranger's, stays unnamed. The face 0.81 like
+        Mara and 0.79 like Tobin is then ahead of everyone the photo's other faces do not hold, as cluster-faces' pairing
+        asks it (owner, 2026-10-17): a save of the photo's tags names it Mara."""
+        face = self.cousins(0.81, 0.02, by_hand=True)
+        tobin = self.add_face(self.together, at(170), box=(300, 0, 500, 200))
+        self.add_face(self.together, at(250), box=(600, 0, 800, 200))
+        db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [tobin], "Tobin Quill"))
+        self.assertEqual([face], self.named_by_its_tags(), "a cousin the photo's other face holds kept the face from Mara")
+
+    def test_well_ahead_it_is_offered_and_named_by_each(self):
+        face = self.cousins(0.85, 0.06, by_hand=True)
+
+        self.assertEqual(("Mara Quill", "likely"), self.offered(face))
+        self.assertEqual(1, self.re_examined())
+        self.assertEqual([face], self.named_by_its_tags())
+
+    def test_a_name_the_face_carries_stays_through_two_reruns(self):
+        """#855: the margin gates names given from now on; the name an earlier run gave, which the photo's keywords bear out,
+        stays (about 18,500 of photo_index's would go otherwise, counted 2026-10-17)."""
+        face = self.cousins(0.805, 0.01, carried="Mara Quill")
+
+        for _run in range(2):
+            self.run_while(lambda conn: None)
+            self.assertEqual(("Mara Quill", None), self.row(face), "a name the face carried was taken away by the margin")
+
+    def test_a_name_given_by_hand_with_no_margin_at_all_is_untouched_through_two_reruns(self):
+        face = self.cousins(0.805, 0.0)
+        db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [face], "Tobin Quill"))
+
+        for _run in range(2):
+            self.run_while(lambda conn: None)
+            self.assertEqual(("Tobin Quill", "manual"), self.row(face))
+
+    def test_a_rerun_names_nothing_new_and_a_run_stopped_at_saving_writes_nothing(self):
+        """The face between the cousins stays unnamed run after run (no flip-flop); a run stopped as it saves leaves the
+        library as it was."""
+        face = self.cousins(0.805, 0.01)
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            before = conn.execute("SELECT id, name, tag_id FROM faces ORDER BY id").fetchall()
+        finally:
+            conn.close()
+
+        def stopped(conn):
+            raise KeyboardInterrupt("the owner closed the window as it saved")
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_while(stopped)
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            self.assertEqual(before, conn.execute("SELECT id, name, tag_id FROM faces ORDER BY id").fetchall())
+        finally:
+            conn.close()
+        names = []
+        for _run in range(3):
+            self.run_while(lambda conn: None)
+            names.append(self.row(face))
+        self.assertEqual([(None, None)] * 3, names, "the face between two people flip-flopped between runs")
+
+    def test_in_a_library_with_one_known_person_the_face_is_named_as_before(self):
+        """Two libraries: the cousins' (well apart), and one where only Mara is known: no second person, so nothing to be
+        ahead of (an infinite margin, by the arithmetic)."""
+        cousins = self.cousins(0.85, 0.06)
+        self.run_while(lambda conn: None)
+        self.db_path = os.path.join(self.tmpdir, "one_person.db")
+        self.index.close()
+        self.index = PhotoIndex(db_path=self.db_path)
+        self.index.load()   # the second library, made as the first
+        self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
+        pair = self.photo_tagged("pair.jpg", ["Mara Quill"])
+        face = self.add_face(pair, at(math.degrees(math.acos(0.805))), box=(0, 0, 200, 200))
+        stranger = self.add_face(pair, at(120), box=(300, 0, 500, 200))
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual([("Mara Quill", None), (None, None)], [self.row(face), self.row(stranger)])
+        self.db_path = os.path.join(self.tmpdir, "faces_test.db")
+        self.assertEqual(("Mara Quill", None), self.row(cousins))
+
+    def test_a_round_settles_its_photos_alike_however_many_at_once(self):
+        """cluster-faces settles a round's photos a block at a time (identities.AHEAD): each up to its pairing, then the
+        block's faces read in one table, then each finished in order. One photo at a time, two, or all at once plan the
+        same names and the same traces. Mutation: a photo's pairing that reads the names its block gave before it."""
+        from unittest import mock
+        from tagpup.services import identities
+        self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
+        self.add_face(self.photo_tagged("tobin.jpg", ["Tobin Quill"]), at(120))
+        for number in range(4):   # the cousins together, each face well ahead of the other cousin, on no anchor's cluster
+            together = self.photo_tagged("together_%d.jpg" % number, ["Mara Quill", "Tobin Quill"])
+            self.add_face(together, at(31 + number), box=(0, 0, 200, 200))
+            self.add_face(together, at(89 - number), box=(300, 0, 500, 200))
+        self.add_face(self.photo_tagged("between.jpg", ["Mara Quill", "Tobin Quill"]), at(60), box=(0, 0, 200, 200))
+
+        def planned(ahead):
+            seen = []
+            self.index.close()
+            self.index = PhotoIndex(db_path=self.db_path)
+            self.index.load()
+            with mock.patch.object(identities, "AHEAD", ahead), mock.patch.object(
+                    identities, "_save_face_names", lambda index, updates, as_read: (seen.extend(sorted(updates)), ([], [], 0, {}))[1]):
+                identities.resolve(self.index)
+            return seen, {face: (trace["person_id"], trace["assignment_order"], trace["resolution_method"])
+                          for face, trace in self.traces().items()}
+        alone = planned(1)
+        # The two solo faces and the eight of the pairs; the face between the cousins is nobody's.
+        self.assertEqual(10, sum(1 for person, _face in alone[0] if person is not None), "the fixture's pairs were not named")
+        for ahead in (2, 2000):
+            self.assertEqual(alone, planned(ahead), "a block of %d photos settled otherwise than one at a time" % ahead)
+
+    def test_new_person_gathers_by_the_margin_a_name_is_offered_at(self):
+        """New Person on a face nobody is named for gathers the faces like it, for the owner to look over before they are
+        named: an offer, so the margin it asks over everyone named is the offer's, 0.02 (owner, 2026-10-17). Mara, a
+        cousin, is named. One face is 0.851 like the chosen face and 0.83 like Mara (0.021 ahead: 0.02 itself is float32's
+        coin toss): gathered. One is 0.845 like it and 0.84
+        like Mara: it could as well be hers, and is left."""
+        mara = self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
+        db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [mara], "Mara Quill"))
+        chosen_at = math.radians(60)
+        target = self.add_face(self.add_photo("new.jpg"), at(60))
+
+        def like(to_mara, to_chosen):
+            """A unit vector `to_mara` like Mara's face and `to_chosen` like the chosen one, out of their plane."""
+            across = (to_chosen - to_mara * math.cos(chosen_at)) / math.sin(chosen_at)
+            vector = np.zeros(512, dtype=np.float32)
+            vector[0], vector[1], vector[2] = to_mara, across, math.sqrt(1 - to_mara ** 2 - across ** 2)
+            return vector
+        ahead = self.add_face(self.add_photo("ahead.jpg"), like(0.83, 0.851))
+        between = self.add_face(self.add_photo("between.jpg"), like(0.84, 0.845))
+
+        found = identify.unnamed_like(self.library(), target, named=self.named())
+
+        gathered = [match["id"] for match in found["matches"]]
+        self.assertNotIn(between, gathered, "a face as like Mara as the new person was gathered for them")
+        self.assertEqual([ahead], gathered, "a face 0.02 ahead of Mara was not offered for the new person")
+
+def face_service_automatch(library, folder, decided):
+    """Re-examine's rehearsal of `folder`: what automatch would name, nothing written."""
+    from tagpup.services import faces as face_service
+    return face_service.automatch_folder(library, folder, decided, rehearse=True)
 
 
 if __name__ == "__main__":

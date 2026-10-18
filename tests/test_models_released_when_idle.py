@@ -242,7 +242,7 @@ class TheTunersCaches(TheServer):
         return "unnamed_faces" in (tuner_routes.identify_cache.held(self.harbour.key) or {}).keys()
 
     def test_the_queue_and_new_persons_pool_are_let_go_never_under_a_grid_being_built(self):
-        def unnamed_like(library, face_id, unnamed=None):
+        def unnamed_like(library, face_id, unnamed=None, *, named):
             unnamed()
             return {"matches": []}
         with mock.patch.object(tuner_routes.identify_service, "unnamed_like", side_effect=unnamed_like):
