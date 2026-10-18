@@ -82,9 +82,15 @@ class Case(unittest.TestCase):
             conn, photo_path, {"XMP:Subject": list(keywords)}))
         return photo_path
 
-    def face(self, photo_path, box=(10, 10, 110, 110), degrees=0, **columns):
+    def face(self, photo_path, box=(10, 10, 110, 110), degrees=0, embedding=True, **columns):
+        """A face `degrees` round the circle; `embedding` None gives it no vector under the library's model (a face the other
+        model found), bytes give it those."""
         def add(conn):
             face_id = faces.insert(conn, photo_path, list(box), at(degrees), model=FACENET)
+            if embedding is None:
+                conn.execute("DELETE FROM face_embeddings WHERE face_id = ?", (face_id,))
+            elif embedding is not True:
+                face_rows.add_vector_of_face(conn, face_id, embedding)
             for column, value in columns.items():
                 conn.execute("UPDATE faces SET %s = ? WHERE id = ?" % column, (value, face_id))
             face_rows.give_their_person(conn, face_id)

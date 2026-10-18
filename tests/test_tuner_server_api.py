@@ -1082,14 +1082,16 @@ class TestTunerFolderRemoval(TunerAPITestBase):
 
         db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, photo, {}))
         conn = db.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?, 'manual')",
-            (photo, unit_vector(500).tobytes(), "Jane Doe"),
-        )
-        conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, excluded) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, NULL, 1)",
-            (photo, unit_vector(501).tobytes()),
-        )
+        named = conn.execute(
+            "INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, 'manual')",
+            (photo, "Jane Doe"),
+        ).lastrowid
+        face_rows.add_vector_of_face(conn, named, unit_vector(500).tobytes())
+        excluded = conn.execute(
+            "INSERT INTO faces (photo_id, box, name, excluded) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', NULL, 1)",
+            (photo,),
+        ).lastrowid
+        face_rows.add_vector_of_face(conn, excluded, unit_vector(501).tobytes())
         conn.commit()
         conn.close()
         return folder, photo

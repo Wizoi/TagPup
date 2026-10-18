@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import damaged_photos  # noqa: E402
 import own_home  # noqa: E402
+from face_rows import VECTOR_OF_FACE  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.core import read_ahead  # noqa: E402
@@ -132,8 +133,8 @@ def recorded(library_path):
         for photo_id, path, document_id in conn.execute("SELECT id, path, document_id FROM photos"):
             vector = conn.execute("SELECT vector FROM embeddings WHERE photo_id = ?", (photo_id,)).fetchone()
             found = [(box, numbers(np.frombuffer(blob, dtype=np.float32)[:3]))
-                     for box, blob in conn.execute("SELECT box, embedding FROM faces WHERE photo_id = ? ORDER BY id",
-                                                   (photo_id,))]
+                     for box, blob in conn.execute("SELECT f.box, v.vector FROM faces f" + VECTOR_OF_FACE
+                                                   + " WHERE f.photo_id = ? ORDER BY f.id", (photo_id,))]
             detected = conn.execute("SELECT found FROM faces_detected WHERE photo_id = ?", (photo_id,)).fetchone()
             rows[os.path.basename(path)] = (document_id is not None,
                                             numbers(np.frombuffer(vector[0], dtype=np.float32)) if vector
