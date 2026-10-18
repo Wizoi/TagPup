@@ -390,8 +390,18 @@ def add(library, folders, queue):
     A folder that is no full path or not on disk is not recorded, and is handed on for the
     queue to report. A Result: `changed`, the folders not added before; details, the
     queue's (`queued`, `already_queued`, `invalid`, `pending`) and `added`, the same count;
-    refused as the queue refuses."""
+    refused as the queue refuses.
+
+    Refused before anything is recorded or queued, with the library's own sentence
+    (settings.LibrarySettings.face_model_refusal), when the library is set to a face model
+    whose vectors it cannot keep: its index would be refused, and a folder recorded with no
+    row would be held, its refused index queued again by every sync after. A library that
+    cannot be read raises."""
     result = Result(attempted=len(folders))
+    refusal = settings.read(library).face_model_refusal
+    if refusal:
+        result.refuse(refusal)
+        return result
     # Before the queue: its worker may start at once, and a Suggest asked for as soon as
     # this returns must find the folder the library's.
     made = record_added(library, folders)

@@ -6,7 +6,9 @@ model is refused every write of faces, with one sentence (tagpup.services.settin
 the model is built or loaded. What the owner lives through:
 
 - (a) Add a folder, or sync: the CLI's index exits 78 with the sentence, having imported no model's library and written
-  no row; the server's queue (index_folder) says "Nothing was indexed: ..." instead of an exit code.
+  no row; the server's queue (index_folder) says "Nothing was indexed: ..." instead of an exit code. Add in TagPup and
+  TagTuner (tagpup.services.libraries.add) answers with the sentence and records no folder as added: one recorded with
+  no row would be held, and every sync after would queue its refused index again.
 - (b) Suggest, and Just look, in that library: the run ends in an error naming the sentence, and no model is built; the
   start-up warm-up builds nothing for it.
 - (c) Identify reads the faces the library holds, unaffected.
@@ -45,6 +47,7 @@ from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import suggester as suggester_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SENTENCE = library_settings.FACE_MODEL_NOT_KEPT
@@ -191,6 +194,46 @@ class TheIndexIsRefused(_Libraries):
         self.assertFalse(result.ok)
         self.assertEqual("Nothing was indexed: %s" % SENTENCE, result.message())
         self.assertEqual(0, result.details["percent"])
+        self.assertEqual(before, rows_of(self.cove.path))
+
+
+class AddingAFolderIsRefused(_Libraries):
+    """(a) Add a folder in the library switched to the new model: TagPup's Add, its index route, TagTuner's Add Folder."""
+
+    ROUTES = (("TagPup's Add", "tagpup", "/cove/api/folder/add", "folder_path"),
+              ("TagPup's index route", "tagpup", "/cove/api/folder/index-start", "folder_path"),
+              ("TagTuner's Add Folder", "tuner", "/cove/api/folder/index-start", "folder_paths"))
+
+    def setUp(self):
+        super().setUp()
+        self.slipway = paths.stored(os.path.join(self.home.root, "Slipway"))
+        os.makedirs(self.slipway)
+        Image.new("RGB", (64, 48), (10, 90, 130)).save(os.path.join(self.slipway, "launch.jpg"), "JPEG")
+        # On the code before the refusal, nothing a route queued may start an indexer.
+        runner = mock.patch.object(indexing_jobs.IndexQueue, "_ensure_runner")
+        runner.start()
+        self.addCleanup(runner.stop)
+
+    def test_add_records_nothing_and_queues_nothing(self):
+        before = rows_of(self.cove.path)
+        queued = []
+        result = library_actions.add(self.cove, [self.slipway], lambda folders: queued.append(folders))
+        self.assertEqual(SENTENCE, result.refused)
+        self.assertEqual(0, result.changed)
+        self.assertEqual([], queued)
+        self.assertEqual(before, rows_of(self.cove.path))
+        self.assertFalse(library_actions.holds(self.cove, self.slipway))
+
+    def test_each_route_shows_the_sentence(self):
+        before = rows_of(self.cove.path)
+        for name, kind, route, key in self.ROUTES:
+            with self.subTest(name):
+                app = web.create_app(kind, startup=self.cove)
+                app.testing = True
+                answer = app.test_client().post(route, json={key: [self.slipway] if key == "folder_paths" else self.slipway})
+                self.assertEqual(400, answer.status_code, answer.get_json())
+                self.assertEqual(SENTENCE, answer.get_json()["error"])
+                self.assertFalse(indexing_jobs.queue_for(self.cove).pending(), "a refused folder was queued")
         self.assertEqual(before, rows_of(self.cove.path))
 
 
