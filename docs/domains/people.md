@@ -63,6 +63,13 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
   library: a save is the owner's own act on that photo's tag, and the tag says whose its one face is; the last pass guesses
   among several faces of a photo whose keywords say only who is in it.
 
+- **Elimination is not the cluster-of-one gate** (2026-10-17, phase 2c; DECISIONS 2026-10-17 "Phase 2c"): the gate is the
+  vote's. The rounds' process of elimination -- one face left and one keyword person no face is known for, the photo's
+  background faces not counted -- names that face with no likeness asked, as the owner's rule of 2026-10-15 (#1374) has it
+  (`test_clustering_meets_naming`: `test_one_face_left_and_one_person_left_on_a_photo_is_still_named`, and the ties that
+  name neither). A face the gate refuses may be named so: it is the known route for a person no face is known for, and
+  trunk gave such a face the same name by the vote (today's names unchanged on copies of the three libraries).
+
 - **The clustering trace's fourth decimal** (2026-10-16, phase 2a; #1548): the last pass read its likenesses from one float32
   product of a block of faces with everyone's faces, not one product a person, so a likeness differed in its last bits
   (at most 4.2e-07 on kr-track) and the trace printed 89 of photo_index's 187,757 similarities one apart at the fourth
@@ -155,6 +162,10 @@ shown, the tag where filed), `person-tag-form` (a person written as a tag path),
 
 ## History
 
+- 2026-10-17, phase 2c: the vote of a cluster of one in a photo of two or more faces asks the tag's gate
+  (`names_from_the_tag`) for a name it gives, in cluster-faces' first round past the photo's conflicts; a name the face
+  carries is never asked, an anchor (one face, one keyword person) and a cluster of two or more are not asked. The rounds and
+  the last pass read who each person is in one place (`identities._known_faces`, anchors first). `min_samples` stays 1.
 - 2026-10-17, phase 2b: a name resting on likeness alone needs a margin over the next person named as well
   (`clustering.margins`, NAME_MARGIN 0.04, OFFER_MARGIN 0.02; owner): the pairing and the last pass of cluster-faces, a save's
   tags naming one of several faces, Re-examine, New Person, Suggest, the strip, the boxes and the Identify grid. A name a face

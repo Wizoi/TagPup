@@ -240,8 +240,30 @@ is the strong signal (precision 99.8% at margin 0.04, with FaceNet's vectors tod
   and the margin 51,059: 4,377 of trunk's not given (1,539 in the last pass), 313 given that trunk does not (70 of them
   another person than trunk's; 1,327 of the 51,059 reach the margin only by leaving out the people the photo's other faces
   hold, 32 of the 313 and 11 of the 70), for the owner's sample review (#1532). New Person gathers at the offer's margin.*
-- **2c Density.** Try `min_samples` 3 to 5 against the named faces (79% of faces are noise at today's cut). Suggest's
-  one `search(k=15)` a photo becomes a batch.
+- **2c Density.** *Measured 2026-10-17, no change (owner): `min_samples` stays 1.* At 1 no face is noise: a face like no
+  other is a cluster of one (kr-track 79.3% of its faces, photo_index 67.1%, renton_parkrun 76.7%), and a larger value makes
+  more noise, not fewer (photo_index 67.1% at 2, 75.0% at 5, 80.2% at 20). On a copy of photo_index every value from 2 takes
+  4,644 to 6,457 names the pass keeps today (a face turned noise loses its own anchor's and its cluster's vote), changes 248
+  to 1,512, and over a third of the names it gives are more like another person than the one given; precision on the faces
+  named by hand, held out, is no better (0.986 to 0.993 against 0.987 at 1, on 152 faces; kr-track 0.996 either way), and
+  the run is 5% quicker (DBSCAN's neighbour search is about 130 s at any value). The chain is the density problem, and no
+  value breaks it: one cluster holds 38,456 faces at 1 and 21,843 at 20, and the vote of a cluster held out by folder is
+  right for 17,615 named faces and wrong for 16,051; a voted name stands only where its photo's keywords name the person.
+  That is a question for the new recogniser's grouping cut (phase 4), not for `min_samples`. *Built from it (owner):* the
+  vote of a cluster of one in a photo of two or more faces is its photo's keywords alone, so a name it gives from now on asks
+  the tag's gate (`names_from_the_tag`: 0.70 and the margin 0.04) in the first round, past the photo's conflicts; a name the
+  face carries is never asked. photo_index held 2,389 names given so, 865 of them more like another person. On copies of the
+  three libraries a run on today's names writes what trunk's writes, face by face. From scratch (every name not given
+  by hand taken off), each on its own copy of the live photo_index made minutes apart (today's plans agree face by face, so
+  the library had not changed), trunk gives 51,059 names, 2b's count, and the branch 50,654 (each with the 175 by hand:
+  51,234 and 50,829). The 405 between them: 1,112 that trunk alone names (1,110 votes of a cluster of one, which the last
+  pass refuses too, and 2 the last pass named), less 707 that the branch alone names (693 by the rounds, the other face of
+  the photo paired once the refused one no longer holds the person, and 14 by the last pass); 1 face is named by both, a
+  person apart (the last pass in trunk, the rounds in the branch). The process of elimination asks no likeness and stays so
+  (docs/domains/people.md, By design).
+  **Suggest's `search(k=15)` stays one a photo** (owner: not built): a flat search of photo_index's 59,519 vectors is 9.25 ms
+  a photo one at a time and 0.27 ms batched (records of the neighbours 0.5 ms), about 1% of a photo Suggest detects again
+  (0.78 s), under the 5% a change asks; no timed run was made.
 
 **Gate.** Same named faces, same or better precision on the hold-out; never a name given or taken that the old pass
 would not; `cluster-faces` re-timed on the real command. Owner: People, with Views-AI for Suggest.

@@ -5,7 +5,8 @@ A photo whose keywords name two people nobody's face is known for keeps its two 
 by elimination (#1374) or one face given the first of a tie of votes (#1454), and the run says how many earlier guesses it took
 back and how many faces it left so (#1455). A cluster holding as many anchors of two people names neither: its faces are named
 by likeness or elimination (#1468). A face named on likeness alone needs a margin over the next person: a face between two
-cousins is neither named nor offered, a name it carries stays (AFaceBetweenTwoCousins; docs/AI_PIPELINE.md, phase 2b).
+cousins is neither named nor offered, a name it carries stays (AFaceBetweenTwoCousins; docs/AI_PIPELINE.md, phase 2b);
+so is one that grouped alone in a photo of two faces and its photo's keyword names one cousin (AFaceThatGroupedAlone).
 """
 import json
 import math
@@ -761,6 +762,94 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         gathered = [match["id"] for match in found["matches"]]
         self.assertNotIn(between, gathered, "a face as like Mara as the new person was gathered for them")
         self.assertEqual([ahead], gathered, "a face 0.02 ahead of Mara was not offered for the new person")
+
+class AFaceThatGroupedAlone(FaceClusteringTestBase):
+    """A face alone in its cluster in a photo of two or more faces was "voted" its photo's one keyword person: the
+    vote of a cluster of one is its own photo's keywords, which say the person is in the photo, not which face is theirs
+    (docs/AI_PIPELINE.md, phase 2c; owner, 2026-10-17). Its name, given from now on, asks what the tag's name asks
+    (clustering.names_from_the_tag: 0.70 like the person and 0.04 ahead of everyone named the photo's other faces do not
+    hold). Mara and Tobin Quill are cousins with a solo photo each; a photo tagged Mara alone holds the face and a second
+    face, which groups with Tobin's. Mutation: the vote of a cluster of one asked nothing (the old code) names the face
+    0.83 like Mara and 0.85 like Tobin."""
+
+    photo_tagged = ClusteringMeetsNaming.photo_tagged
+    run_while = ClusteringMeetsNaming.run_while
+    row = ClusteringMeetsNaming.row
+
+    def tagged_mara(self, to_mara, to_tobin, carried=None):
+        """The three photos; returns the face of Mara's photo with Tobin's look-alike, `to_mara` like Mara's solo face and
+        `to_tobin` like Tobin's, which an earlier run gave `carried`, if any."""
+        face_at = math.degrees(math.acos(to_mara))
+        tobin_at = face_at + math.degrees(math.acos(to_tobin))
+        self.mara = self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
+        self.tobin = self.add_face(self.photo_tagged("tobin.jpg", ["Tobin Quill"]), at(tobin_at))
+        photo = self.photo_tagged("with_a_friend.jpg", ["Mara Quill"])
+        face = self.add_face(photo, at(face_at), box=(0, 0, 200, 200))
+        self.friend = self.add_face(photo, at(tobin_at + 10), box=(300, 0, 500, 200))   # groups with Tobin's face
+        if carried:   # written as a run writes its guesses (store.faces.set_names)
+            db.write_with_connection(self.db_path, lambda conn: store_faces.set_names(
+                conn, {face: face_rows.person_of(conn, carried)}, {face: None}))
+        return face
+
+    def test_a_face_more_like_the_cousin_is_not_named_by_its_photos_keyword(self):
+        face = self.tagged_mara(0.83, 0.85)
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual((None, None), self.row(face), "a face more like Tobin was named Mara by its photo's keyword alone")
+        self.assertEqual((None, None), self.row(self.friend))
+        self.assertIn("final_matching_tagged_photo_failed", self.traces()[face]["resolution_method"],
+                      "the face was not left to the last pass, which asks the same of it")
+
+    def test_the_same_face_well_ahead_of_the_cousin_is_named_as_before(self):
+        face = self.tagged_mara(0.85, 0.80)
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual(("Mara Quill", None), self.row(face))
+        self.assertEqual("cluster_majority_vote", self.traces()[face]["resolution_method"])
+
+    def test_a_name_the_face_carries_stays_through_two_reruns(self):
+        face = self.tagged_mara(0.83, 0.84, carried="Mara Quill")
+
+        for _run in range(2):
+            self.run_while(lambda conn: None)
+            self.assertEqual(("Mara Quill", None), self.row(face), "a name the face carried was taken away by the gate")
+
+    def test_an_anchor_more_like_the_cousin_keeps_its_name(self):
+        """A photo of one face and one keyword person is that person's anchor: no other face of the photo could be theirs."""
+        face_at = math.degrees(math.acos(0.83))
+        self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
+        self.add_face(self.photo_tagged("tobin.jpg", ["Tobin Quill"]), at(face_at + math.degrees(math.acos(0.85))))
+        anchor = self.add_face(self.photo_tagged("mara_again.jpg", ["Mara Quill"]), at(face_at))
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual(("Mara Quill", None), self.row(anchor))
+
+    def test_three_runs_agree_and_a_run_stopped_at_saving_writes_nothing(self):
+        face = self.tagged_mara(0.83, 0.85)
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            before = conn.execute("SELECT id, name, tag_id FROM faces ORDER BY id").fetchall()
+        finally:
+            conn.close()
+
+        def stopped(conn):
+            raise KeyboardInterrupt("the owner closed the window as it saved")
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_while(stopped)
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            self.assertEqual(before, conn.execute("SELECT id, name, tag_id FROM faces ORDER BY id").fetchall())
+        finally:
+            conn.close()
+        names = []
+        for _run in range(3):
+            self.run_while(lambda conn: None)
+            names.append((self.row(face), self.row(self.mara), self.row(self.tobin)))
+        self.assertEqual([((None, None), ("Mara Quill", None), ("Tobin Quill", None))] * 3, names)
+
 
 def face_service_automatch(library, folder, decided):
     """Re-examine's rehearsal of `folder`: what automatch would name, nothing written."""

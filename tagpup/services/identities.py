@@ -20,6 +20,7 @@ tells: its trace and its summary.
 A name resting on likeness alone -- the known people's pairing in a photo, the last pass -- needs a margin over the next person
 named as well as the likeness (tagpup.core.clustering.margins; owner, 2026-10-17). The margin gates names given from now on: a
 face that carries the person already is asked none (`margin_asked`), so a rerun takes away no name the margin would not give.
+So does the vote of a cluster of one in a photo of two or more faces, which is its photo's keywords alone (owner, 2026-10-17).
 """
 import collections
 import contextlib
@@ -132,6 +133,19 @@ def margin_asked(face, person, margin):
     return math.inf if face["person_id"] == person else margin
 
 
+def _known_faces(all_faces, names, direct_anchors, photo_years):
+    """({person: [(embedding, year, photo)]}, clustering.KnownFaces of them) of the faces `names` ({face id: person or None})
+    names: a person with an anchor (direct_anchors) by their anchors' faces alone, so the faces a guess gave them cannot pull
+    them toward it. Each round and the last pass read the people so."""
+    by_name = {}
+    with_anchors = set(direct_anchors.values())
+    for face in all_faces:
+        name = names.get(face["id"])
+        if name and (name not in with_anchors or face["id"] in direct_anchors):
+            by_name.setdefault(name, []).append((face["embedding"], photo_years.get(face["photo_path"]), face["photo_path"]))
+    return by_name, clustering.KnownFaces.of((name, e, y, p) for name, items in by_name.items() for e, y, p in items)
+
+
 def resolve(photo_index, on_step=None):
     """Cluster a library's faces with DBSCAN, name each cluster from the people its photos'
     tags name, and write them back; returns {the tag of each person: faces it newly named}.
@@ -186,12 +200,9 @@ def resolve(photo_index, on_step=None):
     step("grouping", 0, 1)
     embeddings = np.array([f["embedding"] for f in all_faces], dtype=np.float32)
     
-    # DBSCAN parameters:
-    # Since embeddings are L2 normalized, Cosine Distance = 0.5 * (Euclidean Distance)^2.
-    # A cosine similarity cutoff of 0.85 equals a cosine distance of 0.15.
-    # Euclidean eps = sqrt(2 * 0.15) = sqrt(0.3) ≈ 0.547.
-    # Euclidean, at clustering's radius (tagpup.core.clustering.GROUPING, as a
-    # distance). min_samples=1 so single faces can form their own cluster.
+    # Euclidean, at clustering's radius (tagpup.core.clustering.GROUPING, 0.885, as a distance: 0.48 between unit vectors).
+    # min_samples=1, so no face is noise: a face like no other is a cluster of one. 2 to 20 were measured on copies of the
+    # three libraries and kept none (docs/AI_PIPELINE.md, phase 2c: each took thousands of photo_index's names).
     # On the processor: clustering takes no turn of the graphics card (tagpup.ml.gpu), and runs after the indexer let
     # its turn go. A cuML arm on the card, without a turn, was here; cuML was never installed (2026-10-16).
     # Imported here: scikit-learn takes a second to import, and the face records beside this need none of it.
@@ -279,6 +290,7 @@ def resolve(photo_index, on_step=None):
 
     # Phase 2: Cluster voting using direct anchors
     initial_resolved_names = {}
+    alone = []   # faces a cluster of one voted their photo's keyword person, in a photo of two or more faces (the first round)
     for number, (cluster_id, cluster_faces) in enumerate(tqdm(clusters.items(), desc="Resolving face identities")):
         if number % STEP == 0:
             step("voting", number, len(clusters))
@@ -345,6 +357,9 @@ def resolve(photo_index, on_step=None):
                 
                 if resolved_name in photo_people:
                     initial_resolved_names[face["id"]] = resolved_name
+                    if (method == "cluster_majority_vote" and len(cluster_faces) == 1 and face_counts_by_photo[p_path] > 1
+                            and face["person_id"] != resolved_name):
+                        alone.append(face)
                     
                     # Record trace
                     face_direct_anchor = direct_anchors.get(face["id"])
@@ -442,24 +457,14 @@ def resolve(photo_index, on_step=None):
 
     for iteration in range(MAX_ITERATIONS):
         step("propagating", iteration, MAX_ITERATIONS)
-        # 2a. Group embeddings and their photo years by name
-        # Prioritize direct anchors to build unpolluted centroids
-        resolved_by_name = {}
-        names_with_anchors = set(direct_anchors.values())
-        for face in all_faces:
-            name = current_resolved_names.get(face["id"])
-            if name:
-                if name in names_with_anchors and face["id"] not in direct_anchors:
-                    continue
-                if name not in resolved_by_name:
-                    resolved_by_name[name] = []
-                p_path = face["photo_path"]
-                yr = photo_years.get(p_path)
-                resolved_by_name[name].append((face["embedding"], yr, p_path))
-                
-        # Who each name is, by the faces it is on so far (tagpup.core.clustering, #71).
-        known = clustering.KnownFaces.of((name, e, y, p) for name, items in resolved_by_name.items()
-                                         for e, y, p in items)
+        # 2a. Who each name is, by the faces it is on so far (tagpup.core.clustering, #71); anchors first (_known_faces).
+        resolved_by_name, known = _known_faces(all_faces, current_resolved_names, direct_anchors, photo_years)
+        # The faces of `alone`, read against them once, in the first round: their gate is asked there (settle).
+        alone_rows = {}
+        if iteration == 0 and alone:
+            table, _columns = known.likeness_table([(f["embedding"], photo_years.get(f["photo_path"]), f["photo_path"])
+                                                    for f in alone])
+            alone_rows = {f["id"]: row for f, row in zip(alone, table)}
 
         def closest_to(name, embedding, photo_path):
             return known.likeness(name, embedding, photo_years.get(photo_path), photo_path)
@@ -534,6 +539,21 @@ def resolve(photo_index, on_step=None):
                     for f in conf_faces:
                         if not (held and f["id"] in decided):
                             face_resolved[f["id"]] = None
+
+            # The vote of a cluster of one in a photo of two or more faces is its photo's keywords alone: they say the person
+            # is in the photo, not which face is theirs. A name it gives from now on, kept past the photo's conflicts, asks
+            # what the tag's name asks of the last pass (clustering.names_from_the_tag), ahead of everyone named but the
+            # people the photo's other faces hold; a name the face carries was never asked (`alone`), so none is taken away
+            # (owner, 2026-10-17: 2,389 of photo_index's names were given so, 865 of them more like another person). A face
+            # that falls short is left to the pairing below and the last pass.
+            for f in valid_photo_faces:
+                name, row = face_resolved.get(f["id"]), alone_rows.get(f["id"])
+                if row is not None and name is not None and name == initial_resolved_names.get(f["id"]):
+                    held = {other for fid, other in face_resolved.items() if other and fid != f["id"]}
+                    likeness = float(row[columns[name]]) if name in columns else math.nan
+                    if not clustering.names_from_the_tag(None if math.isnan(likeness) else likeness,
+                                                         known.margin_of(row, columns, name, skip=held)):
+                        face_resolved[f["id"]] = None
 
             # Now try to match unassigned valid faces to unused tags in this photo's metadata
             unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None
@@ -644,24 +664,9 @@ def resolve(photo_index, on_step=None):
     # Its own line: without it the log put this pass's time under the loop's, and the 32 minutes it took were looked for
     # in the loop (#1530).
     logger.info("Matching the faces left unnamed against everyone named (the last pass)...")
-    # Step 4: Build database updates and calculate final statistics
-    # Compute mean embeddings for the final resolved names to classify remaining unassigned faces
-    # Prioritize direct anchors to build unpolluted centroids
-    final_resolved_by_name = {}
-    names_with_anchors = set(direct_anchors.values())
-    for face in all_faces:
-        name = refined_resolved_names.get(face["id"])
-        if name:
-            if name in names_with_anchors and face["id"] not in direct_anchors:
-                continue
-            if name not in final_resolved_by_name:
-                final_resolved_by_name[name] = []
-            p_path = face["photo_path"]
-            yr = photo_years.get(p_path)
-            final_resolved_by_name[name].append((face["embedding"], yr, p_path))
-
-    final_known = clustering.KnownFaces.of((name, e, y, p) for name, items in final_resolved_by_name.items()
-                                           for e, y, p in items)
+    # Step 4: Build database updates and calculate final statistics. The faces left unnamed are matched against the people
+    # by the faces named, anchors first (_known_faces).
+    _final, final_known = _known_faces(all_faces, refined_resolved_names, direct_anchors, photo_years)
 
     face_updates = []
     resolved_stats = {}
