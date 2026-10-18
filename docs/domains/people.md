@@ -55,6 +55,14 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
 
 ## By design (each row closed `decided:`)
 
+- **A run's decided vectors and the library's key (2026-10-18, migration 33)**: naming by tag reads face vectors under
+  the library's face model, read once per write (`faces.model_key`), while `derived.Batch.decided` keeps each person's
+  decided vectors for the run. A switch of `faces.model` mid-index can only go to a model nothing writes under
+  (`KEPT_FACE_MODELS`), so the rest of the run's faces have no vector under the new key: each is left
+  (`unreadable_face`), or named by its photo's one keyword person where that person has no decided face under the new
+  key and no other photo waiting (#839), the tag's own route. Two models' vectors never meet in one product; the next
+  index or cluster-faces reads them again.
+
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
   keeps "exactly one person reaches 0.80" beside it, since the margin alone would name a face two people reach 0.04 apart, a
