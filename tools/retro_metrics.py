@@ -279,11 +279,14 @@ def worktree_branch_of(path):
 
 
 def agent_meta(path):
-    """Of the meta file beside a subagent's transcript (every one has one: 438 of 438 on 2026-10-16) only its facts:
+    """Of the meta file beside a subagent's transcript (all but a worker resumed in a later session have one: 438 of 438 on 2026-10-16) only its facts:
     {agent_type, branch, stopped}. Its text fields (the description, the request) are never taken. A run whose meta
     names no worktree branch (a reviewer or owner, or a worker the harness did not tag) is tied to one by its cwd."""
-    with open(path[:-len(".jsonl")] + ".meta.json", encoding="utf-8") as handle:
-        meta = json.load(handle)
+    try:
+        with open(path[:-len(".jsonl")] + ".meta.json", encoding="utf-8") as handle:
+            meta = json.load(handle)
+    except FileNotFoundError:   # a worker resumed in a later session (2026-10-17): its transcript has no meta file
+        meta = {}
     branch = meta.get("worktreeBranch") or worktree_branch_of(path)
     return {"agent_type": AGENT_TYPES.get(meta.get("agentType"), "other"),
             "branch": (branch if WORKTREE_BRANCH.match(str(branch)) else OTHER_BRANCH) if branch else None,

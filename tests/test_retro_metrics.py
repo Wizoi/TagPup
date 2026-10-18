@@ -231,6 +231,18 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
                          "in the main checkout and the one in a folder that is no agent's worktree are tied to none")
         self.assertEqual((1, 1, 3), tuple(a["stopped_by_the_owner"][k] for k in ("runs", "calls", "tokens")))
 
+    def test_a_subagent_resumed_in_a_later_session_has_a_transcript_and_no_meta_file(self):
+        # Seen 2026-10-17: a worker resumed after /clear left agent-<id>.jsonl with no agent-<id>.meta.json beside it.
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "agent-abc1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"type": "user", "cwd": "C:/wt/.claude/worktrees/agent-abc1"}) + "\n")
+            facts = retro_metrics.agent_meta(path)
+        self.assertEqual("other", facts["agent_type"], "its type is not known, and it is not guessed")
+        self.assertEqual("worktree-agent-abc1", facts["branch"], "the branch is still tied by the cwd")
+        self.assertFalse(facts["stopped"])
+
     def test_main_sessions_and_their_compactions(self):
         a = self.report["usage"]["agents"]
         self.assertEqual({"s-1": {"calls": 1, "average_context": 1110, "max_context": 1110, "compactions": 1,
