@@ -627,6 +627,16 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         self.cousins(0.805, 0.01, by_hand=True)
         self.assertEqual([], self.named_by_its_tags(), "the photo's tags named the face for one cousin")
 
+    def test_its_photos_tags_name_it_once_the_other_cousins_face_there_is_named(self):
+        """The owner names one of the photo's other faces Tobin; a third, a stranger's, stays unnamed. The face 0.81 like
+        Mara and 0.79 like Tobin is then ahead of everyone the photo's other faces do not hold, as cluster-faces' pairing
+        asks it (owner, 2026-10-17): a save of the photo's tags names it Mara."""
+        face = self.cousins(0.81, 0.02, by_hand=True)
+        tobin = self.add_face(self.together, at(170), box=(300, 0, 500, 200))
+        self.add_face(self.together, at(250), box=(600, 0, 800, 200))
+        db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [tobin], "Tobin Quill"))
+        self.assertEqual([face], self.named_by_its_tags(), "a cousin the photo's other face holds kept the face from Mara")
+
     def test_well_ahead_it_is_offered_and_named_by_each(self):
         face = self.cousins(0.85, 0.06, by_hand=True)
 

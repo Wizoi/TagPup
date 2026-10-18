@@ -55,12 +55,13 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
 
 ## By design (each row closed `decided:`)
 
-- **The margin (2026-10-17, phase 2b)**: `looks_wrong` asks none -- a name already given is neither taken away nor questioned
-  by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched` keeps "exactly one person
-  reaches 0.80" beside it, since the margin alone would name a face two people reach 0.04 apart, a name the old rule never gave
-  (phase 2's gate); the seconds it costs are its own -- `nearest_people` 8.4 ms a call against 5.5 on photo_index's 55,298 named
-  faces, `cluster-faces` 216 s against 197 (one table a photo the pairing names a face in) -- and are kept until a page asks
-  per face of a crowd or 2c needs them.
+- **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
+  taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
+  keeps "exactly one person reaches 0.80" beside it, since the margin alone would name a face two people reach 0.04 apart, a
+  name the old rule never gave (phase 2's gate), and leaves out the people the photo's other faces hold, as the pairing does.
+  The photo with one face and one person is asked no margin at a save, where cluster-faces' last pass asks 0.04 over the
+  library: a save is the owner's own act on that photo's tag, and the tag says whose its one face is; the last pass guesses
+  among several faces of a photo whose keywords say only who is in it.
 
 - **The clustering trace's fourth decimal** (2026-10-16, phase 2a; #1548): the last pass read its likenesses from one float32
   product of a block of faces with everyone's faces, not one product a person, so a likeness differed in its last bits
