@@ -42,9 +42,10 @@ import logging
 import os
 import threading
 import time
+import types
 
 from tagpup import config as tagpup_config
-from tagpup.core import gpu_turns
+from tagpup.core import gpu_turns, validation
 from tagpup.core import library as libraries
 from tagpup.core.idle import IdleCaches
 from tagpup.core.library import Library
@@ -53,6 +54,7 @@ from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
+from tagpup.jobs.suggestions import REFUSALS
 from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester
@@ -356,6 +358,11 @@ def _build_clip(settings):
 
 
 def _build_faces(settings):
+    """The face models `settings` (LibrarySettings.faces) name: their `model`, made with the rest."""
+    settings = dict(settings)
+    if settings.pop("model") == validation.SCRFD_ADAFACE:
+        from tagpup.ml.scrfd_adaface import ScrfdAdaFace
+        return ScrfdAdaFace()
     from tagpup.ml.faces import FaceModel
     return FaceModel(**settings)
 
@@ -470,6 +477,11 @@ class _OnTheCard:
         self._turn.ensure()
         return self._model.detect_and_embed(*args, **kwargs)
 
+    def faces_in(self, *args, **kwargs):
+        # The phase 3 model's whole detection (tagpup.ml.scrfd_adaface.ScrfdAdaFace.faces_in): a look's one call.
+        self._turn.ensure()
+        return self._model.faces_in(*args, **kwargs)
+
 
 class _Lease:
     """One run's hold on a photo index and a set of models: `what` the run is ("Suggest Regatta (harbour)"), `models`
@@ -490,10 +502,11 @@ def _clip_name(embedder):
 
 
 def _differing(theirs, ours):
-    """The settings two parts differ in, each as the run under way has it: "force_image_size 224"."""
-    keys = sorted(set(theirs or {}) | set(ours or {}))
-    return ", ".join("%s %s" % (key, (theirs or {}).get(key)) for key in keys
-                     if (theirs or {}).get(key) != (ours or {}).get(key))
+    """The settings two parts differ in, each as the run under way has it: "force_image_size 224". Two face models
+    differing in their model differ in that alone: "model scrfd-adaface" (MTCNN's settings are not the other's)."""
+    theirs, ours = theirs or {}, ours or {}
+    keys = ["model"] if theirs.get("model") != ours.get("model") else sorted(set(theirs) | set(ours))
+    return ", ".join("%s %s" % (key, theirs.get(key)) for key in keys if theirs.get(key) != ours.get(key))
 
 
 def _unload(models):
@@ -622,8 +635,16 @@ class Runtime:
 
     def faces(self, library, settings=None):
         """The face models the library's settings name, built the first time any library
-        on those settings asks for them. Their weights load on first use, or in warm_up."""
+        on those settings asks for them. Their weights load on first use, or in warm_up.
+
+        Every write of faces gets its face models here (the CLI's index, Suggest's begin, Just look included, the
+        warm-up): refused, library_settings_service.FaceModelNotReady and nothing built, for a library set to a face
+        model whose vectors it cannot keep (LibrarySettings.face_model_refusal; #1643). A look that writes nothing
+        builds its model by look_at_faces."""
         settings = settings or self.settings(library)
+        refusal = settings.face_model_refusal
+        if refusal:
+            raise library_settings_service.FaceModelNotReady(refusal)
         self.idle.used(MODELS)
         with self._lock:
             model = self._model(self._face_models, self._build_faces, settings.faces)
@@ -806,7 +827,13 @@ class Runtime:
     def _warm(self, library, settings, what):
         """warm_up's loading, under its lease."""
         try:
-            models = (self.clip(library, settings), self.faces(library, settings))
+            # The face models first: a library refused its face model (Runtime.faces) has no CLIP model built either.
+            faces = self.faces(library, settings)
+            models = (self.clip(library, settings), faces)
+        except REFUSALS as e:
+            # Refused, as a Suggest in it would be: a setting the owner chose, not a failure.
+            logger.info("Not warming the models of %s: %s", library.name, e)
+            return
         except Exception as e:
             logger.error("Could not make the models to warm them up: %s", e)
             return
@@ -922,7 +949,8 @@ class Runtime:
         with self._lock:
             self._refuse_another_set(library, settings)
             photo_index = self._index(library, model_key)
-            clip, faces = self.clip(library, settings), self.faces(library, settings)
+            faces = self.faces(library, settings)
+            clip = self.clip(library, settings)
             lease = _Lease(photo_index, what, settings)
             self._leases.append(lease)
             dropped = self._drop_other_sets(lease.models)
@@ -942,6 +970,39 @@ class Runtime:
             end()
             raise
         return RunModel(model, end)
+
+    def look_at_faces(self, library, what=None, cancelled=None, report=None):
+        """The new face model (validation.SCRFD_ADAFACE) for a look that writes nothing -- phase 3's pass reading what
+        it finds, beside the faces a library holds, before any library is switched to it (docs/AI_PIPELINE.md, phase 3):
+        a RunModel whose `faces_in(path)` gives a photo's faces as the model finds them, and `end()`, which the caller
+        calls in a finally. The model is the new one, not the library's (`library` gives the CLIP part of the set held,
+        and its name to a run refused beside it), so a library refused its face model (Runtime.faces) can still be
+        looked at. Reads the library's settings without stamping it (peek_settings) and writes nothing to it. The new
+        model alone: MTCNN's has no `faces_in`, and the library's own faces are read where they are kept.
+
+        Held as a run is (begin): its set -- the library's CLIP model's settings and {"model": SCRFD_ADAFACE} -- under a
+        _Lease, so
+        a Suggest on another set is refused while it holds it, and it is refused (gpu_turns.OtherModelsInUse, nothing
+        begun) while a run on another set is under way; the graphics card taken on its first use (_RunTurn) and let go
+        at end(), the model with it when no library uses it. A weight file missing raises its sentence on first use
+        (tagpup.ml.scrfd_adaface.missing_weights): the face models of the libraries are not touched."""
+        model = validation.SCRFD_ADAFACE
+        looked = types.SimpleNamespace(embedder=peek_settings(library).embedder, faces={"model": model})
+        what = what or "Looking at the faces in %s with %s" % (library.name, model)
+        self.idle.used(MODELS)
+        with self._lock:
+            self._refuse_another_set(library, looked)
+            built = self._model(self._face_models, self._build_faces, looked.faces)
+            lease = _Lease(None, what, looked)
+            self._leases.append(lease)
+            dropped = self._drop_other_sets(lease.models)
+        _unload(dropped)
+        turn = _RunTurn(self.card, what, (built,), cancelled, report)
+
+        def end():
+            turn.close()
+            self._end(lease)
+        return RunModel(_OnTheCard(built, turn), end)
 
     def _another_set(self, models):
         """The run under way (its _Lease) holding other models than `models`, or None: this process holds one set at a

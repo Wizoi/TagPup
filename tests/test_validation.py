@@ -134,7 +134,7 @@ class TheSettings(unittest.TestCase):
     HELD = {"paths.exiftool", "model.name", "model.pretrained", "model.preserve_full_frame",
             "model.max_aspect_ratio", "model.force_image_size", "candidates.tags", "faces.min_face_size",
             "faces.confidence_threshold", "faces.mtcnn_thresholds", "renaming.format", "library.roots",
-            "library.ignored", "faces.detect_max_side"}
+            "library.ignored", "faces.detect_max_side", "faces.model"}
 
     def test_every_setting_is_declared(self):
         self.assertEqual(set(validation.SETTINGS), self.HELD)
@@ -157,7 +157,7 @@ class TheSettings(unittest.TestCase):
         self.assertEqual(locked, {"model.name", "model.pretrained", "model.preserve_full_frame",
                                   "model.max_aspect_ratio", "model.force_image_size", "faces.min_face_size",
                                   "faces.confidence_threshold", "faces.mtcnn_thresholds", "faces.detect_max_side",
-                                  "paths.exiftool"})
+                                  "faces.model", "paths.exiftool"})
         for key, declared in validation.SETTINGS.items():
             with self.subTest(setting=key):
                 self.assertEqual(declared["locked"], bool(declared["consequences"]))

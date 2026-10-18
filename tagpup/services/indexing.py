@@ -21,6 +21,7 @@ from tagpup.core import validation
 from tagpup.core.per_library import PerLibrary
 from tagpup.core.result import Result
 from tagpup.services import roots as roots_service
+from tagpup.services import settings as library_settings
 
 #: Where faces are named from the photos' tags when adding a folder did not cluster them: the button of both apps, whose
 #: label this is (tests/test_indexing_names_a_real_control.py holds the messages and the pages together). The messages named
@@ -60,6 +61,10 @@ INDEXER_LOG = "indexer"
 #: rows is not stopped (tagpup.jobs.indexing.IndexQueue.cancel).
 STOP_FILE = "TAGPUP_STOP_FILE"
 EXIT_CANCELLED = 76
+
+#: What the CLI's `index` exits with when the library is set to a face model whose vectors it cannot keep
+#: (tagpup.services.settings.FACE_MODEL_NOT_KEPT): it wrote nothing, and the folder's status says why.
+EXIT_FACE_MODEL_NOT_READY = 78
 
 #: What a run stopped while it waited says.
 CANCELLED_WAITING = "Cancelled while it waited for the graphics card; nothing was indexed."
@@ -219,6 +224,11 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     if code == EXIT_CANCELLED:
         result.skip(", ".join(folders), CANCELLED_WAITING)
         result.details.update(percent=0, cancelled=True, message=CANCELLED_WAITING)
+        return result
+    if code == EXIT_FACE_MODEL_NOT_READY:
+        # Said as it is, not as an exit code: the setting to change back.
+        result.fail(", ".join(folders), "Nothing was indexed: %s" % library_settings.FACE_MODEL_NOT_KEPT)
+        result.details["percent"] = 0
         return result
     if clustered and code != 0:
         # EXIT_CLUSTERING_FAILED, the roots' stop, or the process ended otherwise once its index was done: the photos

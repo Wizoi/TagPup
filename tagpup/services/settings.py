@@ -64,6 +64,25 @@ NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
 
+#: The face models whose vectors a library can keep (faces.model): FaceNet's alone. `faces.embedding` holds one vector a
+#: face, keyed by no model, and every one of the three libraries' is FaceNet's; another model's vectors written beside
+#: them would be compared with them as if alike (Identify's cosine, Suggest's matching). Until migration 33 keeps each
+#: model's vectors apart (docs/AI_PIPELINE.md, phase 3; #1643), a library set to any other is refused every write of
+#: faces: LibrarySettings.face_model_refusal, which tagpup.runtime.Runtime.faces and the CLI's index read.
+KEPT_FACE_MODELS = frozenset({validation.MTCNN_FACENET})
+
+#: What a library set to a face model it cannot keep vectors of is told, wherever it asks to index or to suggest.
+FACE_MODEL_NOT_KEPT = (
+    "This library is set to a face model whose vectors it cannot keep yet: it holds FaceNet's face vectors, and "
+    "another model's would be compared with them as if they were alike, until its faces are moved to the new schema "
+    "(docs/AI_PIPELINE.md, phase 3). Set the face model (TagTuner's settings, %s) back to %s to index or to "
+    "suggest." % (validation.SETTING_GROUPS["face-model"]["title"], validation.MTCNN_FACENET))
+
+
+class FaceModelNotReady(Exception):
+    """A library's face model was asked for to write faces with, and the library cannot keep its vectors
+    (KEPT_FACE_MODELS): the message is FACE_MODEL_NOT_KEPT. Raised by tagpup.runtime.Runtime.faces."""
+
 
 def _trim(text):
     """Trimmed as the validator trims (tagpup.core.validation.BLANK): a value it allowed
@@ -100,13 +119,26 @@ class LibrarySettings:
 
     @property
     def faces(self):
-        """The face models' settings: tagpup.ml.faces.FaceModel's keyword arguments, what one set of face models is
-        told apart by (tagpup.runtime). The cap a detection looks at is not one of them: detect_max_side."""
+        """The face models' settings, what one set of face models is told apart by (tagpup.runtime): `model`
+        (faces.model) and, for MTCNN and FaceNet, tagpup.ml.faces.FaceModel's keyword arguments; the other model
+        (tagpup.ml.scrfd_adaface) takes none of MTCNN's, so it is `model` alone. The cap a detection looks at is not one
+        of them: detect_max_side."""
+        model = _trim(self.values["faces.model"])
+        if model != validation.MTCNN_FACENET:
+            return {"model": model}
         return {
+            "model": model,
             "min_face_size": int(_trim(self.values["faces.min_face_size"])),
             "confidence_threshold": _float(self.values["faces.confidence_threshold"]),
             "mtcnn_thresholds": [_float(x) for x in self.values["faces.mtcnn_thresholds"].split(",")],
         }
+
+    @property
+    def face_model_refusal(self):
+        """FACE_MODEL_NOT_KEPT when the library is set to a face model whose vectors it cannot keep (KEPT_FACE_MODELS),
+        else None: what refuses every write of faces under it (tagpup.runtime.Runtime.faces; the CLI's index, before
+        it writes anything)."""
+        return None if _trim(self.values["faces.model"]) in KEPT_FACE_MODELS else FACE_MODEL_NOT_KEPT
 
     @property
     def detect_max_side(self):
@@ -289,8 +321,8 @@ def change(library, values, acknowledged=(), apply=True):
     the library's history and can be undone. Refused, with nothing written, for a key
     that is no setting, a value the validator refuses (its message), a library never
     stamped, or a setting changed by someone else since it was read -- and for a change
-    to a locked setting whose group (validation.SETTING_GROUPS: "clip", "faces",
-    "exiftool") `acknowledged` does not name: the refusal lists each such group and what
+    to a locked setting whose group (validation.SETTING_GROUPS: "clip", "face-model",
+    "faces", "exiftool") `acknowledged` does not name: the refusal lists each such group and what
     changing it means, and details["unacknowledged"] holds them. Every caller -- the
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;

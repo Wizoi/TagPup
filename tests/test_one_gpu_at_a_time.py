@@ -402,8 +402,9 @@ class TheRuntimesTurns(_Folder):
         other.release()
 
         runtime.warm_up([Library(home.library("harbour.db"))])
-        self.assertEqual(1, built[0].used)
-        self.assertEqual(1, built[1].loads)
+        faces, clip = built   # the face models are asked for first: a library refused them has no CLIP model built
+        self.assertEqual(1, clip.used)
+        self.assertEqual(1, faces.loads)
         self.assertTrue(card.holds(), "the web server keeps its turn while its models are loaded")
         # An index arrives: the server lets its models go, and the index has the card.
         thread, outcome = self.take_in_thread(self.card(), "indexing Breakwater (harbour)")

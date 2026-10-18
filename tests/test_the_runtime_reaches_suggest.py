@@ -71,7 +71,9 @@ class ARuntime(unittest.TestCase):
             self.assertIs(runtime.faces(self.library), runtime.faces(self.library))
         found = library_settings.of(self.library)
         clip_model.assert_called_once_with(**found.embedder)
-        face_model.assert_called_once_with(**found.faces)
+        # The face models' settings but their `model`, which picks MTCNN and FaceNet (tagpup.runtime._build_faces).
+        mtcnn = {key: value for key, value in found.faces.items() if key != "model"}
+        face_model.assert_called_once_with(**mtcnn)
 
     def test_the_candidate_words_are_read_at_each_run(self):
         """The candidate words were read when each Suggest run began; an edit reached the

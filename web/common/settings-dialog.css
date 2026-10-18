@@ -140,7 +140,8 @@
     display: none;
 }
 
-.settings-group-locked .modal-input[readonly] {
+.settings-group-locked .modal-input[readonly],
+.settings-group-locked .modal-input:disabled {
     opacity: 0.7;
     cursor: default;
 }

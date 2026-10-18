@@ -24,7 +24,7 @@
  */
 import { api } from './api.js';
 import { buildElement, replaceContent } from './dom.js';
-import { loadRules, ruleProblem } from './validate.js';
+import { choicesOf, loadRules, ruleProblem } from './validate.js';
 
 const settingsDialog = {
     modal: null,
@@ -99,7 +99,8 @@ function lockGroup(group, locked) {
     for (const setting of group.settings) {
         const field = settingsDialog.fields.get(setting.key);
         if (!field) continue;
-        if (setting.type === 'boolean') field.input.disabled = locked;
+        // A checkbox and a list of choices cannot be read-only: they are disabled.
+        if (setting.type === 'boolean' || field.input.tagName === 'SELECT') field.input.disabled = locked;
         else field.input.readOnly = locked;
         field.input.setAttribute('aria-readonly', locked ? 'true' : 'false');
     }
@@ -137,8 +138,14 @@ function openLockedGroup(group, section, button) {
 
 function settingRow(setting) {
     const id = `setting-${setting.key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+    // A setting whose rule names its choices (`one_of`: the face model) is chosen from them, the rules' own list.
+    const choices = choicesOf(setting.kind);
     let input;
-    if (setting.type === 'boolean') {
+    if (choices) {
+        input = buildElement('select', { id, className: 'modal-input' },
+            choices.map(choice => buildElement('option', { text: choice, attrs: { value: choice } })));
+        input.value = setting.value;
+    } else if (setting.type === 'boolean') {
         input = buildElement('input', { id, attrs: { type: 'checkbox' } });
         input.checked = shownValue(setting) === 'true';
     } else if (setting.key === 'candidates.tags' || setting.type === 'folders') {
