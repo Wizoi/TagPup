@@ -13,7 +13,8 @@ the model is built or loaded. What the owner lives through:
   no row would be held, and every sync after would queue its refused index again.
 - (b) Suggest, and Just look, in that library: the run ends in an error naming the sentence, and no model is built; the
   start-up warm-up builds nothing for it.
-- (c) Identify reads the faces the library holds, unaffected.
+- (c) Identify compares a library's faces by its own model's vectors: the switched library's are FaceNet's, so it
+  compares none; the other library's, all.
 - (d) Two libraries, one on each model, in one server: the one on MTCNN suggests; the other is refused, its rows unchanged.
 - (e) The model switched while a Suggest runs: the run ends on the models it began with; the next is refused.
 - (f) A look with the new model, which writes nothing (Runtime.look_at_faces): refused beside a Suggest, a Suggest refused
@@ -315,10 +316,12 @@ class SuggestIsRefused(_Libraries):
         self.assertFalse(self.card.holds())
         self.assertEqual(before, rows_of(self.cove.path))
 
-    def test_identify_reads_the_faces_the_library_holds(self):
-        _stamp, unnamed = identify.unnamed_faces(self.cove)
+    def test_identify_compares_the_faces_by_the_librarys_own_model(self):
+        _stamp, unnamed = identify.unnamed_faces(self.harbour)
         self.assertEqual(2, len(unnamed.ids))
         self.assertEqual((2, 512), tuple(unnamed.matrix.shape))
+        _stamp, unnamed = identify.unnamed_faces(self.cove)
+        self.assertEqual(0, len(unnamed.ids), "the switched library's vectors are FaceNet's, not its model's")
 
 
 class TwoLibrariesOneOnEachModel(_Libraries):

@@ -324,7 +324,8 @@ sentence (`FACE_MODEL_NOT_KEPT`): Add in TagPup and TagTuner (`tagpup.services.l
 recorded or queued; the CLI's index before it writes or imports anything, asked of both its reads of the settings
 (exit status 78; the server's queue says "Nothing was indexed: ..."); Suggest and Just look at `Runtime.begin`
 (`FaceModelNotReady`, nothing built); and the warm-up, which builds nothing for it and says so at INFO, a refusal as
-Suggest's are (`tagpup.jobs.suggestions.REFUSALS`). Identify reads the faces the library holds, unaffected. A look that
+Suggest's are (`tagpup.jobs.suggestions.REFUSALS`). Identify reads the faces the library holds (since migration 33
+it compares them by the library's model's vectors alone, so none until the pass gives them the new model's). A look that
 writes nothing builds the new model, and only it, by `Runtime.look_at_faces`: held as a run is (a Suggest on the other set is refused
 beside it, and it beside one), the card taken once at its first use and let go, the model with it, at `end()`.
 Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.

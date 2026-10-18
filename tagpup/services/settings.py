@@ -64,18 +64,18 @@ NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
 
-#: The face models whose vectors a library can keep (faces.model): FaceNet's alone. `faces.embedding` holds one vector a
-#: face, keyed by no model, and every one of the three libraries' is FaceNet's; another model's vectors written beside
-#: them would be compared with them as if alike (Identify's cosine, Suggest's matching). Until migration 33 keeps each
-#: model's vectors apart (docs/AI_PIPELINE.md, phase 3; #1643), a library set to any other is refused every write of
-#: faces: LibrarySettings.face_model_refusal, which tagpup.runtime.Runtime.faces and the CLI's index read.
+#: The face models a library can write faces under (faces.model): FaceNet's alone. Since migration 33 each face's
+#: vectors are kept apart by model in `face_embeddings` (face_id, model) and every reader reads the library's model's
+#: alone (tagpup.store.faces.model_key), so two models' vectors are never compared; but only FaceNet's has a writer.
+#: The new model's vectors are written by phase 3's pass (docs/AI_PIPELINE.md, merge 3), which adds its model here;
+#: until then a library set to any other is refused every write of faces: LibrarySettings.face_model_refusal, which
+#: tagpup.runtime.Runtime.faces and the CLI's index read.
 KEPT_FACE_MODELS = frozenset({validation.MTCNN_FACENET})
 
 #: What a library set to a face model it cannot keep vectors of is told, wherever it asks to index or to suggest.
 FACE_MODEL_NOT_KEPT = (
-    "This library is set to a face model whose vectors it cannot keep yet: it holds FaceNet's face vectors, and "
-    "another model's would be compared with them as if they were alike, until its faces are moved to the new schema "
-    "(docs/AI_PIPELINE.md, phase 3). Set the face model (TagTuner's settings, %s) back to %s to index or to "
+    "This library is set to a face model that cannot write its faces yet: it holds FaceNet's face vectors, and the "
+    "new model's are made only by the pass that looks at its faces again (docs/AI_PIPELINE.md, phase 3). Set the face model (TagTuner's settings, %s) back to %s to index or to "
     "suggest." % (validation.SETTING_GROUPS["face-model"]["title"], validation.MTCNN_FACENET))
 
 
