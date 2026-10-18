@@ -275,12 +275,12 @@ def _reached(vectors, references, on_step=None):
     can be compared and reach someone: compared a block at a time, never a face at a time (a library's faces to place are
     tens of thousands). A person's key is the id of their node; a face's likeness to a person is to their closest decided
     face (clustering.FacesByPerson)."""
+    references = clustering.FaceRows.of(references)
     _ids, people, matrix = references
     if matrix is None or not len(people):
         return {}
     width = matrix.shape[1]
-    by_person = clustering.FacesByPerson([_key(person) for person in people])
-    grouped = by_person.grouped(matrix)
+    by_person, grouped = references.by_person   # made once for the matrix (clustering.FaceRows)
     usable = [(face_id, blob) for face_id, blob in vectors.items() if blob and len(blob) == width * 4]
     reached = {}
     for start in range(0, len(usable), BLOCK):

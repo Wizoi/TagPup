@@ -439,10 +439,10 @@ def propose_guesses(library, named, photo_path=None, folder=None):
         conn.close()
     if not unnamed:
         return 0, {}
-    _ids, people, matrix = named()
-    if matrix is None:
+    known = named()
+    if known[2] is None:
         return len(unnamed), {}
-    return len(unnamed), _closest_named(unnamed, people, matrix)
+    return len(unnamed), _closest_named(unnamed, known)
 
 
 def decide_guesses(conn, proposed):
@@ -494,18 +494,18 @@ def _write_guesses(conn, proposed):
 COMPARE_BLOCK = 512
 
 
-def _closest_named(unnamed, people, matrix):
+def _closest_named(unnamed, named):
     """{photo: [(face_id, person)]} for each of `unnamed` (id, embedding, photo) whose closest
     named face it may be named after unasked. Compared a block at a time: one product per
     face made Re-examine on a folder of 2,600 photos and 9,400 unnamed faces, against
     36,000 named ones, take 32 to 47 seconds; a block at a time, 2 to 5. A face whose
     embedding is not the matrix's width is compared with nobody, where it failed the
     whole folder."""
-    width = matrix.shape[1]
+    named = clustering.FaceRows.of(named)
+    width = named[2].shape[1]
     usable = [(face_id, blob, face_photo) for face_id, blob, face_photo in unnamed
               if blob and len(blob) == width * 4]
-    by_person = clustering.FacesByPerson([person.id for person in people])
-    grouped = by_person.grouped(matrix)
+    by_person, grouped = named.by_person   # made once for the matrix (clustering.FaceRows)
     proposed = {}
     for start in range(0, len(usable), COMPARE_BLOCK):
         block = usable[start:start + COMPARE_BLOCK]

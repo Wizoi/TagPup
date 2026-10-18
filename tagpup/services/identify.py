@@ -96,7 +96,7 @@ def named_faces(library):
             vecs.append(vec / norm)
     finally:
         conn.close()
-    return stamp, (ids, refs, np.vstack(vecs) if vecs else None)
+    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None)
 
 
 #: faces.name_source of a name a person gave a face, and so the only kind that stands for them.
@@ -143,7 +143,7 @@ def decided_faces(library):
             vecs.append(vec / norm)
     finally:
         conn.close()
-    return stamp, (ids, refs, np.vstack(vecs) if vecs else None)
+    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None)
 
 
 def _groups(people_of_rows):
@@ -364,15 +364,16 @@ def nearest_people(known, embedding, skip_id=None, limit=5):
 
     The face `skip_id` is skipped rather than excluded from the matrix, which is shared and cannot be rebuilt per
     face; a face is not a suggestion for itself."""
+    known = face_rules.FaceRows.of(known)
     known_ids, known_people, matrix = known
     if matrix is None:
         return []
-    similarities = np.dot(matrix, embedding).astype(np.float64)
+    by_person, grouped = known.by_person   # made once for the matrix (clustering.FaceRows)
+    similarities = np.dot(grouped, embedding).astype(np.float64)
     if skip_id is not None:
-        similarities[np.asarray(known_ids) == skip_id] = -np.inf
-    by_person = face_rules.FacesByPerson([person.id for person in known_people])
+        similarities[by_person.grouped(np.asarray(known_ids)) == skip_id] = -np.inf
     return [(known_people[by_person.first[column]], similarity, margin)
-            for column, similarity, margin in face_rules.ranked(by_person.table(similarities)[0], limit)]
+            for column, similarity, margin in face_rules.ranked(by_person.table(similarities, grouped=True)[0], limit)]
 
 
 class UnnamedFaces:
@@ -510,11 +511,12 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
     finally:
         conn.close()
 
-    _ids, known_people, known_matrix = named()
+    known = face_rules.FaceRows.of(named())
     vectors = np.stack([np.frombuffer(row[3], dtype=np.float32) for row in faces_rows]) if faces_rows else None
     margins = [math.inf] * len(faces_rows)   # nobody named: nobody else it could be
-    if vectors is not None and known_matrix is not None:
-        others = face_rules.FacesByPerson([person.id for person in known_people]).table(vectors @ known_matrix.T)
+    if vectors is not None and known[2] is not None:
+        by_person, grouped = known.by_person
+        others = by_person.table(vectors @ grouped.T, grouped=True)
         margins = face_rules.margins(np.column_stack([vectors @ target_emb, others]))[:, 0].tolist()
     matches = []
     for (fid, photo_path, box_json, emb_bytes), margin in zip(faces_rows, margins):
@@ -808,10 +810,10 @@ def grid(library, name, named, on_progress=None):
     # (tagpup.core.clustering.is_offered): below it a suggestion is more distraction
     # than help. The number is always shown, and its band says how sure it is.
     report("reading", 0.7, "Reading the faces already named")
-    _known_ids, known_people, known_matrix = named()
-    # Every named face by person, the matrix in their order once for the products below (tagpup.core.clustering).
-    by_person = face_rules.FacesByPerson([person.id for person in known_people])
-    grouped = by_person.grouped(known_matrix) if known_matrix is not None else None
+    known = face_rules.FaceRows.of(named())
+    _known_ids, known_people, known_matrix = known
+    # Every named face by person, the matrix in their order, as kept with the matrix (tagpup.core.clustering.FaceRows).
+    by_person, grouped = known.by_person
 
     def reference_faces(person_keys):
         """Every face already named as this person (or any of the people a shared name is); None when nobody has been named

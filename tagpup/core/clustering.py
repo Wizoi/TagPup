@@ -241,6 +241,35 @@ class FacesByPerson:
         return np.maximum.reduceat(similarities if grouped else similarities[:, self.order], self.starts, axis=1)
 
 
+class FaceRows(tuple):
+    """(ids, people, matrix) of the faces kept one row a face (tagpup.services.identify.named_faces, decided_faces), as
+    their callers unpack them, holding their grouping by person (`by_person`): made once for the matrix, the first time it
+    is asked, and kept with it for as long as the matrix is kept (tagpup.jobs.identify's cache) -- the strip asked it once a
+    face, and each regrouped 55,000 named faces (about 0.34 s against 0.22 s for 40 faces)."""
+
+    def __new__(cls, ids, people, matrix):
+        rows = super().__new__(cls, (ids, people, matrix))
+        rows._grouping = None
+        rows._making = threading.Lock()
+        return rows
+
+    @classmethod
+    def of(cls, rows):
+        """`rows` as FaceRows: themselves, or a plain (ids, people, matrix) made into them."""
+        return rows if isinstance(rows, cls) else cls(*rows)
+
+    @property
+    def by_person(self):
+        """(FacesByPerson of the rows' people -- a person's id each --, the matrix in its `grouped` order, or None)."""
+        if self._grouping is None:
+            with self._making:
+                if self._grouping is None:
+                    _ids, people, matrix = self
+                    grouping = FacesByPerson([person.id for person in people])
+                    self._grouping = (grouping, grouping.grouped(matrix) if matrix is not None else None)
+        return self._grouping
+
+
 def singled_out(votes):
     """The one person (or face) `votes` ({who: how many votes}) gives more than any other, or None. A tie at the top is no
     evidence of who is who: the first of a tie by id order was written as a name, a coin toss (owner, 2026-10-15; #1374,

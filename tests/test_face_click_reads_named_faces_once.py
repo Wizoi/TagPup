@@ -1,4 +1,5 @@
-"""Clicking face cards reads the named faces once, not once per click.
+"""Clicking face cards reads the named faces once, not once per click; and groups them by person once, not once per
+click or per face of the strip (tagpup.core.clustering.FaceRows: about 0.34 s against 0.22 s for 40 faces).
 
 Each click on a face card in Identify Faces asks /api/photo-details for the photo, and
 that read every named face's embedding from SQLite -- 35,826 rows, half a second on the
@@ -40,7 +41,7 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
         conn = db.connect(self.db)
         conn.execute("INSERT INTO photos (path, tags, captions) VALUES (?, '[]', '[]')", (PHOTO,))
         add_face(conn, PHOTO, box="[1,2,3,4]", embedding=emb([1, 0, 0, 0]), name="Rowan Thackeray")
-        add_face(conn, PHOTO, box="[5,6,7,8]", embedding=emb([0.8, 0.6, 0, 0]))
+        self.unnamed = add_face(conn, PHOTO, box="[5,6,7,8]", embedding=emb([0.8, 0.6, 0, 0]))
         conn.commit()
         conn.close()
         tuner_client.forget(self.db)
@@ -65,6 +66,20 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
         similarities = sorted(f["max_similarity"] for f in reply["faces"])
         self.assertAlmostEqual(0.8, similarities[0], places=4)
         self.assertAlmostEqual(1.0, similarities[1], places=4)
+
+    def test_the_named_faces_are_grouped_by_person_once_for_every_click(self):
+        from tagpup.core import clustering
+        made = []
+        real = clustering.FacesByPerson.__init__
+
+        def grouping(self, people):
+            made.append(len(people))
+            real(self, people)
+        with mock.patch.object(clustering.FacesByPerson, "__init__", grouping):
+            for _ in range(3):
+                found = self.requests.get("/api/face-matches?id=%d" % self.unnamed)
+        self.assertEqual([1], made, "the named faces were grouped by person again for a click")
+        self.assertEqual(["Rowan Thackeray"], [each["name"] for each in found])
 
 
 if __name__ == "__main__":
