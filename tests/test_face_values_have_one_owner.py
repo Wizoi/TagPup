@@ -114,23 +114,52 @@ class KnownFacesCompareWithTheClosestFace(unittest.TestCase):
 #: grouped with nothing by their best likeness, faces and not people, and asks no margin (tagpup.services.identify).
 RANKS_FACES = {os.path.join("tagpup", "services", "identify.py"): 2}
 
+#: Any spelling of taking the top of a row: the numpy ones, and the Python ones a second margin could as well be written in.
+TOP_OF_A_ROW = re.compile(r"\b(?:nan)?arg(?:max|sort|partition)\(|\.reduceat\(|\bnp\.(?:sort|partition)\(|\bnlargest\("
+                          r"|\bsorted\(|\.sort\(|\bmax\([^\n]*\bkey=|\.partition\((?![\"'])")
+NUMPY_TOP = re.compile(r"\b(?:nan)?arg(?:max|sort|partition)\(|\.reduceat\(|\bnp\.(?:sort|partition)\(")
+
+#: A file that reads clustering's decisions is where a second margin would be written. The sorts each holds today, every one of
+#: paths, names, cards or faces and none of people by likeness (read 2026-10-17, phase 2b); a new one is looked at and counted
+#: here, or goes through clustering.ranked / best_of.
+SORTS_OF_OTHER_THINGS = {
+    os.path.join("scripts", "measure_pipeline_holdouts.py"): 1,
+    os.path.join("tagpup", "services", "faces.py"): 3,
+    os.path.join("tagpup", "services", "identify.py"): 7,   # RANKS_FACES's two among them
+    os.path.join("tagpup", "services", "suggester.py"): 4,
+    os.path.join("tagpup", "store", "face_tags.py"): 5,
+}
+READS_CLUSTERING = re.compile(r"from tagpup\.core import [^\n]*\bclustering\b|\bimport clustering\b")
+
 
 class TheMarginIsWorkedOutOnce(unittest.TestCase):
     """The best person of a face, and its margin over the next, are clustering's (margins, ranked, best_of, FacesByPerson): a
     service that took the top of a row itself (an argmax, a sort, a partition, a reduceat over people) would have a margin of
     its own, or none (docs/AI_PIPELINE.md, phase 2b). Mutation: services.faces._closest_named back on its own argmax."""
 
-    def test_no_shipped_file_but_clustering_takes_the_top_of_a_row(self):
+    def sources(self):
         owner = os.path.normcase(os.path.join("tagpup", "core", "clustering.py"))
-        found = {}
         for path in python_sources():
-            if os.path.normcase(path) == owner:
-                continue
-            with open(os.path.join(ROOT, path), encoding="utf-8") as handle:
-                count = len(re.findall(r"\b(?:nan)?arg(?:max|sort)\(|\.reduceat\(|np\.partition\(", handle.read()))
-            if count:
-                found[path] = count
+            if os.path.normcase(path) != owner:
+                with open(os.path.join(ROOT, path), encoding="utf-8") as handle:
+                    yield path, handle.read()
+
+    def test_no_shipped_file_but_clustering_takes_the_top_of_a_row(self):
+        found = {path: len(NUMPY_TOP.findall(text)) for path, text in self.sources() if NUMPY_TOP.search(text)}
         self.assertEqual(RANKS_FACES, found)
+
+    def test_a_file_that_reads_clustering_adds_no_sort_of_its_own(self):
+        found = {path: len(TOP_OF_A_ROW.findall(text)) for path, text in self.sources()
+                 if READS_CLUSTERING.search(text) and TOP_OF_A_ROW.search(text)}
+        self.assertEqual(SORTS_OF_OTHER_THINGS, found)
+
+    def test_each_spelling_of_a_second_margin_is_caught(self):
+        """The guard's own mutations: each line a service could take the next person's likeness with."""
+        for spelling in ("second = np.sort(row)[-2]", "second = sorted(values)[-2]", "heapq.nlargest(2, values)",
+                         "values.partition(len(values) - 2)", "best = max(people, key=row.get)", "order = row.argsort()",
+                         "np.partition(row, -2)", "np.argpartition(row, -2)", "np.nanargmax(row)", "values.sort()"):
+            self.assertTrue(TOP_OF_A_ROW.search(spelling), spelling)
+        self.assertIsNone(TOP_OF_A_ROW.search('name, _, rest = text.partition(":")'))   # a string's partition is no margin
 
 
 if __name__ == "__main__":
