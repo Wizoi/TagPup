@@ -55,11 +55,11 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.index.close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def add_face(self, path, name, name_source, excluded):
+    def add_face(self, path, name, name_source, excluded, vector=True, box="[0, 0, 100, 100]"):
         conn = self.index.conn
         photo_rows.add_unread(conn, path)
-        add_face(conn, path, "[0, 0, 100, 100]", np.asarray(ROWAN, dtype=np.float32).tobytes(), prob=0.99, name=name,
-                 tag_id=person_of(conn, name) if name else None, name_source=name_source, excluded=excluded)
+        add_face(conn, path, box, np.asarray(ROWAN, dtype=np.float32).tobytes() if vector else None, prob=0.99,
+                 name=name, tag_id=person_of(conn, name) if name else None, name_source=name_source, excluded=excluded)
         conn.commit()
 
     def suggested(self, path):
@@ -83,6 +83,20 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         # The other tests only show detection is skipped; this one needs the model (found in review of 6.5).
         self.assertIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\new.jpg"))
         self.assertEqual(1, self.processor.calls)
+
+    def test_a_face_with_no_vector_under_the_model_is_on_file_but_compared_with_nobody(self):
+        """Part-way through the new model's pass a photo holds a face with a vector under the library's model and one
+        without (the reader answers None for it). Suggest completes -- it raised on the None, failed the photo, and the
+        run tried it again for ever -- names the face it can compare, and detects nothing again."""
+        self.add_face(r"D:\Pictures\half.jpg", None, None, 0)
+        self.add_face(r"D:\Pictures\half.jpg", None, None, 0, vector=False, box="[200, 0, 300, 100]")
+        self.assertIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\half.jpg"))
+        self.assertEqual(0, self.processor.calls)
+
+    def test_a_photo_whose_only_face_has_no_vector_is_not_detected_again_and_names_nobody(self):
+        self.add_face(r"D:\Pictures\pending.jpg", None, None, 0, vector=False)
+        self.assertNotIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\pending.jpg"))
+        self.assertEqual(0, self.processor.calls)
 
     def test_a_photo_whose_faces_are_all_decided_is_not_detected_again(self):
         self.add_face(r"D:\Pictures\crowd.jpg", None, "manual", 1)

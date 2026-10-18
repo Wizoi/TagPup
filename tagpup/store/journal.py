@@ -663,6 +663,9 @@ def _not_as_left(conn, change_id, changes):
     """Why the rows are not what change `change_id` left them: [] when they are."""
     reasons = []
     roots = store_roots.roots_for(conn)
+    # The rows the change itself inserted: the undo deletes them too, so a child row among them (a face's crop and vector
+    # given with it) is not one made since.
+    inserted = {(change.table, tuple(change.key)) for change in changes if change.action == "insert"}
     for change in changes:
         if change.action == "delete":
             if _read(conn, change.table, change.key, KEYS[change.table]) is not None:
@@ -684,8 +687,10 @@ def _not_as_left(conn, change_id, changes):
             for (parent, child), (column, how) in CASCADES.items():
                 if parent != change.table or how == REBUILT:
                     continue
-                if conn.execute('SELECT 1 FROM "%s" WHERE "%s" = ? LIMIT 1' % (child, column),
-                                (change.new[KEYS[parent][0]],)).fetchone():
+                keys = KEYS[child]
+                if any((child, tuple(row)) not in inserted for row in conn.execute(
+                        'SELECT %s FROM "%s" WHERE "%s" = ?' % (", ".join('"%s"' % c for c in keys), child, column),
+                        (change.new[KEYS[parent][0]],))):
                     reasons.append("%s has rows in %s made since" % (_named(change.table, change.key), child))
             if change.table == "tag_taxonomy" and conn.execute(
                     "SELECT 1 FROM faces WHERE tag_id = ? LIMIT 1", (change.key[0],)).fetchone():

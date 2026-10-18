@@ -432,7 +432,10 @@ class TagSuggester:
                     if excluded or (name is None and name_source == "manual"):
                         continue
                     box = json.loads(box_json)
-                    emb = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
+                    # A face with no vector under the library's face model (store_faces.VECTOR answers None: a library
+                    # part-way through the new model's pass) is a face on file and a box among the photo's, but it is
+                    # compared with nobody.
+                    emb = None if emb_bytes is None else np.frombuffer(emb_bytes, dtype=np.float32).tolist()
                     detected.append({
                         "box": box,
                         "embedding": emb,
@@ -475,7 +478,8 @@ class TagSuggester:
             # Tiny faces in the background are noise: no name is offered for them
             # (tagpup.core.clustering).
             background = clustering.background_faces([f.get("box") for f in detected_faces])
-            valid_detected_faces = [f for i, f in enumerate(detected_faces) if i not in background]
+            valid_detected_faces = [f for i, f in enumerate(detected_faces)
+                                    if i not in background and f.get("embedding") is not None]
 
             if valid_detected_faces:
                 if known_faces.names():

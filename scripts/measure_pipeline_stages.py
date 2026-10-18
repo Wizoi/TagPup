@@ -71,7 +71,7 @@ import sandbox  # noqa: E402
 from sandbox import environment  # noqa: E402
 
 import _root  # noqa: E402,F401
-from tagpup.core import paths, processes  # noqa: E402
+from tagpup.core import clustering, paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 from tagpup.services import inspect as inspect_service  # noqa: E402
@@ -575,8 +575,8 @@ def compared(off, capped):
         if before is None or before["stratum"] != photo["stratum"] or photo["boxes"] is None or before["boxes"] is None:
             continue
         named = [face[0] for face in before.get("stored") or () if face[0] and face[1] and not face[2]]
-        named_off = set(sandbox.pairs(before["boxes"], named))
-        kept = sandbox.pairs(before["boxes"], photo["boxes"])
+        named_off = set(clustering.pairs(before["boxes"], named))
+        kept = clustering.pairs(before["boxes"], photo["boxes"])
         gained = len(photo["boxes"]) - len(kept)
         for name in (photo["stratum"], "all"):
             row = table.setdefault(name, {"photos": 0, "found_off": 0, "named_off": 0, "found": 0, "lost_named": 0,
