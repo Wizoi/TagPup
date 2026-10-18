@@ -55,11 +55,16 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
 
 ## By design (each row closed `decided:`)
 
-- **The clustering trace's fourth decimal** (2026-10-16, phase 2a): the last pass reads its likenesses from one float32
-  product of a block of faces with everyone's faces (`KnownFaces.likeness_table`), not one product a person, so a likeness
-  can differ in its last bits (at most 4.2e-07 on kr-track) and the trace prints 89 of photo_index's 187,757 similarities
-  one apart at the fourth decimal. The names are the result, and they are identical face by face on the three libraries;
-  `likeness_many` already blocked faces so.
+- **The clustering trace's fourth decimal** (2026-10-16, phase 2a; #1548): the last pass read its likenesses from one float32
+  product of a block of faces with everyone's faces, not one product a person, so a likeness differed in its last bits
+  (at most 4.2e-07 on kr-track) and the trace printed 89 of photo_index's 187,757 similarities one apart at the fourth
+  decimal. Since #1545 (2026-10-17) the person's page, Suggest and the last pass are one column of one table
+  (`likeness_table(among=)`; `likeness_many` is that column), so they agree bit for bit. The names were and are identical
+  face by face on the three libraries.
+- **A `KnownFaces` asked for one person, then for everyone, holds that person's faces twice** (2026-10-17, #1611): a
+  one-person table keeps the person's own matrix after everyone's table re-points the arrays to views of one matrix
+  (about 113 MB twice on photo_index) until the next `add`. No caller mixes the two on one object (rounds, last pass,
+  person page and Suggest each use one), so the case has no instance and is not handled.
 
 - **#1209**, a tree rename stopped half way: the photos written hold the new tag while the tree keeps the old node. One
   place orders a tree edit against its files (`tags._retag`): the tree moves only once every photo is rewritten, the reply
