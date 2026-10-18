@@ -971,19 +971,22 @@ class Runtime:
             raise
         return RunModel(model, end)
 
-    def look_at_faces(self, library, model=validation.SCRFD_ADAFACE, what=None, cancelled=None, report=None):
-        """The face model `model` (validation.FACE_MODELS) for a look that writes nothing -- phase 3's pass reading what
-        the new model finds, beside the faces a library holds, before any library is switched to it (docs/AI_PIPELINE.md,
-        phase 3): a RunModel whose `faces_in(path)` gives a photo's faces as the model finds them, and `end()`, which the
-        caller calls in a finally. The model is the one named, not the library's (`library` gives the CLIP part of the set
-        held, and its name to a run refused beside it), so a library refused its face model (Runtime.faces) can still be
-        looked at. Reads the library's settings without stamping it (peek_settings) and writes nothing to it.
+    def look_at_faces(self, library, what=None, cancelled=None, report=None):
+        """The new face model (validation.SCRFD_ADAFACE) for a look that writes nothing -- phase 3's pass reading what
+        it finds, beside the faces a library holds, before any library is switched to it (docs/AI_PIPELINE.md, phase 3):
+        a RunModel whose `faces_in(path)` gives a photo's faces as the model finds them, and `end()`, which the caller
+        calls in a finally. The model is the new one, not the library's (`library` gives the CLIP part of the set held,
+        and its name to a run refused beside it), so a library refused its face model (Runtime.faces) can still be
+        looked at. Reads the library's settings without stamping it (peek_settings) and writes nothing to it. The new
+        model alone: MTCNN's has no `faces_in`, and the library's own faces are read where they are kept.
 
-        Held as a run is (begin): its set -- the library's CLIP model's settings and {"model": model} -- under a _Lease, so
+        Held as a run is (begin): its set -- the library's CLIP model's settings and {"model": SCRFD_ADAFACE} -- under a
+        _Lease, so
         a Suggest on another set is refused while it holds it, and it is refused (gpu_turns.OtherModelsInUse, nothing
         begun) while a run on another set is under way; the graphics card taken on its first use (_RunTurn) and let go
         at end(), the model with it when no library uses it. A weight file missing raises its sentence on first use
         (tagpup.ml.scrfd_adaface.missing_weights): the face models of the libraries are not touched."""
+        model = validation.SCRFD_ADAFACE
         looked = types.SimpleNamespace(embedder=peek_settings(library).embedder, faces={"model": model})
         what = what or "Looking at the faces in %s with %s" % (library.name, model)
         self.idle.used(MODELS)

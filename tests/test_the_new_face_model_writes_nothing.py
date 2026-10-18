@@ -405,6 +405,12 @@ class ALookWithTheNewModel(_Libraries):
         # And a Suggest runs again once it has ended.
         self.begin(self.harbour).end()
 
+    def test_it_looks_with_the_new_model_alone(self):
+        # MTCNN's model has no faces_in: a look is the new model's, never another named.
+        with self.assertRaises(TypeError):
+            self.runtime.look_at_faces(self.harbour, model=validation.MTCNN_FACENET)
+        self.assertEqual([], self.built)
+
 
 class TheNewModelsWeightsNeverMade(_Libraries):
     """(g) The new model on an install where its weights were never made: the real model, its folder empty."""
