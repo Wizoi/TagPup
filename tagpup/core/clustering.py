@@ -225,12 +225,14 @@ class FacesByPerson:
         self.starts = np.flatnonzero(np.r_[True, ordered[1:] != ordered[:-1]]) if len(ordered) else np.zeros(0, np.intp)
         self.keys = ordered[self.starts].tolist()
         self.first = self.order[self.starts].tolist()
+        self.in_order = bool(np.array_equal(self.order, np.arange(len(self.order))))
 
     def grouped(self, matrix):
         """`matrix`'s rows (or a vector's entries) in the order `table` reads them as `grouped`: a matrix many blocks of
         faces are compared with is put in order once, not each product (a product of 512 faces with 55,000 named ones
-        took 0.18 s to reorder, against 0.01 s to reduce, measured 2026-10-17)."""
-        return matrix[self.order]
+        took 0.18 s to reorder, against 0.01 s to reduce, measured 2026-10-17). Rows already in that order are the
+        matrix itself, not a copy."""
+        return matrix if self.in_order else matrix[self.order]
 
     def table(self, similarities, grouped=False):
         """Each face's likeness to each person, from `similarities` (a row a face, a column a face of the matrix; in
@@ -245,9 +247,15 @@ class FaceRows(tuple):
     """(ids, people, matrix) of the faces kept one row a face (tagpup.services.identify.named_faces, decided_faces), as
     their callers unpack them, holding their grouping by person (`by_person`): made once for the matrix, the first time it
     is asked, and kept with it for as long as the matrix is kept (tagpup.jobs.identify's cache) -- the strip asked it once a
-    face, and each regrouped 55,000 named faces (about 0.34 s against 0.22 s for 40 faces)."""
+    face, and each regrouped 55,000 named faces (about 0.34 s against 0.22 s for 40 faces). The rows are put in the order
+    of their people's ids when made, so the grouping's matrix is the matrix itself: one copy of it is kept, not two (about
+    110 MB on photo_index). Every caller reads a row's face and person from these same lists."""
 
     def __new__(cls, ids, people, matrix):
+        if matrix is not None and len(people) > 1:
+            order = np.argsort(np.asarray([person.id for person in people]), kind="stable")
+            if not np.array_equal(order, np.arange(len(order))):
+                ids, people, matrix = [ids[n] for n in order], [people[n] for n in order], matrix[order]
         rows = super().__new__(cls, (ids, people, matrix))
         rows._grouping = None
         rows._making = threading.Lock()
