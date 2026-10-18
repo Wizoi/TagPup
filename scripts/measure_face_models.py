@@ -17,7 +17,8 @@ models here are loaded by this script alone, never by tagpup.
   in a sandbox only): each candidate in a process of its own (`one`), in order, one at a time, holding the owner's turn
   on the card (tagpup.ml.gpu) while it has a model there; nvidia-smi read every 250 ms meanwhile, so each candidate's
   card memory is its own peak over what the card held before it started. Before each, the card is looked at: another
-  process holding the turn, or the card busy, stops the run.
+  process holding the turn, or the card busy, stops the run. A candidate that fails (its traceback printed) does not
+  stop the ones after it; the failures are named at the end.
   - A detector: each photo decoded as the indexer decodes it for faces (tagpup.files.images.opened, as stored), then
     detected, landmarks included where the model gives them; the time of each, the card synchronised. A warm-up photo
     first, untimed.
@@ -249,10 +250,13 @@ class Scrfd:
     def __init__(self, path, side, threshold, in_torch=False):
         self.side, self.threshold, self.in_torch = side, threshold, in_torch
         if in_torch:
+            import onnx
             import torch
             from onnx2torch import convert
             self.torch = torch
-            self.model = convert(path).eval().cuda()
+            # The model loaded, not its path: given a path, onnx2torch reopens a temporary file by name, which
+            # Windows refuses while it is open.
+            self.model = convert(onnx.load(path)).eval().cuda()
         else:
             self.session = _ort(path, True)
             self.input = self.session.get_inputs()[0].name
@@ -521,7 +525,7 @@ def run(args):
     from tagpup.ml import gpu
     work = sandbox.outside_the_repository(args.work)
     names = args.only.split(",") if args.only else list(DETECTORS) + list(RECOGNISERS)
-    memory = {}
+    memory, failed = {}, []
     path = os.path.join(work, "memory.json")
     if os.path.exists(path):
         with open(path, encoding="utf-8") as handle:
@@ -539,8 +543,11 @@ def run(args):
             raise SystemExit("The card is not free (%s; utilisation %s): stopped before %s." % (
                 "held: " + holder.get("what", "?") if holder else "no holder", now.get("mean_utilisation"), name))
         began = time.time()
+        sys.stdout.flush()
+        # Its streams handed over: a child in a hidden console of its own would write its traceback there, unseen.
         done = processes.run([sys.executable, os.path.abspath(__file__), "one", "--work", work, "--models",
-                              args.models, "--candidate", name, "--faces-from", args.faces_from], timeout=args.timeout)
+                              args.models, "--candidate", name, "--faces-from", args.faces_from], timeout=args.timeout,
+                             stdout=sys.stdout, stderr=sys.stderr)
         ended = time.time()
         sampler.stop()
         card = sandbox.window(sampler.gpu, began, ended)
@@ -550,7 +557,9 @@ def run(args):
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(memory, handle, indent=1)
         if done.returncode:
-            raise SystemExit("%s failed: stopped." % name)
+            failed.append(name)   # its traceback is above; the candidates after it do not depend on it
+    if failed:
+        raise SystemExit("failed: %s" % ", ".join(failed))
 
 
 # ---- report --------------------------------------------------------------------------------------------------
