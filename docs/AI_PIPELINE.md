@@ -9,7 +9,9 @@ Status (2026-10-17): **phase 0 done** (measured, section 7); the plan below is r
 accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again) and
 2a (`cluster-faces` 2,113 s to 202 s, names unchanged). **Built, off:** 1a (the detector downscale, the setting
 `faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
-ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Next:** phase 3 not before about 2026-11-15. Update a phase's status
+ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Measured:** phase 3's speed check (2026-10-18,
+section 7: SCRFD 10g in torch and AdaFace IR-101, about 1.8 hours for photo_index against 9.3, no second runtime;
+the choice is the owner's). **Next:** phase 3 not before about 2026-11-15. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
@@ -283,11 +285,12 @@ and drops the column. Destructive (full backup first, no undo); batched with the
 `idx_faces_name`; no other migration in flight; not before about 2026-11-15. Readers to move: `store/faces.py`,
 `store/face_tags.py`, `services/identify.py`, `services/suggester.py`, and every `faces.embedding` read the sweep finds.
 
-**First, a speed check (a spike, in a sandbox, before the design is fixed).** The detector candidates (SCRFD, YuNet,
+**First, a speed check (a spike, in a sandbox, before the design is fixed; measured 2026-10-18, section 7, "The
+phase 3 spike").** The detector candidates (SCRFD, YuNet,
 YOLOv8-face) and the recognisers (AdaFace, an ArcFace R50) timed per photo on the phase 0 sample, with their peak
 card memory, and faces found per stratum beside MTCNN's. The estimate for a pass is `photos x (decode + detector +
-recogniser)`; it is measured, not assumed. AdaFace (MIT licence) is the cleaner choice; insightface's weights are
-accepted by the owner for this personal library. The recogniser runs through torch where it can, with no second
+recogniser)`; it is measured, not assumed. AdaFace's code is MIT, its weights carry their training data's
+non-commercial terms like insightface's (section 7); insightface's weights are accepted by the owner for this personal library. The recogniser runs through torch where it can, with no second
 runtime unless the detector needs one and the owner agrees.
 
 **The pass.**
@@ -436,6 +439,83 @@ clustering's seconds apart, so the rows below are measured again like for like; 
 | Suggest, 224 against 512 (kr-track, 117 tagged photos) | 224: precision 0.911 on 224 offered, 204 right; 512: 0.895 on 228 offered, 204 right; recall 0.50 both; top 5 0.887 and 0.879 | | One library, coarse tags. Embedding at 224 takes 0.118 s a photo with the decode. |
 | Named-face precision, FaceNet vectors, photo_index (35,425 named, 281 people), held out by folder | By likeness: 0.9830 at 0.40, 0.9837 at 0.70, 0.9846 at 0.80, 0.9858 at 0.85, 0.9909 at 0.90, 0.9960 at 0.95 (faces 35,214 down to 4,807). By margin: 0.983 at 0, 0.9954 at 0.02, 0.9983 at 0.04, 0.9991 at 0.06, 0.9992 at 0.10, 1.0 at 0.20 (faces 35,214 down to 9,986) | | Read on faces already matched; the hard faces are among about 152,000 unnamed (#1532). |
 | photo_index counts | 59,519 photos (59,518 readable, 1 gone), 187,784 faces, 223 turned photos | | Megapixels: median 10.0, p10 3.1, p90 20.0, max 192.9; 418 photos at 30 MP or more. |
+
+### The phase 3 spike: face detectors and recognisers (2026-10-18)
+
+`scripts/measure_face_models.py` on phase 0's sample drawn again from photo_index (299 photos, the 10 with the most
+faces among them as "worst"), each candidate in a process of its own in a sandbox venv (onnxruntime-gpu 1.22, OpenCV,
+onnx2torch beside the main venv's torch 2.5.1), one at a time, holding the card's turn; the same card, other programs
+holding 0.6 to 1.6 GB of it. Seconds are means a photo, the card synchronised, after an untimed warm-up photo; "card"
+is the run's peak (nvidia-smi every 250 ms) over what the card held before it. Faces are kept by the indexer's rule
+(15 pixels or more each side). The baselines: MTCNN as the indexer runs it (the library's settings, full size), and
+the photo's stored faces that are named and not excluded (339). The pass is the library's mix, not the sample's:
+photo_index's 59,518 readable photos by stratum (none 10,493; 1 to 3 34,804; 4 to 9 10,798; 10 or more 3,413; worst
+10) times each stratum's decode and detection seconds.
+
+| Detector (long side) | Runtime | Detect s | Card MiB | Faces found: none / 1-3 / 4-9 / 10+ / worst | MTCNN's 5,667 found again, IoU 0.5 / 0.3 | Named found, of 339 | Pass, decode + detect |
+|---|---|---|---|---|---|---|---|
+| MTCNN (full size) | torch | 0.679 | 8,580 | 0 / 117 / 401 / 1,969 / 3,180 | (the baseline) | 339 | 8.81 h |
+| SCRFD 10g, 640 | onnxruntime | 0.039 | 339 | 11 / 101 / 342 / 1,471 / 369 | 2,090 / 2,106 | 317 | 1.67 h |
+| SCRFD 10g, 1280 | onnxruntime | 0.065 | 868 | 16 / 107 / 426 / 1,955 / 2,134 | 3,831 / 3,864 | 323 | 2.02 h |
+| **SCRFD 10g, 1280** | **torch (onnx2torch)** | **0.036** | **567** | 16 / 107 / 426 / 1,955 / 2,135 | 3,832 / 3,865 | **323** | **1.53 h** |
+| SCRFD 10g, 1920 | onnxruntime | 0.092 | 1,369 | 16 / 93 / 424 / 2,084 / 3,817 | 4,786 / 4,808 | 313 | 2.43 h |
+| SCRFD 2.5g, 640 | onnxruntime | 0.027 | 276 | 10 / 101 / 322 / 1,370 / 256 | 1,885 / 1,900 | 312 | 1.36 h |
+| SCRFD 2.5g, 1280 | onnxruntime | 0.054 | 487 | 11 / 104 / 408 / 1,793 / 1,741 | 3,502 / 3,528 | 321 | 1.85 h |
+| YuNet, 640 | OpenCV, processor | 0.012 | 0 | 2 / 52 / 132 / 300 / 0 | 484 / 484 | 196 | 1.11 h |
+| YuNet, 1280 | OpenCV, processor | 0.032 | 0 | 2 / 67 / 188 / 682 / 24 | 959 / 959 | 269 | 1.43 h |
+| YOLOv8n-face, 640 | onnxruntime | 0.027 | 275 | 13 / 102 / 326 / 1,379 / 375 | 2,020 / 2,039 | 315 | 1.39 h |
+
+Decoding (the indexer's `images.opened`) is 0.067 to 0.075 s a photo for every candidate (MTCNN's run 0.097), so
+after the change the decode is the larger half of the detector's pass. Detection time hardly moves with the faces in a
+photo for SCRFD (0.034 to 0.048 s in torch from none to worst) where MTCNN's goes from 0.31 to 2.59 s.
+
+What the numbers say:
+- **The torch conversion is the same detector, faster.** SCRFD 10g at 1280 through onnx2torch finds the same faces as
+  in onnxruntime (4,639 against 4,638; the same 323 named) at 0.036 s against 0.065, in 567 MiB against 868. **No
+  second runtime is needed**: the detector runs in torch like everything else.
+- **Every miss of a named face is a face not found, not a box drawn to other edges**: each detector finds the same
+  named faces at IoU 0.3 as at 0.5.
+- **SCRFD has a blind spot at each end of its scale.** At 640 the named faces it misses are small (22 missed, median
+  side 42 px, largest 89); at 1280 and 1920 it also misses faces that fill the frame (16 missed at 1280, the largest
+  1,690 px; 26 at 1920, median 842 px), which is why 1-3 faces a photo is found less at 1280 (59 of 64 named) than at
+  640 (62 of 64). The two scales together (640 and 1280, merged by non-maximum suppression, counted from the runs
+  above) find 326 of the 339 named, the 13 missed all small (median 42 px, largest 89), and 3,840 of MTCNN's faces.
+- **MTCNN's "worst" photos are mostly not faces SCRFD agrees with**: 3,180 MTCNN faces in 10 photos against 2,135 for
+  SCRFD at 1280 (1,771 shared), and 8 named among them. The faces MTCNN finds that no SCRFD finds are where the
+  pass will make unnamed rows disappear; the pass's rule (named faces never dropped, listed for review) covers the 8.
+- **YuNet** misses too much (196 and 269 of 339 named) and **SCRFD 2.5g** and **YOLOv8n-face** are no faster than
+  SCRFD 10g in torch while finding fewer.
+
+| Recogniser | Faces from | Align s | Recognise s | Card MiB (torch's own peak) | Mirror cosine | Two photos' cosine | Pass with its detector |
+|---|---|---|---|---|---|---|---|
+| FaceNet (today) | MTCNN | 0.014 (crop) | 0.025 | 4,439 (1,767) | 0.945 | 0.123 | 9.27 h |
+| ArcFace R50 (w600k_r50), onnxruntime | SCRFD 10g 1280 | 0.004 | 0.045 | 9,009 (onnxruntime's arena) | 0.924 | 0.041 | 2.56 h; 2.07 h with the torch detector |
+| **AdaFace IR-101 (WebFace12M), torch, half precision** | SCRFD 10g 1280 | 0.004 | **0.025** | 6,648 (2,268) | 0.930 | 0.040 | 2.31 h; **1.81 h with the torch detector** |
+
+The sanity checks say each recogniser is read right: a face and its mirror image are alike (0.92 to 0.95) and the
+first faces of two different photos are not (0.04 to 0.12; FaceNet's vectors sit closer together than the two newer
+models'). How well each tells people apart is not measured here: that is the gate, on the named-face hold-out.
+The recognisers' card memory is the whole photo's faces in one batch (the worst photo has hundreds); the build
+batches faces in fixed chunks, so that peak is not the model's.
+
+For photo_index, decode, detection, alignment and recognition together: **about 1.8 hours (0.110 s a photo)** for
+SCRFD 10g at 1280 in torch with AdaFace, **at most about 2.5 hours** with the 640 scale added (its 0.039 s in onnxruntime,
+not timed in torch), against **9.3 hours (0.561 s a photo)** for MTCNN and FaceNet measured the same way. Not counted:
+writing the rows and the vectors (phase 0's faces write: 0.021 s a photo).
+
+**Licences.** facenet-pytorch (MTCNN, FaceNet): MIT code, weights trained on VGGFace2. insightface's model packs
+(SCRFD 10g and 2.5g, ArcFace R50 `w600k_r50`): MIT code, the weights for non-commercial research only (accepted by the
+owner for this personal library, above). YuNet (OpenCV Zoo): MIT. YOLOv8n-face (lindevs): AGPL-3.0, Ultralytics'
+terms. AdaFace: MIT code, but the IR-101 weights are trained on WebFace12M and its model card says to follow the
+training data's licence, which is non-commercial research too: the "MIT licence" in the plan above is the code's, and
+AdaFace's weights are in the same class as insightface's.
+
+**Recommendation (for the owner's choice, section 6).** Detector: **SCRFD 10g, run in torch** (converted from
+insightface's file by onnx2torch), at 1280 with a second look at 640 merged by non-maximum suppression, so that both
+the small and the frame-filling faces are found; landmarks come with it, for the alignment. Recogniser: **AdaFace
+IR-101** in torch, half precision: the fastest of the two candidates here, torch only, and the plan's preferred model; ArcFace R50 needs onnxruntime and is slower. **No second runtime**: everything runs in torch, and
+onnxruntime stays in the sandbox. Left for the build: whether onnx2torch is needed at run time or the converted
+detector is saved once as a torch file; the 640 scale timed in torch; the faces batched in chunks.
 
 ## 8. Risks
 
