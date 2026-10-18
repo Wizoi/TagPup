@@ -433,7 +433,7 @@ class ACopyIsAFileOfItsOwn(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt", "the roots below are Windows paths")
 class TheMonthlyFromBeforeRoots(unittest.TestCase):
-    """The library took its roots after the monthly was taken (at the baseline, with a later step still to come): the owner
+    """The library took its roots after the monthly was taken (at the latest schema, with a later step still to come): the owner
     restores it while the index is running and a run holds the library's roots."""
 
     def setUp(self):
@@ -449,7 +449,7 @@ class TheMonthlyFromBeforeRoots(unittest.TestCase):
             conn.close()
         snapshots.take(self.library.path, now=NOON)
         self.monthly = snapshots.listed(self.library.path, "monthly")[0]
-        self.assertEqual(schema.BASELINE, schema.version_of(self.monthly.path))
+        self.assertEqual(schema.LATEST, schema.version_of(self.monthly.path))
         self.enterContext(migration_names.ahead())   # a later step, run on opening the library
         schema.ensure(self.library.path)
         rl.convert_to_root(self.library.path, "D:\\Harbour")   # the owner's roots, arrived since
@@ -574,7 +574,7 @@ class ASnapshotBelowTheBaseline(Base):
         shown = self.cli("snapshots", "list")
         self.assertEqual(0, shown.exit_code, shown.output)
         self.assertIn("31 (too old to restore)", shown.output)
-        self.assertIn("32", shown.output, "the weekly and monthly are copies of the same file, so also marked")
+        self.assertIn(str(schema.LATEST), shown.output, "the weekly and monthly are copies of the same file, so also marked")
 
     def test_the_cli_refuses_a_snapshot_from_a_newer_tagpup_in_a_sentence_too(self):
         # The refusal comes before the disk is asked, so the command has no "needs" to print: it was a KeyError (a traceback).

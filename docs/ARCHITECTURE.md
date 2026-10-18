@@ -228,7 +228,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
 ## Data model on one page
 
 One SQLite file per library (`data/<name>.db`, WAL, the baseline (schema 32: a new library is made whole; one below it is refused, DATABASE.md, section 10) and the
-steps after it, from 33, in `tagpup.store.schema`; each runs in one transaction with its checks, and only a destructive one takes a backup). Columns are in
+steps after it, from 33 (which drops the empty `faces_pending` and `idx_faces_name`), in `tagpup.store.schema`; each runs in one transaction with its checks, and only a destructive one takes a backup). Columns are in
 [DATABASE.md](DATABASE.md). Every table has one kind and one writer.
 
 **Ids.** A photo is `photos.id` (an integer kept across renames and moves; `path` is an attribute, and

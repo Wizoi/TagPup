@@ -7,7 +7,8 @@ tree, which made its own table when it saved. Each carried its own idea of the s
 
 A migration runs once per library, in order, and `schema_version` records it. The
 first, version 32 (`BASELINE`), makes a NEW library directly in the schema as it stood after the
-thirty-second step of the old chain; a later one (33 on) is an ordinary step forward. A library below the
+thirty-second step of the old chain; a later one (33 on) is an ordinary step forward, which a new library takes too,
+right after the baseline, from the same runner. A library below the
 baseline is refused (`TooOld`), not converted: the steps 1 to 32 were deleted on 2026-10-15
 (owner decision: no plan to bring up older versions), and the snapshots and backups below 32 can no longer
 be restored. Before that, the conversions of libraries older than 2026-09 had retired on 2026-09-24.
@@ -193,7 +194,8 @@ def row_key(key):
 
 def _baseline(conn):
     """A NEW library, made directly in the schema a library had after migration 32 (owner, 2026-10-15: migrations 1 to 32 are
-    collapsed; the next is 33). Every table, index and trigger of that schema, in the one transaction the runner gives it: a
+    collapsed; the steps from 33 follow it, on a new library as on a kept one). It is frozen: what a later step changes is
+    that step's, not an edit here, so a library made today and one kept since 32 are one schema. Every table, index and trigger of that schema, in the one transaction the runner gives it: a
     failure leaves a library with no table, which the next open makes again. Not a migration of an older library: one below
     BASELINE is refused (`_migrate`). Checked once against the library the old chain made and the three live libraries
     (2026-10-15: every table, column, index, foreign key and trigger identical; docs/DATABASE.md, "The baseline")."""
@@ -230,8 +232,8 @@ def _baseline(conn):
         "CREATE TABLE job_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, library TEXT COLLATE NOCASE,"
         " started TEXT NOT NULL, finished TEXT, outcome TEXT NOT NULL CHECK"
         " (outcome IN ('running', 'done', 'failed', 'abandoned')), changed TEXT, owner TEXT, note TEXT)",
-        # The folders asked to be added, the photos whose faces are to be detected (a mark whose photo is gone is read as none)
-        # and those whose faces were detected, and the library's roots (tagpup.store.added_folders, faces_detected, roots).
+        # The folders asked to be added, the photos whose faces are to be detected (a mark whose photo is gone is read as none;
+        # migration 33 drops it) and those whose faces were detected, and the library's roots (tagpup.store.added_folders, faces_detected, roots).
         "CREATE TABLE added_folders (path TEXT PRIMARY KEY COLLATE %s, subfolders INTEGER NOT NULL, added TEXT NOT NULL)"
         % paths.COLLATE,
         "CREATE TABLE faces_pending (photo_id INTEGER PRIMARY KEY, since TEXT NOT NULL)",
@@ -596,12 +598,26 @@ def _tally(seen, moved):
     return problems + ["%s: a row moved to another rowid" % table for table in moved]
 
 
+def _drop_faces_pending_and_idx_faces_name(conn):
+    """Migration 33 (owner, 2026-10-15): `faces_pending`, which nothing reads or writes since its module was deleted (0 rows in
+    the three live libraries, counted that day), and `idx_faces_name`, the first column of `idx_faces_person (name, tag_id)`,
+    which serves every lookup by name in its place (#1472). Neither statement says IF EXISTS: every library at 32 has both."""
+    conn.execute("DROP TABLE faces_pending")
+    conn.execute("DROP INDEX idx_faces_name")
+
+
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
               "converted (steps 1 to 32 were deleted on 2026-10-15)",
               (),
               (RowsKept(),) + STANDARD),
+    # Not `faces` among what it touches: dropping an index moves no row, and the standard checks would read every face and
+    # crop of the largest library under the write lock for nothing. Every table's rows are still counted (RowsKept).
+    Migration(33, "drop faces_pending and idx_faces_name", _drop_faces_pending_and_idx_faces_name, DESTRUCTIVE,
+              "drops a table (empty in every live library) and a redundant index; one backup first, no undo",
+              ("faces_pending",),
+              (RowsKept(but=("faces_pending",)),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version
