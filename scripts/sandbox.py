@@ -198,13 +198,13 @@ def iou(a, b):
     return shared / union if union > 0 else 0.0
 
 
-def pairs(boxes, others):
+def pairs(boxes, others, at=SAME_FACE):
     """{index in boxes: index in others}: each box paired once with the other it overlaps most, the largest overlaps
-    first, at SAME_FACE or more."""
+    first, at `at` (SAME_FACE) or more."""
     candidates = sorted(((iou(a, b), i, j) for i, a in enumerate(boxes) for j, b in enumerate(others)), reverse=True)
     paired, taken = {}, set()
     for overlap, i, j in candidates:
-        if overlap < SAME_FACE:
+        if overlap < at:
             break
         if i not in paired and j not in taken:
             paired[i] = j

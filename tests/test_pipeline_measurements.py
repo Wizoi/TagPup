@@ -1,5 +1,6 @@
 """The phase 0 measurements of the AI pipeline (scripts/measure_pipeline_stages.py, measure_pipeline_holdouts.py,
-the helpers they share in scripts/sandbox.py; docs/AI_PIPELINE.md): what they draw and how they count, on made-up
+the helpers they share in scripts/sandbox.py; docs/AI_PIPELINE.md), and phase 3's speed check of the face models
+(scripts/measure_face_models.py): what they draw and how they count, on made-up
 numbers. Nothing here loads a model, opens a library or starts a process: the runs themselves are the owner's, in a
 window he names.
 
@@ -20,6 +21,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 import numpy as np  # noqa: E402
 
+import measure_face_models as faces  # noqa: E402
 import measure_pipeline_holdouts as holdouts  # noqa: E402
 import measure_pipeline_stages as stages  # noqa: E402
 import sandbox  # noqa: E402
@@ -369,6 +371,56 @@ class TheOtherChecks(unittest.TestCase):
     def test_a_tag_under_a_branch_of_people_is_not_scored(self):
         self.assertTrue(holdouts._a_person("People/Rowan Thackeray", {"people"}))
         self.assertFalse(holdouts._a_person("Sport/Track", {"people"}))
+
+
+class TheFaceModelSpeedCheck(unittest.TestCase):
+    """Phase 3's speed check (scripts/measure_face_models.py): the owner reads one number, hours for photo_index, and
+    the faces a new detector keeps beside MTCNN's and the named ones. A sample heavy in crowds must not make the pass
+    look slower than the library's mix, and a detector drawing its boxes to other edges must not read as losing
+    faces."""
+
+    def test_the_pass_is_the_librarys_mix_not_the_samples(self):
+        strata = {"none": {"photos": 100}, "1-3": {"photos": 300}, "4-9": {"photos": 50}, "10+": {"photos": 25}}
+        weighed = faces.weights(strata, worst=10)
+        self.assertEqual({"none": 100, "1-3": 300, "4-9": 50, "10+": 15, "worst": 10}, weighed)
+        seconds = {"none": 0.1, "1-3": 0.2, "4-9": 0.4, "10+": 1.0, "worst": 5.0}
+        self.assertAlmostEqual(100 * 0.1 + 300 * 0.2 + 50 * 0.4 + 15 * 1.0 + 10 * 5.0,
+                               faces.pass_estimate(seconds, weighed))
+        # A stratum the library has and the run did not measure: no number rather than a low one.
+        self.assertIsNone(faces.pass_estimate(dict(seconds, **{"4-9": None}), weighed))
+
+    def test_a_face_drawn_to_other_edges_is_counted_at_the_looser_overlap(self):
+        mtcnn = [{"number": 0, "stratum": "1-3", "faces": [[100, 100, 200, 220, 0.99, None], [400, 400, 430, 440, 0.9, None]]}]
+        tighter = [{"number": 0, "stratum": "1-3", "faces": [[120, 150, 180, 220, 0.8, None], [900, 900, 940, 940, 0.7, None]]}]
+        row = faces.agreement(tighter, mtcnn)["1-3"]
+        self.assertEqual((2, 2, 0, 1), (row["found"], row["baseline"], row["matched_0.5"], row["matched_0.3"]))
+        self.assertEqual(2, row["missed_sides"]["n"])
+        self.assertEqual(0.0, sandbox.iou([0, 0, 10, 10], [20, 20, 30, 30]))
+        self.assertEqual({0: 0}, sandbox.pairs([[0, 0, 10, 10]], [[0, 0, 10, 4]], 0.3))
+        self.assertEqual({}, sandbox.pairs([[0, 0, 10, 10]], [[0, 0, 10, 4]]))
+
+    def test_named_faces_are_the_stored_ones_named_and_not_excluded(self):
+        named, unnamed, excluded = [100, 100, 140, 150], [300, 300, 340, 350], [500, 500, 540, 550]
+        plan = [{"number": 0, "stratum": "4-9", "stored": [[named, True, False], [unnamed, False, False],
+                                                            [excluded, True, True]]}]
+        found = [{"number": 0, "stratum": "4-9", "faces": [named + [0.9, None], unnamed + [0.9, None]]}]
+        row = faces.agreement(found, plan, named_only=True)["all"]
+        self.assertEqual((1, 1), (row["baseline"], row["matched_0.5"]))
+
+    def test_every_detector_keeps_faces_by_the_indexers_rule(self):
+        found = [[-5, 10, 40, 60, 0.9, None], [50, 50, 60, 80, 0.9, None], [90, 90, 140, 130, 0.8, [[1, 2]] * 5]]
+        kept = faces.kept_faces(found, width=120, height=200)
+        self.assertEqual([[0.0, 10.0, 40.0, 60.0], [90.0, 90.0, 120.0, 130.0]], [face[:4] for face in kept])
+        self.assertEqual([[1, 2]] * 5, kept[1][5])
+
+    def test_overlapping_boxes_keep_the_highest_score(self):
+        self.assertEqual([1, 2], faces.nms([[0, 0, 10, 10], [0, 0, 10, 11], [50, 50, 60, 60]], [0.6, 0.9, 0.5], 0.4))
+
+    def test_the_seconds_are_read_by_stratum_and_together(self):
+        photos = [{"stratum": "none", "decode": 0.1, "detect": 0.2}, {"stratum": "10+", "decode": 0.3, "detect": 0.6}]
+        table = faces.means(photos, ("decode", "detect"))
+        self.assertAlmostEqual(0.2, table["all"]["decode"])
+        self.assertAlmostEqual(0.6, table["10+"]["detect"])
 
 
 if __name__ == "__main__":
