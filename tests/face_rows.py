@@ -10,6 +10,13 @@ import json
 #: The faces with their photo's path: `SELECT p.path, f.name FROM ` + FACES_WITH_PATHS.
 FACES_WITH_PATHS = "faces f JOIN photos p ON p.id = f.photo_id"
 
+#: The key FaceNet's vectors are kept under (`face_embeddings.model`): the faces.model a library made in a test's home holds by
+#: default, and the key every vector of the three live libraries is under.
+FACENET = "mtcnn-facenet"
+
+#: A face's vector under FaceNet's key, as `v`: `SELECT f.id, v.vector FROM faces f` + VECTOR_OF_FACE.
+VECTOR_OF_FACE = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = '%s'" % FACENET
+
 
 def photo_id(conn, photo_path):
     """The id of the photo row stored under exactly `photo_path`, made if there is none."""
@@ -103,16 +110,26 @@ def give_their_person(conn, face_id):
         conn.execute("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", (found, name, face_id))
 
 
-def add_face(conn, photo_path, box=(0, 0, 10, 10), **columns):
+def add_face(conn, photo_path, box=(0, 0, 10, 10), embedding=None, model=FACENET, **columns):
     """Insert a face into the photo at `photo_path`; `columns` are any others of faces
-    (embedding, name, prob, name_source, excluded, excluded_reason, id). A box that is
-    not a string is written as JSON. A face given a `name` is given the person the tree says it is, as every writer that names a
-    face does (tagpup.store.person_ids.target: the id of the one node called so; none for a name no node, or two, is called).
-    Returns the face's id. The caller commits."""
+    (name, prob, name_source, excluded, excluded_reason, id). A box that is
+    not a string is written as JSON. Its `embedding`, if given (float32 bytes), is its vector in `face_embeddings` under `model`,
+    FaceNet's unless given, as the indexer files it. A face given a `name` is given the person the tree says it is, as every
+    writer that names a face does (tagpup.store.person_ids.target: the id of the one node called so; none for a name no node, or
+    two, is called). Returns the face's id. The caller commits."""
     values = dict(columns, photo_id=photo_id(conn, photo_path),
                   box=box if isinstance(box, str) else json.dumps(list(box)))
     if values.get("name") and "tag_id" not in values:
         values["tag_id"] = person_of(conn, values["name"])
     names = sorted(values)
-    return conn.execute("INSERT INTO faces (%s) VALUES (%s)" % (", ".join(names), ", ".join("?" * len(names))),
-                        [values[name] for name in names]).lastrowid
+    face_id = conn.execute("INSERT INTO faces (%s) VALUES (%s)" % (", ".join(names), ", ".join("?" * len(names))),
+                           [values[name] for name in names]).lastrowid
+    if embedding is not None:
+        add_vector_of_face(conn, face_id, embedding, model)
+    return face_id
+
+
+def add_vector_of_face(conn, face_id, vector, model=FACENET):
+    """Keep `vector` (float32 bytes) as the face's under `model`, FaceNet's unless given, replacing one it had. The caller
+    commits."""
+    conn.execute("INSERT OR REPLACE INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)", (face_id, model, vector))
