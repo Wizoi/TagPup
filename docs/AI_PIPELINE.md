@@ -9,7 +9,7 @@ Status (2026-10-17): **phase 0 done** (measured, section 7); the plan below is r
 accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again) and
 2a (`cluster-faces` 2,113 s to 202 s, names unchanged). **Built, off:** 1a (the detector downscale, the setting
 `faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
-ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Next:** 2c. Update a phase's status
+ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Next:** phase 3 not before about 2026-11-15. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
