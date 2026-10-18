@@ -122,7 +122,8 @@ def _alive(path):
 
 def read_holder(where=None):
     """What the process holding the card says of itself -- {"what", "since", "pid"} -- or
-    None when it said nothing readable."""
+    None when it said nothing readable. The file can outlive a holder that died while letting go: the
+    byte lock decides who holds the card, this only words the wait (#1638, by design)."""
     try:
         with open(os.path.join(where or folder(), HOLDER), encoding="utf-8") as handle:
             found = json.load(handle)
