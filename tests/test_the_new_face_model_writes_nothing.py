@@ -1,0 +1,366 @@
+"""A library set to the new face model (faces.model scrfd-adaface; docs/AI_PIPELINE.md, phase 3) writes nothing.
+
+Every face vector the three libraries hold is FaceNet's, kept by no model's name; another model's vectors written beside
+them would be compared with them as if alike. Until migration 33 keeps each model's apart, a library switched to the new
+model is refused every write of faces, with one sentence (tagpup.services.settings.FACE_MODEL_NOT_KEPT), and nothing of
+the model is built or loaded. What the owner lives through:
+
+- (a) Add a folder, or sync: the CLI's index exits 78 with the sentence, having imported no model's library and written
+  no row; the server's queue (index_folder) says "Nothing was indexed: ..." instead of an exit code.
+- (b) Suggest, and Just look, in that library: the run ends in an error naming the sentence, and no model is built; the
+  start-up warm-up builds nothing for it.
+- (c) Identify reads the faces the library holds, unaffected.
+- (d) Two libraries, one on each model, in one server: the one on MTCNN suggests; the other is refused, its rows unchanged.
+- (e) The model switched while a Suggest runs: the run ends on the models it began with; the next is refused.
+- (f) A look with the new model, which writes nothing (Runtime.look_at_faces): refused beside a Suggest, a Suggest refused
+  beside it; it takes the graphics card once, and lets go of the card and the model at end(), after a failure too.
+- (g) The new model's weights never made: a look says which are missing and how to make them, and Suggest on MTCNN runs.
+
+Fictional names; libraries in a home of the test's own; stand-in models, except the new model in (g), whose weights are
+not there to load.
+"""
+import os
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
+import photo_rows  # noqa: E402
+
+import numpy as np  # noqa: E402
+from PIL import Image  # noqa: E402
+
+from tagpup.core import gpu_turns, paths, processes, validation  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.ml import gpu  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import identify  # noqa: E402
+from tagpup.services import indexing as indexing_service  # noqa: E402
+from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
+from tagpup.services import suggester as suggester_service  # noqa: E402
+from tagpup.store import db  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SENTENCE = library_settings.FACE_MODEL_NOT_KEPT
+
+#: The CLI's index, run as the server's queue runs it, then the model libraries it imported.
+PROBE = (
+    "import sys\n"
+    "import tagpup_cli\n"
+    "try:\n"
+    "    tagpup_cli.cli(sys.argv[1:], standalone_mode=False)\n"
+    "finally:\n"
+    "    print('LOADED=' + ','.join(m for m in ('open_clip', 'torch', 'facenet_pytorch') if m in sys.modules))\n")
+
+
+class _Model:
+    """A model the runtime builds from a library's settings: on the card or off it, counting its loads and unloads."""
+
+    def __init__(self, settings, device="cpu"):
+        self.settings, self.device = dict(settings), device
+        self.loads = self.unloads = self.looked = 0
+
+    def load(self):
+        self.loads += 1
+
+    def unload(self):
+        self.unloads += 1
+
+    def embed_text(self, text):
+        return [0.0]
+
+    def faces_in(self, path):
+        self.looked += 1
+        return []
+
+
+class _Suggests:
+    """What a run is handed (tagpup.services.suggester.SuggestionModel): one tag a photo."""
+    model_key = "stand-in"
+
+    def suggest(self, path, metadata):
+        return {"path": path, "suggested_tags": [{"tag": "Activity/Sailing", "score": 0.9}]}
+
+    def offered(self, suggestion):
+        return [{"tag": "Activity/Sailing", "score": 0.9}], [], None
+
+    def consensus(self, suggestions):
+        return suggestions
+
+
+def rows_of(db_path):
+    """Every row of every table of the library, read-only: what a refused write must leave as it was."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        tables = [name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+                  if not name.startswith("sqlite_")]
+        return {table: sorted(map(repr, conn.execute('SELECT * FROM "%s"' % table))) for table in tables}
+    finally:
+        conn.close()
+
+
+class _Libraries(unittest.TestCase):
+    """harbour, on MTCNN and FaceNet (the default), and cove, switched to the new model; each holding one folder of real
+    photos, one photo of each read by the index and holding two faces FaceNet found."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="new_face_model_")
+        self.harbour, self.regatta = self.library("harbour.db", "Regatta")
+        self.cove, self.jetty = self.library("cove.db", "Jetty")
+        changed = library_settings.change(self.cove, {"faces.model": validation.SCRFD_ADAFACE}, acknowledged=["faces"])
+        self.assertEqual(1, changed.changed, changed.refused)
+        self.built = []
+        self.card = gpu.Card(os.path.join(self.home.root, "card"), poll=0.05)
+        self.addCleanup(self.card.close)
+        self.runtime = Runtime(build_clip=self.build, build_faces=self.build, card=self.card)
+        for library in (self.harbour, self.cove):
+            self.addCleanup(self.runtime.forget, library)
+            self.addCleanup(suggestion_jobs.forget, library)
+            self.addCleanup(indexing_jobs.forget, library)
+        #: The face models each run was handed, as model_for_run is called.
+        self.handed = []
+
+    def library(self, file_name, folder_name):
+        library = Library(self.home.library(file_name))
+        library_actions.create(library.path)
+        folder = paths.stored(os.path.join(self.home.root, folder_name))
+        os.makedirs(folder)
+        library_actions.record_added(library, [folder])
+        rng = np.random.default_rng(len(file_name))
+        conn = db.connect(library.path)
+        try:
+            for n in range(3):
+                path = os.path.join(folder, "mooring %d.jpg" % n)
+                Image.new("RGB", (64, 48), (40 * n, 90, 130)).save(path, "JPEG")
+            read = os.path.join(folder, "mooring 0.jpg")
+            photo_rows.add_read(conn, read, {"XMP:Subject": ["Boats/Dinghy"]})
+            for box in ([2, 2, 30, 30], [32, 4, 60, 34]):
+                vector = rng.normal(size=512).astype(np.float32)
+                store_faces.insert(conn, read, box, (vector / np.linalg.norm(vector)).tobytes(), prob=0.99)
+            conn.commit()
+        finally:
+            conn.close()
+        return library, folder
+
+    def build(self, settings):
+        self.built.append(_Model(settings))
+        return self.built[-1]
+
+    def photos(self, folder):
+        names = sorted(os.listdir(folder))
+        return {paths.key(os.path.join(folder, name)): {"path": paths.stored(os.path.join(folder, name))} for name in names}
+
+    def model_for_run(self, photo_index, clip, faces, words, **kwargs):
+        self.handed.append(faces)
+        return _Suggests()
+
+    def suggest(self, library, folder, looking=False):
+        """Suggest (or, `looking`, Just look) in `folder` as the page starts it, to its end: its status."""
+        runs = suggestion_jobs.runs_for(library)
+        work = suggestion_jobs.work_for(library, lambda: self.photos(folder), self.runtime, looking=looking)
+        with mock.patch.object(suggester_service, "model_for_run", self.model_for_run):
+            (runs.run_looking if looking else runs.run)(folder, work)
+        return runs.status(folder)
+
+    def begin(self, library, **kwargs):
+        with mock.patch.object(suggester_service, "model_for_run", self.model_for_run):
+            return self.runtime.begin(library, **kwargs)
+
+
+class TheIndexIsRefused(_Libraries):
+    """(a) Add a folder, or sync, in the library switched to the new model."""
+
+    def test_the_cli_writes_nothing_and_loads_no_model(self):
+        before = rows_of(self.cove.path)
+        done = processes.run([sys.executable, "-c", PROBE, "--db", self.cove.path, "index", self.jetty], cwd=ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(indexing_service.EXIT_FACE_MODEL_NOT_READY, done.returncode, done.stdout + done.stderr)
+        self.assertIn("Not run: %s" % SENTENCE, " ".join(done.stdout.split()))
+        self.assertEqual("LOADED=", [line for line in done.stdout.splitlines() if line.startswith("LOADED=")][-1])
+        self.assertEqual(before, rows_of(self.cove.path))
+
+    def test_the_servers_queue_says_why_in_words(self):
+        before = rows_of(self.cove.path)
+        result = indexing_service.index_folder(self.cove, self.jetty, ROOT)
+        self.assertFalse(result.ok)
+        self.assertEqual("Nothing was indexed: %s" % SENTENCE, result.message())
+        self.assertEqual(0, result.details["percent"])
+        self.assertEqual(before, rows_of(self.cove.path))
+
+
+class SuggestIsRefused(_Libraries):
+    """(b) Suggest, and Just look, in the library switched to the new model; (c) Identify beside them."""
+
+    def test_suggest_and_just_look_say_why_and_build_nothing(self):
+        before = rows_of(self.cove.path)
+        with self.assertLogs("tagpup.jobs.suggestions", "INFO") as logged:
+            refused = self.suggest(self.cove, self.jetty)
+            looked = self.suggest(self.cove, self.jetty, looking=True)
+        # A refusal, not a failure: no traceback in the log.
+        self.assertFalse([line for line in logged.output if not line.startswith("INFO")], logged.output)
+        self.assertFalse([record for record in logged.records if record.exc_info])
+        self.assertEqual("error", refused["status"], refused)
+        self.assertIn(SENTENCE, refused["message"])
+
+        self.assertEqual("error", looked["status"], looked)
+        self.assertIn("The models could not be made ready, so no photo was analysed and nothing was changed: %s" % SENTENCE,
+                      looked["message"])
+
+        for remember in (True, False):
+            with self.subTest(remember=remember), self.assertRaises(library_settings.FaceModelNotReady) as raised:
+                self.begin(self.cove, remember=remember)
+            self.assertEqual(SENTENCE, str(raised.exception))
+        with self.assertLogs("tagpup.runtime", "ERROR") as logged:
+            self.runtime.warm_up([self.cove])
+        self.assertIn(SENTENCE, "\n".join(logged.output))
+
+        self.assertEqual([], self.built, "a model was built for the switched library")
+        self.assertEqual([], self.handed)
+        self.assertFalse(self.card.holds())
+        self.assertEqual(before, rows_of(self.cove.path))
+
+    def test_identify_reads_the_faces_the_library_holds(self):
+        _stamp, unnamed = identify.unnamed_faces(self.cove)
+        self.assertEqual(2, len(unnamed.ids))
+        self.assertEqual((2, 512), tuple(unnamed.matrix.shape))
+
+
+class TwoLibrariesOneOnEachModel(_Libraries):
+    """(d) harbour on MTCNN and cove on the new model, in one server."""
+
+    def test_one_suggests_the_other_is_refused_and_unchanged(self):
+        before = rows_of(self.cove.path)
+        refused = self.suggest(self.cove, self.jetty)
+        self.assertEqual("error", refused["status"], refused)
+        self.assertIn(SENTENCE, refused["message"])
+
+        done = self.suggest(self.harbour, self.regatta)
+        self.assertEqual("completed", done["status"], done)
+        [faces] = self.handed
+        self.assertEqual(validation.MTCNN_FACENET, faces.settings["model"])
+
+        # While harbour's run holds MTCNN, cove is refused still, and writes nothing.
+        held = self.begin(self.harbour)
+        try:
+            with self.assertRaises((library_settings.FaceModelNotReady, gpu_turns.OtherModelsInUse)):
+                self.begin(self.cove)
+        finally:
+            held.end()
+        self.assertEqual([validation.MTCNN_FACENET], sorted({model.settings.get("model") for model in self.built
+                                                             if "model" in model.settings}))
+        self.assertEqual(before, rows_of(self.cove.path))
+
+
+class SwitchedWhileSuggestRuns(_Libraries):
+    """(e) The owner switches harbour to the new model while a Suggest in it runs."""
+
+    def test_the_run_ends_on_what_it_began_with_and_the_next_is_refused(self):
+        run = self.begin(self.harbour, what="Suggest Regatta (harbour)")
+        try:
+            changed = library_settings.change(self.harbour, {"faces.model": validation.SCRFD_ADAFACE},
+                                              acknowledged=["faces"])
+            self.assertEqual(1, changed.changed, changed.refused)
+            self.runtime.settings_changed(self.harbour)
+            [faces] = self.handed
+            self.assertEqual(validation.MTCNN_FACENET, faces.settings["model"])
+            self.assertEqual("Activity/Sailing", run.suggest("mooring 1.jpg", {})["suggested_tags"][0]["tag"])
+        finally:
+            run.end()
+        before = rows_of(self.harbour.path)
+        with self.assertRaises(library_settings.FaceModelNotReady):
+            self.begin(self.harbour)
+        self.assertEqual(1, len(self.handed))
+        self.assertEqual(before, rows_of(self.harbour.path))
+
+
+class ALookWithTheNewModel(_Libraries):
+    """(f) Phase 3's look (Runtime.look_at_faces): the new model's faces, read beside the library's, writing nothing."""
+
+    def build(self, settings):
+        # The new model on the graphics card, as it would be on the owner's machine.
+        on_card = settings.get("model") == validation.SCRFD_ADAFACE
+        self.built.append(_Model(settings, device="cuda" if on_card else "cpu"))
+        return self.built[-1]
+
+    def test_it_is_held_as_a_run_and_lets_go_after_a_failure(self):
+        suggest = self.begin(self.harbour, what="Suggest Regatta (harbour)")
+        try:
+            with self.assertRaises(gpu_turns.OtherModelsInUse) as raised:
+                self.runtime.look_at_faces(self.harbour)
+            self.assertIn("Suggest Regatta (harbour) is using face models with model %s" % validation.MTCNN_FACENET,
+                          str(raised.exception))
+        finally:
+            suggest.end()
+        self.assertEqual([], [model for model in self.built if model.settings.get("model") == validation.SCRFD_ADAFACE])
+
+        before = rows_of(self.harbour.path)
+        holds = []
+        real_hold = self.card.hold
+
+        def hold(*args, **kwargs):
+            holds.append(args[0])
+            return real_hold(*args, **kwargs)
+        look = self.runtime.look_at_faces(self.harbour, what="Looking at Regatta")
+        with mock.patch.object(self.card, "hold", side_effect=hold):
+            with self.assertRaises(RuntimeError):
+                try:
+                    with self.assertRaises(gpu_turns.OtherModelsInUse) as raised:
+                        self.begin(self.harbour)
+                    self.assertIn("Looking at Regatta is using face models with model %s" % validation.SCRFD_ADAFACE,
+                                  str(raised.exception))
+                    for name in sorted(os.listdir(self.regatta)):
+                        self.assertEqual([], look.faces_in(os.path.join(self.regatta, name)))
+                    self.assertTrue(self.card.holds())
+                    raise RuntimeError("the look's caller failed part-way")
+                finally:
+                    look.end()
+        [new] = [model for model in self.built if model.settings.get("model") == validation.SCRFD_ADAFACE]
+        self.assertEqual(["Looking at Regatta"], holds, "the card was taken more than once")
+        self.assertEqual(3, new.looked)
+        self.assertFalse(self.card.holds(), "the card was kept after the look ended")
+        self.assertTrue(new.unloads, "the new model was kept loaded after the look ended")
+        self.assertEqual(before, rows_of(self.harbour.path))
+        # Let go, not kept for the next look: that one builds it again.
+        self.runtime.look_at_faces(self.harbour).end()
+        self.assertEqual(2, len([model for model in self.built if model.settings.get("model") == validation.SCRFD_ADAFACE]))
+        # And a Suggest runs again once it has ended.
+        self.begin(self.harbour).end()
+
+
+class TheNewModelsWeightsNeverMade(_Libraries):
+    """(g) The new model on an install where its weights were never made: the real model, its folder empty."""
+
+    def build(self, settings):
+        if settings.get("model") == validation.SCRFD_ADAFACE:
+            from tagpup.ml.scrfd_adaface import ScrfdAdaFace
+            self.built.append(ScrfdAdaFace(device="cpu", folder=self.weights))
+            return self.built[-1]
+        return super().build(settings)
+
+    def test_a_look_names_them_and_suggest_on_mtcnn_runs(self):
+        from tagpup.ml import scrfd_adaface
+        self.weights = tempfile.mkdtemp(prefix="weights_", dir=self.home.root)
+        look = self.runtime.look_at_faces(self.harbour)
+        try:
+            with self.assertRaises(FileNotFoundError) as raised:
+                look.faces_in(os.path.join(self.regatta, "mooring 0.jpg"))
+        finally:
+            look.end()
+        self.assertEqual(scrfd_adaface.missing_weights(self.weights), str(raised.exception))
+        self.assertIn(scrfd_adaface.CONVERTER, str(raised.exception))
+        self.assertFalse(look.loaded())
+
+        done = self.suggest(self.harbour, self.regatta)
+        self.assertEqual("completed", done["status"], done)
+        [faces] = self.handed
+        self.assertEqual(validation.MTCNN_FACENET, faces.settings["model"])
+
+
+if __name__ == "__main__":
+    unittest.main()
