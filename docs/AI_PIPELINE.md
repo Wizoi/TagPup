@@ -232,7 +232,13 @@ is the strong signal (precision 99.8% at margin 0.04, with FaceNet's vectors tod
   per-item. The pair pass (about 2 minutes) is left alone unless 2a leaves it the largest part.
 - **2b The margin rule.** A suggested or automatic name requires a margin over the second-best person, with the
   thresholds read off the phase 0 curve on today's vectors (and checked on unnamed faces by the owner's review of a
-  sample, #1532). Interim for FaceNet; phase 4 recalibrates it for the new model.
+  sample, #1532). Interim for FaceNet; phase 4 recalibrates it for the new model. *Built 2026-10-17: margin 0.04 to
+  name unasked, 0.02 to offer, beside the likeness cuts (owner); worked out once (`clustering.margins`) over everyone
+  named. It gates names given from now on: a face that carries the person is asked none. On copies of the three
+  libraries a run on today's names writes what trunk's writes (photo_index 0 either way; kr-track one face fewer of 302,
+  renton_parkrun the same 12). From scratch (every automatic name taken off a copy of photo_index) trunk names 55,123
+  and the margin 51,059: 4,377 of trunk's not given (1,539 in the last pass), 313 given that trunk does not (70 of them
+  another person than trunk's), for the owner's sample review (#1532).*
 - **2c Density.** Try `min_samples` 3 to 5 against the named faces (79% of faces are noise at today's cut). Suggest's
   one `search(k=15)` a photo becomes a batch.
 
@@ -397,7 +403,7 @@ clustering's seconds apart, so the rows below are measured again like for like; 
 | Index, many-face sample, seconds a photo | **1.24** whole CLI run (299 photos, 369.5 s) | **1.05** (1b; 1.22 before on the same day, the index alone) | By stratum (mean s): none 0.60, 1 to 3 0.74, 4 to 9 0.91, 10 or more 1.55, worst 10 photos 3.79. |
 | Per stage, mean s a photo | decode for CLIP 0.071; pad and resize 0.072; CLIP forward 0.058; identity write 0.037; decode for faces 0.061; **MTCNN 0.784**; crop and tensor 0.011; crop JPEG 0.004; recogniser 0.032; faces write 0.021; photo rows 0.003 | | MTCNN is 69%. The 759-face photo 8.97 s (7.0 MTCNN); a 193 MP photo 30.7 s (27.4 MTCNN). |
 | Fixed cost of an index run | **about 15 s** plus the metadata read (10.1 s for 299 photos) | | Process start 0.14, imports 4.7, CLIP load 9.8, face models 0.36. First CLIP forward 0.26 s against 0.058 steady. Suggest's vector load is a separate 8.2 s. |
-| `cluster-faces`, whole library | **2,060 s (34.3 min)** | **202 s** (2a; 2,113 s before on the same copy, the same day) | Before: 132 s grouping (DBSCAN, every core), 76 s the five rounds, about 1,896 s the last pass, card idle (#1530). After: 132 s grouping, 48 s the rounds, 12 s the last pass, 4 s reading and saving; the names identical face by face on the three libraries. |
+| `cluster-faces`, whole library | **2,060 s (34.3 min)** | **202 s** (2a; 2,113 s before on the same copy, the same day); **216 s** (2b, 197 s before on the same copy; from scratch 250 s against 209 s: the pairing's margin is a table a photo) | Before: 132 s grouping (DBSCAN, every core), 76 s the five rounds, about 1,896 s the last pass, card idle (#1530). After: 132 s grouping, 48 s the rounds, 12 s the last pass, 4 s reading and saving; the names identical face by face on the three libraries. |
 | Suggest, a folder, cold / warm | **not measured** | | The script is stale (#1531). |
 | Identify Faces / New Person | Ignore Cluster: first faces on screen 36.5 s, then click to usable median 0.09 s. New Person: first faces 35.5 s, first click 2.46 s, then median 0.51 s | | Headless browser, sandbox copy; the first-faces wait is a start-up cost the owner meets on opening the page. |
 | Card use during an index | many-face sample: 13.6% of samples at 0%, 23.4% under 10%, mean 30.9%. Event run: 13.8%, 21.8%, mean 20.3% | | `nvidia-smi` every 500 ms. The indexing process used 18.9% of 16 logical processors (about 3 cores). |
