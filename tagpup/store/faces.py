@@ -39,9 +39,14 @@ logger = logging.getLogger(__name__)
 PHOTO = " JOIN photos p ON p.id = f.photo_id"
 
 #: A face's vector under one face model (`face_embeddings`, migration 33), as `v`: its one parameter is the model's key, the
-#: library's (model_key) for a reader. VECTOR keeps a face without one (v.vector NULL), WITH_VECTOR only the faces with one.
+#: library's (model_key) for a reader. VECTOR keeps a face without one (v.vector NULL), for a reader that shows faces;
+#: WITH_VECTOR only the faces with one, for every reader that compares them: a face with no vector under the library's model
+#: takes no part in comparing, clustering, New Person's pool or the Identify queue, and this join is the one place that
+#: says so (a library switched to the new model before its pass, or part-way through it). HAS_VECTOR is the same, as a
+#: condition, for a reader that needs only to know.
 VECTOR = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
 WITH_VECTOR = " JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
+HAS_VECTOR = "EXISTS (SELECT 1 FROM face_embeddings v WHERE v.face_id = f.id AND v.model = ?)"
 
 
 def model_key(conn):
@@ -336,12 +341,18 @@ def excluded_ids(conn):
 
 
 def for_clustering(conn):
-    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob) of every face. The crop is
-    left behind: 6 KB a face, and clustering never looks at it."""
+    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob) of every face with a vector under the library's face
+    model (WITH_VECTOR; count_without_vector says how many are left out). The crop is left behind: 6 KB a face, and
+    clustering never looks at it."""
     return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob)
             for face_id, photo_path, box, embedding, tag_id, name, prob in store_roots.natives(conn, conn.execute(
-                "SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob FROM faces f" + PHOTO + VECTOR,
+                "SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob FROM faces f" + PHOTO + WITH_VECTOR,
                 (model_key(conn),)).fetchall(), 1)]
+
+
+def count_without_vector(conn):
+    """How many faces have no vector under the library's face model, and so take no part in clustering (for_clustering)."""
+    return conn.execute("SELECT COUNT(*) FROM faces f WHERE NOT " + HAS_VECTOR, (model_key(conn),)).fetchone()[0]
 
 
 def named_for_known(conn):
@@ -780,26 +791,25 @@ def counts_by_person(conn):
 
 
 def identify_candidates(conn):
-    """(id, photo_path, the photo's people as JSON [[id, name]], 1 or 0) of every nameless face
-    still in play: the Identify Faces queue.
+    """(id, photo_path, the photo's people as JSON [[id, name]]) of every nameless face still in play with a vector under
+    the library's face model (HAS_VECTOR): the Identify Faces queue.
 
-    Whether the face has a vector under the library's face model, not the vector: the queue groups faces by the people
-    their photo names and counts them, and only needs to know a face HAS one -- a face
-    without cannot take part in identifying. Selecting the vectors read 380 MB of BLOB
-    to answer a question about integers; the key of `face_embeddings` answers it without reading one.
+    Whether the face has a vector, not the vector: the queue groups faces by the people their photo names and counts them,
+    and a face without cannot take part in identifying. Selecting the vectors read 380 MB of BLOB to answer a question
+    about integers; the key of `face_embeddings` answers it without reading one.
     """
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, " + PEOPLE_REFS_JSON + ", EXISTS (SELECT 1 FROM face_embeddings v"
-        " WHERE v.face_id = f.id AND v.model = ?) FROM faces f" + PHOTO
-        + " WHERE f.name IS NULL AND f.excluded = 0", (model_key(conn),)).fetchall(), 1)
+        "SELECT f.id, p.path, " + PEOPLE_REFS_JSON + " FROM faces f" + PHOTO
+        + " WHERE f.name IS NULL AND f.excluded = 0 AND " + HAS_VECTOR, (model_key(conn),)).fetchall(), 1)
 
 
 def unnamed_for_matching(conn):
     """(id, photo_path, box JSON, prob, mtime, embedding, year, people as JSON [[id, name]]) of every
-    nameless face still in play, for a person's Identify grid."""
+    nameless face still in play with a vector under the library's face model (WITH_VECTOR), for a person's Identify grid:
+    the faces the queue counts."""
     return store_roots.natives(conn, conn.execute(
         "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year, " + PEOPLE_REFS_JSON + ""
-        " FROM faces f" + PHOTO + VECTOR + " WHERE f.name IS NULL AND f.excluded = 0", (model_key(conn),)).fetchall(), 1)
+        " FROM faces f" + PHOTO + WITH_VECTOR + " WHERE f.name IS NULL AND f.excluded = 0", (model_key(conn),)).fetchall(), 1)
 
 
 def count_unnamed(conn):
@@ -822,20 +832,20 @@ def named_and_unnamed(conn, folder=None):
 
 
 def unnamed_embeddings(conn):
-    """(id, embedding) of every nameless face in play, by id: New Person's pool
-    (tagpup.services.identify.unnamed_faces). idx_faces_identify finds them. A cursor,
+    """(id, embedding) of every nameless face in play with a vector under the library's face model (WITH_VECTOR), by id:
+    New Person's pool (tagpup.services.identify.unnamed_faces). idx_faces_identify finds them. A cursor,
     not a list: the caller takes them a row at a time, never all 390 MB at once."""
-    return conn.execute("SELECT f.id, v.vector FROM faces f" + VECTOR + " WHERE f.name IS NULL AND f.excluded = 0"
+    return conn.execute("SELECT f.id, v.vector FROM faces f" + WITH_VECTOR + " WHERE f.name IS NULL AND f.excluded = 0"
                         " ORDER BY f.id", (model_key(conn),))
 
 
 def unnamed_among(conn, face_ids):
     """(id, photo_path, box JSON, embedding) of those of `face_ids` that are nameless
-    faces in play, read by id."""
+    faces in play with a vector under the library's face model (WITH_VECTOR), read by id."""
     found, key = [], model_key(conn)
     for chunk in _chunks(list(face_ids)):
         found.extend(conn.execute(
-            "SELECT f.id, p.path, f.box, v.vector FROM faces f" + PHOTO + VECTOR + " WHERE f.id IN (%s)"
+            "SELECT f.id, p.path, f.box, v.vector FROM faces f" + PHOTO + WITH_VECTOR + " WHERE f.id IN (%s)"
             " AND f.name IS NULL AND f.excluded = 0" % ",".join("?" * len(chunk)), [key] + list(chunk)).fetchall())
     return store_roots.natives(conn, found, 1)
 

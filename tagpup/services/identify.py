@@ -21,7 +21,7 @@ import numpy as np
 
 from tagpup.core import clustering as face_rules
 from tagpup.core import dates, vocabulary
-from tagpup.core.result import NotFound
+from tagpup.core.result import NotFound, Refused
 from tagpup.ml import grouping
 from tagpup.services import people as people_service
 from tagpup.services import photos as photos_service
@@ -333,10 +333,19 @@ def photo_details(library, photo_path, named):
 
 # ---- Who a face resembles -------------------------------------------------------------------
 
+#: Said when a face asked who it resembles has no vector under the library's face model: a library switched to the new
+#: model before its pass, or part-way through it (docs/AI_PIPELINE.md, phase 3). The routes answer it with 400.
+NO_VECTOR = ("This face has no vector under this library's face model, so it cannot be compared with anyone: the new "
+             "model's pass makes its faces' vectors (docs/AI_PIPELINE.md, phase 3).")
+
+
 def _embedding_of(conn, face_id):
+    """The face's vector under the library's face model; NotFound for no such face, Refused (NO_VECTOR) for one with none."""
     row = faces.embedding_row(conn, face_id)
     if not row:
         raise NotFound("Face not found")
+    if row[0] is None:
+        raise Refused(NO_VECTOR)
     return np.frombuffer(row[0], dtype=np.float32)
 
 
@@ -404,8 +413,8 @@ class UnnamedFaces:
         The float16 matrix is made to size and filled a slice at a time, so neither the
         rows nor a float32 copy of them are ever held whole. Built from a list of the rows
         through np.vstack and astype, a rebuild held about 1.15 GB of photo_index's
-        190,000 faces at its peak, beside the pool it replaced. A row whose embedding is
-        missing, or not as long as the first, is left out."""
+        190,000 faces at its peak, beside the pool it replaced. The rows hold a vector each
+        (faces.unnamed_embeddings); one not as long as the first is left out."""
         if count is None:
             rows = list(rows)
             count = len(rows)
@@ -431,8 +440,6 @@ class UnnamedFaces:
             waiting.clear()
 
         for face_id, blob in rows:
-            if not blob:
-                continue
             vector = np.frombuffer(blob, dtype=np.float32)
             if matrix is None:
                 matrix = np.zeros((max(count, 1), len(vector)), dtype=np.float16)
@@ -446,7 +453,7 @@ class UnnamedFaces:
         if matrix is None:
             return cls(np.zeros(0, dtype=np.int64), np.zeros((0, 0), dtype=np.float16), 0.0)
         flush()
-        if filled < len(ids):   # fewer than counted: rows without an embedding
+        if filled < len(ids):   # fewer than counted: faces without a vector under the library's model, or of another length
             ids, matrix = ids[:filled].copy(), matrix[:filled].copy()
         return cls(ids, matrix, largest)
 
@@ -662,11 +669,9 @@ def queue(library):
 
     tag_candidates, unknown_candidates, photo_unmatched_tags, labels = {}, [], {}, {}
     for r in unmatched_rows:
-        photo_path, people_json, embedding_length = r[1], r[2], r[3]
-        # A face with no embedding cannot take part in identifying, so it is not
-        # waiting for anybody and must not be counted as though it were.
-        if not embedding_length:
-            continue
+        # Only faces with a vector under the library's model are read (faces.identify_candidates): one without cannot take
+        # part in identifying, so it is not waiting for anybody.
+        photo_path, people_json = r[1], r[2]
         matched_keys = matched_by_photo.get(photo_path, set())
         unmatched_tags = []
         for tag_id, name in _listed(people_json):
@@ -864,13 +869,12 @@ def grid(library, name, named, on_progress=None):
         return [tag_name for tag_id, tag_name in _listed(row[7])
                 if tag_id not in matched and tag_id not in seeking_keys]
 
-    valid_rows, embs = [], []
-    for r in candidate_rows:
-        if r[5] and len(r[5]) > 0:
-            emb = np.frombuffer(r[5], dtype=np.float32)
-            norm = np.linalg.norm(emb)
-            embs.append(emb / norm if norm > 0 else emb)
-            valid_rows.append(r)
+    # Each holds a vector under the library's model (faces.unnamed_for_matching).
+    valid_rows, embs = list(candidate_rows), []
+    for r in valid_rows:
+        emb = np.frombuffer(r[5], dtype=np.float32)
+        norm = np.linalg.norm(emb)
+        embs.append(emb / norm if norm > 0 else emb)
     if not embs:
         return stamp, _empty_grid()
 

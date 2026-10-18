@@ -294,6 +294,8 @@ def face_matches_unmatched():
             library, face_id, lambda: identify_jobs.unnamed_faces(library, identify_cache.of(library)), named=_named(library)))
     except NotFound:
         abort(404, description="Face not found")
+    except Refused as why:   # a face with no vector under the library's face model (identify.NO_VECTOR)
+        _refuse(400, str(why))
 
 
 @routes.get("/api/person-faces")

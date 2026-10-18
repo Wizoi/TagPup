@@ -14,7 +14,10 @@ the model is built or loaded. What the owner lives through:
 - (b) Suggest, and Just look, in that library: the run ends in an error naming the sentence, and no model is built; the
   start-up warm-up builds nothing for it.
 - (c) Identify compares a library's faces by its own model's vectors: the switched library's are FaceNet's, so it
-  compares none; the other library's, all.
+  compares none; the other library's, all. Asked who one of its faces resembles (TagTuner's faces strip and selection
+  pane, New Person's seed, TagPup's face boxes), it answers one sentence (identify.NO_VECTOR) with 400, not a 500;
+  cluster-faces says how many faces took no part, without an error, and names nothing. Part-way through the new
+  model's pass (some faces with its vector, some without), the ones with it are compared and clustered.
 - (d) Two libraries, one on each model, in one server: the one on MTCNN suggests; the other is refused, its rows unchanged.
 - (e) The model switched while a Suggest runs: the run ends on the models it began with; the next is refused.
 - (f) A look with the new model, which writes nothing (Runtime.look_at_faces): refused beside a Suggest, a Suggest refused
@@ -32,7 +35,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACENET, add_vector_of_face  # noqa: E402
 import photo_rows  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -44,11 +47,14 @@ from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.ml import gpu  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.core.result import Refused  # noqa: E402
 from tagpup.services import identify  # noqa: E402
+from tagpup.services import identities  # noqa: E402
 from tagpup.services import indexing as indexing_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import suggester as suggester_service  # noqa: E402
+from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
@@ -322,6 +328,110 @@ class SuggestIsRefused(_Libraries):
         self.assertEqual((2, 512), tuple(unnamed.matrix.shape))
         _stamp, unnamed = identify.unnamed_faces(self.cove)
         self.assertEqual(0, len(unnamed.ids), "the switched library's vectors are FaceNet's, not its model's")
+
+
+class IdentifyOnTheSwitchedLibrary(_Libraries):
+    """(c) Who a face resembles, and cluster-faces, in the library switched to the new model: before its pass (no face
+    with the new model's vector) and part-way through it (one face with it)."""
+
+    def face_ids(self, library):
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            return [face_id for (face_id,) in conn.execute("SELECT id FROM faces ORDER BY id")]
+        finally:
+            conn.close()
+
+    def asked(self, library, face_id):
+        """What /api/face-matches (TagPup's and TagTuner's) and /api/face-matches-unmatched (New Person) answer."""
+        answers = {}
+        for kind, route in (("tagpup", "/cove/api/face-matches"), ("tuner", "/cove/api/face-matches"),
+                            ("tuner", "/cove/api/face-matches-unmatched")):
+            app = web.create_app(kind, startup=library)
+            app.testing = True
+            answers[(kind, route)] = app.test_client().get("%s?id=%d" % (route, face_id))
+        return answers
+
+    def cluster(self, library):
+        """identities.resolve as cluster-faces runs it: (what it named, the stages heard, what it logged at WARNING or
+        above)."""
+        index = PhotoIndex(db_path=library.path)
+        self.assertTrue(index.load())
+        heard = []
+        try:
+            with self.assertLogs("tagpup_cli.faces", "INFO") as logged:
+                named = identities.resolve(index, on_step=lambda stage, done=0, total=1: heard.append((stage, done, total)))
+        finally:
+            index.close()
+        return named, heard, [line for line in logged.output if not line.startswith("INFO")]
+
+    def test_before_the_pass_it_says_why_and_writes_nothing(self):
+        before = rows_of(self.cove.path)
+        first, second = self.face_ids(self.cove)
+        named = lambda: identify.named_faces(self.cove)[1]   # noqa: E731
+        with self.assertRaises(Refused) as raised:
+            identify.face_matches(self.cove, first, named)
+        self.assertEqual(identify.NO_VECTOR, str(raised.exception))
+        with self.assertRaises(Refused):
+            identify.unnamed_like(self.cove, second, named=named)
+        for (kind, route), answer in self.asked(self.cove, first).items():
+            with self.subTest(kind=kind, route=route):
+                self.assertEqual(400, answer.status_code, answer.get_data(as_text=True)[:300])
+                self.assertEqual(identify.NO_VECTOR, answer.get_json()["error"])
+
+        found, heard, complaints = self.cluster(self.cove)
+        self.assertEqual({}, found)
+        self.assertIn(("without_vector", 2, 2), heard)
+        self.assertEqual([], complaints, "a face with no vector was an error")
+        self.assertEqual(before, rows_of(self.cove.path))
+
+    def test_cluster_faces_says_how_many_took_no_part(self):
+        before = rows_of(self.cove.path)
+        done = processes.run([sys.executable, "-c", PROBE, "--db", self.cove.path, "cluster-faces"], cwd=ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        said = " ".join((done.stdout + done.stderr).split())
+        self.assertEqual(0, done.returncode, said)
+        self.assertIn("2 of 2 face(s) have no vector under this library's face model and took no part", said)
+        self.assertIn("No face was newly named.", said)
+        self.assertNotIn("Try tagging photos", said)
+        self.assertNotIn("Error retrieving faces", said)
+        self.assertEqual(before, rows_of(self.cove.path))
+
+    def test_part_way_through_the_pass_the_faces_with_a_vector_take_part(self):
+        first, second = self.face_ids(self.cove)
+        rng = np.random.default_rng(7)
+        vector = rng.normal(size=512).astype(np.float32)
+        conn = db.connect(self.cove.path)
+        try:
+            add_vector_of_face(conn, first, (vector / np.linalg.norm(vector)).tobytes(), model=validation.SCRFD_ADAFACE)
+            conn.commit()
+        finally:
+            conn.close()
+        before = rows_of(self.cove.path)
+
+        _stamp, unnamed = identify.unnamed_faces(self.cove)
+        self.assertEqual([first], unnamed.ids.tolist())
+        conn = db.connect(db.readonly_uri(self.cove.path), uri=True)
+        try:
+            self.assertEqual([first], [row[0] for row in store_faces.identify_candidates(conn)])
+            self.assertEqual([first], [row[0] for row in store_faces.unnamed_for_matching(conn)])
+        finally:
+            conn.close()
+        answers = self.asked(self.cove, first)
+        for (kind, route), answer in answers.items():
+            with self.subTest(kind=kind, route=route, face="with a vector"):
+                self.assertEqual(200, answer.status_code, answer.get_data(as_text=True)[:300])
+        self.assertEqual({"matches": []}, answers[("tuner", "/cove/api/face-matches-unmatched")].get_json())
+        for (kind, route), answer in self.asked(self.cove, second).items():
+            with self.subTest(kind=kind, route=route, face="without"):
+                self.assertEqual(400, answer.status_code)
+                self.assertEqual(identify.NO_VECTOR, answer.get_json()["error"])
+
+        found, heard, complaints = self.cluster(self.cove)
+        self.assertIn(("without_vector", 1, 2), heard)
+        self.assertIn("grouping", [stage for stage, _done, _total in heard], "the face with a vector was not clustered")
+        self.assertEqual([], complaints)
+        self.assertEqual({}, found)
+        self.assertEqual(before, rows_of(self.cove.path))
 
 
 class TwoLibrariesOneOnEachModel(_Libraries):
