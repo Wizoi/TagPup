@@ -22,7 +22,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import add_people, photo_id  # noqa: E402
+from face_rows import add_face, add_people, photo_id, FACENET  # noqa: E402
 from shipped_sources import ROOT  # noqa: E402
 
 from mcp import types  # noqa: E402
@@ -101,16 +101,17 @@ class McpServer(unittest.TestCase):
             }
             add_people(conn, cls.sailing, ["Rowan Thackeray"])
             # The faces are made by the store's writers, as the indexer and a person's decision make them (the people are
-            # the tree's nodes: Rowan 2, Pell 8, Maren 9).
+            # the tree's nodes: Rowan 2, Pell 8, Maren 9); the last four hold no vector under the library's model, as a
+            # face the other face model found holds none (add_face without one: the writer always files one).
             camp1, camp2 = os.path.join(cls.gone, "camp_001.jpg"), os.path.join(cls.gone, "camp_002.jpg")
             cls.faces = {
-                "rowan": faces.insert(conn, cls.sailing, [10, 20, 110, 140], b"\x00" * 16, prob=0.99),
-                "stranger": faces.insert(conn, cls.sailing, [200, 20, 260, 90], b"\x00" * 16, prob=0.91),
-                "both": faces.insert(conn, cls.dinghy, [0, 0, 10, 10], None),
+                "rowan": faces.insert(conn, cls.sailing, [10, 20, 110, 140], b"\x00" * 16, prob=0.99, model=FACENET),
+                "stranger": faces.insert(conn, cls.sailing, [200, 20, 260, 90], b"\x00" * 16, prob=0.91, model=FACENET),
+                "both": add_face(conn, cls.dinghy, [0, 0, 10, 10]),
                 # #42: names on the rows of a folder whose files are gone.
-                "camp1": faces.insert(conn, camp1, [0, 0, 10, 10], None),
-                "camp2": faces.insert(conn, camp2, [0, 0, 10, 10], None),
-                "camp2b": faces.insert(conn, camp2, [0, 0, 10, 10], None),
+                "camp1": add_face(conn, camp1, [0, 0, 10, 10]),
+                "camp2": add_face(conn, camp2, [0, 0, 10, 10]),
+                "camp2b": add_face(conn, camp2, [0, 0, 10, 10]),
             }
             faces.name(conn, [cls.faces["rowan"]], 2)
             faces.exclude(conn, [cls.faces["stranger"]], "background")

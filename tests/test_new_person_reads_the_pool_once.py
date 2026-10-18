@@ -125,12 +125,10 @@ class BuildingThePool(unittest.TestCase):
     def rows(self):
         rng = np.random.default_rng(7)
         found = [(n * 3 + 1, rng.standard_normal(8).astype(np.float32).tobytes()) for n in range(11)]
-        found.insert(4, (100, None))   # a face without an embedding
-        found.insert(7, (101, b""))
         return found
 
     def stacked(self, rows):
-        kept = [(face_id, np.frombuffer(blob, dtype=np.float32)) for face_id, blob in rows if blob]
+        kept = [(face_id, np.frombuffer(blob, dtype=np.float32)) for face_id, blob in rows]
         matrix = np.vstack([v for _, v in kept])
         return [f for f, _ in kept], matrix.astype(np.float16), float(np.max(np.linalg.norm(matrix, axis=1)))
 
@@ -149,7 +147,7 @@ class BuildingThePool(unittest.TestCase):
                     self.check(identify.UnnamedFaces.of(iter(rows) if count else rows, count), rows)
 
     def test_no_embeddings_is_an_empty_pool(self):
-        pool = identify.UnnamedFaces.of(iter([(1, None)]), 1)
+        pool = identify.UnnamedFaces.of(iter([]), 1)   # one counted, none with a vector (faces.unnamed_embeddings)
         self.assertEqual(0, len(pool.ids))
         self.assertEqual([], pool.near(np.ones(8, dtype=np.float32), lambda likeness, slack: likeness > -9))
 

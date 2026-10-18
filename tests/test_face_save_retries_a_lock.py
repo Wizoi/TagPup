@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import _root  # noqa: E402,F401
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
@@ -50,7 +51,7 @@ class FaceSaveRetriesALock(unittest.TestCase):
 
         with mock.patch.object(tagpup_db, "connect", side_effect=connect), \
                 mock.patch("time.sleep"):
-            saved = face_records.record_detected(self.index.db_path, PHOTO, [FACE])
+            saved = face_records.record_detected(self.index.db_path, PHOTO, [FACE], model=FACENET)
 
         self.assertEqual(1, saved, "the faces were dropped instead of retried")
 
@@ -59,7 +60,7 @@ class FaceSaveRetriesALock(unittest.TestCase):
                                side_effect=sqlite3.OperationalError("database is locked")), \
                 mock.patch("time.sleep"), \
                 self.assertLogs(face_records.logger.name, level="ERROR"):
-            self.assertEqual(0, face_records.record_detected(self.index.db_path, PHOTO, [FACE]))
+            self.assertEqual(0, face_records.record_detected(self.index.db_path, PHOTO, [FACE], model=FACENET))
 
 
 if __name__ == "__main__":

@@ -253,9 +253,9 @@ SETTING_GROUPS = {
         "app": "tuner",
         "title": "The face model",
         "consequences": [
-            "Set to %s, every index and every Suggest in this library is refused and writes nothing until its "
-            "faces are moved to the new schema (migration 33): it keeps FaceNet's face vectors alone. Identify "
-            "still shows the faces it holds." % SCRFD_ADAFACE,
+            "Set to %s, every index and every Suggest in this library is refused and writes nothing until the "
+            "new model can look at its faces again: it holds FaceNet's face vectors alone. Identify still shows "
+            "the faces it holds, but compares none of them: it reads only the new model's vectors." % SCRFD_ADAFACE,
             "Set back to %s, indexing and Suggest run as before; no face already found changes either way."
             % MTCNN_FACENET,
         ],
@@ -331,7 +331,7 @@ SETTINGS = {
         "face-model", "Face model", "text", MTCNN_FACENET,
         "The models indexing and Suggest find faces and make their vectors with: %s (MTCNN and FaceNet, which made "
         "every face vector the library holds) or %s (SCRFD and AdaFace). The %s settings are MTCNN's. A library "
-        "keeps FaceNet's vectors alone until its faces are moved to the new schema (docs/AI_PIPELINE.md, phase 3): "
+        "holds FaceNet's vectors alone until the new model looks at its faces again (docs/AI_PIPELINE.md, phase 3): "
         "until then, set to %s, indexing and Suggest are refused and write nothing." % (
             MTCNN_FACENET, SCRFD_ADAFACE, SETTING_GROUPS["faces"]["title"], SCRFD_ADAFACE),
         [{"rule": "one_of", "choices": list(FACE_MODELS),

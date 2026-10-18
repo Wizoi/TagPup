@@ -82,10 +82,7 @@ export function openNewPersonModal(seedFaceId) {
     }
 
     api.fetch(`/api/face-matches-unmatched?id=${seedFaceId}`)
-        .then(res => {
-            if (!res.ok) throw new Error('Failed to fetch similar faces');
-            return res.json();
-        })
+        .then(res => api.answered(res, 'Failed to fetch similar faces'))
         .then(data => {
             if (modalMatchesLoading) {
                 modalMatchesLoading.classList.add('hidden');
@@ -95,7 +92,7 @@ export function openNewPersonModal(seedFaceId) {
         .catch(err => {
             console.error(err);
             if (modalMatchesLoading) {
-                modalMatchesLoading.textContent = 'Error finding similar faces.';
+                modalMatchesLoading.textContent = err && err.said ? err.message : 'Error finding similar faces.';
             }
         });
 }

@@ -161,10 +161,7 @@ export function showFaceDetails(faceId) {
         });
 
     api.fetch(`/api/face-matches?id=${face.id}`, { signal })
-        .then(res => {
-            if (!res.ok) throw new Error('Failed to load matches');
-            return res.json();
-        })
+        .then(res => api.answered(res, 'Failed to load matches'))
         .then(diagnostics => {
             matchingDetailDiagnostics.innerHTML = '';
             if (!diagnostics || diagnostics.length === 0) {
@@ -200,7 +197,7 @@ export function showFaceDetails(faceId) {
         .catch(err => {
             if (err.name === 'AbortError') return;
             console.error('Error loading diagnostics:', err);
-            replaceContent(matchingDetailDiagnostics, detailNote('Failed to load diagnostics',
+            replaceContent(matchingDetailDiagnostics, detailNote(err && err.said ? err.message : 'Failed to load diagnostics',
                 'font-size:11px;color:#f87171;padding:4px;', 'div'));
         });
 }

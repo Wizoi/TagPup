@@ -1,16 +1,21 @@
 """The migration runner, and a library meeting a step it has not had (docs/DATABASE.md, "The baseline"; tagpup.store.schema).
 
-There is one real migration, the baseline (schema 32): it makes a NEW library whole, and a library below it is refused. The
-runner is for the next ones (33 on), so every test here gives the code SYNTHETIC steps (tests/migration_names.py) after the
-baseline and holds the runner to what it promises:
+There are two real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused), and
+33, which moves each face's vector to `face_embeddings` under FaceNet's key and drops `faces.embedding`, the empty
+`faces_pending` and the redundant `idx_faces_name`, on a library kept at 32 and on a new one alike.
+The runner is held to what it promises by SYNTHETIC steps after the latest real one (tests/migration_names.py):
 
 * one that adds takes nothing and is watched to change nothing that was there; one that destroys takes one backup, under
   the write lock. Each runs in one transaction with the checks it names, and a failed check rolls it back. Every run is a
   row of `changes`, and is not undone.
-* D8: a library kept at 32 meets an additive step and a destructive one: interrupted part-way it resumes; two openers apply
-  each once; a failing check leaves the library as it was; one backup, before the destructive step only, and none for a
-  library being made; an older app refuses it; a change made at 32 stays undoable across the additive step and not across
-  the destructive one.
+* D8: a library kept at the latest schema meets an additive step and a destructive one: interrupted part-way it resumes; two
+  openers apply each once; a failing check leaves the library as it was; one backup, before the destructive step only, and
+  none for a library being made; an older app refuses it; a change made before stays undoable across the additive step and
+  not across the destructive one. And the owner's library at 32 meets the real 33: one backup, every vector byte for byte
+  under FaceNet's key, the table and the index gone, every other row as it was; a face without FaceNet's vector refuses it
+  with a sentence and nothing changed, until that face is deleted; a library with no face; a reader mid-read keeps its
+  snapshot; a second library in the home is not touched; after it a face's vectors go with the face and move the faces
+  generation; killed after the backup it is still at 32 and migrates at the next open; the app before 33 refuses it after.
 * A library below the baseline is refused with a sentence before anything is written to it, whoever opens it.
 
 A step is declared once, in tests/migration_names.py, not in a list of names in every test that says which ran (#689). However
@@ -31,12 +36,13 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import migration_names  # noqa: E402
-from journal_library import JournalLibrary  # noqa: E402
+from face_rows import FACENET, add_vector_of_face, photo_id  # noqa: E402
+from journal_library import JournalLibrary, vector  # noqa: E402
 from migration_names import step  # noqa: E402
 
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.store import db, journal, schema  # noqa: E402
+from tagpup.store import db, generations, journal, schema  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,8 +55,13 @@ def backups(db_path):
 
 
 def digest(path):
-    with open(path, "rb") as handle:
-        return hashlib.sha256(handle.read()).hexdigest()
+    """The library file's bytes, and its write-ahead log's if it has one: a write not yet checkpointed is in the log."""
+    found = hashlib.sha256()
+    for each in (path, path + "-wal"):
+        if os.path.exists(each):
+            with open(each, "rb") as handle:
+                found.update(handle.read())
+    return found.hexdigest()
 
 
 class Migrated(JournalLibrary):
@@ -241,16 +252,20 @@ class AFailedCheck(Migrated):
 
 # ---- What a migration is -------------------------------------------------------------------
 
-class TheBaselineIsTheOnlyMigration(unittest.TestCase):
-    def test_it_says_what_it_is_and_names_its_checks(self):
-        [baseline] = schema.MIGRATIONS
-        self.assertEqual((schema.BASELINE, migration_names.BASE, schema.ADDITIVE), (baseline.version, 32, baseline.kind))
-        self.assertIn(baseline.kind, schema.KINDS)
-        self.assertTrue(baseline.why and "\n" not in baseline.why)
-        names = [check.name for check in baseline.checks]
-        self.assertIn("foreign keys", names)
-        self.assertIn("integrity", names)
-        self.assertTrue(any(name.startswith("rows kept") for name in names))
+class TheRealMigrations(unittest.TestCase):
+    def test_each_says_what_it_is_and_names_its_checks(self):
+        baseline, dropping = schema.MIGRATIONS
+        self.assertEqual((32, schema.ADDITIVE), (baseline.version, baseline.kind))
+        self.assertEqual((33, schema.DESTRUCTIVE, ("faces_pending", "faces", "face_embeddings"), "face vectors in face_embeddings"),
+                         (dropping.version, dropping.kind, dropping.touches, dropping.name))
+        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 33, 33))
+        for migration in schema.MIGRATIONS:
+            self.assertIn(migration.kind, schema.KINDS)
+            self.assertTrue(migration.why and "\n" not in migration.why)
+            names = [check.name for check in migration.checks]
+            self.assertIn("foreign keys", names)
+            self.assertIn("integrity", names)
+            self.assertTrue(any(name.startswith("rows kept") for name in names))
 
     def test_a_migration_that_does_not_say_what_it_is_cannot_be_declared(self):
         with self.assertRaises(TypeError):
@@ -260,8 +275,8 @@ class TheBaselineIsTheOnlyMigration(unittest.TestCase):
 # ---- D8: a library kept at the baseline meets two new steps --------------------------------
 
 class AKeptLibraryMeetsTwoNewSteps(Migrated):
-    """The library has its rows and a change made at 32. The code then knows an additive step (33: a table) and a destructive
-    one (34: drops `tag_embeddings`)."""
+    """The library has its rows and a change made at the latest schema. The code then knows an additive step (a table) and a
+    destructive one (drops `tag_embeddings`) after it."""
 
     def setUp(self):
         super().setUp()
@@ -276,11 +291,11 @@ class AKeptLibraryMeetsTwoNewSteps(Migrated):
 
         with self.assertRaises(RuntimeError):
             self.migrate(self.additive, self.destroying._replace(apply=crashes))
-        self.assertEqual(33, self.version(), "the additive step is done and recorded; the other left no trace")
+        self.assertEqual(self.additive.version, self.version(), "the additive step is done and recorded; the other left no trace")
         self.assertIn("tag_embeddings", self.tables())
         self.assertEqual(1, len(backups(self.db_path)), "taken before the destructive step, and not before the additive")
         self.assertEqual([self.destroying.name], self.migrate(self.additive, self.destroying))
-        self.assertEqual(34, self.version())
+        self.assertEqual(self.destroying.version, self.version())
         self.assertNotIn("tag_embeddings", self.tables())
 
     def test_two_processes_opening_it_at_once_apply_each_step_once(self):
@@ -302,7 +317,8 @@ class AKeptLibraryMeetsTwoNewSteps(Migrated):
         # Each step is a transaction of its own under the write lock: one process may take both, or each may take one
         # (a split depends on timing). What holds either way: the two steps were applied once between the two.
         self.assertEqual(2, sum(int(answer) for answer in answers), answers)
-        self.assertEqual([(32,), (33,), (34,)], self.query("SELECT version FROM schema_version ORDER BY version"))
+        self.assertEqual([(m.version,) for m in migration_names.REAL + (self.additive, self.destroying)],
+                         self.query("SELECT version FROM schema_version ORDER BY version"))
         self.assertEqual(migration_names.operations(self.additive, self.destroying),
                          [row[0] for row in self.query("SELECT operation FROM changes WHERE operation LIKE 'migration %' ORDER BY id")])
         self.assertEqual(1, len(backups(self.db_path)))
@@ -332,9 +348,10 @@ class AKeptLibraryMeetsTwoNewSteps(Migrated):
         with self.assertRaises(schema.CheckFailed) as failed:
             self.migrate(self.additive, failing)
         self.assertEqual("rows kept", failed.exception.check)
-        self.assertEqual((33, faces), (self.version(), self.query("SELECT COUNT(*) FROM faces")[0][0]))
+        self.assertEqual((self.additive.version, faces), (self.version(), self.query("SELECT COUNT(*) FROM faces")[0][0]))
         self.assertIn("tag_embeddings", self.tables())
-        self.assertEqual([self.additive.name], [r[0][len("migration 33: "):] for r in self.recorded() if r[0].startswith("migration")])
+        self.assertEqual(migration_names.operations(self.additive),
+                         [r[0] for r in self.recorded() if r[0].startswith("migration")])
 
     def test_one_backup_before_the_destructive_step_only_and_none_for_a_library_being_made(self):
         self.migrate(self.additive)
@@ -344,7 +361,8 @@ class AKeptLibraryMeetsTwoNewSteps(Migrated):
         self.assertEqual(taken, self.recorded()[-1][3]["backup"])
         made = self.home.library("made.db")
         with migration_names.ahead(self.additive, self.destroying):
-            self.assertEqual([schema.MIGRATIONS[0].name, self.additive.name, self.destroying.name], schema.ensure(made))
+            self.assertEqual([m.name for m in migration_names.REAL] + [self.additive.name, self.destroying.name],
+                             schema.ensure(made))
         self.assertEqual([], backups(made), "a library being made has nothing to lose")
         self.assertEqual([(0,)], [(count,) for (count,) in
                                   db_rows(made, "SELECT COUNT(*) FROM changes")], "and no record of each step")
@@ -355,18 +373,18 @@ class AKeptLibraryMeetsTwoNewSteps(Migrated):
         before = digest(self.db_path)
         with self.assertRaises(schema.NewerLibrary) as refused:
             schema.ensure(self.db_path)
-        self.assertEqual((34, 32), (refused.exception.found, refused.exception.known))
+        self.assertEqual((self.destroying.version, migration_names.BASE), (refused.exception.found, refused.exception.known))
         self.assertEqual(refused.exception.args[0], schema.newer_problem(self.db_path))
         self.assertEqual(before, digest(self.db_path), "nothing written")
 
-    def test_a_change_made_at_32_stays_undoable_across_the_additive_step_and_not_the_destructive_one(self):
+    def test_a_change_made_before_stays_undoable_across_the_additive_step_and_not_the_destructive_one(self):
         self.migrate(self.additive)
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         self.addCleanup(conn.close)
         self.assertEqual([], journal.refusal(conn, self.change))
         self.migrate(self.additive, self.destroying)
         [why] = journal.refusal(conn, self.change)
-        self.assertIn("migration 34", why)
+        self.assertIn("migration %d" % self.destroying.version, why)
         self.assertIn("is destructive", why)
 
     def test_the_additive_step_leaves_the_change_undoable_and_undo_puts_the_rows_back(self):
@@ -374,6 +392,193 @@ class AKeptLibraryMeetsTwoNewSteps(Migrated):
         self.migrate(self.additive)
         journal.undo(self.db_path, self.change)
         self.assertEqual([], self.query("SELECT id FROM tag_taxonomy WHERE tag = 'Fresh'"))
+
+
+# ---- The owner's library at 32 meets migration 33 ------------------------------------------------------------------------
+
+class TheOwnersLibraryAt32MeetsMigration33(Migrated):
+    """Made and seeded by the app before 33, as the three live libraries are (at 32, each face's vector in `faces.embedding`,
+    2,048 bytes; `faces_pending` empty, `idx_faces_name` there), then opened by this one."""
+
+    NAME = "face vectors in face_embeddings"
+    DROPPED = {("table", "faces_pending"), ("index", "idx_faces_name")}
+    #: Made by 33, and made again without the column (the faces table, and its generation trigger, which named it).
+    MADE = {("table", "face_embeddings"), ("trigger", "face_embeddings_go_with_their_face")} | {
+        ("trigger", "generation_face_embeddings_" + event) for event in ("insert", "update", "delete")}
+    REMADE = {("table", "faces"), ("trigger", "generation_faces_update")}
+
+    def setUp(self):
+        with migration_names.up_to(schema.BASELINE):
+            super().setUp()
+        self.assertEqual(schema.BASELINE, self.version())
+        self.assertLessEqual(self.DROPPED, set(self.objects()))
+        self.before = (self.objects(), self.counts(), self.dump())
+
+    def detected(self, conn, path, box, embedding, crop, prob):
+        """Record a face as the indexer at 32 did: its vector in `faces.embedding`, its crop in `face_crops`."""
+        face_id = conn.execute("INSERT INTO faces (photo_id, box, embedding, prob) VALUES (?, ?, ?, ?)",
+                               (photo_id(conn, path), json.dumps(box), embedding, prob)).lastrowid
+        if crop:
+            conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
+        return face_id
+
+    def objects(self):
+        """{(type, name): sql} of every table, index and trigger."""
+        return {(kind, name): sql for kind, name, sql in self.query(
+            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite%'")}
+
+    def counts(self):
+        return {name: self.query("SELECT COUNT(*) FROM %s" % name)[0][0] for (kind, name) in self.objects() if kind == "table"}
+
+    @staticmethod
+    def as_33_leaves(dump, columns):
+        """`dump` (the library at 32, `columns` its faces' columns) as 33 leaves it: each face without its vector, and the
+        vector, byte for byte and of the type it was stored as, in `face_embeddings` under FaceNet's key."""
+        at = 2 * columns.index("embedding")   # a dump's row is each value, then its type
+        found = dict(dump)
+        found["faces"] = [row[:at] + row[at + 2:] for row in dump["faces"]]
+        found["face_embeddings"] = [(row[0], "integer", FACENET, "text") + row[at:at + 2] for row in dump["faces"]]
+        return found
+
+    def test_it_takes_one_backup_moves_every_vector_and_leaves_every_other_row(self):
+        objects, counts, dump = self.before
+        columns = [row[1] for row in self.query("PRAGMA table_info(faces)")]
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(33, self.version())
+        after = self.objects()
+        self.assertLessEqual(self.MADE | self.REMADE, set(after))
+        self.assertEqual({k: v for k, v in objects.items() if k not in self.DROPPED | self.REMADE},
+                         {k: v for k, v in after.items() if k not in self.MADE | self.REMADE})
+        self.assertNotIn("embedding", [row[1] for row in self.query("PRAGMA table_info(faces)")])
+        counts.pop("faces_pending")
+        counts["schema_version"] += 1
+        counts["changes"] += 1   # the migration's own record
+        counts["face_embeddings"] = counts["faces"]
+        self.assertEqual(counts, self.counts())
+        self.assertEqual(self.as_33_leaves(dump, columns), self.dump())
+        [taken] = backups(self.db_path)
+        operation, version, status, summary = self.recorded()[-1]
+        self.assertEqual(("migration 33: " + self.NAME, 32, "applied", schema.DESTRUCTIVE, taken, {"face vectors": 4}),
+                         (operation, version, status, summary["kind"], summary["backup"], summary["took"]))
+        self.assertIn("every face's vector copied", summary["checks"])
+        backup = db_rows(os.path.join(Library(self.db_path).backups, taken),
+                         "SELECT type, name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name')")
+        self.assertEqual(self.DROPPED, set(backup), "the copy is the way back")
+        plan = " ".join(r[3] for r in self.query("EXPLAIN QUERY PLAN SELECT id FROM faces WHERE name = ?", ("x",)))
+        self.assertIn("idx_faces_person", plan, "a lookup by name still has an index")
+        self.assertEqual([], schema.ensure(self.db_path))
+
+    def test_a_face_without_facenets_vector_refuses_it_with_a_sentence_until_that_face_is_deleted(self):
+        # 0 such faces in the three live libraries (2026-10-18): the check stands between a vector of another length, or
+        # none, and filing it as FaceNet's.
+        conn = db.connect(self.db_path)
+        try:
+            path = conn.execute("SELECT path FROM photos WHERE id = ?", (self.ids["prize"],)).fetchone()[0]
+            short = self.detected(conn, path, [5, 5, 40, 40], vector(5, 256), None, 0.97)
+            none = self.detected(conn, path, [50, 5, 90, 40], None, None, 0.96)
+            conn.commit()
+        finally:
+            conn.close()
+        held = (self.objects(), self.counts(), self.dump())
+        with self.assertRaises(schema.CheckFailed) as refused:
+            schema.ensure(self.db_path)
+        self.assertEqual("every face's vector copied", refused.exception.check)
+        self.assertIn("Migration 33 (%s) was not applied" % self.NAME, str(refused.exception))
+        self.assertIn("2 face(s) hold no vector of FaceNet's length (2048 bytes)", str(refused.exception))
+        self.assertIn("remove those faces, and open it again", str(refused.exception))
+        self.assertEqual(32, self.version())
+        self.assertEqual(held, (self.objects(), self.counts(), self.dump()), "nothing was changed")
+        self.execute("DELETE FROM faces WHERE id IN (?, ?)", (short, none))
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(33, self.version())
+        self.assertEqual(self.query("SELECT id FROM faces ORDER BY id"),
+                         self.query("SELECT face_id FROM face_embeddings WHERE model = ? ORDER BY face_id", (FACENET,)))
+
+    def test_a_kept_library_with_no_face_is_migrated(self):
+        self.execute("DELETE FROM faces")   # its crops go with it (face_crops_go_with_their_face)
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(33, self.version())
+        self.assertEqual([(0,)], self.query("SELECT COUNT(*) FROM face_embeddings"))
+        self.assertEqual({"face vectors": 0}, self.recorded()[-1][3]["took"])
+
+    def test_a_reader_mid_read_keeps_what_it_was_reading_and_its_next_read_is_of_33(self):
+        reader = db.connect(db.readonly_uri(self.db_path), uri=True)
+        self.addCleanup(reader.close)
+        reader.execute("BEGIN")
+        first = reader.execute("SELECT id, embedding FROM faces ORDER BY id").fetchall()
+        self.assertEqual([self.NAME], schema.ensure(self.db_path), "a reader does not hold the migration back")
+        self.assertEqual(first, reader.execute("SELECT id, embedding FROM faces ORDER BY id").fetchall(),
+                         "the read it was in the middle of is of the library as it was")
+        reader.rollback()
+        self.assertEqual(first, reader.execute("SELECT face_id, vector FROM face_embeddings WHERE model = ? ORDER BY face_id",
+                                               (FACENET,)).fetchall())
+
+    def test_of_two_libraries_in_one_home_only_the_one_opened_is_migrated(self):
+        other = self.home.library("cove.db")
+        with migration_names.up_to(schema.BASELINE):
+            schema.ensure(other)
+            conn = db.connect(other)
+            try:
+                self.detected(conn, os.path.join(self.home.root, "Cove", "cove_001.jpg"), [1, 2, 30, 40], vector(9), None, 0.99)
+                conn.commit()
+            finally:
+                conn.close()
+        before = digest(other)
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(before, digest(other), "the other library's file is as it was")
+        self.assertEqual([(32,)], db_rows(other, "SELECT MAX(version) FROM schema_version"))
+        self.assertEqual([], backups(other))
+        self.assertEqual(1, len(backups(self.db_path)))
+
+    def test_after_it_a_deleted_face_takes_its_vectors_and_a_written_vector_moves_the_faces_generation(self):
+        schema.ensure(self.db_path)
+        face = self.ids["copy"]
+        conn = db.connect(self.db_path)
+        try:
+            moved = generations.value(conn, "faces")
+            add_vector_of_face(conn, face, vector(7), "scrfd-adaface")   # a second model's vector beside FaceNet's
+            conn.commit()
+            self.assertEqual(moved + 1, generations.value(conn, "faces"), "a grid of the faces is stale")
+            self.assertEqual(2, conn.execute("SELECT COUNT(*) FROM face_embeddings WHERE face_id = ?", (face,)).fetchone()[0])
+            conn.execute("DELETE FROM faces WHERE id = ?", (face,))
+            conn.commit()
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM face_embeddings WHERE face_id = ?", (face,)).fetchone()[0])
+        finally:
+            conn.close()
+
+    def test_killed_after_the_backup_it_is_still_at_32_and_migrates_at_the_next_open(self):
+        code = textwrap.dedent("""
+            import os, sys
+            sys.path.insert(0, %(root)r)
+            from tagpup.store import schema
+            real = schema.MIGRATIONS[-1]
+
+            def killed(conn):
+                real.apply(conn)
+                os._exit(9)   # the power goes: the vectors copied and the column dropped, nothing committed
+
+            schema.MIGRATIONS = schema.MIGRATIONS[:-1] + (real._replace(apply=killed),)
+            schema.ensure(%(path)r)
+            """) % {"root": ROOT, "path": self.db_path}
+        child = processes.start([sys.executable, "-c", code], env=dict(os.environ, TAGPUP_HOME=self.home.root),
+                                stdout=-1, stderr=-1, text=True)
+        _out, err = child.communicate(timeout=120)
+        self.assertEqual(9, child.returncode, err)
+        self.assertEqual(1, len(backups(self.db_path)), "the backup was taken")
+        self.assertEqual(32, self.version())
+        self.assertEqual(self.before, (self.objects(), self.counts(), self.dump()), "as it was")
+        schema.forget()
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(33, self.version())
+        self.assertFalse(self.DROPPED & set(self.objects()))
+
+    def test_the_app_before_33_refuses_it_after(self):
+        schema.ensure(self.db_path)
+        before = digest(self.db_path)
+        with migration_names.up_to(schema.BASELINE), self.assertRaises(schema.NewerLibrary) as refused:
+            schema.ensure(self.db_path)
+        self.assertEqual((33, 32), (refused.exception.found, refused.exception.known))
+        self.assertEqual(before, digest(self.db_path), "nothing written")
 
 
 def db_rows(path, sql):
@@ -431,7 +636,7 @@ class ALibraryBelowTheBaseline(unittest.TestCase):
         self.assertIn("older than TagPup can bring forward", schema.newer_note(path))
         self.assertEqual(before, digest(path))
 
-    def test_a_library_at_the_baseline_is_opened_without_a_write_a_migration_or_a_backup(self):
+    def test_a_current_library_is_opened_without_a_write_a_migration_or_a_backup(self):
         home = own_home.for_test(self)
         path = home.library("harbour.db")
         schema.ensure(path)
@@ -441,7 +646,7 @@ class ALibraryBelowTheBaseline(unittest.TestCase):
         self.assertEqual([], schema.ensure(path))
         self.assertEqual(before, digest(path))
         self.assertEqual([], backups(path))
-        self.assertEqual(32, schema.version_of(path))
+        self.assertEqual(schema.LATEST, schema.version_of(path))
 
     def test_an_empty_file_is_a_new_library_not_an_old_one(self):
         home = own_home.for_test(self)
@@ -463,7 +668,11 @@ class ANewLibrary(unittest.TestCase):
         schema.ensure(path)
         self.assertEqual([], backups(path))
         self.assertEqual([(0,)], db_rows(path, "SELECT COUNT(*) FROM changes"))
-        self.assertEqual([(32,)], db_rows(path, "SELECT version FROM schema_version"))
+        self.assertEqual([(32,), (33,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
+        self.assertEqual([], db_rows(path, "SELECT name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name')"),
+                         "made at the baseline and taken to 33 by the same runner")
+        self.assertEqual([("face_embeddings",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'face_embeddings'"))
+        self.assertNotIn("embedding", [row[1] for row in db_rows(path, "PRAGMA table_info(faces)")])
 
     def test_made_by_two_processes_at_once_is_made_once(self):
         home = own_home.for_test(self)
@@ -477,8 +686,8 @@ class ANewLibrary(unittest.TestCase):
             out, err = each.communicate(timeout=120)
             self.assertEqual(0, each.returncode, err)
             answers.append(out.strip())
-        self.assertEqual(["0", "1"], sorted(answers))
-        self.assertEqual([(32,)], db_rows(path, "SELECT version FROM schema_version"))
+        self.assertEqual(2, sum(int(answer) for answer in answers), answers)
+        self.assertEqual([(32,), (33,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
 
 
 if __name__ == "__main__":

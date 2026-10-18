@@ -15,6 +15,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, faces, people, person_ids, schema  # noqa: E402
@@ -22,7 +23,8 @@ from tagpup.store import photos as store_photos  # noqa: E402
 
 #: The tables a change can touch, derived ones included, with the order to list them in.
 TABLES = {
-    "photos": "id", "faces": "id", "face_crops": "face_id", "embeddings": "photo_id, model",
+    "photos": "id", "faces": "id", "face_crops": "face_id", "face_embeddings": "face_id, model",
+    "embeddings": "photo_id, model",
     "suggestions": "photo_id", "tag_taxonomy": "id", "photo_people": "photo_id, position",
 }
 
@@ -85,8 +87,8 @@ class JournalLibrary(unittest.TestCase):
             def face(photo_id, n, crop=True):
                 """A detected face, as the indexer records one (its crop cut, unless it is never shown)."""
                 path = conn.execute("SELECT path FROM photos WHERE id = ?", (photo_id,)).fetchone()[0]
-                return faces.insert(conn, path, [120 + n, 80, 260 + n, 240], vector(n), crop=jpeg(n) if crop else None,
-                                    prob=0.99873 - n / 1000.0)
+                return self.detected(conn, path, [120 + n, 80, 260 + n, 240], vector(n), jpeg(n) if crop else None,
+                                     0.99873 - n / 1000.0)
 
             ids["kept"] = face(ids["start"], 1)
             faces.name(conn, [ids["kept"]], ids["People/Rowan Thackeray"])   # a person's decision
@@ -112,6 +114,10 @@ class JournalLibrary(unittest.TestCase):
         finally:
             conn.close()
 
+    def detected(self, conn, path, box, embedding, crop, prob):
+        """Record a face as the indexer does (tagpup.store.faces.insert), its vector FaceNet's. Returns its id."""
+        return faces.insert(conn, path, box, embedding, model=FACENET, crop=crop, prob=prob)
+
     # ---- Reading -----------------------------------------------------------------------
 
     def query(self, sql, params=()):
@@ -131,12 +137,15 @@ class JournalLibrary(unittest.TestCase):
             conn.close()
 
     def dump(self):
-        """Every row of every table a change can touch, each value with the type SQLite
+        """Every row of every table a change can touch that the library has, each value with the type SQLite
         stored it as: two dumps are equal only if the tables are, byte for byte."""
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
             found = {}
+            present = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             for table, order in TABLES.items():
+                if table not in present:
+                    continue
                 columns = [row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)]
                 typed = ", ".join("%s, typeof(%s)" % (c, c) for c in columns)
                 found[table] = conn.execute("SELECT %s FROM %s ORDER BY %s" % (typed, table, order)).fetchall()

@@ -90,6 +90,8 @@ def face_matches():
         return jsonify(identify_service.face_matches(library, face_id, named(library)))
     except NotFound:
         abort(404, description="Face not found")
+    except Refused as why:   # a face with no vector under the library's face model (identify.NO_VECTOR)
+        refuse(400, str(why))
 
 
 @routes.get("/api/people-faces")

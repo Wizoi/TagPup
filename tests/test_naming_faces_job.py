@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 from test_faces_from_tags import ODA, WREN, Case, at, look, write  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -474,7 +475,7 @@ class TwoLibraries(Case789):
 
         def rows(conn):
             photo_rows.add_read(conn, photo, {"XMP:Subject": ["People/" + WREN]})
-            return faces.insert(conn, photo, [0, 0, 100, 100], at(0))
+            return faces.insert(conn, photo, [0, 0, 100, 100], at(0), model=FACENET)
         write(other_path, tree)
         face = write(other_path, rows)
         mine = self.start()

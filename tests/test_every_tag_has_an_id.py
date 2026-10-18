@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
 import people_by_id  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.services import tags as tag_service  # noqa: E402
@@ -106,7 +107,7 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         before = self.tags()
         for write in (lambda conn: faces.name(conn, [self.faces[0]], ZED),
                       lambda conn: faces.name_if_unnamed(conn, self.faces[0], ZED),
-                      lambda conn: faces.insert(conn, self.photo, [40, 0, 50, 10], b"\x07" * 8, name=ZED)):
+                      lambda conn: faces.insert(conn, self.photo, [40, 0, 50, 10], b"\x07" * 8, name=ZED, model=FACENET)):
             with self.assertRaises(ValueError):
                 people_by_id.write(self.path, write)
         self.assertEqual(before, self.tags())

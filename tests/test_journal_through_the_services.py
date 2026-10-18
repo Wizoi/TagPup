@@ -55,8 +55,10 @@ class ThroughTheServices(JournalLibrary):
 
     def test_dedupe_faces(self):
         # A second copy of a face the library already has, knowing no more.
-        self.execute("INSERT INTO faces (photo_id, box, embedding, prob, excluded)"
-                     " SELECT photo_id, box, embedding, prob, 0 FROM faces WHERE id = ?", (self.ids["copy"],))
+        copy = self.execute("INSERT INTO faces (photo_id, box, prob, excluded)"
+                            " SELECT photo_id, box, prob, 0 FROM faces WHERE id = ?", (self.ids["copy"],))
+        self.execute("INSERT INTO face_embeddings (face_id, model, vector)"
+                     " SELECT ?, model, vector FROM face_embeddings WHERE face_id = ?", (copy, self.ids["copy"]))
         self.round_trip("dedupe_faces", duplicate_faces.dedupe_faces)
 
     def test_merge_duplicate_person_tags(self):

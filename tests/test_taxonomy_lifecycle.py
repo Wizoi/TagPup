@@ -463,8 +463,8 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
         conn = tagpup_db.connect(self.TEST_DB)
         conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?)",
-            (photo, b"", "Jane Doe"),
+            "INSERT INTO faces (photo_id, box, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?)",
+            (photo, "Jane Doe"),
         )
         add_people(conn, photo, ["Jane Doe"])
         conn.commit()
@@ -493,7 +493,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
         people_id, _ = self.create_tag("People", has_face=1)
         person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
         conn = tagpup_db.connect(self.TEST_DB)
-        add_face(conn, "D:/case.jpg", box="[]", embedding=b"", name="jane doe")
+        add_face(conn, "D:/case.jpg", box="[]", name="jane doe")
         conn.commit()
         conn.close()
         conn = tagpup_db.connect(self.TEST_DB)
@@ -515,8 +515,8 @@ class TestTaxonomyRename(TaxonomyTestBase):
 
         conn = tagpup_db.connect(self.TEST_DB)
         conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?)",
-            (photo, b"", "Hiking"),
+            "INSERT INTO faces (photo_id, box, name) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?)",
+            (photo, "Hiking"),
         )
         conn.commit()
         conn.close()

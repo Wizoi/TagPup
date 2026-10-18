@@ -23,7 +23,7 @@ from tagpup.store import taxonomy  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
 import photo_rows  # noqa: E402
-from face_rows import person_of  # noqa: E402
+from face_rows import add_face, person_of  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]
 
@@ -58,11 +58,8 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
     def add_face(self, path, name, name_source, excluded):
         conn = self.index.conn
         photo_rows.add_unread(conn, path)
-        conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, prob, name, tag_id, name_source, excluded)"
-            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 100, 100]', ?, 0.99, ?, ?, ?, ?)",
-            (path, np.asarray(ROWAN, dtype=np.float32).tobytes(), name, person_of(conn, name) if name else None,
-             name_source, excluded))
+        add_face(conn, path, "[0, 0, 100, 100]", np.asarray(ROWAN, dtype=np.float32).tobytes(), prob=0.99, name=name,
+                 tag_id=person_of(conn, name) if name else None, name_source=name_source, excluded=excluded)
         conn.commit()
 
     def suggested(self, path):

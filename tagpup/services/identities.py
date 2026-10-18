@@ -51,7 +51,8 @@ def resolution_trace_path(db_path):
 
 
 def _all_faces(photo_index):
-    """Every face's id, photo, box, vector, person (the Ref it carries, and its id) and probability; [] if they cannot be read."""
+    """Every face's id, photo, box, vector, person (the Ref it carries, and its id) and probability, of the faces with a
+    vector under the library's face model (store_faces.for_clustering); [] if they cannot be read."""
     if photo_index.conn is None:
         return []
     try:
@@ -154,7 +155,8 @@ def resolve(photo_index, on_step=None):
     connection, its photos' metadata and its path. Names given by hand are never
     overwritten, and excluded faces take no part.
 
-    `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
+    `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "without_vector" (done: the faces with no
+    vector under the library's face model, left out; total: every face; only when there are any), "grouping" (one call of
     DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving", then "unpaired" (total: the faces
     left unnamed because their photo names people no face is known for and nothing tells which is whose, #1374, #1454;
     done: how many of them carried a guess this run took back, #1455) and "left" (two counts of the faces not given what the
@@ -168,6 +170,11 @@ def resolve(photo_index, on_step=None):
     logger.info("Starting self-tuning face identity resolution...")
     step("reading", 0, 1)
     all_faces = _all_faces(photo_index)
+    left_out = store_faces.count_without_vector(photo_index.conn) if photo_index.conn is not None else 0
+    if left_out:
+        # A library switched to the new face model before its pass, or part-way through it: said, not an error.
+        logger.info("%d face(s) have no vector under the library's face model and take no part.", left_out)
+        step("without_vector", left_out, left_out + len(all_faces))
     if not all_faces:
         logger.info("No face embeddings found in the index.")
         return {}

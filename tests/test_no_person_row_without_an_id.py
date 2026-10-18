@@ -12,6 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import people_by_id  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.services import tags as tag_service  # noqa: E402
@@ -64,7 +65,7 @@ class NoRowWithoutAnId(unittest.TestCase, people_by_id.TwoSams):
     def test_a_face_detected_with_a_name(self):
         for name in ("Zed Quill", "Sam", "Thackeray", "Places"):
             try:
-                people_by_id.write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x09" * 8, name=name))
+                people_by_id.write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x09" * 8, name=name, model=FACENET))
             except (person_ids.PersonProblem, ValueError):
                 pass
             self.none_without_an_id(name)

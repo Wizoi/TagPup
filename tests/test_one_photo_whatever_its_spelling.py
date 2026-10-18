@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import photo_rows  # noqa: E402
-from face_rows import VECTORS_WITH_PATHS, add_face, add_vector, configured_model  # noqa: E402
+from face_rows import add_face, add_vector, configured_model, FACENET, VECTORS_WITH_PATHS  # noqa: E402
 from handler_harness import Library  # noqa: E402
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector  # noqa: E402
 
@@ -150,7 +150,7 @@ class TheFaces(FaceClusteringTestBase):
         try:
             # The row as the indexer writes it (paths.stored); the face as typed.
             conn.execute("UPDATE photos SET path = ? WHERE path = ?", (paths.stored(typed), typed))
-            face = store_faces.insert(conn, typed, [0, 0, 100, 100], identity_vector(3).tobytes(), prob=0.99)
+            face = store_faces.insert(conn, typed, [0, 0, 100, 100], identity_vector(3).tobytes(), prob=0.99, model=FACENET)
             conn.commit()
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0],
                              "the face made a second row for its photo")

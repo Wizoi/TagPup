@@ -31,6 +31,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 
 import tagpup_cli  # noqa: E402
@@ -189,7 +190,7 @@ class TheDetectorName(ALibrary):
             photo_rows.hold(conn, self.folder)
             photo_rows.add_read(conn, photo, {})
             conn.commit()
-            face_records.record_batch(conn, {photo: []}, detector=self.detector_name(library))
+            face_records.record_batch(conn, {photo: []}, detector=self.detector_name(library), model=FACENET)
         finally:
             conn.close()
         self.set_cap(library, 1600)

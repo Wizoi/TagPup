@@ -12,6 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import migration_names  # noqa: E402
 from journal_library import JournalLibrary  # noqa: E402
 
@@ -37,30 +38,34 @@ class ForwardThenUndo(JournalLibrary):
         before = self.dump()
         applied = self.apply([journal.delete("faces", (self.ids["copy"],), {"name": None}),
                               journal.delete("faces", (self.ids["named"],), {"name": "Maren Oakhollow"})])
-        self.assertEqual((2, 4, True), (applied.changed, applied.rows, applied.settled), "two faces and two crops")
+        self.assertEqual((2, 6, True), (applied.changed, applied.rows, applied.settled),
+                         "two faces, their two vectors and two crops")
         self.assertEqual([], self.query("SELECT id FROM faces WHERE id IN (?, ?)", (self.ids["copy"], self.ids["named"])))
         self.assertEqual([], self.query("SELECT face_id FROM face_crops WHERE face_id IN (?, ?)",
+                                        (self.ids["copy"], self.ids["named"])))
+        self.assertEqual([], self.query("SELECT face_id FROM face_embeddings WHERE face_id IN (?, ?)",
                                         (self.ids["copy"], self.ids["named"])))
         self.assertNotIn("Maren Oakhollow", self.people_of(self.ids["finish"]), "a face's name leaves its photo")
         # The values as SQLite values: a vector and a crop as BLOBs, a box as text, prob as a real.
         types = dict(self.query("SELECT column_name, typeof(old) FROM change_rows WHERE change_id = ?"
                                 " AND table_name = 'faces' AND row_key = ?", (applied.change_id, "[%d]" % self.ids["copy"])))
-        self.assertEqual(("blob", "text", "real", "integer", "null"),
-                         (types["embedding"], types["box"], types["prob"], types["excluded"], types["name"]))
-        self.assertEqual([("blob",)], self.query("SELECT DISTINCT typeof(old) FROM change_rows"
-                                                 " WHERE table_name = 'face_crops' AND column_name = 'jpeg'"))
+        self.assertEqual(("text", "real", "integer", "null"),
+                         (types["box"], types["prob"], types["excluded"], types["name"]))
+        for table, column in (("face_crops", "jpeg"), ("face_embeddings", "vector")):
+            self.assertEqual([("blob",)], self.query("SELECT DISTINCT typeof(old) FROM change_rows"
+                                                     " WHERE table_name = ? AND column_name = ?", (table, column)))
 
         undone = journal.undo(self.db_path, applied.change_id)
-        self.assertEqual((4, True), (undone.rows, undone.settled))
+        self.assertEqual((6, True), (undone.rows, undone.settled))
         self.assertEqual(before, self.dump())
         self.assertEqual([(applied.change_id, "test", "undone")], self.changes())
 
     def test_a_deleted_photo_comes_back_with_everything_it_took(self):
         before = self.dump()
         applied = self.apply([journal.delete("photos", (self.ids["finish"],), {"tags": '["Friends/Imogen Vale", "People/Rowan Thackeray"]'})])
-        # The photo, its two faces, the one crop they had, and its vector; its people rebuilt.
+        # The photo, its two faces, their vectors, the one crop they had, and its vector; its people rebuilt.
         tables = dict(self.query("SELECT table_name, COUNT(DISTINCT row_key) FROM change_rows GROUP BY table_name"))
-        self.assertEqual({"photos": 1, "faces": 2, "face_crops": 1, "embeddings": 1}, tables)
+        self.assertEqual({"photos": 1, "faces": 2, "face_embeddings": 2, "face_crops": 1, "embeddings": 1}, tables)
         self.assertEqual([], self.query("SELECT * FROM photo_people WHERE photo_id = ?", (self.ids["finish"],)))
         self.assertEqual([], self.query("SELECT photo_id FROM embeddings WHERE photo_id = ?", (self.ids["finish"],)))
         journal.undo(self.db_path, applied.change_id)
@@ -321,7 +326,7 @@ class Rehearsals(JournalLibrary):
         before = self.dump()
         generations = self.query("SELECT name, value FROM generations ORDER BY name")
         rehearsal = journal.rehearse(self.db_path, "t", self.edits())
-        self.assertEqual((None, 5, 3, True, True, [], 0),
+        self.assertEqual((None, 7, 3, True, True, [], 0),
                          (rehearsal.refused, rehearsal.rows, rehearsal.changed, rehearsal.exact,
                           rehearsal.derived_exact, rehearsal.differences, rehearsal.derived_stale))
         self.assertEqual(before, self.dump())
@@ -331,16 +336,16 @@ class Rehearsals(JournalLibrary):
     def test_a_wrong_inverse_is_caught(self):
         real = journal._inverse
 
-        def loses_the_vector(change):
+        def zeroes_the_vector(change):
             inverse = real(change)
-            if inverse.action == "insert" and inverse.table == "faces":
-                inverse.new.pop("embedding")
+            if inverse.action == "insert" and inverse.table == "face_embeddings":
+                inverse.new["vector"] = bytes(len(inverse.new["vector"]))
             return inverse
 
-        with mock.patch.object(journal, "_inverse", side_effect=loses_the_vector):
+        with mock.patch.object(journal, "_inverse", side_effect=zeroes_the_vector):
             rehearsal = journal.rehearse(self.db_path, "t", self.edits())
         self.assertFalse(rehearsal.exact)
-        self.assertIn("faces %d: embedding" % self.ids["copy"], rehearsal.differences)
+        self.assertIn("face_embeddings %d/%s: vector" % (self.ids["copy"], FACENET), rehearsal.differences)
         self.assertEqual([], self.changes())
 
     def test_a_wrong_derived_rebuild_is_caught(self):
@@ -370,7 +375,7 @@ class Rehearsals(JournalLibrary):
         applied = journal.apply(self.db_path, "t", self.edits())
         after = self.dump()
         rehearsal = journal.rehearse_undo(self.db_path, applied.change_id)
-        self.assertEqual((None, 5, True, True), (rehearsal.refused, rehearsal.rows, rehearsal.exact,
+        self.assertEqual((None, 7, True, True), (rehearsal.refused, rehearsal.rows, rehearsal.exact,
                                                  rehearsal.derived_exact))
         self.assertEqual(after, self.dump())
         self.assertEqual([(1, "t", "applied")], self.changes())
@@ -391,19 +396,22 @@ class HistoryAndPruning(JournalLibrary):
         listed = journal.history(self.db_path)
         self.assertEqual([(second, "refresh_rows", "applied"), (first, "dedupe_faces", "applied")],
                          [(c["id"], c["operation"], c["status"]) for c in listed])
-        self.assertEqual({"faces": {"delete": 1}, "face_crops": {"delete": 1}}, listed[1]["rows"])
-        self.assertEqual({"counts": {"redundant": 1}, "rows": {"face_crops": 1, "faces": 1}}, listed[1]["summary"])
+        self.assertEqual({"faces": {"delete": 1}, "face_crops": {"delete": 1}, "face_embeddings": {"delete": 1}},
+                         listed[1]["rows"])
+        self.assertEqual({"counts": {"redundant": 1}, "rows": {"face_crops": 1, "face_embeddings": 1, "faces": 1}},
+                         listed[1]["summary"])
         self.assertEqual(schema.LATEST, listed[1]["schema_version"])
         self.assertNotIn("keys", listed[1])
 
     def test_one_change_lists_its_keys_and_its_values_only_when_asked(self):
         first, _second = self.two_changes()
         entry = journal.history(self.db_path, change_id=first)[0]
-        self.assertEqual({"faces": [[self.ids["copy"]]], "face_crops": [[self.ids["copy"]]]}, entry["keys"])
+        self.assertEqual({"faces": [[self.ids["copy"]]], "face_crops": [[self.ids["copy"]]],
+                          "face_embeddings": [[self.ids["copy"], FACENET]]}, entry["keys"])
         self.assertNotIn("values", entry)
         values = journal.history(self.db_path, change_id=first, values=True)[0]["values"]
-        face = next(v for v in values if v["table"] == "faces")
-        self.assertEqual(("<2048 bytes>", None), (face["old"]["embedding"], face["new"]))
+        vector = next(v for v in values if v["table"] == "face_embeddings")
+        self.assertEqual(("<2048 bytes>", None), (vector["old"]["vector"], vector["new"]))
 
 
 class TheSchemaMovedOn(unittest.TestCase):
@@ -414,7 +422,7 @@ class TheSchemaMovedOn(unittest.TestCase):
     def test_a_gap_of_only_additive_migrations_that_touch_no_journaled_table_is_exempt(self):
         first, second = migration_names.step(), migration_names.step(version=schema.LATEST + 2)
         with migration_names.ahead(first, second):
-            self.assertIsNone(journal.schema_gap_blocker(schema.BASELINE, second.version))
+            self.assertIsNone(journal.schema_gap_blocker(migration_names.BASE, second.version))
             self.assertIsNone(journal.schema_gap_blocker(second.version, second.version))
 
     def test_a_migration_that_touches_only_derived_tables_blocks_no_undo(self):
@@ -423,14 +431,17 @@ class TheSchemaMovedOn(unittest.TestCase):
         step = migration_names.step(touches=("photo_tags", "folders", "photo_folder"))
         self.assertLessEqual({"photo_tags", "folders", "photo_folder"}, set(journal.DERIVED))
         with migration_names.ahead(step):
-            self.assertIsNone(journal.schema_gap_blocker(schema.BASELINE, step.version))
+            self.assertIsNone(journal.schema_gap_blocker(migration_names.BASE, step.version))
 
     def test_a_change_made_below_the_baseline_is_refused_in_a_sentence_that_says_why(self):
-        # Every journal change made before schema 32 is refused (DECISIONS 2026-10-15); the baseline's own are not.
+        # Every journal change of rows made before schema 32 is refused (DECISIONS 2026-10-15); one made at 32 is refused
+        # across migration 33, which destroys (a column dropped); one made at 33 is not.
         for version in (9, 14, 20, 31):
             found = journal.schema_gap_blocker(version, schema.LATEST)
             self.assertIn("before the baseline, schema %d" % schema.BASELINE, found)
-        self.assertIsNone(journal.schema_gap_blocker(schema.BASELINE, schema.LATEST), "32 is the baseline: undoable")
+        self.assertIn("migration 33, face vectors in face_embeddings, is destructive",
+                      journal.schema_gap_blocker(schema.BASELINE, schema.LATEST))
+        self.assertIsNone(journal.schema_gap_blocker(schema.LATEST, schema.LATEST))
 
     def test_a_gap_with_a_migration_that_is_not_additive_refuses_naming_it(self):
         fake = schema.Migration(schema.LATEST + 1, "rewrites", lambda conn: None, schema.DESTRUCTIVE, "rewrites", (), ())
@@ -440,9 +451,10 @@ class TheSchemaMovedOn(unittest.TestCase):
         self.assertIn("destructive", found)
 
     def test_a_migration_that_is_not_in_the_list_refuses(self):
-        later = migration_names.step(version=schema.LATEST + 2)   # 33 is missing from the list
+        later = migration_names.step(version=schema.LATEST + 2)   # the one between is missing from the list
         with migration_names.ahead(later):
-            self.assertIn("migration 33 is not known", journal.schema_gap_blocker(schema.BASELINE, later.version))
+            self.assertIn("migration %d is not known" % (migration_names.BASE + 1),
+                          journal.schema_gap_blocker(migration_names.BASE, later.version))
         self.assertIn("is not applied here", journal.schema_gap_blocker(schema.LATEST + 1, schema.LATEST))
 
     def test_a_fake_additive_migration_touching_a_journaled_table_is_not_exempt(self):

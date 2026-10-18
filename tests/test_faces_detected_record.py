@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import stand_in_models  # noqa: E402
-from face_rows import add_face  # noqa: E402
+from face_rows import add_face, FACENET  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -44,7 +44,7 @@ from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import faces, faces_detected, journal  # noqa: E402
 
 
-class FaceModel:
+class FaceModel(stand_in_models.Faces):
     """A face model on the card: its settings, and what it was asked."""
     device = "cuda"
 
@@ -89,7 +89,7 @@ class Case(unittest.TestCase):
         """Record a detection as the indexer does, at the end of a batch."""
         conn = db.connect(self.db_path)
         try:
-            face_records.record_batch(conn, {self.photo: found}, detector=face_records.detector_of(model, None))
+            face_records.record_batch(conn, {self.photo: found}, detector=face_records.detector_of(model, None), model=FACENET)
         finally:
             conn.close()
 
@@ -196,7 +196,7 @@ class ThePhotoThatLosesItsFaces(unittest.TestCase):
         conn = db.connect(self.db_path)
         try:
             face_records.record_batch(conn, {self.photo: [{"box": [0, 0, 10, 10], "embedding": [0.0, 1.0], "prob": 0.99}]},
-                                     overwrite=True, detector=self.DETECTOR)
+                                     overwrite=True, detector=self.DETECTOR, model=FACENET)
         finally:
             conn.close()
         self.assertTrue(self.recorded())

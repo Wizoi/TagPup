@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import photo_rows  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import checks, db  # noqa: E402
@@ -50,7 +51,7 @@ class EveryFaceHasAPhotoRow(unittest.TestCase):
             conn.close()
 
     def test_a_face_suggest_found_on_a_photo_never_indexed_gets_its_photo_a_row(self):
-        self.assertEqual(1, face_records.record_detected(self.db_path, self.photo, [self.face()]))
+        self.assertEqual(1, face_records.record_detected(self.db_path, self.photo, [self.face()], model=FACENET))
         self.assertEqual([(self.photo, None, None)], self.rows())
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
@@ -59,9 +60,9 @@ class EveryFaceHasAPhotoRow(unittest.TestCase):
             conn.close()
 
     def test_a_photo_with_a_row_is_not_given_another(self):
-        face_records.record_detected(self.db_path, self.photo, [self.face()])
+        face_records.record_detected(self.db_path, self.photo, [self.face()], model=FACENET)
         db.write_with_connection(self.db_path, lambda conn: face_records.record_batch(
-            conn, {self.photo.upper() if os.name == "nt" else self.photo: [self.face()]}))
+            conn, {self.photo.upper() if os.name == "nt" else self.photo: [self.face()]}, model=FACENET))
         self.assertEqual(1, len(self.rows()))
 
 

@@ -126,11 +126,13 @@ def _faces_of(conn, photo_ids):
     return found
 
 
-def _embeddings(conn, face_ids):
+def _embeddings(conn, face_ids, key):
+    """{face id: its vector under the face model `key`} of those of `face_ids` that have one."""
     found = {}
     for chunk in _chunks(face_ids):
         for face_id, blob in conn.execute(
-                "SELECT id, embedding FROM faces WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk):
+                "SELECT face_id, vector FROM face_embeddings WHERE model = ? AND face_id IN (%s)" % ",".join("?" * len(chunk)),
+                [key] + list(chunk)):
             found[face_id] = blob
     return found
 
@@ -184,14 +186,14 @@ def _to_be_named(faces_here):
     return found, specks
 
 
-def _decided_of(conn, person):
-    """The unit vectors of the faces a person decided of `person` (a Ref with the node's id): named by hand, or on a photo whose
-    keywords name them (the references identify.decided_faces counts), none excluded. By the node's index (idx_faces_tag), one
-    person at a time."""
+def _decided_of(conn, person, key):
+    """The unit vectors under the face model `key` of the faces a person decided of `person` (a Ref with the node's id): named by
+    hand, or on a photo whose keywords name them (the references identify.decided_faces counts), none excluded. By the node's
+    index (idx_faces_tag), one person at a time."""
     rows = conn.execute(
-        "SELECT f.embedding FROM faces f WHERE f.tag_id = ? AND f.excluded = 0 AND f.embedding IS NOT NULL"
+        "SELECT v.vector FROM faces f" + faces.WITH_VECTOR + " WHERE f.tag_id = ? AND f.excluded = 0"
         " AND (f.name_source = 'manual' OR EXISTS (SELECT 1 FROM photo_people pp WHERE pp.photo_id = f.photo_id"
-        " AND pp.source = 'keyword' AND pp.tag_id = f.tag_id))", (person.id,)).fetchall()
+        " AND pp.source = 'keyword' AND pp.tag_id = f.tag_id))", (key, person.id)).fetchall()
     vectors = []
     for (blob,) in rows:
         vec = np.frombuffer(blob, dtype=np.float32)
@@ -221,20 +223,20 @@ def _photos_to_be_named(conn, person):
     return len(seen)
 
 
-def _gated(conn, singles, result, cache, on_step=None):
+def _gated(conn, singles, result, cache, key, on_step=None):
     """The `singles` -- (photo id, face id, person, name_source), each a photo's one face to be named
     and one person -- that the tag alone may name (#833), as Choices, counted in `result.counts`.
     A person with no decided face is named; one with decided faces only if the face's best cosine to them
     is one a name is offered at (clustering.is_offered); one with none, only when no other photo of theirs has a face
     to be named (#839). The decided faces are read once per person, kept in `cache` ({the node's id: vectors or None},
     a batch's: #841), not once per photo."""
-    vectors = _embeddings(conn, [face_id for _photo, face_id, _person, _source in singles])
+    vectors = _embeddings(conn, [face_id for _photo, face_id, _person, _source in singles], key)
     for number, (photo_id, face_id, person, source) in enumerate(singles):
         if on_step is not None and number % STEP == 0:
             on_step("checking", number, len(singles))
         result.counts["tag_alone"] += 1
         if person.id not in cache:
-            cache[person.id] = _decided_of(conn, person)
+            cache[person.id] = _decided_of(conn, person, key)
         decided = cache[person.id]
         if decided is None:
             if _photos_to_be_named(conn, person) > 1:
@@ -347,6 +349,7 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
     one face and one person), "comparing" (the faces of the others against the decided faces), "deciding" -- every
     STEP photos or each block of faces, and may raise to stop it: the plan writes nothing, so nothing is left."""
     result = Plan()
+    key = faces.model_key(conn)   # once: every vector of the plan is read under it
     if on_step is not None:
         on_step("reading", 0, 1)
     people_of = _keyword_people(conn, None if photo_ids is None else sorted(set(photo_ids)))
@@ -370,9 +373,9 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
         else:
             result.counts["left"] += 1
     if singles:
-        _gated(conn, singles, result, {} if cache is None else cache, on_step)
+        _gated(conn, singles, result, {} if cache is None else cache, key, on_step)
     if open_ones:
-        vectors = _embeddings(conn, [face_id for _photo, unnamed, _free, _held in open_ones for face_id in unnamed])
+        vectors = _embeddings(conn, [face_id for _photo, unnamed, _free, _held in open_ones for face_id in unnamed], key)
         if on_step is not None:
             on_step("comparing", 0, len(vectors))
         references = references() if callable(references) else references
@@ -390,7 +393,7 @@ def _remember(conn, cache, choices, done):
     """Add the vectors of the faces just named to the decided faces a batch holds of their people: they are
     keyword-confirmed now, and the next photo of the batch is compared with them as a save after it would."""
     named = {choice.face_id: choice.person for choice in choices if choice.face_id in set(done)}
-    for face_id, blob in _embeddings(conn, list(named)).items():
+    for face_id, blob in _embeddings(conn, list(named), faces.model_key(conn)).items():
         person = named[face_id]
         if person.id not in cache or not blob:
             continue

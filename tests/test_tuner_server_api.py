@@ -20,6 +20,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 import face_rows  # noqa: E402
 import fake_exiftool  # noqa: E402
@@ -1081,14 +1082,16 @@ class TestTunerFolderRemoval(TunerAPITestBase):
 
         db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, photo, {}))
         conn = db.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?, 'manual')",
-            (photo, unit_vector(500).tobytes(), "Jane Doe"),
-        )
-        conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, excluded) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, NULL, 1)",
-            (photo, unit_vector(501).tobytes()),
-        )
+        named = conn.execute(
+            "INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, 'manual')",
+            (photo, "Jane Doe"),
+        ).lastrowid
+        face_rows.add_vector_of_face(conn, named, unit_vector(500).tobytes())
+        excluded = conn.execute(
+            "INSERT INTO faces (photo_id, box, name, excluded) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', NULL, 1)",
+            (photo,),
+        ).lastrowid
+        face_rows.add_vector_of_face(conn, excluded, unit_vector(501).tobytes())
         conn.commit()
         conn.close()
         return folder, photo
@@ -1313,7 +1316,7 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         conn = db.connect(self.TEST_DB)
         try:
             store_faces.insert(conn, photo.swapcase(), [10, 10, 50, 50], unit_vector(911).tobytes(),
-                               name=face_rows.person_of(conn, "Tamsin Okafor"))
+                               name=face_rows.person_of(conn, "Tamsin Okafor"), model=FACENET)
             conn.commit()
         finally:
             conn.close()

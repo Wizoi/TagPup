@@ -16,6 +16,12 @@ People at the top of the tree: 11, 4 and 0. Leaves two people share: 0, 2 and 0.
 three; a listed person with no id: 0 in all three; a person hidden from autocomplete: 0 in all three. Saved Suggest chips:
 601, 5 and 199, of which 103 in kr-track hold a bare name (98 of them found only by `Directory.of_name`).
 
+Face vectors (migration 33, 2026-10-18) are in `face_embeddings`, one per face and face model. Every reader reads them under
+the library's `faces.model` (`store.faces.model_key`, on the reader's connection), and the join with a vector
+(`store.faces.WITH_VECTOR`, `HAS_VECTOR`) is the one place that leaves a face without one out of what compares faces:
+clustering, New Person's pool, the Identify queue and grid. Asked who such a face resembles, Identify answers one
+sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how many faces took no part.
+
 ## The seven conditions (2026-10-15)
 
 1. **No reach-ins.** Met. The uses of People's internals by other domains are rows of the Integration charter's contract
@@ -54,6 +60,18 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
    the main session's (the agents' definitions).
 
 ## By design (each row closed `decided:`)
+
+- **A run's decided vectors and the library's key (2026-10-18, migration 33)**: naming by tag reads face vectors under
+  the library's face model, read once per write (`faces.model_key`), while `derived.Batch.decided` keeps each person's
+  decided vectors for the run. A switch of `faces.model` mid-index can only go to a model nothing writes under
+  (`KEPT_FACE_MODELS`), so the rest of the run's faces have no vector under the new key: each is left
+  (`unreadable_face`), or named by its photo's one keyword person where that person has no decided face under the new
+  key and no other photo waiting (#839), the tag's own route. Two models' vectors never meet in one product; the next
+  index or cluster-faces reads them again.
+- **Identify on a library switched to the new face model, before its pass (2026-10-18)**: the queue, a person's grid and
+  the person page are empty, with no sentence of their own: every reader compares faces under the library's model, and
+  the faces hold FaceNet's vectors alone. The consequence is stated where the owner switches (the settings dialog's face
+  model group, which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
 
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
@@ -94,7 +112,7 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
 - **`Ref` and `Person` stay two.** A `Person` is a node (always an id); a `Ref` is whom a keyword or a face names, and a
   keyword under a face root that no node holds names a `Ref` with no id: a photo read without its library
   (`PeopleVocabulary.defaults()`), which lists nobody for it (`people_rows`).
-- **#1472's index half**: `idx_faces_name` goes with migration 33, which is parked (DECISIONS 2026-10-15, no schema work now).
+- **#1472's index half**: `idx_faces_name` goes with migration 33 (built 2026-10-18, DECISIONS "MIGRATION 33 IS PULLED FORWARD").
 - **#1466**, TagTuner's two people reads, was closed `decided:` before this pass (no instance; 0 hidden people live).
 
 ## The owner's to answer

@@ -53,18 +53,20 @@ class ANewLibrary(SchemaTestCase):
         conn = self.connect()
         self.assertEqual([m.name for m in schema.MIGRATIONS], applied)
         self.assertEqual(schema.LATEST, schema.version(conn))
-        self.assertEqual({"photos", "faces", "face_crops", "embeddings", "photo_people", "suggestions", "tag_taxonomy",
+        self.assertEqual({"photos", "faces", "face_crops", "face_embeddings", "embeddings", "photo_people", "suggestions",
+                          "tag_taxonomy",
                           "tag_embeddings", "generations", "schema_version", "changes", "change_rows", "settings",
                           "change_files", "job_runs", "added_folders",
-                          "faces_pending", "faces_detected", "roots", "photo_tags", "folders", "photo_folder",
+                          "faces_detected", "roots", "photo_tags", "folders", "photo_folder",
                           "search_words", "search_names"}
                          | {"search_%s_%s" % (table, shadow) for table in ("words", "names")
                             for shadow in ("data", "idx", "docsize", "config")},
                          tables(conn))
 
-    def test_has_the_document_id_index(self):
+    def test_has_the_document_id_index_and_not_the_one_migration_33_drops(self):
         schema.ensure(self.db_path)
         self.assertIn("idx_photos_document_id", indexes(self.connect()))
+        self.assertNotIn("idx_faces_name", indexes(self.connect()))
 
     def test_is_left_alone_the_second_time(self):
         schema.ensure(self.db_path)
@@ -147,10 +149,10 @@ class ALibraryRestoredInPlace(SchemaTestCase):
         shutil.copyfile(self.db_path, old)
         with migration_names.ahead():
             self.assertEqual(1, len(schema.ensure(self.db_path)))   # migrated to the step, and remembered as current
-            self.assertEqual(33, schema.version(self.connect()))
-            shutil.copyfile(old, self.db_path)   # the restore: the file at the baseline again, under a library found current
+            self.assertEqual(migration_names.BASE + 1, schema.version(self.connect()))
+            shutil.copyfile(old, self.db_path)   # the restore: the file at the latest real schema again, under a library found current
             self.assertEqual(1, len(schema.ensure(self.db_path)))
-            self.assertEqual(33, schema.version(self.connect()))
+            self.assertEqual(migration_names.BASE + 1, schema.version(self.connect()))
 
 
 class Generations(SchemaTestCase):

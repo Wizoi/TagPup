@@ -512,7 +512,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     if batch_faces:
                         # --force-reembed means redo the work; without it the
                         # existing face rows, and the curation on them, are kept.
-                        face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
+                        face_records.record_batch(photo_index.conn, batch_faces, model=face_processor.key,
+                                                  overwrite=force_reembed,
                                                   detector=face_records.detector_of(face_processor, detect_max_side))
                         batch_faces.clear()
 
@@ -539,7 +540,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             
             # Save the remaining face embeddings
             if batch_faces:
-                face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
+                face_records.record_batch(photo_index.conn, batch_faces, model=face_processor.key, overwrite=force_reembed,
                                           detector=face_records.detector_of(face_processor, detect_max_side))
                 batch_faces.clear()
             
@@ -1222,9 +1223,13 @@ def _resolve_identities(runtime, db_path):
         return
 
     try:
-        unpaired = []
+        unpaired, left_out = [], []
 
         def heard(stage, done=0, total=1):
+            if stage == "without_vector":
+                left_out.append(done)
+                console.print(f"[yellow]{done} of {total} face(s) have no vector under this library's face model and took "
+                              f"no part: the new model's pass makes them (docs/AI_PIPELINE.md, phase 3).[/yellow]")
             if stage == "left":
                 # The causes set_names refuses for: a face or its photo named meanwhile, a person merged away (#1583). Two
                 # counts: the faces left as they were, and those that lost their guess and are unnamed.
@@ -1242,7 +1247,7 @@ def _resolve_identities(runtime, db_path):
 
         if not resolved_stats:
             # Tagging is no advice for faces whose photo is tagged and whose people cannot be told apart.
-            console.print("[yellow]No face was newly named." + ("" if unpaired else " Try tagging photos with people names first.")
+            console.print("[yellow]No face was newly named." + ("" if unpaired or left_out else " Try tagging photos with people names first.")
                           + "[/yellow]")
             return
 

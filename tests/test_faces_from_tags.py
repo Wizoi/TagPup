@@ -20,6 +20,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
 
@@ -91,7 +92,7 @@ class Case(unittest.TestCase):
         def add(conn):
             left = 200 * len(faces.in_photo(conn, photo_path))
             shape = box or [left, 0, left + 100, 100]
-            face_id = faces.insert(conn, photo_path, shape, embedding or at(0))
+            face_id = faces.insert(conn, photo_path, shape, embedding or at(0), model=FACENET)
             sets = ", ".join("%s = ?" % column for column in columns)
             if sets:
                 conn.execute("UPDATE faces SET %s WHERE id = ?" % sets, list(columns.values()) + [face_id])
@@ -129,7 +130,7 @@ class OneFaceOnePerson(Case):
     def test_the_index_of_a_photo_already_tagged_names_it_when_its_faces_come(self):
         photo = self.photo("regatta_002.jpg", ["People/" + WREN])
         detected = [{"box": [10, 10, 110, 110], "embedding": [0.5] * 8, "prob": 0.99, "crop_image": None}]
-        self.assertEqual(1, face_records.record_detected(self.path, photo, detected))
+        self.assertEqual(1, face_records.record_detected(self.path, photo, detected, model=FACENET))
         self.assertEqual([(WREN,)], look(self.path, "SELECT name FROM faces"))
 
     def test_a_batch_of_detections_names_the_photos_that_have_one_face_and_one_person(self):
@@ -138,7 +139,7 @@ class OneFaceOnePerson(Case):
         face = {"box": [10, 10, 110, 110], "embedding": [0.5] * 8, "prob": 0.99, "crop_image": None}
         conn = db.connect(self.path)
         try:
-            face_records.record_batch(conn, {one: [face], two: [face, dict(face, box=[200, 10, 300, 110])]})
+            face_records.record_batch(conn, {one: [face], two: [face, dict(face, box=[200, 10, 300, 110])]}, model=FACENET)
         finally:
             conn.close()
         self.assertEqual({(one, WREN)}, {(path, name) for path, name in look(
@@ -448,9 +449,9 @@ class APassReadsAPersonsDecidedFacesOnce(Case):
         reads = []
         real = face_tags._decided_of
 
-        def counted(conn, name):
-            reads.append(name)
-            return real(conn, name)
+        def counted(conn, person, key):
+            reads.append(person)
+            return real(conn, person, key)
 
         def indexed(conn):
             batch = derived.Batch(conn)

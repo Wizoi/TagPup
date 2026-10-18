@@ -34,7 +34,7 @@ from tagpup.store import faces as store_faces  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
-from face_rows import person_of  # noqa: E402
+from face_rows import add_face, person_of  # noqa: E402
 
 
 def unit(vector):
@@ -96,11 +96,8 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
         ]
         index.conn.execute("INSERT INTO photos (path) VALUES (?)", (r"D:\Pictures\a.jpg",))
         for name, excluded, emb in rows:
-            index.conn.execute(
-                "INSERT INTO faces (photo_id, box, embedding, name, tag_id, excluded)"
-                " VALUES ((SELECT id FROM photos WHERE path = ?),?,?,?,?,?)",
-                (r"D:\Pictures\a.jpg", "[0,0,1,1]", np.asarray(emb, dtype=np.float32).tobytes(),
-                 name, person_of(index.conn, name) if name else None, excluded))
+            add_face(index.conn, r"D:\Pictures\a.jpg", "[0,0,1,1]", np.asarray(emb, dtype=np.float32).tobytes(),
+                     name=name, tag_id=person_of(index.conn, name) if name else None, excluded=excluded)
         index.conn.commit()
         self.index = index
 

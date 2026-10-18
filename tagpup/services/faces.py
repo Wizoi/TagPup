@@ -588,10 +588,11 @@ def panel(library, photo_path, named):
 # (tagpup.ml.faces), and the named faces a new one is compared with. PhotoIndex held a
 # wrapper for each (docs/ARCHITECTURE.md, phase 5.5).
 
-def _insert_detected(conn, photo_path, face):
-    """A face as the face model found it: unnamed (a detection names nobody; its photo's tag may name it after: face_tags)."""
+def _insert_detected(conn, photo_path, face, model):
+    """A face as the face model found it: unnamed (a detection names nobody; its photo's tag may name it after: face_tags),
+    its vector filed under `model`, the key of the face model that found it (its `key`)."""
     faces.insert(conn, photo_path, face.get("box", []),
-                 np.array(face["embedding"], dtype=np.float32).tobytes(),
+                 np.array(face["embedding"], dtype=np.float32).tobytes(), model=model,
                  crop=face.get("crop_image"), prob=face.get("prob"))
 
 
@@ -628,8 +629,10 @@ def _record_detection(conn, photo_path, detector, detected):
     return faces_detected.record(conn, photo_path, detector, store_embeddings.stamp_of(photo_path), len(detected))
 
 
-def record_detected(db_path, photo_path, detected, detector=None):
-    """Record the faces found in a photo only when it has none yet. Returns rows inserted.
+def record_detected(db_path, photo_path, detected, *, model, detector=None):
+    """Record the faces found in a photo only when it has none yet, their vectors under `model`, the key of the face model
+    that found them (tagpup.ml.faces.FaceModel.key): never the library's setting, which may have moved since. Returns rows
+    inserted.
 
     Never deletes: record_batch(overwrite=True) clears the photo's rows first, which would discard
     manual names and exclusions. This is for callers that detected faces as a side
@@ -666,7 +669,7 @@ def record_detected(db_path, photo_path, detected, detector=None):
         for face in detected:
             if face.get("embedding") is None:
                 continue
-            _insert_detected(conn, photo_path, face)
+            _insert_detected(conn, photo_path, face, model)
             inserted += 1
         if inserted:
             face_tags.name_paths(conn, [photo_path])   # the photo's person tag names its face (#788)
@@ -684,8 +687,9 @@ def record_detected(db_path, photo_path, detected, detector=None):
         )
         return 0
 
-def record_batch(conn, batch, overwrite=False, detector=None):
-    """Record the faces found in a batch of photos ({path: faces}) in one transaction.
+def record_batch(conn, batch, *, model, overwrite=False, detector=None):
+    """Record the faces found in a batch of photos ({path: faces}) in one transaction, their vectors under `model`, the key
+    of the face model that found them (tagpup.ml.faces.FaceModel.key).
 
     By default a photo that already has face rows is left alone. Those rows carry
     assigned names, manual overrides, exclusions and cached crops, and re-detection
@@ -710,7 +714,7 @@ def record_batch(conn, batch, overwrite=False, detector=None):
             faces.remove_for_photo(conn, photo_path)
             _record_detection(conn, photo_path, detector, detected)
             for face in detected:
-                _insert_detected(conn, photo_path, face)
+                _insert_detected(conn, photo_path, face, model)
             if detected:
                 recorded.append(photo_path)
         # The photos' person tags name their faces (#788), once the batch's faces are all there.

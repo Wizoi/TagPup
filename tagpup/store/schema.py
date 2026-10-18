@@ -7,7 +7,8 @@ tree, which made its own table when it saved. Each carried its own idea of the s
 
 A migration runs once per library, in order, and `schema_version` records it. The
 first, version 32 (`BASELINE`), makes a NEW library directly in the schema as it stood after the
-thirty-second step of the old chain; a later one (33 on) is an ordinary step forward. A library below the
+thirty-second step of the old chain; a later one (33 on) is an ordinary step forward, which a new library takes too,
+right after the baseline, from the same runner. A library below the
 baseline is refused (`TooOld`), not converted: the steps 1 to 32 were deleted on 2026-10-15
 (owner decision: no plan to bring up older versions), and the snapshots and backups below 32 can no longer
 be restored. Before that, the conversions of libraries older than 2026-09 had retired on 2026-09-24.
@@ -193,7 +194,8 @@ def row_key(key):
 
 def _baseline(conn):
     """A NEW library, made directly in the schema a library had after migration 32 (owner, 2026-10-15: migrations 1 to 32 are
-    collapsed; the next is 33). Every table, index and trigger of that schema, in the one transaction the runner gives it: a
+    collapsed; the steps from 33 follow it, on a new library as on a kept one). It is frozen: what a later step changes is
+    that step's, not an edit here, so a library made today and one kept since 32 are one schema. Every table, index and trigger of that schema, in the one transaction the runner gives it: a
     failure leaves a library with no table, which the next open makes again. Not a migration of an older library: one below
     BASELINE is refused (`_migrate`). Checked once against the library the old chain made and the three live libraries
     (2026-10-15: every table, column, index, foreign key and trigger identical; docs/DATABASE.md, "The baseline")."""
@@ -230,8 +232,8 @@ def _baseline(conn):
         "CREATE TABLE job_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, library TEXT COLLATE NOCASE,"
         " started TEXT NOT NULL, finished TEXT, outcome TEXT NOT NULL CHECK"
         " (outcome IN ('running', 'done', 'failed', 'abandoned')), changed TEXT, owner TEXT, note TEXT)",
-        # The folders asked to be added, the photos whose faces are to be detected (a mark whose photo is gone is read as none)
-        # and those whose faces were detected, and the library's roots (tagpup.store.added_folders, faces_detected, roots).
+        # The folders asked to be added, the photos whose faces are to be detected (a mark whose photo is gone is read as none;
+        # migration 33 drops it) and those whose faces were detected, and the library's roots (tagpup.store.added_folders, faces_detected, roots).
         "CREATE TABLE added_folders (path TEXT PRIMARY KEY COLLATE %s, subfolders INTEGER NOT NULL, added TEXT NOT NULL)"
         % paths.COLLATE,
         "CREATE TABLE faces_pending (photo_id INTEGER PRIMARY KEY, since TEXT NOT NULL)",
@@ -596,12 +598,79 @@ def _tally(seen, moved):
     return problems + ["%s: a row moved to another rowid" % table for table in moved]
 
 
+#: The key the face vectors every library held before migration 33 are kept under: FaceNet's, as the faces.model setting
+#: names it (tagpup.core.validation.MTCNN_FACENET). Spelled here, not imported: a migration is frozen.
+FACENET_KEY = "mtcnn-facenet"
+
+#: FaceNet's vector: 512 float32, the length every face's embedding had in the three live libraries (2026-10-18).
+FACENET_BYTES = 2048
+
+
+class FaceVectorsCopied(Check):
+    """Migration 33's own: before, every face holds FaceNet's vector (a blob of FACENET_BYTES), or nothing is changed; after,
+    `face_embeddings` holds one row under FACENET_KEY for each face there was, and `faces` holds no vector."""
+    name = "every face's vector copied"
+
+    def before(self, conn, migration):
+        bad = conn.execute("SELECT COUNT(*) FROM faces WHERE typeof(embedding) != 'blob' OR LENGTH(embedding) != ?",
+                           (FACENET_BYTES,)).fetchone()[0]
+        _require(self.name, ["%d face(s) hold no vector of FaceNet's length (%d bytes), which the migration would file as "
+                             "FaceNet's: nothing was changed; restore the library from a snapshot taken before they were "
+                             "written, or remove those faces, and open it again" % (bad, FACENET_BYTES)] if bad else [])
+        return _count(conn, "faces")
+
+    def after(self, conn, migration, state):
+        problems = []
+        copied = conn.execute("SELECT COUNT(*) FROM face_embeddings WHERE model = ?", (FACENET_KEY,)).fetchone()[0]
+        if copied != state:
+            problems.append("%d face(s) and %d vector(s) under %s" % (state, copied, FACENET_KEY))
+        if "embedding" in table_columns(conn, "faces"):
+            problems.append("faces.embedding is still there")
+        return problems
+
+
+def _face_vectors_in_a_table_of_their_own(conn):
+    """Migration 33 (owner, 2026-10-16 and 2026-10-18): each face's vector moves to `face_embeddings`, keyed by the face and the
+    face model that made it, FaceNet's for every one a library holds (FACENET_KEY; FaceVectorsCopied refuses a face whose vector
+    is not FaceNet's length), and `faces.embedding` is dropped: a vector has one home, and another model's sit beside it. A
+    face's vectors go with the face (a trigger, as its crop does), and a vector written or removed moves the faces generation
+    as a face's name does. With it the two drops parked on 2026-10-15: `faces_pending`, which nothing reads or writes (0 rows in
+    the three live libraries), and `idx_faces_name`, the first column of `idx_faces_person (name, tag_id)`, which serves every
+    lookup by name in its place (#1472). No statement says IF EXISTS: every library at 32 has what it drops. One transaction
+    (the runner's): interrupted at any statement, nothing of it is committed and the library is at 32."""
+    conn.execute("DROP TABLE faces_pending")
+    conn.execute("DROP INDEX idx_faces_name")
+    conn.execute("CREATE TABLE face_embeddings (face_id INTEGER NOT NULL REFERENCES faces(id) ON DELETE CASCADE,"
+                 " model TEXT NOT NULL, vector BLOB NOT NULL, PRIMARY KEY (face_id, model))")
+    copied = conn.execute("INSERT INTO face_embeddings (face_id, model, vector) SELECT id, ?, embedding FROM faces ORDER BY id",
+                          (FACENET_KEY,)).rowcount
+    conn.execute("CREATE TRIGGER face_embeddings_go_with_their_face AFTER DELETE ON faces"
+                 " BEGIN DELETE FROM face_embeddings WHERE face_id = OLD.id; END")
+    # The faces generation's update trigger names the column, and SQLite drops a column a trigger names without a word: made
+    # again without it, before the drop.
+    bump = "BEGIN UPDATE generations SET value = value + 1 WHERE name = 'faces'; END"
+    conn.execute("DROP TRIGGER generation_faces_update")
+    conn.execute("CREATE TRIGGER generation_faces_update AFTER UPDATE OF name, name_source, excluded, photo_id, tag_id ON faces "
+                 + bump)
+    for event in ("insert", "update", "delete"):
+        conn.execute("CREATE TRIGGER generation_face_embeddings_%s AFTER %s ON face_embeddings %s" % (event, event.upper(), bump))
+    conn.execute("ALTER TABLE faces DROP COLUMN embedding")
+    return {"face vectors": copied}
+
+
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
               "converted (steps 1 to 32 were deleted on 2026-10-15)",
               (),
               (RowsKept(),) + STANDARD),
+    # Among what it touches, `faces` (rewritten without its vectors) and `face_embeddings`: the foreign keys of each and of
+    # every table naming them, and their integrity. Every table's rows are counted (RowsKept), and every vector (its own check).
+    Migration(33, "face vectors in face_embeddings", _face_vectors_in_a_table_of_their_own, DESTRUCTIVE,
+              "drops faces.embedding once each vector is copied under FaceNet's key, and drops faces_pending (empty in every "
+              "live library) and a redundant index; one backup first, no undo",
+              ("faces_pending", "faces", "face_embeddings"),
+              (RowsKept(but=("faces_pending",)), FaceVectorsCopied()) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version
