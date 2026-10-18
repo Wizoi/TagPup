@@ -22,8 +22,10 @@ shows (Views, Integration).
 
 Unfinished work: 0 `derived_pending`, 0 files `writing`, 1 `conflict` file (a changed file, as designed). The doctor reports
 0 broken rules on all three. Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
-listed "too old to restore". No migration is in flight: migration 33 is written and parked on a branch (DECISIONS
-2026-10-15, no schema work now).
+listed "too old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
+`faces_pending` and `idx_faces_name`) is the one in flight (DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD"): the
+three libraries are at 32 (counted 2026-10-18) and reach 33 when the owner installs again; no other migration until it has
+run on all three. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
 
 ## The contract other domains rely on
 
@@ -42,6 +44,7 @@ listed "too old to restore". No migration is in flight: migration 33 is written 
 | Files, Views, Integration | `store.roots`: a row's path form only at the store boundary | `test_roots_store`, `test_roots_scenarios` |
 | People | `removals`: a person taken off a photo blocks naming that face as them | `test_faces_and_tags_in_step`, `test_two_cousins_called_alike` |
 | Files, Views | `faces_detected`, `added_folders`, `job_runs` | `test_faces_detected_record`, `test_rows_only_in_folders_added`, `test_sync_records` |
+| People (`store.faces`) | `store.faces.model_key` reads `store.settings.face_model` on the reader's own connection: a face's vector (`face_embeddings`, keyed by face and model) is read under the library's `faces.model`, in the reader's transaction | `test_the_new_face_model_writes_nothing` (V11 (c)), `test_journal_keys_and_cascades` |
 
 ## The seven conditions (2026-10-15)
 
@@ -65,13 +68,18 @@ listed "too old to restore". No migration is in flight: migration 33 is written 
 ## By design (each row closed `decided:`)
 
 - **#464, #1382**: no runner check of a migration's declared `touches`, nor of the AUTOINCREMENT counters. Both guard only a
-  migration above 32; none exists (33 is parked). The rule instead: a migration branch carries, in its own branch, a check of
+  migration above 32; the one there is, 33, is destructive (it claims no undo exemption) and rebuilds no AUTOINCREMENT
+  table (`DROP COLUMN` rewrites `faces` in place; `sqlite_sequence.faces` equals `MAX(faces.id)` in the three libraries (302,954, 10,241 and 3,329, counted 2026-10-18, read-only, at 32)). The rule instead: a migration branch carries, in its own branch, a check of
   an additive step's `touches` if it claims the undo exemption, and a check that no `sqlite_sequence` counter goes down if it
   rebuilds an AUTOINCREMENT table.
 - **#1375**: a library whose making failed holds only `schema_version`. The three libraries each have their 33 tables, and
   every entry that makes a library runs `ensure`, which makes it whole.
-- **#1088, #1277**: `faces_pending`, the `pruned` value of the `changes.status` CHECK and `idx_faces_name` are still made by
-  the baseline and nothing reads them; they go with the parked migration 33 (DECISIONS 2026-10-15).
+- **#1088, #1277**: `faces_pending` and `idx_faces_name` go with migration 33. The `pruned` value of the `changes.status`
+  CHECK stays: dropping it rebuilds the journal's `changes` table for nothing (DECISIONS 2026-10-18, "AFTER MIGRATION 33",
+  to be confirmed by the owner).
+- **Migration 33's one long transaction** (about 30 s on photo_index, at the edge of the busy timeout): another process
+  that opens the library meanwhile can fail once with "database is locked", having written nothing. The runner's behaviour
+  since the first migration; the install note says to start one app first (DATABASE.md, section 10).
 - **Backups** do not expire by age; the 3/1/1 rotation and the newest five `before-*` copies are the only rule.
 - **A migration that rewrites values** is destructive: a full backup first and no undo (DECISIONS 2026-10-15).
 

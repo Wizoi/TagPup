@@ -11,7 +11,9 @@ accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 
 `faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
 ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Measured:** phase 3's speed check (2026-10-18,
 section 7: SCRFD 10g in torch and AdaFace IR-101, about 1.8 hours for photo_index against 9.3, no second runtime;
-the choice is the owner's). **Next:** phase 3 not before about 2026-11-15. Update a phase's status
+the choice is the owner's). **Built:** migration 33 (2026-10-18, pulled forward: each face's vector in `face_embeddings`
+under its model's key, every reader keyed by the library's `faces.model`; it reaches the libraries at the next install).
+**Next:** merge 3, the pass. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
@@ -340,8 +342,14 @@ Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
   reads one photo at a time; the model does not read ahead of its own.
 - `faces.detect_max_side` does not apply to the new model: it fits each photo into its two squares itself.
 - The new model's vectors go only to `face_embeddings`, under its model key; never to `faces.embedding`.
-- Migration 33 extends `KEPT_FACE_MODELS` (and with it what `faces.model` can be set to and written under): until it
-  has run on a library, the refusal above stands for it.
+- The pass extends `KEPT_FACE_MODELS` (and with it what `faces.model` can be written under), not migration 33
+  (DECISIONS 2026-10-18, "AFTER MIGRATION 33"): until the pass, the refusal above stands.
+- The pass runs while the library is still on FaceNet (the setting switches only at the gate), so every reader keyed by the
+  library reads FaceNet's while it writes the new model's. It needs, in `tagpup.store.faces` as their one owner and named
+  before they are built: a reader with an EXPLICIT key (what the new model's vectors already hold, to resume and to compare
+  at the gate) and a journaled add-vector writer, which adds a vector row under the new key to an existing face
+  (`journal.KEYS` has `face_embeddings` already). `tests/face_rows.add_vector_of_face` (INSERT OR REPLACE) is a
+  fixture's, not that writer.
 - The pass is not in `tagpup.web.lifecycle.under_way`, the one list a drain, Activity and the roots' moves read: run
   in the server, an update would not wait for it. So the pass is a process of its own (the CLI) with its own
   `Runtime`, the graphics card shared through `gpu.Card` as the CLI's index shares it, or it is listed in `under_way`

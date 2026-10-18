@@ -228,7 +228,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
 ## Data model on one page
 
 One SQLite file per library (`data/<name>.db`, WAL, the baseline (schema 32: a new library is made whole; one below it is refused, DATABASE.md, section 10) and the
-steps after it, from 33 (which drops the empty `faces_pending` and `idx_faces_name`), in `tagpup.store.schema`; each runs in one transaction with its checks, and only a destructive one takes a backup). Columns are in
+steps after it, from 33 (each face's vector moved to `face_embeddings`, keyed by the face model, and the empty `faces_pending` and `idx_faces_name` dropped), in `tagpup.store.schema`; each runs in one transaction with its checks, and only a destructive one takes a backup). Columns are in
 [DATABASE.md](DATABASE.md). Every table has one kind and one writer.
 
 **Ids.** A photo is `photos.id` (an integer kept across renames and moves; `path` is an attribute, and
@@ -256,7 +256,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 |---|---|---|
 | File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, `refresh_rows`, `record_tags_in_index` (`store/photos.py`) |
 | Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
-| Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `suggestions`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
+| Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `face_embeddings` (a face's vector under the model that made it, read under the library's `faces.model`: `store.faces.model_key`), `suggestions`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
 | Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs` (the recurring jobs' runs, and the syncs: `sync-whole`, `sync-folder`) | `store/schema.py`, `store/generations.py`, `store/job_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |
 
