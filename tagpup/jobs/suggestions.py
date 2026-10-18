@@ -48,6 +48,7 @@ from tagpup.core import paths
 from tagpup.core.gpu_turns import Cancelled, OtherModelsInUse
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import libraries, suggester
+from tagpup.services.settings import FaceModelNotReady
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +128,15 @@ def _end(model):
             logger.error("Could not end a suggestion run: %s", e)
 
 
+#: What refuses a run before it begins, and says all there is to say: another run's models (OtherModelsInUse), or a
+#: library set to a face model whose vectors it cannot keep (FaceModelNotReady).
+_REFUSALS = (OtherModelsInUse, FaceModelNotReady)
+
+
 def _log_failure(line, folder, error):
-    """A run that failed, in the log: with its traceback, unless it was refused for another run's models
-    (OtherModelsInUse), which is expected and says all there is to say."""
-    if isinstance(error, OtherModelsInUse):
+    """A run that failed, in the log: with its traceback, unless it was refused (_REFUSALS, itself or what a run that
+    only looks says it of), which is expected."""
+    if isinstance(error, _REFUSALS) or isinstance(error.__cause__, _REFUSALS):
         logger.info("Suggest of %s was refused: %s", folder, error)
     else:
         logger.exception(line, folder, error)

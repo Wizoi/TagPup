@@ -826,7 +826,9 @@ class Runtime:
     def _warm(self, library, settings, what):
         """warm_up's loading, under its lease."""
         try:
-            models = (self.clip(library, settings), self.faces(library, settings))
+            # The face models first: a library refused its face model (Runtime.faces) has no CLIP model built either.
+            faces = self.faces(library, settings)
+            models = (self.clip(library, settings), faces)
         except Exception as e:
             logger.error("Could not make the models to warm them up: %s", e)
             return
