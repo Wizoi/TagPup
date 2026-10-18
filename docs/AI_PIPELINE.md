@@ -320,10 +320,12 @@ locked, in its own group "face-model", "The face model", whose consequences say 
 detection group's are MTCNN's; the dialog offers it as a list of the rule's choices; a library holding no value reads as
 the default). A library set to a model whose vectors it
 cannot keep (`tagpup.services.settings.KEPT_FACE_MODELS`, FaceNet's alone) is refused every write of faces with one
-sentence (`FACE_MODEL_NOT_KEPT`): the CLI's index before it writes or imports anything (exit status 78; the server's
-queue says "Nothing was indexed: ..."), Suggest and Just look at `Runtime.begin` (`FaceModelNotReady`, nothing built),
-and the warm-up, which builds nothing for it. Identify reads the faces the library holds, unaffected. A look that
-writes nothing builds the new model by `Runtime.look_at_faces`: held as a run is (a Suggest on the other set is refused
+sentence (`FACE_MODEL_NOT_KEPT`): Add in TagPup and TagTuner (`tagpup.services.libraries.add`) before the folder is
+recorded or queued; the CLI's index before it writes or imports anything, asked of both its reads of the settings
+(exit status 78; the server's queue says "Nothing was indexed: ..."); Suggest and Just look at `Runtime.begin`
+(`FaceModelNotReady`, nothing built); and the warm-up, which builds nothing for it and says so at INFO, a refusal as
+Suggest's are (`tagpup.jobs.suggestions.REFUSALS`). Identify reads the faces the library holds, unaffected. A look that
+writes nothing builds the new model, and only it, by `Runtime.look_at_faces`: held as a run is (a Suggest on the other set is refused
 beside it, and it beside one), the card taken once at its first use and let go, the model with it, at `end()`.
 Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
 
@@ -339,6 +341,10 @@ Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
 - The new model's vectors go only to `face_embeddings`, under its model key; never to `faces.embedding`.
 - Migration 33 extends `KEPT_FACE_MODELS` (and with it what `faces.model` can be set to and written under): until it
   has run on a library, the refusal above stands for it.
+- The pass is not in `tagpup.web.lifecycle.under_way`, the one list a drain, Activity and the roots' moves read: run
+  in the server, an update would not wait for it. So the pass is a process of its own (the CLI) with its own
+  `Runtime`, the graphics card shared through `gpu.Card` as the CLI's index shares it, or it is listed in `under_way`
+  before it runs in the server.
 
 ### Phase 4: Matching, with the new model
 
