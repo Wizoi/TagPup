@@ -567,9 +567,10 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
                                                                   store_faces.name(conn, [tobin], "Tobin Quill")))
         self.together = self.photo_tagged("together.jpg", ["Mara Quill", "Tobin Quill"])
         face = self.add_face(self.together, at(between), box=(0, 0, 200, 200))
-        if carried:
-            db.write_with_connection(self.db_path, lambda conn: conn.execute(
-                "UPDATE faces SET name = ?, tag_id = ? WHERE id = ?", (carried, face_rows.person_of(conn, carried), face)))
+        if carried:   # written as a run writes its guesses (store.faces.set_names)
+            written = db.write_with_connection(self.db_path, lambda conn: store_faces.set_names(
+                conn, {face: face_rows.person_of(conn, carried)}, {face: None})[0])
+            self.assertEqual([face], written)
         return face
 
     def library(self):
