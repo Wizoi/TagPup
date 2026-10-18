@@ -14,9 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 from face_rows import FACENET  # noqa: E402
 import migration_names  # noqa: E402
-from journal_library import JournalLibrary  # noqa: E402
+from journal_library import JournalLibrary, jpeg, vector  # noqa: E402
 
-from tagpup.store import db, journal, schema  # noqa: E402
+from tagpup.store import db, faces, journal, schema  # noqa: E402
 
 
 class Crash(BaseException):
@@ -241,6 +241,58 @@ class Refusals(JournalLibrary):
         self.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, x'ffd8ffd9')", (face,))
         message = self.refused(lambda: journal.undo(self.db_path, applied.change_id))
         self.assertIn("faces %d has rows in face_crops made since" % face, message)
+
+
+class AFacePassFolderUndone(JournalLibrary):
+    """The new face model's pass gives a folder's photos new faces, each with its crop and its vector under the new
+    model's key and no other, as ONE journaled change: it writes the rows and records them (journal.record with no rows,
+    then journal.record_rows), as tagpup.store.face_batches does. The owner undoes the folder: the faces go with the
+    crop and the vector the same change gave them, and come back the same when written again. A row of another
+    change under such a face (a vector a later run added under another model) still refuses the undo, and says so."""
+    NEW_MODEL = "scrfd-adaface"
+
+    def pass_gives_a_face(self):
+        """(change id, face id) of one change that gave the photo "prize" a face, its crop and its vector."""
+        photo = self.query("SELECT path FROM photos WHERE id = ?", (self.ids["prize"],))[0][0]
+
+        def work(conn):
+            face = faces.insert(conn, photo, [40, 40, 140, 160], vector(7), model=self.NEW_MODEL, crop=jpeg(7), prob=0.93)
+            change_id = journal.record(conn, "face pass: Harbour Regatta", [], {"faces": 1})
+            rows = []
+            for table, key in (("faces", (face,)), ("face_crops", (face,)), ("face_embeddings", (face, self.NEW_MODEL))):
+                columns = schema.table_columns(conn, table)
+                where = " AND ".join('"%s" = ?' % c for c in journal.KEYS[table])
+                values = conn.execute('SELECT %s FROM "%s" WHERE %s' % (", ".join('"%s"' % c for c in columns), table,
+                                                                       where), key).fetchone()
+                rows.append(journal.RowChange("insert", table, key, None, dict(zip(columns, values))))
+            journal.record_rows(conn, change_id, rows)
+            return change_id, face
+        return db.write_with_connection(self.db_path, work)
+
+    def test_the_folder_undone_takes_its_faces_crops_and_vectors_and_written_again_gives_them_back(self):
+        before = self.dump()
+        change_id, face = self.pass_gives_a_face()
+        given = self.dump()
+        self.assertEqual(1, len(self.query("SELECT 1 FROM face_embeddings WHERE face_id = ?", (face,))))
+        rehearsal = journal.rehearse_undo(self.db_path, change_id)
+        self.assertEqual((None, True), (rehearsal.refused, rehearsal.exact), "undone and written again, the rows are as given")
+        self.assertEqual(given, self.dump(), "a rehearsal writes nothing")
+        undone = journal.undo(self.db_path, change_id)
+        self.assertEqual(3, undone.rows)
+        self.assertEqual(before, self.dump())
+        for table in ("face_crops", "face_embeddings"):
+            self.assertEqual([], self.query("SELECT 1 FROM %s WHERE face_id = ?" % table, (face,)))
+
+    def test_a_vector_another_change_added_since_still_refuses_the_undo(self):
+        change_id, face = self.pass_gives_a_face()
+        journal.apply(self.db_path, "vectors", [journal.insert("face_embeddings", {"face_id": face, "model": FACENET,
+                                                                                    "vector": vector(8)})])
+        before = self.dump()
+        with self.assertRaises(journal.Refusal) as caught:
+            journal.undo(self.db_path, change_id)
+        self.assertIn("faces %d has rows in face_embeddings made since" % face, str(caught.exception))
+        self.assertNotIn("face_crops", str(caught.exception), "its own crop stands in no way")
+        self.assertEqual(before, self.dump(), "a refusal wrote")
 
 
 class Crashes(JournalLibrary):
