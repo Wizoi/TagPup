@@ -443,21 +443,32 @@ class KnownFaces:
         by the `columns` it came with, of `among` (everyone in it, without) but those in `skip`; the first of a tie in
         `among`'s order, or the columns'; (None, None, None) with nobody to compare. The columns travel with the row, so a
         person added since cannot shift what it is read as."""
-        names = [name for name in (columns if among is None else among) if name in columns and name not in skip]
-        found = ranked(row[[columns[name] for name in names]] if names else row[:0], 1)
-        if not found:
+        if among is None:   # everyone: the skipped masked, not a list of everyone made a face (the last pass asks 96,000)
+            names, values = list(columns), KnownFaces._without(row, columns, skip)
+        else:
+            names = [name for name in among if name in columns and name not in skip]
+            values = row[[columns[name] for name in names]] if names else row[:0]
+        column, likeness, margin = (float(each[0]) for each in best_of(values))
+        if column < 0:
             return (None, None, None)
-        column, likeness, margin = found[0]
-        return (names[column], likeness, margin)
+        return (names[int(column)], likeness, margin)
 
     @staticmethod
     def margin_of(row, columns, name, skip=()):
         """The margin (`margins`) of `name` over everyone else of `row`, a row of likeness_table read by its `columns`, but
         those in `skip`: NaN when `name` has no likeness in it."""
-        names = [each for each in columns if each == name or each not in skip]
-        if name not in names:
+        if name not in columns:
             return float("nan")
-        return float(margins(row[[columns[each] for each in names]])[names.index(name)])
+        return float(margins(KnownFaces._without(row, columns, skip, keep=name))[columns[name]])
+
+    @staticmethod
+    def _without(row, columns, skip, keep=None):
+        """`row` with the people of `skip` but `keep` left out (NaN, which `margins` reads as no likeness)."""
+        values = np.array(row, dtype=np.float64)
+        for name in skip:
+            if name != keep and name in columns:
+                values[columns[name]] = np.nan
+        return values
 
     def likeness_table(self, faces, among=None):
         """likeness of each of `faces`, [(embedding, year, photo)], against every person, or the people `among` that are

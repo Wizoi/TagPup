@@ -22,6 +22,7 @@ named as well as the likeness (tagpup.core.clustering.margins; owner, 2026-10-17
 face that carries the person already is asked none (`margin_asked`), so a rerun takes away no name the margin would not give.
 """
 import collections
+import contextlib
 import json
 import logging
 import math
@@ -118,6 +119,10 @@ STEP = 2000
 
 #: How many rounds the names propagate through the photos' people before the last matching.
 MAX_ITERATIONS = 5
+
+#: How many photos a round settles together, so that the margins its pairing asks are read from one table (`resolve`):
+#: a table a photo made the pairing's margin cost 19 s of photo_index's 216.
+AHEAD = 2000
 
 
 def margin_asked(face, person, margin):
@@ -459,11 +464,15 @@ def resolve(photo_index, on_step=None):
         def closest_to(name, embedding, photo_path):
             return known.likeness(name, embedding, photo_years.get(photo_path), photo_path)
 
-        new_resolved_names = {}
-        
-        for number, (p_path, photo_faces) in enumerate(faces_by_photo.items()):
-            if number and number % STEP == 0:
-                step("propagating", iteration, MAX_ITERATIONS)
+        # The photos of a round are settled AHEAD at a time, each up to its pairing, then the faces all of them pair are read
+        # from one table against everyone named (KnownFaces.likeness_table), then each is finished, in order: its pairing's
+        # likenesses and margins are that table's rows. Inside a round `known` and the names it reads do not change, so a
+        # photo settles as it did alone; and a row is the column likeness reads, so the names are those it gave (2026-10-17,
+        # face by face on copies of the three libraries). The pairing asked likeness a face and a person at a time: 46 s.
+        def settle(number, p_path, photo_faces):
+            """One photo of the round: yields the faces its pairing compares, is sent their rows, and records what the
+            round found for its faces."""
+            nonlocal assignment_counter
             # Get photo metadata people tags
             meta = meta_by_path.get(p_path)
             photo_tags = set(meta.get("people_ids", [])) if meta else set()
@@ -471,7 +480,7 @@ def resolve(photo_index, on_step=None):
 
             # Map of face_id -> resolved_name in this photo
             face_resolved = {f["id"]: current_resolved_names.get(f["id"]) for f in photo_faces}
-            
+
             # A name clustering gave is kept while the face still reaches the value
             # it was named at, against the person's closest face (tagpup.core.clustering)
             # -- unless the photo's own keywords name the person: the tag bears the name
@@ -492,7 +501,7 @@ def resolve(photo_index, on_step=None):
             decided = {f["id"] for f in photo_faces if f["id"] in manual_names}
             for fid in decided:
                 face_resolved[fid] = manual_names[fid]
-            
+
             # Tiny faces in the background are noise: they keep no name
             # (tagpup.core.clustering).
             background = clustering.background_faces([f.get("box") for f in photo_faces])
@@ -502,22 +511,22 @@ def resolve(photo_index, on_step=None):
                     face_resolved[f["id"]] = None
                 else:
                     valid_photo_faces.append(f)
-            
+
             # Count occurrences of resolved names in this photo (only for valid faces)
             resolved_counts = {}
             for f in valid_photo_faces:
                 name = face_resolved.get(f["id"])
                 if name:
                     resolved_counts[name] = resolved_counts.get(name, 0) + 1
-            
+
             # Find names that appear multiple times in the same photo (conflicts)
             conflicting_names = {name for name, count in resolved_counts.items() if count > 1}
-            
+
             if conflicting_names:
                 for conf_name in conflicting_names:
                     # Find all valid faces in this photo that resolved to this name
                     conf_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) == conf_name]
-                    
+
                     # If a photo is trying to match 2 people to the same name for two
                     # different faces, match neither -- unless one was named by hand,
                     # which keeps it.
@@ -531,54 +540,34 @@ def resolve(photo_index, on_step=None):
                                 and f["id"] not in decided]
             assigned_names = {name for name in face_resolved.values() if name}
             unused_tags = photo_tags - assigned_names
-            
+
+            # 1. Match known tags using Hungarian algorithm
+            known_unused = [t for t in unused_tags if t in resolved_by_name] if unassigned_faces else []
+            rows = yield unassigned_faces if known_unused else []
+            if known_unused:
+                from scipy.optimize import linear_sum_assignment
+
+                cost_matrix = np.array([[2.0 if np.isnan(rows[f["id"]][columns[tag]]) else -float(rows[f["id"]][columns[tag]])
+                                         for tag in known_unused] for f in unassigned_faces])
+                row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+                # Assign matches as close as naming a face with no one looking allows, by the likeness and the margin over
+                # everyone else named but the people other faces of the photo hold (tagpup.core.clustering), read from the
+                # same row; a face that carries the person already is asked no margin (margin_asked).
+                for r, c in zip(row_ind, col_ind):
+                    f, tag = unassigned_faces[r], known_unused[c]
+                    margin = known.margin_of(rows[f["id"]], columns, tag, skip=assigned_names)
+                    if clustering.names_unasked(-cost_matrix[r, c], margin_asked(f, tag, margin)):
+                        face_resolved[f["id"]] = tag
+
             if unassigned_faces and unused_tags:
-                # Separate unused tags into known and unknown
-                known_unused = [t for t in unused_tags if t in resolved_by_name]
-                unknown_unused = [t for t in unused_tags if t not in resolved_by_name]
-                
-                # 1. Match known tags using Hungarian algorithm
-                if known_unused:
-                    from scipy.optimize import linear_sum_assignment
-                    
-                    cost_matrix = []
-                    for f in unassigned_faces:
-                        f_emb = np.array(f["embedding"])
-                        row_costs = []
-                        for tag in known_unused:
-                            similarity = closest_to(tag, f_emb, f["photo_path"])
-                            row_costs.append(2.0 if similarity is None else -similarity)
-                        cost_matrix.append(row_costs)
-                    
-                    cost_matrix = np.array(cost_matrix)
-                    row_ind, col_ind = linear_sum_assignment(cost_matrix)
-                    
-                    # Assign matches as close as naming a face with no one looking allows, by the likeness and the margin over
-                    # everyone else named but the people other faces of the photo hold (tagpup.core.clustering). The margin
-                    # needs the face against everyone: asked only of a pair the likeness lets through, and of a face that
-                    # does not carry the person already (margin_asked), in one table for the photo.
-                    pairs = [(unassigned_faces[r], known_unused[c], -cost_matrix[r, c]) for r, c in zip(row_ind, col_ind)]
-                    asked = [f for f, tag, similarity in pairs
-                             if f["person_id"] != tag and clustering.names_unasked(similarity, math.inf)]
-                    rows = {}
-                    if asked:
-                        table, columns = known.likeness_table(
-                            [(f["embedding"], photo_years.get(f["photo_path"]), f["photo_path"]) for f in asked])
-                        rows = {f["id"]: row for f, row in zip(asked, table)}
-                    for f, tag, similarity in pairs:
-                        # A pair not asked carries the person (no margin is asked of it) or is short of the likeness (refused
-                        # whatever the margin).
-                        margin = known.margin_of(rows[f["id"]], columns, tag, skip=assigned_names) if f["id"] in rows else math.inf
-                        if clustering.names_unasked(similarity, margin_asked(f, tag, margin)):
-                            face_resolved[f["id"]] = tag
-                            
                 # Refresh lists for unknown matching
                 unassigned_faces = [f for f in valid_photo_faces if face_resolved.get(f["id"]) is None
                                 and f["id"] not in decided]
                 assigned_names = {name for name in face_resolved.values() if name}
                 unused_tags = photo_tags - assigned_names
                 unknown_unused = [t for t in unused_tags if t not in resolved_by_name]
-                
+
                 # 2. Match unknown tags by process of elimination: every other face of the photo is somebody, so the one
                 # face left is the one person left. Two faces and two such people are a tie and not paired: nothing tells
                 # which is whose, and pairing them by the order of their ids wrote a coin toss as a name (owner, 2026-10-15,
@@ -596,7 +585,7 @@ def resolve(photo_index, on_step=None):
                 old_val = current_resolved_names.get(fid)
                 new_val = face_resolved.get(fid)
                 new_resolved_names[fid] = new_val
-                
+
                 if old_val != new_val:
                     if new_val:
                         assignment_counter += 1
@@ -619,7 +608,24 @@ def resolve(photo_index, on_step=None):
                             "assignment_order": None,
                             "trigger_photos": []
                         }
-        
+
+        _empty, columns = known.likeness_table([])
+        photos_in_order = list(faces_by_photo.items())
+        new_resolved_names = {}
+        for begin in range(0, len(photos_in_order), AHEAD):
+            step("propagating", iteration, MAX_ITERATIONS)
+            pending, asked = [], []
+            for number, (p_path, photo_faces) in enumerate(photos_in_order[begin:begin + AHEAD], begin):
+                work = settle(number, p_path, photo_faces)
+                asked += next(work)
+                pending.append(work)
+            table, _columns = known.likeness_table(
+                [(f["embedding"], photo_years.get(f["photo_path"]), f["photo_path"]) for f in asked])
+            rows = {f["id"]: row for f, row in zip(asked, table)}
+            for work in pending:   # in the photos' order: the round records what it found as one photo at a time did
+                with contextlib.suppress(StopIteration):
+                    work.send(rows)
+
         # Check if there were any changes in assignment compared to the previous iteration
         changed = False
         for fid, val in new_resolved_names.items():
