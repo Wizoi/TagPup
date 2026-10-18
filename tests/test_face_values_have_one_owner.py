@@ -129,7 +129,8 @@ SORTS_OF_OTHER_THINGS = {
     os.path.join("tagpup", "services", "suggester.py"): 4,
     os.path.join("tagpup", "store", "face_tags.py"): 5,
 }
-READS_CLUSTERING = re.compile(r"from tagpup\.core import [^\n]*\bclustering\b|\bimport clustering\b")
+READS_CLUSTERING = re.compile(r"from tagpup\.core import [^\n]*\bclustering\b|\bimport clustering\b"
+                              r"|from tagpup\.core\.clustering import|import tagpup\.core\.clustering\b")
 
 
 class TheMarginIsWorkedOutOnce(unittest.TestCase):
@@ -160,6 +161,9 @@ class TheMarginIsWorkedOutOnce(unittest.TestCase):
                          "np.partition(row, -2)", "np.argpartition(row, -2)", "np.nanargmax(row)", "values.sort()"):
             self.assertTrue(TOP_OF_A_ROW.search(spelling), spelling)
         self.assertIsNone(TOP_OF_A_ROW.search('name, _, rest = text.partition(":")'))   # a string's partition is no margin
+        for importing in ("from tagpup.core import clustering", "from tagpup.core import dates, clustering as face_rules",
+                          "from tagpup.core.clustering import margins", "import tagpup.core.clustering"):
+            self.assertTrue(READS_CLUSTERING.search(importing), importing)
 
 
 if __name__ == "__main__":
