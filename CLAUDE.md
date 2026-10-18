@@ -160,7 +160,7 @@ reviewed once by each owner: it adds no debt, or it is refused. No schema work w
   whole; a deletion is never over budget (DECISIONS 2026-10-16).
 - **At most two review rounds**, the ownership question ("which single place should own this?") in the second; a round
   after it only for a finding that can change a file or lose data. A finding carries a severity: `data` (can lose or
-  corrupt data), `wrong` (a wrong result the owner sees), `low`. Only `data` and `wrong` block a merge.
+  corrupt data), `wrong` (a wrong result the owner sees), `low`. Only `data` and `wrong` block a merge; a merge or phase-end report quotes `tools/add_findings.py --open`.
 - **One migration in flight at a time**: no new migration until the last one is installed
   and has run on the three live libraries.
 - **A new feature's brief states its live count** (how many rows or cases in the three
