@@ -189,7 +189,7 @@ class KnownFaces:
     def __init__(self):
         self._faces = {}     # name -> [(unit embedding, year or None, photo key or None)]
         self._arrays = {}    # name -> (matrix, years, photos), made when first asked
-        self._everyone = None   # everyone's faces in one matrix (likeness_table), made when first asked
+        self._tables = {}    # None (everyone) or a tuple of people -> their faces in one matrix (_table), made when first asked
         self._building = threading.Lock()   # Suggest's workers share one KnownFaces: the matrix is made once (_table)
         self._photos = {}    # name -> the keys of the photos they have a face in, made when first asked
         self._eras = {}      # (name, year) -> _chosen for a photo they have no face in, made when first asked
@@ -213,7 +213,7 @@ class KnownFaces:
             (_unit(embedding), year, paths.key(photo) if photo else None))
         self._arrays.pop(name, None)
         self._photos.pop(name, None)
-        self._everyone = None
+        self._tables = {}
         if self._eras:
             self._eras = {}
         if label is not None:
@@ -274,28 +274,17 @@ class KnownFaces:
         `year`, leaving out `photo`'s own faces. None when they have no face to compare."""
         return self.likeness_many(name, [(embedding, year, photo)])[0]
 
-    #: Faces compared at once by likeness_many: a block of this many by all of a
-    #: person's faces is the largest matrix it holds.
+    #: Faces compared at once by likeness_table: a block of this many by all of the
+    #: people's faces is the largest matrix it holds.
     BLOCK = 1024
 
     def likeness_many(self, name, faces):
-        """likeness for each of `faces`, [(embedding, year, photo)], against `name`: one
-        matrix product for all of them, so a grid of thousands is one pass rather than
-        thousands."""
-        if name not in self._faces or not faces:
+        """likeness for each of `faces`, [(embedding, year, photo)], against `name`: `name`'s column of likeness_table,
+        so a grid of thousands is one pass rather than thousands."""
+        table, columns = self.likeness_table(faces, among=(name,))
+        if name not in columns:
             return [None] * len(faces)
-        matrix = self._of(name)[0]
-        found, masks = [], {}
-        for start in range(0, len(faces), self.BLOCK):
-            block = faces[start:start + self.BLOCK]
-            similarities = np.stack([_unit(e) for e, _y, _p in block]) @ matrix.T
-            for row, (_e, year, photo) in zip(similarities, block):
-                key = (year, paths.key(photo) if photo else None)
-                if key not in masks:
-                    masks[key] = self._chosen(name, year, key[1])
-                chosen = masks[key]
-                found.append(float(row[chosen].max()) if chosen.any() else None)
-        return found
+        return [value if value == value else None for value in table[:, columns[name]].tolist()]   # NaN is not itself
 
     def most_like(self, embedding, year=None, photo=None, among=None, skip=()):
         """(name, likeness) of the person `embedding` is most like, of `among` (everyone,
@@ -315,15 +304,15 @@ class KnownFaces:
         first = int(np.nanargmax(values))   # the first of the highest, as a person by person look kept it
         return (names[first], float(values[first]))
 
-    def likeness_table(self, faces):
-        """likeness of each of `faces`, [(embedding, year, photo)], against every person: (an array, a row a face and a
-        column a person, NaN where likeness is None; {person: their column}, for `best`). A block of faces against everyone's faces is one
-        matrix product, and the faces of one year share each person's years around it (`_chosen`, worked out once a
-        year); only a person with a face in the face's own photo is chosen again, without it. Clustering's last pass
-        asked likeness once a face and a person: 96,000 faces by 281 people on photo_index, over half an hour
-        (docs/findings.md, #1530)."""
-        names, matrix, starts, by_photo, eras, columns = self._table()
-        table = np.full((len(faces), len(names)), np.nan, dtype=np.float32)
+    def likeness_table(self, faces, among=None):
+        """likeness of each of `faces`, [(embedding, year, photo)], against every person, or the people `among` that are
+        known: (an array, a row a face and a column a person, NaN where likeness is None; {person: their column}, for
+        `best`). A block of faces against the people's faces is one matrix product, and the faces of one year share each
+        person's years around it (`_chosen`, worked out once a year); only a person with a face in the face's own photo
+        is chosen again, without it. Clustering's last pass asked likeness once a face and a person: 96,000 faces by 281
+        people on photo_index, over half an hour (docs/findings.md, #1530)."""
+        names, matrix, starts, by_photo, eras, columns = self._table(None if among is None else tuple(among))
+        table = np.empty((len(faces), len(names)), dtype=np.float32)   # every row is written whole
         if not names or not faces:
             return table, columns
         for start in range(0, len(faces), self.BLOCK):
@@ -332,10 +321,10 @@ class KnownFaces:
             for number, (row, (_e, year, photo)) in enumerate(zip(similarities, block)):
                 if year not in eras:
                     eras[year] = self._era(names, starts, year)
-                chosen, any_chosen = eras[year]
+                left_out, nobody = eras[year]
                 out = table[start + number]
-                maxima = np.maximum.reduceat(np.where(chosen, row, -np.inf), starts)
-                out[any_chosen] = maxima[any_chosen]
+                np.maximum.reduceat(row + left_out, starts, out=out)
+                out += nobody
                 key = paths.key(photo) if photo else None
                 for column in by_photo.get(key, ()):
                     name = names[column]
@@ -344,37 +333,37 @@ class KnownFaces:
                     out[column] = segment[picked].max() if picked.any() else np.nan
         return table, columns
 
-    def _table(self):
-        """(names, everyone's faces in one matrix, where each person's rows start, {photo key: the columns of the people
-        with a face in it}, {year: `_era`} as each year is first asked, {name: column}); made again after an `add`.
-        Made under a lock: Suggest's workers ask most_like of one KnownFaces at once, and each made its own copy of
-        everyone's faces (about 72 MB on photo_index), the last one kept. The lock is here, where the matrix is made, so
-        every caller that shares a KnownFaces is covered, not only the suggester's."""
-        everyone = self._everyone
-        if everyone is None:
+    def _table(self, among):
+        """(names, the faces of everyone or of `among` in one matrix, where each person's rows start, {photo key: the
+        columns of the people with a face in it}, {year: `_era`} as each year is first asked, {name: column}), kept for
+        each `among` until an `add`. Made under a lock: Suggest's workers ask most_like of one KnownFaces at once, and
+        each made its own copy of everyone's faces (about 72 MB on photo_index), the last one kept."""
+        table = self._tables.get(among)
+        if table is None:
             with self._building:
-                everyone = self._everyone
-                if everyone is None:
-                    everyone = self._everyone = self._build_table()
-        return everyone
+                table = self._tables.get(among)
+                if table is None:
+                    table = self._tables[among] = self._build_table(among)
+        return table
 
-    def _build_table(self):
-        """_table, made: each person's own arrays (`_of`) become views of everyone's matrix, not copies."""
-        names = list(self._faces)
-        for name in names:
-            self._of(name)
-        matrix = np.concatenate([self._arrays[name][0] for name in names]) if names else np.zeros((0, 0), np.float32)
+    def _build_table(self, among):
+        """_table, made: everyone's makes each person's own arrays (`_of`) views of its matrix; one person's is theirs."""
+        names = list(self._faces) if among is None else [name for name in dict.fromkeys(among) if name in self._faces]
+        mats = [self._of(name)[0] for name in names]
+        matrix = mats[0] if len(mats) == 1 else np.concatenate(mats) if mats else np.zeros((0, 0), np.float32)
         starts = np.cumsum([0] + [len(self._faces[name]) for name in names[:-1]]).astype(np.intp)
         by_photo = {}
         for column, name in enumerate(names):
             _matrix, years, photos = self._arrays[name]
-            self._arrays[name] = (matrix[starts[column]:starts[column] + len(photos)], years, photos)
+            if among is None:
+                self._arrays[name] = (matrix[starts[column]:starts[column] + len(photos)], years, photos)
             for key in {p for p in photos if p}:
                 by_photo.setdefault(key, []).append(column)
         return names, matrix, starts, by_photo, {}, {name: column for column, name in enumerate(names)}
 
     def _era(self, names, starts, year):
-        """(which of everyone's faces a face of `year` is compared with, from a photo none of them is in; whether each
-        person has any): `_chosen` for each person, side by side."""
+        """`_chosen` for each person side by side, for a face of `year` from a photo none of them is in, as two addends:
+        -inf on each face not compared with, NaN for each person with none to compare, else 0."""
         chosen = np.concatenate([self._chosen(name, year, None) for name in names])
-        return chosen, np.logical_or.reduceat(chosen, starts)
+        return (np.where(chosen, 0, -np.inf).astype(np.float32),
+                np.where(np.logical_or.reduceat(chosen, starts), 0, np.nan).astype(np.float32))

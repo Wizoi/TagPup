@@ -184,10 +184,10 @@ class FourWorkersShareEveryonesFaces(unittest.TestCase):
                                           for person in (1, 2, 3)])
         real, made = clustering.KnownFaces._build_table, []
 
-        def slow_build(self):
+        def slow_build(self, among):
             made.append(threading.get_ident())
             time.sleep(0.05)
-            return real(self)
+            return real(self, among)
 
         answers = []
         with mock.patch.object(clustering.KnownFaces, "_build_table", slow_build):
