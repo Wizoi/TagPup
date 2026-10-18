@@ -12,17 +12,24 @@
  * of that record only `type`, `isSidechain` and `message.usage` are looked at, never message text. A payload without
  * the path, a file that cannot be read, or anything else that goes wrong is a no-op: exit 0, nothing said. A broken
  * guard must never stop a prompt.
+ *
+ * A subagent has the same budget at a lower limit (retro 2026-10-18, action 3; the worker's context is held to
+ * WORKER_LIMIT): the same hook, run after a tool call (PostToolUse) with the subagent's `agent_id`, reads the
+ * subagent's own transcript (`<session>/subagents/agent-<id>.jsonl`, whose records are sidechain) and tells the
+ * worker to commit what it has and report.
  */
 import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import path from "node:path";
 
 export const LIMIT = 300000;
+export const WORKER_LIMIT = 150000;
 const CHUNK = 256 * 1024;
 const MOST = 8 * 1024 * 1024;
 
 /** The context of one transcript line if it is a main-session assistant call with usage, else null. An API error's
  * record carries a usage of zeros (20 records in the transcripts on 2026-10-16, 14 of them API errors): it is not
  * a call, so it is skipped. */
-export function contextOf(line) {
+export function contextOf(line, sidechain = false) {
   if (!line.includes('"assistant"') || !line.includes('"usage"')) return null;
   let record;
   try {
@@ -31,15 +38,15 @@ export function contextOf(line) {
     return null;
   }
   const usage = record?.message?.usage;
-  if (record?.type !== "assistant" || record.isSidechain || !usage || typeof usage !== "object") return null;
+  if (record?.type !== "assistant" || Boolean(record.isSidechain) !== sidechain || !usage || typeof usage !== "object") return null;
   const context = (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0) +
     (usage.cache_creation_input_tokens || 0);
   return context > 0 || usage.output_tokens > 0 ? context : null;
 }
 
 /** The context of the last assistant call in the transcript at `path`, read from its end, or null. */
-export function lastContext(path) {
-  const fd = openSync(path, "r");
+export function lastContext(file, sidechain = false) {
+  const fd = openSync(file, "r");
   try {
     const size = fstatSync(fd).size;
     let end = size;
@@ -52,7 +59,7 @@ export function lastContext(path) {
       let stop = data.length;
       for (let i = data.length - 1; i >= -1; i--) {
         if (i >= 0 ? data[i] !== 10 : start > 0) continue;
-        const found = stop > i + 1 ? contextOf(data.subarray(i + 1, stop).toString("utf8")) : null;
+        const found = stop > i + 1 ? contextOf(data.subarray(i + 1, stop).toString("utf8"), sidechain) : null;
         if (found !== null) return found;
         stop = i;
       }
@@ -73,15 +80,39 @@ export function advice(context) {
     "suggest /clear to the owner.";
 }
 
+/** The line for a subagent whose last call carried more than WORKER_LIMIT, or null. */
+export function workerAdvice(context) {
+  if (context === null || context <= WORKER_LIMIT) return null;
+  return `Context budget: your last call carried ${Math.round(context / 1000)}k tokens of context, over ` +
+    `${WORKER_LIMIT / 1000}k (DECISIONS 2026-10-18, the second retro). Commit what you have now and report: ` +
+    "a fresh worker does the rest.";
+}
+
+/** The subagent's own transcript: the session's file `<id>.jsonl` has its subagents in `<id>/subagents/`. */
+export function subagentTranscript(sessionFile, agentId) {
+  if (typeof sessionFile !== "string" || typeof agentId !== "string" || !/^[0-9a-z]+$/i.test(agentId)) return null;
+  return path.join(path.dirname(sessionFile), path.basename(sessionFile, ".jsonl"), "subagents",
+                   `agent-${agentId}.jsonl`);
+}
+
 function main() {
   try {
     const payload = JSON.parse(readFileSync(0, "utf8") || "{}");
     if (typeof payload?.transcript_path !== "string") return;
-    const line = advice(lastContext(payload.transcript_path));
+    let line;
+    let event = "UserPromptSubmit";
+    if (payload.agent_id) {
+      event = "PostToolUse";
+      const own = subagentTranscript(payload.transcript_path, payload.agent_id);
+      line = own && workerAdvice(lastContext(own, true));
+    } else if (payload.hook_event_name === "PostToolUse") {
+      return;   // the main session is asked on the owner's prompt, not after every tool call
+    } else {
+      line = advice(lastContext(payload.transcript_path));
+    }
     if (line) {
-      process.stdout.write(JSON.stringify({
-        hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: line },
-      }) + "\n");
+      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: line } })
+        + "\n");
     }
   } catch {
     // a broken guard says nothing and lets the prompt through

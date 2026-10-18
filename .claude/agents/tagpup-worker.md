@@ -109,7 +109,7 @@ reach-in), work in this order and say so in your report:
 2. **Verify each named item against the trunk first.** A finding or brief that no longer holds (the code is gone, the
    count is zero) is reported as stale, not fixed; the main session closes the row.
 3. **Do the whole sweep in the branch**, cut into commits one concern each, within the branch size rule. One concern
-   per run: when your context passes about 150k tokens, commit what you have and report, so a fresh worker does the rest.
+   per run (a hook tells you when your context passes 150k: commit what you have and report).
 4. **Check your own diff against the seven health conditions** (docs/OWNERS.md) before you report, for EVERY brief: a
    feature, a domain pass, a removal: reach-ins, a rule written twice, hidden coupling, a concept that could collapse, a
    branch with no live instance, scenario tests mapped, an open data/wrong finding. Name each as met (with the evidence)

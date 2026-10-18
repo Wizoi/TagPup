@@ -7,11 +7,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { LIMIT, lastContext } from "../../.claude/hooks/context-budget.mjs";
+import { LIMIT, WORKER_LIMIT, lastContext } from "../../.claude/hooks/context-budget.mjs";
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)),
                        "..", "..", ".claude", "hooks", "context-budget.mjs");
@@ -84,5 +84,28 @@ test("anything wrong is a no-op: exit 0 and nothing said", () => {
     const done = hook(payload);
     assert.equal(done.status, 0, JSON.stringify(payload));
     assert.equal(done.stdout, "", JSON.stringify(payload));
+  }
+});
+
+test("a worker past 150k is told after a tool call to commit and report; the main session is not, and under it nothing", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "context-budget-"));
+  try {
+    const session = path.join(home, "s-1.jsonl");
+    writeFileSync(session, JSON.stringify(call(2, 900000, 0)) + "\n");   // the main session is far over
+    mkdirSync(path.join(home, "s-1", "subagents"), { recursive: true });
+    const own = path.join(home, "s-1", "subagents", "agent-abc123.jsonl");
+    const side = (read) => JSON.stringify(call(2, read, 0, { isSidechain: true })) + "\n";
+    writeFileSync(own, side(160000));
+    const payload = { hook_event_name: "PostToolUse", transcript_path: session, agent_id: "abc123" };
+    const told = JSON.parse(hook(payload).stdout);
+    assert.equal(told.hookSpecificOutput.hookEventName, "PostToolUse");
+    assert.match(told.hookSpecificOutput.additionalContext, /160k.*Commit what you have.*report/);
+    assert.equal(hook({ ...payload, agent_id: undefined }).stdout, "", "the main session is asked on the prompt only");
+    writeFileSync(own, side(WORKER_LIMIT - 2));   // the call adds 2 input tokens: exactly the limit
+    assert.equal(hook(payload).stdout, "");
+    assert.equal(hook({ ...payload, agent_id: "../x" }).stdout, "");
+    assert.equal(hook({ ...payload, agent_id: "nosuch" }).stdout, "");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
