@@ -24,6 +24,10 @@ from tagpup.files import images  # noqa: E402
 
 logger = logging.getLogger("tagpup_cli.faces")
 
+#: The smallest face kept, either side in pixels of the picture as stored: a box smaller is noise, whichever
+#: model found it (this one and tagpup.ml.scrfd_adaface).
+SMALLEST_FACE = 15
+
 def detection_picture(img, max_side):
     """(the picture the detector is handed, (x, y) scale from it back to `img`): `img` itself and (1, 1) when there is
     no cap or its long side is within it; else `img` scaled so that its long side is `max_side` (docs/AI_PIPELINE.md,
@@ -188,7 +192,7 @@ class FaceModel:
                 x1, y1 = max(0, int(x1)), max(0, int(y1))
                 x2, y2 = min(width, int(x2)), min(height, int(y2))
 
-                if (x2 - x1) < 15 or (y2 - y1) < 15:
+                if (x2 - x1) < SMALLEST_FACE or (y2 - y1) < SMALLEST_FACE:
                     continue # Skip tiny/noise crops
 
                 # Crop face from PIL image

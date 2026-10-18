@@ -25,10 +25,12 @@ RUNTIME = os.path.join("tagpup", "runtime.py")
 # --- model in the process had been built from. A model is built by the runtime and handed to what needs it.
 CLIP = os.path.join("tagpup", "ml", "clip.py")
 FACES = os.path.join("tagpup", "ml", "faces.py")
+SCRFD_ADAFACE = os.path.join("tagpup", "ml", "scrfd_adaface.py")
 #: What builds a model, and the one file each may be called in. The old names, which read the config themselves, nowhere.
 BUILDERS = {
     "ClipModel": RUNTIME,
     "FaceModel": RUNTIME,
+    "ScrfdAdaFace": RUNTIME,
     "create_model_and_transforms": CLIP,
     "MTCNN": FACES,
     "InceptionResnetV1": FACES,
@@ -53,7 +55,7 @@ def offenders(relative, source):
 
 #: Where a turn may be taken: the owner, the runtime that hands models their turn, and
 #: each model's own check before it loads.
-TAKERS = {OWNER, RUNTIME, os.path.join("tagpup", "ml", "clip.py"), os.path.join("tagpup", "ml", "faces.py")}
+TAKERS = {OWNER, RUNTIME, CLIP, FACES, SCRFD_ADAFACE}
 #: The byte locks of the machine's shared files: the card's (named by its owner), and the one lock
 #: every such file uses (tagpup.core.byte_lock: the installer's, the hand-over's, the card's).
 BYTE_LOCK = os.path.join("tagpup", "core", "byte_lock.py")
@@ -63,8 +65,10 @@ CALLS_THE_SYSTEM_LOCK = re.compile(r"msvcrt\.locking|fcntl\.flock")
 #: a test's and a sandbox's, #796), and locks nothing: held to the locks themselves.
 NAMES_THE_FOLDER = {os.path.join("tagpup", "config.py")}
 
-#: What loads a model's weights (onto its device): open_clip's and facenet's own.
-WEIGHTS = {"create_model_and_transforms", "MTCNN", "InceptionResnetV1"}
+#: What loads a model's weights (onto its device): open_clip's and facenet's own, safetensors' (AdaFace's), and a
+#: TorchScript file (SCRFD's), the last named by its module since `load` alone is everyone's.
+WEIGHTS = {"create_model_and_transforms", "MTCNN", "InceptionResnetV1", "load_file"}
+LOADS_TORCHSCRIPT = re.compile(r"\bjit\.load\(")
 
 TURNS = re.compile(r"\b(gpu|card)\b.*\.(hold|try_hold|ensure|release_if_idle)\(|\bgpu\.Card\(")
 LOCKS = re.compile(r"msvcrt\.locking|fcntl\.flock|\bcard\.lock\b|TAGPUP_GPU_LOCK")
@@ -74,7 +78,7 @@ LOCKS_ONLY =re.compile(r"msvcrt\.locking|fcntl\.flock|\bcard\.lock\b")
 
 def loads_weights(source):
     """Does the module call one of the builders of a model's weights?"""
-    return any(name in WEIGHTS for name, _line in calls(source))
+    return any(name in WEIGHTS for name, _line in calls(source)) or bool(LOADS_TORCHSCRIPT.search(source))
 
 
 def checks_the_card(source):
@@ -124,7 +128,7 @@ class TheCardHasOneOwner(unittest.TestCase):
             checked += 1
             if not checks_the_card(source):
                 problems.append("%s loads a model's weights with no gpu.on_the_card / ensure before it" % relative)
-        self.assertGreaterEqual(checked, 2, "the guard found no module that loads weights")
+        self.assertGreaterEqual(checked, 3, "the guard found no module that loads weights")
         self.assertEqual([], problems, "\n\nTake the turn on the graphics card (tagpup.ml.gpu) before loading:\n\n"
                          + "\n".join(problems))
 
@@ -174,6 +178,9 @@ class TheCardHasOneOwner(unittest.TestCase):
                    "            (self.gpu or gpu.card()).ensure('loading the face models')\n"
                    "        self.mtcnn = MTCNN(keep_all=True)\n")
         self.assertTrue(loads_weights(unchecked))
+        self.assertTrue(loads_weights("detector = torch.jit.load(path, map_location='cuda')"))
+        self.assertTrue(loads_weights("state = load_file(path)"))
+        self.assertFalse(loads_weights("settings = json.load(handle)"))
         self.assertFalse(checks_the_card(unchecked))
         self.assertTrue(checks_the_card(checked))
         self.assertTrue(TURNS.search("hold = gpu.card().hold('indexing')"))

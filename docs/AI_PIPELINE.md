@@ -517,6 +517,18 @@ IR-101** in torch, half precision: the fastest of the two candidates here, torch
 onnxruntime stays in the sandbox. Left for the build: whether onnx2torch is needed at run time or the converted
 detector is saved once as a torch file; the 640 scale timed in torch; the faces batched in chunks.
 
+**As built (2026-10-18, `tagpup/ml/scrfd_adaface.py`, built by nothing yet).** The converted detector is traced once
+for each square (it cannot be traced for every size at once) and saved as TorchScript by
+`scripts/make_scrfd_torchscript.py`, so the app needs torch alone and onnx2torch is needed only to make the files. Timed
+in torch on the card (the turn held, nothing else on it) on the sample's 10 worst photos, found again read-only in
+photo_index by their faces and size, after a warm-up round: **detection at 640 is 0.0064 s a photo and at 1280
+0.0148 s** (the model alone, the square on the card to the decoded boxes), torch's own peak 388 MiB; on the processor,
+decoding is 0.074 s and fitting both squares 0.053 s (the 640 square scaled from the 1280 one, which halved it). The
+faces found against the spike's on those photos: 2,070 at 1280 against 2,135, 336 at 640 against 369 (Pillow's scaling
+here, OpenCV's area scaling in the spike), 2,081 merged. The whole of a worst photo (both squares, the merge, the
+alignment and AdaFace in chunks of 32 for about 210 faces) is 0.25 s. So the second scale costs about 0.006 s on the
+card and 0.02 s on the processor a photo, not the 0.039 s the onnxruntime run suggested.
+
 ## 8. Risks
 
 | Risk | Phase | Handled by |
