@@ -139,7 +139,9 @@ class FaceModelsLoadOnce(unittest.TestCase):
             runtime.warm_up([library])
         found = library_settings.of(library)
         clip.assert_called_once_with(**found.embedder)
-        faces.assert_called_once_with(**found.faces)
+        # The face models' settings but their `model`, which picks MTCNN and FaceNet (tagpup.runtime._build_faces).
+        mtcnn = {key: value for key, value in found.faces.items() if key != "model"}
+        faces.assert_called_once_with(**mtcnn)
         self.assertEqual(2, clip.return_value.load.call_count)
         self.assertEqual(2, faces.return_value.load.call_count)
 
