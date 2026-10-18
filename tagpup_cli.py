@@ -225,13 +225,17 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
-    # A library set to a face model whose vectors it cannot keep is refused here, before anything is written -- the
-    # reset, a stamp, the folders recorded as added, a row -- and before a model's library is imported (#1643, #1089).
+    def refuse_a_face_model_not_kept(settings):
+        # A library set to a face model whose vectors it cannot keep is refused before anything is written -- the
+        # reset, a stamp, the folders recorded as added, a row -- and before a model's library is imported (#1643,
+        # #1089). Asked of both reads: the face model may be switched between them, and the second is what the run's
+        # face models are built from (Runtime.faces refuses them, once the folder would be recorded).
+        if not skip_faces and settings.face_model_refusal:
+            console.print("Not run: %s" % settings.face_model_refusal, markup=False, soft_wrap=True)
+            raise SystemExit(indexing_service.EXIT_FACE_MODEL_NOT_READY)
+
     # Read without stamping: a library holding no settings is on the default, which it can keep.
-    refusal = None if skip_faces else runtimes.peek_settings(Library(db_path)).face_model_refusal
-    if refusal:
-        console.print("Not run: %s" % refusal, markup=False, soft_wrap=True)
-        raise SystemExit(indexing_service.EXIT_FACE_MODEL_NOT_READY)
+    refuse_a_face_model_not_kept(runtimes.peek_settings(Library(db_path)))
     # A reset deletes the library, and its settings with it; the new one is stamped
     # with them again, not with the defaults. Read without stamping the one deleted.
     kept_settings = runtimes.peek_settings(Library(db_path)).values if reset and os.path.exists(db_path) else None
@@ -253,6 +257,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             library_settings.stamp(Library(db_path), kept_settings, operation=library_settings.FROM_REPLACED)
 
     settings = runtime.settings(Library(db_path))
+    refuse_a_face_model_not_kept(settings)
     exiftool_path = runtimes.exiftool(Library(db_path), settings)
 
     # Setup / Load components

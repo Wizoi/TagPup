@@ -6,7 +6,9 @@ model is refused every write of faces, with one sentence (tagpup.services.settin
 the model is built or loaded. What the owner lives through:
 
 - (a) Add a folder, or sync: the CLI's index exits 78 with the sentence, having imported no model's library and written
-  no row; the server's queue (index_folder) says "Nothing was indexed: ..." instead of an exit code. Add in TagPup and
+  no row; the server's queue (index_folder) says "Nothing was indexed: ..." instead of an exit code. The model switched
+  between the index's first read of the settings and the one it runs by: the same, before the folder is recorded. Add
+  in TagPup and
   TagTuner (tagpup.services.libraries.add) answers with the sentence and records no folder as added: one recorded with
   no row would be held, and every sync after would queue its refused index again.
 - (b) Suggest, and Just look, in that library: the run ends in an error naming the sentence, and no model is built; the
@@ -60,6 +62,21 @@ PROBE = (
     "    tagpup_cli.cli(sys.argv[1:], standalone_mode=False)\n"
     "finally:\n"
     "    print('LOADED=' + ','.join(m for m in ('open_clip', 'torch', 'facenet_pytorch') if m in sys.modules))\n")
+
+#: The CLI's index with the face model switched between its first read of the settings (peek_settings, before anything
+#: is written) and the read it runs by (Runtime.settings): a save in the settings dialog at that moment.
+SWITCHED_BETWEEN = (
+    "import sys\n"
+    "from unittest import mock\n"
+    "import tagpup_cli\n"
+    "from tagpup.core import validation\n"
+    "from tagpup.runtime import Runtime\n"
+    "from tagpup.services import settings\n"
+    "def switched(self, library):\n"
+    "    values = dict(settings.read(library).values, **{'faces.model': validation.SCRFD_ADAFACE})\n"
+    "    return settings.LibrarySettings(values)\n"
+    "with mock.patch.object(Runtime, 'settings', switched):\n"
+    "    tagpup_cli.cli(sys.argv[1:], standalone_mode=False)\n")
 
 
 class _Model:
@@ -187,6 +204,17 @@ class TheIndexIsRefused(_Libraries):
         self.assertIn("Not run: %s" % SENTENCE, " ".join(done.stdout.split()))
         self.assertEqual("LOADED=", [line for line in done.stdout.splitlines() if line.startswith("LOADED=")][-1])
         self.assertEqual(before, rows_of(self.cove.path))
+
+    def test_switched_between_its_two_reads_it_writes_nothing(self):
+        slipway = paths.stored(os.path.join(self.home.root, "Slipway"))
+        os.makedirs(slipway)
+        Image.new("RGB", (64, 48), (10, 90, 130)).save(os.path.join(slipway, "launch.jpg"), "JPEG")
+        before = rows_of(self.harbour.path)
+        done = processes.run([sys.executable, "-c", SWITCHED_BETWEEN, "--db", self.harbour.path, "index", slipway],
+                             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(indexing_service.EXIT_FACE_MODEL_NOT_READY, done.returncode, done.stdout + done.stderr)
+        self.assertIn("Not run: %s" % SENTENCE, " ".join(done.stdout.split()))
+        self.assertEqual(before, rows_of(self.harbour.path))
 
     def test_the_servers_queue_says_why_in_words(self):
         before = rows_of(self.cove.path)
