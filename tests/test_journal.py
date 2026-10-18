@@ -245,33 +245,26 @@ class Refusals(JournalLibrary):
 
 class AFacePassFolderUndone(JournalLibrary):
     """The new face model's pass gives a folder's photos new faces, each with its crop and its vector under the new
-    model's key and no other, as ONE journaled change: it writes the rows and records them (journal.record with no rows,
-    then journal.record_rows), as tagpup.store.face_batches does. The owner undoes the folder: the faces go with the
+    model's key and no other, as ONE journaled change, through its own writer (tagpup.store.faces.give_vectors: the rows
+    written, then recorded as stored by journal.record_inserted). The owner undoes the folder: the faces go with the
     crop and the vector the same change gave them, and come back the same when written again. A row of another
-    change under such a face (a vector a later run added under another model) still refuses the undo, and says so."""
+    change under such a face (a vector a later run added under another model) still refuses the undo, and says so.
+    The whole pass is scenario P8 (tests/test_the_face_pass.py)."""
     NEW_MODEL = "scrfd-adaface"
 
-    def pass_gives_a_face(self):
-        """(change id, face id) of one change that gave the photo "prize" a face, its crop and its vector."""
-        photo = self.query("SELECT path FROM photos WHERE id = ?", (self.ids["prize"],))[0][0]
-
+    def the_pass_gives_a_face(self):
+        """(change id, face id) of the pass's change that gave the photo "prize" a face, its crop and its vector."""
         def work(conn):
-            face = faces.insert(conn, photo, [40, 40, 140, 160], vector(7), model=self.NEW_MODEL, crop=jpeg(7), prob=0.93)
-            change_id = journal.record(conn, "face pass: Harbour Regatta", [], {"faces": 1})
-            rows = []
-            for table, key in (("faces", (face,)), ("face_crops", (face,)), ("face_embeddings", (face, self.NEW_MODEL))):
-                columns = schema.table_columns(conn, table)
-                where = " AND ".join('"%s" = ?' % c for c in journal.KEYS[table])
-                values = conn.execute('SELECT %s FROM "%s" WHERE %s' % (", ".join('"%s"' % c for c in columns), table,
-                                                                       where), key).fetchone()
-                rows.append(journal.RowChange("insert", table, key, None, dict(zip(columns, values))))
-            journal.record_rows(conn, change_id, rows)
+            db.begin(conn, immediate=True)
+            change_id = journal.record(conn, "face pass (%s) Harbour Regatta" % self.NEW_MODEL, [], {})
+            (face,) = faces.give_vectors(conn, change_id, self.ids["prize"], self.NEW_MODEL, [],
+                                         [([40, 40, 140, 160], 0.93, vector(7), jpeg(7))], {"new": 1})
             return change_id, face
         return db.write_with_connection(self.db_path, work)
 
     def test_the_folder_undone_takes_its_faces_crops_and_vectors_and_written_again_gives_them_back(self):
         before = self.dump()
-        change_id, face = self.pass_gives_a_face()
+        change_id, face = self.the_pass_gives_a_face()
         given = self.dump()
         self.assertEqual(1, len(self.query("SELECT 1 FROM face_embeddings WHERE face_id = ?", (face,))))
         rehearsal = journal.rehearse_undo(self.db_path, change_id)
@@ -284,7 +277,7 @@ class AFacePassFolderUndone(JournalLibrary):
             self.assertEqual([], self.query("SELECT 1 FROM %s WHERE face_id = ?" % table, (face,)))
 
     def test_a_vector_another_change_added_since_still_refuses_the_undo(self):
-        change_id, face = self.pass_gives_a_face()
+        change_id, face = self.the_pass_gives_a_face()
         journal.apply(self.db_path, "vectors", [journal.insert("face_embeddings", {"face_id": face, "model": FACENET,
                                                                                     "vector": vector(8)})])
         before = self.dump()

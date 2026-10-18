@@ -22,7 +22,9 @@ each with what the plan read of the row (`expect`). Then:
   independent, uses it.
 - **undo**: the same with old and new swapped, refused when a row is not what the
   change left, when a newer change touched the same rows (named), or when the schema
-  has moved on since.
+  has moved on since. Undoing an insert is refused while rows made since depend on the
+  row; rows the change itself inserted do not count against an insert's undo (a face and
+  the crop and vector given with it go together: `_not_as_left`).
 - **rehearse**: the change and its undo inside a transaction that is rolled back,
   saying whether the undo restored every row exactly. Nothing is written.
 
@@ -865,6 +867,40 @@ def record_rows(conn, change_id, changes):
         if change.table not in KEYS:
             raise ValueError("%s is not a table a change records" % change.table)
     _record(conn, change_id, changes)
+
+
+def record_inserted(conn, change_id, rows, counts=None):
+    """Add to change `change_id` the rows the caller has just inserted, [(table, key)] of tables in KEYS, each read back
+    whole as stored, so that an undo deletes exactly them and a rehearsal puts them back byte for byte; and add `counts`
+    and the rows, by table, to the change's summary, in the same transaction, so a change whose rows come a piece at a
+    time (the face pass: tagpup.store.faces.give_vectors) says what was committed, never what was planned."""
+    changes = []
+    for table, key in rows:
+        if table not in KEYS:
+            raise ValueError("%s is not a table a change records" % table)
+        changes.append(RowChange("insert", table, tuple(key), None,
+                                 _read(conn, table, tuple(key), schema.table_columns(conn, table))))
+    _record(conn, change_id, changes)
+    (text,) = conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()
+    summary = json.loads(text or "{}")
+    for name, count in (counts or {}).items():
+        summary[name] = summary.get(name, 0) + count
+    tables = summary.setdefault("rows", {})
+    for table, count in collections.Counter(change.table for change in changes).items():
+        tables[table] = tables.get(table, 0) + count
+    conn.execute("UPDATE changes SET summary = ? WHERE id = ?", (json.dumps(summary, sort_keys=True), change_id))
+
+
+def kept(conn, change_id):
+    """Is change `change_id` applied and neither undone nor being undone: may a writer still add rows to it?"""
+    row = conn.execute("SELECT status, undone FROM changes WHERE id = ?", (change_id,)).fetchone()
+    return row is not None and row[0] == "applied" and row[1] is None
+
+
+def kept_named(conn, operation):
+    """The ids of the changes called `operation` that are applied and not undone, oldest first."""
+    return [change_id for (change_id,) in conn.execute(
+        "SELECT id FROM changes WHERE operation = ? AND status = 'applied' AND undone IS NULL ORDER BY id", (operation,))]
 
 
 #: What the journal calls the face rows a tree edit changed (taxonomy.delete_branch with force; people.merge_person).

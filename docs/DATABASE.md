@@ -207,7 +207,7 @@ The journal: one row for each bulk edit applied to the library (`tagpup.store.jo
 | `owner` | TEXT | | The process carrying a change of photo files out, `<host>:<pid>`, while it does; NULL once it is finished, or when an error stopped it. A change owned by a process still running is not settled by another. |
 
 ### 12. `change_rows` Table
-What each change found and left, one row per changed column (`tagpup.store.journal`). An update records the columns it changed; an inserted or deleted row records every column. A delete records what it takes with it as deletes of their own: a face's crop, a photo's faces, vectors and suggestions (`journal.CASCADES`); a photo's people are derived and rebuilt instead, and a tag node with nodes under it is refused. Rows are keyed only by ids SQLite never hands out again (AUTOINCREMENT), so putting a deleted row back cannot meet a newer one.
+What each change found and left, one row per changed column (`tagpup.store.journal`). An update records the columns it changed; an inserted or deleted row records every column. A delete records what it takes with it as deletes of their own: a face's crop, a photo's faces, vectors and suggestions (`journal.CASCADES`); a photo's people are derived and rebuilt instead, and a tag node with nodes under it is refused. Rows are keyed only by ids SQLite never hands out again (AUTOINCREMENT), so putting a deleted row back cannot meet a newer one. What refuses an insert's undo, and the rows that do not (the change's own), is said once, in the module's docstring ("undo").
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
