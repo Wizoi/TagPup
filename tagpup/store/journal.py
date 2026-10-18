@@ -79,6 +79,7 @@ KEYS = {
     "faces": ("id",),
     "tag_taxonomy": ("id",),
     "face_crops": ("face_id",),
+    "face_embeddings": ("face_id", "model"),
     "embeddings": ("photo_id", "model"),
     "suggestions": ("photo_id",),
     "settings": ("key",),
@@ -119,12 +120,13 @@ RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
 
 #: What deleting a row of one table takes from another -- (parent, child): (the child's
 #: column naming the parent's key, what the journal does). Recorded: deleted first, as
-#: rows of the change, so an undo puts them back byte for byte; a deleted face's crop and
+#: rows of the change, so an undo puts them back byte for byte; a deleted face's crop and vectors and
 #: a deleted photo's vectors cannot be made again without the file and the models.
 #: Rebuilt: derived, made again from the rows. Forbidden: a change deleting the parent
 #: is refused unless it deletes the children too -- a node with nodes under it.
 CASCADES = {
     ("faces", "face_crops"): ("face_id", RECORDED),
+    ("faces", "face_embeddings"): ("face_id", RECORDED),
     ("photos", "faces"): ("photo_id", RECORDED),
     ("photos", "embeddings"): ("photo_id", RECORDED),
     ("photos", "suggestions"): ("photo_id", RECORDED),
@@ -380,7 +382,7 @@ def _resolve(conn, edits):
         deletes[edit.table][key] = change
 
     # What the deletes take with them, a level at a time: photos, then their faces, then
-    # the faces' crops. One query per table and chunk, not one per row.
+    # the faces' crops and vectors. One query per table and chunk, not one per row.
     planned = {(table, key) for table, rows in deletes.items() for key in rows}
     level = deletes
     while level:

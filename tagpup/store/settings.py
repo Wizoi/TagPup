@@ -5,10 +5,14 @@ Nothing here writes: a setting is changed only through the journal
 library's history and can be undone. What a value means, and what it may be, is
 tagpup.core.validation.SETTINGS'; the service fills in the defaults.
 """
+from tagpup.core import validation
 from tagpup.store import db, schema
 from tagpup.store import roots as store_roots
 
 TABLE = "settings"
+
+#: The setting that names the library's face model, and the key its face vectors are read under (migration 33).
+FACE_MODEL = "faces.model"
 
 
 def _rows(conn):
@@ -43,3 +47,12 @@ def read_only(db_path):
         return _rows(conn)
     finally:
         conn.close()
+
+
+def face_model(conn):
+    """The library's face model on `conn` (faces.model), trimmed as the validator trims, its default for a library that holds
+    none: the key every reader of a face's vector reads `face_embeddings` under (tagpup.store.faces). Read on the reader's own
+    connection, in its transaction, so one read cannot mix two models' vectors. A writer does not ask it: it files a vector
+    under the model that made it."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (FACE_MODEL,)).fetchone()
+    return validation.trim(row[0]) if row else validation.SETTINGS[FACE_MODEL]["default"]

@@ -30,12 +30,24 @@ import types
 from tagpup.core.vocabulary import Ref
 from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
+from tagpup.store import settings as store_settings
 from tagpup.store.people import PEOPLE_REFS_JSON
 
 logger = logging.getLogger(__name__)
 
 #: A face's photo, by its id. Every read that answers with a photo's path joins it.
 PHOTO = " JOIN photos p ON p.id = f.photo_id"
+
+#: A face's vector under one face model (`face_embeddings`, migration 33), as `v`: its one parameter is the model's key, the
+#: library's (model_key) for a reader. VECTOR keeps a face without one (v.vector NULL), WITH_VECTOR only the faces with one.
+VECTOR = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
+WITH_VECTOR = " JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
+
+
+def model_key(conn):
+    """The key a reader on `conn` reads face vectors under: the library's face model (tagpup.store.settings.face_model). Read
+    once a read, and passed to each query of it."""
+    return store_settings.face_model(conn)
 
 
 def _on_photo(conn, photo_path, column="photo_id"):
@@ -109,15 +121,15 @@ def generation(conn):
 
 def fingerprint(conn):
     """A cheap signature of the faces table, which moves whenever a face is added, named,
-    renamed, given to someone else or excluded. TagTuner caches its Identify Faces grids
-    against it."""
+    renamed, given to someone else or excluded, a vector is written, or the library's face model is changed: a grid made of
+    one model's vectors is not another's. TagTuner caches its Identify Faces grids against it."""
     # SUM(excluded) matters: excluding an unnamed face changes what the queue should show
     # without changing the row count, the name count, or the maximum id, so leaving it
     # out serves a stale queue after every exclusion.
     row = conn.execute(
         "SELECT COUNT(*), COUNT(name), COALESCE(MAX(id), 0), COALESCE(SUM(excluded), 0) FROM faces"
     ).fetchone()
-    return (tuple(row) if row else (0, 0, 0, 0)) + (generation(conn),)
+    return (tuple(row) if row else (0, 0, 0, 0)) + (generation(conn), model_key(conn))
 
 
 @contextlib.contextmanager
@@ -293,16 +305,18 @@ def remove_for_photo(conn, photo_path):
     return _rebuilt(conn, photo_ids, removed)
 
 
-def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
-    """Record one detected face: `box` as a list, `embedding` as float32 bytes, and its
+def insert(conn, photo_path, box, embedding, *, model, name=None, crop=None, prob=None):
+    """Record one detected face: `box` as a list, `embedding` as float32 bytes filed under `model`, the key of the face model
+    that made it (never the library's setting, which may have moved since the detection began), and its
     crop, if one was cut, in face_crops. `name` is a person who has a node (the id; _target), or None. Returns the face's
     id. The caller commits."""
     from tagpup.store import photos   # photos imports this module
     photo_id = photos.ensure_row(conn, photo_path)
     tag_id, name = _target(conn, name) if name is not None else (None, None)
     face_id = conn.execute(
-        "INSERT INTO faces (photo_id, box, embedding, name, tag_id, prob) VALUES (?, ?, ?, ?, ?, ?)",
-        (photo_id, json.dumps(box), embedding, name, tag_id, prob)).lastrowid
+        "INSERT INTO faces (photo_id, box, name, tag_id, prob) VALUES (?, ?, ?, ?, ?)",
+        (photo_id, json.dumps(box), name, tag_id, prob)).lastrowid
+    conn.execute("INSERT INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)", (face_id, model, embedding))
     if crop:
         conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
     _rebuilt(conn, [photo_id], bool(name))
@@ -326,7 +340,8 @@ def for_clustering(conn):
     left behind: 6 KB a face, and clustering never looks at it."""
     return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob)
             for face_id, photo_path, box, embedding, tag_id, name, prob in store_roots.natives(conn, conn.execute(
-                "SELECT f.id, p.path, f.box, f.embedding, f.tag_id, f.name, f.prob FROM faces f" + PHOTO).fetchall(), 1)]
+                "SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob FROM faces f" + PHOTO + VECTOR,
+                (model_key(conn),)).fetchall(), 1)]
 
 
 def named_for_known(conn):
@@ -335,18 +350,18 @@ def named_for_known(conn):
     tagpup.core.clustering.KnownFaces is made of."""
     return [(Ref(tag_id, name), embedding, photo_path, year)
             for tag_id, name, embedding, photo_path, year in store_roots.natives(conn, conn.execute(
-                "SELECT f.tag_id, f.name, f.embedding, p.path, p.year FROM faces f" + PHOTO
-                + " WHERE f.excluded = 0 AND f.tag_id IS NOT NULL AND f.embedding IS NOT NULL").fetchall(), 3)]
+                "SELECT f.tag_id, f.name, v.vector, p.path, p.year FROM faces f" + PHOTO + WITH_VECTOR
+                + " WHERE f.excluded = 0 AND f.tag_id IS NOT NULL", (model_key(conn),)).fetchall(), 3)]
 
 
 def in_photo(conn, photo_path):
     """(box JSON, embedding bytes, prob, excluded, Ref or None, name_source) of each face in one
     photo, for suggesting who is in it."""
-    where, params = _on_photo(conn, photo_path)
+    where, params = _on_photo(conn, photo_path, "f.photo_id")
     return [(box, embedding, prob, excluded, _ref(tag_id, name), source)
             for box, embedding, prob, excluded, tag_id, name, source in conn.execute(
-                "SELECT box, embedding, prob, excluded, tag_id, name, name_source FROM faces WHERE " + where,
-                params).fetchall()]
+                "SELECT f.box, v.vector, f.prob, f.excluded, f.tag_id, f.name, f.name_source FROM faces f" + VECTOR
+                + " WHERE " + where, [model_key(conn)] + list(params)).fetchall()]
 
 
 def _target(conn, person, known=None):
@@ -740,8 +755,9 @@ def unnamed(conn, photo_path=None, folder=None):
         where, params = _photos_under(conn, folder)
         source = UNDER_FROM_PHOTOS
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, f.embedding, p.path" + source + " WHERE " + where
-        + " AND f.name IS NULL AND f.excluded = 0 AND " + NOT_DECIDED_NOBODY % "f.", params).fetchall(), 2)
+        "SELECT f.id, v.vector, p.path" + source + VECTOR + " WHERE " + where
+        + " AND f.name IS NULL AND f.excluded = 0 AND " + NOT_DECIDED_NOBODY % "f.",
+        [model_key(conn)] + list(params)).fetchall(), 2)
 
 
 def unnamed_counts(conn, folder):
@@ -764,25 +780,26 @@ def counts_by_person(conn):
 
 
 def identify_candidates(conn):
-    """(id, photo_path, the photo's people as JSON [[id, name]], embedding length) of every nameless face
+    """(id, photo_path, the photo's people as JSON [[id, name]], 1 or 0) of every nameless face
     still in play: the Identify Faces queue.
 
-    LENGTH(embedding) rather than the embedding: the queue groups faces by the people
+    Whether the face has a vector under the library's face model, not the vector: the queue groups faces by the people
     their photo names and counts them, and only needs to know a face HAS one -- a face
-    without cannot take part in identifying. Selecting the column read 380 MB of BLOB
-    to answer a question about integers.
+    without cannot take part in identifying. Selecting the vectors read 380 MB of BLOB
+    to answer a question about integers; the key of `face_embeddings` answers it without reading one.
     """
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, " + PEOPLE_REFS_JSON + ", LENGTH(f.embedding) FROM faces f" + PHOTO
-        + " WHERE f.name IS NULL AND f.excluded = 0").fetchall(), 1)
+        "SELECT f.id, p.path, " + PEOPLE_REFS_JSON + ", EXISTS (SELECT 1 FROM face_embeddings v"
+        " WHERE v.face_id = f.id AND v.model = ?) FROM faces f" + PHOTO
+        + " WHERE f.name IS NULL AND f.excluded = 0", (model_key(conn),)).fetchall(), 1)
 
 
 def unnamed_for_matching(conn):
     """(id, photo_path, box JSON, prob, mtime, embedding, year, people as JSON [[id, name]]) of every
     nameless face still in play, for a person's Identify grid."""
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.year, " + PEOPLE_REFS_JSON + ""
-        " FROM faces f" + PHOTO + " WHERE f.name IS NULL AND f.excluded = 0").fetchall(), 1)
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year, " + PEOPLE_REFS_JSON + ""
+        " FROM faces f" + PHOTO + VECTOR + " WHERE f.name IS NULL AND f.excluded = 0", (model_key(conn),)).fetchall(), 1)
 
 
 def count_unnamed(conn):
@@ -808,18 +825,18 @@ def unnamed_embeddings(conn):
     """(id, embedding) of every nameless face in play, by id: New Person's pool
     (tagpup.services.identify.unnamed_faces). idx_faces_identify finds them. A cursor,
     not a list: the caller takes them a row at a time, never all 390 MB at once."""
-    return conn.execute("SELECT id, embedding FROM faces WHERE name IS NULL AND excluded = 0"
-                        " ORDER BY id")
+    return conn.execute("SELECT f.id, v.vector FROM faces f" + VECTOR + " WHERE f.name IS NULL AND f.excluded = 0"
+                        " ORDER BY f.id", (model_key(conn),))
 
 
 def unnamed_among(conn, face_ids):
     """(id, photo_path, box JSON, embedding) of those of `face_ids` that are nameless
     faces in play, read by id."""
-    found = []
+    found, key = [], model_key(conn)
     for chunk in _chunks(list(face_ids)):
         found.extend(conn.execute(
-            "SELECT f.id, p.path, f.box, f.embedding FROM faces f" + PHOTO + " WHERE f.id IN (%s)"
-            " AND f.name IS NULL AND f.excluded = 0" % ",".join("?" * len(chunk)), chunk).fetchall())
+            "SELECT f.id, p.path, f.box, v.vector FROM faces f" + PHOTO + VECTOR + " WHERE f.id IN (%s)"
+            " AND f.name IS NULL AND f.excluded = 0" % ",".join("?" * len(chunk)), [key] + list(chunk)).fetchall())
     return store_roots.natives(conn, found, 1)
 
 
@@ -841,8 +858,8 @@ def for_named_matrix(conn):
     """(id, Ref, embedding) of every named face that has an embedding and is not
     excluded: what a face is compared against to say who it resembles."""
     return [(face_id, Ref(tag_id, name), embedding) for face_id, tag_id, name, embedding in conn.execute(
-        "SELECT id, tag_id, name, embedding FROM faces"
-        " WHERE tag_id IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()]
+        "SELECT f.id, f.tag_id, f.name, v.vector FROM faces f" + WITH_VECTOR
+        + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (model_key(conn),)).fetchall()]
 
 
 def for_decided_matrix(conn):
@@ -851,21 +868,22 @@ def for_decided_matrix(conn):
     caller keeps those a person decided (tagpup.services.identify.decided_faces)."""
     return [(face_id, Ref(tag_id, name), embedding, source, photo_id)
             for face_id, tag_id, name, embedding, source, photo_id in conn.execute(
-                "SELECT id, tag_id, name, embedding, name_source, photo_id FROM faces"
-                " WHERE tag_id IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()]
+                "SELECT f.id, f.tag_id, f.name, v.vector, f.name_source, f.photo_id FROM faces f" + WITH_VECTOR
+                + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (model_key(conn),)).fetchall()]
 
 
 def embedding_row(conn, face_id):
-    """(embedding,) of one face, or None when there is no such face."""
-    return conn.execute("SELECT embedding FROM faces WHERE id = ?", (face_id,)).fetchone()
+    """(embedding,) of one face, its vector under the library's face model or None, or None when there is no such face."""
+    return conn.execute("SELECT v.vector FROM faces f" + VECTOR + " WHERE f.id = ?", (model_key(conn), face_id)).fetchone()
 
 
 def in_photo_with_names(conn, photo_path):
     """(id, box JSON, Ref or None, embedding, excluded) of each face in one photo."""
-    where, params = _on_photo(conn, photo_path)
+    where, params = _on_photo(conn, photo_path, "f.photo_id")
     return [(face_id, box, _ref(tag_id, name), embedding, excluded)
             for face_id, box, tag_id, name, embedding, excluded in conn.execute(
-                "SELECT id, box, tag_id, name, embedding, excluded FROM faces WHERE " + where, params).fetchall()]
+                "SELECT f.id, f.box, f.tag_id, f.name, v.vector, f.excluded FROM faces f" + VECTOR + " WHERE " + where,
+                [model_key(conn)] + list(params)).fetchall()]
 
 
 def photos_with_unnamed(conn, every=False):
@@ -907,8 +925,8 @@ def person_embeddings(conn, person):
     has an embedding: what their era-aware centroids are made from."""
     where, params = _carries(conn, person_ids.target(conn, person), "f.")
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.embedding, p.mtime, p.year, p.path FROM faces f" + PHOTO
-        + " WHERE " + where + " AND f.embedding IS NOT NULL", params).fetchall(), 3)
+        "SELECT v.vector, p.mtime, p.year, p.path FROM faces f" + PHOTO + WITH_VECTOR
+        + " WHERE " + where, [model_key(conn)] + list(params)).fetchall(), 3)
 
 
 def person_page(conn, person, limit, offset):
@@ -916,9 +934,9 @@ def person_page(conn, person, limit, offset):
     person's faces. A negative limit is no limit."""
     where, params = _carries(conn, person_ids.target(conn, person), "f.")
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.year"
-        " FROM faces f" + PHOTO + " WHERE " + where + " LIMIT ? OFFSET ?",
-        list(params) + [limit, offset]).fetchall(), 1)
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year"
+        " FROM faces f" + PHOTO + VECTOR + " WHERE " + where + " LIMIT ? OFFSET ?",
+        [model_key(conn)] + list(params) + [limit, offset]).fetchall(), 1)
 
 
 def excluded_for_review(conn):
@@ -934,11 +952,11 @@ def excluded_for_review(conn):
 def in_photo_for_panel(conn, photo_path):
     """(id, box JSON, Ref or None, prob, embedding, excluded, excluded_reason) of each face in one
     photo, in detection order."""
-    where, params = _on_photo(conn, photo_path)
+    where, params = _on_photo(conn, photo_path, "f.photo_id")
     return [(face_id, box, _ref(tag_id, name), prob, embedding, excluded, reason)
             for face_id, box, tag_id, name, prob, embedding, excluded, reason in conn.execute(
-                "SELECT id, box, tag_id, name, prob, embedding, excluded, excluded_reason"
-                " FROM faces WHERE " + where + " ORDER BY id", params).fetchall()]
+                "SELECT f.id, f.box, f.tag_id, f.name, f.prob, v.vector, f.excluded, f.excluded_reason"
+                " FROM faces f" + VECTOR + " WHERE " + where + " ORDER BY f.id", [model_key(conn)] + list(params)).fetchall()]
 
 
 def counts_on(conn, stored_path):
