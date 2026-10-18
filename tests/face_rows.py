@@ -7,12 +7,14 @@ rather than the store, so a fixture does not agree with the code it tests.
 """
 import json
 
+from tagpup.core import validation
+
 #: The faces with their photo's path: `SELECT p.path, f.name FROM ` + FACES_WITH_PATHS.
 FACES_WITH_PATHS = "faces f JOIN photos p ON p.id = f.photo_id"
 
 #: The key FaceNet's vectors are kept under (`face_embeddings.model`): the faces.model a library made in a test's home holds by
 #: default, and the key every vector of the three live libraries is under.
-FACENET = "mtcnn-facenet"
+FACENET = validation.MTCNN_FACENET
 
 #: A face's vector under FaceNet's key, as `v`: `SELECT f.id, v.vector FROM faces f` + VECTOR_OF_FACE.
 VECTOR_OF_FACE = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = '%s'" % FACENET

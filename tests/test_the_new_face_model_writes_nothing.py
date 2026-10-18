@@ -31,6 +31,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -163,7 +164,7 @@ class _Libraries(unittest.TestCase):
             photo_rows.add_read(conn, read, {"XMP:Subject": ["Boats/Dinghy"]})
             for box in ([2, 2, 30, 30], [32, 4, 60, 34]):
                 vector = rng.normal(size=512).astype(np.float32)
-                store_faces.insert(conn, read, box, (vector / np.linalg.norm(vector)).tobytes(), prob=0.99)
+                store_faces.insert(conn, read, box, (vector / np.linalg.norm(vector)).tobytes(), prob=0.99, model=FACENET)
             conn.commit()
         finally:
             conn.close()

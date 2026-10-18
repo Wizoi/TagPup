@@ -17,6 +17,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
 from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.result import NotFound, Refused, Result  # noqa: E402
@@ -264,7 +265,7 @@ class Operations(TwoSams, unittest.TestCase):
         from tagpup.services import journal as journal_service
         from tagpup.store import journal
         wren = self.node("People/Wren Halloway")
-        face = write(self.path, lambda conn: faces.insert(conn, self.other, [40, 0, 50, 10], b"\x05" * 8))
+        face = write(self.path, lambda conn: faces.insert(conn, self.other, [40, 0, 50, 10], b"\x05" * 8, model=FACENET))
         write(self.path, lambda conn: faces.name(conn, [face], wren))
         self.assertEqual((wren, "Wren Halloway", "manual"), self.face(face))
         self.assertTrue(tags_service.delete(self.library, wren, "remove", None, "exiftool", force=True).ok)

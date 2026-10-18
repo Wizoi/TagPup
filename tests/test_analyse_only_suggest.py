@@ -31,6 +31,7 @@ import damaged_photos  # noqa: E402
 import face_rows  # noqa: E402
 import library_dump  # noqa: E402
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
@@ -202,7 +203,7 @@ class Base(unittest.TestCase):
                                      np.array(vector_of(path), dtype=np.float32).tobytes())
             store_taxonomy.add_node(conn, "Trips/Regatta")
             store_taxonomy.add_node(conn, "People/Rowan Thackeray")
-            store_faces.insert(conn, self.held[0], [0, 0, 100, 100], ROWAN.tobytes(), name="Rowan Thackeray", prob=0.99)
+            store_faces.insert(conn, self.held[0], [0, 0, 100, 100], ROWAN.tobytes(), name="Rowan Thackeray", prob=0.99, model=FACENET)
             conn.commit()
         finally:
             conn.close()
@@ -563,7 +564,7 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
         conn = db.connect(self.library.path)
         try:
             store_faces.insert(conn, self.held[1], [0, 0, 100, 100], WREN.tobytes(),
-                               name=face_rows.person_of(conn, "Wren Okafor"), prob=0.99)
+                               name=face_rows.person_of(conn, "Wren Okafor"), prob=0.99, model=FACENET)
             conn.commit()
         finally:
             conn.close()

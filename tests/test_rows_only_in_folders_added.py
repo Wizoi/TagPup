@@ -22,6 +22,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
@@ -114,7 +115,7 @@ class TheStore(Folders, unittest.TestCase):
     def test_makes_none_in_a_folder_it_does_not_hold(self):
         writes = {
             "a row": lambda conn: store_photos.ensure_row(conn, self.shared[0]),
-            "a face": lambda conn: store_faces.insert(conn, self.shared[0], [1, 2, 3, 4], b"\0" * 16),
+            "a face": lambda conn: store_faces.insert(conn, self.shared[0], [1, 2, 3, 4], b"\0" * 16, model=FACENET),
             "a vector": lambda conn: store_embeddings.put(conn, self.shared[0], "clip", 1.0, 4, b"\0" * 16),
             "a suggestion": lambda conn: store_suggestions.put(conn, self.shared[0], {"tags": ["Family/Work"]}),
         }

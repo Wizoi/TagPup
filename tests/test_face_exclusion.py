@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import tuner_client  # noqa: E402
-from face_rows import people_of  # noqa: E402
+from face_rows import people_of, FACENET  # noqa: E402
 import fake_exiftool  # noqa: E402
 
 from tagpup.store import db  # noqa: E402
@@ -91,7 +91,7 @@ class ExclusionTestBase(unittest.TestCase):
     def add_face(self, photo, embedding, name=None, box=(0, 0, 100, 100)):
         conn = db.connect(self.TEST_DB)
         person = self.person(conn, name) if name else None
-        fid = store_faces.insert(conn, photo, list(box), embedding.tobytes(), name=person, prob=0.99)
+        fid = store_faces.insert(conn, photo, list(box), embedding.tobytes(), name=person, prob=0.99, model=FACENET)
         conn.commit()
         conn.close()
         return fid
@@ -271,7 +271,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
         ]
         pi = self.index()
         try:
-            self.assertEqual(face_records.record_detected(pi.db_path, photo, detected), 2)
+            self.assertEqual(face_records.record_detected(pi.db_path, photo, detected, model=FACENET), 2)
         finally:
             pi.close()
 
@@ -292,7 +292,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
         pi = self.index()
         try:
             inserted = face_records.record_detected(pi.db_path, 
-                photo, [{"box": [0, 0, 9, 9], "embedding": identity_vector(63).tolist(), "prob": 0.9}]
+                photo, [{"box": [0, 0, 9, 9], "embedding": identity_vector(63).tolist(), "prob": 0.9}], model=FACENET
             )
         finally:
             pi.close()
@@ -310,7 +310,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
     def test_an_empty_detection_records_nothing(self):
         pi = self.index()
         try:
-            self.assertEqual(face_records.record_detected(pi.db_path, self.add_photo("a.jpg"), []), 0)
+            self.assertEqual(face_records.record_detected(pi.db_path, self.add_photo("a.jpg"), [], model=FACENET), 0)
         finally:
             pi.close()
 
@@ -325,7 +325,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
                     "box": [0, 0, 50, 50],
                     "embedding": near(base, 70 + i).tolist(),
                     "prob": 0.99,
-                }])
+                }], model=FACENET)
         finally:
             pi.close()
 
@@ -414,7 +414,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
         pi = self.index()
         try:
-            face_records.record_batch(pi.conn, {photo: [self.detection(2)]})
+            face_records.record_batch(pi.conn, {photo: [self.detection(2)]}, model=FACENET)
         finally:
             pi.close()
 
@@ -429,7 +429,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
         pi = self.index()
         try:
-            face_records.record_batch(pi.conn, {photo: [self.detection(2)]})
+            face_records.record_batch(pi.conn, {photo: [self.detection(2)]}, model=FACENET)
         finally:
             pi.close()
 
@@ -441,7 +441,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
         photo = self.add_photo("new.jpg")
         pi = self.index()
         try:
-            face_records.record_batch(pi.conn, {photo: [self.detection(3), self.detection(4)]})
+            face_records.record_batch(pi.conn, {photo: [self.detection(3), self.detection(4)]}, model=FACENET)
         finally:
             pi.close()
 
@@ -459,7 +459,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
         pi = self.index()
         try:
-            face_records.record_batch(pi.conn, {photo: [self.detection(5)]}, overwrite=True)
+            face_records.record_batch(pi.conn, {photo: [self.detection(5)]}, overwrite=True, model=FACENET)
         finally:
             pi.close()
 

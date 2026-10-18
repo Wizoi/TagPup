@@ -31,6 +31,7 @@ from test_faces_and_tags_in_step import InStep  # noqa: E402
 from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write  # noqa: E402
 from test_face_clustering_rules import identity_vector as clustering_vector, near as near_vector  # noqa: E402
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 import stand_in_models  # noqa: E402
 from test_organize_faces import WREN  # noqa: E402
@@ -275,7 +276,7 @@ class TwoSamsInTheStore(TwoSams, unittest.TestCase):
         with self.assertRaises(NotFound):
             faces_service.name_face(self.library, self.faces[0], 99999)
         with self.assertRaises(person_ids.AmbiguousPerson):
-            write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x03" * 8, name="Sam"))
+            write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x03" * 8, name="Sam", model=FACENET))
         with self.assertRaises(ValueError):
             write(self.path, lambda conn: faces.name(conn, [self.faces[0]], "Vessels/Gull"))
         self.assertEqual(before, self.counts())
@@ -391,7 +392,7 @@ class TwoSamsAreGuessedApart(unittest.TestCase):
             def photo(name, keywords, *faces_of):
                 path = os.path.join(folder, name)
                 photo_rows.add_read(conn, path, {"XMP:Subject": list(keywords)})
-                return [faces.insert(conn, path, [120 * n, 0, 120 * n + 100, 100], near_vector(looks[who], jitter).tobytes())
+                return [faces.insert(conn, path, [120 * n, 0, 120 * n + 100, 100], near_vector(looks[who], jitter).tobytes(), model=FACENET)
                         for n, (who, jitter) in enumerate(faces_of)]
 
             for tag, offset in ((self.FAMILY, 10), (self.FRIENDS, 20)):

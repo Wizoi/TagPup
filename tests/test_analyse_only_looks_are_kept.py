@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import face_rows  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import library_dump  # noqa: E402
 import test_analyse_only_suggest as base  # noqa: E402
 
@@ -292,7 +293,7 @@ class APersonIsFiledAsTheChipFilesThem(Base):
         conn = db.connect(self.library.path)
         try:
             store_faces.insert(conn, self.held[1], [0, 0, 100, 100], base.WREN.tobytes(),
-                               name=face_rows.person_of(conn, "Wren Okafor"), prob=0.99)
+                               name=face_rows.person_of(conn, "Wren Okafor"), prob=0.99, model=FACENET)
             conn.commit()
         finally:
             conn.close()

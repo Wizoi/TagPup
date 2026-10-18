@@ -20,6 +20,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from face_rows import FACENET  # noqa: E402
 import photo_rows  # noqa: E402
 import face_rows  # noqa: E402
 import fake_exiftool  # noqa: E402
@@ -1313,7 +1314,7 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         conn = db.connect(self.TEST_DB)
         try:
             store_faces.insert(conn, photo.swapcase(), [10, 10, 50, 50], unit_vector(911).tobytes(),
-                               name=face_rows.person_of(conn, "Tamsin Okafor"))
+                               name=face_rows.person_of(conn, "Tamsin Okafor"), model=FACENET)
             conn.commit()
         finally:
             conn.close()

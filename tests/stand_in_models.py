@@ -8,6 +8,7 @@ the suggester the way a run does:
 `faces` is the test's own face model (what it detects is the test's point); CLIP is `Clip`, which asks nothing of a photo
 (the test gives its vector) and embeds every word to nothing, so no word is offered.
 """
+from tagpup.core import validation
 from tagpup.services import settings as library_settings
 from tagpup.services import suggester
 
@@ -16,6 +17,7 @@ class Faces:
     """A face model's settings, which tagpup.ml.faces.FaceModel always holds and a detection is recorded under
     (tagpup.services.faces.detector_of): a test's face model is one of these, and says what it detects."""
     min_face_size, confidence_threshold, mtcnn_thresholds = 40, 0.9, [0.6, 0.7, 0.7]
+    key = validation.MTCNN_FACENET   # the key its vectors are filed under, as tagpup.ml.faces.FaceModel's
 
     def picture(self, path, *, max_side):
         """The processor's half, as the CLI's index asks it (tagpup.ml.faces.FaceModel.picture): what the test's
