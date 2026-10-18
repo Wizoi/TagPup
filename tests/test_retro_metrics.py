@@ -279,5 +279,39 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
                 self.assertNotIn(CANARY, handle.read())
 
 
+class AWorkerMergedUnderItsOwnBranchName(unittest.TestCase):
+    """A worker that renamed its branch merges as `Merge perf/thing`: the run is tied to the merge by a `Worktree:`
+    line in the merge's message, which --branch prints while the worker's worktree still exists."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp(prefix="retro-worktree-")
+        self.addCleanup(_remove, self.folder)
+        os.makedirs(os.path.join(self.folder, "main"))
+        self.repo = ARepository(os.path.join(self.folder, "main"))
+        self.repo.commit("2026-10-01", "start", ("a.txt", "a\n"))
+        self.tree = os.path.join(self.folder, "main", ".claude", "worktrees", "agent-beef")
+        self.repo.git("worktree", "add", "-q", "-b", "perf/thing", self.tree)
+
+    def test_the_guard_prints_the_line_and_the_merge_it_leads_to_ties_the_run(self):
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            retro_metrics.main(["--repo", self.repo.folder, "--rev", "main", "--branch", "perf/thing"])
+        self.assertIn("Worktree: agent-beef", printed.getvalue())
+        started = {"worktree-agent-beef": 0}
+        self.assertEqual({"worktree-agent-beef": "no merge found"},
+                         retro_metrics.branch_states(self.repo.folder, "main", started))
+        self.repo.git("-C", self.tree, "commit", "-q", "--allow-empty", "-m", "work")
+        self.repo.git("merge", "-q", "--no-ff", "perf/thing", "-m", "Merge perf/thing: a thing",
+                      "-m", "Worktree: agent-beef")
+        self.repo.git("worktree", "remove", "--force", self.tree)
+        self.repo.git("branch", "-D", "perf/thing")
+        self.assertEqual({"worktree-agent-beef": "merged"},
+                         retro_metrics.branch_states(self.repo.folder, "main", started))
+
+    def test_a_branch_checked_out_in_no_agent_worktree_gets_no_line(self):
+        self.repo.git("branch", "elsewhere")
+        self.assertEqual("", retro_metrics.worktree_line(self.repo.folder, "elsewhere"))
+
+
 if __name__ == "__main__":
     unittest.main()

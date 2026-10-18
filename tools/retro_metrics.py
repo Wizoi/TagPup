@@ -69,6 +69,9 @@ WORK_TYPES = ("worker", "small worker")
 WORKTREE_BRANCH = re.compile(r"^worktree-agent-[0-9a-f]+$")
 OTHER_BRANCH = "(not a worktree-agent branch)"
 MERGED_BRANCH = re.compile(r"^Merge (?:branch ')?(worktree-agent-[0-9a-f]+)")
+#: A line of a merge's message that ties it to the worker's worktree when the branch merged has a name of its own
+#: (`--branch` prints it; retro 2026-10-18, action 2).
+WORKTREE_LINE = re.compile(r"^Worktree: (?:worktree-)?(agent-[0-9a-f]+)\s*$", re.M)
 TOKENS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 
 
@@ -384,7 +387,9 @@ def branch_states(repo, rev, started):
     no merge found: no ref and no merge names it (never merged, or merged under another name: an upper bound)."""
     named = {m.group(1) for m in map(MERGED_BRANCH.match, git(repo, "log", "--merges", "--format=%s", rev).splitlines())
              if m}
-    tips = {name: (sha, int(when)) for name, sha, when in (line.split() for line in git(
+    for body in git(repo, "log", "--merges", "--format=%B%x00", rev).split("\0"):
+        named.update("worktree-" + found for found in WORKTREE_LINE.findall(body))
+    tips ={name: (sha, int(when)) for name, sha, when in (line.split() for line in git(
         repo, "for-each-ref", "--format=%(refname:short) %(objectname) %(committerdate:unix)",
         "refs/heads/worktree-agent-*").splitlines())}
     merged = set(git(repo, "branch", "--merged", rev, "--list", "worktree-agent-*",
@@ -520,6 +525,18 @@ def workers_section(repo, start, end, found):
             "trunk_merges": [{"sha": sha[:10], "day": by_sha[sha]["day"], "added": a, "removed": r,
                               "subject": by_sha[sha]["subject"][:90] if a > BRANCH_BUDGET else ""}
                              for sha, (a, r) in zip(trunk, trunk_sizes)]}
+
+
+def worktree_line(repo, ref):
+    """The `Worktree: agent-<id>` line for the merge message of `ref`, or "" when `ref` is checked out in no agent's
+    worktree (`.claude/worktrees/agent-<id>`)."""
+    path = None
+    for block in git(repo, "worktree", "list", "--porcelain").split("\n\n"):
+        fields = dict(line.split(" ", 1) for line in block.splitlines() if " " in line)
+        if fields.get("branch") in ("refs/heads/" + ref, ref):
+            path = fields.get("worktree", "")
+    found = re.search(r"[/\\](agent-[0-9a-f]+)$", path or "")
+    return "Worktree: %s" % found.group(1) if found else ""
 
 
 def branch_budget(repo, rev, ref, budget):
@@ -703,6 +720,9 @@ def main(argv=None):
         print("%s: +%d -%d lines against %s (its merge base with %s); budget %d added: %s"
               % (b["ref"], b["added"], b["removed"], b["base"], args.rev, b["budget"],
                  ("OVER" + (", allowed" if args.allow_over else "")) if b["over"] else "within"))
+        line = worktree_line(args.repo, args.branch)
+        if line and not args.branch.startswith("worktree-agent-"):
+            print("put this line in the merge message, so the retro ties the worker's run to the merge: %s" % line)
         return 1 if b["over"] and not args.allow_over else 0
     counted = report(args.repo, args.rev, args.transcripts, args.since, args.until)
     text = markdown(counted)
