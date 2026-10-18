@@ -225,6 +225,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
+    # A library set to a face model whose vectors it cannot keep is refused here, before anything is written -- the
+    # reset, a stamp, the folders recorded as added, a row -- and before a model's library is imported (#1643, #1089).
+    # Read without stamping: a library holding no settings is on the default, which it can keep.
+    refusal = None if skip_faces else runtimes.peek_settings(Library(db_path)).face_model_refusal
+    if refusal:
+        console.print("Not run: %s" % refusal, markup=False, soft_wrap=True)
+        raise SystemExit(indexing_service.EXIT_FACE_MODEL_NOT_READY)
     # A reset deletes the library, and its settings with it; the new one is stamped
     # with them again, not with the defaults. Read without stamping the one deleted.
     kept_settings = runtimes.peek_settings(Library(db_path)).values if reset and os.path.exists(db_path) else None
