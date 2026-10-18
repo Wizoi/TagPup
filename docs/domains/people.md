@@ -155,6 +155,10 @@ shown, the tag where filed), `person-tag-form` (a person written as a tag path),
 
 ## History
 
+- 2026-10-17, phase 2c: the vote of a cluster of one in a photo of two or more faces asks the tag's gate
+  (`names_from_the_tag`) for a name it gives, in cluster-faces' first round past the photo's conflicts; a name the face
+  carries is never asked, an anchor (one face, one keyword person) and a cluster of two or more are not asked. The rounds and
+  the last pass read who each person is in one place (`identities._known_faces`, anchors first). `min_samples` stays 1.
 - 2026-10-17, phase 2b: a name resting on likeness alone needs a margin over the next person named as well
   (`clustering.margins`, NAME_MARGIN 0.04, OFFER_MARGIN 0.02; owner): the pairing and the last pass of cluster-faces, a save's
   tags naming one of several faces, Re-examine, New Person, Suggest, the strip, the boxes and the Identify grid. A name a face
