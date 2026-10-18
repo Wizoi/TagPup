@@ -41,6 +41,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import sandbox  # noqa: E402
+from sandbox import environment  # noqa: E402
 
 import _root  # noqa: E402,F401
 from tagpup.core import processes  # noqa: E402
@@ -545,9 +546,10 @@ def run(args):
         began = time.time()
         sys.stdout.flush()
         # Its streams handed over: a child in a hidden console of its own would write its traceback there, unseen.
+        # A home of its own under the work folder; the card's turn stays the owner's line (sandbox.environment).
         done = processes.run([sys.executable, os.path.abspath(__file__), "one", "--work", work, "--models",
                               args.models, "--candidate", name, "--faces-from", args.faces_from], timeout=args.timeout,
-                             stdout=sys.stdout, stderr=sys.stderr)
+                             stdout=sys.stdout, stderr=sys.stderr, env=environment(os.path.join(work, "home")))
         ended = time.time()
         sampler.stop()
         card = sandbox.window(sampler.gpu, began, ended)
