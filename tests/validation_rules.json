@@ -1,5 +1,5 @@
 {
- "version": "265cf2f3402c",
+ "version": "896ce25b745b",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -324,6 +324,28 @@
      "min": 32,
      "max": 2048,
      "message": "The image size must be between 32 and 2048."
+    }
+   ]
+  },
+  "setting faces.model": {
+   "group": "faces",
+   "label": "Face model",
+   "type": "text",
+   "default": "mtcnn-facenet",
+   "info": "The models indexing and Suggest find faces and make their vectors with: mtcnn-facenet (MTCNN and FaceNet, which made every face vector the library holds) or scrfd-adaface (SCRFD and AdaFace). The settings below are MTCNN's. A library keeps FaceNet's vectors alone until its faces are moved to the new schema (docs/AI_PIPELINE.md, phase 3): until then, set to scrfd-adaface, indexing and Suggest are refused and write nothing.",
+   "locked": true,
+   "consequences": [
+    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
+    "Indexing a folder again applies it to that folder."
+   ],
+   "rules": [
+    {
+     "rule": "one_of",
+     "choices": [
+      "mtcnn-facenet",
+      "scrfd-adaface"
+     ],
+     "message": "The face model is one of mtcnn-facenet, scrfd-adaface."
     }
    ]
   },

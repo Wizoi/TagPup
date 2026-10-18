@@ -85,6 +85,13 @@ IGNORED_CLUSTER = "ignored cluster"
 #: (docs/findings.md, #53, #74). A kind since #224, as the turn of a photo is.
 EXCLUSION_REASONS = (DEFAULT_EXCLUSION_REASON, "stranger", "bad crop", "duplicate", IGNORED_CLUSTER)
 
+#: The face models a library can be set to (faces.model): MTCNN and FaceNet, which made every face vector the three
+#: libraries hold, and SCRFD and AdaFace (tagpup.ml.scrfd_adaface; docs/AI_PIPELINE.md, phase 3). Which of them a
+#: library can keep vectors of is tagpup.services.settings.KEPT_FACE_MODELS.
+MTCNN_FACENET = "mtcnn-facenet"
+SCRFD_ADAFACE = "scrfd-adaface"
+FACE_MODELS = (MTCNN_FACENET, SCRFD_ADAFACE)
+
 #: The ways Rotate turns a photo, a quarter each (tagpup.services.photos.rotate).
 ROTATE_DIRECTIONS = ("left", "right")
 
@@ -308,6 +315,15 @@ SETTINGS = {
         [{"rule": "optional"},
          {"rule": "integer", "message": "The image size is a whole number of pixels."},
          _between("The image size", 32, 2048)]),
+    "faces.model": _setting(
+        "faces", "Face model", "text", MTCNN_FACENET,
+        "The models indexing and Suggest find faces and make their vectors with: %s (MTCNN and FaceNet, which made "
+        "every face vector the library holds) or %s (SCRFD and AdaFace). The settings below are MTCNN's. A library "
+        "keeps FaceNet's vectors alone until its faces are moved to the new schema (docs/AI_PIPELINE.md, phase 3): "
+        "until then, set to %s, indexing and Suggest are refused and write nothing." % (
+            MTCNN_FACENET, SCRFD_ADAFACE, SCRFD_ADAFACE),
+        [{"rule": "one_of", "choices": list(FACE_MODELS),
+          "message": "The face model is one of %s." % ", ".join(FACE_MODELS)}]),
     "faces.min_face_size": _setting(
         "faces", "Smallest face", "integer", "20",
         "The smallest face, in pixels, that indexing looks for. Smaller finds more faces in crowds, "
