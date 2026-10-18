@@ -324,6 +324,38 @@ def background_faces(boxes):
     return {i for i, area in enumerate(areas) if area < 0.10 * largest and area < BACKGROUND_AREA}
 
 
+# ---- One face in two detections ------------------------------------------------------
+
+#: Two boxes are one face at this overlap or more (docs/AI_PIPELINE.md, phase 3's carrying rule: a face kept or lost
+#: between two detections).
+SAME_FACE = 0.5
+
+
+def iou(a, b):
+    """The overlap of two boxes (x1, y1, x2, y2): their intersection over their union, 0 for none."""
+    across = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    down = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    shared = across * down
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - shared
+    return shared / union if union > 0 else 0.0
+
+
+def pairs(boxes, others, at=SAME_FACE):
+    """{index in boxes: index in others}: each box paired once with the other it overlaps most, the largest overlaps
+    first, at `at` (SAME_FACE) or more; of equal overlaps the lower indexes first, so a tie is settled the same way
+    every run."""
+    candidates = sorted(((iou(a, b), i, j) for i, a in enumerate(boxes) for j, b in enumerate(others)),
+                        key=lambda each: (-each[0], each[1], each[2]))
+    paired, taken = {}, set()
+    for overlap, i, j in candidates:
+        if overlap < at:
+            break
+        if i not in paired and j not in taken:
+            paired[i] = j
+            taken.add(j)
+    return paired
+
+
 # ---- Everyone's faces ----------------------------------------------------------------
 
 def _window(age):

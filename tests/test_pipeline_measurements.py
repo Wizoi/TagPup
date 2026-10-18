@@ -23,6 +23,7 @@ import numpy as np  # noqa: E402
 import measure_pipeline_holdouts as holdouts  # noqa: E402
 import measure_pipeline_stages as stages  # noqa: E402
 import sandbox  # noqa: E402
+from tagpup.core import clustering  # noqa: E402
 
 
 def library_rows(rng):
@@ -259,11 +260,21 @@ class WhatACapLoses(unittest.TestCase):
         return {"number": number, "stratum": stratum, "boxes": [list(b) for b in boxes], "stored": [list(s) for s in stored]}
 
     def test_a_face_is_one_face_at_half_overlap_each_paired_once(self):
-        self.assertAlmostEqual(1.0, sandbox.iou([0, 0, 10, 10], [0, 0, 10, 10]))
-        self.assertEqual(0.0, sandbox.iou([0, 0, 10, 10], [20, 20, 30, 30]))
-        self.assertEqual({0: 1}, sandbox.pairs([[0, 0, 10, 10]], [[40, 40, 50, 50], [1, 0, 11, 10]]))
-        # Two boxes over one face: only one keeps it.
-        self.assertEqual(1, len(sandbox.pairs([[0, 0, 10, 10], [1, 1, 10, 10]], [[0, 0, 10, 10]])))
+        """The one pairing rule, from the package (tagpup.core.clustering): the measurement and the face pass both
+        carry a face between two detections by it."""
+        self.assertAlmostEqual(1.0, clustering.iou([0, 0, 10, 10], [0, 0, 10, 10]))
+        self.assertEqual(0.0, clustering.iou([0, 0, 10, 10], [20, 20, 30, 30]))
+        self.assertEqual({0: 1}, clustering.pairs([[0, 0, 10, 10]], [[40, 40, 50, 50], [1, 0, 11, 10]]))
+        # Two boxes over one face: only one keeps it, the one overlapping it most.
+        self.assertEqual({1: 0}, clustering.pairs([[1, 1, 10, 10], [0, 0, 10, 10]], [[0, 0, 10, 10]]))
+        # Greedy, the largest overlap first: box 0 overlaps both, but box 1 takes the one it matches exactly.
+        self.assertEqual({0: 1, 1: 0}, clustering.pairs([[0, 0, 10, 10], [2, 0, 12, 10]],
+                                                        [[2, 0, 12, 10], [0, 0, 11, 10]]))
+        # Under SAME_FACE (one third here) nothing is paired.
+        self.assertEqual({}, clustering.pairs([[0, 0, 10, 10]], [[5, 0, 15, 10]]))
+        # A tie is settled by the lower indexes, every run.
+        self.assertEqual({0: 0}, clustering.pairs([[0, 0, 10, 10]], [[0, 0, 10, 10], [0, 0, 10, 10]]))
+        self.assertEqual({0: 0}, clustering.pairs([[0, 0, 10, 10], [0, 0, 10, 10]], [[0, 0, 10, 10]]))
 
     def test_lost_faces_are_named_by_the_stored_face_they_match_and_gained_ones_are_counted(self):
         named, unnamed, excluded = [100, 100, 140, 150], [300, 300, 312, 316], [500, 500, 540, 550]
