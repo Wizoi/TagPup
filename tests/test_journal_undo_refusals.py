@@ -24,8 +24,10 @@ from unittest import mock
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import FACENET  # noqa: E402
 from journal_library import MODEL, JournalLibrary, jpeg, vector  # noqa: E402
 
+from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as library_journal  # noqa: E402
 from tagpup.store import journal  # noqa: E402
@@ -167,8 +169,9 @@ class InsertsRehearsed(Checked):
             "a photo, keyed by SQLite": journal.insert("photos", photo),
             "a photo with its key": journal.insert("photos", dict(photo, id=500)),
             "a face, keyed by SQLite": journal.insert("faces", {"photo_id": prize, "box": "[1, 2, 3, 4]",
-                                                                "embedding": vector(9), "name_source": "manual",
-                                                                "excluded": 0}),
+                                                                "name_source": "manual", "excluded": 0}),
+            "a face's vector under a second model": journal.insert("face_embeddings", {
+                "face_id": self.ids["excluded"], "model": validation.SCRFD_ADAFACE, "vector": vector(9)}),
             "a node with its tag and name": journal.insert("tag_taxonomy", {
                 "tag": "Friends/Maren Oakhollow", "parent_id": self.ids["Friends"], "name": "Maren Oakhollow",
                 "has_face": 1}),
@@ -262,11 +265,12 @@ class HistoryReadsKeysOnly(JournalLibrary):
         with mock.patch.object(journal, "_load", side_effect=AssertionError("loaded every value")):
             entry = journal.history(self.db_path, change_id=applied.change_id)[0]
         self.assertEqual({"face_crops": [[self.ids["copy"]], [self.ids["named"]]],
+                          "face_embeddings": [[self.ids["copy"], FACENET], [self.ids["named"], FACENET]],
                           "faces": [[self.ids["copy"]], [self.ids["named"]]],
                           "photos": [[self.ids["start"]]]}, entry["keys"])
         self.assertNotIn("values", entry)
         values = journal.history(self.db_path, change_id=applied.change_id, values=True)[0]["values"]
-        self.assertEqual(5, len(values))
+        self.assertEqual(7, len(values))
         self.assertTrue(re.match(r"<\d+ bytes>", values[0]["old"]["jpeg"]))
 
 
