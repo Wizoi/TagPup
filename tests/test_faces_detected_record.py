@@ -15,7 +15,8 @@ it (model_for_run), CLIP stood in for (tests/stand_in_models.py).
 
 A photo whose face rows are deleted is detected again (#779): the record says detection ran on a photo, and deleting
 every face row of it -- by the faces store, by id, or by the journal -- left the record, so Suggest believed the photo's
-faces known. A photo that keeps a face keeps its record; a detection that replaces the faces is recorded.
+faces known. A photo that keeps a face keeps its record; a detection that replaces the faces is recorded. A record that
+found no face is kept when faces another change gave the photo are taken away again: it is still true.
 Lifted: test_faces_detected_follows_the_faces. Break that fails the kept tests: faces_detected.forget_faceless doing
 nothing fails test_a_photo_that_loses_its_last_face_is_detected_again.
 """
@@ -201,6 +202,35 @@ class ThePhotoThatLosesItsFaces(unittest.TestCase):
             conn.close()
         self.assertTrue(self.recorded())
 
+
+
+class APhotoTheDetectorFoundNoFaceIn(unittest.TestCase):
+    """The detector found no face in a photo; a later change gave it faces (the new face model's pass, one journaled
+    change) and the owner undid it. The record that the detector found none is still true: it is kept, so Suggest does
+    not detect the photo again. The undo deleted it, the way it forgets a record whose faces were deleted."""
+    DETECTOR = faces_detected.detector({"min_face_size": 20})
+
+    def test_undoing_the_change_that_gave_it_faces_keeps_the_record_that_none_were_found(self):
+        home = own_home.for_test(self, prefix="faces_detected_none_")
+        db_path = home.library("harbour.db")
+        library_actions.create(db_path)
+        photo = os.path.join(home.root, "Regatta", "empty.jpg")
+        conn = db.connect(db_path)
+        try:
+            photo_id = photo_rows.add_read(conn, photo, {})
+            faces_detected.record(conn, photo, self.DETECTOR, None, 0)
+            conn.commit()
+        finally:
+            conn.close()
+        applied = journal.apply(db_path, "the new model's faces", [journal.insert("faces", {"photo_id": photo_id,
+                                                                                            "box": "[0, 0, 40, 40]"})])
+        journal.undo(db_path, applied.change_id)
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0])
+            self.assertTrue(faces_detected.detected(conn, photo, self.DETECTOR))
+        finally:
+            conn.close()
 
 if __name__ == "__main__":
     unittest.main()

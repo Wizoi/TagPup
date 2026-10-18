@@ -67,9 +67,11 @@ def detected(conn, photo_path, name):
 
 
 def forget_faceless(conn, photo_ids):
-    """Take away the row of each photo of `photo_ids` that has no face row now: its faces were deleted (a photo's
-    faces removed, a face deleted by id), so what the row says -- detection ran and these are its faces -- is no
-    longer true, and Suggest detects it again (docs/findings.md, #779). A photo that keeps a face keeps its row.
+    """Take away the row of each photo of `photo_ids` that has no face row now and whose detector found some: its faces
+    were deleted (a photo's faces removed, a face deleted by id), so what the row says -- detection ran and these are its
+    faces -- is no longer true, and Suggest detects it again (docs/findings.md, #779). A photo that keeps a face keeps
+    its row; so does a row that found none, which no deletion of faces makes untrue: a photo the detector found no face
+    in, given faces by another (the new face model's pass) and those undone, is as that detector left it.
     Returns rows taken away. The caller commits."""
     photo_ids = sorted(photo_ids)
     if not photo_ids:
@@ -78,7 +80,7 @@ def forget_faceless(conn, photo_ids):
     for start in range(0, len(photo_ids), 500):
         chunk = photo_ids[start:start + 500]
         removed += conn.execute(
-            "DELETE FROM faces_detected WHERE photo_id IN (%s)"
+            "DELETE FROM faces_detected WHERE photo_id IN (%s) AND found > 0"
             " AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = faces_detected.photo_id)"
             % ",".join("?" * len(chunk)), chunk).rowcount
     return removed
