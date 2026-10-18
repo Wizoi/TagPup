@@ -63,6 +63,13 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
   library: a save is the owner's own act on that photo's tag, and the tag says whose its one face is; the last pass guesses
   among several faces of a photo whose keywords say only who is in it.
 
+- **Elimination is not the cluster-of-one gate** (2026-10-17, phase 2c; DECISIONS 2026-10-17 "Phase 2c"): the gate is the
+  vote's. The rounds' process of elimination -- one face left and one keyword person no face is known for, the photo's
+  background faces not counted -- names that face with no likeness asked, as the owner's rule of 2026-10-15 (#1374) has it
+  (`test_clustering_meets_naming`: `test_one_face_left_and_one_person_left_on_a_photo_is_still_named`, and the ties that
+  name neither). A face the gate refuses may be named so: it is the known route for a person no face is known for, and
+  trunk gave such a face the same name by the vote (today's names unchanged on copies of the three libraries).
+
 - **The clustering trace's fourth decimal** (2026-10-16, phase 2a; #1548): the last pass read its likenesses from one float32
   product of a block of faces with everyone's faces, not one product a person, so a likeness differed in its last bits
   (at most 4.2e-07 on kr-track) and the trace printed 89 of photo_index's 187,757 similarities one apart at the fourth

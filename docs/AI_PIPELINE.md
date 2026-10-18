@@ -253,8 +253,14 @@ is the strong signal (precision 99.8% at margin 0.04, with FaceNet's vectors tod
   vote of a cluster of one in a photo of two or more faces is its photo's keywords alone, so a name it gives from now on asks
   the tag's gate (`names_from_the_tag`: 0.70 and the margin 0.04) in the first round, past the photo's conflicts; a name the
   face carries is never asked. photo_index held 2,389 names given so, 865 of them more like another person. On copies of the
-  three libraries a run on today's names writes what trunk's writes, face by face; from scratch on photo_index it names
-  50,829 where trunk names 51,234: 1,110 such votes not given, 693 faces named by the rounds instead and 14 by the last pass.
+  three libraries a run on today's names writes what trunk's writes, face by face. From scratch (every name not given
+  by hand taken off), each on its own copy of the live photo_index made minutes apart (today's plans agree face by face, so
+  the library had not changed), trunk gives 51,059 names, 2b's count, and the branch 50,654 (each with the 175 by hand:
+  51,234 and 50,829). The 405 between them: 1,112 that trunk alone names (1,110 votes of a cluster of one, which the last
+  pass refuses too, and 2 the last pass named), less 707 that the branch alone names (693 by the rounds, the other face of
+  the photo paired once the refused one no longer holds the person, and 14 by the last pass); 1 face is named by both, a
+  person apart (the last pass in trunk, the rounds in the branch). The process of elimination asks no likeness and stays so
+  (docs/domains/people.md, By design).
   **Suggest's `search(k=15)` stays one a photo** (owner: not built): a flat search of photo_index's 59,519 vectors is 9.25 ms
   a photo one at a time and 0.27 ms batched (records of the neighbours 0.5 ms), about 1% of a photo Suggest detects again
   (0.78 s), under the 5% a change asks; no timed run was made.
