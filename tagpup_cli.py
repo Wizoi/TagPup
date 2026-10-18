@@ -512,7 +512,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     if batch_faces:
                         # --force-reembed means redo the work; without it the
                         # existing face rows, and the curation on them, are kept.
-                        face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
+                        face_records.record_batch(photo_index.conn, batch_faces, model=face_processor.key,
+                                                  overwrite=force_reembed,
                                                   detector=face_records.detector_of(face_processor, detect_max_side))
                         batch_faces.clear()
 
@@ -539,7 +540,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             
             # Save the remaining face embeddings
             if batch_faces:
-                face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
+                face_records.record_batch(photo_index.conn, batch_faces, model=face_processor.key, overwrite=force_reembed,
                                           detector=face_records.detector_of(face_processor, detect_max_side))
                 batch_faces.clear()
             

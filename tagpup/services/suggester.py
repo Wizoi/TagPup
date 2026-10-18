@@ -466,7 +466,7 @@ class TagSuggester:
             # indexed still accumulates face data. Strictly additive: photos that already have face
             # rows are left untouched, so manual names and exclusions are safe.
             if self.remember:
-                saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces,
+                saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces, model=self.faces.key,
                                                      detector=face_records.detector_of(self.faces, self.detect_max_side))
                 if saved:
                     logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")

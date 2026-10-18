@@ -20,6 +20,7 @@ from PIL import Image
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*weights_only.*")
 from facenet_pytorch import MTCNN, InceptionResnetV1  # noqa: E402
 
+from tagpup.core import validation  # noqa: E402
 from tagpup.files import images  # noqa: E402
 
 logger = logging.getLogger("tagpup_cli.faces")
@@ -60,6 +61,9 @@ class NotDetected(list):
 
 class FaceModel:
     """The detector and the face embedder, loaded the first time either is used."""
+
+    #: The key its vectors are filed under (face_embeddings.model): the faces.model setting that names it.
+    key = validation.MTCNN_FACENET
 
     def __init__(self, min_face_size, confidence_threshold, mtcnn_thresholds, device=None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")

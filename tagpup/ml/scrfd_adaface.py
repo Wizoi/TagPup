@@ -23,6 +23,7 @@ import torch
 from PIL import Image
 from torchvision.ops import nms
 
+from tagpup.core import validation
 from tagpup.files import images
 from tagpup.ml import free_device_memory, gpu, refuse_in_tests
 from tagpup.ml.faces import SMALLEST_FACE, NotDetected
@@ -155,6 +156,9 @@ class ScrfdPicture:
 
 class ScrfdAdaFace:
     """The detector at its two squares and the recogniser, loaded the first time either is used."""
+
+    #: The key its vectors are filed under (face_embeddings.model): the faces.model setting that names it.
+    key = validation.SCRFD_ADAFACE
 
     def __init__(self, device=None, folder=None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")

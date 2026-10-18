@@ -11,6 +11,7 @@ import shutil
 import sys
 
 import _root  # noqa: F401
+from tagpup.core import validation
 from tagpup.store import db as tagpup_db
 from tagpup.files import images
 from tagpup.services import settings as library_settings
@@ -120,7 +121,7 @@ def main():
 
     # Insert face for puppy representing already matched face
     # A face is named by the id of the person's node, made above.
-    store_faces.insert(conn, puppy_path, puppy_face_box, face_emb.tobytes(),
+    store_faces.insert(conn, puppy_path, puppy_face_box, face_emb.tobytes(), model=validation.MTCNN_FACENET,
                        name=puppy, crop=puppy_crop, prob=0.98)  # matched to Puppy
 
     # Insert puppy2 image representing new content (untagged, unmatched face)
@@ -142,7 +143,7 @@ def main():
 
     # Insert unmatched face for puppy2
     # The same face embedding as the puppy's, unnamed: face recognition matches them.
-    store_faces.insert(conn, puppy2_path, puppy2_face_box, face_emb.tobytes(),
+    store_faces.insert(conn, puppy2_path, puppy2_face_box, face_emb.tobytes(), model=validation.MTCNN_FACENET,
                        crop=puppy2_crop, prob=0.98)
 
     conn.commit()
