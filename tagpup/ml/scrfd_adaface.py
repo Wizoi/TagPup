@@ -72,15 +72,23 @@ def missing_weights(folder):
     return " ".join(lines)
 
 
-def fitted(img, side):
-    """`img` (RGB, as images.opened gives it) scaled so that its long side is `side`, at the top left of a black `side` x `side` canvas: (the canvas as
-    an array of RGB bytes, the scale from the canvas back to `img`)."""
+def squares(img):
+    """{side: (canvas, scale back to `img`)} for each of SCALES: `img` (RGB, as images.opened gives it) scaled so that
+    its long side is the square's, at the top left of a black square canvas, as an array of RGB bytes. The largest
+    square first, each smaller one scaled from the one before (on the processor, a third of the time of scaling each
+    from the full picture), and Pillow's reducing gap as the detector's cap uses it (faces.detection_picture)."""
+    found, source = {}, img
     width, height = img.size
-    scale = side / max(width, height)
-    size = (max(1, round(width * scale)), max(1, round(height * scale)))
-    canvas = Image.new("RGB", (side, side))
-    canvas.paste(img.resize(size, Image.BILINEAR), (0, 0))
-    return np.array(canvas), 1.0 / scale   # writable: torch takes it as it is
+    for side in sorted(SCALES, reverse=True):
+        scale = side / max(width, height)
+        size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        scaled = source if source.size == size else source.resize(size, Image.BILINEAR, reducing_gap=3.0)
+        canvas = Image.new("RGB", (side, side))
+        canvas.paste(scaled, (0, 0))
+        found[side] = (np.array(canvas), 1.0 / scale)   # writable: torch takes it as it is
+        if scale < 1:
+            source = scaled
+    return found
 
 
 def decoded(outputs, side, back):
@@ -217,7 +225,7 @@ class ScrfdAdaFace:
             return NotDetected()
         try:
             img = images.opened(img_path, upright=False)
-            return ScrfdPicture(img, {side: fitted(img, side) for side in SCALES}, img_path)
+            return ScrfdPicture(img, squares(img), img_path)
         except Exception as e:
             logger.error("Error processing faces in %s: %s", img_path, e)
             return NotDetected()
