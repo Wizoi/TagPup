@@ -1,7 +1,8 @@
 """The migration runner, and a library meeting a step it has not had (docs/DATABASE.md, "The baseline"; tagpup.store.schema).
 
 There are two real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused), and
-33, which drops the empty `faces_pending` and the redundant `idx_faces_name`, on a library kept at 32 and on a new one alike.
+33, which moves each face's vector to `face_embeddings` under FaceNet's key and drops `faces.embedding`, the empty
+`faces_pending` and the redundant `idx_faces_name`, on a library kept at 32 and on a new one alike.
 The runner is held to what it promises by SYNTHETIC steps after the latest real one (tests/migration_names.py):
 
 * one that adds takes nothing and is watched to change nothing that was there; one that destroys takes one backup, under
@@ -10,9 +11,11 @@ The runner is held to what it promises by SYNTHETIC steps after the latest real 
 * D8: a library kept at the latest schema meets an additive step and a destructive one: interrupted part-way it resumes; two
   openers apply each once; a failing check leaves the library as it was; one backup, before the destructive step only, and
   none for a library being made; an older app refuses it; a change made before stays undoable across the additive step and
-  not across the destructive one. And the owner's library at 32 meets the real 33: one backup, the table and the index gone,
-  every other row as it was; killed after the backup it is still at 32 and migrates at the next open; the app before 33
-  refuses it after.
+  not across the destructive one. And the owner's library at 32 meets the real 33: one backup, every vector byte for byte
+  under FaceNet's key, the table and the index gone, every other row as it was; a face without FaceNet's vector refuses it
+  with a sentence and nothing changed, until that face is deleted; a library with no face; a reader mid-read keeps its
+  snapshot; a second library in the home is not touched; after it a face's vectors go with the face and move the faces
+  generation; killed after the backup it is still at 32 and migrates at the next open; the app before 33 refuses it after.
 * A library below the baseline is refused with a sentence before anything is written to it, whoever opens it.
 
 A step is declared once, in tests/migration_names.py, not in a list of names in every test that says which ran (#689). However
@@ -33,12 +36,13 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import migration_names  # noqa: E402
-from journal_library import JournalLibrary  # noqa: E402
+from face_rows import FACENET, add_vector_of_face, photo_id  # noqa: E402
+from journal_library import JournalLibrary, vector  # noqa: E402
 from migration_names import step  # noqa: E402
 
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.store import db, journal, schema  # noqa: E402
+from tagpup.store import db, generations, journal, schema  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -51,8 +55,13 @@ def backups(db_path):
 
 
 def digest(path):
-    with open(path, "rb") as handle:
-        return hashlib.sha256(handle.read()).hexdigest()
+    """The library file's bytes, and its write-ahead log's if it has one: a write not yet checkpointed is in the log."""
+    found = hashlib.sha256()
+    for each in (path, path + "-wal"):
+        if os.path.exists(each):
+            with open(each, "rb") as handle:
+                found.update(handle.read())
+    return found.hexdigest()
 
 
 class Migrated(JournalLibrary):
@@ -247,7 +256,8 @@ class TheRealMigrations(unittest.TestCase):
     def test_each_says_what_it_is_and_names_its_checks(self):
         baseline, dropping = schema.MIGRATIONS
         self.assertEqual((32, schema.ADDITIVE), (baseline.version, baseline.kind))
-        self.assertEqual((33, schema.DESTRUCTIVE, ("faces_pending",)), (dropping.version, dropping.kind, dropping.touches))
+        self.assertEqual((33, schema.DESTRUCTIVE, ("faces_pending", "faces", "face_embeddings"), "face vectors in face_embeddings"),
+                         (dropping.version, dropping.kind, dropping.touches, dropping.name))
         self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 33, 33))
         for migration in schema.MIGRATIONS:
             self.assertIn(migration.kind, schema.KINDS)
@@ -387,10 +397,15 @@ class AKeptLibraryMeetsTwoNewSteps(Migrated):
 # ---- The owner's library at 32 meets migration 33 ------------------------------------------------------------------------
 
 class TheOwnersLibraryAt32MeetsMigration33(Migrated):
-    """Made and seeded by the app before 33, as the three live libraries are (at 32, `faces_pending` empty, `idx_faces_name`
-    there), then opened by this one."""
+    """Made and seeded by the app before 33, as the three live libraries are (at 32, each face's vector in `faces.embedding`,
+    2,048 bytes; `faces_pending` empty, `idx_faces_name` there), then opened by this one."""
 
+    NAME = "face vectors in face_embeddings"
     DROPPED = {("table", "faces_pending"), ("index", "idx_faces_name")}
+    #: Made by 33, and made again without the column (the faces table, and its generation trigger, which named it).
+    MADE = {("table", "face_embeddings"), ("trigger", "face_embeddings_go_with_their_face")} | {
+        ("trigger", "generation_face_embeddings_" + event) for event in ("insert", "update", "delete")}
+    REMADE = {("table", "faces"), ("trigger", "generation_faces_update")}
 
     def setUp(self):
         with migration_names.up_to(schema.BASELINE):
@@ -398,6 +413,14 @@ class TheOwnersLibraryAt32MeetsMigration33(Migrated):
         self.assertEqual(schema.BASELINE, self.version())
         self.assertLessEqual(self.DROPPED, set(self.objects()))
         self.before = (self.objects(), self.counts(), self.dump())
+
+    def detected(self, conn, path, box, embedding, crop, prob):
+        """Record a face as the indexer at 32 did: its vector in `faces.embedding`, its crop in `face_crops`."""
+        face_id = conn.execute("INSERT INTO faces (photo_id, box, embedding, prob) VALUES (?, ?, ?, ?)",
+                               (photo_id(conn, path), json.dumps(box), embedding, prob)).lastrowid
+        if crop:
+            conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
+        return face_id
 
     def objects(self):
         """{(type, name): sql} of every table, index and trigger."""
@@ -407,26 +430,121 @@ class TheOwnersLibraryAt32MeetsMigration33(Migrated):
     def counts(self):
         return {name: self.query("SELECT COUNT(*) FROM %s" % name)[0][0] for (kind, name) in self.objects() if kind == "table"}
 
-    def test_it_takes_one_backup_drops_the_table_and_the_index_and_leaves_every_other_row(self):
+    @staticmethod
+    def as_33_leaves(dump, columns):
+        """`dump` (the library at 32, `columns` its faces' columns) as 33 leaves it: each face without its vector, and the
+        vector, byte for byte and of the type it was stored as, in `face_embeddings` under FaceNet's key."""
+        at = 2 * columns.index("embedding")   # a dump's row is each value, then its type
+        found = dict(dump)
+        found["faces"] = [row[:at] + row[at + 2:] for row in dump["faces"]]
+        found["face_embeddings"] = [(row[0], "integer", FACENET, "text") + row[at:at + 2] for row in dump["faces"]]
+        return found
+
+    def test_it_takes_one_backup_moves_every_vector_and_leaves_every_other_row(self):
         objects, counts, dump = self.before
-        self.assertEqual(["drop faces_pending and idx_faces_name"], schema.ensure(self.db_path))
+        columns = [row[1] for row in self.query("PRAGMA table_info(faces)")]
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
         self.assertEqual(33, self.version())
-        self.assertEqual({k: v for k, v in objects.items() if k not in self.DROPPED}, self.objects())
+        after = self.objects()
+        self.assertLessEqual(self.MADE | self.REMADE, set(after))
+        self.assertEqual({k: v for k, v in objects.items() if k not in self.DROPPED | self.REMADE},
+                         {k: v for k, v in after.items() if k not in self.MADE | self.REMADE})
+        self.assertNotIn("embedding", [row[1] for row in self.query("PRAGMA table_info(faces)")])
         counts.pop("faces_pending")
         counts["schema_version"] += 1
         counts["changes"] += 1   # the migration's own record
+        counts["face_embeddings"] = counts["faces"]
         self.assertEqual(counts, self.counts())
-        self.assertEqual(dump, self.dump())
+        self.assertEqual(self.as_33_leaves(dump, columns), self.dump())
         [taken] = backups(self.db_path)
         operation, version, status, summary = self.recorded()[-1]
-        self.assertEqual(("migration 33: drop faces_pending and idx_faces_name", 32, "applied", schema.DESTRUCTIVE, taken),
-                         (operation, version, status, summary["kind"], summary["backup"]))
+        self.assertEqual(("migration 33: " + self.NAME, 32, "applied", schema.DESTRUCTIVE, taken, {"face vectors": 4}),
+                         (operation, version, status, summary["kind"], summary["backup"], summary["took"]))
+        self.assertIn("every face's vector copied", summary["checks"])
         backup = db_rows(os.path.join(Library(self.db_path).backups, taken),
                          "SELECT type, name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name')")
         self.assertEqual(self.DROPPED, set(backup), "the copy is the way back")
         plan = " ".join(r[3] for r in self.query("EXPLAIN QUERY PLAN SELECT id FROM faces WHERE name = ?", ("x",)))
         self.assertIn("idx_faces_person", plan, "a lookup by name still has an index")
         self.assertEqual([], schema.ensure(self.db_path))
+
+    def test_a_face_without_facenets_vector_refuses_it_with_a_sentence_until_that_face_is_deleted(self):
+        # 0 such faces in the three live libraries (2026-10-18): the check stands between a vector of another length, or
+        # none, and filing it as FaceNet's.
+        conn = db.connect(self.db_path)
+        try:
+            path = conn.execute("SELECT path FROM photos WHERE id = ?", (self.ids["prize"],)).fetchone()[0]
+            short = self.detected(conn, path, [5, 5, 40, 40], vector(5, 256), None, 0.97)
+            none = self.detected(conn, path, [50, 5, 90, 40], None, None, 0.96)
+            conn.commit()
+        finally:
+            conn.close()
+        held = (self.objects(), self.counts(), self.dump())
+        with self.assertRaises(schema.CheckFailed) as refused:
+            schema.ensure(self.db_path)
+        self.assertEqual("every face's vector copied", refused.exception.check)
+        self.assertIn("Migration 33 (%s) was not applied" % self.NAME, str(refused.exception))
+        self.assertIn("2 face(s) hold no vector of FaceNet's length (2048 bytes)", str(refused.exception))
+        self.assertIn("remove those faces, and open it again", str(refused.exception))
+        self.assertEqual(32, self.version())
+        self.assertEqual(held, (self.objects(), self.counts(), self.dump()), "nothing was changed")
+        self.execute("DELETE FROM faces WHERE id IN (?, ?)", (short, none))
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(33, self.version())
+        self.assertEqual(self.query("SELECT id FROM faces ORDER BY id"),
+                         self.query("SELECT face_id FROM face_embeddings WHERE model = ? ORDER BY face_id", (FACENET,)))
+
+    def test_a_kept_library_with_no_face_is_migrated(self):
+        self.execute("DELETE FROM faces")   # its crops go with it (face_crops_go_with_their_face)
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(33, self.version())
+        self.assertEqual([(0,)], self.query("SELECT COUNT(*) FROM face_embeddings"))
+        self.assertEqual({"face vectors": 0}, self.recorded()[-1][3]["took"])
+
+    def test_a_reader_mid_read_keeps_what_it_was_reading_and_its_next_read_is_of_33(self):
+        reader = db.connect(db.readonly_uri(self.db_path), uri=True)
+        self.addCleanup(reader.close)
+        reader.execute("BEGIN")
+        first = reader.execute("SELECT id, embedding FROM faces ORDER BY id").fetchall()
+        self.assertEqual([self.NAME], schema.ensure(self.db_path), "a reader does not hold the migration back")
+        self.assertEqual(first, reader.execute("SELECT id, embedding FROM faces ORDER BY id").fetchall(),
+                         "the read it was in the middle of is of the library as it was")
+        reader.rollback()
+        self.assertEqual(first, reader.execute("SELECT face_id, vector FROM face_embeddings WHERE model = ? ORDER BY face_id",
+                                               (FACENET,)).fetchall())
+
+    def test_of_two_libraries_in_one_home_only_the_one_opened_is_migrated(self):
+        other = self.home.library("cove.db")
+        with migration_names.up_to(schema.BASELINE):
+            schema.ensure(other)
+            conn = db.connect(other)
+            try:
+                self.detected(conn, os.path.join(self.home.root, "Cove", "cove_001.jpg"), [1, 2, 30, 40], vector(9), None, 0.99)
+                conn.commit()
+            finally:
+                conn.close()
+        before = digest(other)
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(before, digest(other), "the other library's file is as it was")
+        self.assertEqual([(32,)], db_rows(other, "SELECT MAX(version) FROM schema_version"))
+        self.assertEqual([], backups(other))
+        self.assertEqual(1, len(backups(self.db_path)))
+
+    def test_after_it_a_deleted_face_takes_its_vectors_and_a_written_vector_moves_the_faces_generation(self):
+        schema.ensure(self.db_path)
+        face = self.ids["copy"]
+        conn = db.connect(self.db_path)
+        try:
+            moved = generations.value(conn, "faces")
+            add_vector_of_face(conn, face, vector(7), "scrfd-adaface")   # a second model's vector beside FaceNet's
+            conn.commit()
+            self.assertEqual(moved + 1, generations.value(conn, "faces"), "a grid of the faces is stale")
+            self.assertEqual(2, conn.execute("SELECT COUNT(*) FROM face_embeddings WHERE face_id = ?", (face,)).fetchone()[0])
+            conn.execute("DELETE FROM faces WHERE id = ?", (face,))
+            conn.commit()
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM face_embeddings WHERE face_id = ?", (face,)).fetchone()[0])
+        finally:
+            conn.close()
 
     def test_killed_after_the_backup_it_is_still_at_32_and_migrates_at_the_next_open(self):
         code = textwrap.dedent("""
@@ -437,7 +555,7 @@ class TheOwnersLibraryAt32MeetsMigration33(Migrated):
 
             def killed(conn):
                 real.apply(conn)
-                os._exit(9)   # the power goes: the drops done, nothing committed
+                os._exit(9)   # the power goes: the vectors copied and the column dropped, nothing committed
 
             schema.MIGRATIONS = schema.MIGRATIONS[:-1] + (real._replace(apply=killed),)
             schema.ensure(%(path)r)
@@ -450,7 +568,7 @@ class TheOwnersLibraryAt32MeetsMigration33(Migrated):
         self.assertEqual(32, self.version())
         self.assertEqual(self.before, (self.objects(), self.counts(), self.dump()), "as it was")
         schema.forget()
-        self.assertEqual(["drop faces_pending and idx_faces_name"], schema.ensure(self.db_path))
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
         self.assertEqual(33, self.version())
         self.assertFalse(self.DROPPED & set(self.objects()))
 
@@ -553,6 +671,8 @@ class ANewLibrary(unittest.TestCase):
         self.assertEqual([(32,), (33,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
         self.assertEqual([], db_rows(path, "SELECT name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name')"),
                          "made at the baseline and taken to 33 by the same runner")
+        self.assertEqual([("face_embeddings",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'face_embeddings'"))
+        self.assertNotIn("embedding", [row[1] for row in db_rows(path, "PRAGMA table_info(faces)")])
 
     def test_made_by_two_processes_at_once_is_made_once(self):
         home = own_home.for_test(self)

@@ -70,14 +70,13 @@ Stores high-level image metadata, tags (keywords) and captions. Its people are i
 | `year` | INTEGER | | The year it was taken: of `taken`, else a year in its file or folder names, or NULL (`tagpup.core.dates.photo_year`). Kept with `taken`; what the Identify views file faces under and what a face is compared across (`tagpup.core.clustering.KnownFaces`). |
 
 ### 2. `faces` Table
-Stores details of faces detected within photos, including face crop coordinates, resolved name identities and confidence scores. Their crops are in `face_crops`.
+Stores details of faces detected within photos, including face crop coordinates, resolved name identities and confidence scores. Their crops are in `face_crops`, their vectors in `face_embeddings` (since migration 33).
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Unique face crop identifier. |
 | `photo_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The photo the face is in. References `photos(id)` with `ON DELETE CASCADE`; the store deletes faces explicitly too, since most connections leave foreign keys off. A face found in a photo never indexed -- the suggester records the faces it detects -- first gets its photo a row holding only the path (`photos.ensure_row`), its `mtime` and `size` empty so the scan reads the file: only in a folder the library holds a photo directly in, or one it was asked to add (`added_folders`, through `tagpup.services.libraries.add` and the indexer); in any other folder `ensure_row` raises `NotHeld` and makes nothing. |
 | `box` | TEXT | | JSON-serialized bounding box coordinates `[x1, y1, x2, y2]`. |
-| `embedding` | BLOB | | 512-dimensional face embedding vector (binary representation of float32 array). |
 | `name` | TEXT | INDEXED (first of `idx_faces_person`, with `tag_id`) | The person's name, a CACHE of their node's leaf (`tag_taxonomy.name`), kept in step with `tag_id` by every writer and by a rename in the tree (stage 2, part B); `NULL` if unmatched. A face with a `name` and no `tag_id` is a row from before names had ids: no writer makes one now (DECISIONS 2026-10-11, identity is the id only), it is not counted as a person, and the doctor lists it. |
 | `prob` | REAL | | Detection confidence/probability score from MTCNN. |
 | `name_source` | TEXT | | Who decided `name`. `'manual'` marks a decision made by a person in TagTuner — including a deliberate unmatch, which is stored as `name = NULL` with this column set. `cluster-faces` re-derives every other name from scratch but preserves manual rows and uses them as anchors. `NULL` means the name was assigned automatically and may be revised. |
@@ -131,7 +130,7 @@ Each face's crop, a JPEG no larger than 256 px on a side, cut when the face is d
 Counters that move whenever a table changes, whoever changes it: TagPup, TagTuner, the CLI or a script. A cache stores the generations it was built at and is current while they have not moved (`tagpup.store.generations`). Triggers made by `tagpup.store.schema` bump them:
 
 - `photos`: every insert, delete and update of a photo row (`generation_photos_insert`, `_delete`, `_update`). The Suggest index reloads when it moves.
-- `faces`: every insert and delete, and every update of `name`, `tag_id`, `name_source`, `excluded`, `embedding` or `photo_id` (`tag_id` too: a face given to another person called alike changes no name). Caching a crop does not move it. Identify Faces keys its queue and match lists on it.
+- `faces`: every insert and delete, and every update of `name`, `tag_id`, `name_source`, `excluded` or `photo_id` (`tag_id` too: a face given to another person called alike changes no name), and every insert, update and delete of a face's vector in `face_embeddings` (`generation_face_embeddings_insert`, `_update`, `_delete`). Caching a crop does not move it. Identify Faces keys its queue and match lists on it.
 - `taxonomy`: every insert and delete in `tag_taxonomy`, and every update of `tag`, `name`, `parent_id` or `has_face`. TagPup keys who the tree says each person is on it, and so sees TagTuner's edits.
 
 Replaced `faces_generation` and `taxonomy_generation`, one table each.
@@ -213,7 +212,7 @@ What each change found and left, one row per changed column (`tagpup.store.journ
 | `id` | INTEGER | PRIMARY KEY | The order the rows were written in; an undo reverses it. |
 | `change_id` | INTEGER | NOT NULL, → `changes.id`, INDEXED | The change. |
 | `action` | TEXT | NOT NULL, `insert`, `update` or `delete` | What was done to the row: tells an insert from an update whose old values were NULL. |
-| `table_name` | TEXT | NOT NULL, INDEXED (with `row_key`) | The table: `photos`, `faces`, `tag_taxonomy`, `face_crops`, `embeddings`, `suggestions` or `settings` (`journal.KEYS`). |
+| `table_name` | TEXT | NOT NULL, INDEXED (with `row_key`) | The table: `photos`, `faces`, `tag_taxonomy`, `face_crops`, `face_embeddings`, `embeddings`, `suggestions` or `settings` (`journal.KEYS`). |
 | `row_key` | TEXT | NOT NULL | The row's key as a JSON list, `[123]` or `[123, "<model>"]`. |
 | `column_name` | TEXT | NOT NULL | The column. |
 | `old` | (none) | | The value before, as SQLite stored it: an integer, a real, text or a BLOB. No declared type, so nothing is converted. NULL for an insert. |
@@ -343,6 +342,15 @@ The photos whose faces were detected (`tagpup.store.faces_detected`; findings #7
 | `found` | INTEGER | NOT NULL | How many faces it found. |
 | `at` | TEXT | NOT NULL | Local time it was recorded, `YYYY-MM-DD HH:MM:SS`. |
 
+### 27. `face_embeddings` Table
+Each face's vector, one per face model (migration 33, DECISIONS 2026-10-16 and 2026-10-18): `faces` keeps a face's identity, and another model's vector sits beside FaceNet's. Migration 33 copied every `faces.embedding` here under `mtcnn-facenet` and dropped the column. A reader reads under the library's face model (the `faces.model` setting, `tagpup.store.settings.face_model`, on its own connection); a writer files a vector under the key of the model that made it (`tagpup.store.faces.insert`). The trigger `face_embeddings_go_with_their_face` deletes a face's vectors with the face, whichever connection deletes it; the journal records them with a deleted face (`journal.CASCADES`), so an undo puts them back.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `face_id` | INTEGER | PRIMARY KEY (with `model`), → `faces.id` ON DELETE CASCADE | The face. |
+| `model` | TEXT | PRIMARY KEY (with `face_id`) | The face model's key: `mtcnn-facenet` or `scrfd-adaface` (`tagpup.core.validation`). Vectors compare only under one key. |
+| `vector` | BLOB | NOT NULL | float32 bytes (FaceNet's: 512, 2,048 bytes). |
+
 ---
 
 ## Entity-Relationship (ER) Diagram
@@ -368,7 +376,6 @@ erDiagram
         INTEGER id PK
         INTEGER photo_id FK
         TEXT box
-        BLOB embedding
         TEXT name
         REAL prob
         TEXT name_source
@@ -444,6 +451,12 @@ erDiagram
         BLOB jpeg
     }
 
+    face_embeddings {
+        INTEGER face_id PK
+        TEXT model PK
+        BLOB vector
+    }
+
     generations {
         TEXT name PK
         INTEGER value
@@ -465,6 +478,7 @@ erDiagram
     folders ||--o{ folders : "parent of"
     photos ||--o| suggestions : "offered"
     faces ||--o| face_crops : "cropped as"
+    faces ||--o{ face_embeddings : "embedded as"
     tag_taxonomy ||--o{ tag_taxonomy : "parent of"
 ```
 

@@ -53,7 +53,8 @@ class ANewLibrary(SchemaTestCase):
         conn = self.connect()
         self.assertEqual([m.name for m in schema.MIGRATIONS], applied)
         self.assertEqual(schema.LATEST, schema.version(conn))
-        self.assertEqual({"photos", "faces", "face_crops", "embeddings", "photo_people", "suggestions", "tag_taxonomy",
+        self.assertEqual({"photos", "faces", "face_crops", "face_embeddings", "embeddings", "photo_people", "suggestions",
+                          "tag_taxonomy",
                           "tag_embeddings", "generations", "schema_version", "changes", "change_rows", "settings",
                           "change_files", "job_runs", "added_folders",
                           "faces_detected", "roots", "photo_tags", "folders", "photo_folder",
