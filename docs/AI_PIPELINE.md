@@ -528,6 +528,7 @@ faces found against the spike's on those photos: 2,070 at 1280 against 2,135, 33
 here, OpenCV's area scaling in the spike), 2,081 merged. The whole of a worst photo (both squares, the merge, the
 alignment and AdaFace in chunks of 32 for about 210 faces) is 0.25 s. So the second scale costs about 0.006 s on the
 card and 0.02 s on the processor a photo, not the 0.039 s the onnxruntime run suggested.
+Measured by a throwaway script in the worker's scratch folder (not kept, so not repeatable from the tree): it took the card's turn itself and read the weights from its own folder, converted by `scripts/make_scrfd_torchscript.py` from the spike's `det_10g.onnx`; the three weight files are not in the owner's checkpoints folder.
 
 ## 8. Risks
 

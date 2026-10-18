@@ -8,6 +8,7 @@ click
 tqdm
 Pillow
 facenet-pytorch
+safetensors
 scikit-learn
 # The web layer (tagpup.web): the apps' routes, and the server that runs both.
 flask
