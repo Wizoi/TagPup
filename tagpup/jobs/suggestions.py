@@ -129,14 +129,15 @@ def _end(model):
 
 
 #: What refuses a run before it begins, and says all there is to say: another run's models (OtherModelsInUse), or a
-#: library set to a face model whose vectors it cannot keep (FaceModelNotReady).
-_REFUSALS = (OtherModelsInUse, FaceModelNotReady)
+#: library set to a face model whose vectors it cannot keep (FaceModelNotReady). Logged at INFO, without a traceback,
+#: here and by the runtime's warm-up (tagpup.runtime.Runtime._warm).
+REFUSALS = (OtherModelsInUse, FaceModelNotReady)
 
 
 def _log_failure(line, folder, error):
-    """A run that failed, in the log: with its traceback, unless it was refused (_REFUSALS, itself or what a run that
+    """A run that failed, in the log: with its traceback, unless it was refused (REFUSALS, itself or what a run that
     only looks says it of), which is expected."""
-    if isinstance(error, _REFUSALS) or isinstance(error.__cause__, _REFUSALS):
+    if isinstance(error, REFUSALS) or isinstance(error.__cause__, REFUSALS):
         logger.info("Suggest of %s was refused: %s", folder, error)
     else:
         logger.exception(line, folder, error)

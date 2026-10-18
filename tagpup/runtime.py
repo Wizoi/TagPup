@@ -54,6 +54,7 @@ from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
+from tagpup.jobs.suggestions import REFUSALS
 from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester
@@ -829,6 +830,10 @@ class Runtime:
             # The face models first: a library refused its face model (Runtime.faces) has no CLIP model built either.
             faces = self.faces(library, settings)
             models = (self.clip(library, settings), faces)
+        except REFUSALS as e:
+            # Refused, as a Suggest in it would be: a setting the owner chose, not a failure.
+            logger.info("Not warming the models of %s: %s", library.name, e)
+            return
         except Exception as e:
             logger.error("Could not make the models to warm them up: %s", e)
             return

@@ -287,9 +287,11 @@ class SuggestIsRefused(_Libraries):
             with self.subTest(remember=remember), self.assertRaises(library_settings.FaceModelNotReady) as raised:
                 self.begin(self.cove, remember=remember)
             self.assertEqual(SENTENCE, str(raised.exception))
-        with self.assertLogs("tagpup.runtime", "ERROR") as logged:
+        with self.assertLogs("tagpup.runtime", "INFO") as logged:
             self.runtime.warm_up([self.cove])
         self.assertIn(SENTENCE, "\n".join(logged.output))
+        # The warm-up's refusal is a refusal too, said at INFO.
+        self.assertFalse([line for line in logged.output if not line.startswith("INFO")], logged.output)
 
         self.assertEqual([], self.built, "a model was built for the switched library")
         self.assertEqual([], self.handed)
