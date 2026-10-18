@@ -315,6 +315,29 @@ still named or on the review list; the counts printed: matched, unmatched, new, 
 Owners: Data (migration), People (identity), Views-AI (detector, recogniser, card), Files for nothing written to a
 file. Size: three merges (migration and readers; detector and recogniser behind the setting; the pass and calibration).
 
+**Merge 2b, as built (2026-10-18).** The setting `faces.model` (`mtcnn-facenet`, the default, or `scrfd-adaface`;
+locked, group "faces"; a library holding no value reads as the default). A library set to a model whose vectors it
+cannot keep (`tagpup.services.settings.KEPT_FACE_MODELS`, FaceNet's alone) is refused every write of faces with one
+sentence (`FACE_MODEL_NOT_KEPT`): the CLI's index before it writes or imports anything (exit status 78; the server's
+queue says "Nothing was indexed: ..."), Suggest and Just look at `Runtime.begin` (`FaceModelNotReady`, nothing built),
+and the warm-up, which builds nothing for it. Identify reads the faces the library holds, unaffected. A look that
+writes nothing builds the new model by `Runtime.look_at_faces`: held as a run is (a Suggest on the other set is refused
+beside it, and it beside one), the card taken once at its first use and let go, the model with it, at `end()`.
+Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
+
+**Merge 3 brief (the pass; after migration 33).**
+- The crop is cut by the pass from the picture as stored (`ScrfdPicture.stored`) by the face's box, with
+  `images.crop_jpeg`, as `tagpup.ml.faces.FaceModel` does: `ScrfdAdaFace.faces_in` gives no crop.
+- The name a detection is recorded under (`tagpup.services.faces.detector_of`, `faces_detected`) gains a `model` key
+  for a model other than MTCNN alone, so the names every stored MTCNN detection was written under stand. Today every
+  write path under the new model is refused, so the arm is unreachable and is not written before the pass needs it.
+- Read-ahead: the pass hands the model the bytes it has read ahead (as the index's read-ahead does for MTCNN), or it
+  reads one photo at a time; the model does not read ahead of its own.
+- `faces.detect_max_side` does not apply to the new model: it fits each photo into its two squares itself.
+- The new model's vectors go only to `face_embeddings`, under its model key; never to `faces.embedding`.
+- Migration 33 extends `KEPT_FACE_MODELS` (and with it what `faces.model` can be set to and written under): until it
+  has run on a library, the refusal above stands for it.
+
 ### Phase 4: Matching, with the new model
 
 - **4a Time-nearest matching.** A new face is matched against the time-nearest named faces by Date Taken, not one
