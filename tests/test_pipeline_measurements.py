@@ -259,11 +259,11 @@ class WhatACapLoses(unittest.TestCase):
         return {"number": number, "stratum": stratum, "boxes": [list(b) for b in boxes], "stored": [list(s) for s in stored]}
 
     def test_a_face_is_one_face_at_half_overlap_each_paired_once(self):
-        self.assertAlmostEqual(1.0, stages.iou([0, 0, 10, 10], [0, 0, 10, 10]))
-        self.assertEqual(0.0, stages.iou([0, 0, 10, 10], [20, 20, 30, 30]))
-        self.assertEqual({0: 1}, stages.pairs([[0, 0, 10, 10]], [[40, 40, 50, 50], [1, 0, 11, 10]]))
+        self.assertAlmostEqual(1.0, sandbox.iou([0, 0, 10, 10], [0, 0, 10, 10]))
+        self.assertEqual(0.0, sandbox.iou([0, 0, 10, 10], [20, 20, 30, 30]))
+        self.assertEqual({0: 1}, sandbox.pairs([[0, 0, 10, 10]], [[40, 40, 50, 50], [1, 0, 11, 10]]))
         # Two boxes over one face: only one keeps it.
-        self.assertEqual(1, len(stages.pairs([[0, 0, 10, 10], [1, 1, 10, 10]], [[0, 0, 10, 10]])))
+        self.assertEqual(1, len(sandbox.pairs([[0, 0, 10, 10], [1, 1, 10, 10]], [[0, 0, 10, 10]])))
 
     def test_lost_faces_are_named_by_the_stored_face_they_match_and_gained_ones_are_counted(self):
         named, unnamed, excluded = [100, 100, 140, 150], [300, 300, 312, 316], [500, 500, 540, 550]

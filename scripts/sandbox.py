@@ -185,6 +185,33 @@ def choose_sample(rows, size, worst=10, rng=None):
     return chosen
 
 
+#: Two boxes are one face at this overlap or more (docs/AI_PIPELINE.md, phase 3's carrying rule: a face kept or lost between two detections).
+SAME_FACE = 0.5
+
+
+def iou(a, b):
+    """The overlap of two boxes (x1, y1, x2, y2): their intersection over their union, 0 for none."""
+    across = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    down = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    shared = across * down
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - shared
+    return shared / union if union > 0 else 0.0
+
+
+def pairs(boxes, others, at=SAME_FACE):
+    """{index in boxes: index in others}: each box paired once with the other it overlaps most, the largest overlaps
+    first, at `at` (SAME_FACE) or more."""
+    candidates = sorted(((iou(a, b), i, j) for i, a in enumerate(boxes) for j, b in enumerate(others)), reverse=True)
+    paired, taken = {}, set()
+    for overlap, i, j in candidates:
+        if overlap < at:
+            break
+        if i not in paired and j not in taken:
+            paired[i] = j
+            taken.add(j)
+    return paired
+
+
 def summary(values):
     """{"n", "mean", "median", "p10", "p90", "max", "sum"} of `values` (None left out); n 0 and nothing else for none."""
     values = sorted(v for v in values if v is not None)

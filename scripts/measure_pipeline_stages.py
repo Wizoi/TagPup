@@ -565,33 +565,6 @@ def stored_faces(library, photo_ids):
 
 # ---- Compare: the faces a cap loses and gains, against the run without one ----------------------------------------
 
-#: Two boxes are one face at this overlap or more (docs/AI_PIPELINE.md, phase 3's carrying rule).
-SAME_FACE = 0.5
-
-
-def iou(a, b):
-    """The overlap of two boxes (x1, y1, x2, y2): their intersection over their union, 0 for none."""
-    across = max(0, min(a[2], b[2]) - max(a[0], b[0]))
-    down = max(0, min(a[3], b[3]) - max(a[1], b[1]))
-    shared = across * down
-    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - shared
-    return shared / union if union > 0 else 0.0
-
-
-def pairs(boxes, others):
-    """{index in boxes: index in others}: each box paired once with the other it overlaps most, the largest overlaps
-    first, at SAME_FACE or more."""
-    candidates = sorted(((iou(a, b), i, j) for i, a in enumerate(boxes) for j, b in enumerate(others)), reverse=True)
-    paired, taken = {}, set()
-    for overlap, i, j in candidates:
-        if overlap < SAME_FACE:
-            break
-        if i not in paired and j not in taken:
-            paired[i] = j
-            taken.add(j)
-    return paired
-
-
 def compared(off, capped):
     """{stratum and "all": counts} of a capped run's photos against the run without a cap, photo by photo by number:
     faces found by each, lost (named, unnamed, their longest side), gained."""
@@ -602,8 +575,8 @@ def compared(off, capped):
         if before is None or before["stratum"] != photo["stratum"] or photo["boxes"] is None or before["boxes"] is None:
             continue
         named = [face[0] for face in before.get("stored") or () if face[0] and face[1] and not face[2]]
-        named_off = set(pairs(before["boxes"], named))
-        kept = pairs(before["boxes"], photo["boxes"])
+        named_off = set(sandbox.pairs(before["boxes"], named))
+        kept = sandbox.pairs(before["boxes"], photo["boxes"])
         gained = len(photo["boxes"]) - len(kept)
         for name in (photo["stratum"], "all"):
             row = table.setdefault(name, {"photos": 0, "found_off": 0, "named_off": 0, "found": 0, "lost_named": 0,
