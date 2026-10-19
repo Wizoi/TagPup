@@ -137,6 +137,19 @@ class FacePass(unittest.TestCase):
         self.assertEqual(untouched, self.dump()["faces"], "no face row moved: names, boxes and exclusions stand")
         self.assertEqual([(1,)], self.query("SELECT excluded FROM faces WHERE id = ?", (excluded,)))
 
+    def test_a_named_face_beside_an_unnamed_duplicate_takes_the_detection_though_the_duplicate_overlaps_it_more(self):
+        """The live shape (one in photo_index, counted 2026-10-18): a named face and an unnamed duplicate of it, at SAME_FACE
+        or more, where the model finds one face. The named face takes it (owner, 2026-10-18: named faces pair first), even
+        though the duplicate's box is the closer, so the person keeps a vector under the new model; the duplicate is
+        listed."""
+        photo, path = self.photo("twice.jpg")
+        named = self.face(path, [100, 100, 200, 200], 1, name="Rowan Thackeray", name_source="manual")
+        duplicate = self.face(path, [96, 100, 196, 200], 2)
+        found = self.run_pass(NewFaces({"twice.jpg": [((95, 100, 195, 200), 0.95, 7)]}))
+        self.assertEqual((1, 0, [(photo, duplicate)]), (found.matched, found.new, found.unmatched))
+        self.assertEqual([FACENET, NEW], self.vectors(named))
+        self.assertEqual([FACENET], self.vectors(duplicate))
+
     def test_a_new_detection_is_a_new_unnamed_face_with_its_crop_and_the_new_vector_alone_and_facenet_readers_leave_it_out(self):
         photo, path = self.photo("crowd.jpg")
         old = self.face(path, [10, 10, 110, 130], 1)

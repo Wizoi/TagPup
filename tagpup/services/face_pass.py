@@ -3,8 +3,10 @@
 The model is handed in (tagpup.ml.scrfd_adaface.ScrfdAdaFace, or a test's stand-in): `key`, `picture(path)` and
 `detect_and_embed(picture)`. For each photo it detects the faces again, and
 
-- each old face, named or not, excluded or not, takes the new detection it overlaps most, at SAME_FACE or more, one to one
-  (tagpup.core.clustering.pairs): it keeps its person, box, crop and decisions, and is given a vector under the model's key;
+- each old face, named or not, excluded or not, takes the new detection it overlaps most, at SAME_FACE or more, one to one,
+  the named faces first (tagpup.core.clustering.pairs; owner, 2026-10-18: a named face beside an unnamed duplicate of it
+  takes the detection though the duplicate overlaps it more): it keeps its person, box, crop and decisions, and is given a
+  vector under the model's key;
 - an old face no detection overlaps is listed (photo id, face id) for review, and nothing of it changes;
 - a detection no old face takes is a new face: unnamed, not excluded, its crop cut from the picture as stored by its box
   (images.crop_jpeg, as tagpup.ml.faces.FaceModel cuts one), its vector under the model's key alone, so every reader keyed
@@ -105,7 +107,8 @@ def _folder(db_path, conn, model, name, photos, apply):
             found.skipped += 1
             continue
         # Read before the model is asked, and again in the write: a face deleted, added or its box moved, or the photo's
-        # row removed or moved, meanwhile (the server or a sync beside this run) leaves the photo for the next run. A name given meanwhile changes nothing here.
+        # row removed or moved, or a face named or unnamed (a named face pairs first), meanwhile (the server or a sync
+        # beside this run) leaves the photo for the next run.
         old = store_faces.boxes_of(conn, photo_id)
         picture = model.picture(path)
         detected = model.detect_and_embed(picture) if face_service.ran(picture) else picture
@@ -115,13 +118,14 @@ def _folder(db_path, conn, model, name, photos, apply):
         if not detected:
             found.none_found += 1
             continue
-        paired = clustering.pairs([box for _face, box in old], [each["box"] for each in detected])
+        paired = clustering.pairs([box for _face, box, _named in old], [each["box"] for each in detected],
+                                  first=[i for i, (_face, _box, named) in enumerate(old) if named])
         matched = [(old[i][0], vector_bytes(detected[j]["embedding"])) for i, j in sorted(paired.items())]
         taken = set(paired.values())
         new = [(each["box"], float(each["prob"]), vector_bytes(each["embedding"]),
                 images.crop_jpeg(picture.stored.crop(tuple(each["box"]))))
                for j, each in enumerate(detected) if j not in taken]
-        unmatched = [(photo_id, face_id) for i, (face_id, _box) in enumerate(old) if i not in paired]
+        unmatched = [(photo_id, face_id) for i, (face_id, _box, _named) in enumerate(old) if i not in paired]
         if apply:
             written = db.write_with_connection(
                 db_path, lambda write: _write(write, model.key, operation, name, change_id, photo_id, path, old, matched,

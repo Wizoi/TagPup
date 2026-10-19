@@ -353,10 +353,10 @@ def vectors_under(conn, key, photo_ids):
 
 
 def boxes_of(conn, photo_id):
-    """[(face id, box)] of a photo's faces, named or not, excluded or not, by id: what the pass pairs with what it detects,
-    and reads again inside its write to see that nothing moved since."""
-    return [(face_id, json.loads(box)) for face_id, box in conn.execute(
-        "SELECT id, box FROM faces WHERE photo_id = ? ORDER BY id", (photo_id,))]
+    """[(face id, box, named)] of a photo's faces, named or not, excluded or not, by id: what the pass pairs with what it
+    detects (a named face first), and reads again inside its write to see that nothing moved since."""
+    return [(face_id, json.loads(box), tag_id is not None) for face_id, box, tag_id in conn.execute(
+        "SELECT id, box, tag_id FROM faces WHERE photo_id = ? ORDER BY id", (photo_id,))]
 
 
 def give_vectors(conn, change_id, photo_path, key, matched, new, counts):

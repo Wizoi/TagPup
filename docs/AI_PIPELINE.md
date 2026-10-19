@@ -296,8 +296,9 @@ non-commercial terms like insightface's (section 7); insightface's weights are a
 runtime unless the detector needs one and the owner agrees.
 
 **The pass.**
-- Each old named box takes the new box with the highest IoU of 0.5 or more in the same photo, keeps its person, and
-  gets its new vector; unmatched named faces are listed for review and never dropped; new unmatched detections
+- Each old named box takes the new box with the highest IoU of 0.5 or more in the same photo, before any unnamed box is
+  paired (owner, 2026-10-18: a named face beside an unnamed duplicate of it takes the detection though the duplicate
+  overlaps it more), keeps its person, and gets its new vector; then each unnamed box the same; unmatched named faces are listed for review and never dropped; new unmatched detections
   become new `faces` rows; excluded faces stay excluded. A turned photo keeps the "turned" rule of DECISIONS
   2026-10-16: boxes are not converted here.
 - One journaled change per folder, dry run by default, a small folder first and the owner checks it, backup first, run
