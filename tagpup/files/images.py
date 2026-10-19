@@ -409,18 +409,23 @@ def parse_box(box):
 
 def face_crop(photo_path, box):
     """The face in `box` cut from its photo, as a JPEG no larger than CROP_SIZE on a
-    side. A box that falls outside the picture gives a plain grey square."""
+    side (face_crop_of)."""
     with Image.open(photo_path) as img:
         if img.mode != "RGB":
             img = img.convert("RGB")
-        width, height = img.size
-        x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
-        x2, y2 = min(width, int(box[2])), min(height, int(box[3]))
-        if (x2 - x1) <= 0 or (y2 - y1) <= 0:
-            crop = Image.new("RGB", (100, 100), color=(50, 50, 50))
-        else:
-            crop = img.crop((x1, y1, x2, y2))
-        return crop_jpeg(crop)
+        return face_crop_of(img, box)
+
+
+def face_crop_of(img, box):
+    """The face in `box` cut from `img`, an RGB Pillow picture as stored, the box clamped to it, as the JPEG a face's
+    crop is kept as (crop_jpeg): what the index (tagpup.ml.faces), the face pass and a crop cut again keep. A box that
+    falls outside the picture gives a plain grey square."""
+    width, height = img.size
+    x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
+    x2, y2 = min(width, int(box[2])), min(height, int(box[3]))
+    if (x2 - x1) <= 0 or (y2 - y1) <= 0:
+        return crop_jpeg(Image.new("RGB", (100, 100), color=(50, 50, 50)))
+    return crop_jpeg(img.crop((x1, y1, x2, y2)))
 
 
 def crop_jpeg(crop):

@@ -9,7 +9,7 @@ The model is handed in (tagpup.ml.scrfd_adaface.ScrfdAdaFace, or a test's stand-
   vector under the model's key;
 - an old face no detection overlaps is listed (photo id, face id) for review, and nothing of it changes;
 - a detection no old face takes is a new face: unnamed, not excluded, its crop cut from the picture as stored by its box
-  (images.crop_jpeg, as tagpup.ml.faces.FaceModel cuts one), its vector under the model's key alone, so every reader keyed
+  (images.face_crop_of, as tagpup.ml.faces.FaceModel cuts one), its vector under the model's key alone, so every reader keyed
   by the library's model (FaceNet's until the gate) leaves it out (tagpup.store.faces.WITH_VECTOR).
 
 A photo is done when one of its faces holds a vector under the key (tagpup.store.faces.vectors_under): a run resumes by
@@ -117,7 +117,7 @@ def _folder(db_path, conn, model, name, photos, apply):
         matched = [(old[i][0], face_service.vector_bytes(detected[j]["embedding"])) for i, j in sorted(paired.items())]
         taken = set(paired.values())
         new = [(each["box"], float(each["prob"]), face_service.vector_bytes(each["embedding"]),
-                images.crop_jpeg(picture.stored.crop(tuple(each["box"]))))
+                images.face_crop_of(picture.stored, each["box"]))
                for j, each in enumerate(detected) if j not in taken]
         unmatched = [(photo_id, face_id) for i, (face_id, _box, _named) in enumerate(old) if i not in paired]
         if apply:
