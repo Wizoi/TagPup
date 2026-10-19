@@ -12,7 +12,7 @@ paths are checked by `tests/test_the_test_map.py`: a commit that moves a module 
 | People and faces | `.claude/agents/tagpup-owner-people.md` | what a person is (the id of a tag-tree node), names, tags and faces in step, Identify and Name faces from tags, clustering, the tree's people side |
 | Files and sync | `.claude/agents/tagpup-owner-files.md` | every touch of a photo file, the journaled write path, indexing, sync and the watcher, following a renamed file, shares |
 | Views, search and AI | `.claude/agents/tagpup-owner-views-ai.md` | which photos in what order and how many, the navigator and grid, search, photo vectors, Suggest, the models and the one graphics card |
-| Integration and apps | `.claude/agents/tagpup-owner-integration.md` | the seams: the cross-domain contract table, scenario tests, servers and routes, jobs' lifecycle, update hand-over and install, CLI and MCP, a route's reply against the page that reads it |
+| Integration and apps | `.claude/agents/tagpup-owner-integration.md` | the seams: the cross-domain contract table, scenario tests, servers and routes, jobs' lifecycle, update hand-over and install, CLI and MCP (a command's flow is its domain's: `index` Files', `face-pass` People's), a route's reply against the page that reads it |
 
 ## How a brief names its domain
 
