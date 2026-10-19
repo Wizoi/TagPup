@@ -10,11 +10,13 @@ The model is handed in (tagpup.ml.scrfd_adaface.ScrfdAdaFace, or a test's stand-
 - an old face no detection overlaps is listed (photo id, face id) for review, and nothing of it changes;
 - a detection no old face takes is a new face: unnamed, not excluded, its crop cut from the picture as stored by its box
   (images.face_crop_of, as tagpup.ml.faces.FaceModel cuts one), its vector under the model's key alone, so every reader keyed
-  by the library's model (FaceNet's until the gate) leaves it out (tagpup.store.faces.WITH_VECTOR).
+  by the library's model (FaceNet's until the gate) leaves it out (tagpup.store.faces.WITH_VECTOR);
+- a detection no old face takes whose shorter side is under NEW_FACE_FLOOR is not made, and is counted (`too_small`).
 
 A photo is done when one of its faces holds a vector under the key (tagpup.store.faces.vectors_under): a run resumes by
 what is held, and a second run writes nothing. No `faces_detected` row is written. A photo the model finds no face in
-writes nothing and is looked at again next run; a turned photo (tagpup.services.photos.box_shape, DECISIONS 2026-10-16:
+writes nothing and is looked at again next run, as is one whose detections are all under the floor and take no old face (no
+row can say it was looked at: a photo is done by a vector); a turned photo (tagpup.services.photos.box_shape, DECISIONS 2026-10-16:
 its boxes are not converted) is skipped; a photo whose picture does not decode or whose model fails is failed. All three
 are counted, and nothing of them is written.
 
@@ -51,6 +53,12 @@ from tagpup.store import roots as store_roots
 #: The name of a folder's change: the model's key. The folder is in its summary.
 OPERATION = "face pass (%s)"
 
+#: The shorter side, in pixels of the picture as stored, under which a detection no old face takes is not made a new
+#: face (owner, 2026-10-18): the new detector's own floor is 15 px, and in one real folder 31 of its 40 new faces were under
+#: 40 px, smudges no one can recognise (the old detector's smallest was 23, its median 64). An old face a detection of any
+#: size matches still gets the vector. To be tuned in slice C against held-out named faces.
+NEW_FACE_FLOOR = 40
+
 #: Reading one photo at a time: the next one is not read before the model is done with this one.
 ONE_AT_A_TIME = {"threads": 1, "ahead": 0, "budget": 0}
 
@@ -67,9 +75,10 @@ def _never():
 class Folder:
     """What the pass did, or a dry run would do, in one folder (the photos directly in it)."""
     folder: str
-    #: Old faces given a vector, and new faces made.
+    #: Old faces given a vector, and new faces made; detections no old face took, under NEW_FACE_FLOOR: not made.
     matched: int = 0
     new: int = 0
+    too_small: int = 0
     #: (photo id, face id) of each old face no detection took: listed for review, untouched.
     unmatched: List[Tuple[int, int]] = field(default_factory=list)
     #: Photos the model was asked about; turned (skipped), already done, in which no face was found (looked at again
@@ -180,9 +189,13 @@ def _photo(db_path, model, operation, name, found, change_id, photo_id, path, ol
                               first=[i for i, (_face, _box, named) in enumerate(old) if named])
     matched = [(old[i][0], face_service.vector_bytes(detected[j]["embedding"])) for i, j in sorted(paired.items())]
     taken = set(paired.values())
+    untaken = [each for j, each in enumerate(detected) if j not in taken]
+    big = [each for each in untaken if min(each["box"][2] - each["box"][0], each["box"][3] - each["box"][1]) >= NEW_FACE_FLOOR]
     new = [(each["box"], float(each["prob"]), face_service.vector_bytes(each["embedding"]),
-            images.face_crop_of(picture.stored, each["box"]))
-           for j, each in enumerate(detected) if j not in taken]
+            images.face_crop_of(picture.stored, each["box"])) for each in big]
+    if not matched and not new:
+        found.too_small += len(untaken)
+        return change_id
     unmatched = [(photo_id, face_id) for i, (face_id, _box, _named) in enumerate(old) if i not in paired]
     if apply:
         before_first_write()
@@ -197,6 +210,7 @@ def _photo(db_path, model, operation, name, found, change_id, photo_id, path, ol
             found.changes.append(change_id)
     found.matched += len(matched)
     found.new += len(new)
+    found.too_small += len(untaken) - len(big)
     found.unmatched += unmatched
     return change_id
 

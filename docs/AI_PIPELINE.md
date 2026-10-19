@@ -372,6 +372,13 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
 - The pass writes no `faces_detected` row: a photo is done when one of its faces holds a vector under the model's key, so
   MTCNN's found-none rows stand, and a photo the new model finds no face in writes nothing and is looked at again each run
   (at most 10,492 photos of photo_index, about 50 minutes a run, writing nothing: accepted).
+- No new face under `face_pass.NEW_FACE_FLOOR` = 40 px on its shorter side (owner, 2026-10-18, DECISIONS): the detector's own
+  floor is 15 px and one real folder gave 31 smudges under 40 px among 40 new faces. Only the making of an unmatched
+  detection as a new face is gated; an old face a detection of any size matches still gets the vector. The detections left
+  unmade are counted in `Folder.too_small` (the CLI's per-folder line). The done rule is unchanged: a photo whose
+  detections are all under the floor and take no old face holds no vector, so it is looked at again each run like one with no
+  face found (a count of detections, nothing written; a marker would be schema work, which DECISIONS 2026-10-15 holds). The
+  floor is tuned in slice C against held-out named faces.
 - What the journal holds: each vector about 2 KB of `change_rows`, a new face's crop about 6 KB more; about 0.4 to 0.5 GB for
   photo_index's vectors (accepted).
 - A folder's change is called "face pass (<key>)": History and the MCP `history` show the operation without reveal, so it

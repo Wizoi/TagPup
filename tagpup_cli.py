@@ -1176,8 +1176,9 @@ def _folder_lines(number, found, reveal):
     lines = ["Folder %d%s:%s" % (number, " " + found.folder if reveal else "", " (stopped here)" if found.stopped else ""),
              "  %d photo(s) looked at, %d done before, %d turned (skipped), %d with no face found, %d failed"
              % (found.looked, found.done, found.skipped, found.none_found, len(found.failed)),
-             "  %d old face(s) given the new vector, %d new face(s) (unnamed), %d old face(s) unmatched (listed for review,"
-             " untouched)" % (found.matched, found.new, len(found.unmatched))]
+             "  %d old face(s) given the new vector, %d new face(s) (unnamed), %d detection(s) too small to make a new face,"
+             " %d old face(s) unmatched (listed for review, untouched)"
+             % (found.matched, found.new, found.too_small, len(found.unmatched))]
     reasons = Counter(why for _photo, why in found.failed)
     lines += ["    %d x %s" % (count, why) for why, count in reasons.most_common()]
     if found.held:
