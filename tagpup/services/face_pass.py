@@ -16,8 +16,9 @@ writes nothing and is looked at again next run; a turned photo (tagpup.services.
 its boxes are not converted) is skipped; a photo whose picture does not decode or whose model fails is failed. All three
 are counted, and nothing of them is written.
 
-Each photo is one transaction (BEGIN IMMEDIATE), in which the photo is read again: still not done, its faces as they were
-read; else nothing is written and it is failed for this run. Each folder is one journaled change, opened at its first
+Each photo is one transaction (BEGIN IMMEDIATE), in which the photo is read again: its row still there at the path listed,
+still not done, its faces as they were read; else nothing is written and it is failed for this run (a row sync removed or
+moved meanwhile is not made again at the path listed: a new face's writer makes a row it does not find). Each folder is one journaled change, opened at its first
 photo that writes, "face pass (<key>) <folder>", and its summary added to in each photo's transaction, so it says what was
 committed. A change undone, or being undone, while the run goes on is not added to: the folder's next photo opens a new
 one. A folder interrupted and resumed is so two changes of one name, each undone alone.
@@ -35,6 +36,7 @@ from tagpup.services import faces as face_service
 from tagpup.services import photos as photo_service
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
+from tagpup.store import photos as store_photos
 
 #: The name of a folder's change: the model's key and the folder.
 OPERATION = "face pass (%s) %s"
@@ -98,8 +100,8 @@ def _folder(db_path, conn, model, name, photos, apply):
         if photo_service.box_shape(path)["turned"]:
             found.skipped += 1
             continue
-        # Read before the model is asked, and again in the write: a face deleted, added or its box moved meanwhile (the
-        # server beside this run) leaves the photo for the next run. A name given meanwhile changes nothing here.
+        # Read before the model is asked, and again in the write: a face deleted, added or its box moved, or the photo's
+        # row removed or moved, meanwhile (the server or a sync beside this run) leaves the photo for the next run. A name given meanwhile changes nothing here.
         old = store_faces.boxes_of(conn, photo_id)
         picture = model.picture(path)
         detected = model.detect_and_embed(picture) if face_service.ran(picture) else picture
@@ -121,8 +123,8 @@ def _folder(db_path, conn, model, name, photos, apply):
                 db_path, lambda write: _write(write, model.key, operation, change_id, photo_id, path, old, matched, new),
                 label="face pass")
             if written is None:
-                found.failed.append((photo_id, "its faces changed while it was read, or another run did it: looked at"
-                                               " again next run"))
+                found.failed.append((photo_id, "its row or its faces changed while it was read, or another run did it:"
+                                               " looked at again next run"))
                 continue
             change_id = written
             if change_id not in found.changes:
@@ -135,8 +137,12 @@ def _folder(db_path, conn, model, name, photos, apply):
 
 def _write(conn, key, operation, change_id, photo_id, path, old, matched, new):
     """One photo's rows, in one transaction: the id of the folder's change they were recorded in, or None, nothing written,
-    when the photo is done or its faces are not as `old` read them."""
+    when the photo's row is gone or at another path than `path`, the photo is done, or its faces are not as `old` read
+    them."""
     db.begin(conn, immediate=True)
+    row = store_photos.thumb_row(conn, photo_id)
+    if row is None or not paths.same(row.path, path):
+        return None
     if store_faces.vectors_under(conn, key, [photo_id]) or store_faces.boxes_of(conn, photo_id) != old:
         return None
     if change_id is None or not journal.kept(conn, change_id):

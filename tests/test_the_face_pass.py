@@ -22,6 +22,7 @@ from stand_in_models import NewFaces  # noqa: E402
 from tagpup.services import face_pass  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
+from tagpup.store import photos as store_photos  # noqa: E402
 
 NEW = NewFaces.key
 #: The journal's own record, and the counters every write moves: not what the pass is to leave as it found.
@@ -183,6 +184,36 @@ class FacePass(unittest.TestCase):
         found = self.run_pass(Meanwhile({"busy.jpg": [((10, 10, 110, 130), 0.9, 1)]}))
         self.assertEqual([photo], [each for each, _why in found.failed])
         self.assertEqual([], self.query("SELECT 1 FROM face_embeddings WHERE model = ?", (NEW,)))
+
+    def test_a_photo_removed_or_moved_while_the_model_looks_is_left_alone(self):
+        """Sync removes one photo's row and moves another's (the file renamed) while the model looks at them. Neither has
+        an old face, so their faces read the same; the pass writes nothing for either -- no row made again at the path it
+        listed, which undo would leave behind -- and looks at them again next run."""
+        gone, gone_path = self.photo("gone.jpg")
+        moved, moved_path = self.photo("moved.jpg")
+        renamed = os.path.join(self.folder, "renamed.jpg")
+        test = self
+
+        class Meanwhile(NewFaces):
+            def detect_and_embed(self, picture):
+                name = os.path.basename(picture.path)
+                if name == "gone.jpg":
+                    store_photos.forget_photo(test.db_path, gone_path)
+                else:
+                    conn = db.connect(test.db_path)
+                    try:
+                        store_photos.move_rows_in(conn, {moved_path: renamed})
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return super().detect_and_embed(picture)
+        found = self.run_pass(Meanwhile({"gone.jpg": [((10, 10, 110, 130), 0.9, 1)],
+                                         "moved.jpg": [((10, 10, 110, 130), 0.9, 2)]}))
+        self.assertEqual(sorted([gone, moved]), sorted(each for each, _why in found.failed))
+        self.assertEqual((0, 0), (found.matched, found.new))
+        self.assertEqual([(moved,)], self.query("SELECT id FROM photos"), "no row is made again at a listed path")
+        self.assertEqual([], self.query("SELECT 1 FROM faces"))
+        self.assertEqual([], self.changes(), "nothing written, nothing to undo")
 
     # ---- Stopped, resumed, run again, undone ---------------------------------------------------------------------
 
