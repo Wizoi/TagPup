@@ -872,12 +872,13 @@ def record_inserted(conn, change_id, rows, counts=None):
     whole as stored, so that an undo deletes exactly them and a rehearsal puts them back byte for byte; and add `counts`
     to the change's summary, in the same transaction, so a change whose rows come a piece at a time (the face pass:
     tagpup.store.faces.give_vectors) says what was committed, never what was planned."""
-    changes = []
-    for table, key in rows:
-        if table not in KEYS:
-            raise ValueError("%s is not a table a change records" % table)
-        changes.append(RowChange("insert", table, tuple(key), None,
-                                 _read(conn, table, tuple(key), schema.table_columns(conn, table))))
+    tables = {table for table, _key in rows}
+    unknown = sorted(tables - set(KEYS))
+    if unknown:
+        raise ValueError("%s is not a table a change records" % unknown[0])
+    columns = {table: schema.table_columns(conn, table) for table in tables}
+    changes = [RowChange("insert", table, tuple(key), None, _read(conn, table, tuple(key), columns[table]))
+               for table, key in rows]
     _record(conn, change_id, changes)
     (text,) = conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()
     summary = json.loads(text or "{}")
