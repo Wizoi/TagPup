@@ -328,10 +328,10 @@ def answering(port):
         return False
 
 
-#: Said where a drain starts (owner, 2026-10-15): a drain sees only this server's own work, never a CLI index, a `sync --apply`
-#: or an MCP write in another process, and the new version migrates the library as it starts.
-BEFORE_UPDATING = ("Finish a CLI index, sync --apply or MCP write before updating: the running server cannot see them, "
-                   "and the new version migrates the library as it starts.")
+#: Said where a drain starts (owner, 2026-10-15): a drain sees only this server's own work, never a CLI write (an index, a
+#: `sync --apply`, a `face-pass`) or an MCP write in another process, and the new version migrates the library as it starts.
+BEFORE_UPDATING = ("Finish a CLI write -- index, sync --apply, face-pass -- or an MCP write before updating: the running "
+                   "server cannot see them, and the new version migrates the library as it starts.")
 
 
 def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=time.monotonic, page=True):
