@@ -6,6 +6,7 @@ What the owner lives through:
 * a dry run, the default, says what it would do, folder by folder, in counts, and writes nothing, no snapshot either;
 * --apply takes one snapshot before it writes, and a second --apply the same day takes none and writes nothing;
 * Ctrl+C half way stops after the photo under way (that photo written whole), and a run again finishes the folder;
+  Ctrl+C before the first photo stops it too, saying so, never that the folder holds no photo;
 * two folders: one change of the journal each, one snapshot for the run; a folder given inside another is refused;
 * `undo` of a folder whose new faces were named since is refused, naming the first ten reasons and how many more;
 * the weights missing: nothing is done, and it says what to fetch.
@@ -54,6 +55,14 @@ class CtrlCAt(NewFaces):
         if os.path.basename(picture.path) == self.at:
             signal.raise_signal(signal.SIGINT)
         return detected
+
+
+class CtrlCBeforeTheFirstPhoto(NewFaces):
+    """The new model, and the owner pressing Ctrl+C while its weights are checked: before any photo is looked at."""
+
+    def missing(self):
+        signal.raise_signal(signal.SIGINT)
+        return None
 
 
 class Missing(NewFaces):
@@ -194,6 +203,18 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         self.assertEqual(6, self.query("SELECT COUNT(*) FROM face_embeddings WHERE model = ?", (NewFaces.key,))[0][0])
         self.assertEqual(2, len(self.changes()), "a folder resumed is two changes, each undone alone")
         self.assertEqual(1, len(self.dailies()))
+
+    def test_ctrl_c_before_the_first_photo_says_it_stopped_and_writes_nothing(self):
+        found = self.three_photos(self.regatta)
+        before = self.dump()
+        model = CtrlCBeforeTheFirstPhoto(found)
+        stopped = self.cli(model, "face-pass", self.regatta, "--apply")
+        self.assertEqual(1, stopped.exit_code, stopped.output)
+        self.assertIn("Stopped: nothing was written; run it again to go on.", stopped.output)
+        self.assertNotIn("holds no photo", stopped.output)
+        self.assertEqual([], model.asked)
+        self.assertEqual(before, self.dump())
+        self.assertEqual([], self.dailies(), "no snapshot for a run stopped before its first write")
 
     def test_two_folders_each_their_own_change_one_snapshot_and_a_folder_inside_another_refused(self):
         found = self.three_photos(self.regatta)

@@ -1238,6 +1238,8 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
     if missing:
         console.print("Not run: %s" % missing, markup=False, soft_wrap=True)
         raise SystemExit(1)
+    if asked.is_set():   # Ctrl+C before the first photo: said as a stop, never as a folder without photos
+        _stopped_before_writing()
     if apply_:
         # One snapshot a run, before its first write (and none when one is from today): every folder's change is
         # undone alone from the journal, and the snapshot is the library as it was before the whole run.
@@ -1252,6 +1254,8 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
         if asked.is_set():
             break
     if not found:
+        if asked.is_set():
+            _stopped_before_writing()
         console.print("The library holds no photo under the folder(s) given.", markup=False)
         return
     for number, folder in enumerate(found, 1):
@@ -1268,6 +1272,11 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
     if not apply_:
         console.print("Nothing changed. --apply writes it, after a snapshot of the library unless one is from today: one "
                       "change of the journal per folder, which `undo` takes back.", markup=False, soft_wrap=True)
+
+
+def _stopped_before_writing():
+    console.print("Stopped: nothing was written; run it again to go on.", markup=False)
+    raise SystemExit(1)
 
 
 @cli.group()
