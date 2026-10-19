@@ -7,7 +7,8 @@ What the owner lives through:
 * --apply takes one snapshot before its first write, and a second --apply the same day writes nothing and takes none;
   an --apply that finds nothing to write (every photo done, or no face found) takes no snapshot;
 * Ctrl+C half way stops after the photo under way (that photo written whole), and a run again finishes the folder;
-  Ctrl+C before the first photo stops it too, saying so, never that the folder holds no photo;
+  Ctrl+C before the first photo stops it too, saying so, never that the folder holds no photo; a dry run stopped
+  says nothing was written;
 * two folders: one change of the journal each, one snapshot for the run; a folder given inside another is refused;
 * `undo` of a folder whose new faces were named since is refused, naming the first ten reasons and how many more;
 * the weights missing: nothing is done, and it says what to fetch.
@@ -214,6 +215,15 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         self.assertEqual(6, self.query("SELECT COUNT(*) FROM face_embeddings WHERE model = ?", (NewFaces.key,))[0][0])
         self.assertEqual(2, len(self.changes()), "a folder resumed is two changes, each undone alone")
         self.assertEqual(1, len(self.dailies()))
+
+    def test_ctrl_c_in_a_dry_run_says_nothing_was_written(self):
+        found = self.three_photos(self.regatta)
+        before = self.dump()
+        stopped = self.cli(CtrlCAt(found, "second.jpg"), "face-pass", self.regatta)
+        self.assertEqual(1, stopped.exit_code, stopped.output)
+        self.assertIn("Stopped: nothing was written; run it again to go on.", stopped.output)
+        self.assertNotIn("stays written", stopped.output)
+        self.assertEqual(before, self.dump())
 
     def test_ctrl_c_before_the_first_photo_says_it_stopped_and_writes_nothing(self):
         found = self.three_photos(self.regatta)

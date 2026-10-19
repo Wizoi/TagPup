@@ -1273,6 +1273,8 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
                                            sum(len(f.unmatched) for f in found), sum(len(f.failed) for f in found)),
                   markup=False, soft_wrap=True)
     if asked.is_set():
+        if not any(folder.changes for folder in found):   # a dry run, or a stop before any photo was written
+            _stopped_before_writing()
         console.print("Stopped: what was written stays written and undoable; run it again to go on.", markup=False)
         raise SystemExit(1)
     if not apply_:
