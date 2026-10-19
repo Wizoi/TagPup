@@ -203,7 +203,7 @@ The journal: one row for each bulk edit applied to the library (`tagpup.store.jo
 | `created` | TEXT | NOT NULL | Local time it was made, `YYYY-MM-DD HH:MM:SS`. |
 | `applied` | TEXT | | When it was applied. |
 | `undone` | TEXT | | When it was undone; NULL while it stands. |
-| `summary` | TEXT | | JSON: the operation's counts and the rows it wrote per table -- or, for a change of photo files, how many files ended in each state. Never names. |
+| `summary` | TEXT | | JSON: the operation's counts (how many rows of each table it wrote is History's, counted from `change_rows`) -- or, for a change of photo files, how many files ended in each state. Never names. |
 | `owner` | TEXT | | The process carrying a change of photo files out, `<host>:<pid>`, while it does; NULL once it is finished, or when an error stopped it. A change owned by a process still running is not settled by another. |
 
 ### 12. `change_rows` Table
