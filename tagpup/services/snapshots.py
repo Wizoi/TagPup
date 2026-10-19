@@ -32,6 +32,19 @@ def take(library, now=None, force=False):
     return result
 
 
+def before_a_long_write(library, now=None):
+    """The one snapshot a long run of writes takes before its first (the CLI's face pass with --apply): a daily, unless
+    the newest daily of `library` was taken today (local time), then nothing -- so a run takes one at most, and a day of
+    runs one. A Result as take()'s; skipped, details["today"] names the daily that stands."""
+    now = time.time() if now is None else now
+    newest = snapshots.listed(library.path, snapshots.DAILY)
+    if newest and time.localtime(newest[0].taken)[:3] == time.localtime(now)[:3]:
+        result = Result(details={"taken": [], "today": newest[0].name})
+        result.skip("daily", "a snapshot taken today stands")
+        return result
+    return take(library, now=now, force=True)
+
+
 def _described(library, snapshot):
     """A snapshot as `listing` shows it. `too_old`: its schema is below the baseline, so a restore of it is refused
     (schema.BASELINE; owner, 2026-10-15)."""

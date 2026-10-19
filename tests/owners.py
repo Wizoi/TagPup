@@ -134,7 +134,7 @@ _SCENARIO_FILES = {
     "P5": "test_tag_tree_edits_are_batches test_taxonomy_lifecycle",
     "P6": "test_two_cousins_called_alike",
     "P7": "test_identify_ignore_assign_restore_undo",
-    "P8": "test_the_face_pass",
+    "P8": "test_the_face_pass test_a_face_pass_from_the_command_line",
     "V1": "test_library_views_scenarios",
     "V2": "test_library_search",
     "V3": "test_analyse_only_looks_are_kept test_analyse_only_suggest test_suggest_then_apply_all",
