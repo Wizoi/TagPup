@@ -29,7 +29,6 @@ one. A folder interrupted and resumed is so two changes of one folder, each undo
 
 A dry run (the default) reads all the same and counts all the same, and writes nothing.
 """
-import array
 import os
 from dataclasses import dataclass, field
 from typing import List, Tuple
@@ -65,11 +64,6 @@ class Folder:
     #: The changes this run wrote, and those of earlier runs of this folder that stand.
     changes: List[int] = field(default_factory=list)
     held: List[int] = field(default_factory=list)
-
-
-def vector_bytes(embedding):
-    """A detection's vector as stored: float32 bytes."""
-    return array.array("f", embedding).tobytes()
 
 
 def _folders(photos):
@@ -120,9 +114,9 @@ def _folder(db_path, conn, model, name, photos, apply):
             continue
         paired = clustering.pairs([box for _face, box, _named in old], [each["box"] for each in detected],
                                   first=[i for i, (_face, _box, named) in enumerate(old) if named])
-        matched = [(old[i][0], vector_bytes(detected[j]["embedding"])) for i, j in sorted(paired.items())]
+        matched = [(old[i][0], face_service.vector_bytes(detected[j]["embedding"])) for i, j in sorted(paired.items())]
         taken = set(paired.values())
-        new = [(each["box"], float(each["prob"]), vector_bytes(each["embedding"]),
+        new = [(each["box"], float(each["prob"]), face_service.vector_bytes(each["embedding"]),
                 images.crop_jpeg(picture.stored.crop(tuple(each["box"]))))
                for j, each in enumerate(detected) if j not in taken]
         unmatched = [(photo_id, face_id) for i, (face_id, _box, _named) in enumerate(old) if i not in paired]

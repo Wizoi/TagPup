@@ -20,6 +20,7 @@ from face_rows import FACENET, add_face, person_of  # noqa: E402
 from stand_in_models import NewFaces  # noqa: E402
 
 from tagpup.services import face_pass  # noqa: E402
+from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -117,7 +118,7 @@ class FacePass(unittest.TestCase):
         self.assertEqual(before, self.query("SELECT f.name, f.tag_id, f.box, f.name_source, c.jpeg FROM faces f"
                                             " JOIN face_crops c ON c.face_id = f.id WHERE f.id = ?", (named,)))
         self.assertEqual([FACENET, NEW], self.vectors(named))
-        self.assertEqual([(face_pass.vector_bytes(NewFaces.vector(5)),)],
+        self.assertEqual([(face_service.vector_bytes(NewFaces.vector(5)),)],
                          self.query("SELECT vector FROM face_embeddings WHERE face_id = ? AND model = ?", (named, NEW)))
         self.assertEqual({photo: {named}}, store_faces.vectors_under(db.connect(db.readonly_uri(self.db_path), uri=True),
                                                                      NEW, [photo]))
