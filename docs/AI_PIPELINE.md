@@ -11,9 +11,17 @@ accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 
 `faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
 ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Measured:** phase 3's speed check (2026-10-18,
 section 7: SCRFD 10g in torch and AdaFace IR-101, about 1.8 hours for photo_index against 9.3, no second runtime;
-the choice is the owner's). **Built:** migration 33 (2026-10-18, pulled forward: each face's vector in `face_embeddings`
-under its model's key, every reader keyed by the library's `faces.model`; it reaches the libraries at the next install).
-**Next:** merge 3, the pass. Update a phase's status
+chosen by the owner, DECISIONS 2026-10-18). **Built (2026-10-18):** the model module (merge 2a), the
+`faces.model` setting with its one refusal and `Runtime.look_at_faces` (merge 2b), and migration 33 (pulled forward:
+each face's vector in `face_embeddings` under its model's key, every reader keyed by the library's `faces.model`);
+**installed on all three libraries on 2026-10-18** (schema 33; vectors checked byte for byte against the backups,
+named counts unchanged). **Merge 3, the pass:** slice A1 merged (one pairing rule, Suggest and a face with no vector,
+the undo of a pass's face); slice A2 (the store layer and `tagpup/services/face_pass.py`, the model injected) is built
+and reviewed but NOT merged: two blockers to fix first (a photo removed while the pass runs must not be re-made as
+a ghost row; the change's name must not carry the folder) and two owner decisions taken (named old faces are
+paired first; new faces stay unnamed). **Next:** finish A2, then slice B (the CLI command, the weight files, a run
+on a copy, a small real folder the owner checks, one snapshot before an `--apply` run) and slice C (the gate:
+the owner picks the naming precision). Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
