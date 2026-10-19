@@ -355,6 +355,24 @@ Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
   `Runtime`, the graphics card shared through `gpu.Card` as the CLI's index shares it, or it is listed in `under_way`
   before it runs in the server.
 
+**Merge 3, slice A2, as built (2026-10-18): the pass's store and service, the model handed in.** `tagpup.services.face_pass.run`
+(People's; the model Views-AI's), scenario P8 (`tests/test_the_face_pass.py`, the model stood in for by
+`tests/stand_in_models.NewFaces`). The store's part is `tagpup.store.faces`: `vectors_under(conn, key, photo_ids)` (the reader
+with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, which records every row it adds as stored
+(`journal.record_inserted`). `KEPT_FACE_MODELS` is not extended here; no CLI yet (slice B).
+- The pass writes no `faces_detected` row: a photo is done when one of its faces holds a vector under the model's key, so
+  MTCNN's found-none rows stand, and a photo the new model finds no face in writes nothing and is looked at again each run
+  (at most 10,492 photos of photo_index, about 50 minutes a run, writing nothing: accepted).
+- What the journal holds: each vector about 2 KB of `change_rows`, a new face's crop about 6 KB more; about 0.4 to 0.5 GB for
+  photo_index's vectors (accepted).
+- A folder interrupted and resumed is two changes of one name ("face pass (scrfd-adaface) <folder>"), each undone alone, each
+  summary what was committed (added to in each photo's transaction). A change undone while the run goes on is not added to:
+  the folder's next photo opens a new one.
+- A dry run (the default) reads and counts the same and names the changes the folder already holds (`Folder.held`).
+- A face the pass matched holds one row of its change, its vector: naming it since does not refuse the undo (the name
+  stays, the vector goes). A new face named since does refuse it ("faces N is not what change C left").
+- Slice B: the CLI, its `undo` output naming the first ten reasons a folder's undo is refused, the card's turn, read-ahead.
+
 ### Phase 4: Matching, with the new model
 
 - **4a Time-nearest matching.** A new face is matched against the time-nearest named faces by Date Taken, not one
