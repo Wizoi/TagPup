@@ -238,7 +238,7 @@ class Operations(TwoSams, unittest.TestCase):
         changes = look(self.path, "SELECT id, summary FROM changes WHERE operation = ?", (journal.PERSON_DELETED,))
         self.assertEqual(1, len(changes))
         summary = json.loads(changes[0][1])
-        self.assertEqual({"faces": 2, "rows": {"faces": 2}}, {key: summary[key] for key in ("faces", "rows")}, "counts only")
+        self.assertEqual(2, summary["faces"], "counts only")
         self.assertIn("not kept", summary["note"], "History says what an undo does not give back")
         self.assertEqual(6, look(self.path, "SELECT COUNT(*) FROM change_rows WHERE change_id = ?", (changes[0][0],))[0][0],
                          "three rows a face: what the refusal and the dry run say")
@@ -279,7 +279,7 @@ class Operations(TwoSams, unittest.TestCase):
         self.assertTrue(self.merge(SAM_I, SAM_T, apply=True).ok)
         changes = look(self.path, "SELECT summary FROM changes WHERE operation = ?", (journal.PERSON_MERGED,))
         summaries = [json.loads(each[0]) for each in changes]
-        self.assertEqual([{"faces": 2, "rows": {"faces": 2}}], [{key: each[key] for key in ("faces", "rows")} for each in summaries])
+        self.assertEqual([2], [each["faces"] for each in summaries])
         self.assertIn("the merged person is not kept", summaries[0]["note"])
 
     def test_force_unnames_the_faces_in_the_same_transaction_and_they_are_not_nobody(self):

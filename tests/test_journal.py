@@ -445,8 +445,7 @@ class HistoryAndPruning(JournalLibrary):
                          [(c["id"], c["operation"], c["status"]) for c in listed])
         self.assertEqual({"faces": {"delete": 1}, "face_crops": {"delete": 1}, "face_embeddings": {"delete": 1}},
                          listed[1]["rows"])
-        self.assertEqual({"counts": {"redundant": 1}, "rows": {"face_crops": 1, "face_embeddings": 1, "faces": 1}},
-                         listed[1]["summary"])
+        self.assertEqual({"counts": {"redundant": 1}}, listed[1]["summary"], "the rows are counted from change_rows")
         self.assertEqual(schema.LATEST, listed[1]["schema_version"])
         self.assertNotIn("keys", listed[1])
 

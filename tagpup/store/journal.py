@@ -825,13 +825,11 @@ def _forward(conn, operation, changes, summary):
     """Write the resolved `changes` and record them as a change, derived_pending. Returns
     its id. The caller holds the transaction."""
     _write(conn, changes)
-    rows = collections.Counter(change.table for change in changes)
-    recorded = dict(summary or {}, rows=dict(rows))
     now = _now()
     change_id = conn.execute(
         "INSERT INTO changes (operation, status, schema_version, created, applied, summary)"
         " VALUES (?, 'derived_pending', ?, ?, ?, ?)",
-        (operation, schema.version(conn), now, now, json.dumps(recorded, sort_keys=True))).lastrowid
+        (operation, schema.version(conn), now, now, json.dumps(summary or {}, sort_keys=True))).lastrowid
     _record(conn, change_id, changes)
     return change_id
 
@@ -843,18 +841,18 @@ def record(conn, operation, changes, summary=None, schema_version=None):
     -- an insert's `new` and a delete's `old` the whole row, an update's the columns it
     changed -- and may be none: the change then only says the operation ran.
     `schema_version` is the version its rows belong to (the library's, without); an undo
-    at another is refused. `summary` is kept with it, counts and never names. The caller
+    at another is refused. `summary` is kept with it, counts and never names (how many rows
+    of each table a change holds is History's, from change_rows: `history`). The caller
     holds the transaction and commits. Returns the change's id."""
     for change in changes:
         if change.table not in KEYS:
             raise ValueError("%s is not a table a change records" % change.table)
-    rows = collections.Counter(change.table for change in changes)
     now = _now()
     change_id = conn.execute(
         "INSERT INTO changes (operation, status, schema_version, created, applied, summary)"
         " VALUES (?, 'applied', ?, ?, ?, ?)",
         (operation, schema.version(conn) if schema_version is None else schema_version, now, now,
-         json.dumps(dict(summary or {}, rows=dict(rows)), sort_keys=True))).lastrowid
+         json.dumps(summary or {}, sort_keys=True))).lastrowid
     _record(conn, change_id, changes)
     return change_id
 
@@ -872,8 +870,8 @@ def record_rows(conn, change_id, changes):
 def record_inserted(conn, change_id, rows, counts=None):
     """Add to change `change_id` the rows the caller has just inserted, [(table, key)] of tables in KEYS, each read back
     whole as stored, so that an undo deletes exactly them and a rehearsal puts them back byte for byte; and add `counts`
-    and the rows, by table, to the change's summary, in the same transaction, so a change whose rows come a piece at a
-    time (the face pass: tagpup.store.faces.give_vectors) says what was committed, never what was planned."""
+    to the change's summary, in the same transaction, so a change whose rows come a piece at a time (the face pass:
+    tagpup.store.faces.give_vectors) says what was committed, never what was planned."""
     changes = []
     for table, key in rows:
         if table not in KEYS:
@@ -885,9 +883,6 @@ def record_inserted(conn, change_id, rows, counts=None):
     summary = json.loads(text or "{}")
     for name, count in (counts or {}).items():
         summary[name] = summary.get(name, 0) + count
-    tables = summary.setdefault("rows", {})
-    for table, count in collections.Counter(change.table for change in changes).items():
-        tables[table] = tables.get(table, 0) + count
     conn.execute("UPDATE changes SET summary = ? WHERE id = ?", (json.dumps(summary, sort_keys=True), change_id))
 
 
