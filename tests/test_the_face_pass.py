@@ -23,6 +23,7 @@ from tagpup.services import face_pass  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 NEW = NewFaces.key
 #: The journal's own record, and the counters every write moves: not what the pass is to leave as it found.
@@ -231,11 +232,12 @@ class FacePass(unittest.TestCase):
         with self.assertRaises(NewFaces.Killed):
             self.run_pass(NewFaces(found, kill_at="lap3.jpg"))
         first = self.dump()
-        operation = face_pass.OPERATION % (NEW, self.folder)
+        operation = face_pass.OPERATION % NEW
         self.assertEqual([operation], self.changes())
         ((summary,),) = self.query("SELECT summary FROM changes")
         self.assertEqual({"matched": 2, "new": 2, "rows": {"face_crops": 2, "face_embeddings": 4, "faces": 2}},
-                         json.loads(summary), "the change says what was committed")
+                         {key: value for key, value in json.loads(summary).items() if key != "folder"},
+                         "the change says what was committed")
         model = NewFaces(found)
         resumed = self.run_pass(model)
         self.assertEqual(["lap3.jpg", "lap4.jpg"], model.asked)
@@ -312,6 +314,28 @@ class FacePass(unittest.TestCase):
         self.assertEqual(1, len(self.changes()), "the undone change stays undone; the new one holds photos 3 and 4")
         ((summary,),) = self.query("SELECT summary FROM changes WHERE id = ?", (written.changes[1],))
         self.assertEqual(2, json.loads(summary)["matched"])
+
+    def test_a_folders_change_is_named_for_the_model_alone_and_each_folder_holds_its_own(self):
+        """History and the MCP `history` show a change's operation without reveal: it names the model, never the folder (a
+        path, and paths can name people). The folder is in the summary, as the library holds it (behind reveal), and is what
+        a run reads to name the changes a folder already holds -- a folder beside it holds its own."""
+        found = self.four_photos()
+        prizes = os.path.join(self.folder, "Prizes")
+        os.makedirs(prizes)
+        _photo, path = self.photo(os.path.join("Prizes", "cup.jpg"))
+        self.face(path, [10, 10, 110, 130], 9)
+        found["cup.jpg"] = [((10, 10, 110, 130), 0.9, 9)]
+        written = face_pass.run(self.db_path, NewFaces(found), self.folder, apply=True)
+        self.assertEqual(["face pass (%s)" % NEW] * 2, self.changes())
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            folders = [store_roots.to_row(conn, self.folder), store_roots.to_row(conn, prizes)]
+        finally:
+            conn.close()
+        self.assertEqual(folders, [json.loads(summary)["folder"] for (summary,) in
+                                   self.query("SELECT summary FROM changes ORDER BY id")])
+        again = face_pass.run(self.db_path, NewFaces(found), self.folder, apply=False)
+        self.assertEqual([each.changes for each in written], [each.held for each in again])
 
     # ---- A dry run; two libraries -------------------------------------------------------------------------------
 

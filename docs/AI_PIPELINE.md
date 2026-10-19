@@ -365,7 +365,9 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
   (at most 10,492 photos of photo_index, about 50 minutes a run, writing nothing: accepted).
 - What the journal holds: each vector about 2 KB of `change_rows`, a new face's crop about 6 KB more; about 0.4 to 0.5 GB for
   photo_index's vectors (accepted).
-- A folder interrupted and resumed is two changes of one name ("face pass (scrfd-adaface) <folder>"), each undone alone, each
+- A folder's change is called "face pass (<key>)": History and the MCP `history` show the operation without reveal, so it
+  names no path; the folder is the summary's `folder`, in the library's row form, behind reveal, and is what `Folder.held`
+  reads. A folder interrupted and resumed is two changes of one folder, each undone alone, each
   summary what was committed (added to in each photo's transaction). A change undone while the run goes on is not added to:
   the folder's next photo opens a new one.
 - A dry run (the default) reads and counts the same and names the changes the folder already holds (`Folder.held`).

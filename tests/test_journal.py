@@ -258,7 +258,7 @@ class AFacePassFolderUndone(JournalLibrary):
 
         def work(conn):
             db.begin(conn, immediate=True)
-            change_id = journal.record(conn, "face pass (%s) Harbour Regatta" % self.NEW_MODEL, [], {})
+            change_id = journal.record(conn, "face pass (%s)" % self.NEW_MODEL, [], {"folder": "Harbour Regatta"})
             (face,) = faces.give_vectors(conn, change_id, photo, self.NEW_MODEL, [],
                                          [([40, 40, 140, 160], 0.93, vector(7), jpeg(7))], {"new": 1})
             return change_id, face

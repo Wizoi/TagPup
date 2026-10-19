@@ -19,9 +19,11 @@ are counted, and nothing of them is written.
 Each photo is one transaction (BEGIN IMMEDIATE), in which the photo is read again: its row still there at the path listed,
 still not done, its faces as they were read; else nothing is written and it is failed for this run (a row sync removed or
 moved meanwhile is not made again at the path listed: a new face's writer makes a row it does not find). Each folder is one journaled change, opened at its first
-photo that writes, "face pass (<key>) <folder>", and its summary added to in each photo's transaction, so it says what was
-committed. A change undone, or being undone, while the run goes on is not added to: the folder's next photo opens a new
-one. A folder interrupted and resumed is so two changes of one name, each undone alone.
+photo that writes, "face pass (<key>)": the operation History and the MCP `history` show without reveal names no path. The
+folder is the summary's `folder`, as the library holds it (store.roots.to_row), behind reveal as every summary's folder is
+(tagpup.services.journal.history), and is what a run reads to name the changes a folder holds (`Folder.held`). The
+summary's counts are added to in each photo's transaction, so it says what was committed. A change undone, or being undone, while the run goes on is not added to: the folder's next photo opens a new
+one. A folder interrupted and resumed is so two changes of one folder, each undone alone.
 
 A dry run (the default) reads all the same and counts all the same, and writes nothing.
 """
@@ -37,9 +39,10 @@ from tagpup.services import photos as photo_service
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
+from tagpup.store import roots as store_roots
 
-#: The name of a folder's change: the model's key and the folder.
-OPERATION = "face pass (%s) %s"
+#: The name of a folder's change: the model's key. The folder is in its summary.
+OPERATION = "face pass (%s)"
 
 
 @dataclass
@@ -89,8 +92,9 @@ def run(db_path, model, folder, apply=False):
 
 def _folder(db_path, conn, model, name, photos, apply):
     found = Folder(name)
-    operation = OPERATION % (model.key, name)
-    found.held = journal.kept_named(conn, operation)
+    operation = OPERATION % model.key
+    found.held = [change_id for change_id, summary in journal.kept_named(conn, operation)
+                  if paths.same(store_roots.from_row(conn, summary.get("folder")), name)]
     done = store_faces.vectors_under(conn, model.key, [photo_id for photo_id, _path in photos])
     change_id = None
     for photo_id, path in photos:
@@ -120,7 +124,8 @@ def _folder(db_path, conn, model, name, photos, apply):
         unmatched = [(photo_id, face_id) for i, (face_id, _box) in enumerate(old) if i not in paired]
         if apply:
             written = db.write_with_connection(
-                db_path, lambda write: _write(write, model.key, operation, change_id, photo_id, path, old, matched, new),
+                db_path, lambda write: _write(write, model.key, operation, name, change_id, photo_id, path, old, matched,
+                                                    new),
                 label="face pass")
             if written is None:
                 found.failed.append((photo_id, "its row or its faces changed while it was read, or another run did it:"
@@ -135,7 +140,7 @@ def _folder(db_path, conn, model, name, photos, apply):
     return found
 
 
-def _write(conn, key, operation, change_id, photo_id, path, old, matched, new):
+def _write(conn, key, operation, folder, change_id, photo_id, path, old, matched, new):
     """One photo's rows, in one transaction: the id of the folder's change they were recorded in, or None, nothing written,
     when the photo's row is gone or at another path than `path`, the photo is done, or its faces are not as `old` read
     them."""
@@ -146,6 +151,7 @@ def _write(conn, key, operation, change_id, photo_id, path, old, matched, new):
     if store_faces.vectors_under(conn, key, [photo_id]) or store_faces.boxes_of(conn, photo_id) != old:
         return None
     if change_id is None or not journal.kept(conn, change_id):
-        change_id = journal.record(conn, operation, [], {"matched": 0, "new": 0})
+        change_id = journal.record(conn, operation, [],
+                                   {"folder": store_roots.to_row(conn, folder), "matched": 0, "new": 0})
     store_faces.give_vectors(conn, change_id, path, key, matched, new, {"matched": len(matched), "new": len(new)})
     return change_id

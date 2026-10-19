@@ -898,9 +898,11 @@ def kept(conn, change_id):
 
 
 def kept_named(conn, operation):
-    """The ids of the changes called `operation` that are applied and not undone, oldest first."""
-    return [change_id for (change_id,) in conn.execute(
-        "SELECT id FROM changes WHERE operation = ? AND status = 'applied' AND undone IS NULL ORDER BY id", (operation,))]
+    """[(id, summary)] of the changes called `operation` that are applied and not undone, oldest first, each summary read
+    from its JSON: the caller picks among them by what the summary says (the face pass: its folder)."""
+    return [(change_id, json.loads(summary or "{}")) for change_id, summary in conn.execute(
+        "SELECT id, summary FROM changes WHERE operation = ? AND status = 'applied' AND undone IS NULL ORDER BY id",
+        (operation,))]
 
 
 #: What the journal calls the face rows a tree edit changed (taxonomy.delete_branch with force; people.merge_person).
