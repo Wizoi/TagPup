@@ -1240,17 +1240,23 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
         raise SystemExit(1)
     if asked.is_set():   # Ctrl+C before the first photo: said as a stop, never as a folder without photos
         _stopped_before_writing()
-    if apply_:
-        # One snapshot a run, before its first write (and none when one is from today): every folder's change is
-        # undone alone from the journal, and the snapshot is the library as it was before the whole run.
-        snapshot = library_snapshots.before_a_long_write(library)
-        console.print("Took a snapshot of the library first (%s)." % ", ".join(snapshot.details["taken"])
-                      if snapshot.changed else "A snapshot of the library from today stands; none taken.", markup=False)
+    taken = []
+
+    def before_first_write():
+        """One snapshot a run, before its first write, across its folders (none when one is from today, none for a run
+        that writes nothing): each folder's change is undone alone from the journal, and the snapshot is the library as
+        it was before the whole run."""
+        if taken:
+            return
+        taken.append(library_snapshots.before_a_long_write(library))
+        console.print("Took a snapshot of the library first (%s)." % ", ".join(taken[0].details["taken"])
+                      if taken[0].changed else "A snapshot of the library from today stands; none taken.", markup=False)
+
     found = []
     for directory in directories:
         found += face_pass_service.run(library.path, look, directory, apply=apply_,
                                        reading={"threads": READ_THREADS, "ahead": READ_AHEAD, "budget": READ_AHEAD_BYTES},
-                                       stop=asked.is_set)
+                                       stop=asked.is_set, before_first_write=before_first_write)
         if asked.is_set():
             break
     if not found:

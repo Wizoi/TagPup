@@ -398,9 +398,10 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
 - Ctrl+C: `run(..., stop=...)` is asked before each photo, so the photo under way is committed whole or not begun; the
   CLI's handler sets it (a second Ctrl+C stops at once, the photo's transaction rolled back). `Folder.looked` and
   `Folder.stopped` say how far it went.
-- One snapshot a run, before the first write and after the weight files are found (`ScrfdAdaFace.missing`): a daily, unless
-  one from today stands (`tagpup.services.snapshots.before_a_long_write`); that snapshot is the run's backup, and each
-  folder's change is undone alone from the journal.
+- One snapshot a run, just before its first write (`run(..., before_first_write=...)`, called before each photo's write;
+  the CLI's acts once a run, across its folders): a daily, unless one from today stands
+  (`tagpup.services.snapshots.before_a_long_write`), and none for a run that writes nothing, so a no-op `--apply` rotates
+  no daily out; that snapshot is the run's backup, and each folder's change is undone alone from the journal.
 - The undo's ten reasons were already the journal's (`tagpup.store.journal.Refusal`: the first ten, "and N more"); slice B
   adds the scenario that shows it from the command line, nothing to the code.
 - `KEPT_FACE_MODELS` is not extended: the pass writes the new model's vectors without the library being set to it, and

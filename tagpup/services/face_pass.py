@@ -96,9 +96,10 @@ def _folders(photos):
     return [grouped[key] for key in sorted(grouped)]
 
 
-def run(db_path, model, folder, apply=False, reading=ONE_AT_A_TIME, stop=_never):
+def run(db_path, model, folder, apply=False, reading=ONE_AT_A_TIME, stop=_never, before_first_write=_never):
     """The pass over the photos under `folder`, at any depth, of the library at `db_path`, with `model`: [Folder], one a
-    folder holding photos, as far as the run went (`stop`). Writes only with `apply`."""
+    folder holding photos, as far as the run went (`stop`). Writes only with `apply`; `before_first_write` is called
+    before each photo's write and acts on the first (the CLI's snapshot), so a run that writes nothing takes none."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         # The changes the folders hold, read once a run: each folder takes those whose summary names it, in row form.
@@ -107,7 +108,7 @@ def run(db_path, model, folder, apply=False, reading=ONE_AT_A_TIME, stop=_never)
         for name, photos in _folders(store_faces.pass_photos(conn, folder)):
             if stop():
                 break
-            found.append(_folder(db_path, conn, model, name, photos, apply, held, reading, stop))
+            found.append(_folder(db_path, conn, model, name, photos, apply, held, reading, stop, before_first_write))
             if found[-1].stopped:
                 break
         return found
@@ -115,7 +116,7 @@ def run(db_path, model, folder, apply=False, reading=ONE_AT_A_TIME, stop=_never)
         conn.close()
 
 
-def _folder(db_path, conn, model, name, photos, apply, held, reading, stop):
+def _folder(db_path, conn, model, name, photos, apply, held, reading, stop, before_first_write):
     found = Folder(name)
     operation = OPERATION % model.key
     here = paths.key(store_roots.to_row(conn, name))
@@ -165,11 +166,12 @@ def _folder(db_path, conn, model, name, photos, apply, held, reading, stop):
                 found.failed.append((photo_id, UNREADABLE))
                 continue
             change_id = _photo(db_path, model, operation, name, found, change_id, photo_id, path, old, picture,
-                               detected, apply)
+                               detected, apply, before_first_write)
     return found
 
 
-def _photo(db_path, model, operation, name, found, change_id, photo_id, path, old, picture, detected, apply):
+def _photo(db_path, model, operation, name, found, change_id, photo_id, path, old, picture, detected, apply,
+           before_first_write):
     """One photo the model found `detected` in: counted into `found`, and written with `apply`. The folder's change id."""
     if not detected:
         found.none_found += 1
@@ -183,6 +185,7 @@ def _photo(db_path, model, operation, name, found, change_id, photo_id, path, ol
            for j, each in enumerate(detected) if j not in taken]
     unmatched = [(photo_id, face_id) for i, (face_id, _box, _named) in enumerate(old) if i not in paired]
     if apply:
+        before_first_write()
         written = db.write_with_connection(
             db_path, lambda write: _write(write, model.key, operation, name, change_id, photo_id, path, old, matched, new),
             label="face pass")

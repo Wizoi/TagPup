@@ -4,7 +4,8 @@ out by a real Runtime (Runtime.look_at_faces), as on the owner's machine.
 
 What the owner lives through:
 * a dry run, the default, says what it would do, folder by folder, in counts, and writes nothing, no snapshot either;
-* --apply takes one snapshot before it writes, and a second --apply the same day takes none and writes nothing;
+* --apply takes one snapshot before its first write, and a second --apply the same day writes nothing and takes none;
+  an --apply that finds nothing to write (every photo done, or no face found) takes no snapshot;
 * Ctrl+C half way stops after the photo under way (that photo written whole), and a run again finishes the folder;
   Ctrl+C before the first photo stops it too, saying so, never that the folder holds no photo;
 * two folders: one change of the journal each, one snapshot for the run; a folder given inside another is refused;
@@ -167,12 +168,22 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         written = self.dump()
         again = self.cli(NewFaces(found), "face-pass", self.regatta, "--apply")
         self.assertEqual(0, again.exit_code, again.output)
-        self.assertIn("A snapshot of the library from today stands; none taken.", again.output)
+        self.assertNotIn("snapshot", again.output, "a run that writes nothing says nothing of a snapshot")
         self.assertIn("0 photo(s) looked at, 3 done before", again.output)
         self.assertIn("Held already: change(s) %d of this folder stand" % change_id, again.output)
         self.assertEqual(written, self.dump(), "a second run writes nothing")
         self.assertEqual([change_id], self.changes())
         self.assertEqual(1, len(self.dailies()), "one snapshot a day")
+
+    def test_an_apply_with_nothing_to_write_takes_no_snapshot(self):
+        self.three_photos(self.regatta)
+        before = self.dump()
+        ran = self.cli(NewFaces({}), "face-pass", self.regatta, "--apply")
+        self.assertEqual(0, ran.exit_code, ran.output)
+        self.assertIn("3 with no face found", ran.output)
+        self.assertNotIn("snapshot", ran.output)
+        self.assertEqual(before, self.dump())
+        self.assertEqual([], self.dailies(), "no snapshot for a run that writes nothing: the oldest stays")
 
     def test_a_snapshot_from_late_yesterday_is_not_todays_the_run_takes_one(self):
         found = self.three_photos(self.regatta)
@@ -227,6 +238,7 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         self.assertIn("2 folder(s), 4 photo(s) looked at", ran.output)
         self.assertEqual(2, len(self.changes()))
         self.assertEqual(1, len(self.dailies()), "one snapshot a run, never one a folder")
+        self.assertEqual(1, ran.output.count("Took a snapshot of the library first"), ran.output)
         inner = self.folder(os.path.join("Harbour Regatta", "Boats"))
         before = self.dump()
         refused = self.cli(NewFaces(found), "face-pass", self.regatta, inner, "--apply")
