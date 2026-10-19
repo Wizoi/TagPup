@@ -115,7 +115,8 @@ class FacePassFromTheCommandLine(unittest.TestCase):
             _photo, path = self.photo(folder, name)
             if number == 0:
                 self.face(path, [100, 50, 200, 170], name="Rowan Thackeray")
-            found[name] = [((102, 52, 198, 172), 0.9, number), ((250, 40, 330, 120), 0.8, number + 10)]
+            found[name] = [((102, 52, 198, 172), 0.9, number), ((250, 40, 330, 120), 0.8, number + 10),
+                          ((10, 200, 30, 240), 0.7, number + 20)]
         return found
 
     def cli(self, model, *args):
@@ -149,7 +150,7 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         ran = self.cli(NewFaces(found), "face-pass", self.regatta)
         self.assertEqual(0, ran.exit_code, ran.output)
         self.assertIn("3 photo(s) looked at, 0 done before", ran.output)
-        self.assertIn("1 old face(s) given the new vector, 5 new face(s) (unnamed), 0 old face(s) unmatched", ran.output)
+        self.assertIn("1 old face(s) given the new vector, 5 new face(s) (unnamed), 3 detection(s) too small to make a new face, 0 old face(s) unmatched", ran.output)
         self.assertIn("Nothing changed. --apply writes it", ran.output)
         self.assertNotIn(self.regatta, ran.output, "a path only with --reveal")
         self.assertEqual(before, self.dump())
@@ -258,7 +259,7 @@ class FacePassFromTheCommandLine(unittest.TestCase):
 
     def test_undo_of_a_folder_whose_new_faces_were_named_since_names_ten_reasons_and_how_many_more(self):
         _photo, path = self.photo(self.regatta, "crowd.jpg")
-        crowd = {"crowd.jpg": [((10 + 33 * i, 10, 40 + 33 * i, 40), 0.9, i) for i in range(11)]}
+        crowd = {"crowd.jpg": [((10 + 60 * (i % 6), 10 + 60 * (i // 6), 55 + 60 * (i % 6), 55 + 60 * (i // 6)), 0.9, i) for i in range(11)]}
         ran = self.cli(NewFaces(crowd), "face-pass", self.regatta, "--apply")
         self.assertEqual(0, ran.exit_code, ran.output)
         (change_id,) = self.changes()
