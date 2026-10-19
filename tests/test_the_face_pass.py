@@ -172,6 +172,35 @@ class FacePass(unittest.TestCase):
             conn.close()
         self.assertEqual([], self.query("SELECT 1 FROM faces_detected"), "the pass records no detection")
 
+    def test_no_new_face_is_made_under_the_floor_a_matched_small_face_still_gets_its_vector_and_the_next_run_has_nothing_to_do(self):
+        """Owner, 2026-10-18: the new detector found 31 smudges under 40 px in 40 new faces of one folder. A detection
+        under NEW_FACE_FLOOR on its shorter side that no old face takes is not made, and is counted; one an old face takes
+        is given its vector at any size."""
+        photo, path = self.photo("small.jpg")
+        old = self.face(path, [10, 10, 40, 38], 1)
+        found = self.run_pass(NewFaces({"small.jpg": [((10, 10, 40, 38), 0.9, 2), ((200, 60, 260, 130), 0.8, 3),
+                                                      ((300, 100, 330, 160), 0.7, 4)]}))
+        self.assertEqual((1, 1, 1), (found.matched, found.new, found.too_small))
+        self.assertEqual([FACENET, NEW], self.vectors(old))
+        self.assertEqual([[200, 60, 260, 130]], [json.loads(box) for (box,) in self.query(
+            "SELECT box FROM faces WHERE photo_id = ? AND id <> ?", (photo, old))])
+        before, changes = self.dump(), self.changes()
+        model = NewFaces({"small.jpg": []})
+        again = self.run_pass(model)
+        self.assertEqual((1, 0, 0, 0, []), (again.done, again.matched, again.new, again.too_small, again.changes))
+        self.assertEqual([], model.asked)
+        self.assertEqual((before, changes), (self.dump(), self.changes()))
+
+    def test_a_photo_whose_only_detections_are_under_the_floor_writes_nothing_and_is_counted_not_as_no_face(self):
+        """Nothing is held for it (a photo is done when a face holds a vector), so it is looked at again as a photo with no
+        face found is: the same count of detections each run, nothing written."""
+        self.photo("tiny.jpg")
+        before = self.dump()
+        found = self.run_pass(NewFaces({"tiny.jpg": [((5, 5, 35, 70), 0.9, 2)]}))
+        self.assertEqual((1, 0, 0, 1, 0, []), (found.looked, found.new, found.none_found, found.too_small, found.done,
+                                              found.changes))
+        self.assertEqual((before, []), (self.dump(), self.changes()))
+
     def test_a_turned_photo_is_skipped_and_one_that_does_not_decode_or_fails_is_reported_and_nothing_is_written(self):
         _turned, turned_path = self.photo("turned.jpg", turned=True)
         self.face(turned_path, [10, 10, 110, 130], 1)
