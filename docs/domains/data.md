@@ -14,7 +14,7 @@ shows (Views, Integration).
 
 | | photo_index | kr-track | renton_parkrun |
 |---|---|---|---|
-| schema | 32 | 32 | 32 |
+| schema | 33 | 33 | 33 |
 | photos / faces | 59,519 / 187,784 | 1,499 / 9,850 | 1,309 / 3,328 |
 | changes / change_rows / change_files | 742 / 8,939 / 77 | 318 / 1,204 / 1,190 | 1,210 / 1,470 / 2,940 |
 | changes made below 32 (row undo refused) | 715 | 316 | 1,210 |
@@ -23,9 +23,8 @@ shows (Views, Integration).
 Unfinished work: 0 `derived_pending`, 0 files `writing`, 1 `conflict` file (a changed file, as designed). The doctor reports
 0 broken rules on all three. Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
 listed "too old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
-`faces_pending` and `idx_faces_name`) is the one in flight (DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD"): the
-three libraries are at 32 (counted 2026-10-18) and reach 33 when the owner installs again; no other migration until it has
-run on all three. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
+`faces_pending` and `idx_faces_name`; DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD") has run on all three
+(schema 33, counted 2026-10-18): no migration is in flight, and the slot is free. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
 
 ## The contract other domains rely on
 
@@ -33,7 +32,7 @@ run on all three. What an install needs (disk, one app first, no CLI index meanw
 |---|---|---|
 | every domain | `db.connect / write / write_with_connection / lock_for / readonly_uri`: WAL, a 30 s busy timeout, one writer per file, retry; one `db.key` for a library file; no `sqlite3.connect`, no SQL outside `tagpup/store` | `test_db_access`, `test_layers` |
 | Integration (server, CLI, MCP, launcher) | `schema.ensure` migrates or raises; a newer or below-baseline library is refused, also in a long-lived process; `reading_newer` / `newer_problem` never write; 503 while migrating | `test_a_library_from_a_newer_tagpup`, `test_newer_library_guard_in_a_long_lived_process`, `test_server_migrates_at_start`, `test_migrations` |
-| People, Files (sync, refresh_rows, relink, maintenance), People (the face pass) | `journal.apply / rehearse / undo / record / record_faces / record_inserted`: one transaction, applied and undone only where rows are as read (an insert's undo: the exception for the change's own rows is the module docstring's, "undo"); refusals name keys; one `schema.row_key` spelling for a row's key | `test_journal`, `test_maintenance`, `test_journal_keys_and_cascades`, `test_journal_through_the_services` |
+| People, Files (sync, refresh_rows, relink, maintenance), People (the face pass) | `journal.apply / rehearse / undo / record / record_faces / record_inserted / kept / kept_named`, `db.begin`: one transaction, applied and undone only where rows are as read (the face pass's change is added to in one transaction a photo, `record_inserted` while `kept`) (an insert's undo: the exception for the change's own rows is the module docstring's, "undo"); refusals name keys; one `schema.row_key` spelling for a row's key | `test_journal`, `test_maintenance`, `test_journal_keys_and_cascades`, `test_journal_through_the_services` |
 | Files (`file_changes`), Integration (batches) | `file_journal`: planned, `writing`, `done` with its row; a crash settled at the next start by what the file holds | `test_file_journal`, `test_a_crash_part_way_is_settled_at_the_next_start` |
 | Files (indexer), People (faces, tree) | `derived.*` and `people.rebuild` in the writer's transaction; `doctor --rebuild-derived` rebuilds the same | `test_derived_writers`, `test_derived_follow_writes`, `test_photo_people_follow_their_sources` |
 | every writer of photos; Views reads | `search_index.refresh` from `derived`; a deleted photo's words by trigger | `test_derived_writers`, `test_search_words` |

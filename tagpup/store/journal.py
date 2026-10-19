@@ -28,6 +28,12 @@ each with what the plan read of the row (`expect`). Then:
 - **rehearse**: the change and its undo inside a transaction that is rolled back,
   saying whether the undo restored every row exactly. Nothing is written.
 
+A change whose rows its writer writes itself is recorded instead (`record`), applied, in
+the writer's transaction. One may be added to in later transactions of its own
+(`record_inserted`, while `kept`): the face pass opens a folder's change at its first
+photo and adds each photo's rows, and counts, in that photo's transaction, so a change
+stopped part-way holds exactly what was committed and is undone as that.
+
 Either way a write is refused, before anything is written, when it would leave a row
 naming a row that is not there -- a face put back on a photo deleted since, a node under
 a parent deleted since -- or break a UNIQUE constraint (`_blocked`): the journal writes
