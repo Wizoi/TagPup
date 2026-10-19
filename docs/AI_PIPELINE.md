@@ -387,6 +387,30 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
   stays, the vector goes). A new face named since does refuse it ("faces N is not what change C left").
 - Slice B: the CLI, its `undo` output naming the first ten reasons a folder's undo is refused, the card's turn, read-ahead.
 
+**Merge 3, slice B, as built (2026-10-18): the `face-pass` command.** `tagpup_cli.py face-pass DIRECTORY... [--apply]
+[--reveal]` (docs/SPEC_TAGPUP_CLI.md), scenario P8 from the command line (`tests/test_a_face_pass_from_the_command_line.py`).
+- A process of its own: the model from `Runtime.look_at_faces`, the card taken at the first photo the model is asked about
+  and let go at `end()`; not in `tagpup.web.lifecycle.under_way`, as the brief above chose.
+- Read-ahead: `face_pass.run(..., reading=...)` reads the photos ahead with `tagpup.core.read_ahead`, the CLI giving it the
+  index's threads, depth and bytes; the model's `picture` on those threads, `detect_and_embed` and every write on the
+  caller's. What a picture holds is the model's to say (`ScrfdAdaFace.picture_bytes`). A service run given no `reading`
+  reads one photo at a time through the same code.
+- Ctrl+C: `run(..., stop=...)` is asked before each photo, so the photo under way is committed whole or not begun; the
+  CLI's handler sets it (a second Ctrl+C stops at once, the photo's transaction rolled back). `Folder.looked` and
+  `Folder.stopped` say how far it went.
+- One snapshot a run, just before its first write (`run(..., before_first_write=...)`, called before each photo's write;
+  the CLI's acts once a run, across its folders): a daily, unless one from today stands
+  (`tagpup.services.snapshots.before_a_long_write`), and none for a run that writes nothing, so a no-op `--apply` rotates
+  no daily out; that snapshot is the run's backup, and each folder's change is undone alone from the journal.
+- The undo's ten reasons were already the journal's (`tagpup.store.journal.Refusal`: the first ten, "and N more"); slice B
+  adds the scenario that shows it from the command line, nothing to the code.
+- `KEPT_FACE_MODELS` is not extended: the pass writes the new model's vectors without the library being set to it, and
+  extending it lets a library be switched to the new model, which is the gate's (slice C).
+- A dry run asks the model about every photo not done, the card held, as long as the run but for the writes: it counts
+  what --apply would write (slice A2, "A dry run ... reads and counts the same"); by design.
+- The weight files are not in the checkpoints folder of this machine yet (counted 2026-10-18): the command refuses with
+  the sentence of `missing_weights` before anything is done.
+
 ### Phase 4: Matching, with the new model
 
 - **4a Time-nearest matching.** A new face is matched against the time-nearest named faces by Date Taken, not one

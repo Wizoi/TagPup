@@ -20,8 +20,10 @@ the model is built or loaded. What the owner lives through:
   model's pass (some faces with its vector, some without), the ones with it are compared and clustered.
 - (d) Two libraries, one on each model, in one server: the one on MTCNN suggests; the other is refused, its rows unchanged.
 - (e) The model switched while a Suggest runs: the run ends on the models it began with; the next is refused.
-- (f) A look with the new model, which writes nothing (Runtime.look_at_faces): refused beside a Suggest, a Suggest refused
-  beside it; it takes the graphics card once, and lets go of the card and the model at end(), after a failure too.
+- (f) A look with the new model (Runtime.look_at_faces), which writes nothing keyed by the library's faces.model (the face
+  pass writes the new model's vectors and new faces with it, the library on its own model: tests/test_the_face_pass.py,
+  tests/test_a_face_pass_from_the_command_line.py): refused beside a Suggest, a Suggest refused beside it; it takes the
+  graphics card once, and lets go of the card and the model at end(), after a failure too.
 - (g) The new model's weights never made: a look says which are missing and how to make them, and Suggest on MTCNN runs.
 
 Fictional names; libraries in a home of the test's own; stand-in models, except the new model in (g), whose weights are
@@ -483,7 +485,8 @@ class SwitchedWhileSuggestRuns(_Libraries):
 
 
 class ALookWithTheNewModel(_Libraries):
-    """(f) Phase 3's look (Runtime.look_at_faces): the new model's faces, read beside the library's, writing nothing."""
+    """(f) Phase 3's look (Runtime.look_at_faces): the new model's faces, read beside the library's; here it writes
+    nothing (the face pass writes with it, the library on its own model: tests/test_the_face_pass.py)."""
 
     def build(self, settings):
         # The new model on the graphics card, as it would be on the owner's machine.

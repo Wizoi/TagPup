@@ -72,6 +72,7 @@ from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import thumbnails
 from tagpup.services import embedding_repair
+from tagpup.services import face_pass as face_pass_service
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
@@ -1143,6 +1144,147 @@ def repair_vectors(ctx, apply_):
                       if counts["reasons"] else ""), markup=False, soft_wrap=True)
     console.print("A running TagPup keeps the vectors it loaded until a photo is edited or the app is restarted: "
                   "restart it to search by the new ones.", markup=False, soft_wrap=True)
+
+
+@contextlib.contextmanager
+def _stop_after_this_photo():
+    """Ctrl+C (and Ctrl+Break) asks a run to stop before its next photo, so the photo under way is committed whole or not
+    begun: the threading.Event the run asks. A second Ctrl+C stops at once (the photo's transaction is rolled back)."""
+    import signal
+    import threading
+    asked = threading.Event()
+    kinds = (signal.SIGINT, signal.SIGBREAK)
+    previous = {kind: signal.getsignal(kind) for kind in kinds}
+
+    def stop(_signum, _frame):
+        if asked.is_set():
+            raise KeyboardInterrupt
+        asked.set()
+        console.print("Stopping after this photo (Ctrl+C again stops at once)...", markup=False)
+
+    for kind in kinds:
+        signal.signal(kind, stop)
+    try:
+        yield asked
+    finally:
+        for kind in kinds:
+            signal.signal(kind, previous[kind])
+
+
+def _folder_lines(number, found, reveal):
+    """What `face-pass` says of one folder: counts, and its path and ids only with --reveal."""
+    lines = ["Folder %d%s:%s" % (number, " " + found.folder if reveal else "", " (stopped here)" if found.stopped else ""),
+             "  %d photo(s) looked at, %d done before, %d turned (skipped), %d with no face found, %d failed"
+             % (found.looked, found.done, found.skipped, found.none_found, len(found.failed)),
+             "  %d old face(s) given the new vector, %d new face(s) (unnamed), %d old face(s) unmatched (listed for review,"
+             " untouched)" % (found.matched, found.new, len(found.unmatched))]
+    reasons = Counter(why for _photo, why in found.failed)
+    lines += ["    %d x %s" % (count, why) for why, count in reasons.most_common()]
+    if found.held:
+        lines.append("  Held already: change(s) %s of this folder stand (`undo` takes each back)."
+                     % ", ".join(map(str, found.held)))
+    if found.changes:
+        lines.append("  Written: change(s) %s." % ", ".join(map(str, found.changes)))
+    if reveal and found.unmatched:
+        lines.append("  Unmatched (photo/face): %s" % ", ".join("%d/%d" % pair for pair in found.unmatched))
+    if reveal and found.failed:
+        lines.append("  Failed (photo): %s" % ", ".join(str(photo) for photo, _why in found.failed))
+    return lines
+
+
+def _nested(folders):
+    """A sentence when one folder given is another, or under it: the pass would look at its photos twice."""
+    for i, first in enumerate(folders):
+        for second in folders[i + 1:]:
+            if paths.same(first, second) or paths.is_under(second, first) or paths.is_under(first, second):
+                return "Not run: two of the folders given are one, or one is under the other; give each once."
+    return None
+
+
+@cli.command("face-pass")
+@click.argument("directories", nargs=-1, required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write: after a snapshot of the library (unless one is from today), one change of the journal per "
+                   "folder. Without it, only says what it would do.")
+@click.option("--reveal", is_flag=True, help="Name each folder's path, and the ids of the faces unmatched. Paths can name people.")
+@click.pass_context
+@_holds_the_roots
+def face_pass(ctx, directories, apply_, reveal):
+    """The new face model's pass over the photos under each DIRECTORY, at any depth (docs/AI_PIPELINE.md, phase 3):
+    each old face given the new model's vector by overlap, its name and box kept; new faces made unnamed; the old faces
+    no detection took listed, untouched. The library stays on its face model. A dry run unless --apply; counts only.
+    Ctrl+C stops it after the photo under way; run it again to go on."""
+    library = _existing_library(ctx)
+    nested = _nested(directories)
+    if nested:
+        console.print(nested, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    with _stop_after_this_photo() as asked:
+        # The card is taken at the first photo the model is asked about; who holds it meanwhile is said, as the index does.
+        look = get_runtime().look_at_faces(library, what="The face pass of %s" % library.name, cancelled=asked.is_set,
+                                           report=lambda line: console.print(line or "Took the graphics card.",
+                                                                             markup=False, soft_wrap=True))
+        try:
+            _face_pass(library, look, directories, apply_, reveal, asked)
+        except gpu_turns.Cancelled:
+            console.print("Stopped while it waited for the graphics card: nothing more was written.", markup=False)
+            raise SystemExit(1) from None
+        finally:
+            look.end()
+
+
+def _face_pass(library, look, directories, apply_, reveal, asked):
+    missing = look.missing()
+    if missing:
+        console.print("Not run: %s" % missing, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    if asked.is_set():   # Ctrl+C before the first photo: said as a stop, never as a folder without photos
+        _stopped_before_writing()
+    taken = []
+
+    def before_first_write():
+        """One snapshot a run, before its first write, across its folders (none when one is from today, none for a run
+        that writes nothing): each folder's change is undone alone from the journal, and the snapshot is the library as
+        it was before the whole run."""
+        if taken:
+            return
+        taken.append(library_snapshots.before_a_long_write(library))
+        console.print("Took a snapshot of the library first (%s)." % ", ".join(taken[0].details["taken"])
+                      if taken[0].changed else "A snapshot of the library from today stands; none taken.", markup=False)
+
+    found = []
+    for directory in directories:
+        found += face_pass_service.run(library.path, look, directory, apply=apply_,
+                                       reading={"threads": READ_THREADS, "ahead": READ_AHEAD, "budget": READ_AHEAD_BYTES},
+                                       stop=asked.is_set, before_first_write=before_first_write)
+        if asked.is_set():
+            break
+    if not found:
+        if asked.is_set():
+            _stopped_before_writing()
+        console.print("The library holds no photo under the folder(s) given.", markup=False)
+        return
+    for number, folder in enumerate(found, 1):
+        for line in _folder_lines(number, folder, reveal):
+            console.print(line, markup=False, soft_wrap=True)
+    total = sum(folder.looked for folder in found)
+    console.print("%d folder(s), %d photo(s) looked at: %d old face(s) given the new vector, %d new, %d unmatched, "
+                  "%d photo(s) failed." % (len(found), total, sum(f.matched for f in found), sum(f.new for f in found),
+                                           sum(len(f.unmatched) for f in found), sum(len(f.failed) for f in found)),
+                  markup=False, soft_wrap=True)
+    if asked.is_set():
+        if not any(folder.changes for folder in found):   # a dry run, or a stop before any photo was written
+            _stopped_before_writing()
+        console.print("Stopped: what was written stays written and undoable; run it again to go on.", markup=False)
+        raise SystemExit(1)
+    if not apply_:
+        console.print("Nothing changed. --apply writes it, after a snapshot of the library unless one is from today: one "
+                      "change of the journal per folder, which `undo` takes back.", markup=False, soft_wrap=True)
+
+
+def _stopped_before_writing():
+    console.print("Stopped: nothing was written; run it again to go on.", markup=False)
+    raise SystemExit(1)
 
 
 @cli.group()

@@ -236,6 +236,18 @@ class ScrfdAdaFace:
             logger.error("Error processing faces in %s: %s", img_path, e)
             return NotDetected()
 
+    def missing(self):
+        """The sentence naming the weight files not in this model's folder (missing_weights), or None: what a run asks
+        before it begins, so that it stops before it has done anything."""
+        return missing_weights(self.folder)
+
+    @staticmethod
+    def picture_bytes(width, height):
+        """The bytes `picture` holds for a photo of `width` x `height`, at most: the picture as stored (RGB), and for each
+        square its canvas and the picture scaled into it. What the face pass's read-ahead reserves
+        (tagpup.services.face_pass); said here, beside what it counts."""
+        return 3 * width * height + sum(2 * 3 * side * side for side in SCALES)
+
     def detect_and_embed(self, picture):
         """The faces of a picture made ready (ScrfdPicture), the highest score first, each a dict of its `box` (in the
         picture as stored, clamped to it, at least SMALLEST_FACE a side), `prob` (its score), `landmarks` (five

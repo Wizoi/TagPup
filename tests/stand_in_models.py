@@ -55,12 +55,21 @@ class NewFaces:
         self.kill_at = kill_at
         self.asked = []
 
+    def missing(self):
+        """Every weight file is there."""
+        return None
+
     @staticmethod
     def vector(seed, size=8):
         """A normalized vector, as the recogniser's, made from `seed`."""
         values = [((seed * 31 + i) % 17) / 17.0 + 0.1 for i in range(size)]
         length = sum(v * v for v in values) ** 0.5
         return [v / length for v in values]
+
+    @staticmethod
+    def picture_bytes(width, height):
+        """What the read-ahead reserves for the picture: the decoded RGB."""
+        return 3 * width * height
 
     def picture(self, path):
         from PIL import Image
