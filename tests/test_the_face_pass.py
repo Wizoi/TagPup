@@ -274,6 +274,7 @@ class FacePass(unittest.TestCase):
         self.assertEqual((before, changes), (self.dump(), self.changes()))
 
     def test_undoing_the_folder_takes_exactly_what_the_pass_added_and_it_may_be_run_again(self):
+        # A new face's own crop and vector, inserted by the same change, do not refuse its undo (#1675).
         found = self.four_photos()
         # A photo MTCNN found no face in, as the index records it, in which the new model finds one.
         nobody, _path = self.photo("nobody.jpg")
