@@ -9,6 +9,7 @@ import os
 import struct
 import sys
 import unittest
+import unittest.mock
 
 from PIL import Image
 
@@ -351,8 +352,12 @@ class FacePass(unittest.TestCase):
             conn.close()
         self.assertEqual(folders, [json.loads(summary)["folder"] for (summary,) in
                                    self.query("SELECT summary FROM changes ORDER BY id")])
-        again = face_pass.run(self.db_path, NewFaces(found), self.folder, apply=False)
+        read = []
+        kept_named = journal.kept_named
+        with unittest.mock.patch.object(journal, "kept_named", lambda *args: read.append(args) or kept_named(*args)):
+            again = face_pass.run(self.db_path, NewFaces(found), self.folder, apply=False)
         self.assertEqual([each.changes for each in written], [each.held for each in again])
+        self.assertEqual(1, len(read), "the changes a run's folders hold are read once a run, not once a folder")
 
     # ---- A dry run; two libraries -------------------------------------------------------------------------------
 

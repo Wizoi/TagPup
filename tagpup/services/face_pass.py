@@ -80,17 +80,19 @@ def run(db_path, model, folder, apply=False):
     folder holding photos. Writes only with `apply`."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        return [_folder(db_path, conn, model, name, photos, apply)
+        # The changes the folders hold, read once a run: each folder takes those whose summary names it, in row form.
+        held = journal.kept_named(conn, OPERATION % model.key)
+        return [_folder(db_path, conn, model, name, photos, apply, held)
                 for name, photos in _folders(store_faces.pass_photos(conn, folder))]
     finally:
         conn.close()
 
 
-def _folder(db_path, conn, model, name, photos, apply):
+def _folder(db_path, conn, model, name, photos, apply, held):
     found = Folder(name)
     operation = OPERATION % model.key
-    found.held = [change_id for change_id, summary in journal.kept_named(conn, operation)
-                  if paths.same(store_roots.from_row(conn, summary.get("folder")), name)]
+    here = paths.key(store_roots.to_row(conn, name))
+    found.held = [change_id for change_id, summary in held if paths.key(summary.get("folder")) == here]
     done = store_faces.vectors_under(conn, model.key, [photo_id for photo_id, _path in photos])
     change_id = None
     for photo_id, path in photos:
