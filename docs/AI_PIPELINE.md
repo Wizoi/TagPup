@@ -372,6 +372,9 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
   summary what was committed (added to in each photo's transaction). A change undone while the run goes on is not added to:
   the folder's next photo opens a new one.
 - A dry run (the default) reads and counts the same and names the changes the folder already holds (`Folder.held`).
+- The pass names nobody (owner, 2026-10-18; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY"): a new face is made
+  unnamed, and a matched face keeps the name it had. Naming the new faces is Name faces from tags' job, once the library is
+  switched to the new model after the gate. Named old faces are paired first (owner, 2026-10-18; "The pass" above).
 - A face the pass matched holds one row of its change, its vector: naming it since does not refuse the undo (the name
   stays, the vector goes). A new face named since does refuse it ("faces N is not what change C left").
 - Slice B: the CLI, its `undo` output naming the first ten reasons a folder's undo is refused, the card's turn, read-ahead.
