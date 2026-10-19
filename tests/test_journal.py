@@ -254,10 +254,12 @@ class AFacePassFolderUndone(JournalLibrary):
 
     def the_pass_gives_a_face(self):
         """(change id, face id) of the pass's change that gave the photo "prize" a face, its crop and its vector."""
+        photo = self.query("SELECT path FROM photos WHERE id = ?", (self.ids["prize"],))[0][0]
+
         def work(conn):
             db.begin(conn, immediate=True)
             change_id = journal.record(conn, "face pass (%s) Harbour Regatta" % self.NEW_MODEL, [], {})
-            (face,) = faces.give_vectors(conn, change_id, self.ids["prize"], self.NEW_MODEL, [],
+            (face,) = faces.give_vectors(conn, change_id, photo, self.NEW_MODEL, [],
                                          [([40, 40, 140, 160], 0.93, vector(7), jpeg(7))], {"new": 1})
             return change_id, face
         return db.write_with_connection(self.db_path, work)

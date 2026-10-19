@@ -318,20 +318,13 @@ def insert(conn, photo_path, box, embedding, *, model, name=None, crop=None, pro
     from tagpup.store import photos   # photos imports this module
     photo_id = photos.ensure_row(conn, photo_path)
     tag_id, name = _target(conn, name) if name is not None else (None, None)
-    face_id = _added(conn, photo_id, box, embedding, model, crop, prob, name, tag_id)
-    _rebuilt(conn, [photo_id], bool(name))
-    return face_id
-
-
-def _added(conn, photo_id, box, embedding, model, crop, prob, name=None, tag_id=None):
-    """The rows of one detected face, its vector under `model` and its crop if one was cut: insert's and the face pass's
-    (give_vectors). Returns the face's id."""
     face_id = conn.execute(
         "INSERT INTO faces (photo_id, box, name, tag_id, prob) VALUES (?, ?, ?, ?, ?)",
         (photo_id, json.dumps(box), name, tag_id, prob)).lastrowid
     conn.execute("INSERT INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)", (face_id, model, embedding))
     if crop:
         conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
+    _rebuilt(conn, [photo_id], bool(name))
     return face_id
 
 
@@ -366,13 +359,13 @@ def boxes_of(conn, photo_id):
         "SELECT id, box FROM faces WHERE photo_id = ? ORDER BY id", (photo_id,))]
 
 
-def give_vectors(conn, change_id, photo_id, key, matched, new, counts):
+def give_vectors(conn, change_id, photo_path, key, matched, new, counts):
     """Write one photo's part of the face pass and record every row it adds as rows of change `change_id`, byte for byte as
     stored, with `counts` added to the change's summary (tagpup.store.journal.record_inserted), in the caller's
     transaction: `matched`, [(face id, vector)], each an existing face's vector under `key`, the face's name, box, crop
     and decisions untouched; `new`, [(box, prob, vector, crop)], each a new face, unnamed and not excluded, with its crop
-    and a vector under `key` alone. Vectors are float32 bytes. No face is named, so no photo's people move. Returns the new
-    faces' ids. The caller commits."""
+    and a vector under `key` alone (insert, unnamed), in the photo at `photo_path`. Vectors are float32 bytes. No face is
+    named, so no photo's people move. Returns the new faces' ids. The caller commits."""
     from tagpup.store import journal   # journal imports the photos store, which imports this module
     rows = []
     for face_id, vector in matched:
@@ -380,7 +373,7 @@ def give_vectors(conn, change_id, photo_id, key, matched, new, counts):
         rows.append(("face_embeddings", (face_id, key)))
     added = []
     for box, prob, vector, crop in new:
-        face_id = _added(conn, photo_id, box, vector, key, crop, prob)
+        face_id = insert(conn, photo_path, box, vector, model=key, crop=crop, prob=prob)
         added.append(face_id)
         rows += [("faces", (face_id,)), ("face_crops", (face_id,)), ("face_embeddings", (face_id, key))]
     journal.record_inserted(conn, change_id, rows, counts)

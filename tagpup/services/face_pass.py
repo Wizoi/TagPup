@@ -118,7 +118,7 @@ def _folder(db_path, conn, model, name, photos, apply):
         unmatched = [(photo_id, face_id) for i, (face_id, _box) in enumerate(old) if i not in paired]
         if apply:
             written = db.write_with_connection(
-                db_path, lambda write: _write(write, model.key, operation, change_id, photo_id, old, matched, new),
+                db_path, lambda write: _write(write, model.key, operation, change_id, photo_id, path, old, matched, new),
                 label="face pass")
             if written is None:
                 found.failed.append((photo_id, "its faces changed while it was read, or another run did it: looked at"
@@ -133,7 +133,7 @@ def _folder(db_path, conn, model, name, photos, apply):
     return found
 
 
-def _write(conn, key, operation, change_id, photo_id, old, matched, new):
+def _write(conn, key, operation, change_id, photo_id, path, old, matched, new):
     """One photo's rows, in one transaction: the id of the folder's change they were recorded in, or None, nothing written,
     when the photo is done or its faces are not as `old` read them."""
     db.begin(conn, immediate=True)
@@ -141,5 +141,5 @@ def _write(conn, key, operation, change_id, photo_id, old, matched, new):
         return None
     if change_id is None or not journal.kept(conn, change_id):
         change_id = journal.record(conn, operation, [], {"matched": 0, "new": 0})
-    store_faces.give_vectors(conn, change_id, photo_id, key, matched, new, {"matched": len(matched), "new": len(new)})
+    store_faces.give_vectors(conn, change_id, path, key, matched, new, {"matched": len(matched), "new": len(new)})
     return change_id

@@ -125,6 +125,7 @@ NUMPY_TOP = re.compile(r"\b(?:nan)?arg(?:max|sort|partition)\(|\.reduceat\(|\bnp
 SORTS_OF_OTHER_THINGS = {
     os.path.join("scripts", "measure_pipeline_holdouts.py"): 1,
     os.path.join("scripts", "measure_pipeline_stages.py"): 2,   # its runs by detect_max_side, its roots' places; pairs from clustering
+    os.path.join("tagpup", "services", "face_pass.py"): 3,   # photos and folders by path; pairs by the old face's index
     os.path.join("tagpup", "services", "faces.py"): 3,
     os.path.join("tagpup", "services", "identify.py"): 7,   # RANKS_FACES's two among them
     os.path.join("tagpup", "services", "suggester.py"): 4,
