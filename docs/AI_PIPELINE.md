@@ -304,8 +304,9 @@ non-commercial terms like insightface's (section 7); insightface's weights are a
 runtime unless the detector needs one and the owner agrees.
 
 **The pass.**
-- Each old named box takes the new box with the highest IoU of 0.5 or more in the same photo, keeps its person, and
-  gets its new vector; unmatched named faces are listed for review and never dropped; new unmatched detections
+- Each old named box takes the new box with the highest IoU of 0.5 or more in the same photo, before any unnamed box is
+  paired (owner, 2026-10-18: a named face beside an unnamed duplicate of it takes the detection though the duplicate
+  overlaps it more), keeps its person, and gets its new vector; then each unnamed box the same; unmatched named faces are listed for review and never dropped; new unmatched detections
   become new `faces` rows; excluded faces stay excluded. A turned photo keeps the "turned" rule of DECISIONS
   2026-10-16: boxes are not converted here.
 - One journaled change per folder, dry run by default, a small folder first and the owner checks it, backup first, run
@@ -362,6 +363,29 @@ Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
   in the server, an update would not wait for it. So the pass is a process of its own (the CLI) with its own
   `Runtime`, the graphics card shared through `gpu.Card` as the CLI's index shares it, or it is listed in `under_way`
   before it runs in the server.
+
+**Merge 3, slice A2, as built (2026-10-18): the pass's store and service, the model handed in.** `tagpup.services.face_pass.run`
+(People's; the model Views-AI's), scenario P8 (`tests/test_the_face_pass.py`, the model stood in for by
+`tests/stand_in_models.NewFaces`). The store's part is `tagpup.store.faces`: `vectors_under(conn, key, photo_ids)` (the reader
+with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, which records every row it adds as stored
+(`journal.record_inserted`). `KEPT_FACE_MODELS` is not extended here; no CLI yet (slice B).
+- The pass writes no `faces_detected` row: a photo is done when one of its faces holds a vector under the model's key, so
+  MTCNN's found-none rows stand, and a photo the new model finds no face in writes nothing and is looked at again each run
+  (at most 10,492 photos of photo_index, about 50 minutes a run, writing nothing: accepted).
+- What the journal holds: each vector about 2 KB of `change_rows`, a new face's crop about 6 KB more; about 0.4 to 0.5 GB for
+  photo_index's vectors (accepted).
+- A folder's change is called "face pass (<key>)": History and the MCP `history` show the operation without reveal, so it
+  names no path; the folder is the summary's `folder`, in the library's row form, behind reveal, and is what `Folder.held`
+  reads. A folder interrupted and resumed is two changes of one folder, each undone alone, each
+  summary what was committed (added to in each photo's transaction). A change undone while the run goes on is not added to:
+  the folder's next photo opens a new one.
+- A dry run (the default) reads and counts the same and names the changes the folder already holds (`Folder.held`).
+- The pass names nobody (owner, 2026-10-18; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY"): a new face is made
+  unnamed, and a matched face keeps the name it had. Naming the new faces is Name faces from tags' job, once the library is
+  switched to the new model after the gate. Named old faces are paired first (owner, 2026-10-18; "The pass" above).
+- A face the pass matched holds one row of its change, its vector: naming it since does not refuse the undo (the name
+  stays, the vector goes). A new face named since does refuse it ("faces N is not what change C left").
+- Slice B: the CLI, its `undo` output naming the first ten reasons a folder's undo is refused, the card's turn, read-ahead.
 
 ### Phase 4: Matching, with the new model
 

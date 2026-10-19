@@ -207,9 +207,8 @@ class FaceModel:
                 # Normalize tensor elements from [0, 255] to [-1, 1] range as expected by facenet
                 face_tensor = (face_tensor - 127.5) / 128.0
 
-                # The crop kept with the face, at the size and quality every crop
-                # is kept at (tagpup.files.images).
-                crop_bytes = images.crop_jpeg(face_crop)
+                # The crop kept with the face, cut and kept as every face's crop is (tagpup.files.images).
+                crop_bytes = images.face_crop_of(img, (x1, y1, x2, y2))
 
                 face_crops_info.append({
                     "box": [x1, y1, x2, y2],

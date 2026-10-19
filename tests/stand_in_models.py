@@ -8,6 +8,8 @@ the suggester the way a run does:
 `faces` is the test's own face model (what it detects is the test's point); CLIP is `Clip`, which asks nothing of a photo
 (the test gives its vector) and embeds every word to nothing, so no word is offered.
 """
+import os
+
 from tagpup.core import validation
 from tagpup.services import settings as library_settings
 from tagpup.services import suggester
@@ -31,6 +33,54 @@ class Faces:
     def detect_and_embed(self, picture):
         path, max_side = picture
         return self.detect_and_embed_faces(path, max_side=max_side)
+
+
+class NewFaces:
+    """The new face model (tagpup.ml.scrfd_adaface.ScrfdAdaFace) as the face pass is handed it: its `key`, a `picture` of
+    the photo as stored (decoded here by Pillow, NotDetected when it does not decode, as the model's own), and
+    `detect_and_embed`, which answers what the test says each photo holds -- `found`, {file name: [(box, prob, seed)]},
+    highest score first, each a detection with a vector made from `seed` (`vector`); a file name given None is a model
+    that fails (NotDetected); one not given has no face. `kill_at`, a file name, raises Killed there: the process stopped."""
+    key = validation.SCRFD_ADAFACE
+
+    class Killed(BaseException):
+        """The run stopped part-way: a crash, the window closed."""
+
+    class Picture:
+        def __init__(self, stored, path):
+            self.stored, self.path = stored, path
+
+    def __init__(self, found=None, kill_at=None):
+        self.found = dict(found or {})
+        self.kill_at = kill_at
+        self.asked = []
+
+    @staticmethod
+    def vector(seed, size=8):
+        """A normalized vector, as the recogniser's, made from `seed`."""
+        values = [((seed * 31 + i) % 17) / 17.0 + 0.1 for i in range(size)]
+        length = sum(v * v for v in values) ** 0.5
+        return [v / length for v in values]
+
+    def picture(self, path):
+        from PIL import Image
+        from tagpup.ml.faces import NotDetected
+        try:
+            with Image.open(path) as img:
+                return self.Picture(img.convert("RGB"), path)
+        except Exception:
+            return NotDetected()
+
+    def detect_and_embed(self, picture):
+        from tagpup.ml.faces import NotDetected
+        name = os.path.basename(picture.path)
+        self.asked.append(name)
+        if name == self.kill_at:
+            raise self.Killed(name)
+        if name in self.found and self.found[name] is None:
+            return NotDetected()
+        return [{"box": list(box), "prob": prob, "landmarks": [], "embedding": self.vector(seed), "norm": 20.0}
+                for box, prob, seed in self.found.get(name, [])]
 
 
 class Clip:

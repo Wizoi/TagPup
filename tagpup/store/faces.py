@@ -328,6 +328,58 @@ def insert(conn, photo_path, box, embedding, *, model, name=None, crop=None, pro
     return face_id
 
 
+# ---- The new face model's pass (tagpup.services.face_pass) ------------------------------------------------------
+
+def pass_photos(conn, folder):
+    """[(photo id, native path)] of the photos under `folder`, at any depth: what the face pass walks. One range of the path
+    index."""
+    where, params = store_roots.sql_under(conn, "path", folder)
+    return [tuple(row) for row in store_roots.natives(
+        conn, conn.execute("SELECT id, path FROM photos WHERE " + where, params).fetchall(), 1)]
+
+
+def vectors_under(conn, key, photo_ids):
+    """{photo id: {ids of its faces holding a vector under `key`}} of the photos among `photo_ids` one of whose faces holds
+    one. The key is given, never the library's (model_key): the pass writes one model's vectors while the library reads
+    another's, and a photo is done when one of its faces holds the pass's. Chunked; idx_faces_photo_id and the vectors'
+    key (face_id, model)."""
+    found = {}
+    for chunk in _chunks(photo_ids):
+        for photo_id, face_id in conn.execute(
+                "SELECT f.photo_id, f.id FROM faces f INDEXED BY idx_faces_photo_id" + WITH_VECTOR
+                + " WHERE f.photo_id IN (%s)" % ",".join("?" * len(chunk)), [key] + chunk):
+            found.setdefault(photo_id, set()).add(face_id)
+    return found
+
+
+def boxes_of(conn, photo_id):
+    """[(face id, box, named)] of a photo's faces, named or not, excluded or not, by id: what the pass pairs with what it
+    detects (a named face first), and reads again inside its write to see that nothing moved since."""
+    return [(face_id, json.loads(box), tag_id is not None) for face_id, box, tag_id in conn.execute(
+        "SELECT id, box, tag_id FROM faces WHERE photo_id = ? ORDER BY id", (photo_id,))]
+
+
+def give_vectors(conn, change_id, photo_path, key, matched, new, counts):
+    """Write one photo's part of the face pass and record every row it adds as rows of change `change_id`, byte for byte as
+    stored, with `counts` added to the change's summary (tagpup.store.journal.record_inserted), in the caller's
+    transaction: `matched`, [(face id, vector)], each an existing face's vector under `key`, the face's name, box, crop
+    and decisions untouched; `new`, [(box, prob, vector, crop)], each a new face, unnamed and not excluded, with its crop
+    and a vector under `key` alone (insert, unnamed), in the photo at `photo_path`. Vectors are float32 bytes. No face is
+    named, so no photo's people move. Returns the new faces' ids. The caller commits."""
+    from tagpup.store import journal   # journal imports the photos store, which imports this module
+    rows = []
+    for face_id, vector in matched:
+        conn.execute("INSERT INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)", (face_id, key, vector))
+        rows.append(("face_embeddings", (face_id, key)))
+    added = []
+    for box, prob, vector, crop in new:
+        face_id = insert(conn, photo_path, box, vector, model=key, crop=crop, prob=prob)
+        added.append(face_id)
+        rows += [("faces", (face_id,)), ("face_crops", (face_id,)), ("face_embeddings", (face_id, key))]
+    journal.record_inserted(conn, change_id, rows, counts)
+    return added
+
+
 def manual_names(conn):
     """face id -> Ref for every face a person decided by hand. A None is a
     deliberate "this is nobody", as binding as a person."""

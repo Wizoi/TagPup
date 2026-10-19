@@ -588,11 +588,15 @@ def panel(library, photo_path, named):
 # (tagpup.ml.faces), and the named faces a new one is compared with. PhotoIndex held a
 # wrapper for each (docs/ARCHITECTURE.md, phase 5.5).
 
+def vector_bytes(embedding):
+    """A face model's vector as a face's vector is stored: float32 bytes (the index, Suggest and the face pass)."""
+    return np.array(embedding, dtype=np.float32).tobytes()
+
+
 def _insert_detected(conn, photo_path, face, model):
     """A face as the face model found it: unnamed (a detection names nobody; its photo's tag may name it after: face_tags),
     its vector filed under `model`, the key of the face model that found it (its `key`)."""
-    faces.insert(conn, photo_path, face.get("box", []),
-                 np.array(face["embedding"], dtype=np.float32).tobytes(), model=model,
+    faces.insert(conn, photo_path, face.get("box", []), vector_bytes(face["embedding"]), model=model,
                  crop=face.get("crop_image"), prob=face.get("prob"))
 
 

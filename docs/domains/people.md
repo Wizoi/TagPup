@@ -72,6 +72,10 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   the person page are empty, with no sentence of their own: every reader compares faces under the library's model, and
   the faces hold FaceNet's vectors alone. The consequence is stated where the owner switches (the settings dialog's face
   model group, which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
+- **The face pass names nobody (2026-10-18, owner; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY")**: the new face
+  model's pass (`services.face_pass`) makes its new faces unnamed and leaves a matched face's name as it was; Name faces
+  from tags names the new faces after the gate. A photo's named faces pair first, so a named face keeps its person
+  beside an unnamed duplicate of it.
 
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`

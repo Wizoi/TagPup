@@ -119,7 +119,7 @@ class AnAdditiveMigration(Migrated):
         self.assertEqual(("migration %d: a step" % (migration_names.BASE + 1), migration_names.BASE, "applied"),
                          (operation, version, status))
         self.assertEqual(schema.ADDITIVE, summary["kind"])
-        self.assertEqual({}, summary["rows"])
+        self.assertNotIn("rows", summary, "History counts a change's rows from change_rows")
         self.assertEqual(["nothing dropped", "nothing that was there changed", "rows kept", "foreign keys",
                           "integrity"], summary["checks"])
 
