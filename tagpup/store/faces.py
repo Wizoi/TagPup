@@ -27,6 +27,7 @@ import logging
 import os
 import types
 
+from tagpup.core import paths
 from tagpup.core.vocabulary import Ref
 from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
@@ -379,6 +380,40 @@ def give_vectors(conn, change_id, photo_path, key, matched, new, counts):
     journal.record_inserted(conn, change_id, rows, counts)
     return added
 
+
+# ---- The gate: two models' vectors of the same faces (tagpup.services.face_gate) -------------------------------------
+
+def under_both(conn, key, other, named):
+    """[(face id, tag id or None, photo id, the photo's folder key, box JSON, vector under `key`, vector under `other`)] of
+    every face not excluded holding a vector under each of the two keys given, never the library's (model_key): the gate
+    compares two models on the same faces while the library reads one of them. `named`: the faces naming a person (tag_id
+    set), else those naming nobody. The folder key is paths.key of the photo's folder as the library holds it (row form):
+    a key to group faces by, never a path to open. No crop is read. Faces by idx_faces_identify (excluded), each vector by its key
+    (face_id, model)."""
+    return [(face_id, tag_id, photo_id, paths.key(paths.row_parent(path) or ""), box, first, second)
+            for face_id, tag_id, photo_id, path, box, first, second in conn.execute(
+                "SELECT f.id, f.tag_id, f.photo_id, p.path, f.box, a.vector, b.vector FROM faces f" + PHOTO
+                + " JOIN face_embeddings a ON a.face_id = f.id AND a.model = ?"
+                + " JOIN face_embeddings b ON b.face_id = f.id AND b.model = ?"
+                + " WHERE f.excluded = 0 AND f.tag_id IS " + ("NOT NULL" if named else "NULL"), (key, other))]
+
+
+def pass_counts(conn, old, new):
+    """What the rows say a pass under `new` did beside the faces of `old`: {"photos", "photos_passed" (one of whose faces holds
+    a vector under `new`), "matched" (a face holding both), "unmatched" and "unmatched_named" (a face of a passed photo
+    holding `old`'s alone: the pass's review list), "new" (a face holding `new`'s alone), "not_passed" (a face of a photo not
+    passed), "neither"}. One read of faces and of the vectors' key; no vector is read."""
+    row = conn.execute(
+        "WITH v AS (SELECT f.photo_id, f.tag_id,"
+        " EXISTS (SELECT 1 FROM face_embeddings e WHERE e.face_id = f.id AND e.model = ?) AS o,"
+        " EXISTS (SELECT 1 FROM face_embeddings e WHERE e.face_id = f.id AND e.model = ?) AS n FROM faces f),"
+        " passed AS (SELECT DISTINCT photo_id FROM v WHERE n)"
+        " SELECT (SELECT COUNT(*) FROM photos), (SELECT COUNT(*) FROM passed),"
+        " TOTAL(o AND n), TOTAL(o AND NOT n AND photo_id IN passed),"
+        " TOTAL(o AND NOT n AND photo_id IN passed AND tag_id IS NOT NULL), TOTAL(n AND NOT o),"
+        " TOTAL(NOT n AND photo_id NOT IN passed), TOTAL(NOT o AND NOT n) FROM v", (old, new)).fetchone()
+    return dict(zip(("photos", "photos_passed", "matched", "unmatched", "unmatched_named", "new", "not_passed", "neither"),
+                    (int(value) for value in row)))
 
 def manual_names(conn):
     """face id -> Ref for every face a person decided by hand. A None is a
