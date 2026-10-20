@@ -135,6 +135,13 @@ def undo_refusals(library, change_ids):
     return reasons
 
 
+def model_alone(model):
+    """The face models' settings (LibrarySettings.faces) of `model`, a model that takes none of MTCNN's arguments
+    (tagpup.ml.scrfd_adaface): `model` alone. The one maker of them, so a library switched to it and a face pass's look
+    (tagpup.runtime.Runtime.look_at_faces) name one set, and share one model built."""
+    return {"model": model}
+
+
 def _trim(text):
     """Trimmed as the validator trims (tagpup.core.validation.BLANK): a value it allowed
     parses here."""
@@ -176,7 +183,7 @@ class LibrarySettings:
         of them: detect_max_side."""
         model = _trim(self.values["faces.model"])
         if model != validation.MTCNN_FACENET:
-            return {"model": model}
+            return model_alone(model)
         return {
             "model": model,
             "min_face_size": int(_trim(self.values["faces.min_face_size"])),

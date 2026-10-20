@@ -972,7 +972,8 @@ class Runtime:
         at end(), the model with it when no library uses it. A weight file missing raises its sentence on first use
         (tagpup.ml.scrfd_adaface.missing_weights): the face models of the libraries are not touched."""
         model = validation.SCRFD_ADAFACE
-        looked = types.SimpleNamespace(embedder=peek_settings(library).embedder, faces={"model": model})
+        looked = types.SimpleNamespace(embedder=peek_settings(library).embedder,
+                                       faces=library_settings_service.model_alone(model))
         what = what or "Looking at the faces in %s with %s" % (library.name, model)
         self.idle.used(MODELS)
         with self._lock:

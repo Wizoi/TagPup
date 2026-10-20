@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
 
-from tagpup.core import paths  # noqa: E402
+from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -81,6 +81,16 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
         self.assertEqual(self.runtime.faces(self.meadow).settings["min_face_size"], 40)
         self.assertEqual(self.runtime.faces(self.harbour).settings["min_face_size"], 20)
         self.assertNotEqual(self.runtime.model_key(self.harbour), self.runtime.model_key(self.meadow))
+
+    def test_a_look_with_the_new_face_model_and_a_library_switched_to_it_share_one_model(self):
+        # orchard, with no faces, switched to the new model; harbour, on FaceNet, looked at with it by a face pass.
+        new = validation.SCRFD_ADAFACE
+        self.assertEqual(1, settings.change(self.orchard, {"faces.model": new}, acknowledged=["face-model"]).changed)
+        switched = self.runtime.faces(self.orchard)
+        look = self.runtime.look_at_faces(self.harbour)
+        look.end()
+        self.assertEqual([switched], [model for model in self.built["faces"] if model.settings.get("model") == new],
+                         "the look built the new model again")
 
     def test_a_changed_setting_is_seen_by_the_next_ask(self):
         self.runtime.clip(self.harbour)
