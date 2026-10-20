@@ -69,7 +69,7 @@ const wait = (window, ms = 50) => new Promise((resolve) => window.setTimeout(res
 
 describe("the faces like the seed", () => {
   test("a seed the library's face model has no vector of says so in the server's words", async (t) => {
-    const said = "This face has no vector under this library's face model, so it cannot be compared with anyone: the new model's pass makes its faces' vectors (docs/AI_PIPELINE.md, phase 3).";
+    const said = "This face has no vector under this library's face model, so it cannot be compared with anyone: the model's pass found no face of its own there, or has not reached this photo yet.";
     const ctx = await open(t, { extra: (server) => server.first("/api/face-matches-unmatched", { success: false, error: said }, { status: 400 }) });
     await flush(ctx.window, 6);
     assert.equal(ctx.document.getElementById("modal-matches-loading").textContent, said);

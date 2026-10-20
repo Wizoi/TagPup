@@ -172,7 +172,7 @@ def resolve(photo_index, on_step=None):
     all_faces = _all_faces(photo_index)
     left_out = store_faces.count_without_vector(photo_index.conn) if photo_index.conn is not None else 0
     if left_out:
-        # A library switched to the new face model before its pass, or part-way through it: said, not an error.
+        # An old face the new model's pass matched with nothing, or one in a photo it has not reached: said, not an error.
         logger.info("%d face(s) have no vector under the library's face model and take no part.", left_out)
         step("without_vector", left_out, left_out + len(all_faces))
     if not all_faces:
