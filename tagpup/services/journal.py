@@ -10,7 +10,8 @@ library is photographs of real people, many of them minors.
 
 A stamp of a library's settings (tagpup.services.settings.STAMPS) is never undone: it
 is the library's first settings, and undone the library held none -- the next read
-stamped it again.
+stamped it again. Nor is a change whose undo would put back a face model the library may
+not be switched to now (tagpup.services.settings.undo_refusals: the switch's own check).
 
 A change of photo files (tagpup.services.file_changes) is undone file by file, and its
 rows follow: a file that no longer holds what the change left is refused, named, and the
@@ -51,12 +52,15 @@ def refusals(library, entries):
     `library`'s history ({"id", "operation"}): what the History dialog shows instead of
     an Undo button. The account the rehearsal refuses by -- a stamp of the settings
     (_stamp_refusal), then the journal's (tagpup.store.journal.refusal: status, schema
-    version, a newer change of the same rows or files) -- so a change offered is one the
-    rehearsal does not refuse out of hand. Reads only."""
+    version, a newer change of the same rows or files), then a face model put back that
+    the library may not be switched to now (settings.undo_refusals) -- so a change offered
+    is one the rehearsal does not refuse out of hand. Reads only."""
     reasons = {entry["id"]: _stamp_refusal(entry["operation"]) for entry in entries}
     found = journal.refusals(library.path, [cid for cid, why in reasons.items() if why is None])
     for change_id, why in found.items():
         reasons[change_id] = "; ".join(why) or None
+    switched = library_settings.undo_refusals(library, [cid for cid, why in reasons.items() if why is None])
+    reasons.update(switched)
     return reasons
 
 
@@ -64,12 +68,14 @@ def rehearse(library, change_id, exiftool_path=None):
     """Undo change `change_id` and apply it again inside a transaction rolled back. A
     Result: `attempted` is the rows the undo would write; details["rehearsal"] says
     whether the round trip restored every row exactly. Refused when the undo would be,
-    and for a stamp of the library's settings (NOT_UNDONE), which undo() refuses too.
+    for a stamp of the library's settings (NOT_UNDONE), and for a face model put back that
+    the library may not be switched to now (settings.undo_refusals); undo() refuses both.
     A change of photo files is rehearsed by reading them (file_changes.rehearse_undo)."""
     if file_changes.writes_files(library, change_id):
         return file_changes.rehearse_undo(library, change_id, exiftool_path)
     result = Result(details={"dry_run": True, "change": change_id})
     stamped = _stamp_refusal(journal.operation(library.path, change_id))
+    stamped = stamped or library_settings.undo_refusals(library, [change_id]).get(change_id)
     if stamped:
         result.refuse(stamped)
         return result

@@ -18,6 +18,10 @@ What the owner lives through, in one library:
   shows that offer: the model's cut decided it, and the tag floor (suggesting.OFFER_A_TAG, 0.60) is not a face's.
 - The switch is in the library's history, and undone there: the library reads by FaceNet again, Identify's cached named
   faces by its vectors, and neither model's vectors were written by the switch or its undo.
+- Switched back to FaceNet, the owner indexes a new folder under it: its faces hold FaceNet's vector alone. The switch
+  back cannot be undone in History now: the undo would put the new model back with those faces in photos its pass has not
+  reached, which the switch itself is refused for (settings.change's check, UNPASSED_SHARE_ALLOWED). History lists it
+  with the switch's sentence and counts, and the rehearsal and the undo refuse it so, writing nothing.
 - A Suggest run or an index begun before a switch keeps the model it began with to its end (Runtime.begin's lease, the
   CLI index's one `runtime.faces`); the next one reads the library's model (tests/test_the_runtime_keeps_models_by_settings.py).
 
@@ -261,6 +265,35 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
         self.assertEqual(during, self.vectors_by_model())
         np.testing.assert_allclose(self.facenet_wren, self.named_vector(grids), atol=1e-6)
+
+    def test_the_switch_back_is_not_undone_onto_faces_the_pass_has_not_reached(self):
+        self.switch(NEW)
+        back = self.switch(FACENET)
+        self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+
+        # A new folder indexed under FaceNet: its photo's face holds FaceNet's vector alone, as the indexer files it.
+        conn = db.connect(self.library.path)
+        try:
+            later = photo(os.path.join(self.folder, "Later", "harbour.jpg"))
+            photo_rows.add_read(conn, later, {})
+            add_face(conn, later, (30, 30, 110, 110), alike(self.facenet_wren, 0.3, 8).tobytes(), model=FACENET, prob=0.99)
+            conn.commit()
+        finally:
+            conn.close()
+
+        said = ("Nothing was written: 2 of the library's 3 faces hold a vector under %s; 0 named faces hold none, and would"
+                " leave the named faces Identify compares with until the pass reaches them; 1 face is in photos the pass"
+                " has not reached. A switch allows at most 5%% of the faces" % NEW)
+        listed = self.client.get("/lakeside/api/history").get_json()["changes"]
+        [entry] = [entry for entry in listed if entry["id"] == back["change"]]
+        self.assertFalse(entry["undoable"], entry)
+        self.assertIn(said, " ".join(entry["why_not"].split()))
+        url = "/lakeside/api/history/%d/undo" % back["change"]
+        for body in ({}, {"apply": True}):
+            reply = self.client.post(url, json=body)
+            self.assertEqual(400, reply.status_code, reply.data)
+            self.assertIn(said, " ".join(reply.get_json()["refused"].split()))
+        self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
 
 
 if __name__ == "__main__":

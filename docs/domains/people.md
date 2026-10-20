@@ -72,7 +72,8 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   library's model, so a face with no vector under it takes no part, with no sentence of its own in the queue, a person's
   grid or the person page: an old face the pass matched with nothing it found (1,195 of kr-track's, counted 2026-10-20),
   and a face in a photo the pass has not reached. A switch is refused while the latter are more than 5% of the faces
-  (`services.settings.UNPASSED_SHARE_ALLOWED`), and says either way how many named faces would leave the gallery
+  (`services.settings.UNPASSED_SHARE_ALLOWED`) -- an undo in History that would put the new model back too, by the
+  same check (`settings.undo_refusals`, asked by `services.journal.refusals`) -- and says either way how many named faces would leave the gallery
   (`settings.change`, `details["face_vectors"]`); the consequence is stated where the owner switches (the settings
   dialog's face model group, which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
 - **The face pass names nobody (2026-10-18, owner; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY")**: the new face

@@ -104,6 +104,25 @@ def _switch_to(library, model):
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 
 
+def undo_refusals(library, change_ids):
+    """{change id: why it is not undone now} of each of `change_ids` whose undo would put back a face model (faces.model)
+    the library may not be switched to now (_switch_to, the check settings.change makes): an undo of a switch back to
+    FaceNet, once faces were added that hold FaceNet's vector alone. An undo putting FaceNet back is never refused. The
+    refusal is the switch's own sentence and counts. Reads only: the journal's old values in one read, each model checked
+    once."""
+    restored = journal.old_values(library.path, list(change_ids), store_settings.TABLE, (FACE_MODEL,), "value")
+    checked, reasons = {}, {}
+    for change_id, model in restored.items():
+        model = _trim(model)
+        if model == validation.MTCNN_FACENET:
+            continue  # _switch_to never refuses it: the History list does not read every face to say so.
+        if model not in checked:
+            checked[model] = _switch_to(library, model)[0]
+        if checked[model]:
+            reasons[change_id] = checked[model]
+    return reasons
+
+
 def _trim(text):
     """Trimmed as the validator trims (tagpup.core.validation.BLANK): a value it allowed
     parses here."""
