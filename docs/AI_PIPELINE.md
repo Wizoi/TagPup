@@ -510,9 +510,19 @@ takes no turn of the card.
   under the floor not made, the one made holding the new model's vector alone, a crop, and `{"model": "scrfd-adaface"}`
   as its detector name); Suggest detects with the new model and offers a person at 0.45, which FaceNet's cuts would not;
   switched back, FaceNet reads its own vectors again and neither switch wrote one.
-- Open: the panel shows a suggestion from `suggesting.OFFER_A_TAG` (0.60), read on FaceNet's likenesses, and a face's
-  offer is scored by its likeness, so under the new model an offer between 0.310 and 0.60 is made and not shown (a
-  finding of this branch).
+
+**Merge 3, item 4, as built (2026-10-20): the switch end to end.**
+- A face's offer has one owner, the face model's cut (`clustering.cuts_of(model).is_offered`): the panel, Apply All and
+  the writers show a person a face offered whatever its score (`SuggestionModel.offered`; owner and main session,
+  2026-10-20); `suggesting.OFFER_A_TAG` (0.60) is the floor of a tag alone. FaceNet's offers are from 0.70, so nothing
+  it shows changed; the new model's from 0.310 are shown now.
+- The switch is a journaled change of the settings (`change settings`): History shows it and Undo takes it back. The
+  dialog's reply carries what the faces hold under the model switched to (`face_vectors`, its sentence shown before the
+  page reloads). A running server reads the model at each read: the faces fingerprint holds the model, so Identify's
+  cached grids are read again; a Suggest run or an index begun before the switch keeps the model it began with to its
+  end, and the next one reads the library's. Scenario P10 switches in the dialog and undoes the switch in History.
+- Left: a decision's cuts and its matrix read by two reads (a switch between them, one request; the next rebuilds), and
+  the undo of a switch back to FaceNet, which reinstates the new model without the pass's check (findings of this branch).
 
 ### Phase 4: Matching, with the new model
 

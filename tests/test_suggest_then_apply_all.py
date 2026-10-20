@@ -47,7 +47,7 @@ from tagpup.services import suggester  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
 Base = base.Base
-EXTRA = {"tag": "People/Emory Kade", "score": 0.31, "has_face_match": True}   # below the panel's floor
+EXTRA = {"tag": "People/Emory Kade", "score": 0.31, "has_face_match": True}   # in the raw list only, never offered
 FIVE = ["cup_01.jpg", "cup_02.jpg", "cup_03.jpg", "cup_04.jpg", "cup_05.jpg"]
 
 
@@ -93,7 +93,7 @@ class ASuggestRunInAHeldFolder(Base):
         self.restart()
         self.assertEqual(self.offered, self.suggested(self.cup))
         self.assertEqual("completed", self.status(self.cup)["status"])
-        # Below the panel's floor, kept in the raw list and never shown: Apply All must not write it.
+        # Kept in the raw list and never offered (the panel's lists are made once): Apply All must not write it.
         runs = suggestion_jobs.runs_for(self.library)
         entry = runs.suggestions(self.cup)[self.loose[0]]
         entry["raw_suggestions"]["suggested_tags"].append(EXTRA)

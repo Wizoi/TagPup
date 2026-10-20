@@ -734,15 +734,19 @@ class SuggestionModel:
             photo, self.embeddings.of(photo), k=15, min_sim=0.35, target_metadata=meta)
 
     def offered(self, suggestion):
-        """What the panel shows for one suggestion: tags, people, title."""
+        """What the panel shows for one suggestion: tags, people, title -- what Apply All and the writers take too.
+
+        A person a face offered is shown whatever the score: the face model's own cut made the offer
+        (clustering.cuts_of(model).is_offered, scored by the likeness), and is its one owner; the tag floor
+        (suggesting.OFFER_A_TAG) was read on tags, and on FaceNet's likenesses never bit (its offers are from 0.70),
+        while it hid the new model's from 0.310 (owner's decision, 2026-10-20). A tag is shown from the floor."""
         tags, people = [], []
         for item in suggestion.get("suggested_tags", []):
             score = item.get("score", 0.0)
-            if score >= suggesting.OFFER_A_TAG:
-                if item.get("has_face_match"):
-                    people.append({"name": item["tag"], "score": score})
-                else:
-                    tags.append({"tag": item["tag"], "score": score})
+            if item.get("has_face_match"):
+                people.append({"name": item["tag"], "score": score})
+            elif score >= suggesting.OFFER_A_TAG:
+                tags.append({"tag": item["tag"], "score": score})
         return tags, people, suggesting.caption_from_tags(
             [t["tag"] for t in tags] + [p["name"] for p in people], self.face_roots)
 
