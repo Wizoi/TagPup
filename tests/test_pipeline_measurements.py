@@ -23,7 +23,7 @@ import numpy as np  # noqa: E402
 import measure_pipeline_holdouts as holdouts  # noqa: E402
 import measure_pipeline_stages as stages  # noqa: E402
 import sandbox  # noqa: E402
-from tagpup.core import clustering  # noqa: E402
+from tagpup.core import clustering, holdout  # noqa: E402
 
 
 def library_rows(rng):
@@ -313,7 +313,7 @@ class TheNamedFaceHoldOut(unittest.TestCase):
         matrix /= np.linalg.norm(matrix, axis=1, keepdims=True)
         people = np.array([1, 1, 2, 2, 3])
         photos = np.array([10, 10, 20, 21, 30])
-        best, first, margin, reachable = holdouts.top_two(matrix, people, photos, block=2)
+        best, first, margin, reachable = holdout.top_two(matrix, people, photos, block=2)
         self.assertEqual([False, False, True, True, False], [bool(r) for r in reachable])   # 3 has one face
         self.assertEqual(3, best[0])            # its own photo's twin left out: the stranger is nearest
         self.assertEqual(2, best[2])
@@ -324,8 +324,8 @@ class TheNamedFaceHoldOut(unittest.TestCase):
         # A burst: person 1 twice in one folder, once in another; person 2 in a third folder.
         matrix = np.array([[1, 0], [1, 0], [0.8, 0.6], [0, 1]], dtype=np.float32)
         people = np.array([1, 1, 1, 2])
-        by_photo = holdouts.hold_out(matrix, people, np.array([1, 2, 3, 4]))
-        by_folder = holdouts.hold_out(matrix, people, np.array([10, 10, 11, 12]))
+        by_photo = holdout.hold_out(matrix, people, np.array([1, 2, 3, 4]))
+        by_folder = holdout.hold_out(matrix, people, np.array([10, 10, 11, 12]))
         self.assertEqual(3, by_photo["evaluated"])          # person 2 has one face only
         top = {point["cut"]: point for point in by_photo["curve"]["likeness"]}
         self.assertEqual(2, top[0.95]["suggested"])         # the burst twins reach 1.0; the third reaches 0.8
@@ -336,7 +336,7 @@ class TheNamedFaceHoldOut(unittest.TestCase):
         correct = np.array([True, True, False, True])
         likeness = np.array([0.95, 0.75, 0.72, 0.5])
         margin = np.array([0.3, 0.05, 0.01, 0.2])
-        curve = holdouts.precision_curve(correct, likeness, margin)
+        curve = holdout.precision_curve(correct, likeness, margin)
         at = {point["cut"]: point for point in curve["likeness"]}
         self.assertEqual((3, 2), (at[0.7]["suggested"], at[0.7]["right"]))
         self.assertEqual((1, 1), (at[0.8]["suggested"], at[0.8]["right"]))
