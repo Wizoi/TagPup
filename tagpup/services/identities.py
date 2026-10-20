@@ -172,7 +172,7 @@ def resolve(photo_index, on_step=None):
     all_faces = _all_faces(photo_index)
     left_out = store_faces.count_without_vector(photo_index.conn) if photo_index.conn is not None else 0
     if left_out:
-        # A library switched to the new face model before its pass, or part-way through it: said, not an error.
+        # An old face the new model's pass matched with nothing, or one in a photo it has not reached: said, not an error.
         logger.info("%d face(s) have no vector under the library's face model and take no part.", left_out)
         step("without_vector", left_out, left_out + len(all_faces))
     if not all_faces:
@@ -209,7 +209,7 @@ def resolve(photo_index, on_step=None):
     step("grouping", 0, 1)
     embeddings = np.array([f["embedding"] for f in all_faces], dtype=np.float32)
     
-    # Euclidean, at clustering's radius (tagpup.core.clustering.GROUPING, 0.885, as a distance: 0.48 between unit vectors).
+    # Euclidean, at the face model's radius (Cuts.group_at as a distance; FaceNet's 0.885 is 0.48 between unit vectors).
     # min_samples=1, so no face is noise: a face like no other is a cluster of one. 2 to 20 were measured on copies of the
     # three libraries and kept none (docs/AI_PIPELINE.md, phase 2c: each took thousands of photo_index's names).
     # On the processor: clustering takes no turn of the graphics card (tagpup.ml.gpu), and runs after the indexer let
@@ -217,7 +217,7 @@ def resolve(photo_index, on_step=None):
     # Imported here: scikit-learn takes a second to import, and the face records beside this need none of it.
     from sklearn.cluster import DBSCAN
     # n_jobs=-1 enables multi-threaded distance computation for large datasets.
-    db = DBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean', n_jobs=-1)
+    db = DBSCAN(eps=cuts.group_distance, min_samples=1, metric='euclidean', n_jobs=-1)
     labels = db.fit_predict(embeddings)
     
     # Group face index records by cluster ID

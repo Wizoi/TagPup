@@ -86,8 +86,8 @@ IGNORED_CLUSTER = "ignored cluster"
 EXCLUSION_REASONS = (DEFAULT_EXCLUSION_REASON, "stranger", "bad crop", "duplicate", IGNORED_CLUSTER)
 
 #: The face models a library can be set to (faces.model): MTCNN and FaceNet, which made every face vector the three
-#: libraries hold, and SCRFD and AdaFace (tagpup.ml.scrfd_adaface; docs/AI_PIPELINE.md, phase 3). Which of them a
-#: library can keep vectors of is tagpup.services.settings.KEPT_FACE_MODELS.
+#: libraries hold, and SCRFD and AdaFace (tagpup.ml.scrfd_adaface; docs/AI_PIPELINE.md, phase 3). A library keeps the
+#: vectors of each apart (face_embeddings, by model), and the rule refuses any other value.
 MTCNN_FACENET = "mtcnn-facenet"
 SCRFD_ADAFACE = "scrfd-adaface"
 FACE_MODELS = (MTCNN_FACENET, SCRFD_ADAFACE)

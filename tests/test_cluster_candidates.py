@@ -23,7 +23,16 @@ from sklearn.cluster import DBSCAN
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 
-from tagpup.ml.grouping import CLUSTER_EPS, cluster_candidates  # noqa: E402
+from tagpup.core import clustering, validation  # noqa: E402
+from tagpup.ml import grouping  # noqa: E402
+
+FACENET = clustering.cuts_of(validation.MTCNN_FACENET)
+ADAFACE = clustering.cuts_of(validation.SCRFD_ADAFACE)
+
+
+def cluster_candidates(embeddings, cuts=FACENET, on_progress=None):
+    """Identify's grouping, by FaceNet's cuts unless a test asks another model's."""
+    return grouping.cluster_candidates(embeddings, cuts, on_progress=on_progress)
 
 
 def unit_rows(matrix):
@@ -39,9 +48,9 @@ def partition(labels):
     return {frozenset(members) for members in groups.values()}
 
 
-def reference(embeddings):
+def reference(embeddings, cuts=FACENET):
     """The call cluster_candidates replaced."""
-    return DBSCAN(eps=CLUSTER_EPS, min_samples=2, metric="euclidean",
+    return DBSCAN(eps=cuts.group_distance, min_samples=2, metric="euclidean",
                   n_jobs=-1).fit_predict(embeddings)
 
 
@@ -100,8 +109,6 @@ class TestItIsTheSameClustering(unittest.TestCase):
 
     def test_it_crosses_more_than_one_block(self):
         """The blocks are an implementation detail; the answer must not notice them."""
-        from tagpup.ml import grouping
-
         pool = people_shaped_pool(5, 5, 0.02, seed=6)
         original = grouping.CLUSTER_BLOCK_BYTES
         try:
@@ -111,6 +118,28 @@ class TestItIsTheSameClustering(unittest.TestCase):
         finally:
             grouping.CLUSTER_BLOCK_BYTES = original
         self.assertEqual(partition(reference(pool)), partition(blocked))
+
+
+class TestEachFaceModelGroupsAtItsOwnRadius(unittest.TestCase):
+    """A library switched to the new face model groups its faces by that model's radius: AdaFace's likenesses of one
+    person sit far lower than FaceNet's, and at FaceNet's 0.885 Identify's groups and cluster-faces' votes would gather
+    far fewer faces (the radius moved into the face model's cuts, 2026-10-20)."""
+
+    def two_faces_alike(self, likeness):
+        rng = np.random.default_rng(11)
+        a, b = rng.standard_normal((2, 512))
+        a /= np.linalg.norm(a)
+        b -= (b @ a) * a
+        b /= np.linalg.norm(b)
+        pair = np.array([a, likeness * a + np.sqrt(1 - likeness ** 2) * b], dtype=np.float32)
+        self.assertAlmostEqual(likeness, float(pair[0] @ pair[1]), places=5)
+        return pair
+
+    def test_two_faces_at_0_82_group_under_adaface_and_not_under_facenet(self):
+        pair = self.two_faces_alike(0.82)
+        self.assertEqual(1, len(partition(cluster_candidates(pair, ADAFACE))), "AdaFace's 0.82 is one person")
+        self.assertEqual(0, len(partition(cluster_candidates(pair, FACENET))), "FaceNet's 0.82 groups no one")
+        self.assertEqual(partition(reference(pair, ADAFACE)), partition(cluster_candidates(pair, ADAFACE)))
 
 
 class TestTooFewToGroup(unittest.TestCase):

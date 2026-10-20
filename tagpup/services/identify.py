@@ -333,10 +333,11 @@ def photo_details(library, photo_path, named):
 
 # ---- Who a face resembles -------------------------------------------------------------------
 
-#: Said when a face asked who it resembles has no vector under the library's face model: a library switched to the new
-#: model before its pass, or part-way through it (docs/AI_PIPELINE.md, phase 3). The routes answer it with 400.
-NO_VECTOR = ("This face has no vector under this library's face model, so it cannot be compared with anyone: the new "
-             "model's pass makes its faces' vectors (docs/AI_PIPELINE.md, phase 3).")
+#: Said when a face asked who it resembles has no vector under the library's face model: an old face the model's pass
+#: matched with no face it found (no pass gives it one), or a face in a photo the pass has not reached (docs/AI_PIPELINE.md,
+#: phase 3). The routes answer it with 400.
+NO_VECTOR = ("This face has no vector under this library's face model, so it cannot be compared with anyone: the model's "
+             "pass found no face of its own there, or has not reached this photo yet.")
 
 
 def _embedding_of(conn, face_id):
@@ -889,7 +890,7 @@ def grid(library, name, named, on_progress=None):
     # Group the candidates. The slow part of this screen by a wide margin, and the
     # reason it reports progress at all (tagpup.ml.grouping).
     labels = grouping.cluster_candidates(
-        embs,
+        embs, cuts,
         on_progress=lambda done, total: report(
             "grouping", done / total if total else 1.0,
             "Grouping %s faces that look alike" % format(total, ",")))

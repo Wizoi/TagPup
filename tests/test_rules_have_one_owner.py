@@ -40,8 +40,10 @@ RULES = (
      r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']|(?<!ACTIVITY_PAGE = )[\"'](activity|school|trips)[\"']", ()),
     ("an unknown year is dates'", os.path.join("tagpup", "core", "dates.py"), r"[\"']Unknown[\"']", ()),
     ("the apps' ports are tagpup_web's", "tagpup_web.py", r"def find_available_port|\b80[89]0\b", ()),
-    ("a face decision's numbers are clustering's", CLUSTERING, r"\bCuts\(|\b(offer_a_name|name_without_asking|name_margin|offer_margin)\s*=", ()),
-    ("the grouping radius is clustering's", CLUSTERING, r"eps\s*=\s*0\.\d|CLUSTER_EPS\s*=\s*0\.\d", ()),
+    ("a face decision's numbers are clustering's", CLUSTERING, r"\bCuts\(|\b(offer_a_name|name_without_asking|name_margin|offer_margin|group_at)\s*=", ()),
+    # The radius is a face model's (Cuts.group_at): a module constant of one value for every model is a copy, even in
+    # clustering (it was GROUPING, and grouping's CLUSTER_EPS).
+    ("the grouping radius is a face model's cuts", None, r"eps\s*=\s*0\.\d|\b(CLUSTER_EPS|GROUPING)\s*=", ()),
     # A photo file's fields are written by the journaled path (file_changes.write_fields), and by the just-look path
     # (file_only, unjournaled by the owner's decision, #527) alone: a bulk write of its own once left rows describing
     # what the photos used to hold (#1443).
@@ -328,14 +330,14 @@ class TheOwnersValues(unittest.TestCase):
                          tuple(facenet.band(v, m) for v, m in ((0.80, 0.04), (0.79, 1), (0.70, 0.02), (0.9, 0.03),
                                                                 (0.69, 1), (0.9, 0.01), (None, None))))
         self.assertTrue(facenet.names_unasked(0.80, math.inf))   # a name carried is asked no margin
-        self.assertEqual(0.885, clustering.GROUPING)
-        self.assertAlmostEqual(0.48, clustering.distance(clustering.GROUPING), places=2)
+        self.assertEqual(0.885, facenet.group_at)
+        self.assertAlmostEqual(0.48, facenet.group_distance, places=2)
         self.assertEqual((True, False, False), (facenet.gathers_for_a_new_person(0.80, 0.02),
                                                 facenet.gathers_for_a_new_person(0.79, 1),
                                                 facenet.gathers_for_a_new_person(0.9, 0.019)))
         adaface = clustering.cuts_of(validation.SCRFD_ADAFACE)
-        self.assertEqual((0.310, 0.520, 0.205, 0.090), (adaface.offer_a_name, adaface.name_without_asking,
-                                                          adaface.name_margin, adaface.offer_margin))
+        self.assertEqual((0.310, 0.520, 0.205, 0.090, 0.80), (adaface.offer_a_name, adaface.name_without_asking,
+                                                                adaface.name_margin, adaface.offer_margin, adaface.group_at))
         self.assertEqual(("likely", "possible", None), tuple(adaface.band(v, m) for v, m in ((0.52, 0.205), (0.4, 0.09), (0.4, 0.089))))
         self.assertEqual(set(validation.FACE_MODELS), set(clustering.CUTS))   # every model a library can be set to has its own
         for cuts in clustering.CUTS.values():

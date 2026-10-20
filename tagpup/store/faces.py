@@ -43,7 +43,7 @@ PHOTO = " JOIN photos p ON p.id = f.photo_id"
 #: library's (model_key) for a reader. VECTOR keeps a face without one (v.vector NULL), for a reader that shows faces;
 #: WITH_VECTOR only the faces with one, for every reader that compares them: a face with no vector under the library's model
 #: takes no part in comparing, clustering, New Person's pool or the Identify queue, and this join is the one place that
-#: says so (a library switched to the new model before its pass, or part-way through it). HAS_VECTOR is the same, as a
+#: says so (an old face the new model's pass matched with nothing, or one in a photo it has not reached). HAS_VECTOR is the same, as a
 #: condition, for a reader that needs only to know.
 VECTOR = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
 WITH_VECTOR = " JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"

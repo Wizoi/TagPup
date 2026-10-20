@@ -3,20 +3,14 @@
 TagTuner's per-person grid groups every nameless candidate before it shows one, and on
 a real library that is tens of thousands of 512-dimensional vectors. This was the
 server's own code; it is the model side of that screen, so it lives with the models.
-The radius it groups at is clustering's (tagpup.core.clustering.GROUPING): the server
-must not carry a number of its own.
+The radius it groups at is the face model's (tagpup.core.clustering.Cuts.group_at): the
+server must not carry a number of its own, and two models' likenesses are not on one scale.
 
 scipy and scikit-learn are imported inside cluster_candidates: they take over a second to
 load and the web app imports this module (through the Identify service) whether or not
 anything is grouped. tests/test_heavy_imports_stay_lazy.py keeps it so.
 """
 import numpy as np
-
-from tagpup.core import clustering
-
-#: How alike two faces must be to be neighbours, as a distance between unit vectors:
-#: clustering's radius as a distance. The DBSCAN call this replaced used the same number.
-CLUSTER_EPS = clustering.distance(clustering.GROUPING)
 
 #: How much of one row-block of the similarity matrix to hold at once, in bytes. The
 #: block is (rows x every face) float32, so this is what decides the block size -- and
@@ -25,10 +19,10 @@ CLUSTER_EPS = clustering.distance(clustering.GROUPING)
 CLUSTER_BLOCK_BYTES = 96 * 1024 * 1024
 
 
-def cluster_candidates(embeddings, on_progress=None):
+def cluster_candidates(embeddings, cuts, on_progress=None):
     """Group faces that resemble each other, a block of rows at a time.
 
-    This is DBSCAN, and it returns what `DBSCAN(eps=CLUSTER_EPS, min_samples=2,
+    This is DBSCAN, and it returns what `DBSCAN(eps=cuts.group_distance, min_samples=2,
     metric="euclidean")` returns -- verified against it on the real library: 79,662
     faces, 4,210 clusters both ways, the same partition face for face and the same
     63,175 left as noise.
@@ -47,13 +41,15 @@ def cluster_candidates(embeddings, on_progress=None):
     is a similarity threshold; comparing similarities lets the whole block be
     thresholded at once.
 
-    `on_progress` is called with (rows_done, rows_total) as each block lands.
+    `cuts` are those of the face model the vectors were read under (tagpup.core.clustering.cuts_of): two faces are
+    neighbours when at least `cuts.group_at` alike. `on_progress` is called with (rows_done, rows_total) as each block
+    lands.
     """
     count = len(embeddings)
     if count < 2:
         return np.full(count, -1, dtype=int)
 
-    similarity_floor = clustering.GROUPING
+    similarity_floor = cuts.group_at
     block_rows = int(CLUSTER_BLOCK_BYTES / (4 * max(count, 1)))
     block_rows = max(1, min(block_rows, 4096, count))
 
@@ -84,4 +80,4 @@ def cluster_candidates(embeddings, on_progress=None):
 
     graph = sparse.csr_matrix((values, (rows, cols)), shape=(count, count))
     sort_graph_by_row_values(graph, warn_when_not_sorted=False)
-    return DBSCAN(eps=CLUSTER_EPS, min_samples=2, metric="precomputed").fit_predict(graph)
+    return DBSCAN(eps=cuts.group_distance, min_samples=2, metric="precomputed").fit_predict(graph)
