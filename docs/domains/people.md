@@ -63,15 +63,18 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
 
 - **A run's decided vectors and the library's key (2026-10-18, migration 33)**: naming by tag reads face vectors under
   the library's face model, read once per write (`faces.model_key`), while `derived.Batch.decided` keeps each person's
-  decided vectors for the run. A switch of `faces.model` mid-index can only go to a model nothing writes under
-  (`KEPT_FACE_MODELS`), so the rest of the run's faces have no vector under the new key: each is left
+  decided vectors for the run. A switch of `faces.model` mid-index leaves the run on the face model it began with,
+  so the rest of the run's faces have no vector under the new key: each is left
   (`unreadable_face`), or named by its photo's one keyword person where that person has no decided face under the new
   key and no other photo waiting (#839), the tag's own route. Two models' vectors never meet in one product; the next
   index or cluster-faces reads them again.
-- **Identify on a library switched to the new face model, before its pass (2026-10-18)**: the queue, a person's grid and
-  the person page are empty, with no sentence of their own: every reader compares faces under the library's model, and
-  the faces hold FaceNet's vectors alone. The consequence is stated where the owner switches (the settings dialog's face
-  model group, which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
+- **Identify on a library switched to the new face model (2026-10-18; 2026-10-20)**: every reader compares faces under the
+  library's model, so a face with no vector under it takes no part, with no sentence of its own in the queue, a person's
+  grid or the person page: an old face the pass matched with nothing it found (1,195 of kr-track's, counted 2026-10-20),
+  and a face in a photo the pass has not reached. A switch is refused while the latter are more than 5% of the faces
+  (`services.settings.UNPASSED_SHARE_ALLOWED`), and says either way how many named faces would leave the gallery
+  (`settings.change`, `details["face_vectors"]`); the consequence is stated where the owner switches (the settings
+  dialog's face model group, which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
 - **The face pass names nobody (2026-10-18, owner; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY")**: the new face
   model's pass (`services.face_pass`) makes its new faces unnamed and leaves a matched face's name as it was; Name faces
   from tags names the new faces after the gate. A photo's named faces pair first, so a named face keeps its person
@@ -79,7 +82,7 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
 
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
-  keeps "exactly one person reaches 0.80" beside it, since the margin alone would name a face two people reach 0.04 apart, a
+  keeps "exactly one person reaches 0.80" (FaceNet's naming likeness; each model's own since 2026-10-20) beside it, since the margin alone would name a face two people reach 0.04 apart, a
   name the old rule never gave (phase 2's gate), and leaves out the people the photo's other faces hold, as the pairing does.
   The photo with one face and one person is asked no margin at a save, where cluster-faces' last pass asks 0.04 over the
   library: a save is the owner's own act on that photo's tag, and the tag says whose its one face is; the last pass guesses
@@ -183,6 +186,12 @@ shown, the tag where filed), `person-tag-form` (a person written as a tag path),
 `tuner-suggestions-belong-to-their-grid` and `tuner-undo-puts-faces-back`, each the rule its name says.
 
 ## History
+
+- 2026-10-20, phase 3 merge 3, items 1 and 2: the cuts a name is given and offered at are the face model's
+  (`clustering.Cuts`, `CUTS`, `cuts_of`; FaceNet's 0.80 / 0.04 and 0.70 / 0.02 unchanged, AdaFace's 0.520 / 0.205 and
+  0.310 / 0.090 from the gate), asked by every reader by the key its vectors were read under; Name faces from tags'
+  counts renamed `like_them_enough_to_name` / `like_them_enough_to_offer`. A library may switch to the new model once its
+  pass has reached all but 5% of its faces (`settings.change`, docs/AI_PIPELINE.md).
 
 - 2026-10-17, phase 2c: the vote of a cluster of one in a photo of two or more faces asks the tag's gate
   (`names_from_the_tag`) for a name it gives, in cluster-faces' first round past the photo's conflicts; a name the face

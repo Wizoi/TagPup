@@ -312,7 +312,8 @@ runtime unless the detector needs one and the owner agrees.
 - One journaled change per folder, dry run by default, a small folder first and the owner checks it, backup first, run
   on a copy first, resumable by what `face_embeddings` already holds, never two models' vectors mixed in one read.
 - The embedding norm is a quality score: low-quality faces are held out of clustering.
-- The face model is a per-library setting; a library switches to the new model only when the gate below is met.
+- The face model is a per-library setting; a library switches to the new model only when the gate below is met, and
+  only once its pass has reached its faces (items 1 and 2 below).
 
 **How it fails:** interrupted half way (each photo's faces change in one transaction; the run resumes); a photo
 unreadable now (its faces keep their old vectors, reported); two libraries holding one folder (each library has its
@@ -466,6 +467,31 @@ takes no turn of the card.
   1,425 and 1,017.
 - The margin grid runs to 1.0: 1,354 of AdaFace's 2,849 named faces have a margin above 0.5 (the highest 0.744), against
   13 of FaceNet's; extending it from 0.5 changed no reading at 0.95, 0.98 or 0.99.
+
+**Merge 3, items 1 and 2, as built (2026-10-20): the cuts are the face model's, and a library may switch.**
+- The likeness and margin a name is given and offered at are the face model's (`tagpup.core.clustering.Cuts`; `CUTS`,
+  `cuts_of(model)`, asked by the key the vectors were read under, `store.faces.model_key`): two models' cosines are not on
+  one scale. Every reader that named or offered by the old constants asks the cuts of its run's model.
+
+| Face model | Name: likeness / margin | Offer: likeness / margin | From |
+|---|---|---|---|
+| `mtcnn-facenet` | 0.80 / 0.04 | 0.70 / 0.02 | the owner's choices of 2026-09-24 and 2026-10-17, unchanged |
+| `scrfd-adaface` | 0.520 / 0.205 | 0.310 / 0.090 | slice C's pooled open-set reading at precision 0.99 (name) and 0.98 (offer), 2026-10-20 |
+
+- Name faces from tags' counts are named for what they are, not for FaceNet's numbers: `like_them_enough_to_name` and
+  `like_them_enough_to_offer` (were `like_them_from_0.80`, `like_them_from_0.70_to_0.80`).
+- `KEPT_FACE_MODELS` holds both models. `settings.change` refuses a switch of `faces.model` to the new model while more
+  than `UNPASSED_SHARE_ALLOWED` (5%, the owner's to change) of the library's faces are in photos the pass has not
+  reached, before the consequences are asked; refused or not it says how many faces hold a vector under the model, how
+  many named faces hold none (they leave the gallery of named faces until the pass reaches them) and how many are in
+  photos not passed (`details["face_vectors"]`, from `store.faces.vector_counts` and `pass_counts`, read-only). A library
+  with no faces switches; switching back to FaceNet is never refused. Counted 2026-10-20, read-only: kr-track 11,457
+  faces, 10,246 with the new vector, 3 named without, 16 in photos not passed (0.14%: allowed); renton_parkrun 3,644,
+  3,315, 0, 7 (0.19%: allowed); photo_index 187,784, none, 55,298, all (refused). The unmatched old faces of a passed
+  photo (1,195 on kr-track) keep FaceNet's vector alone, by design: they are not counted against the switch.
+- Left for items 3 and 4: the index and Suggest writing faces with the new model (`ScrfdAdaFace` answers neither the
+  index's `picture(path, max_side=...)` nor Suggest's `detect_and_embed_faces` yet), and the switch's own scenario end
+  to end. Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`, is the switch now.
 
 ### Phase 4: Matching, with the new model
 
