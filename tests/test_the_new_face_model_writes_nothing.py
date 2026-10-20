@@ -1,25 +1,23 @@
-"""A library set to the new face model (faces.model scrfd-adaface; docs/AI_PIPELINE.md, phase 3) writes nothing.
+"""A library switches to the new face model (faces.model scrfd-adaface; docs/AI_PIPELINE.md, phase 3) once its pass has
+reached its faces, and every reader then compares by the new model's vectors alone.
 
-Every face vector the three libraries hold is FaceNet's, kept by no model's name; another model's vectors written beside
-them would be compared with them as if alike. Until migration 33 keeps each model's apart, a library switched to the new
-model is refused every write of faces, with one sentence (tagpup.services.settings.FACE_MODEL_NOT_KEPT), and nothing of
-the model is built or loaded. What the owner lives through:
+Every face vector the three libraries held was FaceNet's; the new model's are written beside them by the face pass, each
+kept under its model's key (migration 33), and every reader reads the library's model's alone. A switch to the new model
+before the pass has reached the library would leave its faces with nothing to be compared by, so tagpup.services.settings
+.change refuses it, saying the counts (UNPASSED_SHARE_ALLOWED). What the owner lives through:
 
-- (a) Add a folder, or sync: the CLI's index exits 78 with the sentence, having imported no model's library and written
-  no row; the server's queue (index_folder) says "Nothing was indexed: ..." instead of an exit code. The model switched
-  between the index's first read of the settings and the one it runs by: the same, before the folder is recorded. Add
-  in TagPup and
-  TagTuner (tagpup.services.libraries.add) answers with the sentence and records no folder as added: one recorded with
-  no row would be held, and every sync after would queue its refused index again.
-- (b) Suggest, and Just look, in that library: the run ends in an error naming the sentence, and no model is built; the
-  start-up warm-up builds nothing for it.
-- (c) Identify compares a library's faces by its own model's vectors: the switched library's are FaceNet's, so it
-  compares none; the other library's, all. Asked who one of its faces resembles (TagTuner's faces strip and selection
-  pane, New Person's seed, TagPup's face boxes), it answers one sentence (identify.NO_VECTOR) with 400, not a 500;
-  cluster-faces says how many faces took no part, without an error, and names nothing. Part-way through the new
-  model's pass (some faces with its vector, some without), the ones with it are compared and clustered.
-- (d) Two libraries, one on each model, in one server: the one on MTCNN suggests; the other is refused, its rows unchanged.
-- (e) The model switched while a Suggest runs: the run ends on the models it began with; the next is refused.
+- (s) The switch: a library more than a twentieth of whose faces are in photos the pass has not reached is refused, with
+  how many faces hold a vector under the new model, how many named faces hold none, and how to finish the pass; nothing is
+  written, nor in a dry run. A library the pass has nearly covered switches, told the same counts. A library with no
+  faces switches. Switching back to FaceNet is always allowed. The consequences the owner ticks say what switching does.
+- (c) Identify compares a library's faces by its own model's vectors. In the library switched after its pass, a face the
+  pass gave no vector (an old face it matched with nothing it found) is answered one sentence (identify.NO_VECTOR) with
+  400, not a 500, wherever it is asked who it resembles (TagTuner's faces strip and selection pane, New Person's seed,
+  TagPup's face boxes); cluster-faces says how many faces took no part, without an error; the faces with a vector are
+  compared and clustered.
+- (d) Two libraries, one on each model, in one server: each Suggest is handed its own library's face model; while one
+  holds the card, the other is refused, its rows unchanged.
+- (e) The model switched while a Suggest runs: the run ends on the models it began with; the next is handed the new one.
 - (f) A look with the new model (Runtime.look_at_faces), which writes nothing keyed by the library's faces.model (the face
   pass writes the new model's vectors and new faces with it, the library on its own model: tests/test_the_face_pass.py,
   tests/test_a_face_pass_from_the_command_line.py): refused beside a Suggest, a Suggest refused beside it; it takes the
@@ -37,7 +35,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import FACENET, add_vector_of_face  # noqa: E402
+from face_rows import FACENET, add_face, add_vector_of_face  # noqa: E402
 import photo_rows  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -52,7 +50,6 @@ from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.services import identify  # noqa: E402
 from tagpup.services import identities  # noqa: E402
-from tagpup.services import indexing as indexing_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import suggester as suggester_service  # noqa: E402
@@ -62,9 +59,9 @@ from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SENTENCE = library_settings.FACE_MODEL_NOT_KEPT
+NEW = validation.SCRFD_ADAFACE
 
-#: The CLI's index, run as the server's queue runs it, then the model libraries it imported.
+#: The CLI, run as the server's queue runs it, then the model libraries it imported.
 PROBE = (
     "import sys\n"
     "import tagpup_cli\n"
@@ -72,21 +69,6 @@ PROBE = (
     "    tagpup_cli.cli(sys.argv[1:], standalone_mode=False)\n"
     "finally:\n"
     "    print('LOADED=' + ','.join(m for m in ('open_clip', 'torch', 'facenet_pytorch') if m in sys.modules))\n")
-
-#: The CLI's index with the face model switched between its first read of the settings (peek_settings, before anything
-#: is written) and the read it runs by (Runtime.settings): a save in the settings dialog at that moment.
-SWITCHED_BETWEEN = (
-    "import sys\n"
-    "from unittest import mock\n"
-    "import tagpup_cli\n"
-    "from tagpup.core import validation\n"
-    "from tagpup.runtime import Runtime\n"
-    "from tagpup.services import settings\n"
-    "def switched(self, library):\n"
-    "    values = dict(settings.read(library).values, **{'faces.model': validation.SCRFD_ADAFACE})\n"
-    "    return settings.LibrarySettings(values)\n"
-    "with mock.patch.object(Runtime, 'settings', switched):\n"
-    "    tagpup_cli.cli(sys.argv[1:], standalone_mode=False)\n")
 
 
 class _Model:
@@ -135,16 +117,49 @@ def rows_of(db_path):
         conn.close()
 
 
+def unit(rng):
+    """A unit vector as float32 bytes, as both models store theirs."""
+    vector = rng.normal(size=512).astype(np.float32)
+    return (vector / np.linalg.norm(vector)).tobytes()
+
+
+def face_ids(library):
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return [face_id for (face_id,) in conn.execute("SELECT id FROM faces ORDER BY id")]
+    finally:
+        conn.close()
+
+
+def passed(library, face_ids, seed=3):
+    """The face pass's part of `face_ids`: each given a vector under the new model beside its FaceNet one, as
+    tagpup.store.faces.give_vectors writes a matched face's."""
+    rng = np.random.default_rng(seed)
+    conn = db.connect(library.path)
+    try:
+        for face_id in face_ids:
+            add_vector_of_face(conn, face_id, unit(rng), model=NEW)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def switch(library, model=NEW, **kwargs):
+    return library_settings.change(library, {"faces.model": model}, acknowledged=["face-model"], **kwargs)
+
+
 class _Libraries(unittest.TestCase):
-    """harbour, on MTCNN and FaceNet (the default), and cove, switched to the new model; each holding one folder of real
-    photos, one photo of each read by the index and holding two faces FaceNet found."""
+    """harbour, on MTCNN and FaceNet (the default), and cove, switched to the new model after its pass; each holding one
+    folder of real photos, one photo of each read by the index and holding two faces FaceNet found. cove's pass gave
+    its first face the new model's vector and matched its second with nothing it found, so the second keeps FaceNet's
+    alone (live, 2026-10-20: 1,195 of kr-track's 11,457 faces are such)."""
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="new_face_model_")
         self.harbour, self.regatta = self.library("harbour.db", "Regatta")
         self.cove, self.jetty = self.library("cove.db", "Jetty")
-        changed = library_settings.change(self.cove, {"faces.model": validation.SCRFD_ADAFACE},
-                                          acknowledged=["face-model"])
+        passed(self.cove, face_ids(self.cove)[:1])
+        changed = switch(self.cove)
         self.assertEqual(1, changed.changed, changed.refused)
         self.built = []
         self.card = gpu.Card(os.path.join(self.home.root, "card"), poll=0.05)
@@ -172,8 +187,7 @@ class _Libraries(unittest.TestCase):
             read = os.path.join(folder, "mooring 0.jpg")
             photo_rows.add_read(conn, read, {"XMP:Subject": ["Boats/Dinghy"]})
             for box in ([2, 2, 30, 30], [32, 4, 60, 34]):
-                vector = rng.normal(size=512).astype(np.float32)
-                store_faces.insert(conn, read, box, (vector / np.linalg.norm(vector)).tobytes(), prob=0.99, model=FACENET)
+                store_faces.insert(conn, read, box, unit(rng), prob=0.99, model=FACENET)
             conn.commit()
         finally:
             conn.close()
@@ -204,144 +218,105 @@ class _Libraries(unittest.TestCase):
             return self.runtime.begin(library, **kwargs)
 
 
-class TheOwnerIsToldFirst(_Libraries):
-    """Before the switch: what the owner is asked to acknowledge says what switching does, and nothing that is not so."""
+class TheSwitchWaitsForThePass(_Libraries):
+    """(s) The owner switches a library to the new model in TagTuner's settings (settings.change, as the dialog's route
+    calls it)."""
 
-    def test_the_consequences_say_it_is_refused(self):
+    def faces_in(self, library, name, count, new, named=None, seed=5):
+        """`count` faces FaceNet found in the photo `name` of the library's folder, read by the index; with `new`, each
+        given the new model's vector by the pass; the first named `named`, a person of the tree."""
+        rng = np.random.default_rng(seed)
+        folder = self.regatta if library is self.harbour else self.jetty
+        path = os.path.join(folder, name)
+        conn = db.connect(library.path)
+        try:
+            photo_rows.add_read(conn, path, {"XMP:Subject": ["Boats/Dinghy"]})
+            for n in range(count):
+                columns = {"name": named, "name_source": "manual"} if named and n == 0 else {}
+                face_id = add_face(conn, path, box=(2 * n, 2, 2 * n + 20, 22), embedding=unit(rng), **columns)
+                if new:
+                    add_vector_of_face(conn, face_id, unit(rng), model=NEW)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_a_library_half_passed_is_refused_with_its_counts(self):
+        passed(self.harbour, face_ids(self.harbour))
+        self.faces_in(self.harbour, "mooring 1.jpg", 2, new=False, named="Marta Quillfeather")
         before = rows_of(self.harbour.path)
-        refused = library_settings.change(self.harbour, {"faces.model": validation.SCRFD_ADAFACE},
-                                          acknowledged=["faces"])
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                refused = switch(self.harbour, apply=apply)
+                self.assertEqual(0, refused.changed)
+                said = " ".join(refused.refused.split())
+                self.assertIn("Nothing was written: 2 of the library's 4 faces hold a vector under %s; 1 named face holds "
+                              "none" % NEW, said)
+                self.assertIn("2 faces are in photos the pass has not reached", said)
+                self.assertIn("face-pass <folder> --apply", said)
+                self.assertEqual({"faces": 4, "without": 2, "named_without": 1, "not_passed": 2},
+                                 {k: v for k, v in refused.details["face_vectors"].items() if k != "said"})
+        self.assertEqual(before, rows_of(self.harbour.path))
+        self.assertEqual(FACENET, library_settings.read(self.harbour)["faces.model"])
+
+    def test_a_library_never_passed_is_refused_before_its_consequences_are_asked(self):
+        refused = switch(self.harbour)
+        self.assertIn("0 of the library's 2 faces hold a vector under %s" % NEW, refused.refused)
+        self.assertNotIn("unacknowledged", refused.details)
+
+    def test_a_library_the_pass_has_nearly_covered_switches_told_what_is_left(self):
+        passed(self.harbour, face_ids(self.harbour))
+        self.faces_in(self.harbour, "mooring 1.jpg", 19, new=True)
+        # One photo the pass has not reached, its one face named: 1 of 22 faces, under the share a switch allows.
+        self.faces_in(self.harbour, "mooring 2.jpg", 1, new=False, named="Marta Quillfeather", seed=6)
+        changed = switch(self.harbour)
+        self.assertEqual(1, changed.changed, changed.refused)
+        self.assertEqual(NEW, library_settings.read(self.harbour)["faces.model"])
+        said = " ".join(changed.details["face_vectors"]["said"].split())
+        self.assertIn("21 of the library's 22 faces hold a vector under %s; 1 named face holds none, and would leave the "
+                      "named faces Identify compares with until the pass reaches it; 1 face is in photos the pass has not "
+                      "reached." % NEW, said)
+
+    def test_a_library_with_no_faces_switches(self):
+        dune = Library(self.home.library("dune.db"))
+        library_actions.create(dune.path)
+        changed = switch(dune)
+        self.assertEqual(1, changed.changed, changed.refused)
+        self.assertEqual({"faces": 0, "without": 0, "named_without": 0, "not_passed": 0}, changed.details["face_vectors"])
+
+    def test_switching_back_is_always_allowed(self):
+        # cove, indexed after its switch: a photo whose three faces hold the new model's vector alone.
+        rng = np.random.default_rng(9)
+        conn = db.connect(self.cove.path)
+        try:
+            path = os.path.join(self.jetty, "mooring 1.jpg")
+            photo_rows.add_read(conn, path, {"XMP:Subject": ["Boats/Dinghy"]})
+            for n in range(3):
+                store_faces.insert(conn, path, [2 * n, 2, 2 * n + 20, 22], unit(rng), prob=0.99, model=NEW)
+            conn.commit()
+        finally:
+            conn.close()
+        changed = switch(self.cove, FACENET)
+        self.assertEqual(1, changed.changed, changed.refused)
+        self.assertEqual(FACENET, library_settings.read(self.cove)["faces.model"])
+        self.assertEqual(3, changed.details["face_vectors"]["without"])
+
+    def test_the_consequences_say_what_switching_does(self):
+        passed(self.harbour, face_ids(self.harbour))
+        before = rows_of(self.harbour.path)
+        refused = library_settings.change(self.harbour, {"faces.model": NEW}, acknowledged=["faces"])
         self.assertEqual(0, refused.changed)
         said = refused.refused
-        self.assertIn("every index and every Suggest in this library is refused and writes nothing", said)
+        self.assertIn("compare faces by the new model's vectors", said)
+        self.assertIn("FaceNet's vectors stay and nothing is deleted", said)
+        self.assertNotIn("refused", said.replace("Nothing was written", ""))
         # The face detection settings' consequences are MTCNN's: an index again does not apply the new model.
         self.assertNotIn("Indexing a folder again applies it", said)
         self.assertEqual(before, rows_of(self.harbour.path))
 
 
-class TheIndexIsRefused(_Libraries):
-    """(a) Add a folder, or sync, in the library switched to the new model."""
-
-    def test_the_cli_writes_nothing_and_loads_no_model(self):
-        before = rows_of(self.cove.path)
-        done = processes.run([sys.executable, "-c", PROBE, "--db", self.cove.path, "index", self.jetty], cwd=ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(indexing_service.EXIT_FACE_MODEL_NOT_READY, done.returncode, done.stdout + done.stderr)
-        self.assertIn("Not run: %s" % SENTENCE, " ".join(done.stdout.split()))
-        self.assertEqual("LOADED=", [line for line in done.stdout.splitlines() if line.startswith("LOADED=")][-1])
-        self.assertEqual(before, rows_of(self.cove.path))
-
-    def test_switched_between_its_two_reads_it_writes_nothing(self):
-        slipway = paths.stored(os.path.join(self.home.root, "Slipway"))
-        os.makedirs(slipway)
-        Image.new("RGB", (64, 48), (10, 90, 130)).save(os.path.join(slipway, "launch.jpg"), "JPEG")
-        before = rows_of(self.harbour.path)
-        done = processes.run([sys.executable, "-c", SWITCHED_BETWEEN, "--db", self.harbour.path, "index", slipway],
-                             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        self.assertEqual(indexing_service.EXIT_FACE_MODEL_NOT_READY, done.returncode, done.stdout + done.stderr)
-        self.assertIn("Not run: %s" % SENTENCE, " ".join(done.stdout.split()))
-        self.assertEqual(before, rows_of(self.harbour.path))
-
-    def test_the_servers_queue_says_why_in_words(self):
-        before = rows_of(self.cove.path)
-        result = indexing_service.index_folder(self.cove, self.jetty, ROOT)
-        self.assertFalse(result.ok)
-        self.assertEqual("Nothing was indexed: %s" % SENTENCE, result.message())
-        self.assertEqual(0, result.details["percent"])
-        self.assertEqual(before, rows_of(self.cove.path))
-
-
-class AddingAFolderIsRefused(_Libraries):
-    """(a) Add a folder in the library switched to the new model: TagPup's Add, its index route, TagTuner's Add Folder."""
-
-    ROUTES = (("TagPup's Add", "tagpup", "/cove/api/folder/add", "folder_path"),
-              ("TagPup's index route", "tagpup", "/cove/api/folder/index-start", "folder_path"),
-              ("TagTuner's Add Folder", "tuner", "/cove/api/folder/index-start", "folder_paths"))
-
-    def setUp(self):
-        super().setUp()
-        self.slipway = paths.stored(os.path.join(self.home.root, "Slipway"))
-        os.makedirs(self.slipway)
-        Image.new("RGB", (64, 48), (10, 90, 130)).save(os.path.join(self.slipway, "launch.jpg"), "JPEG")
-        # On the code before the refusal, nothing a route queued may start an indexer.
-        runner = mock.patch.object(indexing_jobs.IndexQueue, "_ensure_runner")
-        runner.start()
-        self.addCleanup(runner.stop)
-
-    def test_add_records_nothing_and_queues_nothing(self):
-        before = rows_of(self.cove.path)
-        queued = []
-        result = library_actions.add(self.cove, [self.slipway], lambda folders: queued.append(folders))
-        self.assertEqual(SENTENCE, result.refused)
-        self.assertEqual(0, result.changed)
-        self.assertEqual([], queued)
-        self.assertEqual(before, rows_of(self.cove.path))
-        self.assertFalse(library_actions.holds(self.cove, self.slipway))
-
-    def test_each_route_shows_the_sentence(self):
-        before = rows_of(self.cove.path)
-        for name, kind, route, key in self.ROUTES:
-            with self.subTest(name):
-                app = web.create_app(kind, startup=self.cove)
-                app.testing = True
-                answer = app.test_client().post(route, json={key: [self.slipway] if key == "folder_paths" else self.slipway})
-                self.assertEqual(400, answer.status_code, answer.get_json())
-                self.assertEqual(SENTENCE, answer.get_json()["error"])
-                self.assertFalse(indexing_jobs.queue_for(self.cove).pending(), "a refused folder was queued")
-        self.assertEqual(before, rows_of(self.cove.path))
-
-
-class SuggestIsRefused(_Libraries):
-    """(b) Suggest, and Just look, in the library switched to the new model; (c) Identify beside them."""
-
-    def test_suggest_and_just_look_say_why_and_build_nothing(self):
-        before = rows_of(self.cove.path)
-        with self.assertLogs("tagpup.jobs.suggestions", "INFO") as logged:
-            refused = self.suggest(self.cove, self.jetty)
-            looked = self.suggest(self.cove, self.jetty, looking=True)
-        # A refusal, not a failure: no traceback in the log.
-        self.assertFalse([line for line in logged.output if not line.startswith("INFO")], logged.output)
-        self.assertFalse([record for record in logged.records if record.exc_info])
-        self.assertEqual("error", refused["status"], refused)
-        self.assertIn(SENTENCE, refused["message"])
-
-        self.assertEqual("error", looked["status"], looked)
-        self.assertIn("The models could not be made ready, so no photo was analysed and nothing was changed: %s" % SENTENCE,
-                      looked["message"])
-
-        for remember in (True, False):
-            with self.subTest(remember=remember), self.assertRaises(library_settings.FaceModelNotReady) as raised:
-                self.begin(self.cove, remember=remember)
-            self.assertEqual(SENTENCE, str(raised.exception))
-        with self.assertLogs("tagpup.runtime", "INFO") as logged:
-            self.runtime.warm_up([self.cove])
-        self.assertIn(SENTENCE, "\n".join(logged.output))
-        # The warm-up's refusal is a refusal too, said at INFO.
-        self.assertFalse([line for line in logged.output if not line.startswith("INFO")], logged.output)
-
-        self.assertEqual([], self.built, "a model was built for the switched library")
-        self.assertEqual([], self.handed)
-        self.assertFalse(self.card.holds())
-        self.assertEqual(before, rows_of(self.cove.path))
-
-    def test_identify_compares_the_faces_by_the_librarys_own_model(self):
-        _stamp, unnamed = identify.unnamed_faces(self.harbour)
-        self.assertEqual(2, len(unnamed.ids))
-        self.assertEqual((2, 512), tuple(unnamed.matrix.shape))
-        _stamp, unnamed = identify.unnamed_faces(self.cove)
-        self.assertEqual(0, len(unnamed.ids), "the switched library's vectors are FaceNet's, not its model's")
-
-
 class IdentifyOnTheSwitchedLibrary(_Libraries):
-    """(c) Who a face resembles, and cluster-faces, in the library switched to the new model: before its pass (no face
-    with the new model's vector) and part-way through it (one face with it)."""
-
-    def face_ids(self, library):
-        conn = db.connect(db.readonly_uri(library.path), uri=True)
-        try:
-            return [face_id for (face_id,) in conn.execute("SELECT id FROM faces ORDER BY id")]
-        finally:
-            conn.close()
+    """(c) Who a face resembles, and cluster-faces, in the library switched to the new model after its pass: one face
+    with the new model's vector, one the pass gave none."""
 
     def asked(self, library, face_id):
         """What /api/face-matches (TagPup's and TagTuner's) and /api/face-matches-unmatched (New Person) answer."""
@@ -366,52 +341,23 @@ class IdentifyOnTheSwitchedLibrary(_Libraries):
             index.close()
         return named, heard, [line for line in logged.output if not line.startswith("INFO")]
 
-    def test_before_the_pass_it_says_why_and_writes_nothing(self):
+    def test_identify_compares_the_faces_by_the_librarys_own_model(self):
+        _stamp, unnamed = identify.unnamed_faces(self.harbour)
+        self.assertEqual(2, len(unnamed.ids))
+        self.assertEqual((2, 512), tuple(unnamed.matrix.shape))
+        first, _second = face_ids(self.cove)
+        _stamp, unnamed = identify.unnamed_faces(self.cove)
+        self.assertEqual([first], unnamed.ids.tolist(), "the switched library compares by its model's vectors")
+
+    def test_a_face_the_pass_gave_no_vector_takes_no_part(self):
+        first, second = face_ids(self.cove)
         before = rows_of(self.cove.path)
-        first, second = self.face_ids(self.cove)
         named = lambda: identify.named_faces(self.cove)[1]   # noqa: E731
         with self.assertRaises(Refused) as raised:
-            identify.face_matches(self.cove, first, named)
+            identify.face_matches(self.cove, second, named)
         self.assertEqual(identify.NO_VECTOR, str(raised.exception))
         with self.assertRaises(Refused):
             identify.unnamed_like(self.cove, second, named=named)
-        for (kind, route), answer in self.asked(self.cove, first).items():
-            with self.subTest(kind=kind, route=route):
-                self.assertEqual(400, answer.status_code, answer.get_data(as_text=True)[:300])
-                self.assertEqual(identify.NO_VECTOR, answer.get_json()["error"])
-
-        found, heard, complaints = self.cluster(self.cove)
-        self.assertEqual({}, found)
-        self.assertIn(("without_vector", 2, 2), heard)
-        self.assertEqual([], complaints, "a face with no vector was an error")
-        self.assertEqual(before, rows_of(self.cove.path))
-
-    def test_cluster_faces_says_how_many_took_no_part(self):
-        before = rows_of(self.cove.path)
-        done = processes.run([sys.executable, "-c", PROBE, "--db", self.cove.path, "cluster-faces"], cwd=ROOT,
-                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        said = " ".join((done.stdout + done.stderr).split())
-        self.assertEqual(0, done.returncode, said)
-        self.assertIn("2 of 2 face(s) have no vector under this library's face model and took no part", said)
-        self.assertIn("No face was newly named.", said)
-        self.assertNotIn("Try tagging photos", said)
-        self.assertNotIn("Error retrieving faces", said)
-        self.assertEqual(before, rows_of(self.cove.path))
-
-    def test_part_way_through_the_pass_the_faces_with_a_vector_take_part(self):
-        first, second = self.face_ids(self.cove)
-        rng = np.random.default_rng(7)
-        vector = rng.normal(size=512).astype(np.float32)
-        conn = db.connect(self.cove.path)
-        try:
-            add_vector_of_face(conn, first, (vector / np.linalg.norm(vector)).tobytes(), model=validation.SCRFD_ADAFACE)
-            conn.commit()
-        finally:
-            conn.close()
-        before = rows_of(self.cove.path)
-
-        _stamp, unnamed = identify.unnamed_faces(self.cove)
-        self.assertEqual([first], unnamed.ids.tolist())
         conn = db.connect(db.readonly_uri(self.cove.path), uri=True)
         try:
             self.assertEqual([first], [row[0] for row in store_faces.identify_candidates(conn)])
@@ -425,63 +371,66 @@ class IdentifyOnTheSwitchedLibrary(_Libraries):
         self.assertEqual({"matches": []}, answers[("tuner", "/cove/api/face-matches-unmatched")].get_json())
         for (kind, route), answer in self.asked(self.cove, second).items():
             with self.subTest(kind=kind, route=route, face="without"):
-                self.assertEqual(400, answer.status_code)
+                self.assertEqual(400, answer.status_code, answer.get_data(as_text=True)[:300])
                 self.assertEqual(identify.NO_VECTOR, answer.get_json()["error"])
 
         found, heard, complaints = self.cluster(self.cove)
         self.assertIn(("without_vector", 1, 2), heard)
         self.assertIn("grouping", [stage for stage, _done, _total in heard], "the face with a vector was not clustered")
-        self.assertEqual([], complaints)
+        self.assertEqual([], complaints, "a face with no vector was an error")
         self.assertEqual({}, found)
+        self.assertEqual(before, rows_of(self.cove.path))
+
+    def test_cluster_faces_says_how_many_took_no_part(self):
+        before = rows_of(self.cove.path)
+        done = processes.run([sys.executable, "-c", PROBE, "--db", self.cove.path, "cluster-faces"], cwd=ROOT,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        said = " ".join((done.stdout + done.stderr).split())
+        self.assertEqual(0, done.returncode, said)
+        self.assertIn("1 of 2 face(s) have no vector under this library's face model and took no part", said)
+        self.assertNotIn("Try tagging photos", said)
+        self.assertNotIn("Error retrieving faces", said)
         self.assertEqual(before, rows_of(self.cove.path))
 
 
 class TwoLibrariesOneOnEachModel(_Libraries):
     """(d) harbour on MTCNN and cove on the new model, in one server."""
 
-    def test_one_suggests_the_other_is_refused_and_unchanged(self):
+    def test_each_suggests_with_its_own_model_and_waits_for_the_other(self):
+        for library, folder, model in ((self.cove, self.jetty, NEW), (self.harbour, self.regatta, FACENET)):
+            with self.subTest(model=model):
+                done = self.suggest(library, folder)
+                self.assertEqual("completed", done["status"], done)
+                self.assertEqual(model, self.handed[-1].settings["model"])
+
+        # While harbour's run holds MTCNN, cove's is refused, and writes nothing.
         before = rows_of(self.cove.path)
-        refused = self.suggest(self.cove, self.jetty)
-        self.assertEqual("error", refused["status"], refused)
-        self.assertIn(SENTENCE, refused["message"])
-
-        done = self.suggest(self.harbour, self.regatta)
-        self.assertEqual("completed", done["status"], done)
-        [faces] = self.handed
-        self.assertEqual(validation.MTCNN_FACENET, faces.settings["model"])
-
-        # While harbour's run holds MTCNN, cove is refused still, and writes nothing.
         held = self.begin(self.harbour)
         try:
-            with self.assertRaises((library_settings.FaceModelNotReady, gpu_turns.OtherModelsInUse)):
+            with self.assertRaises(gpu_turns.OtherModelsInUse):
                 self.begin(self.cove)
         finally:
             held.end()
-        self.assertEqual([validation.MTCNN_FACENET], sorted({model.settings.get("model") for model in self.built
-                                                             if "model" in model.settings}))
         self.assertEqual(before, rows_of(self.cove.path))
 
 
 class SwitchedWhileSuggestRuns(_Libraries):
-    """(e) The owner switches harbour to the new model while a Suggest in it runs."""
+    """(e) The owner switches harbour, its pass done, to the new model while a Suggest in it runs."""
 
-    def test_the_run_ends_on_what_it_began_with_and_the_next_is_refused(self):
+    def test_the_run_ends_on_what_it_began_with_and_the_next_has_the_new_model(self):
+        passed(self.harbour, face_ids(self.harbour))
         run = self.begin(self.harbour, what="Suggest Regatta (harbour)")
         try:
-            changed = library_settings.change(self.harbour, {"faces.model": validation.SCRFD_ADAFACE},
-                                              acknowledged=["face-model"])
+            changed = switch(self.harbour)
             self.assertEqual(1, changed.changed, changed.refused)
             self.runtime.settings_changed(self.harbour)
             [faces] = self.handed
-            self.assertEqual(validation.MTCNN_FACENET, faces.settings["model"])
+            self.assertEqual(FACENET, faces.settings["model"])
             self.assertEqual("Activity/Sailing", run.suggest("mooring 1.jpg", {})["suggested_tags"][0]["tag"])
         finally:
             run.end()
-        before = rows_of(self.harbour.path)
-        with self.assertRaises(library_settings.FaceModelNotReady):
-            self.begin(self.harbour)
-        self.assertEqual(1, len(self.handed))
-        self.assertEqual(before, rows_of(self.harbour.path))
+        self.begin(self.harbour).end()
+        self.assertEqual([FACENET, NEW], [faces.settings["model"] for faces in self.handed])
 
 
 class ALookWithTheNewModel(_Libraries):
@@ -490,7 +439,7 @@ class ALookWithTheNewModel(_Libraries):
 
     def build(self, settings):
         # The new model on the graphics card, as it would be on the owner's machine.
-        on_card = settings.get("model") == validation.SCRFD_ADAFACE
+        on_card = settings.get("model") == NEW
         self.built.append(_Model(settings, device="cuda" if on_card else "cpu"))
         return self.built[-1]
 
@@ -499,11 +448,11 @@ class ALookWithTheNewModel(_Libraries):
         try:
             with self.assertRaises(gpu_turns.OtherModelsInUse) as raised:
                 self.runtime.look_at_faces(self.harbour)
-            self.assertIn("Suggest Regatta (harbour) is using face models with model %s" % validation.MTCNN_FACENET,
+            self.assertIn("Suggest Regatta (harbour) is using face models with model %s" % FACENET,
                           str(raised.exception))
         finally:
             suggest.end()
-        self.assertEqual([], [model for model in self.built if model.settings.get("model") == validation.SCRFD_ADAFACE])
+        self.assertEqual([], [model for model in self.built if model.settings.get("model") == NEW])
 
         before = rows_of(self.harbour.path)
         holds = []
@@ -518,7 +467,7 @@ class ALookWithTheNewModel(_Libraries):
                 try:
                     with self.assertRaises(gpu_turns.OtherModelsInUse) as raised:
                         self.begin(self.harbour)
-                    self.assertIn("Looking at Regatta is using face models with model %s" % validation.SCRFD_ADAFACE,
+                    self.assertIn("Looking at Regatta is using face models with model %s" % NEW,
                                   str(raised.exception))
                     for name in sorted(os.listdir(self.regatta)):
                         self.assertEqual([], look.faces_in(os.path.join(self.regatta, name)))
@@ -526,7 +475,7 @@ class ALookWithTheNewModel(_Libraries):
                     raise RuntimeError("the look's caller failed part-way")
                 finally:
                     look.end()
-        [new] = [model for model in self.built if model.settings.get("model") == validation.SCRFD_ADAFACE]
+        [new] = [model for model in self.built if model.settings.get("model") == NEW]
         self.assertEqual(["Looking at Regatta"], holds, "the card was taken more than once")
         self.assertEqual(3, new.looked)
         self.assertFalse(self.card.holds(), "the card was kept after the look ended")
@@ -534,14 +483,14 @@ class ALookWithTheNewModel(_Libraries):
         self.assertEqual(before, rows_of(self.harbour.path))
         # Let go, not kept for the next look: that one builds it again.
         self.runtime.look_at_faces(self.harbour).end()
-        self.assertEqual(2, len([model for model in self.built if model.settings.get("model") == validation.SCRFD_ADAFACE]))
+        self.assertEqual(2, len([model for model in self.built if model.settings.get("model") == NEW]))
         # And a Suggest runs again once it has ended.
         self.begin(self.harbour).end()
 
     def test_it_looks_with_the_new_model_alone(self):
         # MTCNN's model has no faces_in: a look is the new model's, never another named.
         with self.assertRaises(TypeError):
-            self.runtime.look_at_faces(self.harbour, model=validation.MTCNN_FACENET)
+            self.runtime.look_at_faces(self.harbour, model=FACENET)
         self.assertEqual([], self.built)
 
 
@@ -549,7 +498,7 @@ class TheNewModelsWeightsNeverMade(_Libraries):
     """(g) The new model on an install where its weights were never made: the real model, its folder empty."""
 
     def build(self, settings):
-        if settings.get("model") == validation.SCRFD_ADAFACE:
+        if settings.get("model") == NEW:
             from tagpup.ml.scrfd_adaface import ScrfdAdaFace
             self.built.append(ScrfdAdaFace(device="cpu", folder=self.weights))
             return self.built[-1]
@@ -571,7 +520,7 @@ class TheNewModelsWeightsNeverMade(_Libraries):
         done = self.suggest(self.harbour, self.regatta)
         self.assertEqual("completed", done["status"], done)
         [faces] = self.handed
-        self.assertEqual(validation.MTCNN_FACENET, faces.settings["model"])
+        self.assertEqual(FACENET, faces.settings["model"])
 
 
 if __name__ == "__main__":

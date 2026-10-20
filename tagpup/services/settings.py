@@ -33,7 +33,8 @@ from typing import Dict
 from tagpup.core import paths, validation
 from tagpup.core.result import Result
 from tagpup.services import sync as sync_service
-from tagpup.store import journal, schema
+from tagpup.store import db, journal, schema
+from tagpup.store import faces as store_faces
 from tagpup.store import settings as store_settings
 
 #: The value each setting has when a library does not say: what a new library is stamped with.
@@ -47,6 +48,7 @@ CHANGE = "change settings"
 #: The library's root folders and the folders it ignores (phase 8's sync).
 ROOTS = "library.roots"
 IGNORED = "library.ignored"
+FACE_MODEL = "faces.model"
 
 #: What a stamp writes: every setting but the roots. A library has no roots until the
 #: owner sets them (the gear dialog, an ordinary change, which can be
@@ -64,19 +66,55 @@ NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
 
-#: The face models a library can write faces under (faces.model): FaceNet's alone. Since migration 33 each face's
-#: vectors are kept apart by model in `face_embeddings` (face_id, model) and every reader reads the library's model's
-#: alone (tagpup.store.faces.model_key), so two models' vectors are never compared; but only FaceNet's has a writer.
-#: The new model's vectors are written by phase 3's pass (docs/AI_PIPELINE.md, merge 3), which adds its model here;
-#: until then a library set to any other is refused every write of faces: LibrarySettings.face_model_refusal, which
-#: tagpup.runtime.Runtime.faces and the CLI's index read.
-KEPT_FACE_MODELS = frozenset({validation.MTCNN_FACENET})
+#: The face models a library can write faces under (faces.model): FaceNet's and, since phase 3's pass writes its vectors
+#: (docs/AI_PIPELINE.md, merge 3), SCRFD and AdaFace's. Since migration 33 each face's vectors are kept apart by model in
+#: `face_embeddings` (face_id, model) and every reader reads the library's model's alone (tagpup.store.faces.model_key),
+#: so two models' vectors are never compared. A library set to any other is refused every write of faces:
+#: LibrarySettings.face_model_refusal, which tagpup.runtime.Runtime.faces and the CLI's index read.
+KEPT_FACE_MODELS = frozenset({validation.MTCNN_FACENET, validation.SCRFD_ADAFACE})
 
 #: What a library set to a face model it cannot keep vectors of is told, wherever it asks to index or to suggest.
 FACE_MODEL_NOT_KEPT = (
-    "This library is set to a face model that cannot write its faces yet: it holds FaceNet's face vectors, and the "
-    "new model's are made only by the pass that looks at its faces again (docs/AI_PIPELINE.md, phase 3). Set the face model (TagTuner's settings, %s) back to %s to index or to "
-    "suggest." % (validation.SETTING_GROUPS["face-model"]["title"], validation.MTCNN_FACENET))
+    "This library is set to a face model TagPup cannot write faces with. Set the face model (TagTuner's settings, %s) "
+    "to one of %s to index or to suggest." % (validation.SETTING_GROUPS["face-model"]["title"],
+                                              ", ".join(sorted(KEPT_FACE_MODELS))))
+
+#: The share of a library's faces that may be in photos the new model's pass has not reached when the library is switched
+#: to it (settings.change refuses a switch above it). Those faces hold no vector under the model switched to, so they
+#: take no part in comparing, clustering or the gallery of named faces until the pass reaches their photos. Not zero:
+#: a pass leaves a few photos it could not read or that were added after it (live, 2026-10-20: 16 of kr-track's 11,457
+#: faces, 7 of renton_parkrun's 3,644, both under 0.2%), and the owner switches with those and finishes them by a pass
+#: again; a library its pass has not walked (photo_index, all of its faces) is far above it. 5% is the default the owner
+#: may change here: a library a twentieth of whose faces would drop out of Identify is one the owner should pass first.
+UNPASSED_SHARE_ALLOWED = 0.05
+
+
+def _switch_to(library, model):
+    """(refusal or None, what the faces hold under `model`): whether the library may be switched to the face model `model`
+    (UNPASSED_SHARE_ALLOWED), and one sentence saying how many of its faces hold a vector under it and how many named
+    faces hold none, said either way. FaceNet, which made every face the libraries hold, is never refused; nor is a
+    library with no faces. Read-only, by tagpup.store.faces.vector_counts and pass_counts."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        held = store_faces.vector_counts(conn, model)
+        not_passed = store_faces.pass_counts(conn, validation.MTCNN_FACENET, model)["not_passed"] if held["faces"] else 0
+    finally:
+        conn.close()
+    held["not_passed"] = not_passed
+    if not held["faces"]:
+        return None, held
+    said = ("%d of the library's %d faces hold a vector under %s; %d named face%s hold%s none, and would leave the named "
+            "faces Identify compares with until the pass reaches %s; %d face%s %s in photos the pass has not reached." % (
+                held["faces"] - held["without"], held["faces"], model, held["named_without"],
+                "" if held["named_without"] == 1 else "s", "s" if held["named_without"] == 1 else "",
+                "it" if held["named_without"] == 1 else "them", not_passed, "" if not_passed == 1 else "s",
+                "is" if not_passed == 1 else "are"))
+    held["said"] = said
+    if model == validation.MTCNN_FACENET or not_passed <= UNPASSED_SHARE_ALLOWED * held["faces"]:
+        return None, held
+    return ("Nothing was written: %s A switch allows at most %d%% of the faces in photos the pass has not reached: "
+            "finish the pass first (TagPup CLI: face-pass <folder> --apply, for each folder of the library)." % (
+                said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 
 
 class FaceModelNotReady(Exception):
@@ -323,7 +361,10 @@ def change(library, values, acknowledged=(), apply=True):
     stamped, or a setting changed by someone else since it was read -- and for a change
     to a locked setting whose group (validation.SETTING_GROUPS: "clip", "face-model",
     "faces", "exiftool") `acknowledged` does not name: the refusal lists each such group and what
-    changing it means, and details["unacknowledged"] holds them. Every caller -- the
+    changing it means, and details["unacknowledged"] holds them. A change of the face model
+    (faces.model) to one whose pass has not reached more than UNPASSED_SHARE_ALLOWED of the
+    library's faces is refused first; either way details["face_vectors"] holds what its faces
+    hold under the model switched to, and, for a library with faces, its sentence ("said"). Every caller -- the
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;
     details["locked"] says whether any was a locked one, after which what the models
@@ -377,6 +418,12 @@ def change(library, values, acknowledged=(), apply=True):
             continue
         changed.append(key)
     result.details.update({"changed": changed, "locked": any(validation.SETTINGS[k]["locked"] for k in changed)})
+    if FACE_MODEL in changed:
+        # Before the consequences are asked for: ticking them cannot make a library its pass has not reached switchable.
+        refusal, result.details["face_vectors"] = _switch_to(library, _trim(wanted[FACE_MODEL]))
+        if refusal:
+            result.refuse(refusal)
+            return result
     missing = unacknowledged(changed, acknowledged)
     if missing:
         result.details["unacknowledged"] = missing

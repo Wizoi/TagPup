@@ -437,9 +437,19 @@ def for_clustering(conn):
                 (model_key(conn),)).fetchall(), 1)]
 
 
+def vector_counts(conn, key):
+    """{"faces", "without" (holding no vector under `key`), "named_without" (of those, the ones naming a person and not
+    excluded: the named faces the gallery of known faces, named_for_known, would lose read under `key`)}. The key is given,
+    never the library's (model_key): a switch of the face model asks it of the model switched to
+    (tagpup.services.settings.change). One scan of faces, each face's vector by its key (face_id, model); no vector read."""
+    row = conn.execute("SELECT COUNT(*), TOTAL(NOT " + HAS_VECTOR + "), TOTAL(f.tag_id IS NOT NULL AND f.excluded = 0"
+                       " AND NOT " + HAS_VECTOR + ") FROM faces f", (key, key)).fetchone()
+    return {"faces": row[0], "without": int(row[1]), "named_without": int(row[2])}
+
+
 def count_without_vector(conn):
     """How many faces have no vector under the library's face model, and so take no part in clustering (for_clustering)."""
-    return conn.execute("SELECT COUNT(*) FROM faces f WHERE NOT " + HAS_VECTOR, (model_key(conn),)).fetchone()[0]
+    return vector_counts(conn, model_key(conn))["without"]
 
 
 def named_for_known(conn):
