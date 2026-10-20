@@ -28,6 +28,9 @@ What the owner lives through, in one library:
   back cannot be undone in History now: the undo would put the new model back with those faces in photos its pass has not
   reached, which the switch itself is refused for (settings.change's check, UNPASSED_SHARE_ALLOWED). History lists it
   with the switch's sentence and counts, and the rehearsal and the undo refuse it so, writing nothing.
+- A library stamped before the face model was a setting holds no faces.model row (each of the three live libraries,
+  counted 2026-10-20) and reads the default, FaceNet: its first switch inserts the row, History lists it undoable, and
+  the undo deletes it, the default read again; the switch's check never refuses that undo (it puts no model back).
 - A switch back the owner undid already, asked to be undone again, is refused as undone (the journal's own account comes
   first), not with the switch's sentence, though putting the new model back would be refused too.
 - A Suggest run or an index begun before a switch keeps the model it began with to its end (Runtime.begin's lease, the
@@ -316,6 +319,27 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
             reply = self.client.post(url, json=body)
             self.assertEqual(400, reply.status_code, reply.data)
             self.assertIn(said, " ".join(reply.get_json()["refused"].split()))
+        self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+
+    def test_the_first_switch_of_a_library_stamped_before_the_setting_is_undone_to_the_default(self):
+        # Stamped before faces.model was a setting: the row is not there (made so here, the stamp of today writing it).
+        conn = db.connect(self.library.path)
+        try:
+            conn.execute("DELETE FROM settings WHERE key = 'faces.model'")
+            conn.commit()
+        finally:
+            conn.close()
+        held = "SELECT value FROM settings WHERE key = 'faces.model'"
+        self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+        switched = self.switch(NEW)
+        self.assertEqual([(NEW,)], self.read(held))
+        self.assertEqual([("insert",)], self.read("SELECT DISTINCT action FROM change_rows WHERE change_id = ?", switched["change"]))
+        listed = self.client.get("/lakeside/api/history").get_json()["changes"]
+        [entry] = [entry for entry in listed if entry["id"] == switched["change"]]
+        self.assertTrue(entry["undoable"], entry)
+        self.assertEqual({}, library_settings.undo_refusals(self.library, [switched["change"]]))
+        self.assertEqual(1, self.undo(switched["change"])["changed"])
+        self.assertEqual([], self.read(held))
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
 
     def test_a_switch_back_undone_already_is_refused_as_undone(self):
