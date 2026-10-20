@@ -889,7 +889,7 @@ def grid(library, name, named, on_progress=None):
     # Group the candidates. The slow part of this screen by a wide margin, and the
     # reason it reports progress at all (tagpup.ml.grouping).
     labels = grouping.cluster_candidates(
-        embs,
+        embs, cuts,
         on_progress=lambda done, total: report(
             "grouping", done / total if total else 1.0,
             "Grouping %s faces that look alike" % format(total, ",")))

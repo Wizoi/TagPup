@@ -75,6 +75,10 @@ class Cuts:
     name_margin: float
     #: A face is offered a name only when it is at least this much more like that person than the next one.
     offer_margin: float
+    #: Faces at least this alike are grouped together before anyone is named: cluster-faces' radius
+    #: (tagpup.services.identities) and Identify's grouping of the nameless (tagpup.ml.grouping), as a distance there
+    #: (group_distance).
+    group_at: float
     #: Where the values come from.
     source: str
 
@@ -117,6 +121,11 @@ class Cuts:
         rough first look that must miss none it would name (tagpup.services.identify.UnnamedFaces)."""
         return similarities >= self.name_without_asking - slack
 
+    @property
+    def group_distance(self):
+        """group_at as the distance between two unit vectors: what DBSCAN, which works in distances, is given."""
+        return distance(self.group_at)
+
     def looks_wrong(self, similarity):
         """Is a name on a face only `similarity`-like its person worth a second look? Below the value it would be
         offered at, it would not even have been suggested."""
@@ -127,8 +136,19 @@ class Cuts:
 #: stranger in twenty reaches a face named and nearly all of the owner's people do; at 0.80 four strangers in a thousand
 #: and four in five of the owner's people, rightly. The margins the owner chose (2026-10-17, phase 2b): precision 99.83%
 #: at 0.04 and 99.54% at 0.02 on photo_index's named faces, against 98.46% by the likeness alone.
-FACENET_CUTS = Cuts(offer_a_name=0.70, name_without_asking=0.80, name_margin=0.04, offer_margin=0.02,
-                    source="owner, 2026-09-24 (likeness) and 2026-10-17 (margin, phase 2b)")
+#: The grouping radius, measured on kr-track (2026-09-24), each hand-named face against the nearest face of its own
+#: person, of anyone else, and of a stranger, never one of its own photo:
+#:
+#:     similarity   own person's reaches   someone else's   a stranger's
+#:       0.80              81%                  3.4%             0.6%
+#:       0.85              63%                  1.8%             0.1%
+#:       0.885             46%                  0.6%             0.0%
+#:       0.90              38%                  0.5%             0.0%
+#:
+#: Grouping chains faces, so each that reaches someone else can pull two people into one group; naming, from anchors
+#: and keywords, does the rest. It was 0.48 as a distance in two places. The owner kept 0.885 (2026-09-24).
+FACENET_CUTS = Cuts(offer_a_name=0.70, name_without_asking=0.80, name_margin=0.04, offer_margin=0.02, group_at=0.885,
+                    source="owner, 2026-09-24 (likeness, grouping) and 2026-10-17 (margin, phase 2b)")
 
 #: AdaFace's (SCRFD and AdaFace's vectors). Read off the phase 3 gate (docs/AI_PIPELINE.md, merge 3 slice C,
 #: 2026-10-20): kr-track and renton_parkrun pooled, the open set (a face alone in its folder counted, every name it is
@@ -136,8 +156,14 @@ FACENET_CUTS = Cuts(offer_a_name=0.70, name_without_asking=0.80, name_margin=0.0
 #: unasked (FaceNet's on the same reading: 0.140 and 0.795). The two a name is offered at are the same reading at
 #: precision 0.98 (owner, 2026-10-20: where FaceNet's 0.70 sits, an offer the owner looks over): a likeness of 0.310
 #: and a margin of 0.090.
-ADAFACE_CUTS = Cuts(offer_a_name=0.310, name_without_asking=0.520, name_margin=0.205, offer_margin=0.090,
-                    source="the phase 3 gate, open set, pooled (2026-10-20): naming at precision 0.99, offering at 0.98")
+#: The grouping radius, 0.80: a read-only measurement (2026-10-20) on kr-track and renton_parkrun, 2,849 named faces
+#: holding both vectors, pooled: AdaFace at 0.80 groups as impurely as FaceNet at 0.885 (33 wrong pairs, 1 to 2 impure
+#: clusters; pair precision 99.68% against 99.48%, purity 0.9988 against 0.9976) and groups 1,646 named faces against
+#: FaceNet's 1,243. AdaFace's curve is flat from 0.65 to 0.82. A thin sample, and the chaining over a whole library is
+#: not yet seen: a read-only cluster-faces rehearsal on AdaFace's vectors is to follow.
+ADAFACE_CUTS = Cuts(offer_a_name=0.310, name_without_asking=0.520, name_margin=0.205, offer_margin=0.090, group_at=0.80,
+                    source="the phase 3 gate, open set, pooled (2026-10-20): naming at precision 0.99, offering at 0.98;"
+                           " grouping at FaceNet's impurity on 2,849 named faces (2026-10-20)")
 
 #: Each face model's cuts, by its key (tagpup.core.validation.FACE_MODELS): every model a library can be set to has
 #: its own.
@@ -147,23 +173,6 @@ CUTS = {validation.MTCNN_FACENET: FACENET_CUTS, validation.SCRFD_ADAFACE: ADAFAC
 def cuts_of(model):
     """The cuts the vectors of face model `model` (its key: tagpup.store.faces.model_key) are read by."""
     return CUTS[model]
-
-
-#: Faces at least this alike are grouped together before anyone is named: clustering's
-#: radius, and TagTuner's grouping of the nameless (DBSCAN, as a distance). Measured on
-#: `kr-track` (2026-09-24), each hand-named face against the nearest face of its own
-#: person, of anyone else, and of a stranger, never one of its own photo:
-#:
-#:     similarity   own person's reaches   someone else's   a stranger's
-#:       0.80              81%                  3.4%             0.6%
-#:       0.85              63%                  1.8%             0.1%
-#:       0.885             46%                  0.6%             0.0%
-#:       0.90              38%                  0.5%             0.0%
-#:
-#: Grouping chains faces, so each that reaches someone else can pull two people into one
-#: group; naming, from anchors and keywords, does the rest. It was 0.48 as a distance in
-#: two places. The owner kept it (2026-09-24).
-GROUPING = 0.885
 
 
 def distance(similarity):

@@ -479,6 +479,12 @@ takes no turn of the card.
 | `mtcnn-facenet` | 0.80 / 0.04 | 0.70 / 0.02 | the owner's choices of 2026-09-24 and 2026-10-17, unchanged |
 | `scrfd-adaface` | 0.520 / 0.205 | 0.310 / 0.090 | slice C's pooled open-set reading at precision 0.99 (name) and 0.98 (offer), 2026-10-20 |
 
+- The grouping radius is the face model's too (`Cuts.group_at`, was `clustering.GROUPING` and `grouping.CLUSTER_EPS`):
+  cluster-faces' DBSCAN and Identify's grid group by the cuts of the model their vectors were read under. FaceNet's
+  0.885 is unchanged; AdaFace's 0.80 is a read-only measurement (2026-10-20) on kr-track and renton_parkrun, 2,849
+  named faces holding both vectors, pooled: at 0.80 AdaFace groups as impurely as FaceNet at 0.885 (33 wrong pairs;
+  pair precision 99.68% against 99.48%) and groups 1,646 named faces against 1,243; its curve is flat from 0.65 to
+  0.82. A thin sample: a read-only cluster-faces rehearsal on AdaFace's vectors over a whole library is to follow.
 - Name faces from tags' counts are named for what they are, not for FaceNet's numbers: `like_them_enough_to_name` and
   `like_them_enough_to_offer` (were `like_them_from_0.80`, `like_them_from_0.70_to_0.80`).
 - `KEPT_FACE_MODELS` holds both models. `settings.change` refuses a switch of `faces.model` to the new model while more
