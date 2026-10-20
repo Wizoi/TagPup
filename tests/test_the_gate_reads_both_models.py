@@ -135,6 +135,21 @@ class TheGateReadsBothModels(unittest.TestCase):
         for name in PEOPLE + ("Event", ".jpg"):
             self.assertNotIn(name, text)
 
+    def test_a_model_whose_margins_run_past_half_is_read_there(self):
+        """A model that separates people widely puts its wrong faces at margins over 0.5 too (AdaFace's live margins reach
+        0.744): its cut is read where the precision is reached, not "no cut reaches it" because the grid stopped at 0.5."""
+        count = 400
+        margin = np.concatenate([np.linspace(0.60, 0.70, 300), np.linspace(0.40, 0.52, 100)])
+        found = {"right": np.arange(count) < 300, "reachable": np.ones(count, dtype=bool), "margin": margin,
+                 "likeness": margin + 0.2, "short": np.full(count, 60.0), "unnamed_likeness": np.empty(0),
+                 "unnamed_margin": np.empty(0)}
+        reading = {"pass": {}, "models": {face_gate.OLD: found, face_gate.NEW: found}}
+        cut = face_gate.score(reading, [0.95])["precisions"][0.95]["new"]["margin"]
+        self.assertIsNotNone(cut, "no cut reached 0.95 though every face over 0.52 is right")
+        self.assertGreater(cut["cut"], 0.5)
+        self.assertEqual(300, cut["at"]["right"])
+        self.assertGreaterEqual(cut["at"]["precision"], 0.95)
+
     def test_a_library_the_pass_has_not_reached_has_nothing_to_score(self):
         path = self.home.library("meadow.db")
         schema.ensure(path)

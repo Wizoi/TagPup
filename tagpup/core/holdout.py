@@ -13,10 +13,11 @@ from tagpup.core import clustering
 LIKENESS_CUTS = tuple(round(0.40 + 0.05 * i, 2) for i in range(12))
 #: The margin cuts: the top person's likeness over the second-best person's.
 MARGIN_CUTS = tuple(round(0.02 * i, 2) for i in range(16))
-#: The cuts a threshold is read off at (the gate): every 0.005 of likeness from 0 to 1, and of margin from 0 to 0.5. A
-#: grid, so that two models' curves, and the libraries' curves pooled, are read at the same points.
+#: The cuts a threshold is read off at (the gate): every 0.005 of likeness and of margin from 0 to 1 (a margin is a
+#: difference of two likenesses; AdaFace's run past 0.7 on the live libraries). A grid, so that two models' curves, and
+#: the libraries' curves pooled, are read at the same points.
 FINE_LIKENESS_CUTS = tuple(round(0.005 * i, 3) for i in range(201))
-FINE_MARGIN_CUTS = tuple(round(0.005 * i, 3) for i in range(101))
+FINE_MARGIN_CUTS = FINE_LIKENESS_CUTS
 
 
 def matched_against(queries, groups, gallery, people, gallery_groups, own=None, block=1024):
