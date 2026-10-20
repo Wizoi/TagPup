@@ -8,8 +8,8 @@ or a person.
 
 * `faces` (c), read-only, no model: every named face of the library (services.identify.named_faces, today's FaceNet
   vectors) is matched against the named faces of every OTHER photo -- held out by photo, never by face, so a face is
-  never matched with its own photo's -- by the closest single face of each person (the rule of
-  tagpup.core.clustering's measurement; without the years window KnownFaces adds). The top person, its likeness and
+  never matched with its own photo's -- by the closest single face of each person (tagpup.core.holdout, which the
+  gate of phase 3 reads too). The top person, its likeness and
   its margin over the second-best person give the precision of the top suggestion at each likeness cut and each
   margin cut, with the counts behind each point. A face whose person has no face in another photo cannot be matched
   by any recogniser and is counted apart.
@@ -40,71 +40,11 @@ import sandbox  # noqa: E402
 import _root  # noqa: E402,F401
 import numpy as np  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
-from tagpup.core import clustering, paths, vocabulary  # noqa: E402
+from tagpup.core import holdout, paths, vocabulary  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import identify  # noqa: E402
 
-#: The likeness cuts of the face curve; tagpup.core.clustering's two naming cuts among them.
-LIKENESS_CUTS = tuple(round(0.40 + 0.05 * i, 2) for i in range(12))
-#: The margin cuts: the top person's likeness over the second-best person's.
-MARGIN_CUTS = tuple(round(0.02 * i, 2) for i in range(16))
-
-
 # ---- (c) the named faces ------------------------------------------------------------------------------------------
-
-def top_two(matrix, people, photos, block=1024):
-    """For each row of `matrix` (unit vectors): (its best person, that likeness, its margin over the second-best person,
-    whether its own person had a face to compare), each person's likeness being their closest face in another photo: the
-    margin the gates ask, worked out where they work it out (tagpup.core.clustering.margins), so the curve is read off the
-    rule it sets. `people` and `photos` are an integer for each row. Rows are compared a block at a time."""
-    best, first, margin, reachable = (np.full(len(people), -1, dtype=people.dtype), np.empty(len(people)),
-                                      np.empty(len(people)), np.empty(len(people), dtype=bool))
-    grouping = clustering.FacesByPerson(people)
-    grouped, grouped_photos = grouping.grouped(matrix), grouping.grouped(photos)
-    names = np.asarray(grouping.keys, dtype=people.dtype)
-    column_of = {name: column for column, name in enumerate(grouping.keys)}
-    for start in range(0, len(people), block):
-        rows = slice(start, start + block)
-        likeness = matrix[rows] @ grouped.T
-        likeness[photos[rows][:, None] == grouped_photos[None, :]] = -np.inf
-        by_person = grouping.table(likeness, grouped=True)
-        columns, first[rows], margin[rows] = clustering.best_of(by_person)
-        best[rows] = np.where(columns >= 0, names[columns], -1)
-        own = np.fromiter((column_of[person] for person in people[rows].tolist()), dtype=np.intp)
-        reachable[rows] = np.isfinite(by_person[np.arange(len(own)), own])
-    return best, first, margin, reachable
-
-
-def precision_curve(correct, likeness, margin):
-    """The precision of the top suggestion at each cut: [{"cut", "suggested", "right", "precision", "share"}] for
-    LIKENESS_CUTS (a suggestion is its likeness at the cut or above) and for MARGIN_CUTS (its margin)."""
-    def curve(values, cuts):
-        points = []
-        for cut in cuts:
-            kept = values >= cut
-            suggested, right = int(kept.sum()), int((correct & kept).sum())
-            points.append({"cut": cut, "suggested": suggested, "right": right,
-                           "precision": right / suggested if suggested else None,
-                           "share": suggested / len(values) if len(values) else None})
-        return points
-    return {"likeness": curve(likeness, LIKENESS_CUTS), "margin": curve(margin, MARGIN_CUTS)}
-
-
-def hold_out(matrix, people, groups):
-    """The curve and its counts for faces matched only against faces of another group (a photo, a folder): `people`
-    and `groups` an integer a row."""
-    best, first, margin, reachable = top_two(matrix, people, groups)
-    correct = best == people
-    return {"faces": len(people), "own_person_only_in_this_group": int((~reachable).sum()),
-            "evaluated": int(reachable.sum()), "top_right": int(correct[reachable].sum()),
-            "curve": precision_curve(correct[reachable], first[reachable], margin[reachable])}
-
-
-def _numbered(keys):
-    """An integer for each key, equal keys equal."""
-    seen = {}
-    return np.array([seen.setdefault(key, len(seen)) for key in keys])
-
 
 def faces_check(library, report):
     """(c), read-only: the precision of the top suggestion over the named faces, held out by photo and, stricter, by
@@ -129,8 +69,9 @@ def faces_check(library, report):
         people = np.array([refs[i].id for i in rows])
         photos = [photo_of[ids[i]] for i in rows]
         answer[label] = {
-            "by_photo": hold_out(matrix[rows], people, _numbered(paths.key(p) for p in photos)),
-            "by_folder": hold_out(matrix[rows], people, _numbered(paths.key(os.path.dirname(p)) for p in photos))}
+            "by_photo": holdout.hold_out(matrix[rows], people, holdout.numbered(paths.key(p) for p in photos)),
+            "by_folder": holdout.hold_out(matrix[rows], people,
+                                          holdout.numbered(paths.key(os.path.dirname(p)) for p in photos))}
     answer["seconds"] = time.time() - started
     return answer
 
