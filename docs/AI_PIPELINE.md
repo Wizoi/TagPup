@@ -343,11 +343,12 @@ beside it, and it beside one), the card taken once at its first use and let go, 
 Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
 
 **Merge 3 brief (the pass; after migration 33).**
-- The crop is cut by the pass from the picture as stored (`ScrfdPicture.stored`) by the face's box, with
-  `images.crop_jpeg`, as `tagpup.ml.faces.FaceModel` does: `ScrfdAdaFace.faces_in` gives no crop.
-- The name a detection is recorded under (`tagpup.services.faces.detector_of`, `faces_detected`) gains a `model` key
-  for a model other than MTCNN alone, so the names every stored MTCNN detection was written under stand. Today every
-  write path under the new model is refused, so the arm is unreachable and is not written before the pass needs it.
+- The crop is cut from the picture as stored (`ScrfdPicture.stored`) by the face's box, as every face's crop is
+  (`images.face_crop_of`), by the model's `new_faces`: wherever a detection makes a new face (the index, Suggest, the
+  pass), as built in item 3 below. (`ScrfdAdaFace.faces_in`, which gave no crop, is gone.)
+- The name a detection is recorded under (`tagpup.services.faces.detector_of`, `faces_detected`) is the model's own
+  (`detector(max_side)`): `{"model": "scrfd-adaface"}` for the new model, and MTCNN's settings spelled as before, so the
+  names every stored MTCNN detection was written under stand (item 3 below).
 - Read-ahead: the pass hands the model the bytes it has read ahead (as the index's read-ahead does for MTCNN), or it
   reads one photo at a time; the model does not read ahead of its own.
 - `faces.detect_max_side` does not apply to the new model: it fits each photo into its two squares itself.
@@ -492,6 +493,26 @@ takes no turn of the card.
 - Left for items 3 and 4: the index and Suggest writing faces with the new model (`ScrfdAdaFace` answers neither the
   index's `picture(path, max_side=...)` nor Suggest's `detect_and_embed_faces` yet), and the switch's own scenario end
   to end. Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`, is the switch now.
+
+**Merge 3, item 3, as built (2026-10-20): the index, Suggest and the pass write faces with the library's model, whichever.**
+- One surface, answered by `tagpup.ml.faces.FaceModel` and `tagpup.ml.scrfd_adaface.ScrfdAdaFace` alike, built by
+  `tagpup.runtime` from the library's `faces.model`: `key` (what its vectors are filed under), `picture(path, max_side=)`
+  (the processor's half, on a read-ahead thread), `picture_bytes(width, height, max_side=)` (what the read-ahead
+  reserves), `detect_and_embed(picture)` (the card's half), `new_faces(detected, picture)` (of what it found, the faces a
+  detection makes new where no old face takes them, each with its crop), `detect_and_embed_faces(path, max_side=)` (the
+  three in one, Suggest's) and `detector(max_side)` (the name its detections are recorded under). The library's cap
+  (`faces.detect_max_side`) is MTCNN's: the new model takes it and does not use it, its two squares being its own.
+- The floor of a new face has one owner, `scrfd_adaface.NEW_FACE_FLOOR` (40 px on the shorter side), applied by the
+  model's `new_faces` wherever a detection makes a face: the index, Suggest, and the pass for a detection no old face
+  takes. FaceModel's `new_faces` makes every face it found, as before.
+- Scenario P10, `tests/test_a_switched_library_indexes_and_suggests_with_its_model.py`: a library its pass reached is
+  switched; Name faces from tags reads the new vectors by AdaFace's cuts; a new photo is indexed through the CLI (the face
+  under the floor not made, the one made holding the new model's vector alone, a crop, and `{"model": "scrfd-adaface"}`
+  as its detector name); Suggest detects with the new model and offers a person at 0.45, which FaceNet's cuts would not;
+  switched back, FaceNet reads its own vectors again and neither switch wrote one.
+- Open: the panel shows a suggestion from `suggesting.OFFER_A_TAG` (0.60), read on FaceNet's likenesses, and a face's
+  offer is scored by its likeness, so under the new model an offer between 0.310 and 0.60 is made and not shown (a
+  finding of this branch).
 
 ### Phase 4: Matching, with the new model
 
