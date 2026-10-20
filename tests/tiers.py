@@ -65,6 +65,7 @@ SCENARIO = frozenset({
     "test_the_face_pass",
     "test_a_face_pass_from_the_command_line",
     "test_the_gate_reads_both_models",
+    "test_a_switched_library_indexes_and_suggests_with_its_model",
     "test_a_library_from_a_newer_tagpup",
     # Roots: the folders a library holds, through a whole scenario.
     "test_roots_scenarios",
