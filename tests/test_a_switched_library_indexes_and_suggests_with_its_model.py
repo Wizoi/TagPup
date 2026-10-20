@@ -12,8 +12,8 @@ What the owner lives through, in one library:
   holds a vector under the new model alone, a crop, and the photo is recorded as detected under {"model": "scrfd-adaface"}.
 - Suggest (Runtime.begin) on a photo with no face on file, in a folder not indexed, detects it with the new model, records
   the face (its vector the new model's alone, a crop), and offers the person whose named face it is 0.45 like: AdaFace
-  offers from 0.310, FaceNet's 0.70 would not. (The panel shows a suggestion from 0.60, suggesting.OFFER_A_TAG, a floor
-  read on FaceNet's likenesses: what it shows of such an offer is an open finding of this branch.)
+  offers from 0.310, FaceNet's 0.70 would not. The panel (SuggestionModel.offered, what Apply All and the writers take)
+  shows that offer: the model's cut decided it, and the tag floor (suggesting.OFFER_A_TAG, 0.60) is not a face's.
 - Switching back to FaceNet is allowed, and FaceNet reads its own vectors again; neither model's vectors were written by
   either switch.
 
@@ -211,10 +211,12 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         run = runtime.begin(self.library, what="Suggest Visitors (lakeside)")
         try:
             suggested = run.suggester.suggest_for_photo(visitor, [0.1] * CLIP_DIM)
+            _tags, people, _title = run.offered(suggested)
         finally:
             run.end()
         [offer] = [t for t in suggested["suggested_tags"] if t.get("has_face_match")]
         self.assertEqual((PERSON, 0.45), (offer["tag"], offer["score"]))
+        self.assertEqual([{"name": PERSON, "score": 0.45}], people, "the panel hid the offer the model's cut made")
         self.assertFalse(clustering.FACENET_CUTS.is_offered(0.45, math.inf), "the case is not one FaceNet's cuts offer")
         self.made_by_the_new_model(visitor, detected=False)
 

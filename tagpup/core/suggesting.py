@@ -28,7 +28,8 @@ from tagpup.core import vocabulary
 
 #: A suggested tag is shown in the panel, applied by Apply All, and written by the CLI,
 #: the writer and the runner when its score is at least this. Six in seven are right.
-#: The owner chose it (2026-09-24).
+#: The owner chose it (2026-09-24). Not a person a face offered: the face model's own cut
+#: made that offer (tagpup.core.clustering.Cuts.is_offered; owner, 2026-10-20).
 OFFER_A_TAG = 0.60
 
 
