@@ -133,11 +133,11 @@ FACENET_CUTS = Cuts(offer_a_name=0.70, name_without_asking=0.80, name_margin=0.0
 #: AdaFace's (SCRFD and AdaFace's vectors). Read off the phase 3 gate (docs/AI_PIPELINE.md, merge 3 slice C,
 #: 2026-10-20): kr-track and renton_parkrun pooled, the open set (a face alone in its folder counted, every name it is
 #: given wrong), at the precision the owner chose, 0.99 (2026-10-20): a margin of 0.205 and a likeness of 0.520 to name
-#: unasked (FaceNet's on the same reading: 0.140 and 0.795). The two cuts a name is offered at are not read off the gate:
-#: they are FaceNet's offer cuts scaled by the same ratio as its naming cuts, the margin 0.02 x 0.205 / 0.04 = 0.1025
-#: and the likeness 0.70 x 0.520 / 0.80 = 0.455.
-ADAFACE_CUTS = Cuts(offer_a_name=0.455, name_without_asking=0.520, name_margin=0.205, offer_margin=0.1025,
-                    source="the phase 3 gate, open set, pooled, precision 0.99 (2026-10-20); the offer's scaled")
+#: unasked (FaceNet's on the same reading: 0.140 and 0.795). The two a name is offered at are the same reading at
+#: precision 0.98 (owner, 2026-10-20: where FaceNet's 0.70 sits, an offer the owner looks over): a likeness of 0.310
+#: and a margin of 0.090.
+ADAFACE_CUTS = Cuts(offer_a_name=0.310, name_without_asking=0.520, name_margin=0.205, offer_margin=0.090,
+                    source="the phase 3 gate, open set, pooled (2026-10-20): naming at precision 0.99, offering at 0.98")
 
 #: Each face model's cuts, by its key (tagpup.core.validation.FACE_MODELS): every model a library can be set to has
 #: its own.

@@ -314,7 +314,7 @@ class TheOwnersValues(unittest.TestCase):
     def test_the_decisions_about_a_face(self):
         """The likeness and the margin over the next person each a gate (owner, 2026-09-24 and 2026-10-17): for FaceNet's
         vectors 0.70 and 0.02 to offer, 0.80 and 0.04 to name unasked, 0.70 and 0.04 when the photo's keywords name the
-        person; AdaFace's read off the phase 3 gate at 0.99 (2026-10-20), its offer scaled."""
+        person; AdaFace's read off the phase 3 gate, naming at 0.99 and offering at 0.98 (owner, 2026-10-20)."""
         import math
         from tagpup.core import clustering, validation
         facenet = clustering.cuts_of(validation.MTCNN_FACENET)
@@ -334,9 +334,9 @@ class TheOwnersValues(unittest.TestCase):
                                                 facenet.gathers_for_a_new_person(0.79, 1),
                                                 facenet.gathers_for_a_new_person(0.9, 0.019)))
         adaface = clustering.cuts_of(validation.SCRFD_ADAFACE)
-        self.assertEqual((0.455, 0.520, 0.205, 0.1025), (adaface.offer_a_name, adaface.name_without_asking,
+        self.assertEqual((0.310, 0.520, 0.205, 0.090), (adaface.offer_a_name, adaface.name_without_asking,
                                                           adaface.name_margin, adaface.offer_margin))
-        self.assertEqual(("likely", "possible", None), tuple(adaface.band(v, m) for v, m in ((0.52, 0.205), (0.6, 0.11), (0.6, 0.1))))
+        self.assertEqual(("likely", "possible", None), tuple(adaface.band(v, m) for v, m in ((0.52, 0.205), (0.4, 0.09), (0.4, 0.089))))
         self.assertEqual(set(validation.FACE_MODELS), set(clustering.CUTS))   # every model a library can be set to has its own
         for cuts in clustering.CUTS.values():
             for decide in (cuts.is_offered, cuts.names_unasked, cuts.names_from_the_tag, cuts.gathers_for_a_new_person):
