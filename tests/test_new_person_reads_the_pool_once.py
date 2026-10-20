@@ -144,10 +144,10 @@ class BuildingThePool(unittest.TestCase):
         with mock.patch.object(identify.UnnamedFaces, "SLICE", 3):
             for count in (len(rows), len(rows) - 2, 5, None):   # as counted, fewer, more
                 with self.subTest(count=count):
-                    self.check(identify.UnnamedFaces.of(iter(rows) if count else rows, count), rows)
+                    self.check(identify.UnnamedFaces.of(iter(rows) if count else rows, count, key=face_rows.FACENET), rows)
 
     def test_no_embeddings_is_an_empty_pool(self):
-        pool = identify.UnnamedFaces.of(iter([]), 1)   # one counted, none with a vector (faces.unnamed_embeddings)
+        pool = identify.UnnamedFaces.of(iter([]), 1, key=face_rows.FACENET)   # one counted, none with a vector (faces.unnamed_embeddings)
         self.assertEqual(0, len(pool.ids))
         self.assertEqual([], pool.near(np.ones(8, dtype=np.float32), lambda likeness, slack: likeness > -9))
 

@@ -242,7 +242,7 @@ class AFolderIsReadFromItsPhotos(FacesCase):
         photo = self.photo("a.jpg")
         self.face(photo, embedding=vector(1))
         self.face(photo, name=ROWAN, embedding=vector(2))
-        for ask in (lambda conn: store_faces.unnamed(conn, folder=self.folder),
+        for ask in (lambda conn: store_faces.unnamed(conn, store_faces.model_key(conn), folder=self.folder),
                     lambda conn: store_faces.unnamed_counts(conn, self.folder)):
             for plan in self.plans(ask):
                 self.assertTrue(plan.startswith("SEARCH p USING COVERING INDEX idx_photos_path_nocase"), plan)

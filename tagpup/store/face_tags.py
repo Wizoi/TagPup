@@ -271,13 +271,14 @@ STEP = 50
 BLOCK = 512
 
 
-def _reached(vectors, references, cuts, on_step=None):
+def _reached(vectors, references, key, cuts, on_step=None):
     """({face id: ({the keys of the people some decided face of whom it is alike enough to name unasked}, its row: its
     likeness to each person)}, {person's key: their column of the rows}) for the faces of `vectors` {face id: embedding bytes}
     that can be compared and reach someone: compared a block at a time, never a face at a time (a library's faces to place
     are tens of thousands). A person's key is the id of their node; a face's likeness to a person is to their closest
-    decided face (clustering.FacesByPerson)."""
-    references = clustering.FaceRows.of(references)
+    decided face (clustering.FacesByPerson). `references` are compared only when read under `key`, the vectors' face
+    model (clustering.FaceRows.under): they are read on another connection, after the plan's."""
+    references = clustering.FaceRows.of(references).under(key)
     _ids, people, matrix = references
     if matrix is None or not len(people):
         return {}, {}
@@ -380,7 +381,7 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
         if on_step is not None:
             on_step("comparing", 0, len(vectors))
         references = references() if callable(references) else references
-        reached, columns = _reached(vectors, references, cuts, on_step)
+        reached, columns = _reached(vectors, references, key, cuts, on_step)
         if on_step is not None:
             on_step("deciding", 0, len(open_ones))
         for photo_id, unnamed, free, held in open_ones:

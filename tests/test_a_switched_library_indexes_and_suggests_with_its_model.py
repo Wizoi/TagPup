@@ -24,6 +24,8 @@ What the owner lives through, in one library:
   with the switch's sentence and counts, and the rehearsal and the undo refuse it so, writing nothing.
 - A Suggest run or an index begun before a switch keeps the model it began with to its end (Runtime.begin's lease, the
   CLI index's one `runtime.faces`); the next one reads the library's model (tests/test_the_runtime_keeps_models_by_settings.py).
+  The vectors it compares are that model's too: a Suggest run begun under FaceNet, the owner switching while it runs,
+  offers Wren for a face 0.75 like her by FaceNet's vectors, never reading the new model's.
 
 Fictional names; a library in a home of the test's own; the new model as tagpup.runtime builds it, its weights not
 loaded and its two networks stood in for (`_detected`, `embed`): the picture, the floor, the crop and the detector name
@@ -265,6 +267,33 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
         self.assertEqual(during, self.vectors_by_model())
         np.testing.assert_allclose(self.facenet_wren, self.named_vector(grids), atol=1e-6)
+
+    def a_face_like_wren_by_facenet(self, name, likeness, keywords=()):
+        """A photo named `name` with `keywords`, holding one unnamed face `likeness` like Wren's named face by FaceNet's
+        vectors and 0.1 by the new model's."""
+        conn = db.connect(self.library.path)
+        try:
+            path = photo(os.path.join(self.folder, name))
+            photo_rows.add_read(conn, path, {"XMP:Subject": list(keywords)} if keywords else {})
+            face = add_face(conn, path, (40, 30, 120, 110), alike(self.facenet_wren, likeness, 9).tobytes(), model=FACENET,
+                            prob=0.99)
+            add_vector_of_face(conn, face, alike(self.adaface_wren, 0.1, 10).tobytes(), model=NEW)
+            conn.commit()
+        finally:
+            conn.close()
+        return path, face
+
+    def test_a_suggest_run_begun_under_facenet_compares_facenet_vectors_after_a_switch(self):
+        cove, _face = self.a_face_like_wren_by_facenet("cove.jpg", 0.75)   # FaceNet offers her from 0.70
+        run = self.runtime.begin(self.library, what="Suggest Lakeside (lakeside)")
+        try:
+            self.switch(NEW)   # while the run is under way: it keeps FaceNet to its end
+            suggested = run.suggester.suggest_for_photo(cove, [0.1] * CLIP_DIM)
+        finally:
+            run.end()
+        self.assertEqual(NEW, library_settings.read(self.library)["faces.model"])
+        offers = [(t["tag"], t["score"]) for t in suggested["suggested_tags"] if t.get("has_face_match")]
+        self.assertEqual([(PERSON, 0.75)], offers, "the run compared the new model's vectors by FaceNet's cuts")
 
     def test_the_switch_back_is_not_undone_onto_faces_the_pass_has_not_reached(self):
         self.switch(NEW)

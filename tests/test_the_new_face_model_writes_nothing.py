@@ -361,7 +361,7 @@ class IdentifyOnTheSwitchedLibrary(_Libraries):
         conn = db.connect(db.readonly_uri(self.cove.path), uri=True)
         try:
             self.assertEqual([first], [row[0] for row in store_faces.identify_candidates(conn)])
-            self.assertEqual([first], [row[0] for row in store_faces.unnamed_for_matching(conn)])
+            self.assertEqual([first], [row[0] for row in store_faces.unnamed_for_matching(conn, store_faces.model_key(conn))])
         finally:
             conn.close()
         answers = self.asked(self.cove, first)

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fake_exiftool  # noqa: E402
 import web_client  # noqa: E402
-from face_rows import add_face  # noqa: E402
+from face_rows import FACENET, add_face  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core.vocabulary import Ref  # noqa: E402
@@ -157,7 +157,8 @@ class TheAnswers(Library):
         self.assertEqual([self.person(WREN), self.person(SAM_T)], [each["person"] for each in found],
                          "a face named for a person is that person, whoever else is called alike")
         exact = identify.face_matches(self.library, self.stranger, lambda: ([1], [Ref(self.sam_i, "Sam")],
-                                                                          np.array([[1, 0, 0, 0]], dtype=np.float32)))
+                                                                          np.array([[1, 0, 0, 0]], dtype=np.float32),
+                                                                          FACENET))
         self.assertEqual([self.person(SAM_I)], [each["person"] for each in exact])
         self.assertTrue(all("similarity" in each and "band" in each for each in found))
 

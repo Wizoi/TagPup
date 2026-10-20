@@ -156,13 +156,14 @@ class EveryReadAnswersNative(TwoLibraries):
 
     def test_faces(self):
         def ask(conn, side):
-            return (sorted(faces.for_clustering(conn)), sorted(faces.names_by_photo(conn).items(), key=lambda kv: kv[0]),
-                    sorted(faces.decisions(conn)), faces.unnamed(conn, folder=side.pictures),
+            key = faces.model_key(conn)
+            return (sorted(faces.for_clustering(conn, key)), sorted(faces.names_by_photo(conn).items(), key=lambda kv: kv[0]),
+                    sorted(faces.decisions(conn)), faces.unnamed(conn, key, folder=side.pictures),
                     sorted(faces.unnamed_counts(conn, side.pictures).items()),
                     sorted(faces.identify_candidates(conn)), faces.busiest_photo(conn) is not None,
-                    sorted(faces.photos_with_unnamed(conn, every=True)), sorted(faces.named_for_known(conn)),
-                    sorted(faces.person_page(conn, "Rowan Thackeray", 50, 0)),
-                    faces.rows(conn, [1, 2, 3]), faces.unnamed(conn, photo_path=side.real[0]))
+                    sorted(faces.photos_with_unnamed(conn, every=True)), sorted(faces.named_for_known(conn, key)),
+                    sorted(faces.person_page(conn, "Rowan Thackeray", 50, 0, key)),
+                    faces.rows(conn, [1, 2, 3]), faces.unnamed(conn, key, photo_path=side.real[0]))
         self.same(ask)
 
     def test_the_added_and_ignored_folders(self):

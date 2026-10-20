@@ -34,7 +34,7 @@ from tagpup.store import faces as store_faces  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
-from face_rows import add_face, person_of  # noqa: E402
+from face_rows import FACENET, add_face, person_of  # noqa: E402
 
 
 def unit(vector):
@@ -64,7 +64,7 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
     def test_three_photos_read_the_people_once_and_never_the_whole_table(self):
         known_reads = []
 
-        def known_faces(db_path):
+        def known_faces(db_path, key):
             known_reads.append(db_path)
             return clustering.KnownFaces.of([(7, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg", Ref(7, "Rowan Thackeray"))])
 
@@ -106,7 +106,7 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_named_faces_only_excluded_left_out(self):
-        known = face_records.known_faces(self.db)
+        known = face_records.known_faces(self.db, FACENET)
         self.assertEqual(sorted(person.name for person in known.labels.values()), ["Imogen Vale", "Rowan Thackeray"])
         # Rowan's closest face to each of their two named ones is itself; the excluded
         # face is not among them.

@@ -76,13 +76,14 @@ def named_faces(library):
     The ids are carried so a caller can leave a particular face out of its own answer:
     the matrix is shared, so it cannot be rebuilt to exclude one row. The fingerprint is
     read first, on the same connection, so the matrix is stamped with a state no newer
-    than its rows.
+    than its rows, in one read transaction with them; the rows carry the face model they were read under (FaceRows.key).
     """
     conn = _reading(library)
     try:
-        stamp = faces.fingerprint(conn)
+        db.begin(conn)
+        stamp, key = faces.fingerprint(conn), faces.model_key(conn)
         ids, refs, vecs = [], [], []
-        for face_id, person, blob in faces.for_named_matrix(conn):
+        for face_id, person, blob in faces.for_named_matrix(conn, key):
             try:
                 vec = np.frombuffer(blob, dtype=np.float32)
             except Exception:
@@ -96,7 +97,7 @@ def named_faces(library):
             vecs.append(vec / norm)
     finally:
         conn.close()
-    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None)
+    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None, key)
 
 
 #: faces.name_source of a name a person gave a face, and so the only kind that stands for them.
@@ -125,10 +126,11 @@ def decided_faces(library):
     never what a later guess is compared with; automatch alone reads this matrix."""
     conn = _reading(library)
     try:
-        stamp = _decided_stamp(conn)
+        db.begin(conn)   # one read transaction: the stamp, the keywords and the rows see one state
+        stamp, key = _decided_stamp(conn), faces.model_key(conn)
         keywords = people.keyword_keys(conn)
         ids, refs, vecs = [], [], []
-        for face_id, person, blob, source, photo_id in faces.for_decided_matrix(conn):
+        for face_id, person, blob, source, photo_id in faces.for_decided_matrix(conn, key):
             if source != DECIDED and person.id not in keywords.get(photo_id, ()):
                 continue
             try:
@@ -143,7 +145,7 @@ def decided_faces(library):
             vecs.append(vec / norm)
     finally:
         conn.close()
-    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None)
+    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None, key)
 
 
 def _groups(people_of_rows):
@@ -268,8 +270,9 @@ def photo_details(library, photo_path, named):
     the faces' boxes are in (_box_pixels)."""
     conn = _reading(library)
     try:
+        key = faces.model_key(conn)
         photo_row = photos.details(conn, photo_path)
-        face_rows = faces.in_photo_with_names(conn, photo_path)
+        face_rows = faces.in_photo_with_names(conn, photo_path, key)
         everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
@@ -295,7 +298,7 @@ def photo_details(library, photo_path, named):
     # Every named face, from the matrix shared with face_matches. This read all of
     # them from SQLite on every click of a face card -- 35,826 rows, half a second --
     # for the one number per face shown beside it.
-    _known_ids, _known_people, known_matrix = named()
+    _known_ids, _known_people, known_matrix = face_rules.FaceRows.of(named()).under(key)
 
     found = []
     for fid, box_str, carried, emb_bytes, excluded in face_rows:
@@ -340,9 +343,9 @@ NO_VECTOR = ("This face has no vector under this library's face model, so it can
              "pass found no face of its own there, or has not reached this photo yet.")
 
 
-def _embedding_of(conn, face_id):
-    """The face's vector under the library's face model; NotFound for no such face, Refused (NO_VECTOR) for one with none."""
-    row = faces.embedding_row(conn, face_id)
+def _embedding_of(conn, face_id, key):
+    """The face's vector under face model `key`; NotFound for no such face, Refused (NO_VECTOR) for one with none."""
+    row = faces.embedding_row(conn, face_id, key)
     if not row:
         raise NotFound("Face not found")
     if row[0] is None:
@@ -355,15 +358,15 @@ def face_matches(library, face_id, named):
     its band, and the `person` the name is (tagpup.services.people). Selecting a card asks this."""
     conn = _reading(library)
     try:
-        target_emb = _embedding_of(conn, face_id)
+        key = faces.model_key(conn)   # once: the face's vector, the named faces it is compared with and the cuts are its
+        target_emb = _embedding_of(conn, face_id, key)
         everyone = person_ids.Directory.read(conn)
-        cuts = face_rules.cuts_of(faces.model_key(conn))
     finally:
         conn.close()
-
+    cuts = face_rules.cuts_of(key)
     return [{"name": found.name, "person": everyone.of_id(found.id), "similarity": similarity,
              "band": cuts.band(similarity, margin)}
-            for found, similarity, margin in nearest_people(named(), target_emb, face_id)]
+            for found, similarity, margin in nearest_people(face_rules.FaceRows.of(named()).under(key), target_emb, face_id)]
 
 
 def nearest_people(known, embedding, skip_id=None, limit=5):
@@ -401,15 +404,18 @@ class UnnamedFaces:
     #: Rows compared at once: a float32 copy of a slice, not of the whole matrix.
     SLICE = 8192
 
-    def __init__(self, ids, matrix, largest_norm, gone=None):
+    def __init__(self, ids, matrix, largest_norm, key, gone=None):
         self.ids = ids
         self.matrix = matrix
         self.largest_norm = largest_norm
+        #: The face model the vectors were read under (tagpup.store.faces.model_key): kept between requests, the pool is
+        #: compared only with a face read under the same key (unnamed_like).
+        self.key = key
         self.gone = gone if gone is not None else np.zeros(len(ids), dtype=bool)
 
     @classmethod
-    def of(cls, rows, count=None):
-        """From (id, embedding bytes) rows, taken once and in order; `count` is how many
+    def of(cls, rows, count=None, *, key):
+        """From (id, embedding bytes) rows read under face model `key`, taken once and in order; `count` is how many
         there are, as counted before they were read.
 
         The float16 matrix is made to size and filled a slice at a time, so neither the
@@ -453,17 +459,17 @@ class UnnamedFaces:
             if len(waiting) == cls.SLICE:
                 flush()
         if matrix is None:
-            return cls(np.zeros(0, dtype=np.int64), np.zeros((0, 0), dtype=np.float16), 0.0)
+            return cls(np.zeros(0, dtype=np.int64), np.zeros((0, 0), dtype=np.float16), 0.0, key)
         flush()
         if filled < len(ids):   # fewer than counted: faces without a vector under the library's model, or of another length
             ids, matrix = ids[:filled].copy(), matrix[:filled].copy()
-        return cls(ids, matrix, largest)
+        return cls(ids, matrix, largest, key)
 
     def without(self, face_ids):
         """The same faces less `face_ids`: those named or excluded since. The matrix is
         shared, not copied."""
         gone = self.gone | np.isin(self.ids, np.fromiter((int(f) for f in face_ids), dtype=np.int64))
-        return UnnamedFaces(self.ids, self.matrix, self.largest_norm, gone)
+        return UnnamedFaces(self.ids, self.matrix, self.largest_norm, self.key, gone)
 
     def near(self, target, might):
         """The ids of the faces whose likeness to `target` `might` accept (a function of
@@ -489,9 +495,9 @@ def unnamed_faces(library):
     try:
         # One read transaction: the fingerprint, the count and the rows see one state.
         db.begin(conn)
-        stamp = faces.fingerprint(conn)
+        stamp, key = faces.fingerprint(conn), faces.model_key(conn)
         count = faces.count_unnamed(conn)
-        return stamp, UnnamedFaces.of(faces.unnamed_embeddings(conn), count)
+        return stamp, UnnamedFaces.of(faces.unnamed_embeddings(conn, key), count, key=key)
     finally:
         conn.close()
 
@@ -505,24 +511,28 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
 
     `unnamed` gives the UnnamedFaces to look among, kept between requests
     (tagpup.jobs.identify.unnamed_faces); without it they are read now; `named` as face_matches'.
-    Either way the faces it finds are read again by id and scored from their rows."""
+    Either way the faces it finds are read again by id and scored from their rows. Every vector compared is of one face
+    model, the library's as the request began (`key`): a pool or named faces kept from before a switch gather nothing."""
     conn = _reading(library)
     try:
-        target_emb = _embedding_of(conn, face_id)
-        cuts = face_rules.cuts_of(faces.model_key(conn))
+        key = faces.model_key(conn)
+        target_emb = _embedding_of(conn, face_id, key)
     finally:
         conn.close()
+    cuts = face_rules.cuts_of(key)
     pool = unnamed() if unnamed is not None else unnamed_faces(library)[1]
+    if pool.key != key:   # read since under the other model: a switch committed during the request
+        return {"matches": []}
     candidates = [fid for fid in pool.near(target_emb, cuts.might_name_unasked) if fid != face_id]
     if not candidates:
         return {"matches": []}
     conn = _reading(library)
     try:
-        faces_rows = faces.unnamed_among(conn, candidates)
+        faces_rows = faces.unnamed_among(conn, candidates, key)
     finally:
         conn.close()
 
-    known = face_rules.FaceRows.of(named())
+    known = face_rules.FaceRows.of(named()).under(key)
     vectors = np.stack([np.frombuffer(row[3], dtype=np.float32) for row in faces_rows]) if faces_rows else None
     margins = [math.inf] * len(faces_rows)   # nobody named: nobody else it could be
     if vectors is not None and known[2] is not None:
@@ -560,10 +570,11 @@ def person_faces(library, person, limit=100, page=1):
         if found[0] is None:
             raise NotFound("No person is called %s: reload the page." % found[1])
         ref = key = found[0]
+        key_of_vectors = faces.model_key(conn)   # once: both reads of vectors are under it, and judged by its cuts
         total_count = faces.count_named(conn, ref)
-        all_matched_rows = faces.person_embeddings(conn, ref)
-        rows = faces.person_page(conn, ref, limit, offset)
-        cuts = face_rules.cuts_of(faces.model_key(conn))
+        all_matched_rows = faces.person_embeddings(conn, ref, key_of_vectors)
+        rows = faces.person_page(conn, ref, limit, offset, key_of_vectors)
+        cuts = face_rules.cuts_of(key_of_vectors)
     finally:
         conn.close()
 
@@ -774,9 +785,10 @@ def grid(library, name, named, on_progress=None):
 
     conn = _reading(library)
     try:
-        stamp = faces.fingerprint(conn)
-        cuts = face_rules.cuts_of(faces.model_key(conn))
-        unmatched_rows = faces.unnamed_for_matching(conn)
+        db.begin(conn)   # one read transaction: the stamp and the rows see one state, one face model's
+        stamp, key = faces.fingerprint(conn), faces.model_key(conn)
+        cuts = face_rules.cuts_of(key)
+        unmatched_rows = faces.unnamed_for_matching(conn, key)
         matched_by_photo = faces.names_by_photo(conn) if unmatched_rows else {}
     finally:
         conn.close()
@@ -821,7 +833,7 @@ def grid(library, name, named, on_progress=None):
     # (tagpup.core.clustering.Cuts.is_offered, the library's face model's): below it a suggestion is more distraction
     # than help. The number is always shown, and its band says how sure it is.
     report("reading", 0.7, "Reading the faces already named")
-    known = face_rules.FaceRows.of(named())
+    known = face_rules.FaceRows.of(named()).under(key)
     _known_ids, known_people, known_matrix = known
     # Every named face by person, the matrix in their order, as kept with the matrix (tagpup.core.clustering.FaceRows).
     by_person, grouped = known.by_person

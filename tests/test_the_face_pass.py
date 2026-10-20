@@ -165,7 +165,7 @@ class FacePass(unittest.TestCase):
         self.assertTrue(jpeg.startswith(b"\xff\xd8"), "the crop is a JPEG cut from the picture")
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
-            self.assertEqual([old], [face_id for face_id, _vector in store_faces.unnamed_embeddings(conn)],
+            self.assertEqual([old], [face_id for face_id, _vector in store_faces.unnamed_embeddings(conn, store_faces.model_key(conn))],
                              "New Person's pool reads FaceNet's vectors alone")
             self.assertEqual([old], [row[0] for row in store_faces.identify_candidates(conn)], "nor does Identify's queue")
         finally:

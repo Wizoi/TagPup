@@ -207,7 +207,9 @@ class TagSuggester:
                     if len(parts) >= 2 and vocabulary.key(parts[0]) in face_roots:
                         names.add(vocabulary.key(parts[-1]))
                 # Read when the run begins (model_for_run): a read that fails fails the run, never "nobody is known".
-                known = face_records.known_faces(self.index.db_path)
+                # Under the run's face model, as the photos' faces are (on_file): a switch while the run is under way
+                # leaves it comparing the vectors of the model it began with, by that model's cuts.
+                known = face_records.known_faces(self.index.db_path, self.faces.key)
                 tags_by_id = self._tags_by_id()
                 names.update(vocabulary.key(person.name) for person in known.labels.values())
                 self._people = (names, known, tags_by_id)
@@ -423,7 +425,7 @@ class TagSuggester:
             """(whether the photo has faces on file, those to compare)."""
             detected, has_rows = [], False
             if self.index.conn:
-                for row in store_faces.in_photo(self.index.conn, photo_path):
+                for row in store_faces.in_photo(self.index.conn, photo_path, self.faces.key):
                     box_json, emb_bytes, prob, excluded, name, name_source = row
                     has_rows = True
                     # A face someone excluded, or decided is nobody, is not to be
@@ -432,9 +434,9 @@ class TagSuggester:
                     if excluded or (name is None and name_source == "manual"):
                         continue
                     box = json.loads(box_json)
-                    # A face with no vector under the library's face model (store_faces.VECTOR answers None: a library
-                    # part-way through the new model's pass) is a face on file and a box among the photo's, but it is
-                    # compared with nobody.
+                    # A face with no vector under the run's face model (store_faces.VECTOR answers None: one the other
+                    # model made, or an old face its pass matched with nothing) is a face on file and a box among the
+                    # photo's, but it is compared with nobody.
                     emb = None if emb_bytes is None else np.frombuffer(emb_bytes, dtype=np.float32).tolist()
                     detected.append({
                         "box": box,

@@ -430,20 +430,21 @@ def written_report(library, face_ids, folder):
 def propose_guesses(library, named, photo_path=None, folder=None):
     """(the number of unnamed faces looked at, {photo path: [(face id, person)]}): each unnamed face in a photo, or under a
     folder at any depth, that may be named unasked after the named face it most resembles (clustering.Cuts.names_unasked,
-    the library's face model's: the model the unnamed faces' vectors were read under); the person is their id. Reads only; the compare happens before any write lock is taken.
+    the library's face model's: the model the unnamed faces' vectors were read under, and the decided faces compared with
+    them, clustering.FaceRows.under); the person is their id. Reads only; the compare happens before any write lock is taken.
     `named()` gives the decided faces (_automatch)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        unnamed = faces.unnamed(conn, photo_path=photo_path, folder=folder)
-        cuts = clustering.cuts_of(faces.model_key(conn))
+        key = faces.model_key(conn)
+        unnamed = faces.unnamed(conn, key, photo_path=photo_path, folder=folder)
     finally:
         conn.close()
     if not unnamed:
         return 0, {}
-    known = named()
+    known = clustering.FaceRows.of(named()).under(key)
     if known[2] is None:
         return len(unnamed), {}
-    return len(unnamed), _closest_named(unnamed, known, cuts)
+    return len(unnamed), _closest_named(unnamed, known, clustering.cuts_of(key))
 
 
 def decide_guesses(conn, proposed):
@@ -547,13 +548,14 @@ def panel(library, photo_path, named):
     """
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        rows = faces.in_photo_for_panel(conn, photo_path)
+        key = faces.model_key(conn)   # once: the faces' vectors are read under it, and compared by its cuts
+        rows = faces.in_photo_for_panel(conn, photo_path, key)
         if not rows:
             return {"faces": [], "total": 0, "unmatched": 0}
         everyone = person_ids.Directory.read(conn)
-        cuts = clustering.cuts_of(faces.model_key(conn))
     finally:
         conn.close()
+    cuts, known = clustering.cuts_of(key), None
 
     found = []
     for face_id, box_json, carried, prob, emb, excluded, reason in rows:
@@ -564,7 +566,9 @@ def panel(library, photo_path, named):
             box = []
         suggestion = suggested = similarity = None
         if emb and name is None and not excluded:
-            for suggested, alike, margin in identify.nearest_people(named(), np.frombuffer(emb, dtype=np.float32), face_id, 1):
+            if known is None:   # read only when a face needs it, and only of the vectors' model
+                known = clustering.FaceRows.of(named()).under(key)
+            for suggested, alike, margin in identify.nearest_people(known, np.frombuffer(emb, dtype=np.float32), face_id, 1):
                 if cuts.is_offered(alike, margin):
                     suggestion, similarity = suggested.name, round(alike, 4)
                 else:
@@ -731,8 +735,9 @@ def named_counts(library, folder=None):
     return {"named": named, "unnamed": unnamed}
 
 
-def known_faces(db_path):
-    """Every named face that is not excluded, as tagpup.core.clustering.KnownFaces: what a
+def known_faces(db_path, key):
+    """Every named face that is not excluded, its vector under face model `key` (a Suggest run's, which its faces are
+    compared by), as tagpup.core.clustering.KnownFaces: what a
     face is compared with to say who it is, KEYED BY PERSON (the node's id: two people called alike are two), `labels` holding
     each one's Ref. It was each person's mean face,
     with no years (docs/findings.md, #71).
@@ -743,7 +748,7 @@ def known_faces(db_path):
     """
     conn = db.connect(db_path, timeout=30.0)
     try:
-        rows = faces.named_for_known(conn)
+        rows = faces.named_for_known(conn, key)
     finally:
         conn.close()
     return clustering.KnownFaces.of(
