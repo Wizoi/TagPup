@@ -18,6 +18,9 @@ What the owner lives through, in one library:
   shows that offer: the model's cut decided it, and the tag floor (suggesting.OFFER_A_TAG, 0.60) is not a face's.
 - The switch is in the library's history, and undone there: the library reads by FaceNet again, Identify's cached named
   faces by its vectors, and neither model's vectors were written by the switch or its undo.
+- Switched back to FaceNet (never refused), the reply says only what is true of the faces under FaceNet: a face the new
+  model made while the library was on it holds no FaceNet vector and takes no part; no face is "in a photo the pass has
+  not reached", which is the new model's pass and no part of a switch back.
 - Switched back to FaceNet, the owner indexes a new folder under it: its faces hold FaceNet's vector alone. The switch
   back cannot be undone in History now: the undo would put the new model back with those faces in photos its pass has not
   reached, which the switch itself is refused for (settings.change's check, UNPASSED_SHARE_ALLOWED). History lists it
@@ -268,8 +271,23 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
 
     def test_the_switch_back_is_not_undone_onto_faces_the_pass_has_not_reached(self):
         self.switch(NEW)
+        # Indexed while on the new model: its photo's face holds the new model's vector alone, as the indexer files it.
+        conn = db.connect(self.library.path)
+        try:
+            dock = photo(os.path.join(self.folder, "Dock", "bollard.jpg"))
+            photo_rows.add_read(conn, dock, {})
+            add_face(conn, dock, (20, 20, 90, 90), alike(self.adaface_wren, 0.2, 9).tobytes(), model=NEW, prob=0.95)
+            conn.commit()
+        finally:
+            conn.close()
         back = self.switch(FACENET)
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+        counts = back["face_vectors"]
+        self.assertEqual({"faces": 3, "without": 1, "named_without": 0, "not_passed": 0},
+                         {k: v for k, v in counts.items() if k != "said"}, "a pass's count read for a switch back")
+        self.assertEqual("1 of the library's 3 faces holds no vector under %s and takes no part in comparing, clustering"
+                         " or the gallery of named faces while the library is on it." % FACENET,
+                         " ".join(counts["said"].split()))
 
         # A new folder indexed under FaceNet: its photo's face holds FaceNet's vector alone, as the indexer files it.
         conn = db.connect(self.library.path)
@@ -281,7 +299,7 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         finally:
             conn.close()
 
-        said = ("Nothing was written: 2 of the library's 3 faces hold a vector under %s; 0 named faces hold none, and would"
+        said = ("Nothing was written: 3 of the library's 4 faces hold a vector under %s; 0 named faces hold none, and would"
                 " leave the named faces Identify compares with until the pass reaches them; 1 face is in photos the pass"
                 " has not reached. A switch allows at most 5%% of the faces" % NEW)
         listed = self.client.get("/lakeside/api/history").get_json()["changes"]
