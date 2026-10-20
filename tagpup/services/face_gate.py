@@ -1,0 +1,141 @@
+"""The gate of phase 3, read-only (docs/AI_PIPELINE.md, phase 3, "Gate", and slice C as built): the new face model and
+FaceNet scored on the same named faces -- those holding a vector under both keys after the pass -- each named face matched
+against the library's other named faces of every OTHER folder (tagpup.core.holdout, the way section 7 read FaceNet's curve),
+by the margin of its top person over the second-best (clustering.margins) and by its likeness.
+
+For each precision the owner may choose, the cut is read off each model's curve (holdout.operating_point) and said with what
+it names: right, wrong, left for review, the recall (named right of the faces that could be), the library's unnamed faces it
+would name, and the same by the face's shorter side (the bands, and the floors a new face could be made at:
+face_pass.NEW_FACE_FLOOR is tuned here). A reading is "too thin" when its faces cannot tell the precision asked from what is
+under it (holdout.too_thin). And the pass's counts, from the library's rows and journal. Nothing is written; a library is
+opened read-only (db.readonly_uri), and nothing said names a person, a photo or a folder: counts only.
+"""
+import json
+
+import numpy as np
+
+from tagpup.core import holdout
+from tagpup.core.validation import MTCNN_FACENET, SCRFD_ADAFACE
+from tagpup.services import face_pass
+from tagpup.store import db, journal
+from tagpup.store import faces as store_faces
+
+#: The model the library reads today, and the one the pass gave its faces.
+OLD, NEW = MTCNN_FACENET, SCRFD_ADAFACE
+#: The bands of a face's shorter side, in pixels of the picture as stored: [low, high).
+BANDS = ((0, 30), (30, 40), (40, 50), (50, None))
+#: The floors a new face could be made at (face_pass.NEW_FACE_FLOOR among them).
+FLOORS = (30, 40, 50)
+#: Under this many faces evaluated, a library's curve is too thin to read at all.
+FEWEST = 100
+
+
+def _matrix(blobs):
+    matrix = np.array([np.frombuffer(blob, dtype=np.float32) for blob in blobs], dtype=np.float32).reshape(len(blobs), -1)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    return matrix / np.where(norms > 0, norms, 1)
+
+
+def _short_side(box):
+    x1, y1, x2, y2 = json.loads(box)[:4]
+    return min(x2 - x1, y2 - y1)
+
+
+def read(db_path, old=OLD, new=NEW):
+    """What the gate reads of one library, opened read-only: {"pass": the rows' counts (store.faces.pass_counts) and the
+    journal's ("changes", "journal_matched", "journal_new" of the pass's kept changes), "models": {key: the named faces
+    matched against each other by it, a face a row: "right", "reachable", "likeness", "margin", "short"; "unnamed_likeness",
+    "unnamed_margin" of the unnamed faces holding both vectors against the named}}, empty when no named face holds both."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        named = store_faces.under_both(conn, old, new, named=True)
+        unnamed = store_faces.under_both(conn, old, new, named=False) if named else []
+        counts = store_faces.pass_counts(conn, old, new)
+        kept = journal.kept_named(conn, face_pass.OPERATION % new)
+    finally:
+        conn.close()
+    counts.update(changes=len(kept), journal_matched=sum(int(s.get("matched", 0)) for _id, s in kept),
+                  journal_new=sum(int(s.get("new", 0)) for _id, s in kept))
+    people = np.array([row[1] for row in named], dtype=np.int64)
+    folders = holdout.numbered(row[3] for row in named)
+    photos = np.array([row[2] for row in named], dtype=np.int64)
+    unnamed_photos = np.array([row[2] for row in unnamed], dtype=np.int64)
+    short = np.array([_short_side(row[4]) for row in named], dtype=np.float64)
+    models = {}
+    for key, column in ((old, 5), (new, 6)) if named else ():
+        matrix = _matrix([row[column] for row in named])
+        best, likeness, margin, reachable = holdout.top_two(matrix, people, folders)
+        found = {"right": best == people, "reachable": reachable, "likeness": likeness, "margin": margin, "short": short,
+                 "unnamed_likeness": np.empty(0), "unnamed_margin": np.empty(0)}
+        if unnamed:
+            _best, found["unnamed_likeness"], found["unnamed_margin"], _seen = holdout.matched_against(
+                _matrix([row[column] for row in unnamed]), unnamed_photos, matrix, people, photos)
+        models[key] = found
+    return {"pass": counts, "models": models}
+
+
+def pooled(readings):
+    """The libraries' readings as one: each face was matched within its own library, so their rows are put end to end."""
+    models, scored = {}, [reading for reading in readings if reading["models"]]
+    for key in scored[0]["models"] if scored else ():
+        parts = [reading["models"][key] for reading in scored]
+        models[key] = {name: np.concatenate([part[name] for part in parts]) for name in parts[0]}
+    counts = {name: sum(reading["pass"][name] for reading in readings) for name in readings[0]["pass"]}
+    return {"pass": counts, "models": models}
+
+
+def _at(found, kept, cut, by):
+    """What naming the faces `kept` (a mask) at `cut` of `by` gives, counted on the faces whose person has a face in another
+    folder (`faces`; the curve's): named right or wrong, left for review, its precision and recall; and `alone_named`, the
+    faces whose person has none there that it would name (someone else, since their own is not there to be found)."""
+    named = kept & (np.nan_to_num(found[by], nan=-np.inf) >= cut)
+    could = kept & found["reachable"]
+    right = int((named & could & found["right"]).sum())
+    named_could = int((named & could).sum())
+    return {"faces": int(could.sum()), "named": named_could, "right": right, "wrong": named_could - right,
+            "review": int((could & ~named).sum()), "alone_named": int((named & ~found["reachable"]).sum()),
+            "precision": right / named_could if named_could else None,
+            "recall": right / int(could.sum()) if could.any() else None}
+
+
+def _model(found, precision):
+    """One model's reading at `precision`: the cut by margin and by likeness, what each names, and by size."""
+    reachable = found["reachable"]
+    every = np.ones(len(reachable), dtype=bool)
+    answer = {"evaluated": int(reachable.sum()), "faces": len(reachable)}
+    for by, cuts in (("margin", holdout.FINE_MARGIN_CUTS), ("likeness", holdout.FINE_LIKENESS_CUTS)):
+        values = np.nan_to_num(found[by][reachable], nan=-np.inf)
+        point = holdout.operating_point(holdout.curve(found["right"][reachable], values, cuts), precision)
+        if point is None:
+            answer[by] = None
+            continue
+        cut = point["cut"]
+        reading = {"cut": cut, "at": _at(found, every, cut, by),
+                   "thin": bool(holdout.too_thin(point["suggested"], precision)),
+                   "unnamed_named": int((np.nan_to_num(found["unnamed_" + by], nan=-np.inf) >= cut).sum()),
+                   "unnamed": len(found["unnamed_" + by])}
+        if by == "margin":
+            short = found["short"]
+            reading["bands"] = [dict(_at(found, (short >= low) & ((short < high) if high else True), cut, by),
+                                     low=low, high=high) for low, high in BANDS]
+            reading["floors"] = [{"floor": floor, "right_under": int((reachable & found["right"] & (short < floor) & (
+                np.nan_to_num(found[by], nan=-np.inf) >= cut)).sum())} for floor in FLOORS]
+        answer[by] = reading
+    return answer
+
+
+def score(reading, precisions, old=OLD, new=NEW):
+    """The gate's answer for one reading (a library's, or pooled): {"pass", "thin", "precisions": {p: {"old", "new",
+    "better"}}}; "better" is whether the new model names more right at its margin cut, or None when either is too thin
+    or reaches no cut."""
+    models = reading["models"]
+    evaluated = min(int(found["reachable"].sum()) for found in models.values()) if models else 0
+    answer = {"pass": reading["pass"], "evaluated": evaluated, "thin": evaluated < FEWEST, "precisions": {}}
+    for precision in precisions:
+        both = {"old": _model(models[old], precision), "new": _model(models[new], precision)} if models else {}
+        cuts = [both[side]["margin"] for side in ("old", "new")] if both else [None]
+        # The same faces are evaluated by both, so naming more right at the precision is the higher recall.
+        both["better"] = (None if answer["thin"] or any(cut is None or cut["thin"] for cut in cuts)
+                          else cuts[1]["at"]["right"] > cuts[0]["at"]["right"])
+        answer["precisions"][precision] = both
+    return answer
