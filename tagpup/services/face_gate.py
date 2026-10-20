@@ -9,7 +9,7 @@ between the models, and the verdict's. On the open set: every named face, a face
 not in the gallery by construction, so every name given it is wrong -- the precision the owner would live with, right /
 (named of both), and its cut. Each is said with what it names: right, wrong, left for review, the recall (named right of
 the faces that could be), the library's unnamed faces it would name, and on the closed set the same by the face's shorter side (the bands, and the floors a new face could be made at:
-face_pass.NEW_FACE_FLOOR is tuned here). A reading is "too thin" when its faces cannot tell the precision asked from what is
+tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR is read here). A reading is "too thin" when its faces cannot tell the precision asked from what is
 under it (holdout.too_thin). And the pass's counts, from the library's rows and journal. Nothing is written; a library is
 opened read-only (db.readonly_uri), and nothing said names a person, a photo or a folder: counts only.
 """
@@ -27,7 +27,7 @@ from tagpup.store import faces as store_faces
 OLD, NEW = MTCNN_FACENET, SCRFD_ADAFACE
 #: The bands of a face's shorter side, in pixels of the picture as stored: [low, high).
 BANDS = ((0, 30), (30, 40), (40, 50), (50, None))
-#: The floors a new face could be made at (face_pass.NEW_FACE_FLOOR among them).
+#: The floors a new face could be made at (tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR among them).
 FLOORS = (30, 40, 50)
 #: Under this many faces evaluated, a library's curve is too thin to read at all.
 FEWEST = 100

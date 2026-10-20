@@ -477,11 +477,6 @@ class _OnTheCard:
         self._turn.ensure()
         return self._model.detect_and_embed(*args, **kwargs)
 
-    def faces_in(self, *args, **kwargs):
-        # The phase 3 model's whole detection (tagpup.ml.scrfd_adaface.ScrfdAdaFace.faces_in): a look's one call.
-        self._turn.ensure()
-        return self._model.faces_in(*args, **kwargs)
-
 
 class _Lease:
     """One run's hold on a photo index and a set of models: `what` the run is ("Suggest Regatta (harbour)"), `models`
@@ -638,7 +633,8 @@ class Runtime:
         on those settings asks for them. Their weights load on first use, or in warm_up.
 
         Every write of faces gets its face models here (the CLI's index, Suggest's begin, Just look included, the
-        warm-up): refused, library_settings_service.FaceModelNotReady and nothing built, for a library set to a face
+        warm-up), whichever the library names: each answers the same calls (tagpup.ml.faces.FaceModel,
+        tagpup.ml.scrfd_adaface.ScrfdAdaFace): refused, library_settings_service.FaceModelNotReady and nothing built, for a library set to a face
         model whose vectors it cannot keep (LibrarySettings.face_model_refusal; #1643). A look that writes nothing
         builds its model by look_at_faces."""
         settings = settings or self.settings(library)
@@ -974,11 +970,11 @@ class Runtime:
     def look_at_faces(self, library, what=None, cancelled=None, report=None):
         """The new face model (validation.SCRFD_ADAFACE) for a look that writes nothing -- phase 3's pass reading what
         it finds, beside the faces a library holds, before any library is switched to it (docs/AI_PIPELINE.md, phase 3):
-        a RunModel whose `faces_in(path)` gives a photo's faces as the model finds them, and `end()`, which the caller
+        a RunModel whose `picture` and `detect_and_embed` give a photo's faces as the model finds them, and `end()`, which the caller
         calls in a finally. The model is the new one, not the library's (`library` gives the CLIP part of the set held,
         and its name to a run refused beside it), so a library refused its face model (Runtime.faces) can still be
         looked at. Reads the library's settings without stamping it (peek_settings) and writes nothing to it. The new
-        model alone: MTCNN's has no `faces_in`, and the library's own faces are read where they are kept.
+        model alone: the library's own faces are read where they are kept.
 
         Held as a run is (begin): its set -- the library's CLIP model's settings and {"model": SCRFD_ADAFACE} -- under a
         _Lease, so

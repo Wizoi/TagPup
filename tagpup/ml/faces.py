@@ -29,6 +29,13 @@ logger = logging.getLogger("tagpup_cli.faces")
 #: model found it (this one and tagpup.ml.scrfd_adaface).
 SMALLEST_FACE = 15
 
+#: What MTCNN's detections are told apart by (tagpup.store.faces_detected): the settings it is made from, the keys of
+#: tagpup.services.settings.LibrarySettings.faces but `model` (tests/test_service_faces.py holds them equal), and the cap
+#: on the picture it looks at (LibrarySettings.detect_max_side), part of the name only when there is one, so a library that
+#: sets none keeps every photo recorded as detected under the name it had (docs/AI_PIPELINE.md, phase 1a).
+DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
+DETECTOR_CAP = "detect_max_side"
+
 def detection_picture(img, max_side):
     """(the picture the detector is handed, (x, y) scale from it back to `img`): `img` itself and (1, 1) when there is
     no cap or its long side is within it; else `img` scaled so that its long side is `max_side` (docs/AI_PIPELINE.md,
@@ -132,7 +139,21 @@ class FaceModel:
         """Detect all faces in an image and generate 512-dimensional embeddings for each. `max_side` is the longest
         side of the picture the detector looks at, or None for the picture as it is: the library's
         (LibrarySettings.detect_max_side), given with each call, so one model serves libraries of any cap."""
-        return self.detect_and_embed(self.picture(img_path, max_side=max_side))
+        picture = self.picture(img_path, max_side=max_side)
+        return self.new_faces(self.detect_and_embed(picture), picture)
+
+    def detector(self, max_side):
+        """The settings its detections at the cap `max_side` are recorded under (tagpup.services.faces.detector_of):
+        DETECTOR_SETTINGS, and the cap only when there is one."""
+        values = {key: getattr(self, key) for key in DETECTOR_SETTINGS}
+        if max_side is not None:
+            values[DETECTOR_CAP] = max_side
+        return {key: list(value) if isinstance(value, tuple) else value for key, value in values.items()}
+
+    def new_faces(self, detected, picture):
+        """Of the faces detect_and_embed found in `picture`, those a detection makes a face of where the photo has none
+        to match them with (the index, Suggest): every one, its crop cut, as found."""
+        return detected
 
     def picture(self, img_path, *, max_side):
         """The photo made ready for the detector, on the processor alone (DetectionPicture): decoded as stored, scaled

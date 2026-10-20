@@ -7,7 +7,6 @@ test_identify_ignore_assign_restore_undo.py.
 import json
 import os
 import sys
-import types
 import unittest
 from unittest import mock
 
@@ -260,22 +259,24 @@ class AnAccountedWrite(FacesCase):
 
 class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
     def test_the_settings_a_detection_is_told_apart_by_are_those_a_face_model_is_made_from(self):
-        """services.faces.detector_of names a detection by DETECTOR_SETTINGS, which spell the keys of
-        LibrarySettings.faces again (importing the owner is an import cycle), and by the cap, LibrarySettings.
-        detect_max_side: a setting added to one and not the other would let a changed setting reuse an old detection.
-        Held equal here, with a cap set and with none. The face model (faces.model) is the one key not in the name:
-        MTCNN's detections alone are recorded (a library set to another is refused every write of faces,
-        LibrarySettings.face_model_refusal), so the name every row was written under stands until phase 3's pass."""
+        """services.faces.detector_of names an MTCNN detection by FaceModel's DETECTOR_SETTINGS, which spell the keys of
+        LibrarySettings.faces again (ml may not import services), and by the cap, LibrarySettings.detect_max_side: a
+        setting added to one and not the other would let a changed setting reuse an old detection. Held equal here, with
+        a cap set and with none. The face model (faces.model) is not in MTCNN's name, so the name every row was written
+        under stands; the new model's detections are named by its key alone, the cap not used."""
+        from tagpup.ml import faces as face_models
+        from tagpup.ml.scrfd_adaface import ScrfdAdaFace
         from tagpup.services import settings as library_settings
         for cap in ("", "2048"):
             with self.subTest(cap=cap):
                 made = library_settings.LibrarySettings(dict(library_settings.DEFAULTS, **{"faces.detect_max_side": cap}))
                 mtcnn = {key: value for key, value in made.faces.items() if key != "model"}
-                self.assertEqual(tuple(mtcnn), faces.DETECTOR_SETTINGS)
-                self.assertIsNone(made.face_model_refusal)
-                name = json.loads(faces.detector_of(types.SimpleNamespace(**mtcnn), made.detect_max_side))
-                expected = dict(mtcnn, **({faces.DETECTOR_CAP: made.detect_max_side} if cap else {}))
+                self.assertEqual(tuple(mtcnn), face_models.DETECTOR_SETTINGS)
+                name = json.loads(faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), made.detect_max_side))
+                expected = dict(mtcnn, **({face_models.DETECTOR_CAP: made.detect_max_side} if cap else {}))
                 self.assertEqual(expected, name)
+                self.assertEqual({"model": "scrfd-adaface"},
+                                 json.loads(faces.detector_of(ScrfdAdaFace(device="cpu"), made.detect_max_side)))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,11 @@ nose, the corners of the mouth), from which it is aligned onto the 112 x 112 tem
 the recogniser runs in half precision on the card, in fixed chunks. A face's vector is given normalized, and its length
 before (the norm) beside it: AdaFace's measure of how recognisable the face is.
 
-Built like tagpup.ml.faces.FaceModel, by tagpup.runtime only; nothing builds it yet (phase 3's next merge does).
+Built like tagpup.ml.faces.FaceModel, by tagpup.runtime only, and answering what FaceModel answers the index, Suggest and
+the face pass: `key`, `picture(path, max_side=)`, `picture_bytes`, `detect_and_embed(picture)`, `new_faces`,
+`detect_and_embed_faces(path, max_side=)` and `detector(max_side)` (docs/AI_PIPELINE.md, phase 3, merge 3 item 3). The
+library's cap on the detector's picture (faces.detect_max_side, MTCNN's) is taken and not used: the two squares are
+this detector's own.
 
 The weights are three files in torch's checkpoints folder (facenet-pytorch keeps its own there): the detector traced
 once for each square (TorchScript: the converted model cannot be traced for every size at once), and AdaFace's
@@ -49,6 +53,13 @@ DETECTOR_FILE = "scrfd_10g_%d.pt"
 RECOGNISER_FILE = "adaface_ir101_webface12m.safetensors"
 RECOGNISER_SOURCE = "https://huggingface.co/minchul/cvlface_adaface_ir101_webface12m (model.safetensors)"
 CONVERTER = "scripts/make_scrfd_torchscript.py"
+
+#: The shorter side, in pixels of the picture as stored, under which a detection is not made a new face, wherever one is
+#: made -- the index, Suggest, and the face pass for a detection no old face takes (owner, 2026-10-18): the detector's own
+#: floor is SMALLEST_FACE, and in one real folder 31 of its 40 new faces were under 40 px, smudges no one can recognise (the
+#: old detector's smallest was 23, its median 64). An old face a detection of any size matches still gets the vector (the
+#: pass). Read in slice C against held-out named faces (tagpup.services.face_gate.FLOORS).
+NEW_FACE_FLOOR = 40
 
 
 def weights_folder():
@@ -121,6 +132,19 @@ def merged(found):
         return []
     kept = nms(torch.from_numpy(boxes).float(), torch.from_numpy(scores).float(), OVERLAP).tolist()
     return [(boxes[i], float(scores[i]), points[i]) for i in kept]
+
+
+def new_faces(detected, picture):
+    """Of the faces detected in `picture` (detect_and_embed, of a ScrfdPicture), those that may be made new faces: at
+    least NEW_FACE_FLOOR on the shorter side, each with its crop, cut from the picture as stored by its box as every face's crop is
+    (images.face_crop_of). NotDetected is handed back."""
+    if isinstance(detected, NotDetected):
+        return detected
+    made = [dict(face) for face in detected
+            if min(face["box"][2] - face["box"][0], face["box"][3] - face["box"][1]) >= NEW_FACE_FLOOR]
+    for face in made:
+        face["crop_image"] = images.face_crop_of(picture.stored, face["box"])
+    return made
 
 
 def similarity(source, target):
@@ -217,15 +241,26 @@ class ScrfdAdaFace:
         self.detectors = detectors
         logger.info("Face models loaded.")
 
-    def faces_in(self, img_path):
-        """The faces of the photo at `img_path` (detect_and_embed): each its box, score, landmarks, vector and norm --
-        no crop, and no `max_side`, which tagpup.ml.faces.FaceModel's callers pass: nothing that writes faces is handed
-        this model before phase 3's pass (tagpup.runtime.Runtime.faces refuses it; Runtime.look_at_faces looks)."""
-        return self.detect_and_embed(self.picture(img_path))
+    def detect_and_embed_faces(self, img_path, *, max_side):
+        """The faces of the photo at `img_path` made new faces of (new_faces): what Suggest records of a photo with no face
+        on file. `max_side` is taken and not used (picture)."""
+        picture = self.picture(img_path, max_side=max_side)
+        return self.new_faces(self.detect_and_embed(picture), picture)
 
-    def picture(self, img_path):
+    def new_faces(self, detected, picture):
+        """Of the faces detect_and_embed found in `picture`, those a detection makes a face of where no old face takes
+        them (the module's new_faces: at least NEW_FACE_FLOOR, each with its crop)."""
+        return new_faces(detected, picture)
+
+    def detector(self, max_side):
+        """The settings its detections are recorded under (tagpup.services.faces.detector_of): its key alone, the cap not
+        being used, so no MTCNN detection's name is ever this one."""
+        return {"model": self.key}
+
+    def picture(self, img_path, *, max_side):
         """The photo made ready for the detector, on the processor alone (ScrfdPicture): decoded as stored, a turned
-        photo's boxes being kept in the picture as stored (tagpup.files.images), and fitted into each square.
+        photo's boxes being kept in the picture as stored (tagpup.files.images), and fitted into each square: the
+        squares are this detector's cap, and `max_side` (MTCNN's, the library's) is not used.
         NotDetected when the file is gone or its picture does not decode."""
         if not os.path.exists(img_path):
             return NotDetected()
@@ -242,10 +277,11 @@ class ScrfdAdaFace:
         return missing_weights(self.folder)
 
     @staticmethod
-    def picture_bytes(width, height):
+    def picture_bytes(width, height, *, max_side):
         """The bytes `picture` holds for a photo of `width` x `height`, at most: the picture as stored (RGB), and for each
-        square its canvas and the picture scaled into it. What the face pass's read-ahead reserves
-        (tagpup.services.face_pass); said here, beside what it counts."""
+        square its canvas and the picture scaled into it, `max_side` not used (picture). What the read-ahead of the index
+        and of the face pass reserves (tagpup_cli.read_ahead_bytes, tagpup.services.face_pass); said here, beside what it
+        counts."""
         return 3 * width * height + sum(2 * 3 * side * side for side in SCALES)
 
     def detect_and_embed(self, picture):

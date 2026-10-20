@@ -109,7 +109,7 @@ READ_AHEAD_BYTES = 1 << 30
 def read_ahead_bytes(width, height, clip=None, faces=None, max_side=None):
     """What a photo of `width` x `height` is reserved while it is read ahead: the larger of what each half it goes
     through holds at once -- CLIP's (`clip`, when its vector is to be made: ClipModel.input_bytes), whose pictures
-    are let go before the faces' are made, and the faces' (`faces`: FaceModel.picture_bytes), held until the card
+    are let go before the faces' are made, and the faces' (`faces`: its picture_bytes), held until the card
     has detected them. Each half says its own; this only takes the larger."""
     halves = [faces.picture_bytes(width, height, max_side=max_side)] if faces is not None else []
     if clip is not None:
@@ -491,7 +491,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
-                    faces = face_processor.detect_and_embed(picture)
+                    faces = face_processor.new_faces(face_processor.detect_and_embed(picture), picture)
                     batch_faces[path] = faces
 
                 # A photo already indexed is not removed first: build_or_update

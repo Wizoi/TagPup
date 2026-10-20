@@ -87,7 +87,7 @@ class _Model:
     def embed_text(self, text):
         return [0.0]
 
-    def faces_in(self, path):
+    def detect_and_embed_faces(self, path, *, max_side):
         self.looked += 1
         return []
 
@@ -470,7 +470,7 @@ class ALookWithTheNewModel(_Libraries):
                     self.assertIn("Looking at Regatta is using face models with model %s" % NEW,
                                   str(raised.exception))
                     for name in sorted(os.listdir(self.regatta)):
-                        self.assertEqual([], look.faces_in(os.path.join(self.regatta, name)))
+                        self.assertEqual([], look.detect_and_embed_faces(os.path.join(self.regatta, name), max_side=None))
                     self.assertTrue(self.card.holds())
                     raise RuntimeError("the look's caller failed part-way")
                 finally:
@@ -488,7 +488,7 @@ class ALookWithTheNewModel(_Libraries):
         self.begin(self.harbour).end()
 
     def test_it_looks_with_the_new_model_alone(self):
-        # MTCNN's model has no faces_in: a look is the new model's, never another named.
+        # A look is the new model's, never another named.
         with self.assertRaises(TypeError):
             self.runtime.look_at_faces(self.harbour, model=FACENET)
         self.assertEqual([], self.built)
@@ -510,7 +510,7 @@ class TheNewModelsWeightsNeverMade(_Libraries):
         look = self.runtime.look_at_faces(self.harbour)
         try:
             with self.assertRaises(FileNotFoundError) as raised:
-                look.faces_in(os.path.join(self.regatta, "mooring 0.jpg"))
+                look.detect_and_embed_faces(os.path.join(self.regatta, "mooring 0.jpg"), max_side=None)
         finally:
             look.end()
         self.assertEqual(scrfd_adaface.missing_weights(self.weights), str(raised.exception))
