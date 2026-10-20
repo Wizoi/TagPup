@@ -46,19 +46,25 @@ def _short_side(box):
 
 def read(db_path, old=OLD, new=NEW):
     """What the gate reads of one library, opened read-only: {"pass": the rows' counts (store.faces.pass_counts) and the
-    journal's ("changes", "journal_matched", "journal_new" of the pass's kept changes), "models": {key: the named faces
-    matched against each other by it, a face a row: "right", "reachable", "likeness", "margin", "short"; "unnamed_likeness",
-    "unnamed_margin" of the unnamed faces holding both vectors against the named}}, empty when no named face holds both."""
+    journal's ("changes", "journal_matched", "journal_new" of the pass's kept changes), and "unnamed_nobody", the unnamed
+    faces holding both vectors a person called nobody by hand (store.faces.manual_names), left out of the unnamed; "models":
+    {key: the named faces matched against each other by it, a face a row: "right", "reachable", "likeness", "margin",
+    "short"; "unnamed_likeness", "unnamed_margin" of the other unnamed faces holding both vectors against the named}},
+    empty when no named face holds both. The unnamed are held out by photo (each against the named of other photos: it
+    has no person, so no folder of its person to leave out), while the cut they are read at is the named faces' by folder."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         named = store_faces.under_both(conn, old, new, named=True)
         unnamed = store_faces.under_both(conn, old, new, named=False) if named else []
+        nobody = {face_id for face_id, ref in store_faces.manual_names(conn).items() if ref is None} if unnamed else set()
         counts = store_faces.pass_counts(conn, old, new)
         kept = journal.kept_named(conn, face_pass.OPERATION % new)
     finally:
         conn.close()
     counts.update(changes=len(kept), journal_matched=sum(int(s.get("matched", 0)) for _id, s in kept),
-                  journal_new=sum(int(s.get("new", 0)) for _id, s in kept))
+                  journal_new=sum(int(s.get("new", 0)) for _id, s in kept),
+                  unnamed_nobody=sum(row[0] in nobody for row in unnamed))
+    unnamed = [row for row in unnamed if row[0] not in nobody]
     people = np.array([row[1] for row in named], dtype=np.int64)
     folders = holdout.numbered(row[3] for row in named)
     photos = np.array([row[2] for row in named], dtype=np.int64)

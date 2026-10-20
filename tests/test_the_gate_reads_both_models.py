@@ -179,6 +179,30 @@ class TheGateReadsBothModels(unittest.TestCase):
         for name in PEOPLE + STRANGERS + ("Away", "Event"):
             self.assertNotIn(name, text)
 
+    def test_a_face_called_nobody_is_not_one_it_would_name(self):
+        """Two unnamed faces the pass matched; the owner called one of them nobody by hand (store.faces.unname, as the page
+        does). The gate's "unnamed it would name" counts the other alone: a decided nobody is not waiting for a name."""
+        conn = db.connect(self.big)
+        try:
+            photo = os.path.join(self.home.root, "Event 0", "Ilse 0.jpg")
+            change = journal.record(conn, face_pass.OPERATION % NEW_KEY, [], {"folder": "x", "matched": 0, "new": 0})
+            vector = np.ones(64, dtype=np.float32) / 8
+            ids = [add_face(conn, photo, (0, 70 * k, 60, 70 * k + 60), vector.tobytes(), prob=0.99) for k in (2, 3)]
+            store_faces.give_vectors(conn, change, photo, NEW_KEY, [(face_id, vector.tobytes()) for face_id in ids], [],
+                                     {"matched": 2, "new": 0})
+            store_faces.unname(conn, ids[:1])
+            conn.commit()
+        finally:
+            conn.close()
+        answers, text = run("--source", self.big, "--precision", "0.95")
+        harbour = answers["harbour"]
+        self.assertEqual(1, harbour["pass"]["unnamed_nobody"])
+        for side in ("old", "new"):
+            for kind in ("closed", "open"):
+                self.assertEqual(1, harbour["precisions"][0.95][side][kind]["margin"]["unnamed"])
+        self.assertIn("unnamed faces holding both vectors: 1 (1 called nobody by hand left out)", text)
+        self.assertIn("held out by photo", text)
+
     def test_a_model_whose_margins_run_past_half_is_read_there(self):
         """A model that separates people widely puts its wrong faces at margins over 0.5 too (AdaFace's live margins reach
         0.744): its cut is read where the precision is reached, not "no cut reaches it" because the grid stopped at 0.5."""

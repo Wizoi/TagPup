@@ -71,6 +71,9 @@ def lines(name, reading, answer):
     faces = len(models[face_gate.OLD]["reachable"])
     out.append("  named faces holding both vectors: %d; evaluated (their person in another folder) %d%s" % (
         faces, answer["evaluated"], ": TOO THIN to read (under %d)" % face_gate.FEWEST if answer["thin"] else ""))
+    out.append("  unnamed faces holding both vectors: %d (%d called nobody by hand left out), each matched against the "
+               "named of the other photos (held out by photo, while the cut is read held out by folder)" % (
+                   len(models[face_gate.OLD]["unnamed_margin"]), counts["unnamed_nobody"]))
     for key in (face_gate.OLD, face_gate.NEW):
         out.append("  %s by margin, precision (named): %s" % (LABELS[key], _curve(models[key])))
     for precision, both in answer["precisions"].items():
