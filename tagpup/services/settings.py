@@ -66,19 +66,6 @@ NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
 
-#: The face models a library can write faces under (faces.model): FaceNet's and, since phase 3's pass writes its vectors
-#: (docs/AI_PIPELINE.md, merge 3), SCRFD and AdaFace's. Since migration 33 each face's vectors are kept apart by model in
-#: `face_embeddings` (face_id, model) and every reader reads the library's model's alone (tagpup.store.faces.model_key),
-#: so two models' vectors are never compared. A library set to any other is refused every write of faces:
-#: LibrarySettings.face_model_refusal, which tagpup.runtime.Runtime.faces and the CLI's index read.
-KEPT_FACE_MODELS = frozenset({validation.MTCNN_FACENET, validation.SCRFD_ADAFACE})
-
-#: What a library set to a face model it cannot keep vectors of is told, wherever it asks to index or to suggest.
-FACE_MODEL_NOT_KEPT = (
-    "This library is set to a face model TagPup cannot write faces with. Set the face model (TagTuner's settings, %s) "
-    "to one of %s to index or to suggest." % (validation.SETTING_GROUPS["face-model"]["title"],
-                                              ", ".join(sorted(KEPT_FACE_MODELS))))
-
 #: The share of a library's faces that may be in photos the new model's pass has not reached when the library is switched
 #: to it (settings.change refuses a switch above it). Those faces hold no vector under the model switched to, so they
 #: take no part in comparing, clustering or the gallery of named faces until the pass reaches their photos. Not zero:
@@ -115,11 +102,6 @@ def _switch_to(library, model):
     return ("Nothing was written: %s A switch allows at most %d%% of the faces in photos the pass has not reached: "
             "finish the pass first (TagPup CLI: face-pass <folder> --apply, for each folder of the library)." % (
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
-
-
-class FaceModelNotReady(Exception):
-    """A library's face model was asked for to write faces with, and the library cannot keep its vectors
-    (KEPT_FACE_MODELS): the message is FACE_MODEL_NOT_KEPT. Raised by tagpup.runtime.Runtime.faces."""
 
 
 def _trim(text):
@@ -170,13 +152,6 @@ class LibrarySettings:
             "confidence_threshold": _float(self.values["faces.confidence_threshold"]),
             "mtcnn_thresholds": [_float(x) for x in self.values["faces.mtcnn_thresholds"].split(",")],
         }
-
-    @property
-    def face_model_refusal(self):
-        """FACE_MODEL_NOT_KEPT when the library is set to a face model whose vectors it cannot keep (KEPT_FACE_MODELS),
-        else None: what refuses every write of faces under it (tagpup.runtime.Runtime.faces; the CLI's index, before
-        it writes anything)."""
-        return None if _trim(self.values["faces.model"]) in KEPT_FACE_MODELS else FACE_MODEL_NOT_KEPT
 
     @property
     def detect_max_side(self):

@@ -54,7 +54,6 @@ from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
-from tagpup.jobs.suggestions import REFUSALS
 from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester
@@ -634,13 +633,8 @@ class Runtime:
 
         Every write of faces gets its face models here (the CLI's index, Suggest's begin, Just look included, the
         warm-up), whichever the library names: each answers the same calls (tagpup.ml.faces.FaceModel,
-        tagpup.ml.scrfd_adaface.ScrfdAdaFace): refused, library_settings_service.FaceModelNotReady and nothing built, for a library set to a face
-        model whose vectors it cannot keep (LibrarySettings.face_model_refusal; #1643). A look that writes nothing
-        builds its model by look_at_faces."""
+        tagpup.ml.scrfd_adaface.ScrfdAdaFace). A look that writes nothing builds its model by look_at_faces."""
         settings = settings or self.settings(library)
-        refusal = settings.face_model_refusal
-        if refusal:
-            raise library_settings_service.FaceModelNotReady(refusal)
         self.idle.used(MODELS)
         with self._lock:
             model = self._model(self._face_models, self._build_faces, settings.faces)
@@ -823,13 +817,8 @@ class Runtime:
     def _warm(self, library, settings, what):
         """warm_up's loading, under its lease."""
         try:
-            # The face models first: a library refused its face model (Runtime.faces) has no CLIP model built either.
             faces = self.faces(library, settings)
             models = (self.clip(library, settings), faces)
-        except REFUSALS as e:
-            # Refused, as a Suggest in it would be: a setting the owner chose, not a failure.
-            logger.info("Not warming the models of %s: %s", library.name, e)
-            return
         except Exception as e:
             logger.error("Could not make the models to warm them up: %s", e)
             return
