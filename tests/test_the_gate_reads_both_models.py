@@ -26,6 +26,7 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import FACENET, add_face  # noqa: E402
 
+from tagpup.ml import scrfd_adaface  # noqa: E402
 from tagpup.services import face_gate, face_pass  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -119,6 +120,8 @@ class TheGateReadsBothModels(unittest.TestCase):
             self.assertEqual([1, 1, 1, 1], [int(band["faces"] > 0) for band in new["bands"]])   # every band has faces
             under = [floor["right_under"] for floor in new["floors"]]
             self.assertEqual(sorted(under), under)   # a higher floor loses as many or more
+            # The floor a new face is made at is among those read: a new floor is not shipped unread.
+            self.assertIn(scrfd_adaface.NEW_FACE_FLOOR, [floor["floor"] for floor in new["floors"]])
             # A band of about 75 faces cannot tell 0.98 from what is under it (196 needed): said thin; the bands together can.
             if precision == 0.98:
                 self.assertEqual([True] * 4, [band["thin"] for band in new["bands"]])

@@ -27,7 +27,8 @@ from tagpup.store import faces as store_faces
 OLD, NEW = MTCNN_FACENET, SCRFD_ADAFACE
 #: The bands of a face's shorter side, in pixels of the picture as stored: [low, high).
 BANDS = ((0, 30), (30, 40), (40, 50), (50, None))
-#: The floors a new face could be made at (tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR among them).
+#: The floors a new face could be made at (tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR among them: a test of the gate fails
+#: when the floor is moved to one not read here).
 FLOORS = (30, 40, 50)
 #: Under this many faces evaluated, a library's curve is too thin to read at all.
 FEWEST = 100
