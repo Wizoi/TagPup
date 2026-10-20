@@ -19,9 +19,9 @@ named counts unchanged). **Merge 3, the pass:** slice A1 merged (one pairing rul
 the undo of a pass's face); slice A2 (the store layer and `tagpup/services/face_pass.py`, the model injected) is built
 and reviewed but NOT merged: two blockers to fix first (a photo removed while the pass runs must not be re-made as
 a ghost row; the change's name must not carry the folder) and two owner decisions taken (named old faces are
-paired first; new faces stay unnamed). **Next:** finish A2, then slice B (the CLI command, the weight files, a run
-on a copy, a small real folder the owner checks, one snapshot before an `--apply` run) and slice C (the gate:
-the owner picks the naming precision). Update a phase's status
+paired first; new faces stay unnamed). **Slice B** (the `face-pass` command) is built. **Slice C** (the gate's scoring,
+`scripts/measure_face_gate.py`, read-only) is built on `feature/gate-scoring`, as built below; the owner picks the naming
+precision from its numbers. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
@@ -417,6 +417,39 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
   what --apply would write (slice A2, "A dry run ... reads and counts the same"); by design.
 - The weight files are not in the checkpoints folder of this machine yet (counted 2026-10-18): the command refuses with
   the sentence of `missing_weights` before anything is done.
+
+**Merge 3, slice C, as built (2026-10-20): the gate's scoring, read-only.** What it is: `tagpup/core/holdout.py` (the
+hold-out and the curve, moved out of the phase 0 script), `tagpup.store.faces.under_both` (the named and unnamed faces
+holding both models' vectors) and `pass_counts`, `tagpup/services/face_gate.py` (the scoring), `scripts/measure_face_gate.py`
+(the program), scenario P9 (`tests/test_the_gate_reads_both_models.py`). It opens each library read-only, loads no model and
+takes no turn of the card.
+- Run: `.venv/Scripts/python.exe scripts/measure_face_gate.py --source data/kr-track.db --source data/renton_parkrun.db
+  [--precision 0.95 ...] [--out <folder outside the repo>]`; about 1 s.
+- Method (as section 7): the named faces, held out by folder, each person by their closest face; both models on the same
+  faces, the ones holding both vectors; the cut read on a 0.005 grid from the top. A row is "too thin" when fewer than 100
+  faces were evaluated or fewer than 4p/(1-p) at the cut.
+- Counted 2026-10-20 on kr-track and renton_parkrun (photo_index has not had the pass): 2,849 named faces hold both vectors
+  (pooled), 2,498 evaluated; verdict "yes" in every row. The sizes use the old MTCNN box.
+
+| Pooled precision | By margin: recall FaceNet | AdaFace | Cut FaceNet | Cut AdaFace |
+|---|---|---|---|---|
+| 0.95 | 0.9616 | 0.9740 | 0 | 0 |
+| 0.98 | 0.9452 | 0.9732 | 0.030 | 0.015 |
+| 0.99 | 0.9195 | 0.9628 | 0.060 | 0.060 |
+
+- At 0.99 FaceNet leaves 178 faces for review and AdaFace 70, 23 wrong each. By likeness at 0.99 the cut is 0.755 (FaceNet)
+  against 0.435 (AdaFace).
+- Size bands (AdaFace, margin cut at 0.99):
+
+| Shorter side | Faces | Recall |
+|---|---|---|
+| under 30 px | 6 | 1.0 |
+| 30 to 39 px | 31 | 0.903 |
+| 40 to 49 px | 54 | 0.96 |
+| 50 px and over | 2,758 | 0.9635 |
+
+- Recall if new faces under a floor were never made: floor 30 gives 0.9608, 40 gives 0.9496, 50 gives 0.9295.
+- Unnamed faces holding both vectors: 3,757; at pooled 0.99 by margin FaceNet would name 1,573, AdaFace 1,439.
 
 ### Phase 4: Matching, with the new model
 
