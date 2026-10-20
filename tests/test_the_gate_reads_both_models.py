@@ -32,17 +32,20 @@ from tagpup.store import faces as store_faces  # noqa: E402
 
 PEOPLE = ("Ilse Varnham", "Tobin Marlowe", "Odile Brackwater", "Fenn Ashgrove", "Calla Dunmore", "Rufus Pellingham",
           "Neve Holloway", "Bram Quenby", "Selma Ardwick", "Jory Castleton", "Wynn Halberd", "Petra Lunsford")
+#: People seen at one event only: each has a folder of their own, so held out by folder their own person is not in the gallery.
+STRANGERS = ("Ottilie Grisewood", "Lucan Merriweather")
 NEW_KEY = face_gate.NEW
 
 
-def library_of(home, name, people, faces_each, folders, old_noise, new_noise, seed):
+def library_of(home, name, people, faces_each, folders, old_noise, new_noise, seed, strangers=()):
     """A library in `home` whose `people` each have `faces_each` named faces, one a photo, spread over `folders` folders, each
     holding a FaceNet vector (`old_noise` from its person's centre) and, by the pass, the new model's (`new_noise`); plus, in the
-    first photo, an unnamed face the pass made and a named face it did not match. Its path."""
+    first photo, an unnamed face the pass made and a named face it did not match; and as many of each of the `strangers`, all
+    in a folder of their own. Its path."""
     rng = np.random.default_rng(seed)
     path = home.library(name)
     schema.ensure(path)
-    centres = {person: rng.normal(size=64) for person in people}
+    centres = {person: rng.normal(size=64) for person in tuple(people) + tuple(strangers)}
 
     def near(centre, noise):
         vector = centre / np.linalg.norm(centre) + rng.normal(scale=noise, size=64)
@@ -52,9 +55,10 @@ def library_of(home, name, people, faces_each, folders, old_noise, new_noise, se
     try:
         change = journal.record(conn, face_pass.OPERATION % NEW_KEY, [], {"folder": "x", "matched": 0, "new": 0})
         n = 0
-        for person in people:
+        for person in tuple(people) + tuple(strangers):
             for i in range(faces_each):
-                photo = os.path.join(home.root, "Event %d" % ((n + i) % folders), "%s %d.jpg" % (person.split()[0], i))
+                folder = "Away %d" % strangers.index(person) if person in strangers else "Event %d" % ((n + i) % folders)
+                photo = os.path.join(home.root, folder, "%s %d.jpg" % (person.split()[0], i))
                 photo_rows.add_unread(conn, photo)
                 side = 25 + 10 * (i % 4)   # 25, 35, 45 and 55 px: each band of the floor
                 face_id = add_face(conn, photo, (0, 0, side, side), near(centres[person], old_noise), name=person, prob=0.99)
@@ -107,7 +111,7 @@ class TheGateReadsBothModels(unittest.TestCase):
         self.assertFalse(harbour["thin"])
         for precision in (0.95, 0.98):
             both = harbour["precisions"][precision]
-            old, new = both["old"]["margin"], both["new"]["margin"]
+            old, new = both["old"]["closed"]["margin"], both["new"]["closed"]["margin"]
             self.assertTrue(both["better"], precision)
             self.assertGreater(new["at"]["recall"], old["at"]["recall"])
             self.assertGreaterEqual(new["at"]["precision"], precision)
@@ -135,6 +139,32 @@ class TheGateReadsBothModels(unittest.TestCase):
         for name in PEOPLE + ("Event", ".jpg"):
             self.assertNotIn(name, text)
 
+    def test_a_face_whose_person_is_not_in_the_gallery_is_named_wrong(self):
+        """Two people seen at one event only: held out by folder, their own person is not there to be found, so every name
+        the gate's cut gives their faces is wrong. The closed set (the models compared) leaves them out; the open set
+        counts them, its precision is lower at the same cut, and its own cut is read on that curve."""
+        path = library_of(self.home, "harbour away.db", PEOPLE, 25, 5, old_noise=0.16, new_noise=0.03, seed=3,
+                          strangers=STRANGERS)
+        answers, text = run("--source", path, "--precision", "0.95")
+        both = answers["harbour away"]["precisions"][0.95]
+        self.assertTrue(both["better"])
+        for side in ("old", "new"):
+            closed, opened = both[side]["closed"]["margin"], both[side]["open"]["margin"]
+            self.assertEqual(50, both[side]["alone"])
+            self.assertLessEqual(closed["at"]["open_precision"], closed["at"]["precision"])
+            self.assertGreaterEqual(opened["cut"], closed["cut"])
+            self.assertGreaterEqual(opened["at"]["open_precision"], 0.95)
+        # AdaFace names every face right on the closed set: its cut is the lowest, it names the strangers too, and says so.
+        closed = both["new"]["closed"]["margin"]
+        self.assertTrue(closed["every"])
+        self.assertEqual(50, closed["at"]["alone_named"])
+        self.assertLess(closed["at"]["open_precision"], 0.95)
+        self.assertGreater(both["new"]["open"]["margin"]["cut"], closed["cut"])
+        self.assertIn("no cut: it names every face", text)
+        self.assertIn("whose person is not in the gallery (alone in their folder) are all wrong", text)
+        for name in PEOPLE + STRANGERS + ("Away", "Event"):
+            self.assertNotIn(name, text)
+
     def test_a_model_whose_margins_run_past_half_is_read_there(self):
         """A model that separates people widely puts its wrong faces at margins over 0.5 too (AdaFace's live margins reach
         0.744): its cut is read where the precision is reached, not "no cut reaches it" because the grid stopped at 0.5."""
@@ -144,7 +174,7 @@ class TheGateReadsBothModels(unittest.TestCase):
                  "likeness": margin + 0.2, "short": np.full(count, 60.0), "unnamed_likeness": np.empty(0),
                  "unnamed_margin": np.empty(0)}
         reading = {"pass": {}, "models": {face_gate.OLD: found, face_gate.NEW: found}}
-        cut = face_gate.score(reading, [0.95])["precisions"][0.95]["new"]["margin"]
+        cut = face_gate.score(reading, [0.95])["precisions"][0.95]["new"]["closed"]["margin"]
         self.assertIsNotNone(cut, "no cut reached 0.95 though every face over 0.52 is right")
         self.assertGreater(cut["cut"], 0.5)
         self.assertEqual(300, cut["at"]["right"])

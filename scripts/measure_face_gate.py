@@ -30,10 +30,23 @@ def _p(value):
     return "-" if value is None else "%.4f" % value
 
 
-def _named(at):
-    return ("named %d (right %d, wrong %d), review %d, precision %s, recall %s; of the faces alone in their folder %d "
-            "named" % (at["named"], at["right"], at["wrong"], at["review"], _p(at["precision"]), _p(at["recall"]),
-                       at["alone_named"]))
+def _cut(found):
+    return "cut %.3f%s%s" % (found["cut"], " (no cut: it names every face)" if found["every"] else "",
+                             " (too thin)" if found["thin"] else "")
+
+
+def _closed(at):
+    return ("named %d (right %d, wrong %d), review %d, precision %s, recall %s; beside them it names %d faces alone in "
+            "their folder, all wrong: precision with them %s" % (
+                at["named"], at["right"], at["wrong"], at["review"], _p(at["precision"]), _p(at["recall"]),
+                at["alone_named"], _p(at["open_precision"])))
+
+
+def _open(at):
+    left = at["alone"] - at["alone_named"]
+    return ("named %d (right %d, wrong %d, %d of them alone in their folder), review %d (%d of them alone), precision %s, "
+            "recall %s" % (at["named"] + at["alone_named"], at["right"], at["wrong"] + at["alone_named"],
+                           at["alone_named"], at["review"] + left, left, _p(at["open_precision"]), _p(at["recall"])))
 
 
 def _curve(found):
@@ -61,20 +74,23 @@ def lines(name, reading, answer):
     for key in (face_gate.OLD, face_gate.NEW):
         out.append("  %s by margin, precision (named): %s" % (LABELS[key], _curve(models[key])))
     for precision, both in answer["precisions"].items():
-        out.append("  at precision %.2f:" % precision)
-        for by in ("margin", "likeness"):
-            for side, key in (("old", face_gate.OLD), ("new", face_gate.NEW)):
-                found = both[side][by]
-                if found is None:
-                    out.append("    %-8s %-7s no cut reaches it" % (by, LABELS[key]))
-                    continue
-                out.append("    %-8s %-7s cut %.3f%s: %s; unnamed it would name %d of %d" % (
-                    by, LABELS[key], found["cut"], " (too thin)" if found["thin"] else "", _named(found["at"]),
-                    found["unnamed_named"], found["unnamed"]))
+        for kind, title, said in (
+                ("closed", "closed set, the faces whose person has a face in another folder (the models compared)", _closed),
+                ("open", "open set, every named face: the names of faces whose person is not in the gallery (alone in "
+                 "their folder) are all wrong", _open)):
+            out.append("  at precision %.2f, %s:" % (precision, title))
+            for by in ("margin", "likeness"):
+                for side, key in (("old", face_gate.OLD), ("new", face_gate.NEW)):
+                    found = both[side][kind][by]
+                    if found is None:
+                        out.append("    %-8s %-7s no cut reaches it" % (by, LABELS[key]))
+                        continue
+                    out.append("    %-8s %-7s %s: %s; unnamed it would name %d of %d" % (
+                        by, LABELS[key], _cut(found), said(found["at"]), found["unnamed_named"], found["unnamed"]))
         verdict = {True: "yes", False: "no", None: "cannot tell (too thin, or no cut)"}[both["better"]]
-        out.append("    the new model names more faces right at its margin cut: %s" % verdict)
+        out.append("    the new model names more faces right at its margin cut, on the closed set: %s" % verdict)
         for side, key in (("old", face_gate.OLD), ("new", face_gate.NEW)):
-            found = both[side]["margin"]
+            found = both[side]["closed"]["margin"]
             if found is None:
                 continue
             bands = "; ".join("%s px %d faces, right %d, wrong %d, recall %s" % (

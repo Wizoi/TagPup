@@ -3,9 +3,12 @@ FaceNet scored on the same named faces -- those holding a vector under both keys
 against the library's other named faces of every OTHER folder (tagpup.core.holdout, the way section 7 read FaceNet's curve),
 by the margin of its top person over the second-best (clustering.margins) and by its likeness.
 
-For each precision the owner may choose, the cut is read off each model's curve (holdout.operating_point) and said with what
-it names: right, wrong, left for review, the recall (named right of the faces that could be), the library's unnamed faces it
-would name, and the same by the face's shorter side (the bands, and the floors a new face could be made at:
+For each precision the owner may choose, the cut is read off each model's curve (holdout.operating_point) twice. On the
+closed set: the faces whose person has a face in another folder, the precision right / named among them -- the comparison
+between the models, and the verdict's. On the open set: every named face, a face alone in its folder too, whose person is
+not in the gallery by construction, so every name given it is wrong -- the precision the owner would live with, right /
+(named of both), and its cut. Each is said with what it names: right, wrong, left for review, the recall (named right of
+the faces that could be), the library's unnamed faces it would name, and on the closed set the same by the face's shorter side (the bands, and the floors a new face could be made at:
 face_pass.NEW_FACE_FLOOR is tuned here). A reading is "too thin" when its faces cannot tell the precision asked from what is
 under it (holdout.too_thin). And the pass's counts, from the library's rows and journal. Nothing is written; a library is
 opened read-only (db.readonly_uri), and nothing said names a person, a photo or a folder: counts only.
@@ -85,55 +88,67 @@ def pooled(readings):
 
 
 def _at(found, kept, cut, by):
-    """What naming the faces `kept` (a mask) at `cut` of `by` gives, counted on the faces whose person has a face in another
-    folder (`faces`; the curve's): named right or wrong, left for review, its precision and recall; and `alone_named`, the
-    faces whose person has none there that it would name (someone else, since their own is not there to be found)."""
+    """What naming the faces `kept` (a mask) at `cut` of `by` gives. On the faces whose person has a face in another folder
+    (`faces`; the closed set): named right or wrong, left for review, its precision and recall. And `alone_named`, the faces
+    whose person has none there (`alone`) that it would name: someone else, since their own is not in the gallery, so each
+    is wrong; `open_precision` counts them: right / (named + alone_named)."""
     named = kept & (np.nan_to_num(found[by], nan=-np.inf) >= cut)
     could = kept & found["reachable"]
     right = int((named & could & found["right"]).sum())
     named_could = int((named & could).sum())
+    alone_named = int((named & ~found["reachable"]).sum())
     return {"faces": int(could.sum()), "named": named_could, "right": right, "wrong": named_could - right,
-            "review": int((could & ~named).sum()), "alone_named": int((named & ~found["reachable"]).sum()),
+            "review": int((could & ~named).sum()), "alone": int((kept & ~found["reachable"]).sum()),
+            "alone_named": alone_named,
             "precision": right / named_could if named_could else None,
+            "open_precision": right / (named_could + alone_named) if named_could + alone_named else None,
             "recall": right / int(could.sum()) if could.any() else None}
 
 
+def _reading(found, faces, precision, by, cuts):
+    """The cut by `by` for `precision` on the curve of the faces `faces` (a mask: the closed set's, or every face, the open
+    set's: a face alone in its folder counts as named wrong), and what it names; None when no cut reaches it. "every": the
+    cut is the lowest that names anything at all, so it is no cut -- it names every face it has a person for."""
+    values = np.nan_to_num(found[by][faces], nan=-np.inf)
+    point = holdout.operating_point(holdout.curve((found["right"] & found["reachable"])[faces], values, cuts), precision)
+    if point is None:
+        return None
+    cut = point["cut"]
+    return {"cut": cut, "every": bool(point["suggested"] == int(np.isfinite(values).sum())),
+            "at": _at(found, np.ones(len(faces), dtype=bool), cut, by),
+            "thin": bool(holdout.too_thin(point["suggested"], precision)),
+            "unnamed_named": int((np.nan_to_num(found["unnamed_" + by], nan=-np.inf) >= cut).sum()),
+            "unnamed": len(found["unnamed_" + by])}
+
+
 def _model(found, precision):
-    """One model's reading at `precision`: the cut by margin and by likeness, what each names, and by size."""
+    """One model's reading at `precision`: {"closed": {by: reading}, "open": {by: reading}} by margin and by likeness
+    (_reading), the closed set's margin reading by size too."""
     reachable = found["reachable"]
-    every = np.ones(len(reachable), dtype=bool)
-    answer = {"evaluated": int(reachable.sum()), "faces": len(reachable)}
+    answer = {"evaluated": int(reachable.sum()), "faces": len(reachable), "alone": int((~reachable).sum()),
+              "closed": {}, "open": {}}
     for by, cuts in (("margin", holdout.FINE_MARGIN_CUTS), ("likeness", holdout.FINE_LIKENESS_CUTS)):
-        values = np.nan_to_num(found[by][reachable], nan=-np.inf)
-        point = holdout.operating_point(holdout.curve(found["right"][reachable], values, cuts), precision)
-        if point is None:
-            answer[by] = None
-            continue
-        cut = point["cut"]
-        reading = {"cut": cut, "at": _at(found, every, cut, by),
-                   "thin": bool(holdout.too_thin(point["suggested"], precision)),
-                   "unnamed_named": int((np.nan_to_num(found["unnamed_" + by], nan=-np.inf) >= cut).sum()),
-                   "unnamed": len(found["unnamed_" + by])}
-        if by == "margin":
-            short = found["short"]
+        answer["open"][by] = _reading(found, np.ones(len(reachable), dtype=bool), precision, by, cuts)
+        reading = answer["closed"][by] = _reading(found, reachable, precision, by, cuts)
+        if by == "margin" and reading is not None:
+            cut, short = reading["cut"], found["short"]
             reading["bands"] = [dict(_at(found, (short >= low) & ((short < high) if high else True), cut, by),
                                      low=low, high=high) for low, high in BANDS]
             reading["floors"] = [{"floor": floor, "right_under": int((reachable & found["right"] & (short < floor) & (
                 np.nan_to_num(found[by], nan=-np.inf) >= cut)).sum())} for floor in FLOORS]
-        answer[by] = reading
     return answer
 
 
 def score(reading, precisions, old=OLD, new=NEW):
     """The gate's answer for one reading (a library's, or pooled): {"pass", "thin", "precisions": {p: {"old", "new",
-    "better"}}}; "better" is whether the new model names more right at its margin cut, or None when either is too thin
-    or reaches no cut."""
+    "better"}}}; "better" is whether the new model names more right at its margin cut on the closed set (the comparison
+    between the models: both are read on the same faces), or None when either is too thin or reaches no cut."""
     models = reading["models"]
     evaluated = min(int(found["reachable"].sum()) for found in models.values()) if models else 0
     answer = {"pass": reading["pass"], "evaluated": evaluated, "thin": evaluated < FEWEST, "precisions": {}}
     for precision in precisions:
         both = {"old": _model(models[old], precision), "new": _model(models[new], precision)} if models else {}
-        cuts = [both[side]["margin"] for side in ("old", "new")] if both else [None]
+        cuts = [both[side]["closed"]["margin"] for side in ("old", "new")] if both else [None]
         # The same faces are evaluated by both, so naming more right at the precision is the higher recall.
         both["better"] = (None if answer["thin"] or any(cut is None or cut["thin"] for cut in cuts)
                           else cuts[1]["at"]["right"] > cuts[0]["at"]["right"])
