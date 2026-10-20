@@ -119,6 +119,20 @@ class TheGateReadsBothModels(unittest.TestCase):
             self.assertEqual([1, 1, 1, 1], [int(band["faces"] > 0) for band in new["bands"]])   # every band has faces
             under = [floor["right_under"] for floor in new["floors"]]
             self.assertEqual(sorted(under), under)   # a higher floor loses as many or more
+            # A band of about 75 faces cannot tell 0.98 from what is under it (196 needed): said thin; the bands together can.
+            if precision == 0.98:
+                self.assertEqual([True] * 4, [band["thin"] for band in new["bands"]])
+                self.assertFalse(new["thin"])
+            # The floor read twice: an old face under it counted as missed, or left out (the floor makes no new face
+            # under it, so an old face there is not lost); the second is the bands at or above the floor, pooled.
+            for floor, start in zip(new["floors"], (1, 2, 3)):
+                above = new["bands"][start:]
+                self.assertAlmostEqual(sum(band["right"] for band in above) / sum(band["faces"] for band in above),
+                                       floor["recall_at_or_above"])
+                self.assertAlmostEqual((new["at"]["right"] - floor["right_under"]) / new["at"]["faces"],
+                                       floor["recall_counting_under"])
+        self.assertRegex(text, r"px \d+ faces, right \d+, wrong \d+, recall [0-9.]+ [(]thin[)]")
+        self.assertIn("among the faces at or above it", text)
 
         # The pass's counts, from the rows and the journal: the unmatched named face is on the review list.
         counts = harbour["pass"]

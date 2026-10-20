@@ -93,15 +93,18 @@ def lines(name, reading, answer):
             found = both[side]["closed"]["margin"]
             if found is None:
                 continue
-            bands = "; ".join("%s px %d faces, right %d, wrong %d, recall %s" % (
+            bands = "; ".join("%s px %d faces, right %d, wrong %d, recall %s%s" % (
                 "%d-%d" % (band["low"], band["high"] - 1) if band["high"] else "%d+" % band["low"], band["faces"],
-                band["right"], band["wrong"], _p(band["recall"])) for band in found["bands"])
-            could = found["at"]["faces"]
-            floors = "; ".join("%d px: recall %s (%d right under it)" % (
-                floor["floor"], _p((found["at"]["right"] - floor["right_under"]) / could if could else None),
-                floor["right_under"]) for floor in found["floors"])
-            out.append("    %-7s by size: %s" % (LABELS[key], bands))
-            out.append("    %-7s were faces under a floor never made: %s" % (LABELS[key], floors))
+                band["right"], band["wrong"], _p(band["recall"]), " (thin)" if band["thin"] else "")
+                for band in found["bands"])
+            floors = "; ".join("%d px: recall %s counting the %d faces under it as missed (%d right), %s among the faces "
+                               "at or above it" % (floor["floor"], _p(floor["recall_counting_under"]),
+                                                   floor["faces_under"], floor["right_under"],
+                                                   _p(floor["recall_at_or_above"])) for floor in found["floors"])
+            out.append("    %-7s by size (closed set; thin: too few named to tell the precision): %s" % (LABELS[key], bands))
+            out.append("    %-7s were faces under a floor never made: %s. The floor applies only to a detection no old "
+                       "face took, so an old face under it is not lost: the first reading is the bound, the second the "
+                       "recall of the faces it keeps" % (LABELS[key], floors))
     return out
 
 

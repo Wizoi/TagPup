@@ -121,6 +121,19 @@ def _reading(found, faces, precision, by, cuts):
             "unnamed": len(found["unnamed_" + by])}
 
 
+def _floor(found, at, floor, cut, by):
+    """What a floor at `floor` px would have left of the named right at `cut`, read twice: "recall_counting_under" counts an
+    old face under the floor as missed (right_under taken from the right, over every face that could be named), and
+    "recall_at_or_above" leaves those faces out (the floor stops the pass making a new face under it; an old face there is
+    kept, so this is the recall among the faces at or above it)."""
+    under = found["reachable"] & (found["short"] < floor)
+    right_under = int((under & found["right"] & (np.nan_to_num(found[by], nan=-np.inf) >= cut)).sum())
+    above = at["faces"] - int(under.sum())
+    return {"floor": floor, "right_under": right_under, "faces_under": int(under.sum()),
+            "recall_counting_under": (at["right"] - right_under) / at["faces"] if at["faces"] else None,
+            "recall_at_or_above": (at["right"] - right_under) / above if above else None}
+
+
 def _model(found, precision):
     """One model's reading at `precision`: {"closed": {by: reading}, "open": {by: reading}} by margin and by likeness
     (_reading), the closed set's margin reading by size too."""
@@ -132,10 +145,10 @@ def _model(found, precision):
         reading = answer["closed"][by] = _reading(found, reachable, precision, by, cuts)
         if by == "margin" and reading is not None:
             cut, short = reading["cut"], found["short"]
-            reading["bands"] = [dict(_at(found, (short >= low) & ((short < high) if high else True), cut, by),
-                                     low=low, high=high) for low, high in BANDS]
-            reading["floors"] = [{"floor": floor, "right_under": int((reachable & found["right"] & (short < floor) & (
-                np.nan_to_num(found[by], nan=-np.inf) >= cut)).sum())} for floor in FLOORS]
+            reading["bands"] = [dict(at, low=low, high=high, thin=bool(holdout.too_thin(at["named"], precision)))
+                                for low, high in BANDS
+                                for at in [_at(found, (short >= low) & ((short < high) if high else True), cut, by)]]
+            reading["floors"] = [_floor(found, reading["at"], floor, cut, by) for floor in FLOORS]
     return answer
 
 
