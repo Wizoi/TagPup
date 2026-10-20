@@ -3,7 +3,9 @@ phase 3, merge 3 item 3), keeps working in it, and switches back.
 
 What the owner lives through, in one library:
 
-- The switch is allowed: every face is in a photo the pass reached (tagpup.services.settings.change).
+- The switch, in the gear's dialog (POST /api/settings), is allowed: every face is in a photo the pass reached
+  (tagpup.services.settings.change), and the reply says what the faces hold under the new model, for the dialog to show.
+  Identify's named faces, cached against the faces fingerprint (which holds the model), are read again by the new model.
 - Name faces from tags, asked first (a dry run), reads the new model's vectors by its own cuts: a photo with one face and
   one person whose face is 0.6 like the person's named face is like them enough to name (AdaFace names unasked from
   0.520; by FaceNet's 0.80 the same number would not be).
@@ -14,8 +16,10 @@ What the owner lives through, in one library:
   the face (its vector the new model's alone, a crop), and offers the person whose named face it is 0.45 like: AdaFace
   offers from 0.310, FaceNet's 0.70 would not. The panel (SuggestionModel.offered, what Apply All and the writers take)
   shows that offer: the model's cut decided it, and the tag floor (suggesting.OFFER_A_TAG, 0.60) is not a face's.
-- Switching back to FaceNet is allowed, and FaceNet reads its own vectors again; neither model's vectors were written by
-  either switch.
+- The switch is in the library's history, and undone there: the library reads by FaceNet again, Identify's cached named
+  faces by its vectors, and neither model's vectors were written by the switch or its undo.
+- A Suggest run or an index begun before a switch keeps the model it began with to its end (Runtime.begin's lease, the
+  CLI index's one `runtime.faces`); the next one reads the library's model (tests/test_the_runtime_keeps_models_by_settings.py).
 
 Fictional names; a library in a home of the test's own; the new model as tagpup.runtime builds it, its weights not
 loaded and its two networks stood in for (`_detected`, `embed`): the picture, the floor, the crop and the detector name
@@ -37,14 +41,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import stand_in_models  # noqa: E402
+import web_client  # noqa: E402
 from face_rows import FACENET, add_face, add_vector_of_face  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.core import clustering, paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs import identify as identify_jobs  # noqa: E402
 from tagpup.ml import clip, scrfd_adaface  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
-from tagpup.services import faces_from_tags, identify  # noqa: E402
+from tagpup.services import faces_from_tags  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
@@ -105,13 +112,15 @@ class TheNewModelStoodIn:
 
 @unittest.skipIf(own_home.installed_exiftool() is None, "ExifTool not installed")
 class ALibrarySwitchedToTheNewModel(unittest.TestCase):
-    """lakeside: one folder; Wren Calloway named by hand on one photo, and a photo whose keyword names her holding one
-    face nobody named; every face holding FaceNet's vector and the new model's (its pass done)."""
+    """lakeside, open in TagTuner: one folder; Wren Calloway named by hand on one photo, and a photo whose keyword names
+    her holding one face nobody named; every face holding FaceNet's vector and the new model's (its pass done)."""
 
     def setUp(self):
-        self.home = own_home.for_test(self, prefix="switched_model_")
+        self.runtime = Runtime(build_clip=lambda settings: stand_in_models.Clip(CLIP_DIM))
+        app, self.home = web_client.app_for(self, "tuner", startup="lakeside.db", runtime=self.runtime)
+        self.client = app.test_client()
         self.library = Library(self.home.library("lakeside.db"))
-        self.assertEqual(1, library_actions.create(self.library.path).changed)
+        self.addCleanup(self.runtime.forget, self.library)
         self.folder = paths.stored(os.path.join(self.home.root, "Lakeside"))
         os.makedirs(self.folder)
         library_actions.record_added(self.library, [self.folder])
@@ -150,8 +159,26 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         return dict(self.read("SELECT model, COUNT(*) FROM face_embeddings GROUP BY model"))
 
     def switch(self, model):
-        changed = library_settings.change(self.library, {"faces.model": model}, acknowledged=["face-model"])
-        self.assertEqual(1, changed.changed, changed.refused)
+        """Switched in the gear's dialog, its consequences ticked: the reply."""
+        reply = self.client.post("/lakeside/api/settings", json={"values": {"faces.model": model},
+                                                                  "acknowledged": ["face-model"]})
+        self.assertEqual(200, reply.status_code, reply.data)
+        answer = reply.get_json()
+        self.assertEqual((1, True), (answer["changed"], answer["locked"]), answer)
+        return answer
+
+    def undo(self, change):
+        """The change undone in History, rehearsed first."""
+        url = "/lakeside/api/history/%d/undo" % change
+        self.assertTrue(self.client.post(url, json={}).get_json()["dry_run"])
+        reply = self.client.post(url, json={"apply": True})
+        self.assertEqual(200, reply.status_code, reply.data)
+        return reply.get_json()
+
+    def named_vector(self, cache):
+        """Wren's named face's vector in Identify's named faces, as the server's cache answers them."""
+        ids, _people, matrix = identify_jobs.named_faces(self.library, cache)
+        return matrix[list(ids).index(self.named)]
 
     def index(self, folder):
         """`tagpup_cli.py index` of `folder`, as the server's queue runs it; CLIP stood in for."""
@@ -179,10 +206,17 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
             paths.stored(path))])
         return face_id, box
 
-    def test_the_owner_switches_works_in_it_and_switches_back(self):
+    def test_the_owner_switches_works_in_it_and_undoes_the_switch(self):
         before = self.vectors_by_model()
         self.assertEqual({FACENET: 2, NEW: 2}, before)
-        self.switch(NEW)
+        grids = identify_jobs.GridCache()
+        np.testing.assert_allclose(self.facenet_wren, self.named_vector(grids), atol=1e-6)
+        switched = self.switch(NEW)
+        counts = switched["face_vectors"]
+        self.assertEqual({"faces": 2, "without": 0, "named_without": 0, "not_passed": 0},
+                         {k: v for k, v in counts.items() if k != "said"})
+        self.assertIn("2 of the library's 2 faces hold a vector under %s" % NEW, " ".join(counts["said"].split()))
+        np.testing.assert_allclose(self.adaface_wren, self.named_vector(grids), atol=1e-6)
 
         # Name faces from tags, asked first: shore's face is 0.6 like Wren's named face, by the new model's vectors.
         planned = faces_from_tags.plan(self.library)
@@ -206,9 +240,7 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         visitor = photo(os.path.join(self.folder, "Visitors", "pier.jpg"))
         self.model.boxes = [(60, 30, 140, 110)]
         self.model.vectors = [alike(self.adaface_wren, 0.45, 7)]
-        runtime = Runtime(build_clip=lambda settings: stand_in_models.Clip(CLIP_DIM))
-        self.addCleanup(runtime.forget, self.library)
-        run = runtime.begin(self.library, what="Suggest Visitors (lakeside)")
+        run = self.runtime.begin(self.library, what="Suggest Visitors (lakeside)")
         try:
             suggested = run.suggester.suggest_for_photo(visitor, [0.1] * CLIP_DIM)
             _tags, people, _title = run.offered(suggested)
@@ -220,14 +252,15 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         self.assertFalse(clustering.FACENET_CUTS.is_offered(0.45, math.inf), "the case is not one FaceNet's cuts offer")
         self.made_by_the_new_model(visitor, detected=False)
 
-        # Switched back: FaceNet reads its own vectors again, and no switch wrote a vector.
+        # The switch is in History, and undone there: FaceNet reads its own vectors again, and no vector was written.
         during = self.vectors_by_model()
         self.assertEqual({FACENET: 2, NEW: 4}, during)
-        self.switch(FACENET)
+        [newest] = journal_service.history(self.library, limit=1)["changes"]
+        self.assertEqual((switched["change"], library_settings.CHANGE), (newest["id"], newest["operation"]))
+        self.assertEqual(1, self.undo(switched["change"])["changed"])
+        self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
         self.assertEqual(during, self.vectors_by_model())
-        ids, _people, matrix = identify.named_faces(self.library)[1]
-        self.assertIn(self.named, list(ids))
-        np.testing.assert_allclose(self.facenet_wren, matrix[list(ids).index(self.named)], atol=1e-6)
+        np.testing.assert_allclose(self.facenet_wren, self.named_vector(grids), atol=1e-6)
 
 
 if __name__ == "__main__":
