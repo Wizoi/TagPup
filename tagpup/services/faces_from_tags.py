@@ -28,7 +28,7 @@ KIND = "face named from its photo's tag"
 
 #: Why a second apply asks to be said again (#840).
 AGAIN = ("Naming faces from tags was applied to this library before, and not undone. The faces it named then are references for "
-         "the next run, which names the faces that look like them from 0.70, so each apply can name more and a person's "
+         "the next run, which names the faces that look like them as much as a name is offered at, so each apply can name more and a person's "
          "references can drift one step at a time (the rule on a save does the same).")
 
 
@@ -92,8 +92,9 @@ def _plan(library, on_step=None, folder=None):
                 # Of the photos with one face and one person (#833), by how the face looks like the person.
                 "one_face_one_person": found.counts["tag_alone"],
                 "person_has_no_decided_face": found.counts["no_decided_face"],
-                "like_them_from_0.80": found.counts["like_them"],
-                "like_them_from_0.70_to_0.80": found.counts["like_them_somewhat"],
+                # By the cuts of the library's face model (tagpup.core.clustering.Cuts): enough to name unasked, or to offer.
+                "like_them_enough_to_name": found.counts["like_them"],
+                "like_them_enough_to_offer": found.counts["like_them_somewhat"],
                 "not_like_them": found.counts["not_like_them"],
                 "not_decidable_yet": found.counts["not_decidable_yet"],
                 "face_unreadable": found.counts["unreadable_face"],

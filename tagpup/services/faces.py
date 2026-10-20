@@ -364,8 +364,8 @@ def remove_folder(library, folder):
 
 def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     """Automatch the unnamed faces in a photo, or under a folder. A face is given the name of the named
-    face it most resembles, when it may be named unasked (clustering.names_unasked: the likeness and the margin over the next
-    person), unless that name is already
+    face it most resembles, when it may be named unasked (clustering.Cuts.names_unasked of the library's face model: the
+    likeness and the margin over the next person), unless that name is already
     in its photo or proposed for two faces there.
 
     The faces are compared before the write lock is taken -- building the named matrix
@@ -429,12 +429,13 @@ def written_report(library, face_ids, folder):
 
 def propose_guesses(library, named, photo_path=None, folder=None):
     """(the number of unnamed faces looked at, {photo path: [(face id, person)]}): each unnamed face in a photo, or under a
-    folder at any depth, that may be named unasked after the named face it most resembles (clustering.names_unasked); the
-    person is their id. Reads only; the compare happens before any write lock is taken.
+    folder at any depth, that may be named unasked after the named face it most resembles (clustering.Cuts.names_unasked,
+    the library's face model's: the model the unnamed faces' vectors were read under); the person is their id. Reads only; the compare happens before any write lock is taken.
     `named()` gives the decided faces (_automatch)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         unnamed = faces.unnamed(conn, photo_path=photo_path, folder=folder)
+        cuts = clustering.cuts_of(faces.model_key(conn))
     finally:
         conn.close()
     if not unnamed:
@@ -442,7 +443,7 @@ def propose_guesses(library, named, photo_path=None, folder=None):
     known = named()
     if known[2] is None:
         return len(unnamed), {}
-    return len(unnamed), _closest_named(unnamed, known)
+    return len(unnamed), _closest_named(unnamed, known, cuts)
 
 
 def decide_guesses(conn, proposed):
@@ -494,9 +495,9 @@ def _write_guesses(conn, proposed):
 COMPARE_BLOCK = 512
 
 
-def _closest_named(unnamed, named):
+def _closest_named(unnamed, named, cuts):
     """{photo: [(face_id, person)]} for each of `unnamed` (id, embedding, photo) whose closest
-    named face it may be named after unasked. Compared a block at a time: one product per
+    named face it may be named after unasked (`cuts`, the face model's: clustering.Cuts). Compared a block at a time: one product per
     face made Re-examine on a folder of 2,600 photos and 9,400 unnamed faces, against
     36,000 named ones, take 32 to 47 seconds; a block at a time, 2 to 5. A face whose
     embedding is not the matrix's width is compared with nobody, where it failed the
@@ -516,8 +517,8 @@ def _closest_named(unnamed, named):
         columns, likenesses, margins = clustering.best_of(by_person.table(vectors @ grouped.T, grouped=True))
         for row, (face_id, _blob, face_photo) in enumerate(block):
             # As alike, and as far ahead of the next person, as naming a face with no one looking allows
-            # (tagpup.core.clustering).
-            if clustering.names_unasked(float(likenesses[row]), float(margins[row])):
+            # (tagpup.core.clustering.Cuts).
+            if cuts.names_unasked(float(likenesses[row]), float(margins[row])):
                 proposed.setdefault(face_photo, []).append((face_id, by_person.keys[columns[row]]))
     return proposed
 
@@ -539,7 +540,7 @@ def panel(library, photo_path, named):
 
     The similarity is to the nearest single named face of that person, from the matrix
     `/api/face-matches` reads, so the strip and the boxes cannot disagree (#828). Below the value every screen offers a name from
-    (tagpup.core.clustering.is_offered) the nearest name is noise, not a candidate:
+    (tagpup.core.clustering.Cuts.is_offered, the library's face model's) the nearest name is noise, not a candidate:
     it was 0.5 here, which two strangers in three reach (docs/findings.md, #75).
     Named first, then by confidence, then largest first: the faces needing attention
     are the ones the eye should land on.
@@ -550,6 +551,7 @@ def panel(library, photo_path, named):
         if not rows:
             return {"faces": [], "total": 0, "unmatched": 0}
         everyone = person_ids.Directory.read(conn)
+        cuts = clustering.cuts_of(faces.model_key(conn))
     finally:
         conn.close()
 
@@ -563,7 +565,7 @@ def panel(library, photo_path, named):
         suggestion = suggested = similarity = None
         if emb and name is None and not excluded:
             for suggested, alike, margin in identify.nearest_people(named(), np.frombuffer(emb, dtype=np.float32), face_id, 1):
-                if clustering.is_offered(alike, margin):
+                if cuts.is_offered(alike, margin):
                     suggestion, similarity = suggested.name, round(alike, 4)
                 else:
                     suggested = None

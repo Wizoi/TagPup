@@ -356,11 +356,12 @@ def face_matches(library, face_id, named):
     try:
         target_emb = _embedding_of(conn, face_id)
         everyone = person_ids.Directory.read(conn)
+        cuts = face_rules.cuts_of(faces.model_key(conn))
     finally:
         conn.close()
 
     return [{"name": found.name, "person": everyone.of_id(found.id), "similarity": similarity,
-             "band": face_rules.band(similarity, margin)}
+             "band": cuts.band(similarity, margin)}
             for found, similarity, margin in nearest_people(named(), target_emb, face_id)]
 
 
@@ -496,7 +497,8 @@ def unnamed_faces(library):
 
 def unnamed_like(library, face_id, unnamed=None, *, named):
     """{"matches": [...]}: the other nameless faces alike enough to be gathered for New
-    Person without a look at each, best first (tagpup.core.clustering.gathers_for_a_new_person): as like the face as naming
+    Person without a look at each, best first (tagpup.core.clustering.Cuts.gathers_for_a_new_person, the library's
+    face model's): as like the face as naming
     unasked asks, and by the margin a name is offered at more like it than like anyone named (`named()`, named_faces'
     matrix; the face is the new person's one face, everyone named the others it could be, tagpup.core.clustering.margins).
 
@@ -506,10 +508,11 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
     conn = _reading(library)
     try:
         target_emb = _embedding_of(conn, face_id)
+        cuts = face_rules.cuts_of(faces.model_key(conn))
     finally:
         conn.close()
     pool = unnamed() if unnamed is not None else unnamed_faces(library)[1]
-    candidates = [fid for fid in pool.near(target_emb, face_rules.might_name_unasked) if fid != face_id]
+    candidates = [fid for fid in pool.near(target_emb, cuts.might_name_unasked) if fid != face_id]
     if not candidates:
         return {"matches": []}
     conn = _reading(library)
@@ -528,7 +531,7 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
     matches = []
     for (fid, photo_path, box_json, emb_bytes), margin in zip(faces_rows, margins):
         sim = float(np.dot(np.frombuffer(emb_bytes, dtype=np.float32), target_emb))
-        if fid != face_id and face_rules.gathers_for_a_new_person(sim, margin):
+        if fid != face_id and cuts.gathers_for_a_new_person(sim, margin):
             matches.append({
                 "id": fid,
                 "photo_path": photo_path,
@@ -559,6 +562,7 @@ def person_faces(library, person, limit=100, page=1):
         total_count = faces.count_named(conn, ref)
         all_matched_rows = faces.person_embeddings(conn, ref)
         rows = faces.person_page(conn, ref, limit, offset)
+        cuts = face_rules.cuts_of(faces.model_key(conn))
     finally:
         conn.close()
 
@@ -583,9 +587,9 @@ def person_faces(library, person, limit=100, page=1):
             "mtime": r[4] if r[4] is not None else 0.0,
             "year": shown_year(r[6]),
             # Shown as it is; whether the name looks wrong is decided here, not on the
-            # page (tagpup.core.clustering.looks_wrong).
+            # page (tagpup.core.clustering.Cuts.looks_wrong, the library's face model's).
             "similarity": 1.0 if similarity is None else similarity,
-            "possibly_wrong": face_rules.looks_wrong(similarity),
+            "possibly_wrong": cuts.looks_wrong(similarity),
         })
 
     has_more = (offset + len(found)) < total_count if limit >= 0 else False
@@ -770,6 +774,7 @@ def grid(library, name, named, on_progress=None):
     conn = _reading(library)
     try:
         stamp = faces.fingerprint(conn)
+        cuts = face_rules.cuts_of(faces.model_key(conn))
         unmatched_rows = faces.unnamed_for_matching(conn)
         matched_by_photo = faces.names_by_photo(conn) if unmatched_rows else {}
     finally:
@@ -812,7 +817,7 @@ def grid(library, name, named, on_progress=None):
         return stamp, _empty_grid()
 
     # A group is offered a name from the value every screen offers one from
-    # (tagpup.core.clustering.is_offered): below it a suggestion is more distraction
+    # (tagpup.core.clustering.Cuts.is_offered, the library's face model's): below it a suggestion is more distraction
     # than help. The number is always shown, and its band says how sure it is.
     report("reading", 0.7, "Reading the faces already named")
     known = face_rules.FaceRows.of(named())
@@ -857,7 +862,7 @@ def grid(library, name, named, on_progress=None):
                 if not usable[i]:
                     continue
                 score, margin = float(scores[offset]), float(margins[offset])
-                results[i] = (known_people[by_person.first[columns[offset]]] if face_rules.is_offered(score, margin) else None,
+                results[i] = (known_people[by_person.first[columns[offset]]] if cuts.is_offered(score, margin) else None,
                               score, margin)
         return results
 
@@ -937,7 +942,7 @@ def grid(library, name, named, on_progress=None):
             "suggested_name": suggested_name,
             "suggested_person_id": suggested_person.id if suggested_person else None,
             "suggested_similarity": round(suggested_sim, 3),
-            "suggestion_strength": face_rules.band(suggested_sim, suggested_margin) if suggested_name else None,
+            "suggestion_strength": cuts.band(suggested_sim, suggested_margin) if suggested_name else None,
             "_emb_idx": global_idx,
         }
 
@@ -1006,13 +1011,13 @@ def grid(library, name, named, on_progress=None):
             # panel scores it the same way.
             face["person_similarity"] = round(
                 float(np.max(np.dot(seeking, embs[face.pop("_emb_idx")]))), 3)
-            face["band"] = face_rules.band(face["person_similarity"], margin)
+            face["band"] = cuts.band(face["person_similarity"], margin)
         cards.sort(key=lambda x: x["person_similarity"], reverse=True)
     else:
         # Nobody named yet: how like its own group a face is, in the same bands; nobody else it could be, so no margin.
         for face in cards:
             face.pop("_emb_idx", None)
-            face["band"] = face_rules.band(face["similarity"], math.inf)
+            face["band"] = cuts.band(face["similarity"], math.inf)
         cards.sort(key=lambda x: x["similarity"], reverse=True)
 
     return stamp, {

@@ -40,7 +40,7 @@ RULES = (
      r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']|(?<!ACTIVITY_PAGE = )[\"'](activity|school|trips)[\"']", ()),
     ("an unknown year is dates'", os.path.join("tagpup", "core", "dates.py"), r"[\"']Unknown[\"']", ()),
     ("the apps' ports are tagpup_web's", "tagpup_web.py", r"def find_available_port|\b80[89]0\b", ()),
-    ("a face decision's numbers are clustering's", CLUSTERING, r"\b(OFFER_A_NAME|NAME_WITHOUT_ASKING|NAME_MARGIN|OFFER_MARGIN)\b", ()),
+    ("a face decision's numbers are clustering's", CLUSTERING, r"\bCuts\(|\b(offer_a_name|name_without_asking|name_margin|offer_margin)\s*=", ()),
     ("the grouping radius is clustering's", CLUSTERING, r"eps\s*=\s*0\.\d|CLUSTER_EPS\s*=\s*0\.\d", ()),
     # A photo file's fields are written by the journaled path (file_changes.write_fields), and by the just-look path
     # (file_only, unjournaled by the owner's decision, #527) alone: a bulk write of its own once left rows describing
@@ -312,29 +312,36 @@ class TheOwnersValues(unittest.TestCase):
                               if re.search(r"[\"'](Unknown Camera|All Cameras)[\"']|get\([\"']EXIF:Model", read(p))])
 
     def test_the_decisions_about_a_face(self):
-        """The likeness and the margin over the next person each a gate (owner, 2026-09-24 and 2026-10-17): 0.70 and 0.02
-        to offer, 0.80 and 0.04 to name unasked, 0.70 and 0.04 when the photo's keywords name the person."""
+        """The likeness and the margin over the next person each a gate (owner, 2026-09-24 and 2026-10-17): for FaceNet's
+        vectors 0.70 and 0.02 to offer, 0.80 and 0.04 to name unasked, 0.70 and 0.04 when the photo's keywords name the
+        person; AdaFace's read off the phase 3 gate at 0.99 (2026-10-20), its offer scaled."""
         import math
-        from tagpup.core import clustering
+        from tagpup.core import clustering, validation
+        facenet = clustering.cuts_of(validation.MTCNN_FACENET)
         self.assertEqual((True, False, False, True, False, False, True, False),
-                         (clustering.is_offered(0.70, 0.02), clustering.is_offered(0.69, 1), clustering.is_offered(0.9, 0.019),
-                          clustering.names_unasked(0.80, 0.04), clustering.names_unasked(0.79, 1),
-                          clustering.names_unasked(0.9, 0.039), clustering.looks_wrong(0.69), clustering.looks_wrong(0.70)))
-        self.assertEqual((True, False, False), (clustering.names_from_the_tag(0.70, 0.04), clustering.names_from_the_tag(0.69, 1),
-                                                clustering.names_from_the_tag(0.9, 0.03)))
+                         (facenet.is_offered(0.70, 0.02), facenet.is_offered(0.69, 1), facenet.is_offered(0.9, 0.019),
+                          facenet.names_unasked(0.80, 0.04), facenet.names_unasked(0.79, 1),
+                          facenet.names_unasked(0.9, 0.039), facenet.looks_wrong(0.69), facenet.looks_wrong(0.70)))
+        self.assertEqual((True, False, False), (facenet.names_from_the_tag(0.70, 0.04), facenet.names_from_the_tag(0.69, 1),
+                                                facenet.names_from_the_tag(0.9, 0.03)))
         self.assertEqual(("likely", "possible", "possible", "possible", None, None, None),
-                         tuple(clustering.band(v, m) for v, m in ((0.80, 0.04), (0.79, 1), (0.70, 0.02), (0.9, 0.03),
-                                                                   (0.69, 1), (0.9, 0.01), (None, None))))
-        self.assertTrue(clustering.names_unasked(0.80, math.inf))   # a name carried is asked no margin
+                         tuple(facenet.band(v, m) for v, m in ((0.80, 0.04), (0.79, 1), (0.70, 0.02), (0.9, 0.03),
+                                                                (0.69, 1), (0.9, 0.01), (None, None))))
+        self.assertTrue(facenet.names_unasked(0.80, math.inf))   # a name carried is asked no margin
         self.assertEqual(0.885, clustering.GROUPING)
         self.assertAlmostEqual(0.48, clustering.distance(clustering.GROUPING), places=2)
-        self.assertEqual((True, False, False), (clustering.gathers_for_a_new_person(0.80, 0.02),
-                                                clustering.gathers_for_a_new_person(0.79, 1),
-                                                clustering.gathers_for_a_new_person(0.9, 0.019)))
-        for decide in (clustering.is_offered, clustering.names_unasked, clustering.names_from_the_tag,
-                       clustering.gathers_for_a_new_person):
-            self.assertFalse(decide(None, None))   # nothing is decided about nothing
-        self.assertFalse(clustering.looks_wrong(None))
+        self.assertEqual((True, False, False), (facenet.gathers_for_a_new_person(0.80, 0.02),
+                                                facenet.gathers_for_a_new_person(0.79, 1),
+                                                facenet.gathers_for_a_new_person(0.9, 0.019)))
+        adaface = clustering.cuts_of(validation.SCRFD_ADAFACE)
+        self.assertEqual((0.455, 0.520, 0.205, 0.1025), (adaface.offer_a_name, adaface.name_without_asking,
+                                                          adaface.name_margin, adaface.offer_margin))
+        self.assertEqual(("likely", "possible", None), tuple(adaface.band(v, m) for v, m in ((0.52, 0.205), (0.6, 0.11), (0.6, 0.1))))
+        self.assertEqual(set(validation.FACE_MODELS), set(clustering.CUTS))   # every model a library can be set to has its own
+        for cuts in clustering.CUTS.values():
+            for decide in (cuts.is_offered, cuts.names_unasked, cuts.names_from_the_tag, cuts.gathers_for_a_new_person):
+                self.assertFalse(decide(None, None))   # nothing is decided about nothing
+            self.assertFalse(cuts.looks_wrong(None))
 
 
 class ThePagesKeepNoCopyOfTheirOwn(unittest.TestCase):

@@ -489,9 +489,10 @@ class TagSuggester:
                         # value every screen offers a name from, scored by that likeness
                         # (tagpup.core.clustering). It was a mean face with no years, a
                         # distance cut of 0.90, and a score made up between 0.5 and 1.
-                        # Offered only as far ahead of the next person as a name is offered at (clustering.is_offered).
+                        # Offered only as far ahead of the next person as a name is offered at, by the cuts of the
+                        # run's face model, whose vectors these are (clustering.Cuts.is_offered).
                         best_key, likeness, margin = known_faces.most_like(face["embedding"], target_year, photo_path)
-                        if best_key and clustering.is_offered(likeness, margin):
+                        if best_key and clustering.cuts_of(self.faces.key).is_offered(likeness, margin):
                             label = known_faces.labels.get(best_key)
                             best_name = label.name if label else str(best_key)
                             score = round(likeness, 2)

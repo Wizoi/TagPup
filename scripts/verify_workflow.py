@@ -43,7 +43,7 @@ import _root  # noqa: E402,F401
 from sandbox import enter, environment, remove_sandbox  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
-from tagpup.core import clustering  # noqa: E402
+from tagpup.core import clustering, validation  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.store import checks  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -337,7 +337,7 @@ def run_checks(report, work_db, args):
         if suggested:
             sims = [f["similarity"] for f in suggested]
             # The likeness half: the page shows no margin, and the server asked it (services.faces.panel).
-            report.check("every suggestion clears the offer floor", all(clustering.is_offered(s, math.inf) for s in sims),
+            report.check("every suggestion clears the offer floor", all(clustering.cuts_of(validation.MTCNN_FACENET).is_offered(s, math.inf) for s in sims),
                          f"{len(suggested)} suggested, min={min(sims):.3f}")
         else:
             report.check("suggestions behave", True, "none confident enough, which is valid")

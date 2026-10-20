@@ -178,6 +178,8 @@ def resolve(photo_index, on_step=None):
     if not all_faces:
         logger.info("No face embeddings found in the index.")
         return {}
+    # The cuts of the model the vectors were read under (tagpup.core.clustering.Cuts): every decision of the run asks them.
+    cuts = clustering.cuts_of(store_faces.model_key(photo_index.conn))
 
     # Faces marked as not-a-person are dropped before anything else runs. They must
     # not cluster, vote, seed a centroid, or be offered as a candidate -- the whole
@@ -503,7 +505,7 @@ def resolve(photo_index, on_step=None):
                 if name and name in resolved_by_name and name not in photo_tags:
                     similarity = closest_to(name, f["embedding"], f["photo_path"])
                     # A name kept is asked no margin: the margin never takes a name away (owner, 2026-10-17).
-                    if similarity is not None and not clustering.names_unasked(similarity, math.inf):
+                    if similarity is not None and not cuts.names_unasked(similarity, math.inf):
                         face_resolved[f["id"]] = None
 
             # A decision made by hand holds through every step below: its face keeps
@@ -549,7 +551,7 @@ def resolve(photo_index, on_step=None):
 
             # The vote of a cluster of one in a photo of two or more faces is its photo's keywords alone: they say the person
             # is in the photo, not which face is theirs. A name it gives from now on, kept past the photo's conflicts, asks
-            # what the tag's name asks of the last pass (clustering.names_from_the_tag), ahead of everyone named but the
+            # what the tag's name asks of the last pass (clustering.Cuts.names_from_the_tag), ahead of everyone named but the
             # people the photo's other faces hold; a name the face carries was never asked (`alone`), so none is taken away
             # (owner, 2026-10-17: 2,389 of photo_index's names were given so, 865 of them more like another person). A face
             # that falls short is left to the pairing below and the last pass.
@@ -558,7 +560,7 @@ def resolve(photo_index, on_step=None):
                 if row is not None and name is not None and name == initial_resolved_names.get(f["id"]):
                     held = {other for fid, other in face_resolved.items() if other and fid != f["id"]}
                     likeness = float(row[columns[name]]) if name in columns else math.nan
-                    if not clustering.names_from_the_tag(None if math.isnan(likeness) else likeness,
+                    if not cuts.names_from_the_tag(None if math.isnan(likeness) else likeness,
                                                          known.margin_of(row, columns, name, skip=held)):
                         face_resolved[f["id"]] = None
 
@@ -584,7 +586,7 @@ def resolve(photo_index, on_step=None):
                 for r, c in zip(row_ind, col_ind):
                     f, tag = unassigned_faces[r], known_unused[c]
                     margin = known.margin_of(rows[f["id"]], columns, tag, skip=assigned_names)
-                    if clustering.names_unasked(-cost_matrix[r, c], margin_asked(f, tag, margin)):
+                    if cuts.names_unasked(-cost_matrix[r, c], margin_asked(f, tag, margin)):
                         face_resolved[f["id"]] = tag
 
             if unassigned_faces and unused_tags:
@@ -720,14 +722,14 @@ def resolve(photo_index, on_step=None):
                 best_sim = -1.0 if best_sim is None else best_sim
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
                 # The tag bears the name out, so the face is named from the likeness a name is offered at
-                # (tagpup.core.clustering.names_from_the_tag), not only from where it is named with no one
+                # (tagpup.core.clustering.Cuts.names_from_the_tag), not only from where it is named with no one
                 # looking: the loop above keeps a tag-confirmed name whatever the likeness (#855), and a
                 # face that reaches this pass unnamed -- its cluster has no anchor -- was left unnamed at
                 # 0.73 and 0.78 (docs/findings.md, #902). The tag does not say which face is theirs: the margin
                 # over the next person does, but for a face that carries them already (margin_asked). A name
                 # already taken by another face of the photo is skipped (`skip`), to prevent false assignments in
                 # multi-face photos.
-                if best_name in photo_tags and clustering.names_from_the_tag(best_sim, margin_asked(face, best_name, margin)):
+                if best_name in photo_tags and cuts.names_from_the_tag(best_sim, margin_asked(face, best_name, margin)):
                     final_name = best_name
                     names_taken_here.add(final_name)
                     traces[face["id"]] = {
