@@ -25,6 +25,8 @@ What the owner lives through, in one library:
   back cannot be undone in History now: the undo would put the new model back with those faces in photos its pass has not
   reached, which the switch itself is refused for (settings.change's check, UNPASSED_SHARE_ALLOWED). History lists it
   with the switch's sentence and counts, and the rehearsal and the undo refuse it so, writing nothing.
+- A switch back the owner undid already, asked to be undone again, is refused as undone (the journal's own account comes
+  first), not with the switch's sentence, though putting the new model back would be refused too.
 - A Suggest run or an index begun before a switch keeps the model it began with to its end (Runtime.begin's lease, the
   CLI index's one `runtime.faces`); the next one reads the library's model (tests/test_the_runtime_keeps_models_by_settings.py).
 
@@ -312,6 +314,28 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
             self.assertEqual(400, reply.status_code, reply.data)
             self.assertIn(said, " ".join(reply.get_json()["refused"].split()))
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+
+    def test_a_switch_back_undone_already_is_refused_as_undone(self):
+        self.switch(NEW)
+        back = self.switch(FACENET)
+        self.undo(back["change"])
+        self.assertEqual(NEW, library_settings.read(self.library)["faces.model"])
+        self.switch(FACENET)
+        conn = db.connect(self.library.path)
+        try:
+            later = photo(os.path.join(self.folder, "Later", "harbour.jpg"))
+            photo_rows.add_read(conn, later, {})
+            add_face(conn, later, (30, 30, 110, 110), alike(self.facenet_wren, 0.3, 8).tobytes(), model=FACENET, prob=0.99)
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertIn(back["change"], library_settings.undo_refusals(self.library, [back["change"]]),
+                      "the case is not one the switch's check refuses")
+        reply = self.client.post("/lakeside/api/history/%d/undo" % back["change"], json={})
+        self.assertEqual(400, reply.status_code, reply.data)
+        refused = reply.get_json()["refused"]
+        self.assertIn("change %d is undone" % back["change"], refused)
+        self.assertNotIn("in photos the pass has not reached", refused)
 
 
 if __name__ == "__main__":
