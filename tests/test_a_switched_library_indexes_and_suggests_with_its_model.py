@@ -16,6 +16,9 @@ What the owner lives through, in one library:
   the face (its vector the new model's alone, a crop), and offers the person whose named face it is 0.45 like: AdaFace
   offers from 0.310, FaceNet's 0.70 would not. The panel (SuggestionModel.offered, what Apply All and the writers take)
   shows that offer: the model's cut decided it, and the tag floor (suggesting.OFFER_A_TAG, 0.60) is not a face's.
+- Wren's page (/api/person-faces) on the switched library: a named face the pass gave no vector under the new model
+  (one it matched with nothing it found: 3 of kr-track's named faces, counted 2026-10-20) is not scored -- its
+  similarity null, `no_vector` true, for the page to say so -- never shown as a perfect match.
 - The switch is in the library's history, and undone there: the library reads by FaceNet again, Identify's cached named
   faces by its vectors, and neither model's vectors were written by the switch or its undo.
 - Switched back to FaceNet (never refused), the reply says only what is true of the faces under FaceNet: a face the new
@@ -336,6 +339,25 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         refused = reply.get_json()["refused"]
         self.assertIn("change %d is undone" % back["change"], refused)
         self.assertNotIn("in photos the pass has not reached", refused)
+
+    def test_a_named_face_with_no_vector_under_the_model_is_not_shown_as_a_match(self):
+        conn = db.connect(self.library.path)
+        try:
+            # Wren's second face in jetty, a photo the pass reached: it matched nothing the new model found.
+            alone = add_face(conn, os.path.join(self.folder, "jetty.jpg"), (130, 30, 190, 100),
+                             alike(self.facenet_wren, 0.8, 10).tobytes(), model=FACENET, prob=0.99,
+                             name="Wren Calloway", name_source="manual")
+            conn.commit()
+        finally:
+            conn.close()
+        self.switch(NEW)
+        reply = self.client.get("/lakeside/api/person-faces", query_string={"name": "Wren Calloway", "limit": -1})
+        self.assertEqual(200, reply.status_code, reply.data)
+        shown = {face["id"]: face for face in reply.get_json()["faces"]}
+        self.assertEqual({self.named, alone}, set(shown))
+        self.assertEqual((None, True, False), (shown[alone]["similarity"], shown[alone]["no_vector"],
+                                               shown[alone]["possibly_wrong"]))
+        self.assertFalse(shown[self.named]["no_vector"])
 
 
 if __name__ == "__main__":

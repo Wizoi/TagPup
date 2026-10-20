@@ -549,7 +549,9 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
 def person_faces(library, person, limit=100, page=1):
     """A page of a person's faces (`person`: the id of their node, or a tag path or a name; a name two people have is
     refused, naming their paths), each scored against their closest other face of the years around it, never one of its own photo
-    (tagpup.core.clustering, #71), and flagged when the name looks wrong. A negative limit is no limit."""
+    (tagpup.core.clustering, #71), and flagged when the name looks wrong. A face with no vector under the library's face model
+    (`no_vector`: one the new model's pass matched with nothing it found) is not scored, its similarity None, nor is one with
+    no other face to be compared with. A negative limit is no limit."""
     offset = (page - 1) * limit
     conn = _reading(library)
     try:
@@ -578,7 +580,8 @@ def person_faces(library, person, limit=100, page=1):
 
     found = []
     for r in rows:
-        similarity = next(likenesses) if r[5] is not None and len(r[5]) > 0 else None
+        held = r[5] is not None and len(r[5]) > 0
+        similarity = next(likenesses) if held else None
         found.append({
             "id": r[0],
             "photo_path": r[1],
@@ -589,7 +592,8 @@ def person_faces(library, person, limit=100, page=1):
             "year": shown_year(r[6]),
             # Shown as it is; whether the name looks wrong is decided here, not on the
             # page (tagpup.core.clustering.Cuts.looks_wrong, the library's face model's).
-            "similarity": 1.0 if similarity is None else similarity,
+            "similarity": similarity,
+            "no_vector": not held,
             "possibly_wrong": cuts.looks_wrong(similarity),
         })
 
