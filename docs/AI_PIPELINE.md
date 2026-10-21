@@ -532,8 +532,13 @@ takes no turn of the card.
   page reloads). A running server reads the model at each read: the faces fingerprint holds the model, so Identify's
   cached grids are read again; a Suggest run or an index begun before the switch keeps the model it began with to its
   end, and the next one reads the library's. Scenario P10 switches in the dialog and undoes the switch in History.
-- Left: a decision's cuts and its matrix read by two reads (a switch between them, one request; the next rebuilds), and
-  the undo of a switch back to FaceNet, which reinstates the new model without the pass's check (findings of this branch).
+- As built (2026-10-20, the key travels with the vectors): every `store.faces` reader of vectors takes its key; a
+  decision (cluster-faces, automatch and Re-examine, the details panel, Identify's requests, a Suggest run, name faces
+  from tags) reads the key once and its vectors and cuts by it, and the named and decided faces kept between requests
+  carry theirs (`clustering.FaceRows.key`), compared only with vectors of that key (`FaceRows.under`: none otherwise,
+  for that one request; the next reads them again, the fingerprint holding the model). Scenario P10: a switch
+  committed while cluster-faces runs leaves it deciding FaceNet's vectors by FaceNet's cuts. The undo of a switch back
+  to FaceNet is refused by the switch's own check (79c4fd75).
 
 ### Phase 4: Matching, with the new model
 
