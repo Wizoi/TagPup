@@ -80,7 +80,7 @@ def build_repository(folder):
              when="2026-10-03")
     repo.commit("2026-10-03", "findings only",
                 ("docs/findings.md", HEAD + "| 1 | 2026-10-01 | wrong: a thing | fixed: abc |\n"
-                 "| 2 | 2026-10-03 | wrong: the reviewer saw it | open |\n"),
+                 "| 2 | 2026-10-03 | wrong (once a library is switched): the reviewer saw it | open |\n"),
                 ("docs/history/findings_closed_0001-0250.md", HEAD + "| 3 | 2026-10-02 | low: x | obsolete: gone |\n"))
     repo.commit("2026-10-03", "Revert the first test", remove=["tests/test_a.py"])
     repo.commit("2026-10-05", "after the window", ("tagpup/b.py", "y = 2\n"))
@@ -143,7 +143,8 @@ SUBAGENTS = (("a1", "tagpup-reviewer", None, False, 1), ("a2", "tagpup-worker", 
              ("a5", "tagpup-worker-small", "worktree-agent-dead", False, 1),
              ("a6", "tagpup-worker-small", "worktree-agent-cafe", False, 1),
              ("a7", "tagpup-worker", "worktree-agent-f00d", False, 1),
-             ("a8", "tagpup-quick-reviewer", None, False, 1), ("a9", "tagpup-owner-data", None, False, 1))
+             ("a8", "tagpup-quick-reviewer", None, False, 1), ("a9", "tagpup-owner-data", None, False, 1),
+             ("a10", "tagpup-worker-small", None, False, 1))
 
 
 #: The folder a subagent ran in, where its meta file names no branch: a worktree, the main checkout, a folder that
@@ -203,21 +204,21 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
         self.assertEqual((1, 10, 20, 100, 1000), (opus["turns"], opus["input_tokens"], opus["output_tokens"],
                                                   opus["cache_creation_input_tokens"], opus["cache_read_input_tokens"]))
         self.assertEqual(0, opus["large_context"])
-        self.assertEqual((10, 10, 20, False), (fable["turns"], fable["input_tokens"], fable["output_tokens"],
+        self.assertEqual((11, 11, 22, False), (fable["turns"], fable["input_tokens"], fable["output_tokens"],
                                              fable["priced"]))
         self.assertAlmostEqual(10 * 5e-6 + 20 * 25e-6 + 100 * 5e-6 * 1.25 + 1000 * 5e-6 * 0.1, u["cost_low"])
         self.assertAlmostEqual(3 * (10 * 5e-6 + 20 * 25e-6 + 100 * 5e-6 * 1.25 + 1000 * 5e-6 * 0.1), u["cost_high"])
-        self.assertEqual(({"2026-10-02": 1}, {"2026-10-02": 9}, {"main": 1130, "subagent": 30}, ["fable-test-1"]),
+        self.assertEqual(({"2026-10-02": 1}, {"2026-10-02": 10}, {"main": 1130, "subagent": 33}, ["fable-test-1"]),
                          (u["sessions_per_day"], u["subagent_files_per_day"], u["tokens_main_vs_subagent"],
                           u["unpriced_models"]))
 
     def test_agent_types_branches_and_the_runs_the_owner_stopped(self):
         a = self.report["usage"]["agents"]
         kinds = {t: (v["runs"], v["calls"], v["tokens"]) for t, v in a["by_agent_type"].items() if v["calls"]}
-        self.assertEqual({"main session": (1, 1, 1130), "worker": (3, 4, 12), "small worker": (2, 2, 6),
+        self.assertEqual({"main session": (1, 1, 1130), "worker": (3, 4, 12), "small worker": (3, 3, 9),
                           "reviewer": (1, 1, 3), "quick reviewer": (1, 1, 3), "owner: data": (1, 1, 3),
                           "general-purpose": (1, 1, 3)}, kinds)
-        self.assertEqual((9, 18), (a["review"]["tokens"], a["work"]["tokens"]))
+        self.assertEqual((9, 21), (a["review"]["tokens"], a["work"]["tokens"]))
         self.assertEqual({"worktree-agent-abc1": ("merged", 9), "worktree-agent-beef": ("no merge found", 3),
                           "worktree-agent-dead": ("open", 3), "worktree-agent-cafe": ("nothing to merge", 3),
                           "worktree-agent-f00d": ("fast-forward", 3),
@@ -225,6 +226,8 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
                          {b: (v["state"], v["tokens"]) for b, v in a["by_branch"].items()})
         self.assertEqual((1, 9), (a["branches_per_state"]["merged"]["branches"],
                                   a["branches_per_state"]["merged"]["tokens"]))
+        loose = a["branches_per_state"][retro_metrics.NO_BRANCH]
+        self.assertEqual((1, 3), (loose["runs"], loose["tokens"]), "a worker tied to no branch is a state of its own")
         self.assertEqual({"worktree-agent-abc1": 1}, {b: v["review_runs"] for b, v in a["by_branch"].items()
                                                       if v["review_runs"]},
                          "the reviewer that ran in a branch's worktree is that branch's review run; the one that ran "
@@ -276,7 +279,7 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
 
     def test_no_transcript_text_reaches_any_output(self):
         records, compactions = retro_metrics.transcript_facts(self.transcripts)
-        self.assertEqual((12, 2), (len(records), len(compactions)))
+        self.assertEqual((13, 2), (len(records), len(compactions)))
         self.assertNotIn(CANARY, json.dumps([records, compactions]))
         for path in (self.out, self.json):
             with open(path, encoding="utf-8") as handle:

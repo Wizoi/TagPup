@@ -49,7 +49,7 @@ EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 WORKTREE_MERGE = re.compile(r"^Merge (?:branch ')?worktree-agent-")
 TRAILER = re.compile(r"^co-authored-by:\s*([^<\n]+?)\s*(?:<|$)", re.I | re.M)
 REVIEW_WORDS = re.compile(r"\b(?:review|reviewer|owner)s?\b", re.I)
-SEVERITY = re.compile(r"^\s*(data|wrong|low):", re.I)
+SEVERITY = re.compile(r"^\s*(data|wrong|low)\b\s*(?:\([^)]*\))?\s*:", re.I)
 #: A call whose context (input, cache write and cache read) is above this is counted as large.
 LARGE_CONTEXT = 150000
 #: A branch adds about this many lines or fewer (CLAUDE.md, "Keeping the project small"; DECISIONS 2026-10-16: added
@@ -68,6 +68,8 @@ WORK_TYPES = ("worker", "small worker")
 #: The only branch name a table prints; any other (a name could hold a person's) is counted as OTHER_BRANCH.
 WORKTREE_BRANCH = re.compile(r"^worktree-agent-[0-9a-f]+$")
 OTHER_BRANCH = "(not a worktree-agent branch)"
+#: The state row of worker runs whose transcript names no branch (a worker the harness did not tag).
+NO_BRANCH = "worker run tied to no branch"
 MERGED_BRANCH = re.compile(r"^Merge (?:branch ')?(worktree-agent-[0-9a-f]+)")
 #: A line of a merge's message that ties it to the worker's worktree when the branch merged has a name of its own
 #: (`--branch` prints it; retro 2026-10-18, action 2).
@@ -425,7 +427,10 @@ def agents_section(records, compactions, repo, rev):
     per_state = {s: dict(tally([r for r in records if r["branch"] and states[r["branch"]] == s]),
                          branches=sum(1 for b in by_branch.values() if b["state"] == s))
                  for s in sorted({b["state"] for b in by_branch.values()})}
-    main = [r for r in records if r["agent_type"] == MAIN]
+    loose = [r for r in records if not r["branch"] and r["agent_type"] in WORK_TYPES]
+    if loose:
+        per_state[NO_BRANCH] = dict(tally(loose), branches=0)
+    main =[r for r in records if r["agent_type"] == MAIN]
     sessions = {}
     for s in sorted({r["session"] for r in main}):
         context = [sum(r[k] for k in TOKENS) - r["output_tokens"] for r in main if r["session"] == s]
