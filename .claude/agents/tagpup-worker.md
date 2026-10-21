@@ -25,9 +25,8 @@ Everything below holds for every task; the brief does not repeat it.
 
 ## How you edit
 - Read CLAUDE.md and the part of docs/ARCHITECTURE.md the task touches first.
-- Edit with a script through `tools/patch.py` (`from patch import Patch`), written with
-  the Write tool and run with the interpreter. Never a shell heredoc; a hook refuses one
-  holding a backslash escape. One script per concern: patch, then lint, then test.
+- Edit with a script through `tools/patch.py` (`from patch import Patch`), written with the Write tool (never a
+  heredoc: CLAUDE.md) and run with the interpreter. One script per concern: patch, lint, test.
 - New code goes in the layer ARCHITECTURE.md gives it; `tests/test_layers.py` says what
   may import what.
 
@@ -43,6 +42,8 @@ of them, missed:
 - **The real data's shape**: counts and spellings from the live libraries, read-only
   (`db.readonly_uri`), not what a fixture holds. Check a claim you report against it.
 - **What the owner sees**: the page, the message, the time it takes, on a network share.
+- **A model swap's output**: the dry run prints the new model's output distribution (sizes, counts) beside the old
+  model's, and the owner looks at one real folder before `--apply` (the pass made 31 smudges under 40 px, 2026-10-18).
 - **Scenario, not code**: add or lift a test that is a scenario a person lives through, in the domain owner's test group;
   delete the granular tests that scenario makes redundant, and say which in the report (CLAUDE.md).
 - **Every test file has one owner**: a test file you add (or rename, or delete) is added to (or removed from)

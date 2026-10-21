@@ -25,7 +25,7 @@ name (`tests/test_layers.py`).
 
 ```
 .venv/Scripts/python.exe tools/run_tests.py --fast      # the fast tier, the loop while editing
-.venv/Scripts/python.exe tools/run_tests.py             # every tier: the commit gate (about 3,600 tests, about 5 minutes)
+.venv/Scripts/python.exe tools/run_tests.py             # every tier: the commit gate (about 5 minutes)
 .venv/Scripts/python.exe tools/affected_tests.py        # the test files a change reaches
 .venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"
 node --test tests/frontend/*.test.mjs                   # the glob: `node --test tests/frontend/` fails on harness.mjs
@@ -74,8 +74,6 @@ Each names its one owner and the guard that fails the build when it is broken.
   (`tests/frontend/page-state.test.mjs`, `tag-vocabulary.test.mjs`, `tuner-starts-last.test.mjs`).
 - **A page's request goes through `web/common/api.js`** (`api.json`, `api.fetch`, `api.image`, `api.url`); a bare `fetch`
   reaches no library (`tests/frontend/database-routing.test.mjs`; one scope per module: `page-modules.test.mjs`).
-- **Write patch scripts with a file tool, not a shell heredoc**: escapes are mangled in transit;
-  `.claude/hooks/no-heredoc-escapes.mjs` refuses an interpreter heredoc holding one.
 - **A test's data is made by the code that makes the real thing**: a photo row through `tests/photo_rows.py` (`add_read`,
   `add_unread`), a page's record as the page builds it (#246, #247; `tests/test_fixtures_make_photo_rows_like_the_indexer.py`);
   a test that selects or creates a library runs in a home of its own (`tests/test_tests_have_homes_of_their_own.py`).
@@ -128,7 +126,8 @@ first. Read docs/DEVELOPMENT.md, "Performance work", before claiming anything go
 A worker's standing rules (how the work fails, one-way choices, findings, what it runs, its report) are in
 `.claude/agents/tagpup-worker.md`; delegate multi-file work to it in a worktree, and the brief says only the task, the
 domain and which files are its, plus what is particular to the task.
-- Edit through `tools/patch.py` from a script written with the Write tool, one script per concern (patch, lint, test).
+- Edit through `tools/patch.py` from a script written with the Write tool, never a shell heredoc (a hook refuses one
+  holding an escape), one script per concern (patch, lint, test).
 - Before briefing a new tool, script or module, find the existing owner: grep `tagpup/services/`, the MCP server's
   tools and `scripts/`.
 - A brief names how the work fails (interrupted part-way, two at once, a read that fails, the real data's shape, what
