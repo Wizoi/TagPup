@@ -26,6 +26,12 @@ What the owner lives through, in one library:
   CLI index's one `runtime.faces`); the next one reads the library's model (tests/test_the_runtime_keeps_models_by_settings.py).
   The vectors it compares are that model's too: a Suggest run begun under FaceNet, the owner switching while it runs,
   offers Wren for a face 0.75 like her by FaceNet's vectors, never reading the new model's.
+- A switch committed while cluster-faces runs, after it read the vectors, does not lend the run the new model's cuts: the
+  vectors it read are FaceNet's, and it decides by FaceNet's. A photo whose keywords name Wren and Oda Castellane (whose
+  face nobody named) holds two faces, one 0.6 like Wren's by FaceNet: FaceNet names neither (0.6 is under its 0.80, and
+  two faces are not one face left for Oda); AdaFace's cuts read on those vectors would name the first Wren (0.520) and
+  the second Oda by elimination. The key a set of vectors was read under travels with them (tagpup.store.faces: every
+  reader of vectors is given its key).
 
 Fictional names; a library in a home of the test's own; the new model as tagpup.runtime builds it, its weights not
 loaded and its two networks stood in for (`_detected`, `embed`): the picture, the floor, the crop and the detector name
@@ -61,9 +67,11 @@ from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 
 NEW = validation.SCRFD_ADAFACE
 PERSON = "People/Wren Calloway"
+NOBODYS_FACE = "People/Oda Castellane"
 CLIP_DIM = 8
 
 
@@ -294,6 +302,38 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         self.assertEqual(NEW, library_settings.read(self.library)["faces.model"])
         offers = [(t["tag"], t["score"]) for t in suggested["suggested_tags"] if t.get("has_face_match")]
         self.assertEqual([(PERSON, 0.75)], offers, "the run compared the new model's vectors by FaceNet's cuts")
+
+    def test_a_switch_committed_while_cluster_faces_runs_lends_it_no_other_models_cuts(self):
+        conn = db.connect(self.library.path)
+        try:
+            taxonomy.add_path(conn, NOBODYS_FACE)
+            conn.commit()
+        finally:
+            conn.close()
+        dune, like_wren = self.a_face_like_wren_by_facenet("dune.jpg", 0.6, [PERSON, NOBODYS_FACE])
+        conn = db.connect(self.library.path)
+        try:
+            other = add_face(conn, dune, (130, 30, 190, 110), alike(self.facenet_wren, 0.0, 11).tobytes(), model=FACENET,
+                             prob=0.99)
+            add_vector_of_face(conn, other, alike(self.adaface_wren, 0.0, 12).tobytes(), model=NEW)
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertTrue(clustering.ADAFACE_CUTS.names_unasked(0.6, math.inf))
+        self.assertFalse(clustering.FACENET_CUTS.names_unasked(0.6, math.inf), "the case is not one FaceNet's cuts refuse")
+        read = store_faces.for_clustering
+
+        def switched_after_the_read(conn, *args, **kwargs):
+            rows = read(conn, *args, **kwargs)
+            self.switch(NEW)   # the owner's switch, in the gear's dialog, committed while the run is under way
+            return rows
+
+        with mock.patch.object(store_faces, "for_clustering", switched_after_the_read):
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "cluster-faces"])
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual(NEW, library_settings.read(self.library)["faces.model"], "the switch did not land")
+        self.assertEqual([(None,), (None,)], self.read("SELECT name FROM faces WHERE id IN (?, ?)", like_wren, other),
+                         "FaceNet's vectors were decided by the new model's cuts")
 
     def test_the_switch_back_is_not_undone_onto_faces_the_pass_has_not_reached(self):
         self.switch(NEW)
