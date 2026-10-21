@@ -100,7 +100,12 @@ test("a worker past 150k is told after a tool call to commit and report; the mai
     const told = JSON.parse(hook(payload).stdout);
     assert.equal(told.hookSpecificOutput.hookEventName, "PostToolUse");
     assert.match(told.hookSpecificOutput.additionalContext, /160k.*Commit what you have.*report/);
-    assert.equal(hook({ ...payload, agent_id: undefined }).stdout, "", "the main session is asked on the prompt only");
+    const main = JSON.parse(hook({ ...payload, agent_id: undefined }).stdout);   // retro 2026-10-20: after a call too
+    assert.equal(main.hookSpecificOutput.hookEventName, "PostToolUse");
+    assert.match(main.hookSpecificOutput.additionalContext, /900k.*memory handoff/);
+    writeFileSync(session, JSON.stringify(call(2, 100000, 0)) + "\n");
+    assert.equal(hook({ ...payload, agent_id: undefined }).stdout, "", "the main session under its limit is not told");
+    writeFileSync(session, JSON.stringify(call(2, 900000, 0)) + "\n");
     writeFileSync(own, side(WORKER_LIMIT - 2));   // the call adds 2 input tokens: exactly the limit
     assert.equal(hook(payload).stdout, "");
     assert.equal(hook({ ...payload, agent_id: "../x" }).stdout, "");

@@ -513,6 +513,10 @@ def distribution(sizes):
             "old_over_budget": sum(1 for s in both if s > BRANCH_BUDGET)}
 
 
+#: The line `--branch --allow-over REASON` asks for in the merge message of a branch over budget.
+OVER_BUDGET_LINE = re.compile(r"^Over budget: \S", re.M)
+
+
 def workers_section(repo, start, end, found):
     worktree = [c["sha"] for c in found if WORKTREE_MERGE.match(c["subject"]) and len(c["parents"]) > 1]
     span = end if start == EMPTY_TREE else "%s..%s" % (start, end)
@@ -523,7 +527,8 @@ def workers_section(repo, start, end, found):
             "merges_into_the_trunk": distribution(trunk_sizes),
             "trunk_merges_of_other_branches": sum(1 for sha in trunk if not MERGED_BRANCH.match(by_sha[sha]["subject"])),
             "trunk_merges": [{"sha": sha[:10], "day": by_sha[sha]["day"], "added": a, "removed": r,
-                              "subject": by_sha[sha]["subject"][:90] if a > BRANCH_BUDGET else ""}
+                              "subject": by_sha[sha]["subject"][:90] if a > BRANCH_BUDGET else "",
+                              "reason": bool(OVER_BUDGET_LINE.search(by_sha[sha]["body"])) if a > BRANCH_BUDGET else None}
                              for sha, (a, r) in zip(trunk, trunk_sizes)]}
 
 
@@ -641,7 +646,8 @@ def markdown(r):
                       for name, v in k.items() if name in ("worktree_branches", "merges_into_the_trunk")]))
     out.append("\nEach merge into the trunk (the subject only of one adding over %d):\n\n" % BRANCH_BUDGET
                + table(["merge", "day", "added", "removed", "over %d added" % BRANCH_BUDGET, "subject"],
-                       [[m["sha"], m["day"], m["added"], m["removed"], "over" if m["added"] > BRANCH_BUDGET else "",
+                       [[m["sha"], m["day"], m["added"], m["removed"],
+                         ("over, reason given" if m["reason"] else "over, no reason") if m["added"] > BRANCH_BUDGET else "",
                          m["subject"].replace("|", "/")] for m in k["trunk_merges"]]))
     if u is not None and k["merges_into_the_trunk"]["count"]:
         out.append("\nCost per merge into the trunk: %.0f..%.0f USD (the priced total over %d merges).\n"
@@ -713,8 +719,11 @@ def main(argv=None):
     parser.add_argument("--json", help="write the numbers as JSON here")
     parser.add_argument("--branch", metavar="REF", help="only the budget guard: REF's lines against its merge base")
     parser.add_argument("--budget", type=int, default=BRANCH_BUDGET, help="added lines a branch may hold (--branch)")
-    parser.add_argument("--allow-over", action="store_true", help="report a branch over budget but exit 0")
+    parser.add_argument("--allow-over", metavar="REASON", type=str.strip,
+                        help="report a branch over budget but exit 0; the reason goes into the merge message")
     args = parser.parse_args(argv)
+    if args.allow_over is not None and not args.allow_over:
+        parser.error("--allow-over needs a reason: a branch over budget says why in its merge message")
     if args.branch:
         b = branch_budget(args.repo, args.rev, args.branch, args.budget)
         print("%s: +%d -%d lines against %s (its merge base with %s); budget %d added: %s"
@@ -723,7 +732,9 @@ def main(argv=None):
         line = worktree_line(args.repo, args.branch)
         if line and not args.branch.startswith("worktree-agent-"):
             print("put this line in the merge message, so the retro ties the worker's run to the merge: %s" % line)
-        return 1 if b["over"] and not args.allow_over else 0
+        if b["over"] and args.allow_over:
+            print("put this line in the merge message, so the retro finds the reason: Over budget: %s" % args.allow_over)
+        return 1 if b["over"] and args.allow_over is None else 0
     counted = report(args.repo, args.rev, args.transcripts, args.since, args.until)
     text = markdown(counted)
     if args.out:

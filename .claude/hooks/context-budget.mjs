@@ -13,6 +13,8 @@
  * the path, a file that cannot be read, or anything else that goes wrong is a no-op: exit 0, nothing said. A broken
  * guard must never stop a prompt.
  *
+ * The main session is told at LIMIT after a tool call as well as on a prompt (retro 2026-10-20, action 3).
+ *
  * A subagent has the same budget at a lower limit (retro 2026-10-18, action 3; the worker's context is held to
  * WORKER_LIMIT): the same hook, run after a tool call (PostToolUse) with the subagent's `agent_id`, reads the
  * subagent's own transcript (`<session>/subagents/agent-<id>.jsonl`, whose records are sidechain) and tells the
@@ -105,9 +107,10 @@ function main() {
       event = "PostToolUse";
       const own = subagentTranscript(payload.transcript_path, payload.agent_id);
       line = own && workerAdvice(lastContext(own, true));
-    } else if (payload.hook_event_name === "PostToolUse") {
-      return;   // the main session is asked on the owner's prompt, not after every tool call
     } else {
+      // The main session too is asked after a tool call (retro 2026-10-20, action 3): a session that runs many
+      // calls under one prompt reached 335k and never met a prompt.
+      if (payload.hook_event_name === "PostToolUse") event = "PostToolUse";
       line = advice(lastContext(payload.transcript_path));
     }
     if (line) {

@@ -7,6 +7,7 @@ face-values guards: a person called "Excluded" opened the excluded faces
 instead of their own (#68); a face was compared with a mean in clustering, a geometric median in the grid and a
 mean with no years in the suggester, each against a value of its own (#71, #75).
 """
+import ast
 import inspect
 import io
 import os
@@ -388,6 +389,35 @@ class ThePagesKeepNoCopyOfTheirOwn(unittest.TestCase):
         self.assertIn("const ALL_CAMERAS = '%s';" % fields.ALL_CAMERAS, page)
         self.assertEqual([], lines_spelling(page, r"[\"'](Unknown Camera|All Cameras|EXIF:Model)[\"']",
                                             "const CAMERA_FIELDS =", "const UNKNOWN_CAMERA =", "const ALL_CAMERAS ="))
+
+
+def functions_reading_the_key_twice(source):
+    """[(function, lines)] of each function in `source` that calls model_key more than once."""
+    found = []
+    for fn in ast.walk(ast.parse(source)):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            lines = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call)
+                     and getattr(n.func, "attr", getattr(n.func, "id", "")) == "model_key"]
+            if len(lines) > 1:
+                found.append((fn.name, lines))
+    return found
+
+
+class AFaceModelKeyIsReadOnceAndTravelsWithItsVectors(unittest.TestCase):
+    """Vectors and the cuts that judge them were read under two reads of the library's face model, and a switch between
+    the reads gave a result under neither (#1709, #1722-#1726; retro 2026-10-20, action 1). One read per function, and
+    the key then travels with the vectors (clustering.FaceRows)."""
+
+    def test_a_function_that_reads_the_key_twice_is_found(self):
+        source = "def f(conn):\n    a = faces.model_key(conn)\n    return faces.model_key(conn), a\n"
+        self.assertEqual([("f", [2, 3])], functions_reading_the_key_twice(source))
+        self.assertEqual([], functions_reading_the_key_twice("def f(conn):\n    return faces.model_key(conn)\n"))
+
+    def test_no_function_in_the_package_reads_it_twice(self):
+        problems = ["%s: %s reads the face model key at lines %s" % (relative, name, lines)
+                    for relative in python_sources() if relative.startswith("tagpup")
+                    for name, lines in functions_reading_the_key_twice(read(relative))]
+        self.assertEqual([], problems)
 
 
 if __name__ == "__main__":

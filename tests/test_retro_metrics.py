@@ -252,7 +252,7 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
     def test_workers(self):
         self.assertEqual({"count": 1, "median": 3, "p90": 3, "max": 3, "over_budget": 0, "removed": 0, "old_median": 3,
                           "old_over_budget": 0}, self.report["workers"]["worktree_branches"])
-        self.assertEqual([{"day": "2026-10-03", "added": 3, "removed": 0, "subject": ""}],
+        self.assertEqual([{"day": "2026-10-03", "added": 3, "removed": 0, "subject": "", "reason": None}],
                          [{k: v for k, v in m.items() if k != "sha"} for m in self.report["workers"]["trunk_merges"]])
 
     def test_before_a_merge_a_branch_adding_over_the_budget_fails_unless_allowed(self):
@@ -266,7 +266,11 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertIn("+4 -10", said)
         self.assertIn("OVER", said)
-        self.assertEqual(0, run("--budget", "3", "--allow-over")[0])
+        code, said = run("--budget", "3", "--allow-over", "one migration, cannot be cut")
+        self.assertEqual(0, code)
+        self.assertIn("Over budget: one migration, cannot be cut", said, "the line for the merge message")
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            run("--budget", "3", "--allow-over", " ")
         self.assertEqual(0, run("--budget", "4")[0], "the budget counts added lines: 10 removed are not over 4")
         self.assertEqual(0, run()[0])
 
