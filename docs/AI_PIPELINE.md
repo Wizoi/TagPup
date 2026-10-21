@@ -340,7 +340,7 @@ Suggest's are (`tagpup.jobs.suggestions.REFUSALS`). Identify reads the faces the
 it compares them by the library's model's vectors alone, so none until the pass gives them the new model's). A look that
 writes nothing builds the new model, and only it, by `Runtime.look_at_faces`: held as a run is (a Suggest on the other set is refused
 beside it, and it beside one), the card taken once at its first use and let go, the model with it, at `end()`.
-Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
+Scenario V11, `tests/test_switching_a_librarys_face_model.py`.
 
 **Merge 3 brief (the pass; after migration 33).**
 - The crop is cut from the picture as stored (`ScrfdPicture.stored`) by the face's box, as every face's crop is
@@ -504,7 +504,7 @@ takes no turn of the card.
   photo (1,195 on kr-track) keep FaceNet's vector alone, by design: they are not counted against the switch.
 - Left for items 3 and 4: the index and Suggest writing faces with the new model (`ScrfdAdaFace` answers neither the
   index's `picture(path, max_side=...)` nor Suggest's `detect_and_embed_faces` yet), and the switch's own scenario end
-  to end. Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`, is the switch now.
+  to end. Scenario V11, `tests/test_switching_a_librarys_face_model.py`, is the switch now.
 
 **Merge 3, item 3, as built (2026-10-20): the index, Suggest and the pass write faces with the library's model, whichever.**
 - One surface, answered by `tagpup.ml.faces.FaceModel` and `tagpup.ml.scrfd_adaface.ScrfdAdaFace` alike, built by

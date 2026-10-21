@@ -43,7 +43,7 @@ listed "too old to restore". Migration 33 (each face's vector to `face_embedding
 | Files, Views, Integration | `store.roots`: a row's path form only at the store boundary | `test_roots_store`, `test_roots_scenarios` |
 | People | `removals`: a person taken off a photo blocks naming that face as them | `test_faces_and_tags_in_step`, `test_two_cousins_called_alike` |
 | Files, Views | `faces_detected`, `added_folders`, `job_runs` | `test_faces_detected_record`, `test_rows_only_in_folders_added`, `test_sync_records` |
-| People (`store.faces`) | `store.faces.model_key` reads `store.settings.face_model` on the reader's own connection: a face's vector (`face_embeddings`, keyed by face and model) is read under the key its caller gives the reader, which a decision reads once from the library's `faces.model` on its own connection | `test_the_new_face_model_writes_nothing` (V11 (c)), `test_journal_keys_and_cascades` |
+| People (`store.faces`) | `store.faces.model_key` reads `store.settings.face_model` on the reader's own connection: a face's vector (`face_embeddings`, keyed by face and model) is read under the key its caller gives the reader, which a decision reads once from the library's `faces.model` on its own connection | `test_switching_a_librarys_face_model` (V11 (c)), `test_journal_keys_and_cascades` |
 
 ## The seven conditions (2026-10-15)
 

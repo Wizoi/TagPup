@@ -149,7 +149,7 @@ _SCENARIO_FILES = {
     "V8": "test_library_views_scenarios",
     "V9": "test_repair_turned_vectors test_suggest_then_apply_all",
     "V10": "test_faces_found_at_the_librarys_cap",
-    "V11": "test_the_new_face_model_writes_nothing",
+    "V11": "test_switching_a_librarys_face_model",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
