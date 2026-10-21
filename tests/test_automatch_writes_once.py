@@ -18,6 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tests.test_service_faces import FacesCase, vector  # noqa: E402
 
+from face_rows import FACENET  # noqa: E402
+
 from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import db, person_ids, taxonomy  # noqa: E402
@@ -36,7 +38,7 @@ class AutomatchNamesItsFacesInOneWrite(FacesCase):
 
     def matrix(self):
         node = self.lib.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", ("People/" + ROWAN,))[0][0]
-        return [self.known], [Ref(node, ROWAN)], np.stack([self.rowan])
+        return [self.known], [Ref(node, ROWAN)], np.stack([self.rowan]), FACENET
 
     def test_one_rebuild_and_one_read_of_the_tree_for_the_whole_folder(self):
         with mock.patch.object(store_faces, "_rebuilt", wraps=store_faces._rebuilt) as rebuilt, \

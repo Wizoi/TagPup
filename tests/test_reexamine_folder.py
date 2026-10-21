@@ -31,6 +31,8 @@ from tests.test_face_exclusion import ExclusionTestBase  # noqa: E402
 from tests.test_face_clustering_rules import identity_vector, near  # noqa: E402
 from tests.test_service_faces import FacesCase, vector  # noqa: E402
 
+from face_rows import FACENET  # noqa: E402
+
 from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
@@ -144,7 +146,7 @@ class ReexamineInTheService(FacesCase):
 
     def matrix(self):
         node = self.lib.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", ("People/" + ROWAN,))[0][0]
-        return [self.known], [Ref(node, ROWAN)], np.stack([self.rowan])
+        return [self.known], [Ref(node, ROWAN)], np.stack([self.rowan]), FACENET
 
     def test_a_person_renamed_after_the_named_faces_were_read_is_written_by_the_new_name(self):
         """A guess names the person by their node, not by the name it read: a rename between the compare and the write

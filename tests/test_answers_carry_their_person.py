@@ -150,7 +150,7 @@ class TheAnswers(Library):
         # Every named face carries its person's id (0 without one in the three libraries, 2026-10-17; INVARIANTS).
         def named():
             return ([1, 2], [Ref(self.wren, "Wren"), Ref(self.sam_t, "Sam")],
-                    np.array([[0, 1, 0, 0], [1, 0, 0, 0]], dtype=np.float32))
+                    np.array([[0, 1, 0, 0], [1, 0, 0, 0]], dtype=np.float32), FACENET)
 
         found = identify.face_matches(self.library, self.stranger, named)
         self.assertEqual(["Wren", "Sam"], [each["name"] for each in found])
@@ -164,7 +164,7 @@ class TheAnswers(Library):
 
     def test_the_identify_pages_photo(self):
         def named():
-            return [1], [Ref(self.wren, "Wren")], np.array([[0, 1, 0, 0]], dtype=np.float32)
+            return [1], [Ref(self.wren, "Wren")], np.array([[0, 1, 0, 0]], dtype=np.float32), FACENET
 
         details = identify.photo_details(self.library, self.path, named)
         faces = {each["id"]: each for each in details["faces"]}
