@@ -387,7 +387,8 @@ class IdentifyOnTheSwitchedLibrary(_Libraries):
                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         said = " ".join((done.stdout + done.stderr).split())
         self.assertEqual(0, done.returncode, said)
-        self.assertIn("1 of 2 face(s) have no vector under this library's face model and took no part", said)
+        self.assertIn("1 of 2 face(s) have no vector under this library's face model and took no part: the model's pass"
+                      " found no face of its own there, or has not reached their photos yet.", said)
         self.assertNotIn("Try tagging photos", said)
         self.assertNotIn("Error retrieving faces", said)
         self.assertEqual(before, rows_of(self.cove.path))
