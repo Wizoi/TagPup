@@ -292,7 +292,7 @@ class AFaceUnmatchedByHandStaysNobody(FacesCase):
         faces.unname_faces(self.lib.library, [self.unmatched])   # Unmatch Face: the real path
 
     def named(self):
-        return [1], [ROWAN], np.stack([self.rowan])
+        return [1], [ROWAN], np.stack([self.rowan]), FACENET
 
     def test_re_examining_the_folder_neither_counts_nor_names_it(self):
         plan = faces.automatch_folder(self.lib.library, self.folder, self.named, rehearse=True)
