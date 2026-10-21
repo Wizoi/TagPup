@@ -15,7 +15,7 @@ from service_fixture import TempLibrary  # noqa: E402
 
 from face_rows import add_face  # noqa: E402
 
-from tagpup.core import clustering  # noqa: E402
+from tagpup.core import clustering, validation  # noqa: E402
 from tagpup.core.result import NotFound, Refused  # noqa: E402
 from tagpup.services import faces as face_service, identify, photos  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -145,7 +145,7 @@ class APhotosFacePanel(unittest.TestCase):
     """The faces on one photo for the strip and the boxes: faces.panel, as /api/photo-faces answers.
 
     Lifted: tests/test_tagpup_server_api.py's (now test_tagpup_routes) TestPhotoFaces (nine tests), which carried finding #75. Broken in a scratch copy and this
-    fails: panel's `clustering.is_offered(alike)` dropped (the strangers row, #75), store.faces.for_named_matrix reading
+    fails: panel's `cuts.is_offered(alike)` dropped (the strangers row, #75), store.faces.for_named_matrix reading
     excluded faces (an excluded face a source of names), panel's sort by name dropped (named first), `unmatched` counting
     an excluded face.
     """
@@ -177,7 +177,7 @@ class APhotosFacePanel(unittest.TestCase):
         self.assertEqual("Sam Hart", shown["faces"][0]["name"], "an unidentified face sorted first")
         self.assertEqual(("Jane Doe", None), (by_id[alike]["suggestion"], by_id[strangers]["suggestion"]))
         self.assertGreater(by_id[alike]["similarity"], 0.9)
-        self.assertLess(0.6, clustering.OFFER_A_NAME)
+        self.assertLess(0.6, clustering.cuts_of(validation.MTCNN_FACENET).offer_a_name)
         self.assertEqual((3, 2), (shown["total"], shown["unmatched"]))
         elsewhere = self.panel(other)
         by_id = {each["id"]: each for each in elsewhere["faces"]}

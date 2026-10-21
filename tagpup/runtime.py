@@ -54,7 +54,6 @@ from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
-from tagpup.jobs.suggestions import REFUSALS
 from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester
@@ -477,11 +476,6 @@ class _OnTheCard:
         self._turn.ensure()
         return self._model.detect_and_embed(*args, **kwargs)
 
-    def faces_in(self, *args, **kwargs):
-        # The phase 3 model's whole detection (tagpup.ml.scrfd_adaface.ScrfdAdaFace.faces_in): a look's one call.
-        self._turn.ensure()
-        return self._model.faces_in(*args, **kwargs)
-
 
 class _Lease:
     """One run's hold on a photo index and a set of models: `what` the run is ("Suggest Regatta (harbour)"), `models`
@@ -638,13 +632,9 @@ class Runtime:
         on those settings asks for them. Their weights load on first use, or in warm_up.
 
         Every write of faces gets its face models here (the CLI's index, Suggest's begin, Just look included, the
-        warm-up): refused, library_settings_service.FaceModelNotReady and nothing built, for a library set to a face
-        model whose vectors it cannot keep (LibrarySettings.face_model_refusal; #1643). A look that writes nothing
-        builds its model by look_at_faces."""
+        warm-up), whichever the library names: each answers the same calls (tagpup.ml.faces.FaceModel,
+        tagpup.ml.scrfd_adaface.ScrfdAdaFace). A look that writes nothing builds its model by look_at_faces."""
         settings = settings or self.settings(library)
-        refusal = settings.face_model_refusal
-        if refusal:
-            raise library_settings_service.FaceModelNotReady(refusal)
         self.idle.used(MODELS)
         with self._lock:
             model = self._model(self._face_models, self._build_faces, settings.faces)
@@ -827,13 +817,8 @@ class Runtime:
     def _warm(self, library, settings, what):
         """warm_up's loading, under its lease."""
         try:
-            # The face models first: a library refused its face model (Runtime.faces) has no CLIP model built either.
             faces = self.faces(library, settings)
             models = (self.clip(library, settings), faces)
-        except REFUSALS as e:
-            # Refused, as a Suggest in it would be: a setting the owner chose, not a failure.
-            logger.info("Not warming the models of %s: %s", library.name, e)
-            return
         except Exception as e:
             logger.error("Could not make the models to warm them up: %s", e)
             return
@@ -974,11 +959,11 @@ class Runtime:
     def look_at_faces(self, library, what=None, cancelled=None, report=None):
         """The new face model (validation.SCRFD_ADAFACE) for a look that writes nothing -- phase 3's pass reading what
         it finds, beside the faces a library holds, before any library is switched to it (docs/AI_PIPELINE.md, phase 3):
-        a RunModel whose `faces_in(path)` gives a photo's faces as the model finds them, and `end()`, which the caller
+        a RunModel whose `picture` and `detect_and_embed` give a photo's faces as the model finds them, and `end()`, which the caller
         calls in a finally. The model is the new one, not the library's (`library` gives the CLIP part of the set held,
         and its name to a run refused beside it), so a library refused its face model (Runtime.faces) can still be
         looked at. Reads the library's settings without stamping it (peek_settings) and writes nothing to it. The new
-        model alone: MTCNN's has no `faces_in`, and the library's own faces are read where they are kept.
+        model alone: the library's own faces are read where they are kept.
 
         Held as a run is (begin): its set -- the library's CLIP model's settings and {"model": SCRFD_ADAFACE} -- under a
         _Lease, so
@@ -987,7 +972,8 @@ class Runtime:
         at end(), the model with it when no library uses it. A weight file missing raises its sentence on first use
         (tagpup.ml.scrfd_adaface.missing_weights): the face models of the libraries are not touched."""
         model = validation.SCRFD_ADAFACE
-        looked = types.SimpleNamespace(embedder=peek_settings(library).embedder, faces={"model": model})
+        looked = types.SimpleNamespace(embedder=peek_settings(library).embedder,
+                                       faces=library_settings_service.model_alone(model))
         what = what or "Looking at the faces in %s with %s" % (library.name, model)
         self.idle.used(MODELS)
         with self._lock:

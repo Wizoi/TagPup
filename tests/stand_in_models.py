@@ -11,15 +11,20 @@ the suggester the way a run does:
 import os
 
 from tagpup.core import validation
+from tagpup.ml import faces as face_models
+from tagpup.ml import scrfd_adaface
 from tagpup.services import settings as library_settings
 from tagpup.services import suggester
 
 
 class Faces:
     """A face model's settings, which tagpup.ml.faces.FaceModel always holds and a detection is recorded under
-    (tagpup.services.faces.detector_of): a test's face model is one of these, and says what it detects."""
+    (tagpup.services.faces.detector_of): a test's face model is one of these, and says what it detects. What FaceModel
+    answers of them (`detector`, `new_faces`) is FaceModel's own."""
     min_face_size, confidence_threshold, mtcnn_thresholds = 40, 0.9, [0.6, 0.7, 0.7]
     key = validation.MTCNN_FACENET   # the key its vectors are filed under, as tagpup.ml.faces.FaceModel's
+    detector = face_models.FaceModel.detector
+    new_faces = face_models.FaceModel.new_faces
 
     def picture(self, path, *, max_side):
         """The processor's half, as the CLI's index asks it (tagpup.ml.faces.FaceModel.picture): what the test's
@@ -37,11 +42,14 @@ class Faces:
 
 class NewFaces:
     """The new face model (tagpup.ml.scrfd_adaface.ScrfdAdaFace) as the face pass is handed it: its `key`, a `picture` of
-    the photo as stored (decoded here by Pillow, NotDetected when it does not decode, as the model's own), and
+    the photo as stored (decoded here by Pillow, NotDetected when it does not decode, as the model's own), the model's own
+    `new_faces` and `detector`, and
     `detect_and_embed`, which answers what the test says each photo holds -- `found`, {file name: [(box, prob, seed)]},
     highest score first, each a detection with a vector made from `seed` (`vector`); a file name given None is a model
     that fails (NotDetected); one not given has no face. `kill_at`, a file name, raises Killed there: the process stopped."""
     key = validation.SCRFD_ADAFACE
+    detector = scrfd_adaface.ScrfdAdaFace.detector
+    new_faces = scrfd_adaface.ScrfdAdaFace.new_faces
 
     class Killed(BaseException):
         """The run stopped part-way: a crash, the window closed."""
@@ -67,11 +75,11 @@ class NewFaces:
         return [v / length for v in values]
 
     @staticmethod
-    def picture_bytes(width, height):
+    def picture_bytes(width, height, *, max_side):
         """What the read-ahead reserves for the picture: the decoded RGB."""
         return 3 * width * height
 
-    def picture(self, path):
+    def picture(self, path, *, max_side):
         from PIL import Image
         from tagpup.ml.faces import NotDetected
         try:

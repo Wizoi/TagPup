@@ -312,7 +312,8 @@ runtime unless the detector needs one and the owner agrees.
 - One journaled change per folder, dry run by default, a small folder first and the owner checks it, backup first, run
   on a copy first, resumable by what `face_embeddings` already holds, never two models' vectors mixed in one read.
 - The embedding norm is a quality score: low-quality faces are held out of clustering.
-- The face model is a per-library setting; a library switches to the new model only when the gate below is met.
+- The face model is a per-library setting; a library switches to the new model only when the gate below is met, and
+  only once its pass has reached its faces (items 1 and 2 below).
 
 **How it fails:** interrupted half way (each photo's faces change in one transaction; the run resumes); a photo
 unreadable now (its faces keep their old vectors, reported); two libraries holding one folder (each library has its
@@ -342,11 +343,12 @@ beside it, and it beside one), the card taken once at its first use and let go, 
 Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`.
 
 **Merge 3 brief (the pass; after migration 33).**
-- The crop is cut by the pass from the picture as stored (`ScrfdPicture.stored`) by the face's box, with
-  `images.crop_jpeg`, as `tagpup.ml.faces.FaceModel` does: `ScrfdAdaFace.faces_in` gives no crop.
-- The name a detection is recorded under (`tagpup.services.faces.detector_of`, `faces_detected`) gains a `model` key
-  for a model other than MTCNN alone, so the names every stored MTCNN detection was written under stand. Today every
-  write path under the new model is refused, so the arm is unreachable and is not written before the pass needs it.
+- The crop is cut from the picture as stored (`ScrfdPicture.stored`) by the face's box, as every face's crop is
+  (`images.face_crop_of`), by the model's `new_faces`: wherever a detection makes a new face (the index, Suggest, the
+  pass), as built in item 3 below. (`ScrfdAdaFace.faces_in`, which gave no crop, is gone.)
+- The name a detection is recorded under (`tagpup.services.faces.detector_of`, `faces_detected`) is the model's own
+  (`detector(max_side)`): `{"model": "scrfd-adaface"}` for the new model, and MTCNN's settings spelled as before, so the
+  names every stored MTCNN detection was written under stand (item 3 below).
 - Read-ahead: the pass hands the model the bytes it has read ahead (as the index's read-ahead does for MTCNN), or it
   reads one photo at a time; the model does not read ahead of its own.
 - `faces.detect_max_side` does not apply to the new model: it fits each photo into its two squares itself.
@@ -466,6 +468,78 @@ takes no turn of the card.
   1,425 and 1,017.
 - The margin grid runs to 1.0: 1,354 of AdaFace's 2,849 named faces have a margin above 0.5 (the highest 0.744), against
   13 of FaceNet's; extending it from 0.5 changed no reading at 0.95, 0.98 or 0.99.
+
+**Merge 3, items 1 and 2, as built (2026-10-20): the cuts are the face model's, and a library may switch.**
+- The likeness and margin a name is given and offered at are the face model's (`tagpup.core.clustering.Cuts`; `CUTS`,
+  `cuts_of(model)`, asked by the key the vectors were read under, `store.faces.model_key`): two models' cosines are not on
+  one scale. Every reader that named or offered by the old constants asks the cuts of its run's model.
+
+| Face model | Name: likeness / margin | Offer: likeness / margin | From |
+|---|---|---|---|
+| `mtcnn-facenet` | 0.80 / 0.04 | 0.70 / 0.02 | the owner's choices of 2026-09-24 and 2026-10-17, unchanged |
+| `scrfd-adaface` | 0.520 / 0.205 | 0.310 / 0.090 | slice C's pooled open-set reading at precision 0.99 (name) and 0.98 (offer), 2026-10-20 |
+
+- The grouping radius is the face model's too (`Cuts.group_at`, was `clustering.GROUPING` and `grouping.CLUSTER_EPS`):
+  cluster-faces' DBSCAN and Identify's grid group by the cuts of the model their vectors were read under. FaceNet's
+  0.885 is unchanged; AdaFace's 0.80 is a read-only measurement (2026-10-20) on kr-track and renton_parkrun, 2,849
+  named faces holding both vectors, pooled: at 0.80 AdaFace groups as impurely as FaceNet at 0.885 (33 wrong pairs;
+  pair precision 99.68% against 99.48%) and groups 1,646 named faces against 1,243; its curve is flat from 0.65 to
+  0.82. A thin sample: a read-only cluster-faces rehearsal on AdaFace's vectors over a whole library is to follow.
+- Name faces from tags' counts are named for what they are, not for FaceNet's numbers: `like_them_enough_to_name` and
+  `like_them_enough_to_offer` (were `like_them_from_0.80`, `like_them_from_0.70_to_0.80`).
+- `KEPT_FACE_MODELS` holds both models (and with it, removed with the last merge of phase 3, the refusal of a model a
+  library cannot keep: `face_model_refusal`, `FACE_MODEL_NOT_KEPT`, `FaceModelNotReady`, the CLI's exit 78, had no
+  instance once both models were kept and the rule refuses any other value). `settings.change` refuses a switch of `faces.model` to the new model while more
+  than `UNPASSED_SHARE_ALLOWED` (5%, the owner's to change) of the library's faces are in photos the pass has not
+  reached, before the consequences are asked; refused or not it says how many faces hold a vector under the model, how
+  many named faces hold none (they leave the gallery of named faces until the pass reaches them) and how many are in
+  photos not passed (`details["face_vectors"]`, from `store.faces.vector_counts` and `pass_counts`, read-only). A library
+  with no faces switches; switching back to FaceNet is never refused, reads no pass count (`not_passed` 0) and says
+  only how many faces hold no FaceNet vector (those the new model made meanwhile), when any do. An undo in History that would put the new model
+  back (the undo of a switch back to FaceNet) is refused by the same check, with the same sentence and counts
+  (`settings.undo_refusals`, asked by `services.journal.refusals` and its rehearsal); undoing the switch to the new model
+  is never refused by it. Counted 2026-10-20, read-only: kr-track 11,457
+  faces, 10,246 with the new vector, 3 named without, 16 in photos not passed (0.14%: allowed); renton_parkrun 3,644,
+  3,315, 0, 7 (0.19%: allowed); photo_index 187,784, none, 55,298, all (refused). The unmatched old faces of a passed
+  photo (1,195 on kr-track) keep FaceNet's vector alone, by design: they are not counted against the switch.
+- Left for items 3 and 4: the index and Suggest writing faces with the new model (`ScrfdAdaFace` answers neither the
+  index's `picture(path, max_side=...)` nor Suggest's `detect_and_embed_faces` yet), and the switch's own scenario end
+  to end. Scenario V11, `tests/test_the_new_face_model_writes_nothing.py`, is the switch now.
+
+**Merge 3, item 3, as built (2026-10-20): the index, Suggest and the pass write faces with the library's model, whichever.**
+- One surface, answered by `tagpup.ml.faces.FaceModel` and `tagpup.ml.scrfd_adaface.ScrfdAdaFace` alike, built by
+  `tagpup.runtime` from the library's `faces.model`: `key` (what its vectors are filed under), `picture(path, max_side=)`
+  (the processor's half, on a read-ahead thread), `picture_bytes(width, height, max_side=)` (what the read-ahead
+  reserves), `detect_and_embed(picture)` (the card's half), `new_faces(detected, picture)` (of what it found, the faces a
+  detection makes new where no old face takes them, each with its crop), `detect_and_embed_faces(path, max_side=)` (the
+  three in one, Suggest's) and `detector(max_side)` (the name its detections are recorded under). The library's cap
+  (`faces.detect_max_side`) is MTCNN's: the new model takes it and does not use it, its two squares being its own.
+- The floor of a new face has one owner, `scrfd_adaface.NEW_FACE_FLOOR` (40 px on the shorter side), applied by the
+  model's `new_faces` wherever a detection makes a face: the index, Suggest, and the pass for a detection no old face
+  takes. FaceModel's `new_faces` makes every face it found, as before.
+- Scenario P10, `tests/test_a_switched_library_indexes_and_suggests_with_its_model.py`: a library its pass reached is
+  switched; Name faces from tags reads the new vectors by AdaFace's cuts; a new photo is indexed through the CLI (the face
+  under the floor not made, the one made holding the new model's vector alone, a crop, and `{"model": "scrfd-adaface"}`
+  as its detector name); Suggest detects with the new model and offers a person at 0.45, which FaceNet's cuts would not;
+  switched back, FaceNet reads its own vectors again and neither switch wrote one.
+
+**Merge 3, item 4, as built (2026-10-20): the switch end to end.**
+- A face's offer has one owner, the face model's cut (`clustering.cuts_of(model).is_offered`): the panel, Apply All and
+  the writers show a person a face offered whatever its score (`SuggestionModel.offered`; owner and main session,
+  2026-10-20); `suggesting.OFFER_A_TAG` (0.60) is the floor of a tag alone. FaceNet's offers are from 0.70, so nothing
+  it shows changed; the new model's from 0.310 are shown now.
+- The switch is a journaled change of the settings (`change settings`): History shows it and Undo takes it back. The
+  dialog's reply carries what the faces hold under the model switched to (`face_vectors`, its sentence shown before the
+  page reloads). A running server reads the model at each read: the faces fingerprint holds the model, so Identify's
+  cached grids are read again; a Suggest run or an index begun before the switch keeps the model it began with to its
+  end, and the next one reads the library's. Scenario P10 switches in the dialog and undoes the switch in History.
+- As built (2026-10-20, the key travels with the vectors): every `store.faces` reader of vectors takes its key; a
+  decision (cluster-faces, automatch and Re-examine, the details panel, Identify's requests, a Suggest run, name faces
+  from tags) reads the key once and its vectors and cuts by it, and the named and decided faces kept between requests
+  carry theirs (`clustering.FaceRows.key`), compared only with vectors of that key (`FaceRows.under`: none otherwise,
+  for that one request; the next reads them again, the fingerprint holding the model). Scenario P10: a switch
+  committed while cluster-faces runs leaves it deciding FaceNet's vectors by FaceNet's cuts. The undo of a switch back
+  to FaceNet is refused by the switch's own check (79c4fd75).
 
 ### Phase 4: Matching, with the new model
 

@@ -207,7 +207,9 @@ class TagSuggester:
                     if len(parts) >= 2 and vocabulary.key(parts[0]) in face_roots:
                         names.add(vocabulary.key(parts[-1]))
                 # Read when the run begins (model_for_run): a read that fails fails the run, never "nobody is known".
-                known = face_records.known_faces(self.index.db_path)
+                # Under the run's face model, as the photos' faces are (on_file): a switch while the run is under way
+                # leaves it comparing the vectors of the model it began with, by that model's cuts.
+                known = face_records.known_faces(self.index.db_path, self.faces.key)
                 tags_by_id = self._tags_by_id()
                 names.update(vocabulary.key(person.name) for person in known.labels.values())
                 self._people = (names, known, tags_by_id)
@@ -423,7 +425,7 @@ class TagSuggester:
             """(whether the photo has faces on file, those to compare)."""
             detected, has_rows = [], False
             if self.index.conn:
-                for row in store_faces.in_photo(self.index.conn, photo_path):
+                for row in store_faces.in_photo(self.index.conn, photo_path, self.faces.key):
                     box_json, emb_bytes, prob, excluded, name, name_source = row
                     has_rows = True
                     # A face someone excluded, or decided is nobody, is not to be
@@ -432,9 +434,9 @@ class TagSuggester:
                     if excluded or (name is None and name_source == "manual"):
                         continue
                     box = json.loads(box_json)
-                    # A face with no vector under the library's face model (store_faces.VECTOR answers None: a library
-                    # part-way through the new model's pass) is a face on file and a box among the photo's, but it is
-                    # compared with nobody.
+                    # A face with no vector under the run's face model (store_faces.VECTOR answers None: one the other
+                    # model made, or an old face its pass matched with nothing) is a face on file and a box among the
+                    # photo's, but it is compared with nobody.
                     emb = None if emb_bytes is None else np.frombuffer(emb_bytes, dtype=np.float32).tolist()
                     detected.append({
                         "box": box,
@@ -489,9 +491,10 @@ class TagSuggester:
                         # value every screen offers a name from, scored by that likeness
                         # (tagpup.core.clustering). It was a mean face with no years, a
                         # distance cut of 0.90, and a score made up between 0.5 and 1.
-                        # Offered only as far ahead of the next person as a name is offered at (clustering.is_offered).
+                        # Offered only as far ahead of the next person as a name is offered at, by the cuts of the
+                        # run's face model, whose vectors these are (clustering.Cuts.is_offered).
                         best_key, likeness, margin = known_faces.most_like(face["embedding"], target_year, photo_path)
-                        if best_key and clustering.is_offered(likeness, margin):
+                        if best_key and clustering.cuts_of(self.faces.key).is_offered(likeness, margin):
                             label = known_faces.labels.get(best_key)
                             best_name = label.name if label else str(best_key)
                             score = round(likeness, 2)
@@ -733,15 +736,19 @@ class SuggestionModel:
             photo, self.embeddings.of(photo), k=15, min_sim=0.35, target_metadata=meta)
 
     def offered(self, suggestion):
-        """What the panel shows for one suggestion: tags, people, title."""
+        """What the panel shows for one suggestion: tags, people, title -- what Apply All and the writers take too.
+
+        A person a face offered is shown whatever the score: the face model's own cut made the offer
+        (clustering.cuts_of(model).is_offered, scored by the likeness), and is its one owner; the tag floor
+        (suggesting.OFFER_A_TAG) was read on tags, and on FaceNet's likenesses never bit (its offers are from 0.70),
+        while it hid the new model's from 0.310 (owner's decision, 2026-10-20). A tag is shown from the floor."""
         tags, people = [], []
         for item in suggestion.get("suggested_tags", []):
             score = item.get("score", 0.0)
-            if score >= suggesting.OFFER_A_TAG:
-                if item.get("has_face_match"):
-                    people.append({"name": item["tag"], "score": score})
-                else:
-                    tags.append({"tag": item["tag"], "score": score})
+            if item.get("has_face_match"):
+                people.append({"name": item["tag"], "score": score})
+            elif score >= suggesting.OFFER_A_TAG:
+                tags.append({"tag": item["tag"], "score": score})
         return tags, people, suggesting.caption_from_tags(
             [t["tag"] for t in tags] + [p["name"] for p in people], self.face_roots)
 

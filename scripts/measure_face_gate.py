@@ -20,7 +20,7 @@ import sandbox  # noqa: E402
 import _root  # noqa: E402,F401
 import numpy as np  # noqa: E402
 from tagpup.core import holdout  # noqa: E402
-from tagpup.services import face_gate, face_pass  # noqa: E402
+from tagpup.services import face_gate  # noqa: E402
 
 LABELS = {face_gate.OLD: "FaceNet", face_gate.NEW: "AdaFace"}
 SHOWN_MARGINS = (0.0, 0.02, 0.04, 0.06, 0.1, 0.2)
@@ -128,8 +128,8 @@ def main(argv=None):
     precisions = args.precision or [0.95, 0.98, 0.99]
     if any(not 0 < p < 1 for p in precisions):
         raise SystemExit("A precision is between 0 and 1, not 0 or 1.")
-    print("the gate: %s against %s, held out by folder, the floor today %d px (read-only)" % (
-        LABELS[face_gate.NEW], LABELS[face_gate.OLD], face_pass.NEW_FACE_FLOOR))
+    print("the gate: %s against %s, held out by folder, at the floors %s px (read-only)" % (
+        LABELS[face_gate.NEW], LABELS[face_gate.OLD], ", ".join(map(str, face_gate.FLOORS))))
     readings, answers = [], {}
     for source in args.source:
         name = os.path.splitext(os.path.basename(source))[0]

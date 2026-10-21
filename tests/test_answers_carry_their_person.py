@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fake_exiftool  # noqa: E402
 import web_client  # noqa: E402
-from face_rows import add_face  # noqa: E402
+from face_rows import FACENET, add_face  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core.vocabulary import Ref  # noqa: E402
@@ -150,20 +150,21 @@ class TheAnswers(Library):
         # Every named face carries its person's id (0 without one in the three libraries, 2026-10-17; INVARIANTS).
         def named():
             return ([1, 2], [Ref(self.wren, "Wren"), Ref(self.sam_t, "Sam")],
-                    np.array([[0, 1, 0, 0], [1, 0, 0, 0]], dtype=np.float32))
+                    np.array([[0, 1, 0, 0], [1, 0, 0, 0]], dtype=np.float32), FACENET)
 
         found = identify.face_matches(self.library, self.stranger, named)
         self.assertEqual(["Wren", "Sam"], [each["name"] for each in found])
         self.assertEqual([self.person(WREN), self.person(SAM_T)], [each["person"] for each in found],
                          "a face named for a person is that person, whoever else is called alike")
         exact = identify.face_matches(self.library, self.stranger, lambda: ([1], [Ref(self.sam_i, "Sam")],
-                                                                          np.array([[1, 0, 0, 0]], dtype=np.float32)))
+                                                                          np.array([[1, 0, 0, 0]], dtype=np.float32),
+                                                                          FACENET))
         self.assertEqual([self.person(SAM_I)], [each["person"] for each in exact])
         self.assertTrue(all("similarity" in each and "band" in each for each in found))
 
     def test_the_identify_pages_photo(self):
         def named():
-            return [1], [Ref(self.wren, "Wren")], np.array([[0, 1, 0, 0]], dtype=np.float32)
+            return [1], [Ref(self.wren, "Wren")], np.array([[0, 1, 0, 0]], dtype=np.float32), FACENET
 
         details = identify.photo_details(self.library, self.path, named)
         faces = {each["id"]: each for each in details["faces"]}

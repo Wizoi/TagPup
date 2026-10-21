@@ -364,8 +364,8 @@ def remove_folder(library, folder):
 
 def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     """Automatch the unnamed faces in a photo, or under a folder. A face is given the name of the named
-    face it most resembles, when it may be named unasked (clustering.names_unasked: the likeness and the margin over the next
-    person), unless that name is already
+    face it most resembles, when it may be named unasked (clustering.Cuts.names_unasked of the library's face model: the
+    likeness and the margin over the next person), unless that name is already
     in its photo or proposed for two faces there.
 
     The faces are compared before the write lock is taken -- building the named matrix
@@ -429,20 +429,22 @@ def written_report(library, face_ids, folder):
 
 def propose_guesses(library, named, photo_path=None, folder=None):
     """(the number of unnamed faces looked at, {photo path: [(face id, person)]}): each unnamed face in a photo, or under a
-    folder at any depth, that may be named unasked after the named face it most resembles (clustering.names_unasked); the
-    person is their id. Reads only; the compare happens before any write lock is taken.
+    folder at any depth, that may be named unasked after the named face it most resembles (clustering.Cuts.names_unasked,
+    the library's face model's: the model the unnamed faces' vectors were read under, and the decided faces compared with
+    them, clustering.FaceRows.under); the person is their id. Reads only; the compare happens before any write lock is taken.
     `named()` gives the decided faces (_automatch)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        unnamed = faces.unnamed(conn, photo_path=photo_path, folder=folder)
+        key = faces.model_key(conn)
+        unnamed = faces.unnamed(conn, key, photo_path=photo_path, folder=folder)
     finally:
         conn.close()
     if not unnamed:
         return 0, {}
-    known = named()
+    known = clustering.FaceRows.of(named()).under(key)
     if known[2] is None:
         return len(unnamed), {}
-    return len(unnamed), _closest_named(unnamed, known)
+    return len(unnamed), _closest_named(unnamed, known, clustering.cuts_of(key))
 
 
 def decide_guesses(conn, proposed):
@@ -494,9 +496,9 @@ def _write_guesses(conn, proposed):
 COMPARE_BLOCK = 512
 
 
-def _closest_named(unnamed, named):
+def _closest_named(unnamed, named, cuts):
     """{photo: [(face_id, person)]} for each of `unnamed` (id, embedding, photo) whose closest
-    named face it may be named after unasked. Compared a block at a time: one product per
+    named face it may be named after unasked (`cuts`, the face model's: clustering.Cuts). Compared a block at a time: one product per
     face made Re-examine on a folder of 2,600 photos and 9,400 unnamed faces, against
     36,000 named ones, take 32 to 47 seconds; a block at a time, 2 to 5. A face whose
     embedding is not the matrix's width is compared with nobody, where it failed the
@@ -516,8 +518,8 @@ def _closest_named(unnamed, named):
         columns, likenesses, margins = clustering.best_of(by_person.table(vectors @ grouped.T, grouped=True))
         for row, (face_id, _blob, face_photo) in enumerate(block):
             # As alike, and as far ahead of the next person, as naming a face with no one looking allows
-            # (tagpup.core.clustering).
-            if clustering.names_unasked(float(likenesses[row]), float(margins[row])):
+            # (tagpup.core.clustering.Cuts).
+            if cuts.names_unasked(float(likenesses[row]), float(margins[row])):
                 proposed.setdefault(face_photo, []).append((face_id, by_person.keys[columns[row]]))
     return proposed
 
@@ -539,19 +541,21 @@ def panel(library, photo_path, named):
 
     The similarity is to the nearest single named face of that person, from the matrix
     `/api/face-matches` reads, so the strip and the boxes cannot disagree (#828). Below the value every screen offers a name from
-    (tagpup.core.clustering.is_offered) the nearest name is noise, not a candidate:
+    (tagpup.core.clustering.Cuts.is_offered, the library's face model's) the nearest name is noise, not a candidate:
     it was 0.5 here, which two strangers in three reach (docs/findings.md, #75).
     Named first, then by confidence, then largest first: the faces needing attention
     are the ones the eye should land on.
     """
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        rows = faces.in_photo_for_panel(conn, photo_path)
+        key = faces.model_key(conn)   # once: the faces' vectors are read under it, and compared by its cuts
+        rows = faces.in_photo_for_panel(conn, photo_path, key)
         if not rows:
             return {"faces": [], "total": 0, "unmatched": 0}
         everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
+    cuts, known = clustering.cuts_of(key), None
 
     found = []
     for face_id, box_json, carried, prob, emb, excluded, reason in rows:
@@ -562,8 +566,10 @@ def panel(library, photo_path, named):
             box = []
         suggestion = suggested = similarity = None
         if emb and name is None and not excluded:
-            for suggested, alike, margin in identify.nearest_people(named(), np.frombuffer(emb, dtype=np.float32), face_id, 1):
-                if clustering.is_offered(alike, margin):
+            if known is None:   # read only when a face needs it, and only of the vectors' model
+                known = clustering.FaceRows.of(named()).under(key)
+            for suggested, alike, margin in identify.nearest_people(known, np.frombuffer(emb, dtype=np.float32), face_id, 1):
+                if cuts.is_offered(alike, margin):
                     suggestion, similarity = suggested.name, round(alike, 4)
                 else:
                     suggested = None
@@ -600,24 +606,12 @@ def _insert_detected(conn, photo_path, face, model):
                  crop=face.get("crop_image"), prob=face.get("prob"))
 
 
-#: What a face model is told apart by: the settings it detects with (tagpup.services.settings.LibrarySettings.faces).
-DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
-
-#: The cap on the picture the detector looks at (LibrarySettings.detect_max_side): part of the name only when there is
-#: one, so a library that sets none keeps every photo recorded as detected under the name it had (docs/AI_PIPELINE.md,
-#: phase 1a).
-DETECTOR_CAP = "detect_max_side"
-
-
 def detector_of(model, max_side):
     """The name the detections of face model `model` at cap `max_side` are recorded under (tagpup.store.faces_detected):
-    the model's settings, which a tagpup.ml.faces.FaceModel always holds (a test's stand-in holds them too), and the cap
-    the detection was given (LibrarySettings.detect_max_side) only when there is one. The one spelling of it, for the
+    the settings the model says (its `detector`: MTCNN's settings and the cap when there is one,
+    tagpup.ml.faces.FaceModel; the new model's key, tagpup.ml.scrfd_adaface.ScrfdAdaFace). The one name of it, for the
     write (the index, Suggest) and the read (Suggest's "detected before")."""
-    values = {key: getattr(model, key) for key in DETECTOR_SETTINGS}
-    if max_side is not None:
-        values[DETECTOR_CAP] = max_side
-    return faces_detected.detector({key: list(value) if isinstance(value, tuple) else value for key, value in values.items()})
+    return faces_detected.detector(model.detector(max_side))
 
 
 def ran(detected):
@@ -741,8 +735,9 @@ def named_counts(library, folder=None):
     return {"named": named, "unnamed": unnamed}
 
 
-def known_faces(db_path):
-    """Every named face that is not excluded, as tagpup.core.clustering.KnownFaces: what a
+def known_faces(db_path, key):
+    """Every named face that is not excluded, its vector under face model `key` (a Suggest run's, which its faces are
+    compared by), as tagpup.core.clustering.KnownFaces: what a
     face is compared with to say who it is, KEYED BY PERSON (the node's id: two people called alike are two), `labels` holding
     each one's Ref. It was each person's mean face,
     with no years (docs/findings.md, #71).
@@ -753,7 +748,7 @@ def known_faces(db_path):
     """
     conn = db.connect(db_path, timeout=30.0)
     try:
-        rows = faces.named_for_known(conn)
+        rows = faces.named_for_known(conn, key)
     finally:
         conn.close()
     return clustering.KnownFaces.of(

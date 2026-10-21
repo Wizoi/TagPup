@@ -1301,6 +1301,25 @@ def settle_once(db_path):
     return settle(db_path)
 
 
+def old_values(db_path, change_ids, table, key, column):
+    """{change id: what `column` of the row `key` (a tuple) of `table` held before it} of each of `change_ids` that updated
+    it: what an undo of each would put back. One read, by the rows' index (table_name, row_key). Reads only."""
+    if not change_ids:
+        return {}
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        found = {}
+        for start in range(0, len(change_ids), CHUNK):
+            chunk = list(change_ids[start:start + CHUNK])
+            found.update(conn.execute(
+                "SELECT change_id, old FROM change_rows WHERE table_name = ? AND row_key = ? AND action = 'update'"
+                " AND column_name = ? AND change_id IN (%s)" % ",".join("?" * len(chunk)),
+                [table, schema.row_key(key), column] + chunk).fetchall())
+        return found
+    finally:
+        conn.close()
+
+
 def _shown(value):
     return "<%d bytes>" % len(value) if isinstance(value, bytes) else value
 

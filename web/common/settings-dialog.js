@@ -317,6 +317,9 @@ export function saveSettings() {
         }
         if (result.locked) {
             say('Saved. Reloading...');
+            // A switch of the face model says what the faces hold under the new one: read before the reload.
+            const vectors = result.face_vectors;
+            if (vectors && vectors.said) window.alert(vectors.said);
             window.location.reload();
             return result;
         }

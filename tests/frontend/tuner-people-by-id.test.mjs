@@ -103,6 +103,21 @@ describe("Review People lists the two Sams as two people", () => {
   });
 });
 
+describe("a person's faces on a library switched to another face model", () => {
+  test("a face with no vector under the model says so, and is not scored", async (t) => {
+    // /api/person-faces: similarity null and no_vector true for a named face the new model's pass gave no vector.
+    const server = reviewPeople([face(1, { similarity: 0.82 }), face(2, { similarity: null, no_vector: true })]);
+    const ctx = await openReviewPeople(t, server);
+    click(ctx.window, ctx.rows()[2]);
+    await flush(ctx.window, 8);
+    const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
+    const said = (id) => cards.find((card) => card.dataset.faceId === String(id)).querySelector(".face-no-vector");
+    assert.equal(cards.length, 2);
+    assert.equal(said(2).textContent, "no vector under this model");
+    assert.equal(said(1), null);
+  });
+});
+
 describe("naming faces as one of two people called alike", () => {
   async function withGrid(t) {
     const ctx = await openReviewPeople(t);

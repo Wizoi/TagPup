@@ -50,11 +50,9 @@ def resolution_trace_path(db_path):
     return Library(db_path).face_trace_file
 
 
-def _all_faces(photo_index):
+def _all_faces(photo_index, key):
     """Every face's id, photo, box, vector, person (the Ref it carries, and its id) and probability, of the faces with a
-    vector under the library's face model (store_faces.for_clustering); [] if they cannot be read."""
-    if photo_index.conn is None:
-        return []
+    vector under `key`, the face model's (store_faces.for_clustering); [] if they cannot be read."""
     try:
         return [{
             "id": face_id,
@@ -64,7 +62,7 @@ def _all_faces(photo_index):
             "person": person,
             "person_id": person.id if person else None,
             "prob": prob,
-        } for face_id, photo_path, box_json, emb_bytes, person, prob in store_faces.for_clustering(photo_index.conn)]
+        } for face_id, photo_path, box_json, emb_bytes, person, prob in store_faces.for_clustering(photo_index.conn, key)]
     except Exception as e:
         logger.error(f"Error retrieving faces: {e}")
         return []
@@ -169,10 +167,17 @@ def resolve(photo_index, on_step=None):
     step = on_step or (lambda stage, done=0, total=1: None)
     logger.info("Starting self-tuning face identity resolution...")
     step("reading", 0, 1)
-    all_faces = _all_faces(photo_index)
-    left_out = store_faces.count_without_vector(photo_index.conn) if photo_index.conn is not None else 0
+    if photo_index.conn is None:
+        logger.info("No face embeddings found in the index.")
+        return {}
+    # The library's face model, read once: the run's vectors are read under it, and every decision of the run asks its cuts
+    # (tagpup.core.clustering.Cuts). A switch committed while the run reads leaves it on the model it began with.
+    key = store_faces.model_key(photo_index.conn)
+    cuts = clustering.cuts_of(key)
+    all_faces = _all_faces(photo_index, key)
+    left_out = store_faces.count_without_vector(photo_index.conn, key)
     if left_out:
-        # A library switched to the new face model before its pass, or part-way through it: said, not an error.
+        # An old face the new model's pass matched with nothing, or one in a photo it has not reached: said, not an error.
         logger.info("%d face(s) have no vector under the library's face model and take no part.", left_out)
         step("without_vector", left_out, left_out + len(all_faces))
     if not all_faces:
@@ -207,7 +212,7 @@ def resolve(photo_index, on_step=None):
     step("grouping", 0, 1)
     embeddings = np.array([f["embedding"] for f in all_faces], dtype=np.float32)
     
-    # Euclidean, at clustering's radius (tagpup.core.clustering.GROUPING, 0.885, as a distance: 0.48 between unit vectors).
+    # Euclidean, at the face model's radius (Cuts.group_at as a distance; FaceNet's 0.885 is 0.48 between unit vectors).
     # min_samples=1, so no face is noise: a face like no other is a cluster of one. 2 to 20 were measured on copies of the
     # three libraries and kept none (docs/AI_PIPELINE.md, phase 2c: each took thousands of photo_index's names).
     # On the processor: clustering takes no turn of the graphics card (tagpup.ml.gpu), and runs after the indexer let
@@ -215,7 +220,7 @@ def resolve(photo_index, on_step=None):
     # Imported here: scikit-learn takes a second to import, and the face records beside this need none of it.
     from sklearn.cluster import DBSCAN
     # n_jobs=-1 enables multi-threaded distance computation for large datasets.
-    db = DBSCAN(eps=clustering.distance(clustering.GROUPING), min_samples=1, metric='euclidean', n_jobs=-1)
+    db = DBSCAN(eps=cuts.group_distance, min_samples=1, metric='euclidean', n_jobs=-1)
     labels = db.fit_predict(embeddings)
     
     # Group face index records by cluster ID
@@ -503,7 +508,7 @@ def resolve(photo_index, on_step=None):
                 if name and name in resolved_by_name and name not in photo_tags:
                     similarity = closest_to(name, f["embedding"], f["photo_path"])
                     # A name kept is asked no margin: the margin never takes a name away (owner, 2026-10-17).
-                    if similarity is not None and not clustering.names_unasked(similarity, math.inf):
+                    if similarity is not None and not cuts.names_unasked(similarity, math.inf):
                         face_resolved[f["id"]] = None
 
             # A decision made by hand holds through every step below: its face keeps
@@ -549,7 +554,7 @@ def resolve(photo_index, on_step=None):
 
             # The vote of a cluster of one in a photo of two or more faces is its photo's keywords alone: they say the person
             # is in the photo, not which face is theirs. A name it gives from now on, kept past the photo's conflicts, asks
-            # what the tag's name asks of the last pass (clustering.names_from_the_tag), ahead of everyone named but the
+            # what the tag's name asks of the last pass (clustering.Cuts.names_from_the_tag), ahead of everyone named but the
             # people the photo's other faces hold; a name the face carries was never asked (`alone`), so none is taken away
             # (owner, 2026-10-17: 2,389 of photo_index's names were given so, 865 of them more like another person). A face
             # that falls short is left to the pairing below and the last pass.
@@ -558,7 +563,7 @@ def resolve(photo_index, on_step=None):
                 if row is not None and name is not None and name == initial_resolved_names.get(f["id"]):
                     held = {other for fid, other in face_resolved.items() if other and fid != f["id"]}
                     likeness = float(row[columns[name]]) if name in columns else math.nan
-                    if not clustering.names_from_the_tag(None if math.isnan(likeness) else likeness,
+                    if not cuts.names_from_the_tag(None if math.isnan(likeness) else likeness,
                                                          known.margin_of(row, columns, name, skip=held)):
                         face_resolved[f["id"]] = None
 
@@ -584,7 +589,7 @@ def resolve(photo_index, on_step=None):
                 for r, c in zip(row_ind, col_ind):
                     f, tag = unassigned_faces[r], known_unused[c]
                     margin = known.margin_of(rows[f["id"]], columns, tag, skip=assigned_names)
-                    if clustering.names_unasked(-cost_matrix[r, c], margin_asked(f, tag, margin)):
+                    if cuts.names_unasked(-cost_matrix[r, c], margin_asked(f, tag, margin)):
                         face_resolved[f["id"]] = tag
 
             if unassigned_faces and unused_tags:
@@ -720,14 +725,14 @@ def resolve(photo_index, on_step=None):
                 best_sim = -1.0 if best_sim is None else best_sim
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
                 # The tag bears the name out, so the face is named from the likeness a name is offered at
-                # (tagpup.core.clustering.names_from_the_tag), not only from where it is named with no one
+                # (tagpup.core.clustering.Cuts.names_from_the_tag), not only from where it is named with no one
                 # looking: the loop above keeps a tag-confirmed name whatever the likeness (#855), and a
                 # face that reaches this pass unnamed -- its cluster has no anchor -- was left unnamed at
                 # 0.73 and 0.78 (docs/findings.md, #902). The tag does not say which face is theirs: the margin
                 # over the next person does, but for a face that carries them already (margin_asked). A name
                 # already taken by another face of the photo is skipped (`skip`), to prevent false assignments in
                 # multi-face photos.
-                if best_name in photo_tags and clustering.names_from_the_tag(best_sim, margin_asked(face, best_name, margin)):
+                if best_name in photo_tags and cuts.names_from_the_tag(best_sim, margin_asked(face, best_name, margin)):
                     final_name = best_name
                     names_taken_here.add(final_name)
                     traces[face["id"]] = {

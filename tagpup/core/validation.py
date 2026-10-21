@@ -86,8 +86,8 @@ IGNORED_CLUSTER = "ignored cluster"
 EXCLUSION_REASONS = (DEFAULT_EXCLUSION_REASON, "stranger", "bad crop", "duplicate", IGNORED_CLUSTER)
 
 #: The face models a library can be set to (faces.model): MTCNN and FaceNet, which made every face vector the three
-#: libraries hold, and SCRFD and AdaFace (tagpup.ml.scrfd_adaface; docs/AI_PIPELINE.md, phase 3). Which of them a
-#: library can keep vectors of is tagpup.services.settings.KEPT_FACE_MODELS.
+#: libraries hold, and SCRFD and AdaFace (tagpup.ml.scrfd_adaface; docs/AI_PIPELINE.md, phase 3). A library keeps the
+#: vectors of each apart (face_embeddings, by model), and the rule refuses any other value.
 MTCNN_FACENET = "mtcnn-facenet"
 SCRFD_ADAFACE = "scrfd-adaface"
 FACE_MODELS = (MTCNN_FACENET, SCRFD_ADAFACE)
@@ -253,10 +253,11 @@ SETTING_GROUPS = {
         "app": "tuner",
         "title": "The face model",
         "consequences": [
-            "Set to %s, every index and every Suggest in this library is refused and writes nothing until the "
-            "new model can look at its faces again: it holds FaceNet's face vectors alone. Identify still shows "
-            "the faces it holds, but compares none of them: it reads only the new model's vectors." % SCRFD_ADAFACE,
-            "Set back to %s, indexing and Suggest run as before; no face already found changes either way."
+            "Set to %s, Identify, cluster-faces, New Person and Suggest compare faces by the new model's vectors, "
+            "with its own cuts for naming and offering a person; photos indexed after it find faces with the new "
+            "model. A face the pass has not given a new vector takes no part, and a named one leaves the named "
+            "faces compared with, until the pass reaches its photo." % SCRFD_ADAFACE,
+            "FaceNet's vectors stay and nothing is deleted: set back to %s, everything compares by them as before."
             % MTCNN_FACENET,
         ],
     },
@@ -330,9 +331,10 @@ SETTINGS = {
     "faces.model": _setting(
         "face-model", "Face model", "text", MTCNN_FACENET,
         "The models indexing and Suggest find faces and make their vectors with: %s (MTCNN and FaceNet, which made "
-        "every face vector the library holds) or %s (SCRFD and AdaFace). The %s settings are MTCNN's. A library "
-        "holds FaceNet's vectors alone until the new model looks at its faces again (docs/AI_PIPELINE.md, phase 3): "
-        "until then, set to %s, indexing and Suggest are refused and write nothing." % (
+        "the libraries' first face vectors) or %s (SCRFD and AdaFace). The %s settings are MTCNN's. Every reader "
+        "compares a face by its vector under this model, so switching to %s waits for its pass (face-pass) to give "
+        "the library's faces their new vectors: a switch is refused, with the counts, while too many faces are in photos "
+        "the pass has not reached. Switching back is always allowed (docs/AI_PIPELINE.md, phase 3)." % (
             MTCNN_FACENET, SCRFD_ADAFACE, SETTING_GROUPS["faces"]["title"], SCRFD_ADAFACE),
         [{"rule": "one_of", "choices": list(FACE_MODELS),
           "message": "The face model is one of %s." % ", ".join(FACE_MODELS)}]),

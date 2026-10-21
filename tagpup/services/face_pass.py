@@ -1,17 +1,18 @@
 """The new face model's pass over a library's photos (docs/AI_PIPELINE.md, phase 3, "The pass" and "Merge 3 brief").
 
-The model is handed in (tagpup.ml.scrfd_adaface.ScrfdAdaFace, or a test's stand-in): `key`, `picture(path)` and
-`detect_and_embed(picture)`. For each photo it detects the faces again, and
+The model is handed in (tagpup.ml.scrfd_adaface.ScrfdAdaFace, or a test's stand-in): `key`, `picture(path, max_side=)`,
+`picture_bytes`, `detect_and_embed(picture)` and `new_faces`. For each photo it detects the faces again, and
 
 - each old face, named or not, excluded or not, takes the new detection it overlaps most, at SAME_FACE or more, one to one,
   the named faces first (tagpup.core.clustering.pairs; owner, 2026-10-18: a named face beside an unnamed duplicate of it
   takes the detection though the duplicate overlaps it more): it keeps its person, box, crop and decisions, and is given a
   vector under the model's key;
 - an old face no detection overlaps is listed (photo id, face id) for review, and nothing of it changes;
-- a detection no old face takes is a new face: unnamed, not excluded, its crop cut from the picture as stored by its box
-  (images.face_crop_of, as tagpup.ml.faces.FaceModel cuts one), its vector under the model's key alone, so every reader keyed
-  by the library's model (FaceNet's until the gate) leaves it out (tagpup.store.faces.WITH_VECTOR);
-- a detection no old face takes whose shorter side is under NEW_FACE_FLOOR is not made, and is counted (`too_small`).
+- a detection no old face takes is a new face, if the model makes one of it (its `new_faces`, as the index and Suggest
+  make theirs: tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR, the crop cut from the picture as stored by its box): unnamed, not
+  excluded, its vector under the model's key alone, so every reader keyed by the library's model (FaceNet's until the
+  switch) leaves it out (tagpup.store.faces.WITH_VECTOR);
+- a detection no old face takes that the model makes no face of (under the floor) is not made, and is counted (`too_small`).
 
 A photo is done when one of its faces holds a vector under the key (tagpup.store.faces.vectors_under): a run resumes by
 what is held, and a second run writes nothing. No `faces_detected` row is written. A photo the model finds no face in
@@ -53,12 +54,6 @@ from tagpup.store import roots as store_roots
 #: The name of a folder's change: the model's key. The folder is in its summary.
 OPERATION = "face pass (%s)"
 
-#: The shorter side, in pixels of the picture as stored, under which a detection no old face takes is not made a new
-#: face (owner, 2026-10-18): the new detector's own floor is 15 px, and in one real folder 31 of its 40 new faces were under
-#: 40 px, smudges no one can recognise (the old detector's smallest was 23, its median 64). An old face a detection of any
-#: size matches still gets the vector. To be tuned in slice C against held-out named faces.
-NEW_FACE_FLOOR = 40
-
 #: Reading one photo at a time: the next one is not read before the model is done with this one.
 ONE_AT_A_TIME = {"threads": 1, "ahead": 0, "budget": 0}
 
@@ -75,7 +70,7 @@ def _never():
 class Folder:
     """What the pass did, or a dry run would do, in one folder (the photos directly in it)."""
     folder: str
-    #: Old faces given a vector, and new faces made; detections no old face took, under NEW_FACE_FLOOR: not made.
+    #: Old faces given a vector, and new faces made; detections no old face took, under the model's floor: not made.
     matched: int = 0
     new: int = 0
     too_small: int = 0
@@ -147,8 +142,9 @@ def _folder(db_path, conn, model, name, photos, apply, held, reading, stop, befo
     def read(photo, _begun, reserve):
         """On a thread of the read-ahead: the photo made ready for the model, nothing on the graphics card."""
         width, height = images.picture_size(photo[1])
-        reserve(model.picture_bytes(width, height))
-        return model.picture(photo[1])
+        # The library's cap is MTCNN's: the new model's squares are its own (ScrfdAdaFace.picture).
+        reserve(model.picture_bytes(width, height, max_side=None))
+        return model.picture(photo[1], max_side=None)
 
     change_id = None
     with read_ahead.ReadAhead(photos, begin, read, **reading) as ahead:
@@ -190,9 +186,9 @@ def _photo(db_path, model, operation, name, found, change_id, photo_id, path, ol
     matched = [(old[i][0], face_service.vector_bytes(detected[j]["embedding"])) for i, j in sorted(paired.items())]
     taken = set(paired.values())
     untaken = [each for j, each in enumerate(detected) if j not in taken]
-    big = [each for each in untaken if min(each["box"][2] - each["box"][0], each["box"][3] - each["box"][1]) >= NEW_FACE_FLOOR]
-    new = [(each["box"], float(each["prob"]), face_service.vector_bytes(each["embedding"]),
-            images.face_crop_of(picture.stored, each["box"])) for each in big]
+    big = model.new_faces(untaken, picture)
+    new = [(each["box"], float(each["prob"]), face_service.vector_bytes(each["embedding"]), each["crop_image"])
+           for each in big]
     if not matched and not new:
         found.too_small += len(untaken)
         return change_id

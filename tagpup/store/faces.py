@@ -43,7 +43,7 @@ PHOTO = " JOIN photos p ON p.id = f.photo_id"
 #: library's (model_key) for a reader. VECTOR keeps a face without one (v.vector NULL), for a reader that shows faces;
 #: WITH_VECTOR only the faces with one, for every reader that compares them: a face with no vector under the library's model
 #: takes no part in comparing, clustering, New Person's pool or the Identify queue, and this join is the one place that
-#: says so (a library switched to the new model before its pass, or part-way through it). HAS_VECTOR is the same, as a
+#: says so (an old face the new model's pass matched with nothing, or one in a photo it has not reached). HAS_VECTOR is the same, as a
 #: condition, for a reader that needs only to know.
 VECTOR = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
 WITH_VECTOR = " JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
@@ -51,8 +51,12 @@ HAS_VECTOR = "EXISTS (SELECT 1 FROM face_embeddings v WHERE v.face_id = f.id AND
 
 
 def model_key(conn):
-    """The key a reader on `conn` reads face vectors under: the library's face model (tagpup.store.settings.face_model). Read
-    once a read, and passed to each query of it."""
+    """The key a reader on `conn` reads face vectors under: the library's face model (tagpup.store.settings.face_model).
+
+    Read once a decision, and passed to every read of vectors it makes and to clustering.cuts_of: a switch of the face
+    model committed between two reads would otherwise compare one model's vectors with the other's, by either's cuts.
+    So every reader below that answers vectors is GIVEN its key, never reads the library's itself; the key travels with
+    what it read (clustering.FaceRows.key, identify.UnnamedFaces.key) to whatever compares it later."""
     return store_settings.face_model(conn)
 
 
@@ -427,39 +431,49 @@ def excluded_ids(conn):
     return {face_id for (face_id,) in conn.execute("SELECT id FROM faces WHERE excluded = 1")}
 
 
-def for_clustering(conn):
-    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob) of every face with a vector under the library's face
-    model (WITH_VECTOR; count_without_vector says how many are left out). The crop is left behind: 6 KB a face, and
+def for_clustering(conn, key):
+    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob) of every face with a vector under `key`, the face
+    model's (WITH_VECTOR; count_without_vector says how many are left out). The crop is left behind: 6 KB a face, and
     clustering never looks at it."""
     return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob)
             for face_id, photo_path, box, embedding, tag_id, name, prob in store_roots.natives(conn, conn.execute(
                 "SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob FROM faces f" + PHOTO + WITH_VECTOR,
-                (model_key(conn),)).fetchall(), 1)]
+                (key,)).fetchall(), 1)]
 
 
-def count_without_vector(conn):
-    """How many faces have no vector under the library's face model, and so take no part in clustering (for_clustering)."""
-    return conn.execute("SELECT COUNT(*) FROM faces f WHERE NOT " + HAS_VECTOR, (model_key(conn),)).fetchone()[0]
+def vector_counts(conn, key):
+    """{"faces", "without" (holding no vector under `key`), "named_without" (of those, the ones naming a person and not
+    excluded: the named faces the gallery of known faces, named_for_known, would lose read under `key`)}. The key is given,
+    never the library's (model_key): a switch of the face model asks it of the model switched to
+    (tagpup.services.settings.change). One scan of faces, each face's vector by its key (face_id, model); no vector read."""
+    row = conn.execute("SELECT COUNT(*), TOTAL(NOT " + HAS_VECTOR + "), TOTAL(f.tag_id IS NOT NULL AND f.excluded = 0"
+                       " AND NOT " + HAS_VECTOR + ") FROM faces f", (key, key)).fetchone()
+    return {"faces": row[0], "without": int(row[1]), "named_without": int(row[2])}
 
 
-def named_for_known(conn):
+def count_without_vector(conn, key):
+    """How many faces have no vector under `key`, and so take no part in clustering (for_clustering)."""
+    return vector_counts(conn, key)["without"]
+
+
+def named_for_known(conn, key):
     """(Ref, embedding bytes, photo path, the year it was taken or None) of every named
-    face that is not excluded and names a person by id (a name from before ids is no person): what
-    tagpup.core.clustering.KnownFaces is made of."""
+    face that is not excluded, names a person by id (a name from before ids is no person) and holds a vector under `key`:
+    what tagpup.core.clustering.KnownFaces is made of."""
     return [(Ref(tag_id, name), embedding, photo_path, year)
             for tag_id, name, embedding, photo_path, year in store_roots.natives(conn, conn.execute(
                 "SELECT f.tag_id, f.name, v.vector, p.path, p.year FROM faces f" + PHOTO + WITH_VECTOR
-                + " WHERE f.excluded = 0 AND f.tag_id IS NOT NULL", (model_key(conn),)).fetchall(), 3)]
+                + " WHERE f.excluded = 0 AND f.tag_id IS NOT NULL", (key,)).fetchall(), 3)]
 
 
-def in_photo(conn, photo_path):
-    """(box JSON, embedding bytes, prob, excluded, Ref or None, name_source) of each face in one
-    photo, for suggesting who is in it."""
+def in_photo(conn, photo_path, key):
+    """(box JSON, embedding bytes -- its vector under `key`, or None --, prob, excluded, Ref or None, name_source) of each
+    face in one photo, for suggesting who is in it."""
     where, params = _on_photo(conn, photo_path, "f.photo_id")
     return [(box, embedding, prob, excluded, _ref(tag_id, name), source)
             for box, embedding, prob, excluded, tag_id, name, source in conn.execute(
                 "SELECT f.box, v.vector, f.prob, f.excluded, f.tag_id, f.name, f.name_source FROM faces f" + VECTOR
-                + " WHERE " + where, [model_key(conn)] + list(params)).fetchall()]
+                + " WHERE " + where, [key] + list(params)).fetchall()]
 
 
 def _target(conn, person, known=None):
@@ -842,8 +856,8 @@ def _photos_under(conn, folder):
 NOT_DECIDED_NOBODY = "COALESCE(%sname_source, '') <> 'manual'"
 
 
-def unnamed(conn, photo_path=None, folder=None):
-    """(id, embedding bytes, photo_path) of the unnamed, unexcluded faces in one photo, or
+def unnamed(conn, key, photo_path=None, folder=None):
+    """(id, embedding bytes -- under `key`, or None --, photo_path) of the unnamed, unexcluded faces in one photo, or
     under a folder at any depth, that automatch may name: not those unmatched by hand
     (docs/findings.md, #643)."""
     if photo_path is not None:
@@ -855,7 +869,7 @@ def unnamed(conn, photo_path=None, folder=None):
     return store_roots.natives(conn, conn.execute(
         "SELECT f.id, v.vector, p.path" + source + VECTOR + " WHERE " + where
         + " AND f.name IS NULL AND f.excluded = 0 AND " + NOT_DECIDED_NOBODY % "f.",
-        [model_key(conn)] + list(params)).fetchall(), 2)
+        [key] + list(params)).fetchall(), 2)
 
 
 def unnamed_counts(conn, folder):
@@ -890,13 +904,13 @@ def identify_candidates(conn):
         + " WHERE f.name IS NULL AND f.excluded = 0 AND " + HAS_VECTOR, (model_key(conn),)).fetchall(), 1)
 
 
-def unnamed_for_matching(conn):
+def unnamed_for_matching(conn, key):
     """(id, photo_path, box JSON, prob, mtime, embedding, year, people as JSON [[id, name]]) of every
-    nameless face still in play with a vector under the library's face model (WITH_VECTOR), for a person's Identify grid:
+    nameless face still in play with a vector under `key` (WITH_VECTOR), for a person's Identify grid:
     the faces the queue counts."""
     return store_roots.natives(conn, conn.execute(
         "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year, " + PEOPLE_REFS_JSON + ""
-        " FROM faces f" + PHOTO + WITH_VECTOR + " WHERE f.name IS NULL AND f.excluded = 0", (model_key(conn),)).fetchall(), 1)
+        " FROM faces f" + PHOTO + WITH_VECTOR + " WHERE f.name IS NULL AND f.excluded = 0", (key,)).fetchall(), 1)
 
 
 def count_unnamed(conn):
@@ -918,18 +932,18 @@ def named_and_unnamed(conn, folder=None):
     return named, unnamed
 
 
-def unnamed_embeddings(conn):
-    """(id, embedding) of every nameless face in play with a vector under the library's face model (WITH_VECTOR), by id:
+def unnamed_embeddings(conn, key):
+    """(id, embedding) of every nameless face in play with a vector under `key` (WITH_VECTOR), by id:
     New Person's pool (tagpup.services.identify.unnamed_faces). idx_faces_identify finds them. A cursor,
     not a list: the caller takes them a row at a time, never all 390 MB at once."""
     return conn.execute("SELECT f.id, v.vector FROM faces f" + WITH_VECTOR + " WHERE f.name IS NULL AND f.excluded = 0"
-                        " ORDER BY f.id", (model_key(conn),))
+                        " ORDER BY f.id", (key,))
 
 
-def unnamed_among(conn, face_ids):
+def unnamed_among(conn, face_ids, key):
     """(id, photo_path, box JSON, embedding) of those of `face_ids` that are nameless
-    faces in play with a vector under the library's face model (WITH_VECTOR), read by id."""
-    found, key = [], model_key(conn)
+    faces in play with a vector under `key` (WITH_VECTOR), read by id."""
+    found = []
     for chunk in _chunks(list(face_ids)):
         found.extend(conn.execute(
             "SELECT f.id, p.path, f.box, v.vector FROM faces f" + PHOTO + WITH_VECTOR + " WHERE f.id IN (%s)"
@@ -951,36 +965,36 @@ def count_excluded(conn):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE excluded = 1").fetchone()[0]
 
 
-def for_named_matrix(conn):
-    """(id, Ref, embedding) of every named face that has an embedding and is not
+def for_named_matrix(conn, key):
+    """(id, Ref, embedding) of every named face that has a vector under `key` and is not
     excluded: what a face is compared against to say who it resembles."""
     return [(face_id, Ref(tag_id, name), embedding) for face_id, tag_id, name, embedding in conn.execute(
         "SELECT f.id, f.tag_id, f.name, v.vector FROM faces f" + WITH_VECTOR
-        + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (model_key(conn),)).fetchall()]
+        + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (key,)).fetchall()]
 
 
-def for_decided_matrix(conn):
-    """(id, Ref, embedding, name_source, photo_id) of every named face that has an embedding
+def for_decided_matrix(conn, key):
+    """(id, Ref, embedding, name_source, photo_id) of every named face that has a vector under `key`
     and is not excluded: the candidates for what automatch compares a face against. The
     caller keeps those a person decided (tagpup.services.identify.decided_faces)."""
     return [(face_id, Ref(tag_id, name), embedding, source, photo_id)
             for face_id, tag_id, name, embedding, source, photo_id in conn.execute(
                 "SELECT f.id, f.tag_id, f.name, v.vector, f.name_source, f.photo_id FROM faces f" + WITH_VECTOR
-                + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (model_key(conn),)).fetchall()]
+                + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (key,)).fetchall()]
 
 
-def embedding_row(conn, face_id):
-    """(embedding,) of one face, its vector under the library's face model or None, or None when there is no such face."""
-    return conn.execute("SELECT v.vector FROM faces f" + VECTOR + " WHERE f.id = ?", (model_key(conn), face_id)).fetchone()
+def embedding_row(conn, face_id, key):
+    """(embedding,) of one face, its vector under `key` or None, or None when there is no such face."""
+    return conn.execute("SELECT v.vector FROM faces f" + VECTOR + " WHERE f.id = ?", (key, face_id)).fetchone()
 
 
-def in_photo_with_names(conn, photo_path):
-    """(id, box JSON, Ref or None, embedding, excluded) of each face in one photo."""
+def in_photo_with_names(conn, photo_path, key):
+    """(id, box JSON, Ref or None, embedding -- under `key`, or None --, excluded) of each face in one photo."""
     where, params = _on_photo(conn, photo_path, "f.photo_id")
     return [(face_id, box, _ref(tag_id, name), embedding, excluded)
             for face_id, box, tag_id, name, embedding, excluded in conn.execute(
                 "SELECT f.id, f.box, f.tag_id, f.name, v.vector, f.excluded FROM faces f" + VECTOR + " WHERE " + where,
-                [model_key(conn)] + list(params)).fetchall()]
+                [key] + list(params)).fetchall()]
 
 
 def photos_with_unnamed(conn, every=False):
@@ -1017,23 +1031,23 @@ def count_of_people(conn, person_ids_, named=None):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s) AND name = ?" % marks, ids + [named]).fetchone()[0]
 
 
-def person_embeddings(conn, person):
+def person_embeddings(conn, person, key):
     """(embedding, mtime, year, photo_path) of each of a person's faces that
-    has an embedding: what their era-aware centroids are made from."""
+    has a vector under `key`: what their era-aware centroids are made from."""
     where, params = _carries(conn, person_ids.target(conn, person), "f.")
     return store_roots.natives(conn, conn.execute(
         "SELECT v.vector, p.mtime, p.year, p.path FROM faces f" + PHOTO + WITH_VECTOR
-        + " WHERE " + where, [model_key(conn)] + list(params)).fetchall(), 3)
+        + " WHERE " + where, [key] + list(params)).fetchall(), 3)
 
 
-def person_page(conn, person, limit, offset):
-    """(id, photo_path, box JSON, prob, mtime, embedding, year) of a page of a
+def person_page(conn, person, limit, offset, key):
+    """(id, photo_path, box JSON, prob, mtime, embedding -- under `key`, or None --, year) of a page of a
     person's faces. A negative limit is no limit."""
     where, params = _carries(conn, person_ids.target(conn, person), "f.")
     return store_roots.natives(conn, conn.execute(
         "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year"
         " FROM faces f" + PHOTO + VECTOR + " WHERE " + where + " LIMIT ? OFFSET ?",
-        [model_key(conn)] + list(params) + [limit, offset]).fetchall(), 1)
+        [key] + list(params) + [limit, offset]).fetchall(), 1)
 
 
 def excluded_for_review(conn):
@@ -1046,14 +1060,14 @@ def excluded_for_review(conn):
 
 # ---- What TagPup's photo panel and the CLI read -----------------------------------------
 
-def in_photo_for_panel(conn, photo_path):
-    """(id, box JSON, Ref or None, prob, embedding, excluded, excluded_reason) of each face in one
-    photo, in detection order."""
+def in_photo_for_panel(conn, photo_path, key):
+    """(id, box JSON, Ref or None, prob, embedding -- under `key`, or None --, excluded, excluded_reason) of each face in
+    one photo, in detection order."""
     where, params = _on_photo(conn, photo_path, "f.photo_id")
     return [(face_id, box, _ref(tag_id, name), prob, embedding, excluded, reason)
             for face_id, box, tag_id, name, prob, embedding, excluded, reason in conn.execute(
                 "SELECT f.id, f.box, f.tag_id, f.name, f.prob, v.vector, f.excluded, f.excluded_reason"
-                " FROM faces f" + VECTOR + " WHERE " + where + " ORDER BY f.id", [model_key(conn)] + list(params)).fetchall()]
+                " FROM faces f" + VECTOR + " WHERE " + where + " ORDER BY f.id", [key] + list(params)).fetchall()]
 
 
 def counts_on(conn, stored_path):

@@ -33,8 +33,8 @@ against the same person's other photos:
 
 The median gains nothing over the mean, and the closest face tells the owner's people
 from strangers better than either. The same two values serve every decision: a name
-is flagged as possibly wrong below OFFER_A_NAME -- it would not even be offered -- and
-clustering keeps a name it gave only while the face reaches NAME_WITHOUT_ASKING, the
+is flagged as possibly wrong below the likeness a name is offered at (Cuts.offer_a_name) -- it would not even be offered -- and
+clustering keeps a name it gave only while the face reaches the likeness it names unasked at (Cuts.name_without_asking), the
 value it named at *(owner, 2026-09-24)*. The grid flagged below 0.85 of the median,
 which is half of every correctly named face, and clustering unnamed below 0.80 of the
 mean, a third of them.
@@ -53,38 +53,90 @@ photo_index's 55,088).
 """
 import math
 import threading
+from dataclasses import dataclass
 
 import numpy as np
 
-from tagpup.core import paths
+from tagpup.core import paths, validation
 
-#: A face is offered a name -- a person looks, and accepts or not -- when it is at least
-#: this like one face already named. One stranger in twenty reaches it, and nearly all
-#: of the owner's people do. The owner chose it (2026-09-24).
-OFFER_A_NAME = 0.70
+@dataclass(frozen=True)
+class Cuts:
+    """The likeness and the margin over the next person (`margins`) at which one face model's vectors offer a name and
+    give one with no one looking. A likeness is the cosine of two vectors of one model, and two models' cosines are not on
+    one scale (AdaFace's faces of one person sit far lower than FaceNet's), so each model has its own (CUTS, cuts_of):
+    every decision below is a model's, asked of the cuts of the model whose vectors were compared. Callers ask these;
+    the values are this module's alone (tests/test_face_values_have_one_owner.py)."""
+    #: A face is offered a name -- a person looks, and accepts or not -- when it is at least this like one face named.
+    offer_a_name: float
+    #: A face is given a name with no one looking -- automatch, the faces New Person gathers, clustering naming a face
+    #: whose photo's keywords name the person -- when it is at least this like one face named.
+    name_without_asking: float
+    #: ... and only when it is at least this much more like that person than the next person named.
+    name_margin: float
+    #: A face is offered a name only when it is at least this much more like that person than the next one.
+    offer_margin: float
+    #: Faces at least this alike are grouped together before anyone is named: cluster-faces' radius
+    #: (tagpup.services.identities) and Identify's grouping of the nameless (tagpup.ml.grouping), as a distance there
+    #: (group_distance).
+    group_at: float
+    #: Where the values come from.
+    source: str
 
-#: A face is given a name with no one looking -- automatch, the faces New Person
-#: gathers, clustering naming a face whose photo's keywords name the person -- when it
-#: is at least this like one face already named (clustering: that person's face of the
-#: years around the photo). Four strangers in a thousand reach it; four in five of the
-#: owner's people do, and those rightly. The owner chose it (2026-09-24).
-NAME_WITHOUT_ASKING = 0.80
+    def band(self, similarity, margin):
+        """The band a face this alike a person, by this margin over the next person, is shown in: "likely" when it
+        could be named unasked, "possible" when it would be offered, else None. TagTuner's candidates, suggestions and
+        diagnostics had four sets of numbers for this (0.75/0.60, 0.85, 0.8/0.65, 0.8); the server now names the band
+        and the page shows it *(owner, 2026-09-24)*."""
+        if self.names_unasked(similarity, margin):
+            return "likely"
+        if self.is_offered(similarity, margin):
+            return "possible"
+        return None
+
+    def is_offered(self, similarity, margin):
+        """Is a face `similarity`-like the person, and `margin` more like them than the next person (`margins`), worth
+        offering as its name?"""
+        return similarity is not None and similarity >= self.offer_a_name and margin >= self.offer_margin
+
+    def names_unasked(self, similarity, margin):
+        """May a face `similarity`-like the person, and `margin` more like them than the next person (`margins`), be
+        given their name with no one looking? A name the face carries is asked no margin -- the margin never takes a
+        name away (owner, 2026-10-17) --: its caller passes math.inf."""
+        return similarity is not None and similarity >= self.name_without_asking and margin >= self.name_margin
+
+    def gathers_for_a_new_person(self, similarity, margin):
+        """Is a nameless face `similarity`-like the face New Person was opened on, and `margin` more like it than like
+        anyone named, gathered for the new person? As like as naming unasked asks, since they are named together; but
+        gathering is an offer the owner looks over before naming, so the margin is the offer's (owner, 2026-10-17)."""
+        return similarity is not None and similarity >= self.name_without_asking and margin >= self.offer_margin
+
+    def names_from_the_tag(self, similarity, margin):
+        """May a face be given the name of a person its photo's keywords name, with no one looking? The keyword says
+        the person is in the photo, so the likeness need only be one a name is offered at (#902); it does not say which
+        face is theirs, which is what the margin says, so that is the margin of naming unasked (owner, 2026-10-17)."""
+        return similarity is not None and similarity >= self.offer_a_name and margin >= self.name_margin
+
+    def might_name_unasked(self, similarities, slack):
+        """Which of `similarities` (an array) names_unasked could accept, were each off by as much as `slack`: for a
+        rough first look that must miss none it would name (tagpup.services.identify.UnnamedFaces)."""
+        return similarities >= self.name_without_asking - slack
+
+    @property
+    def group_distance(self):
+        """group_at as the distance between two unit vectors: what DBSCAN, which works in distances, is given."""
+        return distance(self.group_at)
+
+    def looks_wrong(self, similarity):
+        """Is a name on a face only `similarity`-like its person worth a second look? Below the value it would be
+        offered at, it would not even have been suggested."""
+        return similarity is not None and similarity < self.offer_a_name
 
 
-#: A face is given a name with no one looking only when it is at least this much more like that person than the
-#: next person named (`margins`), as well as NAME_WITHOUT_ASKING like them: precision 99.83% on photo_index's
-#: named faces, against 98.46% by the likeness alone. The owner chose it (2026-10-17). Interim, for FaceNet's
-#: vectors: phase 4 reads it again for the new model.
-NAME_MARGIN = 0.04
-
-#: A face is offered a name only when it is at least this much more like that person than the next one, as well
-#: as OFFER_A_NAME like them: precision 99.54%. The owner chose it (2026-10-17).
-OFFER_MARGIN = 0.02
-
-
-#: Faces at least this alike are grouped together before anyone is named: clustering's
-#: radius, and TagTuner's grouping of the nameless (DBSCAN, as a distance). Measured on
-#: `kr-track` (2026-09-24), each hand-named face against the nearest face of its own
+#: FaceNet's (MTCNN and FaceNet's vectors). The likenesses the owner chose on kr-track (2026-09-24): at 0.70 one
+#: stranger in twenty reaches a face named and nearly all of the owner's people do; at 0.80 four strangers in a thousand
+#: and four in five of the owner's people, rightly. The margins the owner chose (2026-10-17, phase 2b): precision 99.83%
+#: at 0.04 and 99.54% at 0.02 on photo_index's named faces, against 98.46% by the likeness alone.
+#: The grouping radius, measured on kr-track (2026-09-24), each hand-named face against the nearest face of its own
 #: person, of anyone else, and of a stranger, never one of its own photo:
 #:
 #:     similarity   own person's reaches   someone else's   a stranger's
@@ -93,23 +145,34 @@ OFFER_MARGIN = 0.02
 #:       0.885             46%                  0.6%             0.0%
 #:       0.90              38%                  0.5%             0.0%
 #:
-#: Grouping chains faces, so each that reaches someone else can pull two people into one
-#: group; naming, from anchors and keywords, does the rest. It was 0.48 as a distance in
-#: two places. The owner kept it (2026-09-24).
-GROUPING = 0.885
+#: Grouping chains faces, so each that reaches someone else can pull two people into one group; naming, from anchors
+#: and keywords, does the rest. It was 0.48 as a distance in two places. The owner kept 0.885 (2026-09-24).
+FACENET_CUTS = Cuts(offer_a_name=0.70, name_without_asking=0.80, name_margin=0.04, offer_margin=0.02, group_at=0.885,
+                    source="owner, 2026-09-24 (likeness, grouping) and 2026-10-17 (margin, phase 2b)")
+
+#: AdaFace's (SCRFD and AdaFace's vectors). Read off the phase 3 gate (docs/AI_PIPELINE.md, merge 3 slice C,
+#: 2026-10-20): kr-track and renton_parkrun pooled, the open set (a face alone in its folder counted, every name it is
+#: given wrong), at the precision the owner chose, 0.99 (2026-10-20): a margin of 0.205 and a likeness of 0.520 to name
+#: unasked (FaceNet's on the same reading: 0.140 and 0.795). The two a name is offered at are the same reading at
+#: precision 0.98 (owner, 2026-10-20: where FaceNet's 0.70 sits, an offer the owner looks over): a likeness of 0.310
+#: and a margin of 0.090.
+#: The grouping radius, 0.80: a read-only measurement (2026-10-20) on kr-track and renton_parkrun, 2,849 named faces
+#: holding both vectors, pooled: AdaFace at 0.80 groups as impurely as FaceNet at 0.885 (33 wrong pairs, 1 to 2 impure
+#: clusters; pair precision 99.68% against 99.48%, purity 0.9988 against 0.9976) and groups 1,646 named faces against
+#: FaceNet's 1,243. AdaFace's curve is flat from 0.65 to 0.82. A thin sample, and the chaining over a whole library is
+#: not yet seen: a read-only cluster-faces rehearsal on AdaFace's vectors is to follow.
+ADAFACE_CUTS = Cuts(offer_a_name=0.310, name_without_asking=0.520, name_margin=0.205, offer_margin=0.090, group_at=0.80,
+                    source="the phase 3 gate, open set, pooled (2026-10-20): naming at precision 0.99, offering at 0.98;"
+                           " grouping at FaceNet's impurity on 2,849 named faces (2026-10-20)")
+
+#: Each face model's cuts, by its key (tagpup.core.validation.FACE_MODELS): every model a library can be set to has
+#: its own.
+CUTS = {validation.MTCNN_FACENET: FACENET_CUTS, validation.SCRFD_ADAFACE: ADAFACE_CUTS}
 
 
-def band(similarity, margin):
-    """The band a face this alike a person, by this margin over the next person, is shown in: "likely" when it could
-    be named unasked, "possible" when it would be offered, else None. TagTuner's candidates,
-    suggestions and diagnostics had four sets of numbers for this (0.75/0.60, 0.85,
-    0.8/0.65, 0.8); the server now names the band and the page shows it *(owner,
-    2026-09-24)*."""
-    if names_unasked(similarity, margin):
-        return "likely"
-    if is_offered(similarity, margin):
-        return "possible"
-    return None
+def cuts_of(model):
+    """The cuts the vectors of face model `model` (its key: tagpup.store.faces.model_key) are read by."""
+    return CUTS[model]
 
 
 def distance(similarity):
@@ -117,51 +180,6 @@ def distance(similarity):
     what the clustering code, which works in distances, compares against."""
     return math.sqrt(2.0 - 2.0 * similarity)
 
-
-
-# ---- The decisions ---------------------------------------------------------------------
-#
-# Callers ask these; the values above are this module's alone
-# (tests/test_face_values_have_one_owner.py).
-
-def is_offered(similarity, margin):
-    """Is a face `similarity`-like the person, and `margin` more like them than the next person (`margins`), worth
-    offering as its name?"""
-    return similarity is not None and similarity >= OFFER_A_NAME and margin >= OFFER_MARGIN
-
-
-def names_unasked(similarity, margin):
-    """May a face `similarity`-like the person, and `margin` more like them than the next person (`margins`), be given
-    their name with no one looking? A name the face carries is asked no margin -- the margin never takes a name away
-    (owner, 2026-10-17) --: its caller passes math.inf."""
-    return similarity is not None and similarity >= NAME_WITHOUT_ASKING and margin >= NAME_MARGIN
-
-
-def gathers_for_a_new_person(similarity, margin):
-    """Is a nameless face `similarity`-like the face New Person was opened on, and `margin` more like it than like anyone
-    named, gathered for the new person? As like as naming unasked asks, since they are named together; but gathering is an
-    offer the owner looks over before naming, so the margin is the offer's (owner, 2026-10-17)."""
-    return similarity is not None and similarity >= NAME_WITHOUT_ASKING and margin >= OFFER_MARGIN
-
-
-def names_from_the_tag(similarity, margin):
-    """May a face be given the name of a person its photo's keywords name, with no one looking? The keyword says the
-    person is in the photo, so the likeness need only be one a name is offered at (#902); it does not say which face is
-    theirs, which is what the margin says, so that is the margin of naming unasked (owner, 2026-10-17)."""
-    return similarity is not None and similarity >= OFFER_A_NAME and margin >= NAME_MARGIN
-
-
-def might_name_unasked(similarities, slack):
-    """Which of `similarities` (an array) names_unasked could accept, were each off by
-    as much as `slack`: for a rough first look that must miss none it would name
-    (tagpup.services.identify.UnnamedFaces)."""
-    return similarities >= NAME_WITHOUT_ASKING - slack
-
-
-def looks_wrong(similarity):
-    """Is a name on a face only `similarity`-like its person worth a second look? Below
-    the value it would be offered at, it would not even have been suggested."""
-    return similarity is not None and similarity < OFFER_A_NAME
 
 
 def margins(table):
@@ -249,22 +267,33 @@ class FaceRows(tuple):
     is asked, and kept with it for as long as the matrix is kept (tagpup.jobs.identify's cache) -- the strip asked it once a
     face, and each regrouped 55,000 named faces (about 0.34 s against 0.22 s for 40 faces). The rows are put in the order
     of their people's ids when made, so the grouping's matrix is the matrix itself: one copy of it is kept, not two (about
-    110 MB on photo_index). Every caller reads a row's face and person from these same lists."""
+    110 MB on photo_index). Every caller reads a row's face and person from these same lists.
 
-    def __new__(cls, ids, people, matrix):
+    `key` is the face model the vectors were read under (tagpup.store.faces.model_key): kept between requests, the rows
+    may be one model's while the library has been switched to the other since, so a reader compares them only with
+    vectors of the same key (`under`), by that key's cuts."""
+
+    def __new__(cls, ids, people, matrix, key):
         if matrix is not None and len(people) > 1:
             order = np.argsort(np.asarray([person.id for person in people]), kind="stable")
             if not np.array_equal(order, np.arange(len(order))):
                 ids, people, matrix = [ids[n] for n in order], [people[n] for n in order], matrix[order]
         rows = super().__new__(cls, (ids, people, matrix))
+        rows.key = key
         rows._grouping = None
         rows._making = threading.Lock()
         return rows
 
     @classmethod
     def of(cls, rows):
-        """`rows` as FaceRows: themselves, or a plain (ids, people, matrix) made into them."""
+        """`rows` as FaceRows: themselves, or a plain (ids, people, matrix, key) made into them."""
         return rows if isinstance(rows, cls) else cls(*rows)
+
+    def under(self, key):
+        """These rows, when their vectors are face model `key`'s; else none (no rows, of `key`): one model's vectors are
+        never compared with the other's. Rows of another key are of a switch committed between two reads of one decision
+        (the next read of the named faces is the new model's: their cache's fingerprint holds the model)."""
+        return self if self.key == key else FaceRows([], [], None, key)
 
     @property
     def by_person(self):

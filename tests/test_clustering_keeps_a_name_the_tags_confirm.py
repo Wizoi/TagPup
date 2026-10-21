@@ -20,7 +20,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
 
-from tagpup.core import clustering  # noqa: E402
+from tagpup.core import clustering, validation  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 REAL = clustering.KnownFaces.likeness
@@ -45,8 +45,9 @@ class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
                 self.add_face(crowd, near(bob, 8), box=(0, 0, 400, 400)))
 
     def test_a_name_the_photos_keywords_confirm_is_kept_between_070_and_080(self):
-        self.assertGreaterEqual(0.75, clustering.OFFER_A_NAME)
-        self.assertFalse(clustering.names_unasked(0.75, math.inf))
+        facenet = clustering.cuts_of(validation.MTCNN_FACENET)
+        self.assertGreaterEqual(0.75, facenet.offer_a_name)
+        self.assertFalse(facenet.names_unasked(0.75, math.inf))
         jane_face, bob_face = self.two_people_in_one_photo()
         with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.75, "crowd.jpg")):
             self.resolve()

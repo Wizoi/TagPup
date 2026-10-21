@@ -445,6 +445,15 @@ This photo also names ${face.other_names.join(', ')}. `
                     + `named for this person. The list is ordered by it.`;
                 item.appendChild(badge);
             }
+            // A person's face with no vector under the library's face model is compared with nobody: said, never scored.
+            if (face.no_vector) {
+                const none = document.createElement('span');
+                none.className = 'face-resemblance face-no-vector';
+                none.textContent = 'no vector under this model';
+                none.title = `This face holds no vector under the library's face model, so it is compared with `
+                    + `nobody and cannot be told apart from the person's other faces.`;
+                item.appendChild(none);
+            }
             item.title = face.photo_path + competingHere;
             item.setAttribute('data-face-id', face.id);
             // So a group's heading can be recounted from the cards still in it.

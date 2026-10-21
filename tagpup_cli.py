@@ -109,7 +109,7 @@ READ_AHEAD_BYTES = 1 << 30
 def read_ahead_bytes(width, height, clip=None, faces=None, max_side=None):
     """What a photo of `width` x `height` is reserved while it is read ahead: the larger of what each half it goes
     through holds at once -- CLIP's (`clip`, when its vector is to be made: ClipModel.input_bytes), whose pictures
-    are let go before the faces' are made, and the faces' (`faces`: FaceModel.picture_bytes), held until the card
+    are let go before the faces' are made, and the faces' (`faces`: its picture_bytes), held until the card
     has detected them. Each half says its own; this only takes the larger."""
     halves = [faces.picture_bytes(width, height, max_side=max_side)] if faces is not None else []
     if clip is not None:
@@ -226,17 +226,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
-    def refuse_a_face_model_not_kept(settings):
-        # A library set to a face model whose vectors it cannot keep is refused before anything is written -- the
-        # reset, a stamp, the folders recorded as added, a row -- and before a model's library is imported (#1643,
-        # #1089). Asked of both reads: the face model may be switched between them, and the second is what the run's
-        # face models are built from (Runtime.faces refuses them, once the folder would be recorded).
-        if not skip_faces and settings.face_model_refusal:
-            console.print("Not run: %s" % settings.face_model_refusal, markup=False, soft_wrap=True)
-            raise SystemExit(indexing_service.EXIT_FACE_MODEL_NOT_READY)
-
-    # Read without stamping: a library holding no settings is on the default, which it can keep.
-    refuse_a_face_model_not_kept(runtimes.peek_settings(Library(db_path)))
     # A reset deletes the library, and its settings with it; the new one is stamped
     # with them again, not with the defaults. Read without stamping the one deleted.
     kept_settings = runtimes.peek_settings(Library(db_path)).values if reset and os.path.exists(db_path) else None
@@ -258,7 +247,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             library_settings.stamp(Library(db_path), kept_settings, operation=library_settings.FROM_REPLACED)
 
     settings = runtime.settings(Library(db_path))
-    refuse_a_face_model_not_kept(settings)
     exiftool_path = runtimes.exiftool(Library(db_path), settings)
 
     # Setup / Load components
@@ -491,7 +479,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
-                    faces = face_processor.detect_and_embed(picture)
+                    faces = face_processor.new_faces(face_processor.detect_and_embed(picture), picture)
                     batch_faces[path] = faces
 
                 # A photo already indexed is not removed first: build_or_update
@@ -1372,7 +1360,8 @@ def _resolve_identities(runtime, db_path):
             if stage == "without_vector":
                 left_out.append(done)
                 console.print(f"[yellow]{done} of {total} face(s) have no vector under this library's face model and took "
-                              f"no part: the new model's pass makes them (docs/AI_PIPELINE.md, phase 3).[/yellow]")
+                              f"no part: the model's pass found no face of its own there, or has not reached their photos"
+                              f" yet.[/yellow]")
             if stage == "left":
                 # The causes set_names refuses for: a face or its photo named meanwhile, a person merged away (#1583). Two
                 # counts: the faces left as they were, and those that lost their guess and are unnamed.

@@ -90,7 +90,7 @@ class Case(unittest.TestCase):
     def face(self, photo_path, embedding=None, box=None, **columns):
         """A face as detection records it (a row with its box), then given `columns`."""
         def add(conn):
-            left = 200 * len(faces.in_photo(conn, photo_path))
+            left = 200 * len(faces.in_photo(conn, photo_path, faces.model_key(conn)))
             shape = box or [left, 0, left + 100, 100]
             face_id = faces.insert(conn, photo_path, shape, embedding or at(0), model=FACENET)
             sets = ", ".join("%s = ?" % column for column in columns)
@@ -341,8 +341,8 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         fresh = self.photo("band_d.jpg", ["People/" + ODA])
         self.face(fresh, at(5))
         counts = from_tags(self.library).details["counts"]
-        self.assertEqual((4, 1, 1, 1, 1), (counts["one_face_one_person"], counts["like_them_from_0.80"],
-                                           counts["like_them_from_0.70_to_0.80"], counts["not_like_them"],
+        self.assertEqual((4, 1, 1, 1, 1), (counts["one_face_one_person"], counts["like_them_enough_to_name"],
+                                           counts["like_them_enough_to_offer"], counts["not_like_them"],
                                            counts["person_has_no_decided_face"]))
         self.assertEqual(3, counts["faces"])
 
