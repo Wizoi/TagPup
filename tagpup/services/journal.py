@@ -70,12 +70,15 @@ def rehearse(library, change_id, exiftool_path=None):
     whether the round trip restored every row exactly. Refused when the undo would be,
     for a stamp of the library's settings (NOT_UNDONE), and for a face model put back that
     the library may not be switched to now (settings.undo_refusals); undo() refuses both.
-    A change of photo files is rehearsed by reading them (file_changes.rehearse_undo)."""
+    In refusals' order: a change the journal refuses (undone already, say) is refused with
+    its account, not the switch's. A change of photo files is rehearsed by reading them
+    (file_changes.rehearse_undo)."""
     if file_changes.writes_files(library, change_id):
         return file_changes.rehearse_undo(library, change_id, exiftool_path)
     result = Result(details={"dry_run": True, "change": change_id})
     stamped = _stamp_refusal(journal.operation(library.path, change_id))
-    stamped = stamped or library_settings.undo_refusals(library, [change_id]).get(change_id)
+    if not stamped and not journal.refusals(library.path, [change_id])[change_id]:
+        stamped = library_settings.undo_refusals(library, [change_id]).get(change_id)
     if stamped:
         result.refuse(stamped)
         return result

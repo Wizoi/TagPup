@@ -494,7 +494,8 @@ takes no turn of the card.
   reached, before the consequences are asked; refused or not it says how many faces hold a vector under the model, how
   many named faces hold none (they leave the gallery of named faces until the pass reaches them) and how many are in
   photos not passed (`details["face_vectors"]`, from `store.faces.vector_counts` and `pass_counts`, read-only). A library
-  with no faces switches; switching back to FaceNet is never refused. An undo in History that would put the new model
+  with no faces switches; switching back to FaceNet is never refused, reads no pass count (`not_passed` 0) and says
+  only how many faces hold no FaceNet vector (those the new model made meanwhile), when any do. An undo in History that would put the new model
   back (the undo of a switch back to FaceNet) is refused by the same check, with the same sentence and counts
   (`settings.undo_refusals`, asked by `services.journal.refusals` and its rehearsal); undoing the switch to the new model
   is never refused by it. Counted 2026-10-20, read-only: kr-track 11,457

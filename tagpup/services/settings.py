@@ -79,16 +79,28 @@ UNPASSED_SHARE_ALLOWED = 0.05
 def _switch_to(library, model):
     """(refusal or None, what the faces hold under `model`): whether the library may be switched to the face model `model`
     (UNPASSED_SHARE_ALLOWED), and one sentence saying how many of its faces hold a vector under it and how many named
-    faces hold none, said either way. FaceNet, which made every face the libraries hold, is never refused; nor is a
-    library with no faces. Read-only, by tagpup.store.faces.vector_counts and pass_counts."""
+    faces hold none, said either way. FaceNet, which made every face the libraries hold before the new model's pass, is
+    never refused, and its pass's count is not read for it (not_passed 0: a face in a photo the new model's pass has not
+    reached is no part of a switch back); its sentence says only how many faces hold no FaceNet vector (those the new model
+    made while the library was on it), and is left out when none do. Nor is a library with no faces refused. Read-only, by
+    tagpup.store.faces.vector_counts and, for a switch to another model, pass_counts."""
+    back = model == validation.MTCNN_FACENET
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         held = store_faces.vector_counts(conn, model)
-        not_passed = store_faces.pass_counts(conn, validation.MTCNN_FACENET, model)["not_passed"] if held["faces"] else 0
+        passed = held["faces"] and not back
+        not_passed = store_faces.pass_counts(conn, validation.MTCNN_FACENET, model)["not_passed"] if passed else 0
     finally:
         conn.close()
     held["not_passed"] = not_passed
     if not held["faces"]:
+        return None, held
+    if back:
+        if held["without"]:
+            held["said"] = ("%d of the library's %d faces hold%s no vector under %s and take%s no part in comparing, "
+                            "clustering or the gallery of named faces while the library is on it." % (
+                                held["without"], held["faces"], "s" if held["without"] == 1 else "", model,
+                                "s" if held["without"] == 1 else ""))
         return None, held
     said = ("%d of the library's %d faces hold a vector under %s; %d named face%s hold%s none, and would leave the named "
             "faces Identify compares with until the pass reaches %s; %d face%s %s in photos the pass has not reached." % (
@@ -97,7 +109,7 @@ def _switch_to(library, model):
                 "it" if held["named_without"] == 1 else "them", not_passed, "" if not_passed == 1 else "s",
                 "is" if not_passed == 1 else "are"))
     held["said"] = said
-    if model == validation.MTCNN_FACENET or not_passed <= UNPASSED_SHARE_ALLOWED * held["faces"]:
+    if not_passed <= UNPASSED_SHARE_ALLOWED * held["faces"]:
         return None, held
     return ("Nothing was written: %s A switch allows at most %d%% of the faces in photos the pass has not reached: "
             "finish the pass first (TagPup CLI: face-pass <folder> --apply, for each folder of the library)." % (
@@ -121,6 +133,13 @@ def undo_refusals(library, change_ids):
         if checked[model]:
             reasons[change_id] = checked[model]
     return reasons
+
+
+def model_alone(model):
+    """The face models' settings (LibrarySettings.faces) of `model`, a model that takes none of MTCNN's arguments
+    (tagpup.ml.scrfd_adaface): `model` alone. The one maker of them, so a library switched to it and a face pass's look
+    (tagpup.runtime.Runtime.look_at_faces) name one set, and share one model built."""
+    return {"model": model}
 
 
 def _trim(text):
@@ -164,7 +183,7 @@ class LibrarySettings:
         of them: detect_max_side."""
         model = _trim(self.values["faces.model"])
         if model != validation.MTCNN_FACENET:
-            return {"model": model}
+            return model_alone(model)
         return {
             "model": model,
             "min_face_size": int(_trim(self.values["faces.min_face_size"])),
@@ -358,7 +377,8 @@ def change(library, values, acknowledged=(), apply=True):
     changing it means, and details["unacknowledged"] holds them. A change of the face model
     (faces.model) to one whose pass has not reached more than UNPASSED_SHARE_ALLOWED of the
     library's faces is refused first; either way details["face_vectors"] holds what its faces
-    hold under the model switched to, and, for a library with faces, its sentence ("said"). Every caller -- the
+    hold under the model switched to, and, for a library with faces, its sentence ("said"; for a switch back to
+    FaceNet, only when a face holds no FaceNet vector: _switch_to). Every caller -- the
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;
     details["locked"] says whether any was a locked one, after which what the models

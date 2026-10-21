@@ -16,12 +16,23 @@ What the owner lives through, in one library:
   the face (its vector the new model's alone, a crop), and offers the person whose named face it is 0.45 like: AdaFace
   offers from 0.310, FaceNet's 0.70 would not. The panel (SuggestionModel.offered, what Apply All and the writers take)
   shows that offer: the model's cut decided it, and the tag floor (suggesting.OFFER_A_TAG, 0.60) is not a face's.
+- Wren's page (/api/person-faces) on the switched library: a named face the pass gave no vector under the new model
+  (one it matched with nothing it found: 3 of kr-track's named faces, counted 2026-10-20) is not scored -- its
+  similarity null, `no_vector` true, for the page to say so -- never shown as a perfect match.
 - The switch is in the library's history, and undone there: the library reads by FaceNet again, Identify's cached named
   faces by its vectors, and neither model's vectors were written by the switch or its undo.
+- Switched back to FaceNet (never refused), the reply says only what is true of the faces under FaceNet: a face the new
+  model made while the library was on it holds no FaceNet vector and takes no part; no face is "in a photo the pass has
+  not reached", which is the new model's pass and no part of a switch back.
 - Switched back to FaceNet, the owner indexes a new folder under it: its faces hold FaceNet's vector alone. The switch
   back cannot be undone in History now: the undo would put the new model back with those faces in photos its pass has not
   reached, which the switch itself is refused for (settings.change's check, UNPASSED_SHARE_ALLOWED). History lists it
   with the switch's sentence and counts, and the rehearsal and the undo refuse it so, writing nothing.
+- A library stamped before the face model was a setting holds no faces.model row (each of the three live libraries,
+  counted 2026-10-20) and reads the default, FaceNet: its first switch inserts the row, History lists it undoable, and
+  the undo deletes it, the default read again; the switch's check never refuses that undo (it puts no model back).
+- A switch back the owner undid already, asked to be undone again, is refused as undone (the journal's own account comes
+  first), not with the switch's sentence, though putting the new model back would be refused too.
 - A Suggest run or an index begun before a switch keeps the model it began with to its end (Runtime.begin's lease, the
   CLI index's one `runtime.faces`); the next one reads the library's model (tests/test_the_runtime_keeps_models_by_settings.py).
 
@@ -268,8 +279,23 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
 
     def test_the_switch_back_is_not_undone_onto_faces_the_pass_has_not_reached(self):
         self.switch(NEW)
+        # Indexed while on the new model: its photo's face holds the new model's vector alone, as the indexer files it.
+        conn = db.connect(self.library.path)
+        try:
+            dock = photo(os.path.join(self.folder, "Dock", "bollard.jpg"))
+            photo_rows.add_read(conn, dock, {})
+            add_face(conn, dock, (20, 20, 90, 90), alike(self.adaface_wren, 0.2, 9).tobytes(), model=NEW, prob=0.95)
+            conn.commit()
+        finally:
+            conn.close()
         back = self.switch(FACENET)
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+        counts = back["face_vectors"]
+        self.assertEqual({"faces": 3, "without": 1, "named_without": 0, "not_passed": 0},
+                         {k: v for k, v in counts.items() if k != "said"}, "a pass's count read for a switch back")
+        self.assertEqual("1 of the library's 3 faces holds no vector under %s and takes no part in comparing, clustering"
+                         " or the gallery of named faces while the library is on it." % FACENET,
+                         " ".join(counts["said"].split()))
 
         # A new folder indexed under FaceNet: its photo's face holds FaceNet's vector alone, as the indexer files it.
         conn = db.connect(self.library.path)
@@ -281,7 +307,7 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         finally:
             conn.close()
 
-        said = ("Nothing was written: 2 of the library's 3 faces hold a vector under %s; 0 named faces hold none, and would"
+        said = ("Nothing was written: 3 of the library's 4 faces hold a vector under %s; 0 named faces hold none, and would"
                 " leave the named faces Identify compares with until the pass reaches them; 1 face is in photos the pass"
                 " has not reached. A switch allows at most 5%% of the faces" % NEW)
         listed = self.client.get("/lakeside/api/history").get_json()["changes"]
@@ -294,6 +320,68 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
             self.assertEqual(400, reply.status_code, reply.data)
             self.assertIn(said, " ".join(reply.get_json()["refused"].split()))
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+
+    def test_the_first_switch_of_a_library_stamped_before_the_setting_is_undone_to_the_default(self):
+        # Stamped before faces.model was a setting: the row is not there (made so here, the stamp of today writing it).
+        conn = db.connect(self.library.path)
+        try:
+            conn.execute("DELETE FROM settings WHERE key = 'faces.model'")
+            conn.commit()
+        finally:
+            conn.close()
+        held = "SELECT value FROM settings WHERE key = 'faces.model'"
+        self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+        switched = self.switch(NEW)
+        self.assertEqual([(NEW,)], self.read(held))
+        self.assertEqual([("insert",)], self.read("SELECT DISTINCT action FROM change_rows WHERE change_id = ?", switched["change"]))
+        listed = self.client.get("/lakeside/api/history").get_json()["changes"]
+        [entry] = [entry for entry in listed if entry["id"] == switched["change"]]
+        self.assertTrue(entry["undoable"], entry)
+        self.assertEqual({}, library_settings.undo_refusals(self.library, [switched["change"]]))
+        self.assertEqual(1, self.undo(switched["change"])["changed"])
+        self.assertEqual([], self.read(held))
+        self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+
+    def test_a_switch_back_undone_already_is_refused_as_undone(self):
+        self.switch(NEW)
+        back = self.switch(FACENET)
+        self.undo(back["change"])
+        self.assertEqual(NEW, library_settings.read(self.library)["faces.model"])
+        self.switch(FACENET)
+        conn = db.connect(self.library.path)
+        try:
+            later = photo(os.path.join(self.folder, "Later", "harbour.jpg"))
+            photo_rows.add_read(conn, later, {})
+            add_face(conn, later, (30, 30, 110, 110), alike(self.facenet_wren, 0.3, 8).tobytes(), model=FACENET, prob=0.99)
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertIn(back["change"], library_settings.undo_refusals(self.library, [back["change"]]),
+                      "the case is not one the switch's check refuses")
+        reply = self.client.post("/lakeside/api/history/%d/undo" % back["change"], json={})
+        self.assertEqual(400, reply.status_code, reply.data)
+        refused = reply.get_json()["refused"]
+        self.assertIn("change %d is undone" % back["change"], refused)
+        self.assertNotIn("in photos the pass has not reached", refused)
+
+    def test_a_named_face_with_no_vector_under_the_model_is_not_shown_as_a_match(self):
+        conn = db.connect(self.library.path)
+        try:
+            # Wren's second face in jetty, a photo the pass reached: it matched nothing the new model found.
+            alone = add_face(conn, os.path.join(self.folder, "jetty.jpg"), (130, 30, 190, 100),
+                             alike(self.facenet_wren, 0.8, 10).tobytes(), model=FACENET, prob=0.99,
+                             name="Wren Calloway", name_source="manual")
+            conn.commit()
+        finally:
+            conn.close()
+        self.switch(NEW)
+        reply = self.client.get("/lakeside/api/person-faces", query_string={"name": "Wren Calloway", "limit": -1})
+        self.assertEqual(200, reply.status_code, reply.data)
+        shown = {face["id"]: face for face in reply.get_json()["faces"]}
+        self.assertEqual({self.named, alone}, set(shown))
+        self.assertEqual((None, True, False), (shown[alone]["similarity"], shown[alone]["no_vector"],
+                                               shown[alone]["possibly_wrong"]))
+        self.assertFalse(shown[self.named]["no_vector"])
 
 
 if __name__ == "__main__":
