@@ -96,7 +96,8 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
 
 - **A Suggest offers a name by the cuts of the face model its run holds** (2026-10-20, phase 3 merge 3;
   `clustering.cuts_of(self.faces.key)`, `suggester`): a library switched mid-run ends on the model it began with, and
-  the cuts with it; the next run has the new model's.
+  the cuts with it, and the vectors too (the photo's faces and the known faces are read under `self.faces.key`); the
+  next run has the new model's.
 
 ## Unit files that stay, and the rule each holds
 

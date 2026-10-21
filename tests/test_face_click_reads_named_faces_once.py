@@ -85,10 +85,12 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
         """Two people's faces read in the order of the rows, not of the people: the matrix kept is put in the people's order,
         and the grouping reads that matrix itself, not a second copy (about 110 MB on photo_index)."""
         from tagpup.core import clustering
+        from tagpup.core import validation
         from tagpup.core.vocabulary import Ref
         matrix = np.eye(4, dtype=np.float32)
         rows = clustering.FaceRows([11, 12, 13, 14], [Ref(2, "Wren Halloway"), Ref(1, "Rowan Thackeray"),
-                                                      Ref(2, "Wren Halloway"), Ref(1, "Rowan Thackeray")], matrix)
+                                                      Ref(2, "Wren Halloway"), Ref(1, "Rowan Thackeray")], matrix,
+                                       validation.MTCNN_FACENET)
         ids, people, kept = rows
         self.assertEqual([12, 14, 11, 13], ids)
         self.assertEqual([1, 1, 2, 2], [person.id for person in people])

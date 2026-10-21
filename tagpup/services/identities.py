@@ -50,11 +50,9 @@ def resolution_trace_path(db_path):
     return Library(db_path).face_trace_file
 
 
-def _all_faces(photo_index):
+def _all_faces(photo_index, key):
     """Every face's id, photo, box, vector, person (the Ref it carries, and its id) and probability, of the faces with a
-    vector under the library's face model (store_faces.for_clustering); [] if they cannot be read."""
-    if photo_index.conn is None:
-        return []
+    vector under `key`, the face model's (store_faces.for_clustering); [] if they cannot be read."""
     try:
         return [{
             "id": face_id,
@@ -64,7 +62,7 @@ def _all_faces(photo_index):
             "person": person,
             "person_id": person.id if person else None,
             "prob": prob,
-        } for face_id, photo_path, box_json, emb_bytes, person, prob in store_faces.for_clustering(photo_index.conn)]
+        } for face_id, photo_path, box_json, emb_bytes, person, prob in store_faces.for_clustering(photo_index.conn, key)]
     except Exception as e:
         logger.error(f"Error retrieving faces: {e}")
         return []
@@ -169,8 +167,15 @@ def resolve(photo_index, on_step=None):
     step = on_step or (lambda stage, done=0, total=1: None)
     logger.info("Starting self-tuning face identity resolution...")
     step("reading", 0, 1)
-    all_faces = _all_faces(photo_index)
-    left_out = store_faces.count_without_vector(photo_index.conn) if photo_index.conn is not None else 0
+    if photo_index.conn is None:
+        logger.info("No face embeddings found in the index.")
+        return {}
+    # The library's face model, read once: the run's vectors are read under it, and every decision of the run asks its cuts
+    # (tagpup.core.clustering.Cuts). A switch committed while the run reads leaves it on the model it began with.
+    key = store_faces.model_key(photo_index.conn)
+    cuts = clustering.cuts_of(key)
+    all_faces = _all_faces(photo_index, key)
+    left_out = store_faces.count_without_vector(photo_index.conn, key)
     if left_out:
         # An old face the new model's pass matched with nothing, or one in a photo it has not reached: said, not an error.
         logger.info("%d face(s) have no vector under the library's face model and take no part.", left_out)
@@ -178,8 +183,6 @@ def resolve(photo_index, on_step=None):
     if not all_faces:
         logger.info("No face embeddings found in the index.")
         return {}
-    # The cuts of the model the vectors were read under (tagpup.core.clustering.Cuts): every decision of the run asks them.
-    cuts = clustering.cuts_of(store_faces.model_key(photo_index.conn))
 
     # Faces marked as not-a-person are dropped before anything else runs. They must
     # not cluster, vote, seed a centroid, or be offered as a candidate -- the whole

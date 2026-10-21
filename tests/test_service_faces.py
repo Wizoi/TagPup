@@ -15,7 +15,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
-from face_rows import add_face, people_of  # noqa: E402
+from face_rows import FACENET, add_face, people_of  # noqa: E402
 
 from tagpup.core.result import Conflict, NotFound  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
@@ -159,7 +159,7 @@ class Automatching(FacesCase):
 
     def named(self):
         self.asked.append(True)
-        return [1, 2], [self.ref("Wren Halloway"), self.ref("Ada Pembrook")], np.stack([self.wren, self.ada])
+        return [1, 2], [self.ref("Wren Halloway"), self.ref("Ada Pembrook")], np.stack([self.wren, self.ada]), FACENET
 
     def test_a_face_like_a_named_one_is_given_its_name(self):
         photo = self.photo("a.jpg")
@@ -230,7 +230,7 @@ class TheWriteLockIsNotHeldThroughAScan(FacesCase):
 
         with mock.patch.object(store_faces, "people_in_photo", side_effect=people_in_photo):
             faces.automatch_folder(self.lib.library, self.folder,
-                                   lambda: ([1], [self.ref("Kit Morrow")], np.stack([vector(1)])))
+                                   lambda: ([1], [self.ref("Kit Morrow")], np.stack([vector(1)]), FACENET))
         self.assertEqual(asked, [photo])
         self.assertEqual(self.face_row(self.lib.rows("SELECT id FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
                                                      (photo,))[0][0])[0], "Kit Morrow")

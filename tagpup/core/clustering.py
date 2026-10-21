@@ -267,22 +267,33 @@ class FaceRows(tuple):
     is asked, and kept with it for as long as the matrix is kept (tagpup.jobs.identify's cache) -- the strip asked it once a
     face, and each regrouped 55,000 named faces (about 0.34 s against 0.22 s for 40 faces). The rows are put in the order
     of their people's ids when made, so the grouping's matrix is the matrix itself: one copy of it is kept, not two (about
-    110 MB on photo_index). Every caller reads a row's face and person from these same lists."""
+    110 MB on photo_index). Every caller reads a row's face and person from these same lists.
 
-    def __new__(cls, ids, people, matrix):
+    `key` is the face model the vectors were read under (tagpup.store.faces.model_key): kept between requests, the rows
+    may be one model's while the library has been switched to the other since, so a reader compares them only with
+    vectors of the same key (`under`), by that key's cuts."""
+
+    def __new__(cls, ids, people, matrix, key):
         if matrix is not None and len(people) > 1:
             order = np.argsort(np.asarray([person.id for person in people]), kind="stable")
             if not np.array_equal(order, np.arange(len(order))):
                 ids, people, matrix = [ids[n] for n in order], [people[n] for n in order], matrix[order]
         rows = super().__new__(cls, (ids, people, matrix))
+        rows.key = key
         rows._grouping = None
         rows._making = threading.Lock()
         return rows
 
     @classmethod
     def of(cls, rows):
-        """`rows` as FaceRows: themselves, or a plain (ids, people, matrix) made into them."""
+        """`rows` as FaceRows: themselves, or a plain (ids, people, matrix, key) made into them."""
         return rows if isinstance(rows, cls) else cls(*rows)
+
+    def under(self, key):
+        """These rows, when their vectors are face model `key`'s; else none (no rows, of `key`): one model's vectors are
+        never compared with the other's. Rows of another key are of a switch committed between two reads of one decision
+        (the next read of the named faces is the new model's: their cache's fingerprint holds the model)."""
+        return self if self.key == key else FaceRows([], [], None, key)
 
     @property
     def by_person(self):

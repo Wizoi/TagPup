@@ -90,7 +90,7 @@ class Case(unittest.TestCase):
     def face(self, photo_path, embedding=None, box=None, **columns):
         """A face as detection records it (a row with its box), then given `columns`."""
         def add(conn):
-            left = 200 * len(faces.in_photo(conn, photo_path))
+            left = 200 * len(faces.in_photo(conn, photo_path, faces.model_key(conn)))
             shape = box or [left, 0, left + 100, 100]
             face_id = faces.insert(conn, photo_path, shape, embedding or at(0), model=FACENET)
             sets = ", ".join("%s = ?" % column for column in columns)

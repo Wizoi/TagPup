@@ -16,8 +16,12 @@ People at the top of the tree: 11, 4 and 0. Leaves two people share: 0, 2 and 0.
 three; a listed person with no id: 0 in all three; a person hidden from autocomplete: 0 in all three. Saved Suggest chips:
 601, 5 and 199, of which 103 in kr-track hold a bare name (98 of them found only by `Directory.of_name`).
 
-Face vectors (migration 33, 2026-10-18) are in `face_embeddings`, one per face and face model. Every reader reads them under
-the library's `faces.model` (`store.faces.model_key`, on the reader's connection), and the join with a vector
+Face vectors (migration 33, 2026-10-18) are in `face_embeddings`, one per face and face model. Every reader of vectors is
+given the key it reads under (a required argument): a decision reads the library's `faces.model` once
+(`store.faces.model_key`, on its own connection), reads its vectors under it and decides by that key's cuts; a set of
+vectors kept between reads carries its key (`clustering.FaceRows.key`, `identify.UnnamedFaces.key`) and is compared only
+with vectors of the same key (`FaceRows.under`), so a switch committed meanwhile never sets one model's vectors beside the
+other's, nor reads them by the other's cuts. The join with a vector
 (`store.faces.WITH_VECTOR`, `HAS_VECTOR`) is the one place that leaves a face without one out of what compares faces:
 clustering, New Person's pool, the Identify queue and grid. Asked who such a face resembles, Identify answers one
 sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how many faces took no part.
@@ -63,8 +67,8 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
 
 - **A run's decided vectors and the library's key (2026-10-18, migration 33)**: naming by tag reads face vectors under
   the library's face model, read once per write (`faces.model_key`), while `derived.Batch.decided` keeps each person's
-  decided vectors for the run. A switch of `faces.model` mid-index leaves the run on the face model it began with,
-  so the rest of the run's faces have no vector under the new key: each is left
+  decided vectors for the run. A switch of `faces.model` mid-index leaves the run on the face model it began with
+  (its vectors, and the cuts it decides them by: the key travels with them; cluster-faces likewise), so the rest of the run's faces have no vector under the new key: each is left
   (`unreadable_face`), or named by its photo's one keyword person where that person has no decided face under the new
   key and no other photo waiting (#839), the tag's own route. Two models' vectors never meet in one product; the next
   index or cluster-faces reads them again.

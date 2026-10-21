@@ -361,7 +361,7 @@ class IdentifyOnTheSwitchedLibrary(_Libraries):
         conn = db.connect(db.readonly_uri(self.cove.path), uri=True)
         try:
             self.assertEqual([first], [row[0] for row in store_faces.identify_candidates(conn)])
-            self.assertEqual([first], [row[0] for row in store_faces.unnamed_for_matching(conn)])
+            self.assertEqual([first], [row[0] for row in store_faces.unnamed_for_matching(conn, store_faces.model_key(conn))])
         finally:
             conn.close()
         answers = self.asked(self.cove, first)
@@ -387,7 +387,8 @@ class IdentifyOnTheSwitchedLibrary(_Libraries):
                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         said = " ".join((done.stdout + done.stderr).split())
         self.assertEqual(0, done.returncode, said)
-        self.assertIn("1 of 2 face(s) have no vector under this library's face model and took no part", said)
+        self.assertIn("1 of 2 face(s) have no vector under this library's face model and took no part: the model's pass"
+                      " found no face of its own there, or has not reached their photos yet.", said)
         self.assertNotIn("Try tagging photos", said)
         self.assertNotIn("Error retrieving faces", said)
         self.assertEqual(before, rows_of(self.cove.path))
