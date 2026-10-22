@@ -417,6 +417,74 @@ def pass_counts(conn, old, new):
     return dict(zip(("photos", "photos_passed", "matched", "unmatched", "unmatched_named", "new", "not_passed", "neither"),
                     (int(value) for value in row)))
 
+# ---- Retiring the old detector's faces (tagpup.services.retire_faces) ------------------------------------------------
+
+#: A face the new model's pass gave no vector, as a condition on `f`: one parameter, the key of the model kept.
+RETIRED = "NOT " + HAS_VECTOR
+
+#: A face holding any decision (DECISION, below): a person, who decided it, an exclusion or its reason.
+DECIDED = ("(f.name IS NOT NULL OR f.tag_id IS NOT NULL OR f.name_source IS NOT NULL OR f.excluded <> 0"
+           " OR f.excluded_reason IS NOT NULL)")
+
+#: What a kept face's decisions are cleared to: nobody, decided by no one, not excluded.
+UNDECIDED = {"name": None, "tag_id": None, "name_source": None, "excluded": 0, "excluded_reason": None}
+
+
+def retire_counts(conn, key):
+    """What retiring every face without a vector under `key` would do, from one scan of faces (each face's vector by its
+    key (face_id, model), no vector or crop read): {"faces", "photos" (holding a face to delete or to clear), "deleted",
+    "deleted_named" (of those, naming a person automatically), "deleted_decided" (decided by hand: a name, nobody, or
+    excluded), and of the faces kept, the decisions cleared: "cleared_by_hand" (a person named by hand),
+    "cleared_automatic" (a person named automatically), "cleared_nobody" (decided by hand to be nobody, not excluded),
+    "cleared_excluded"}."""
+    row = conn.execute(
+        "WITH r AS (SELECT f.photo_id, f.tag_id IS NOT NULL AS named, COALESCE(f.name_source, '') = 'manual' AS by_hand,"
+        " f.excluded <> 0 AS excluded, " + RETIRED + " AS gone, " + DECIDED + " AS decided FROM faces f)"
+        " SELECT COUNT(*), (SELECT COUNT(DISTINCT photo_id) FROM r WHERE gone OR decided), TOTAL(gone),"
+        " TOTAL(gone AND named AND NOT by_hand), TOTAL(gone AND (by_hand OR excluded)),"
+        " TOTAL(NOT gone AND named AND by_hand), TOTAL(NOT gone AND named AND NOT by_hand),"
+        " TOTAL(NOT gone AND NOT named AND by_hand AND NOT excluded), TOTAL(NOT gone AND excluded) FROM r",
+        (key,)).fetchone()
+    return dict(zip(("faces", "photos", "deleted", "deleted_named", "deleted_decided", "cleared_by_hand",
+                     "cleared_automatic", "cleared_nobody", "cleared_excluded"), (int(value or 0) for value in row)))
+
+
+def retire_photos(conn, key):
+    """The ids, in order, of the photos holding a face without a vector under `key` or a face with a decision: what
+    retiring walks, a chunk at a time (retire_rows). One scan of faces."""
+    return [photo_id for (photo_id,) in conn.execute(
+        "SELECT DISTINCT f.photo_id FROM faces f WHERE " + RETIRED + " OR " + DECIDED + " ORDER BY f.photo_id", (key,))]
+
+
+def retire_rows(conn, key, photo_ids):
+    """[(face id, photo id, kept, {column: value} of DECISION)] of the faces of `photo_ids` still to retire, read as they
+    stand on `conn` (inside the write's transaction: a face done since, or a photo removed with its faces, is not among
+    them): `kept` False for a face holding no vector under `key` (to delete), True for one holding a decision (to clear).
+    By idx_faces_photo_id, each face's vector by its key; no vector or crop is read."""
+    found = []
+    for chunk in _chunks(photo_ids):
+        for face_id, photo_id, kept, *values in conn.execute(
+                "SELECT f.id, f.photo_id, " + HAS_VECTOR + ", " + ", ".join("f." + column for column in DECISION)
+                + " FROM faces f INDEXED BY idx_faces_photo_id WHERE f.photo_id IN (%s) AND (" % ",".join("?" * len(chunk))
+                + RETIRED + " OR " + DECIDED + ") ORDER BY f.id", [key] + chunk + [key]):
+            found.append((face_id, photo_id, bool(kept), dict(zip(DECISION, values))))
+    return found
+
+
+def rows_of_faces(conn, face_ids):
+    """[(table, key)] of the rows each of `face_ids` holds in face_crops and face_embeddings (every model's), then of the
+    faces themselves: the rows a delete of them takes, children first, as the journal records them before the delete
+    (tagpup.store.journal.record_removing). Keys only, no crop or vector read."""
+    crops, vectors = [], []
+    for chunk in _chunks(face_ids):
+        marks = ",".join("?" * len(chunk))
+        crops += [("face_crops", (face_id,)) for (face_id,) in conn.execute(
+            "SELECT face_id FROM face_crops WHERE face_id IN (%s) ORDER BY face_id" % marks, chunk)]
+        vectors += [("face_embeddings", (face_id, model)) for face_id, model in conn.execute(
+            "SELECT face_id, model FROM face_embeddings WHERE face_id IN (%s) ORDER BY face_id, model" % marks, chunk)]
+    return crops + vectors + [("faces", (face_id,)) for face_id in face_ids]
+
+
 def manual_names(conn):
     """face id -> Ref for every face a person decided by hand. A None is a
     deliberate "this is nobody", as binding as a person."""
