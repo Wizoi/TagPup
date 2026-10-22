@@ -13,6 +13,7 @@ Date Taken (B-2 of the branch, decided), and Suggest and Identify both compare i
 Rows are made as the code that makes them makes them: the photos by the indexer's record (tests/photo_rows.py), the
 tree by tagpup.store.taxonomy, the faces by tagpup.store.faces; the pages through Flask's test client.
 """
+import datetime
 import math
 import os
 import sys
@@ -88,6 +89,7 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
         fields = {"XMP:Subject": list(keywords)}
         if year is not None:
             fields["EXIF:DateTimeOriginal"] = "%d:06:01 10:00:00" % year
+            self.files.hold(photo_path, EXIF__DateTimeOriginal=fields["EXIF:DateTimeOriginal"])
         db.write_with_connection(self.path, lambda conn: photo_rows.add_read(conn, photo_path, fields))
         return photo_path
 
@@ -178,6 +180,18 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
         self.assertEqual(2, answer["unclustered_total"])
         self.assertEqual([alike], shown, "the face past the cap was chosen by a rule the grid does not show")
         self.assertNotIn(child_like, shown)
+
+    def test_a_named_face_whose_date_taken_is_shifted_is_compared_by_its_new_year(self):
+        # The boxes of a face of 2020 say Oda; then Wren's photo of 1994, her child face, is found to be of 2020 and shifted
+        # by Time Shift: the same boxes, asked again in the same running app, compare the face with that face too (Wren).
+        photo = self.photo("regatta/start_line.jpg", 2020, ["People/" + WREN, "People/" + ODA])
+        face = self.face(photo, 5)
+        self.assertEqual(ODA, self.boxes(face))
+        minutes = int((datetime.datetime(2020, 6, 1) - datetime.datetime(1994, 6, 1)).total_seconds() // 60)
+        shifted = photos_service.shift_date_taken(self.library, [os.path.join(self.folder, "school", "wren_1994.jpg")],
+                                                  minutes, "exiftool")
+        self.assertEqual(1, shifted.changed)
+        self.assertEqual(WREN, self.boxes(face), "the named faces kept the year their photo had before Time Shift")
 
     def test_a_photo_dated_only_by_its_folder_is_compared_with_every_year_by_suggest_and_identify(self):
         photo = self.photo("2020 Regatta/start_line.jpg", None, ["People/" + WREN, "People/" + ODA])

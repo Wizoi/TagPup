@@ -267,9 +267,9 @@ def dissolve_stranded_clusters(faces):
 def named_faces(library, cache):
     """(ids, people, matrix) of every named face (tagpup.services.identify.named_faces),
     built once per state of the faces table rather than once per request. Naming or
-    excluding a face moves the fingerprint and the matrix is rebuilt; nothing else
-    disturbs it."""
-    cached = cache.get("named_matrix", identify.fingerprint(library))
+    excluding a face moves the fingerprint and the matrix is rebuilt, and so does any write
+    of a photo (the photos generation): a Date Taken shifted moves its faces' era year."""
+    cached = cache.get("named_matrix", identify.decided_stamp(library))
     if cached is not None:
         return cached
     stamp, value = identify.named_faces(library)
@@ -333,7 +333,7 @@ def unnamed_faces(library, cache):
 def queue(library, cache):
     """The Identify Faces queue (tagpup.services.identify.queue), cached against the
     faces fingerprint and the photos generation."""
-    cached = cache.get("queue", identify.queue_stamp(library))
+    cached = cache.get("queue", identify.decided_stamp(library))
     if cached is not None:
         return cached
     stamp, value = identify.queue(library)

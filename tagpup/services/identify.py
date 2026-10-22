@@ -96,14 +96,15 @@ def named_faces(library, key=None):
     The ids are carried so a caller can leave a particular face out of its own answer:
     the matrix is shared, so it cannot be rebuilt to exclude one row. The fingerprint is
     read first, on the same connection, so the matrix is stamped with a state no newer
-    than its rows, in one read transaction with them; the rows carry the face model they were read under (FaceRows.key):
+    than its rows, in one read transaction with them: the photos stamp (decided_stamp), as each row carries its photo's era
+    year, which Time Shift moves without touching a face. The rows carry the face model they were read under (FaceRows.key):
     the library's, or `key` (a Suggest run's, which its faces are compared by: a switch while it runs leaves it on the
     model it began with).
     """
     conn = _reading(library)
     try:
         db.begin(conn)
-        stamp, key = faces.fingerprint(conn), key or faces.model_key(conn)
+        stamp, key = _decided_stamp(conn), key or faces.model_key(conn)
         rows = _face_rows(faces.for_named_matrix(conn, key), key)
     finally:
         conn.close()
@@ -115,8 +116,10 @@ DECIDED = "manual"
 
 
 def decided_stamp(library):
-    """What decided_faces is cached against: the faces fingerprint and the photos generation,
-    which moves when a photo's keywords do (photo_people)."""
+    """What the named and decided faces and the queue are cached against: the faces fingerprint and the photos generation,
+    which moves when a photo's keywords do (photo_people: the decided faces, the queue's people, docs/findings.md #58) or
+    its Date Taken (each named face's era year). A person's grid is not: it takes up to a minute to build, and would be
+    rebuilt after every photo written."""
     conn = _reading(library)
     try:
         return _decided_stamp(conn)
@@ -646,23 +649,6 @@ def excluded(library, default_reason):
 
 # ---- The queue ---------------------------------------------------------------------------
 
-def queue_stamp(library):
-    """What the queue is cached against: the faces fingerprint and the photos generation.
-    The queue groups nameless faces by the people their photo lists, which a tag saved in
-    TagPup changes without touching a face (docs/findings.md, #58). Only the queue
-    follows the photos; a person's grid takes up to a minute to build, and would be
-    rebuilt after every photo written."""
-    conn = _reading(library)
-    try:
-        return _queue_stamp(conn)
-    finally:
-        conn.close()
-
-
-def _queue_stamp(conn):
-    return (faces.fingerprint(conn), generations.value(conn, "photos"))
-
-
 def _listed(people_json):
     """[(node id, name)] of a photo's people (faces.identify_candidates' JSON, [[id, name]]); none for text that is not. A row
     with no id (from before ids) is no person."""
@@ -687,7 +673,7 @@ def queue(library):
     """
     conn = _reading(library)
     try:
-        stamp = _queue_stamp(conn)
+        stamp = _decided_stamp(conn)
         unmatched_rows = faces.identify_candidates(conn)
         matched_by_photo = faces.names_by_photo(conn)
         excluded_count = faces.count_excluded(conn)
