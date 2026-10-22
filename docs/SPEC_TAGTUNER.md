@@ -368,7 +368,8 @@ capped at 500 because a person in many group photos can have tens of thousands a
 card for each locks up the browser. The cap used to be applied *before* ranking, so with
 4,739 candidates the 500 on screen were an arbitrary sample that happened to be sorted,
 and the best matches in the other 4,239 were unreachable — clearing the queue sliced the
-same way next time. Every candidate is now scored, then the top 500 are built.
+same way next time. Every candidate is now scored, then the top 500 are built, by the likeness the card shows: to the
+person sought, or with nobody sought to the person it most resembles (the years around its own, never its own photo).
 
 **Selection behaves like a file list.** A plain click selects only the face it lands
 on, and clicking the only selected face clears it. `Ctrl` (or `Cmd`) adds and removes
