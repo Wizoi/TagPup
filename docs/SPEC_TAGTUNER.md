@@ -255,7 +255,8 @@ is one:
   person already has faces named, every candidate carries `person_similarity`, the
   resemblance to those faces -- to the person's closest face of the years around the
   candidate's own, never a face of its own photo, as the boxes and the strip read it (the
-  one gallery, `clustering.FaceRows.likeness`); 0 when none of theirs is left to compare --
+  one gallery, `clustering.FaceRows.likeness`); 0 when none of theirs is left to compare,
+  and the card then shows no number --
   and the list is sorted by it, as are the unclustered faces before the cap of 500 chooses
   which are shown; the **Likely** (>= 0.75) and
   **Possible** (0.60 to 0.75) tabs use it too. Each face shows the number. Candidates are
