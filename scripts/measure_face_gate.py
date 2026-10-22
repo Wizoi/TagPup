@@ -4,6 +4,11 @@ written names a person, a photo or a folder. Opens each library read-only and wr
 
     .venv/Scripts/python.exe scripts/measure_face_gate.py --source data/kr-track.db --source data/renton_parkrun.db
         [--precision 0.95 --precision 0.98 --precision 0.99] [--out <folder outside the repository>]
+    .venv/Scripts/python.exe scripts/measure_face_gate.py --alone --source data/photo_index.db
+
+How often each model's best match is right (top-1 right), and the precision of the names it gives at its naming cuts,
+by the years between a named face and the face it was matched with, are printed beside the gate;
+--alone prints it alone, for each library's own face model (a library the pass has not reached).
 
 What it reads and how: tagpup.services.face_gate.
 """
@@ -111,6 +116,26 @@ def lines(name, reading, answer):
     return out
 
 
+def gap_lines(name, reading):
+    """The text of each model's top-1 right and precision at the cut by year gap (face_gate.by_gap), and its answer:
+    {key: bands}. The precision at the cut is (named - wrong) / named: of the faces the cuts name, those named right."""
+    out, answer = [], {}
+    for key, found in reading["models"].items():
+        bands = answer[key] = face_gate.by_gap(found, key)
+        out.append("  %s %s by the years to the face matched (every face whose person is in another folder; named at "
+                   "its naming cuts):" % (name, LABELS[key]))
+        for band in bands:
+            span = ("undated" if band["low"] is None else "%d" % band["low"] if band["high"] == band["low"]
+                    else "%d+" % band["low"] if band["high"] is None else "%d-%d" % (band["low"], band["high"]))
+            at_cut = (band["named"] - band["wrong"]) / band["named"] if band["named"] else None
+            out.append("    %-8s %6d faces, top-1 right %s; named %d, wrong %d, precision at the cut %s; alone in their "
+                       "folder named %d" % (span, band["faces"], _p(band["top1_right"]), band["named"], band["wrong"],
+                                            _p(at_cut), band["alone_named"]))
+    if not reading["models"]:
+        out.append("  %s: no named face holds a vector under its model: nothing to read by year" % name)
+    return out, answer
+
+
 def _jsonable(value):
     if isinstance(value, dict):
         return {str(k): _jsonable(v) for k, v in value.items()}
@@ -124,10 +149,18 @@ def main(argv=None):
     parser.add_argument("--source", action="append", required=True, help="a library, opened read-only and never written")
     parser.add_argument("--precision", action="append", type=float, help="a precision the owner may choose (repeat)")
     parser.add_argument("--out", help="a folder outside the repository for the answer as JSON")
+    parser.add_argument("--alone", action="store_true", help="each library's own face model alone, by year gap only")
     args = parser.parse_args(argv)
     precisions = args.precision or [0.95, 0.98, 0.99]
     if any(not 0 < p < 1 for p in precisions):
         raise SystemExit("A precision is between 0 and 1, not 0 or 1.")
+    if args.alone:
+        answers = {}
+        for source in args.source:
+            name = os.path.splitext(os.path.basename(source))[0]
+            text, answers[name] = gap_lines(name, face_gate.read_alone(os.path.abspath(source)))
+            print("\n".join(text))
+        return _written(answers, args.out)
     print("the gate: %s against %s, held out by folder, at the floors %s px (read-only)" % (
         LABELS[face_gate.NEW], LABELS[face_gate.OLD], ", ".join(map(str, face_gate.FLOORS))))
     readings, answers = [], {}
@@ -135,13 +168,20 @@ def main(argv=None):
         name = os.path.splitext(os.path.basename(source))[0]
         readings.append(face_gate.read(os.path.abspath(source)))
         answers[name] = face_gate.score(readings[-1], precisions)
-        print("\n".join(lines(name, readings[-1], answers[name])))
+        text, answers[name]["gaps"] = gap_lines(name, readings[-1])
+        print("\n".join(lines(name, readings[-1], answers[name]) + text))
     if len(readings) > 1:
         both = face_gate.pooled(readings)
         answers["pooled"] = face_gate.score(both, precisions)
-        print("\n".join(lines("pooled", both, answers["pooled"])))
-    if args.out:
-        path = os.path.join(sandbox.outside_the_repository(args.out), "face-gate-%s.json" % time.strftime("%Y%m%dT%H%M%S"))
+        text, answers["pooled"]["gaps"] = gap_lines("pooled", both)
+        print("\n".join(lines("pooled", both, answers["pooled"]) + text))
+    return _written(answers, args.out)
+
+
+def _written(answers, out):
+    """`answers`, written as JSON to a new file in `out` (outside the repository) when one is given."""
+    if out:
+        path = os.path.join(sandbox.outside_the_repository(out), "face-gate-%s.json" % time.strftime("%Y%m%dT%H%M%S"))
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(_jsonable(answers), handle, indent=1)
         print("written %s" % path)

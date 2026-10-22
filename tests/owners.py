@@ -45,7 +45,7 @@ SCENARIOS = {
     "P5": ("people", "A tree edit (new, rename, merge, move) keeps every photo, face and filing in step."),
     "P6": ("people", "Two cousins called alike under two groups are named by id; a typed bare name that fits both is refused, naming both paths."),
     "P7": ("people", "Identify Faces: ignore, assign, restore and undo, against the real server."),
-    "P9": ("people", "The gate, read-only: the new face model against FaceNet on the same held-out named faces of each library and pooled, the cut at a chosen precision, the floor's bands, a thin sample said so, nothing written."),
+    "P9": ("people", "The gate, read-only: the new face model against FaceNet on the same held-out named faces of each library and pooled, the cut at a chosen precision, the floor's bands, a thin sample said so, each model's precision by the years to the face matched (a library's own model alone too), nothing written."),
     "P8": ("people", "The new face model's pass over a folder: names kept by overlap, new faces, the unmatched listed, a run stopped and resumed, undone from History, a dry run."),
     "P10": ("people", "A library its pass reached is switched to the new face model: a new photo is indexed and Suggested by it, Name faces from tags reads its vectors by its own cuts, and switched back FaceNet reads its own again."),
     "F1": ("files", "A photo write is journaled, one at a time, read back; a click three times writes once."),

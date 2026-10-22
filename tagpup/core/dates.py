@@ -25,6 +25,13 @@ SHIFTED_FIELDS = tuple(field for field in DATE_TAKEN_FIELDS if ":" in field)
 #: is as often a counter (IMG_0001) as a date.
 EARLIEST, LATEST = 1800, 2100
 
+#: The first year a photo's Date Taken is a year to match a face by (its era); the last is the current year, read when
+#: asked, so a photo taken this year is never undated. A year outside them is undated for that use (owner, 2026-10-22,
+#: #1738: photo_index's named faces carried years from 1827 to 2079, a wrong clock or a counter read as a year). A rule in
+#: code, not in the row: the row keeps its date, the library shows it as it is. Narrower than EARLIEST-LATEST, which only
+#: tells a year in a name from a counter.
+ERA_FIRST = 1950
+
 #: What a photo whose year is not known is shown and grouped under. TagTuner's server,
 #: the folder scan's records (scripts/metadata.py) and TagTuner's page each spelled it;
 #: the page keeps a copy that tests/test_rules_have_one_owner.py holds to this (#74).
@@ -91,6 +98,15 @@ def year_taken(raw_metadata):
         if match and EARLIEST <= int(match.group(1)) <= LATEST:
             return int(match.group(1))
     return None
+
+
+def era_year(taken):
+    """The year of `taken` (photos.taken, the photo's Date Taken: 'YYYY:MM:DD HH:MM:SS', some with a time zone after) as
+    a year to match a face by: from ERA_FIRST to the current year, else None (undated); None for a photo with no Date
+    Taken, never a year read from its file or folder name as photos.year falls back to."""
+    match = _YEAR_AT_START.match(str(taken or "").strip())
+    year = int(match.group(1)) if match else None
+    return year if year is not None and ERA_FIRST <= year <= datetime.date.today().year else None
 
 
 def year_in_name(path):
