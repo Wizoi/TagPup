@@ -15,7 +15,9 @@ old detector alone found, holding FaceNet's vector alone, which no reader keyed 
 
 `plan` reads only, and says what would change, in counts (Plan.said); it is refused, before anything is written, when the
 library is not on the new model or more of its faces than a switch allows are in photos the pass has not reached
-(settings.switch_to, the switch's own check and sentence). `apply` walks the photos the plan listed CHUNK at a time,
+(settings.switch_to, the switch's own check and sentence). The names given by hand go only when the caller asks for them
+by name (`refusal`, `clear_manual_names`; owner, 2026-10-22: manual names go too, but never by a run that did not say so).
+`apply` walks the photos the plan listed CHUNK at a time,
 each chunk ONE transaction (BEGIN IMMEDIATE) in which the chunk's faces are read again (store.faces.retire_rows): a face
 done since, by this run or another, no longer matches, and a photo removed since (sync, the indexer) has no faces to
 read, and is left alone. In that transaction the deleted rows are recorded whole, children first, and the cleared
@@ -24,13 +26,17 @@ chunk's counts added to the change's summary: History says what was committed. T
 at the first chunk that writes, and added to while it is the journal's newest change and kept (journal.newest_kept): a
 run stopped (`stop`, asked between chunks) or killed part-way leaves it whole, and the next run continues it; a change
 recorded after it, or its undo, makes the next chunk open a new one. Undone from History, every deleted face comes back
-with its crop and vectors, and every decision as it was.
+with its crop and vectors, and every decision as it was; the journal refuses that undo once a later change wrote the same
+rows (a face named since by Name faces from tags), naming the change. The pass's own change ("face pass (<key>)") is not
+undone while a retiring after it stands (`undo_refusals`): its new faces stand in for the faces the retiring deleted, and
+undone first it would leave photos with no face at all under the model.
 """
 import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 from tagpup.core import validation
+from tagpup.services import face_pass
 from tagpup.services import settings as library_settings
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
@@ -49,6 +55,12 @@ CHUNK = 500
 #: Why a run ends at a chunk: the library was switched to another model after the plan (settings, beside the run).
 MODEL_MOVED = "the library's face model changed since the plan"
 
+MANUAL_NAMES = ("Nothing was written: %d names given by hand would go (%d of faces kept, cleared; %d of faces deleted). "
+                "They go only when asked for (TagPup CLI: retire-faces --apply --clear-manual-names).")
+
+#: Why an undo of the pass's change is refused while a retiring after it stands (undo_refusals).
+PASS_STANDS_IN = "change %d (retire faces) deleted the old faces this pass's new faces stand in for: undo it first"
+
 NOT_ON_THE_MODEL = ("Nothing was written: the library's face model is %s, not %s. Faces are retired only once a library "
                     "is on the new model (switch it in the library's settings after its pass).")
 
@@ -66,6 +78,11 @@ class Plan:
     #: Why it is refused, nothing written; None when it may be applied.
     refused: Optional[str] = None
 
+    @property
+    def names_by_hand(self):
+        """The names given by hand the plan takes away: of the faces kept (cleared) and of the faces deleted."""
+        return self.counts.get("cleared_by_hand", 0) + self.counts.get("deleted_by_hand", 0)
+
     def said(self):
         """What the owner is told, in counts."""
         if self.refused:
@@ -74,9 +91,9 @@ class Plan:
         return ("%d of the library's %d faces hold no vector under %s and are deleted, with their crops and vectors "
                 "(%d named automatically, %d decided by hand or excluded). Of the faces kept, the decisions are cleared: "
                 "%d people named by hand, %d named automatically, %d decided to be nobody, %d exclusions. %d photos. "
-                "No keyword in a photo file and no tag of the tree is touched." % (
+                "%d names given by hand go. No keyword in a photo file and no tag of the tree is touched." % (
                     c["deleted"], c["faces"], self.model, c["deleted_named"], c["deleted_decided"], c["cleared_by_hand"],
-                    c["cleared_automatic"], c["cleared_nobody"], c["cleared_excluded"], c["photos"]))
+                    c["cleared_automatic"], c["cleared_nobody"], c["cleared_excluded"], c["photos"], self.names_by_hand))
 
 
 @dataclass
@@ -100,6 +117,8 @@ class Retired:
     error: Optional[str] = None
     #: The run was stopped between two chunks (`stop`).
     stopped: bool = False
+    #: Why nothing was written (refusal: the plan's own, or names given by hand not asked for); None when it ran.
+    refused: Optional[str] = None
 
     @property
     def deleted(self):
@@ -123,8 +142,8 @@ class Retired:
 
     def said(self):
         """What the owner is told: what was committed, never what was planned."""
-        if self.plan.refused:
-            return self.plan.refused
+        if self.refused:
+            return self.refused
         text = "%d faces deleted and %d faces' decisions cleared, in %d of %d photos; %d photos left alone (changed since)." % (
             self.deleted, self.cleared, sum(chunk.photos for chunk in self.chunks), len(self.plan.photo_ids),
             self.left_alone)
@@ -157,11 +176,25 @@ def plan(library):
         conn.close()
 
 
-def apply(library, planned, stop=_never):
-    """Retire what `planned` (plan) listed, CHUNK photos a transaction, until done or `stop` says so between two chunks.
-    Nothing is written for a refused plan. Returns what was committed (Retired)."""
-    found = Retired(planned)
+def refusal(planned, clear_manual_names=False):
+    """Why `planned` may not be applied, nothing written: the plan's own refusal, or names given by hand that would go
+    without `clear_manual_names`. None when it may. What the caller asks before anything else it does for a write (the
+    CLI's snapshot)."""
     if planned.refused:
+        return planned.refused
+    if planned.names_by_hand and not clear_manual_names:
+        return MANUAL_NAMES % (planned.names_by_hand, planned.counts["cleared_by_hand"], planned.counts["deleted_by_hand"])
+    return None
+
+
+def apply(library, planned, stop=_never, heard=None, clear_manual_names=False):
+    """Retire what `planned` (plan) listed, CHUNK photos a transaction, until done or `stop` says so between two chunks;
+    `heard(chunk, chunks)` is told of each chunk committed (Chunk, and how many the plan makes). Nothing is written for a
+    plan `refusal` refuses: names given by hand go only with `clear_manual_names`. Returns what was committed
+    (Retired)."""
+    found = Retired(planned)
+    found.refused = refusal(planned, clear_manual_names)
+    if found.refused:
         return found
     operation = OPERATION % planned.model
     photo_ids = planned.photo_ids
@@ -183,7 +216,42 @@ def apply(library, planned, stop=_never):
             found.failed, found.error = len(chunk), MODEL_MOVED
             break
         found.chunks.append(done)
+        if heard is not None:
+            heard(done, -(-len(photo_ids) // CHUNK))
     return found
+
+
+def undo_refusals(library, change_ids):
+    """{change id: why it is not undone now} of each of `change_ids` that is a face pass's change ("face pass (<key>)")
+    older than a retiring under the same key that stands (applied, not undone): PASS_STANDS_IN, naming the newest such.
+    The journal alone would allow it -- the retiring wrote other rows than the pass did -- and undone, the pass would take
+    the new model's vectors and faces from photos whose old faces are gone. Reads only, one connection."""
+    if not change_ids:
+        return {}
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        operations = journal.operations(conn, change_ids)
+        standing, reasons = {}, {}
+        for change_id, operation in operations.items():
+            key = _key_of(operation, face_pass.OPERATION)
+            if key is None:
+                continue
+            if key not in standing:
+                standing[key] = [kept_id for kept_id, _summary in journal.kept_named(conn, OPERATION % key)]
+            later = [kept_id for kept_id in standing[key] if kept_id > change_id]
+            if later:
+                reasons[change_id] = PASS_STANDS_IN % later[-1]
+        return reasons
+    finally:
+        conn.close()
+
+
+def _key_of(operation, named):
+    """The model key in `operation` when it is `named` ("... (%s)") of some key; else None."""
+    head, tail = named.split("%s")
+    if operation and operation.startswith(head) and operation.endswith(tail) and len(operation) > len(head) + len(tail):
+        return operation[len(head):len(operation) - len(tail)]
+    return None
 
 
 def _write(conn, model, operation, photo_ids):

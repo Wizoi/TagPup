@@ -940,6 +940,17 @@ def newest_kept(conn, operation):
     return row[0] if row is not None and row[1] == operation and kept(conn, row[0]) else None
 
 
+def operations(conn, change_ids):
+    """{id: operation} of each of `change_ids` the journal holds, on the caller's connection."""
+    found = {}
+    ids = list(change_ids)
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        found.update(conn.execute("SELECT id, operation FROM changes WHERE id IN (%s)" % ",".join("?" * len(chunk)),
+                                  chunk).fetchall())
+    return found
+
+
 def kept_named(conn, operation):
     """[(id, summary)] of the changes called `operation` that are applied and not undone, oldest first, each summary read
     from its JSON: the caller picks among them by what the summary says (the face pass: its folder)."""

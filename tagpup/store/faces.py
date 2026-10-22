@@ -433,19 +433,19 @@ UNDECIDED = {"name": None, "tag_id": None, "name_source": None, "excluded": 0, "
 def retire_counts(conn, key):
     """What retiring every face without a vector under `key` would do, from one scan of faces (each face's vector by its
     key (face_id, model), no vector or crop read): {"faces", "photos" (holding a face to delete or to clear), "deleted",
-    "deleted_named" (of those, naming a person automatically), "deleted_decided" (decided by hand: a name, nobody, or
-    excluded), and of the faces kept, the decisions cleared: "cleared_by_hand" (a person named by hand),
+    "deleted_named" (of those, naming a person automatically), "deleted_by_hand" (naming a person by hand),
+    "deleted_decided" (decided by hand: a name, nobody, or excluded), and of the faces kept, the decisions cleared: "cleared_by_hand" (a person named by hand),
     "cleared_automatic" (a person named automatically), "cleared_nobody" (decided by hand to be nobody, not excluded),
     "cleared_excluded"}."""
     row = conn.execute(
         "WITH r AS (SELECT f.photo_id, f.tag_id IS NOT NULL AS named, COALESCE(f.name_source, '') = 'manual' AS by_hand,"
         " f.excluded <> 0 AS excluded, " + RETIRED + " AS gone, " + DECIDED + " AS decided FROM faces f)"
         " SELECT COUNT(*), (SELECT COUNT(DISTINCT photo_id) FROM r WHERE gone OR decided), TOTAL(gone),"
-        " TOTAL(gone AND named AND NOT by_hand), TOTAL(gone AND (by_hand OR excluded)),"
+        " TOTAL(gone AND named AND NOT by_hand), TOTAL(gone AND named AND by_hand), TOTAL(gone AND (by_hand OR excluded)),"
         " TOTAL(NOT gone AND named AND by_hand), TOTAL(NOT gone AND named AND NOT by_hand),"
         " TOTAL(NOT gone AND NOT named AND by_hand AND NOT excluded), TOTAL(NOT gone AND excluded) FROM r",
         (key,)).fetchone()
-    return dict(zip(("faces", "photos", "deleted", "deleted_named", "deleted_decided", "cleared_by_hand",
+    return dict(zip(("faces", "photos", "deleted", "deleted_named", "deleted_by_hand", "deleted_decided", "cleared_by_hand",
                      "cleared_automatic", "cleared_nobody", "cleared_excluded"), (int(value or 0) for value in row)))
 
 
