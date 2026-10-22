@@ -69,6 +69,21 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
         self.assertEqual(1, len(named_reads), "every click re-read the named faces:\n" + "\n".join(named_reads))
         self.assertEqual([0.8], [round(f["max_similarity"], 4) for f in reply["faces"]])
 
+    def test_a_face_card_shows_how_like_someone_named_it_is_never_by_itself_or_a_face_of_its_photo(self):
+        """The owner clicks a photo holding a named face beside the unnamed one. The number beside each face was a raw
+        maximum over every named face: the named face showed 1.0, its own, and the unnamed one its likeness to the face
+        beside it, someone else (two faces in a photo are two people). It is asked of the one gallery now
+        (clustering.FaceRows.likeness), as the boxes and the strip are."""
+        conn = db.connect(self.db)
+        named = add_face(conn, PHOTO, box="[9,9,12,12]", embedding=np.asarray([0.6, 0.8, 0, 0], dtype=np.float32).tobytes(),
+                         name="Wren Halloway")
+        conn.commit()
+        conn.close()
+        reply = self.requests.get("/api/photo-details?path=" + urllib.parse.quote(PHOTO))
+        shown = {face["id"]: round(face["max_similarity"], 4) for face in reply["faces"]}
+        # Each is compared with Rowan alone, the one named face of another photo: 0.8 and 0.6, not 0.96 and 1.0.
+        self.assertEqual({self.unnamed: 0.8, named: 0.6}, shown)
+
     def test_the_named_faces_are_grouped_by_person_once_for_every_click(self):
         from tagpup.core import clustering
         made = []

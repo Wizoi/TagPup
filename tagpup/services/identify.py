@@ -272,6 +272,7 @@ def photo_details(library, photo_path, named):
         key = faces.model_key(conn)
         photo_row = photos.details(conn, photo_path)
         face_rows = faces.in_photo_with_names(conn, photo_path, key)
+        eras = faces.eras_of(conn, [row[0] for row in face_rows])   # where and when, for the years around it
         everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
@@ -296,11 +297,21 @@ def photo_details(library, photo_path, named):
 
     # Every named face, from the matrix shared with face_matches. This read all of
     # them from SQLite on every click of a face card -- 35,826 rows, half a second --
-    # for the one number per face shown beside it.
-    _known_ids, _known_people, known_matrix = face_rules.FaceRows.of(named()).under(key)
+    # for the one number per face shown beside it: how like the person it is most like each face is, asked of the one
+    # gallery as the boxes and the strip ask it (FaceRows.likeness: of the years around its own, never a face of its own
+    # photo, so never itself). It was a raw maximum over every named face: a named face showed 1.0, its own.
+    known = face_rules.FaceRows.of(named()).under(key)
+    asked = [(row[0], row[3]) for row in face_rows if row[3] is not None] if known[2] is not None else []
+    alike = {}
+    if asked:
+        where = [eras.get(face_id, (None, None)) for face_id, _blob in asked]
+        table = known.likeness(np.stack([face_rules.unit(np.frombuffer(blob, dtype=np.float32)) for _id, blob in asked]),
+                               [year for _photo, year in where], [photo for photo, _year in where])
+        alike = {face_id: float(value) for (face_id, _blob), value in zip(asked, table.max(axis=1, initial=-np.inf))
+                 if np.isfinite(value)}
 
     found = []
-    for fid, box_str, carried, emb_bytes, excluded in face_rows:
+    for fid, box_str, carried, _vector, excluded in face_rows:
         fname = carried.name if carried else None
         try:
             box = json.loads(box_str)
@@ -310,11 +321,7 @@ def photo_details(library, photo_path, named):
                 box = [int(x) for x in box_str.replace("[", "").replace("]", "").split(",")]
             except Exception:
                 box = [0, 0, 0, 0]
-        max_sim = 0.0
-        if emb_bytes is not None and known_matrix is not None:
-            sims = np.dot(known_matrix, np.frombuffer(emb_bytes, dtype=np.float32))
-            if len(sims) > 0:
-                max_sim = float(np.max(sims))
+        max_sim = alike.get(fid, 0.0)   # nobody named to compare: 0, as before
         # Excluded: the page counts a photo's unmatched faces from these, and an excluded
         # face is not one, as the list's counts say (docs/findings.md, #642, #655).
         found.append({"id": fid, "box": box, "name": fname,
