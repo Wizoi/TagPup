@@ -404,20 +404,31 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
 
 
 def _remember(conn, cache, choices, done):
-    """Add the vectors of the faces just named to the decided faces a batch holds of their people: they are
-    keyword-confirmed now, and the next photo of the batch is compared with them as a save after it would."""
+    """Add the faces just named to the decided faces a batch holds of their people (`cache`, {the node's id: FaceRows or
+    None}, `_decided_of`'s): they are keyword-confirmed now, and the next photo of the batch is compared with them as a
+    save after it would. Each person's rows are made again with the new faces' ids, vectors, photos and years: the one
+    gallery's rows, not read again from the library. One model key for the batch: it is read in the batch's transaction."""
     named = {choice.face_id: choice.person for choice in choices if choice.face_id in set(done)}
-    for face_id, blob in _embeddings(conn, list(named), faces.model_key(conn)).items():
+    key = faces.model_key(conn)
+    vectors = _embeddings(conn, list(named), key)
+    eras = faces.eras_of(conn, list(vectors))
+    added = collections.defaultdict(list)
+    for face_id, blob in vectors.items():
         person = named[face_id]
         if person.id not in cache or not blob:
             continue
         vec = np.frombuffer(blob, dtype=np.float32)
         norm = np.linalg.norm(vec)
-        if not norm:
-            continue
-        row = (vec / norm)[None, :]
-        known = cache[person.id]
-        cache[person.id] = row if known is None or known.shape[1] != row.shape[1] else np.vstack([known, row])
+        if norm:
+            photo, year = eras.get(face_id, (None, None))
+            added[person.id].append((face_id, person, vec / norm, photo, year))
+    for person_id, new in added.items():
+        known = cache[person_id]
+        rows = [] if known is None else list(zip(known[0], known[1], known[2], known.photos, known.years.tolist()))
+        rows += new
+        cache[person_id] = clustering.FaceRows([face for face, _p, _v, _f, _y in rows], [person for _i, person, _v, _f, _y in rows],
+                                               np.stack([vec for _i, _p, vec, _f, _y in rows]), key,
+                                               [year for _i, _p, _v, _f, year in rows], [photo for _i, _p, _v, photo, _y in rows])
 
 
 def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):

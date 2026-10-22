@@ -464,6 +464,34 @@ class APassReadsAPersonsDecidedFacesOnce(Case):
         self.assertEqual(50, len(look(self.path, "SELECT name FROM faces WHERE name = ? AND name_source IS NULL", (WREN,))))
         self.assertEqual(1, len(reads), "the person's decided faces were read again for a photo of the pass")
 
+    def test_the_second_photo_of_an_index_batch_is_compared_with_the_face_the_first_just_named(self):
+        """An index pass over two photos of one person, each with one face: the first photo's face (30 degrees from the
+        person's decided face) is named by the tag and is keyword-confirmed now; the second's (60 degrees: a cosine of
+        0.5 to the decided face, 0.87 to the first's) is named only because the batch remembers the first one. The
+        batch's decided faces are the one gallery's rows (clustering.FaceRows): remembering one raised AttributeError."""
+        known = self.photo("known_3.jpg")
+        self.face(known, at(0), name=WREN, name_source="manual")
+        first, second = self.photo("ferry_001.jpg"), self.photo("ferry_002.jpg")
+        first_face, second_face = self.face(first, at(30)), self.face(second, at(60))
+        reads = []
+        real = face_tags._decided_of
+
+        def counted(conn, person, key):
+            reads.append(person)
+            return real(conn, person, key)
+
+        def indexed(conn):
+            batch = derived.Batch(conn)
+            for photo_path in (first, second):
+                row = photo_rows.as_read(photo_path, {"XMP:Subject": ["People/" + WREN]})
+                photos.record_indexed(conn, photo_path, row, batch=batch)
+
+        with mock.patch.object(face_tags, "_decided_of", counted):
+            write(self.path, indexed)
+        self.assertEqual(WREN, self.name(first_face))
+        self.assertEqual(WREN, self.name(second_face), "the second photo was not compared with the face the first named")
+        self.assertEqual(1, len(reads), "the person's decided faces were read again inside the pass")
+
     def test_a_save_on_its_own_still_reads_them_fresh(self):
         known = self.photo("known_2.jpg")
         self.face(known, at(0), name=WREN, name_source="manual")
