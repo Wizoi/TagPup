@@ -260,6 +260,19 @@ class FacesByPerson:
             return np.zeros((len(similarities), 0), dtype=similarities.dtype)
         return np.maximum.reduceat(similarities if grouped else similarities[:, self.order], self.starts, axis=1)
 
+    def closest(self, similarities, columns, grouped=False):
+        """The face each row's likeness to the person of `columns` (one a row: a column of `table`, -1 for none) is: the row
+        of the matrix (as given, not `grouped`) of that person's closest face, -1 for none. What the gate reads the year
+        gap of a match by (tagpup.core.holdout)."""
+        similarities = np.atleast_2d(similarities if grouped else similarities[:, self.order])
+        ends = np.r_[self.starts[1:], similarities.shape[1]].astype(np.intp)
+        found = np.full(len(columns), -1, dtype=np.int64)
+        for row, column in enumerate(np.asarray(columns).tolist()):
+            if column >= 0:
+                low = self.starts[column]
+                found[row] = self.order[low + int(np.argmax(similarities[row, low:ends[column]]))]
+        return found
+
 
 class FaceRows(tuple):
     """(ids, people, matrix) of the faces kept one row a face (tagpup.services.identify.named_faces, decided_faces), as
