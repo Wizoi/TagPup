@@ -115,7 +115,12 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   year is its photo's Date Taken alone (`dates.era_year`, 1950 to the current year, `store.faces.eras_of`), and a
   face with none is compared with every year, as is a person with no dated face; a face is never compared with
   itself nor with a face of its own photo (two faces in a photo are two people), wherever it is asked (owner and main
-  session, 2026-10-22; DECISIONS 2026-10-22). A card whose person has no face left to compare shows 0.
+  session, 2026-10-22; DECISIONS 2026-10-22). A card whose person has no face left to compare is 0 and shows no
+  number. Its rows are built one way (`FaceRows.made`: a zero vector left out, none in the three libraries). Two lazy
+  lookups of a gallery (`FaceRows._where`, `columns`; `FacesByPerson._eras`) are filled without its lock: each is the
+  same answer of the same rows, so two Suggest workers that build one at once build it twice and keep either (the
+  grouping itself is made under the lock, as it is large). `FacesByPerson.table`'s loop a face at a time is slower for a
+  whole folder held out at once, which only `scripts/measure_face_gate.py` asks.
 
 - **#1209**, a tree rename stopped half way: the photos written hold the new tag while the tree keeps the old node. One
   place orders a tree edit against its files (`tags._retag`): the tree moves only once every photo is rewritten, the reply
