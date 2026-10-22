@@ -560,7 +560,10 @@ takes no turn of the card.
   at the cuts 8,604 -> 9,614, wrong 78 -> 93, precision at the cut 0.9909 -> 0.9903; faces matched across 6 to 10
   years 955 -> 134, across 11 or more 392 -> 195. A face's nearest person changed for named faces 0 of 1,637
   (kr-track), 2 of 1,212 (renton_parkrun), 591 of 53,387 (photo_index); for unnamed faces 216 of 3,631, 35 of 2,049
-  and 1,864 of a sample of 5,000. Every new query's plan is indexed.
+  and 1,864 of a sample of 5,000. Every new query's plan is indexed. cluster-faces on a copy of photo_index (AdaFace,
+  218,265 faces, 55,298 named in play before), the trunk's code against the branch's: 176.9 s against 187.8 s; faces
+  named after 61,280 against 61,517 (newly named 8,092 / 8,320, renamed 897 / 915, unnamed 2,110 / 2,101); face by
+  face, 50 named by the old code alone, 287 by the new alone, 3 given another person.
 - **4b Incremental assignment.** A folder that arrives has its faces matched against known faces by neighbour query and
   joins a person within threshold, or waits; a full re-cluster is the exception, not the response to every event.
 
