@@ -101,12 +101,8 @@ class AFaceIsComparedWithTheClosestFaceOfItsYears(unittest.TestCase):
         faces = [(self.ODA, face(1, 0), 2020, 1), (self.ODA, face(0, 1), 2020, 2)]
         self.assertAlmostEqual(0.0, self.like(faces, face(1, 0), 2020, 1, self.ODA), places=5)
 
-    def test_from_the_years_around_the_photo(self):
-        # A child's faces from long ago say less than those of the years around.
-        faces = [(self.WREN, face(1, 0), 2010, n) for n in range(5)] + [(self.WREN, face(0, 1), 2024, 10 + n) for n in range(5)]
-        self.assertAlmostEqual(1.0, self.like(faces, face(0, 1), 2024, 99, self.WREN), places=5)
-        self.assertAlmostEqual(0.0, self.like(faces, face(1, 0), 2024, 99, self.WREN), places=5)
-        self.assertAlmostEqual(1.0, self.like(faces, face(1, 0), None, 99, self.WREN), places=5)   # undated: every year
+    # From the years around the photo, every year for an undated one: the scenario P11
+    # (tests/test_a_face_gets_one_nearest_person_everywhere.py), in every place a face is asked.
 
 
 #: Where a shipped file other than clustering.py may order faces by likeness, and why: Identify's grid ranks the faces that
