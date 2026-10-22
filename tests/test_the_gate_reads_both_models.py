@@ -9,7 +9,8 @@ separability: each person a centre, FaceNet's faces far from it, the new model's
 
 And by year (TheGateReadsByYearGap): before phase 4a changes how a face is matched, the owner reads how far in years the
 face a name rests on is, on a library the pass has not reached (FaceNet alone, as photo_index), with a child who grew past
-her old faces, a photo whose clock said 2079, and a person seen at one event only.
+her old faces, a photo whose clock said 2079, a person seen at one event only, and photos whose folder names a year: the
+year is the photo's Date Taken, never a year in a name.
 """
 import contextlib
 import hashlib
@@ -247,8 +248,9 @@ class TheGateReadsBothModels(unittest.TestCase):
 class TheGateReadsByYearGap(unittest.TestCase):
     """A FaceNet library: four people photographed twice a year from 2010 to 2013 (a spring and an autumn folder, each
     face a little older than the last); a child photographed in 2008 and again in 2020, when she looks like her cousin
-    more than like her old faces; the cousin, seen in 2008 at one event only (one folder); and a photo whose clock said
-    2079, of the first person as he was in 2010."""
+    more than like her old faces; the cousin, seen in 2008 at one event only (one folder); a photo whose clock said
+    2079, of the first person as he was in 2010; a photo with no Date Taken in a folder named 'Picnic 2015', of the
+    second as she was after 2013; and a photo taken in 2014 in a folder named 'Summer 1999', of the third."""
 
     STEADY = PEOPLE[:4]
     CHILD, COUSIN = "Tamsin Revell", "Corin Ashby"
@@ -269,14 +271,16 @@ class TheGateReadsByYearGap(unittest.TestCase):
         try:
             def face(folder, name, year, vector, person):
                 photo = os.path.join(self.home.root, folder, name + ".jpg")
-                photo_rows.add_read(conn, photo, {"EXIF:DateTimeOriginal": "%d:06:01 12:00:00" % year})
+                photo_rows.add_read(conn, photo, {} if year is None else {"EXIF:DateTimeOriginal": "%d:06:01 12:00:00" % year})
                 add_face(conn, photo, (0, 0, 60, 60), unit(vector), name=person, prob=0.99)
+
+            def aged(person, year):
+                return centre[person] / np.linalg.norm(centre[person]) + 0.25 * (year - 2010) * older[person] / 8
 
             for year in range(2010, 2014):
                 for season in ("Spring", "Autumn"):
                     for person in self.STEADY:
-                        aged = centre[person] / np.linalg.norm(centre[person]) + 0.25 * (year - 2010) * older[person] / 8
-                        face("%s %d" % (season, year), person.split()[0], year, aged, person)
+                        face("%s %d" % (season, year), person.split()[0], year, aged(person, year), person)
             for i in range(3):
                 face("Spring 2008", "Tamsin %d" % i, 2008, centre[self.CHILD], self.CHILD)
                 face("Autumn 2008", "Corin %d" % i, 2008, centre[self.COUSIN], self.COUSIN)
@@ -284,6 +288,8 @@ class TheGateReadsByYearGap(unittest.TestCase):
                     centre[self.COUSIN])
                 face("Spring 2020", "Tamsin %d" % i, 2020, grown, self.CHILD)
             face("Lost clock", "Ilse", 2079, centre[self.STEADY[0]], self.STEADY[0])
+            face("Picnic 2015", "Tobin", None, aged(self.STEADY[1], 2014.5), self.STEADY[1])
+            face("Summer 1999", "Odile", 2014, aged(self.STEADY[2], 2014.5), self.STEADY[2])
             conn.commit()
         finally:
             conn.close()
@@ -306,13 +312,18 @@ class TheGateReadsByYearGap(unittest.TestCase):
         # A clock that said 2079 is no year to match by: that face, and the faces matched with it, are undated, not 69
         # years off (store.faces.era_year).
         self.assertGreaterEqual(by[(None, None)]["faces"], 1)
+        # The year is the photo's Date Taken: the picnic photo has none, so it is undated, not 2015 from its folder's
+        # name (two years from the 2013 face it meets); the summer photo was taken in 2014, one year from its 2013 face,
+        # not 1999 from its folder's name.
+        self.assertEqual(0, by[(2, 2)]["faces"])
+        self.assertEqual(1, by[(1, 1)]["faces"])
         # The cousin's faces are all in one folder: her person is not in the gallery, so she is not among the faces
         # read, and the name the cut gives her (her cousin's, 2020) is counted apart, wrong.
-        self.assertEqual(4 * 4 * 2 + 1 + 6, sum(band["faces"] for band in bands))
+        self.assertEqual(4 * 4 * 2 + 1 + 6 + 2, sum(band["faces"] for band in bands))
         self.assertEqual(3, sum(band["alone_named"] for band in bands))
         self.assertIn("undated", text)
         self.assertIn("11+", text)
-        for name in PEOPLE + (self.CHILD, self.COUSIN, "Spring", "Autumn", "Lost clock", ".jpg"):
+        for name in PEOPLE + (self.CHILD, self.COUSIN, "Spring", "Autumn", "Lost clock", "Picnic", "Summer", ".jpg"):
             self.assertNotIn(name, text)
 
     def test_a_library_is_read_by_its_own_model_alone(self):

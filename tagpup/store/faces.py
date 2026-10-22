@@ -56,8 +56,11 @@ HAS_VECTOR = "EXISTS (SELECT 1 FROM face_embeddings v WHERE v.face_id = f.id AND
 ERA_FIRST, ERA_LAST = 1990, 2026
 
 
-def era_year(year):
-    """`year` (photos.year) as a year to match a face by: itself between ERA_FIRST and ERA_LAST, else None (undated)."""
+def era_year(taken):
+    """The year of `taken` (photos.taken, the photo's Date Taken: 'YYYY:MM:DD HH:MM:SS', some with a time zone after) as
+    a year to match a face by: between ERA_FIRST and ERA_LAST, else None (undated); None for a photo with no Date Taken,
+    never a year read from its file or folder name as photos.year falls back to."""
+    year = int(taken[:4]) if taken else None
     return year if year is not None and ERA_FIRST <= year <= ERA_LAST else None
 
 
@@ -399,7 +402,7 @@ def give_vectors(conn, change_id, photo_path, key, matched, new, counts):
 # ---- The gate: two models' vectors of the same faces (tagpup.services.face_gate) -------------------------------------
 
 def under_each(conn, keys, named):
-    """[(face id, tag id or None, photo id, the photo's folder key, box JSON, the photo's era_year, then its vector under
+    """[(face id, tag id or None, photo id, the photo's folder key, box JSON, era_year of the photo's Date Taken, then its vector under
     each of `keys`)] of every face not excluded holding a vector under each key given. The gate gives two (it compares two
     models on the same faces while the library reads one of them); a reading of one model alone, the library's (model_key),
     never mixed with another's. `named`: the faces naming a person (tag_id set), else those naming nobody. The folder key is
@@ -407,9 +410,9 @@ def under_each(conn, keys, named):
     crop is read. Faces by idx_faces_identify (excluded), each vector by its key (face_id, model), each photo by its id."""
     joins = "".join(" JOIN face_embeddings e%d ON e%d.face_id = f.id AND e%d.model = ?" % (n, n, n) for n in range(len(keys)))
     vectors = "".join(", e%d.vector" % n for n in range(len(keys)))
-    return [(face_id, tag_id, photo_id, paths.key(paths.row_parent(path) or ""), box, era_year(year), *found)
-            for face_id, tag_id, photo_id, path, box, year, *found in conn.execute(
-                "SELECT f.id, f.tag_id, f.photo_id, p.path, f.box, p.year" + vectors + " FROM faces f" + PHOTO + joins
+    return [(face_id, tag_id, photo_id, paths.key(paths.row_parent(path) or ""), box, era_year(taken), *found)
+            for face_id, tag_id, photo_id, path, box, taken, *found in conn.execute(
+                "SELECT f.id, f.tag_id, f.photo_id, p.path, f.box, p.taken" + vectors + " FROM faces f" + PHOTO + joins
                 + " WHERE f.excluded = 0 AND f.tag_id IS " + ("NOT NULL" if named else "NULL"), tuple(keys))]
 
 
