@@ -36,6 +36,8 @@ ALLOWED = {
     "tagpup/store/face_batches.py": "the batch's own follower: faces written in the transaction that marks the photo's file done",
     "tagpup/store/face_tags.py": "the one-face rule: a photo's keyword just recorded names its only unnamed face as a GUESS (no decider)",
     "tagpup/store/taxonomy.py": "deleting a person with force unnames their faces, journaled (PERSON_DELETED); their tag goes with the node",
+    "tagpup/services/retire_faces.py": ("the old detector's faces deleted and every kept face's decision cleared, journaled; no photo's "
+                                        "keyword moves, by the owner's decision (2026-10-22): the keywords are the record kept"),
 }
 
 #: Writers that reach faces another way and are not scanned: the naming job (Name faces from tags), the indexer, and the MCP server's
