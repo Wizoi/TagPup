@@ -338,8 +338,7 @@ class TagSuggester:
         # Where and when, for who a face looks like: the year of its Date Taken as every matcher reads it (dates.era_year), and
         # its photo's id, the library's row at its path -- a run's record (the page's) carries none; a photo the library
         # does not hold (a look) has none, and no face of it to leave out.
-        face_year = (dates.era_year(dates.date_taken(target_metadata.get("raw_metadata", target_metadata)))
-                     if target_metadata else None)
+        face_year = dates.era_year(dates.date_taken(target_metadata["raw_metadata"])) if target_metadata else None
         photo_id = next(iter(store_roots.photo_ids_at(self.index.conn, [photo_path])), None) if self.index.conn else None
         # Default decay parameter: half-life of 5 years (ln(2)/5 = 0.1386)
         decay_lambda = 0.1386
