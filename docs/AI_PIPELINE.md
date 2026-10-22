@@ -557,8 +557,20 @@ takes no turn of the card.
 - photo_index (a sandbox copy of the live library, 2026-10-22): of 218,265 faces, 35,486 deleted (1,907 named
   automatically, 19 decided by hand or excluded); of the faces kept, decisions cleared on 175 faces named by hand,
   59,428 named automatically, 3 decided to be nobody and 13 exclusions; 44,268 photos walked in 89 chunks. Applied
-  through the CLI in 86 s (peak working set 80 MB), after the snapshot. The gate counts the names given by hand of the
-  faces deleted too: none in photo_index, 3 in kr-track (counted read-only).
+  through the CLI in 86 s with the snapshot first (peak working set 80 MB); the change holds 156,386 rows (about 130 MB
+  of the journal, the crops' bytes most of it). `undo` of it through the CLI: rehearsed in 32 s, applied in 50 s (one
+  transaction, peak working set 1 GB), every face, crop, vector and decision back (218,265 faces, 61,510 named). Applied
+  again in 21 s, with `--clear-manual-names` (refused without it, nothing written: 175 names given by hand); a dry run
+  after it says "Nothing to retire". The gate counts the names given by hand of the faces deleted too: none in
+  photo_index, 3 in kr-track (counted read-only).
+- Named again on the same copy, from the keywords: Name faces from tags (the plan in 4.4 s, the write in 1.9 s) names
+  3 faces of 182,779: with no decided face left, a one-face-one-person photo (14,300 of them) is named by its tag alone
+  only for a person with no other photo waiting (#839), and 14,297 are "not decidable yet". `cluster-faces` then names
+  55,990 (210 s, peak working set 2.6 GB; not journaled), 55,991 named in all against 59,603 of the kept faces before:
+  14,089 of them anchors (the one face of a photo whose keywords name one person, its cluster agreeing), 24,804 by an
+  anchor's cluster, 13,066 by the rounds that follow the photos' people, 3,044 by a cluster's vote, 988 by the last
+  pass's likeness; 51 left unnamed in photos naming people no face is known for. So on a library starting afresh the
+  keywords name the faces through `cluster-faces` (or the index, which runs it), not through Name faces from tags.
 
 ### Phase 4: Matching, with the new model
 
