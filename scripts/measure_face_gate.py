@@ -6,7 +6,8 @@ written names a person, a photo or a folder. Opens each library read-only and wr
         [--precision 0.95 --precision 0.98 --precision 0.99] [--out <folder outside the repository>]
     .venv/Scripts/python.exe scripts/measure_face_gate.py --alone --source data/photo_index.db
 
-Each model's precision by the years between a named face and the face it was matched with is printed beside the gate;
+How often each model's best match is right (top-1 right), and the precision of the names it gives at its naming cuts,
+by the years between a named face and the face it was matched with, are printed beside the gate;
 --alone prints it alone, for each library's own face model (a library the pass has not reached).
 
 What it reads and how: tagpup.services.face_gate.
@@ -116,7 +117,8 @@ def lines(name, reading, answer):
 
 
 def gap_lines(name, reading):
-    """The text of each model's precision by year gap (face_gate.by_gap), and its answer: {key: bands}."""
+    """The text of each model's top-1 right and precision at the cut by year gap (face_gate.by_gap), and its answer:
+    {key: bands}. The precision at the cut is (named - wrong) / named: of the faces the cuts name, those named right."""
     out, answer = [], {}
     for key, found in reading["models"].items():
         bands = answer[key] = face_gate.by_gap(found, key)
@@ -125,8 +127,10 @@ def gap_lines(name, reading):
         for band in bands:
             span = ("undated" if band["low"] is None else "%d" % band["low"] if band["high"] == band["low"]
                     else "%d+" % band["low"] if band["high"] is None else "%d-%d" % (band["low"], band["high"]))
-            out.append("    %-8s %6d faces, precision %s; named %d, wrong %d; alone in their folder named %d" % (
-                span, band["faces"], _p(band["precision"]), band["named"], band["wrong"], band["alone_named"]))
+            at_cut = (band["named"] - band["wrong"]) / band["named"] if band["named"] else None
+            out.append("    %-8s %6d faces, top-1 right %s; named %d, wrong %d, precision at the cut %s; alone in their "
+                       "folder named %d" % (span, band["faces"], _p(band["top1_right"]), band["named"], band["wrong"],
+                                            _p(at_cut), band["alone_named"]))
     if not reading["models"]:
         out.append("  %s: no named face holds a vector under its model: nothing to read by year" % name)
     return out, answer

@@ -13,8 +13,8 @@ tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR is read here). A reading is "too thin" wh
 under it (holdout.too_thin). And the pass's counts, from the library's rows and journal. Nothing is written; a library is
 opened read-only (db.readonly_uri), and nothing said names a person, a photo or a folder: counts only.
 
-By year (phase 4a's gate): each model's precision by the years between a named face and the face it was matched with
-(by_gap), on every face and at the model's own naming cuts; for both models of the gate, or for the library's own model
+By year (phase 4a's gate): how often each model's best match is right by the years between a named face and the face it
+was matched with (by_gap), on every face and at the model's own naming cuts; for both models of the gate, or for the library's own model
 alone (read_alone: a library the pass has not reached, photo_index). A year outside the era is no year (core.dates.era_year).
 """
 import json
@@ -117,9 +117,10 @@ def read_alone(db_path):
 
 
 def by_gap(found, key):
-    """One model's (`key`) precision by the years between a named face and the face it was matched with: [{"low", "high"
-    (None: no bound; both None: "undated", a face or its match with no year to match by), "faces" (whose person has a
-    face in another folder), "right", "precision", "named" and "wrong" of them at the model's naming cuts
+    """One model's (`key`) best matches by the years between a named face and the face it was matched with: [{"low",
+    "high" (None: no bound; both None: "undated", a face or its match with no year to match by), "faces" (whose person has
+    a face in another folder), "right", "top1_right" (right / faces, None for none), "named" and "wrong" of them at the
+    model's naming cuts
     (clustering.Cuts.names_unasked), "alone_named" (faces alone in their folder it names there, each wrong)}]."""
     cuts = clustering.cuts_of(key)
     named = np.array([cuts.names_unasked(likeness, margin)
@@ -131,7 +132,7 @@ def by_gap(found, key):
             inside = np.isnan(gap) if low is None else (gap >= low) & ((gap <= high) if high is not None else True)
         faces = inside & reachable
         bands.append({"low": low, "high": high, "faces": int(faces.sum()), "right": int((faces & right).sum()),
-                      "precision": int((faces & right).sum()) / int(faces.sum()) if faces.any() else None,
+                      "top1_right": int((faces & right).sum()) / int(faces.sum()) if faces.any() else None,
                       "named": int((faces & named).sum()), "wrong": int((faces & named & ~right).sum()),
                       "alone_named": int((inside & ~reachable & named).sum())})
     return bands

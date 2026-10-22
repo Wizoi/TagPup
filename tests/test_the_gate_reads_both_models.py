@@ -303,11 +303,11 @@ class TheGateReadsByYearGap(unittest.TestCase):
         # The library's own model alone: FaceNet's, at FaceNet's naming cuts.
         self.assertEqual([FACENET], list(answers["fells"]))
         # Each steady face meets its twin of the other season, the same year: right, no year apart.
-        self.assertEqual(1.0, by[(0, 0)]["precision"])
+        self.assertEqual(1.0, by[(0, 0)]["top1_right"])
         self.assertGreaterEqual(by[(0, 0)]["faces"], 28)
         # The child grew past her old faces: the three of 2008 still find hers of 2020, but those of 2020 her cousin's of
         # 2008, twelve years off and wrong; named at the cuts, each of those is a wrong name.
-        self.assertEqual((6, 3, 0.5), (by[(11, None)]["faces"], by[(11, None)]["right"], by[(11, None)]["precision"]))
+        self.assertEqual((6, 3, 0.5), (by[(11, None)]["faces"], by[(11, None)]["right"], by[(11, None)]["top1_right"]))
         self.assertEqual(3, by[(11, None)]["wrong"])
         # A clock that said 2079 is no year to match by: that face, and the faces matched with it, are undated, not 69
         # years off (core.dates.era_year).
@@ -323,6 +323,8 @@ class TheGateReadsByYearGap(unittest.TestCase):
         self.assertEqual(3, sum(band["alone_named"] for band in bands))
         self.assertIn("undated", text)
         self.assertIn("11+", text)
+        self.assertIn("top-1 right", text)
+        self.assertIn("precision at the cut", text)
         for name in PEOPLE + (self.CHILD, self.COUSIN, "Spring", "Autumn", "Lost clock", "Picnic", "Summer", ".jpg"):
             self.assertNotIn(name, text)
 
