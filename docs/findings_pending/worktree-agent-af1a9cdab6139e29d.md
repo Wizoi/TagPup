@@ -11,3 +11,5 @@ docs/findings.md when the main session merges the branch, and removes this file.
 | B-4 | 2026-10-22 | low: a second rule for which years are years (store.faces ERA vs core/dates EARLIEST/LATEST). Phase 4a cut 1 review. | fixed: 6e665b34 |
 | B-5 | 2026-10-22 | low: face_gate.by_gap used the word precision for right / reachable faces beside precision at the cut. Phase 4a cut 1 review. | fixed: a8560d6a |
 | B-6 | 2026-10-22 | low: AI_PIPELINE.md named under_both. Phase 4a cut 1 review. | fixed: 1b3029b0 |
+| B-7 | 2026-10-22 | low: `dates.era_year` read the year with its own `int(taken[:4])` beside `_YEAR_AT_START`, a second rule for the year at the start of Date Taken; no live row differs | fixed: da327a61 |
+| B-8 | 2026-10-22 | low: the 'Summer 1999' face of TheGateReadsByYearGap does not test Date Taken against a folder name (photos.year also prefers Date Taken); only the undated 'Picnic 2015' face does | decided: only the undated face proves the fix; the other stays as a guard on the rule (the two differ only for a photo with no Date Taken) |
