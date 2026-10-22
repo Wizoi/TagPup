@@ -7,8 +7,10 @@ edited, not the date the photo was taken.
 import ast
 import os
 import re
+import datetime
 import sys
 import unittest
+import unittest.mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -59,6 +61,25 @@ class TheYearFromItsName(unittest.TestCase):
     def test_the_metadata_wins_over_the_name(self):
         self.assertEqual(dates.photo_year({"DateTimeOriginal": "2011:01:01"}, r"D:\2008\a.jpg"), 2011)
         self.assertEqual(dates.photo_year({}, r"D:\2008\a.jpg"), 2008)
+
+
+class TheEraOfAFace(unittest.TestCase):
+    """The year a face is matched by: its photo's Date Taken, from 1990 to the year it is now (owner, 2026-10-22)."""
+
+    def test_the_last_year_is_the_current_one(self):
+        with unittest.mock.patch.object(dates, "datetime", wraps=datetime) as clock:
+            clock.date.today.return_value = datetime.date(2026, 12, 31)
+            self.assertEqual(2026, dates.era_year("2026:12:31 23:59:00"))
+            self.assertIsNone(dates.era_year("2027:01:01 00:00:00"))
+            clock.date.today.return_value = datetime.date(2027, 1, 1)
+            self.assertEqual(2027, dates.era_year("2027:01:01 00:00:00"))
+            self.assertIsNone(dates.era_year("2079:06:01 12:00:00"))
+
+    def test_a_wrong_clock_and_no_date_are_undated(self):
+        self.assertEqual(1990, dates.era_year("1990:01:01 00:00:00"))
+        self.assertIsNone(dates.era_year("1989:12:31 23:59:59"))
+        self.assertEqual(2018, dates.era_year("2018:07:04 09:30:00+02:00"))
+        self.assertIsNone(dates.era_year(None))
 
 
 class TheSortKey(unittest.TestCase):
