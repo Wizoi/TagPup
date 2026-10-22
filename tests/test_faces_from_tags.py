@@ -28,6 +28,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import faces_from_tags, identify, journal as journal_service  # noqa: E402
 from tagpup.store import db, derived, face_tags, faces, people, photos, schema, taxonomy  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 from unittest import mock  # noqa: E402
 
 WREN = "Wren Halloway"
@@ -366,7 +367,7 @@ class APersonWithNoDecidedFace(Case):
     def ids_of(self, photo_paths):
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
-            return face_tags.photo_ids_of(conn, photo_paths)
+            return store_roots.photo_ids_at(conn, photo_paths)
         finally:
             conn.close()
 

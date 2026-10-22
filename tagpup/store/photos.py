@@ -47,16 +47,8 @@ def date_photos(conn, photo_ids=None):
     conn.executemany("UPDATE photos SET taken = ?, year = ? WHERE id = ?", dated)
 
 
-def _ids_of(conn, photo_paths):
-    ids = []
-    for photo_path in photo_paths:
-        where, params = store_roots.sql_equals(conn, "path", photo_path)
-        ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
-    return ids
-
-
 def _dated_paths(conn, photo_paths):
-    date_photos(conn, _ids_of(conn, photo_paths))
+    date_photos(conn, store_roots.photo_ids_at(conn, photo_paths))
 
 
 #: How far a row's mtime may be from its file's and the row still describe the file:
@@ -116,11 +108,6 @@ def forget_photo(db_path, photo_path):
     return removed
 
 
-def _ids_at(cursor, path):
-    where, params = store_roots.sql_equals(cursor.connection, "path", path)
-    return [r[0] for r in cursor.execute("SELECT id FROM photos WHERE " + where, params)]
-
-
 def move_rows_in(conn, renames):
     """Move index rows from each old path to its new one, in the caller's transaction: the file
     journal marks a rename done in the transaction that moves its row. Its faces and vectors point
@@ -149,7 +136,7 @@ def move_rows_in(conn, renames):
             new_key = paths.key(new_path)
             clash = new_key in arriving
             if not clash and not paths.same(old_path, new_path) and new_key not in leaving:
-                clash = bool(_ids_at(cursor, new_path))
+                clash = bool(store_roots.photo_ids_at(cursor.connection, [new_path]))
             if clash:
                 skipped.append((old_path, new_path))
                 del plan[old_path]
@@ -160,7 +147,7 @@ def move_rows_in(conn, renames):
     staged = []
     for n, (old_path, new_path) in enumerate(plan.items()):
         # Its faces and vectors point at the row by id, and go with it.
-        photo_ids = _ids_at(cursor, old_path)
+        photo_ids = store_roots.photo_ids_at(cursor.connection, [old_path])
         # "<" cannot appear in a Windows file name, and this never outlives
         # the transaction.
         placeholder = "<moving %d>" % n
@@ -400,9 +387,7 @@ def records(conn, model, photo_ids=None, people_ids=False):
 
 
 def _row_id(conn, photo_path):
-    clause, params = store_roots.sql_equals(conn, "path", photo_path)
-    row = conn.execute("SELECT id FROM photos WHERE " + clause + " LIMIT 1", params).fetchone()
-    return row[0] if row else None
+    return next(iter(store_roots.photo_ids_at(conn, [photo_path])), None)
 
 
 def _unread_row(conn, photo_path):
@@ -562,11 +547,6 @@ def ids_under(conn, folder):
     """The ids of the photos under `folder`, at any depth: one range of the path index."""
     where, params = store_roots.sql_under(conn, "path", folder)
     return [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
-
-
-def ids_at(conn, photo_paths):
-    """The ids of the photos at `photo_paths`, however spelled: one indexed lookup a path."""
-    return _ids_of(conn, photo_paths)
 
 
 # ---- What TagTuner's screens read -----------------------------------------------------

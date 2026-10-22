@@ -38,17 +38,11 @@ def detector(settings):
     return json.dumps(settings, sort_keys=True)
 
 
-def _photo_id(conn, photo_path):
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
-    row = conn.execute("SELECT id FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
-    return row[0] if row else None
-
-
 def record(conn, photo_path, name, stamp, found, now=None):
     """Record that detector `name` ran on the photo at `photo_path`, its file at `stamp`
     ((mtime, size) or None), and found `found` faces. 1 when the photo has a row to record
     it on, else 0. The caller commits."""
-    photo_id = _photo_id(conn, photo_path)
+    photo_id = next(iter(store_roots.photo_ids_at(conn, [photo_path])), None)
     if photo_id is None:
         return 0
     mtime, size = stamp if stamp else (None, None)

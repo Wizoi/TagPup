@@ -108,9 +108,8 @@ def nobody_in_photo(conn, photo_path):
 def _of_photo(conn, photo_path):
     """[(id, Ref or None, name_source, excluded)] of one photo's faces, found by idx_faces_photo_id: with the name and the exclusion in
     the WHERE the planner reads idx_faces_identify (every named face of the library, 0.12 s on photo_index) for each photo."""
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
     return [(face_id, _ref(tag_id, name), source, excluded)
-            for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params).fetchall()
+            for photo_id in store_roots.photo_ids_at(conn, [photo_path])
             for face_id, tag_id, name, source, excluded in conn.execute(
                 "SELECT id, tag_id, name, name_source, excluded FROM faces INDEXED BY idx_faces_photo_id"
                 " WHERE photo_id = ? ORDER BY id", (photo_id,)).fetchall()]
@@ -305,8 +304,7 @@ def _rebuilt(conn, photo_ids, changed, vocabulary=None, known=None):
 def remove_for_photo(conn, photo_path):
     """Delete a photo's face rows, names and decisions with them. Returns rows deleted.
     The caller commits."""
-    found, found_params = store_roots.sql_equals(conn, "path", photo_path)
-    photo_ids = {photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + found, found_params)}
+    photo_ids = set(store_roots.photo_ids_at(conn, [photo_path]))
     where, params = _on_photo(conn, photo_path)
     removed = conn.execute("DELETE FROM faces WHERE " + where, params).rowcount
     if removed:

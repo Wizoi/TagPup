@@ -125,10 +125,7 @@ def repair(db_path, photo_ids):
 def rebuild_photos(conn, photo_paths, known=None):
     """rebuild, for the photos at `photo_paths`, however they are spelled. Returns how many
     photos' people changed. The caller commits."""
-    ids = []
-    for photo_path in photo_paths:
-        where, params = store_roots.sql_equals(conn, "path", photo_path)
-        ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
+    ids = store_roots.photo_ids_at(conn, photo_paths)
     return rebuild(conn, ids, known) if ids else 0
 
 

@@ -132,11 +132,7 @@ def ids_of_stored(conn, stored_paths):
 
 def ids_of_files(conn, photo_paths):
     """The ids of the photos stored under any spelling of these paths, as paths compare."""
-    found = set()
-    for photo_path in photo_paths:
-        where, params = store_roots.sql_equals(conn, "path", photo_path)
-        found.update(photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params))
-    return sorted(found)
+    return sorted(set(store_roots.photo_ids_at(conn, photo_paths)))
 
 
 # ---- Faces ------------------------------------------------------------------------------

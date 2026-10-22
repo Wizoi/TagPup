@@ -454,15 +454,6 @@ def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
     return done
 
 
-def photo_ids_of(conn, photo_paths):
-    """The ids of the rows of the photos at `photo_paths`, however they are spelled."""
-    ids = []
-    for photo_path in photo_paths:
-        where, params = store_roots.sql_equals(conn, "path", photo_path)
-        ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
-    return ids
-
-
 def name_paths(conn, photo_paths, references=None):
     """name_photos, for the photos at `photo_paths`."""
-    return name_photos(conn, photo_ids_of(conn, photo_paths), references)
+    return name_photos(conn, store_roots.photo_ids_at(conn, photo_paths), references)

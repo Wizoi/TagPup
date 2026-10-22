@@ -25,6 +25,7 @@ from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, embeddings, photos  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 MODEL = embeddings.model_key("ViT-T", "tiny", True, 1.4, 512)
 OTHER = embeddings.model_key("ViT-T", "tiny", True, 1.4, None)
@@ -136,7 +137,7 @@ class Vectors(unittest.TestCase):
             embeddings.put(conn, other_photo, OTHER, 1.0, 1, VECTOR)
             conn.commit()
             vectors = dict(photos.vectors(conn, MODEL))
-            (photo_id,), (other_id,) = photos.ids_at(conn, [self.photo]), photos.ids_at(conn, [other_photo])
+            (photo_id,), (other_id,) = store_roots.photo_ids_at(conn, [self.photo]), store_roots.photo_ids_at(conn, [other_photo])
         finally:
             conn.close()
         self.assertEqual(VECTOR, vectors[photo_id])

@@ -269,6 +269,17 @@ def sql_equals(conn, column, path):
     return paths.sql_equals(column, path, roots_for(conn))
 
 
+def photo_ids_at(conn, photo_paths):
+    """The ids of the photos whose rows are at `photo_paths`, however each is spelled (sql_equals): one seek of the path
+    index a path. The one lookup of a photo's row by its path; here, beside sql_equals, because every store module imports
+    this one (store.photos imports store.face_tags, which could not import it back)."""
+    ids = []
+    for photo_path in photo_paths:
+        where, params = sql_equals(conn, "path", photo_path)
+        ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
+    return ids
+
+
 def sql_under(conn, column, folder):
     """paths.sql_under, the argument converted by the connection's Roots."""
     return paths.sql_under(column, folder, roots_for(conn))
