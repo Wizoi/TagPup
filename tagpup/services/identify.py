@@ -62,7 +62,27 @@ def fingerprint(library):
         conn.close()
 
 
-def named_faces(library):
+def _face_rows(rows, key):
+    """clustering.FaceRows of `rows` (face id, Ref, vector bytes, photo id, era year), read under `key`, each vector made
+    unit; a row whose vector is damaged or zero is left out: one is not a reason to refuse every comparison."""
+    ids, refs, vecs, photo_ids, years = [], [], [], [], []
+    for face_id, person, blob, photo_id, year in rows:
+        try:
+            vec = np.frombuffer(blob, dtype=np.float32)
+        except Exception:
+            continue
+        norm = np.linalg.norm(vec)
+        if norm == 0:
+            continue
+        ids.append(face_id)
+        refs.append(person)
+        vecs.append(vec / norm)
+        photo_ids.append(photo_id)
+        years.append(year)
+    return face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None, key, years, photo_ids)
+
+
+def named_faces(library, key=None):
     """(fingerprint, (ids, people, matrix)): every face that carries a name, as unit
     vectors, with the person (a Ref) beside each; matrix None when nobody has been named yet.
 
@@ -76,30 +96,18 @@ def named_faces(library):
     The ids are carried so a caller can leave a particular face out of its own answer:
     the matrix is shared, so it cannot be rebuilt to exclude one row. The fingerprint is
     read first, on the same connection, so the matrix is stamped with a state no newer
-    than its rows, in one read transaction with them; the rows carry the face model they were read under (FaceRows.key).
+    than its rows, in one read transaction with them; the rows carry the face model they were read under (FaceRows.key):
+    the library's, or `key` (a Suggest run's, which its faces are compared by: a switch while it runs leaves it on the
+    model it began with).
     """
     conn = _reading(library)
     try:
         db.begin(conn)
-        stamp, key = faces.fingerprint(conn), faces.model_key(conn)
-        ids, refs, vecs, photo_ids, years = [], [], [], [], []
-        for face_id, person, blob, photo_id, year in faces.for_named_matrix(conn, key):
-            try:
-                vec = np.frombuffer(blob, dtype=np.float32)
-            except Exception:
-                # One damaged row is not a reason to refuse every comparison.
-                continue
-            norm = np.linalg.norm(vec)
-            if norm == 0:
-                continue
-            ids.append(face_id)
-            refs.append(person)
-            vecs.append(vec / norm)
-            photo_ids.append(photo_id)
-            years.append(year)
+        stamp, key = faces.fingerprint(conn), key or faces.model_key(conn)
+        rows = _face_rows(faces.for_named_matrix(conn, key), key)
     finally:
         conn.close()
-    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None, key, years, photo_ids)
+    return stamp, rows
 
 
 #: faces.name_source of a name a person gave a face, and so the only kind that stands for them.
@@ -131,25 +139,12 @@ def decided_faces(library):
         db.begin(conn)   # one read transaction: the stamp, the keywords and the rows see one state
         stamp, key = _decided_stamp(conn), faces.model_key(conn)
         keywords = people.keyword_keys(conn)
-        ids, refs, vecs, photo_ids, years = [], [], [], [], []
-        for face_id, person, blob, source, photo_id, year in faces.for_decided_matrix(conn, key):
-            if source != DECIDED and person.id not in keywords.get(photo_id, ()):
-                continue
-            try:
-                vec = np.frombuffer(blob, dtype=np.float32)
-            except Exception:
-                continue
-            norm = np.linalg.norm(vec)
-            if norm == 0:
-                continue
-            ids.append(face_id)
-            refs.append(person)
-            vecs.append(vec / norm)
-            photo_ids.append(photo_id)
-            years.append(year)
+        rows = _face_rows(((face_id, person, blob, photo_id, year)
+                           for face_id, person, blob, source, photo_id, year in faces.for_decided_matrix(conn, key)
+                           if source == DECIDED or person.id in keywords.get(photo_id, ())), key)
     finally:
         conn.close()
-    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None, key, years, photo_ids)
+    return stamp, rows
 
 
 def _groups(people_of_rows):
@@ -581,25 +576,23 @@ def person_faces(library, person, limit=100, page=1):
         ref = key = found[0]
         key_of_vectors = faces.model_key(conn)   # once: both reads of vectors are under it, and judged by its cuts
         total_count = faces.count_named(conn, ref)
-        all_matched_rows = faces.person_embeddings(conn, ref, key_of_vectors)
+        theirs = _face_rows(faces.for_named_matrix(conn, key_of_vectors, ref), key_of_vectors)
         rows = faces.person_page(conn, ref, limit, offset, key_of_vectors)
         cuts = face_rules.cuts_of(key_of_vectors)
     finally:
         conn.close()
 
-    known = face_rules.KnownFaces()
-    for emb_bytes, _mtime, year, photo_path in all_matched_rows:
-        if emb_bytes and len(emb_bytes) > 0:
-            known.add(key, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
-
-    # The page's faces against the person's, in one pass (KnownFaces.likeness_many).
-    likenesses = iter(known.likeness_many(key, [
-        (np.frombuffer(r[5], dtype=np.float32), r[6], r[1]) for r in rows if r[5] is not None and len(r[5]) > 0]))
+    # The page's faces against the person's, in one pass: of the years around each, never one of its own photo (the one
+    # gallery, FaceRows.likeness_of).
+    asked = [r for r in rows if r[5] is not None and len(r[5]) > 0]
+    likenesses = iter(theirs.likeness_of(key, np.stack([face_rules.unit(np.frombuffer(r[5], dtype=np.float32)) for r in asked]),
+                                         [r[8] for r in asked], [r[7] for r in asked]).tolist() if asked else ())
 
     found = []
     for r in rows:
         held = r[5] is not None and len(r[5]) > 0
         similarity = next(likenesses) if held else None
+        similarity = similarity if similarity is not None and math.isfinite(similarity) else None   # nobody to compare
         found.append({
             "id": r[0],
             "photo_path": r[1],

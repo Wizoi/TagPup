@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from tagpup.core import clustering, dates, paths, suggesting, vocabulary
+from tagpup.core.library import Library
+from tagpup.services import identify
 from tagpup.services import faces as face_records
 from tagpup.services import search
 from tagpup.store import db, person_ids
@@ -191,7 +193,8 @@ class TagSuggester:
         self._people_lock = threading.Lock()
 
     def _known_people(self):
-        """(lower-cased names of everyone known, their named faces as KnownFaces -- keyed by person, with their `labels`; and
+        """(lower-cased names of everyone known, their named faces as clustering.FaceRows -- the one gallery, keyed by the id of
+        each person's node --, {that id: their Ref}; and
         {the id of each person the tree files: their tag}, which says exactly who a face resembles even when two people share a
         name).
 
@@ -209,10 +212,11 @@ class TagSuggester:
                 # Read when the run begins (model_for_run): a read that fails fails the run, never "nobody is known".
                 # Under the run's face model, as the photos' faces are (on_file): a switch while the run is under way
                 # leaves it comparing the vectors of the model it began with, by that model's cuts.
-                known = face_records.known_faces(self.index.db_path, self.faces.key)
+                known = identify.named_faces(Library(self.index.db_path), self.faces.key)[1]
+                labels = {person.id: person for person in known[1]}
                 tags_by_id = self._tags_by_id()
-                names.update(vocabulary.key(person.name) for person in known.labels.values())
-                self._people = (names, known, tags_by_id)
+                names.update(vocabulary.key(person.name) for person in labels.values())
+                self._people = (names, known, labels, tags_by_id)
             return self._people
 
     def _tags_by_id(self):
@@ -225,7 +229,7 @@ class TagSuggester:
 
     def knows_named_faces(self):
         """Does the library hold a named face to compare a photo's faces with?"""
-        return bool(self._known_people()[1].names())
+        return self._known_people()[1][2] is not None
 
     def _precompute_candidates(self):
         """Precompute embeddings for candidate tags using a template."""
@@ -316,7 +320,7 @@ class TagSuggester:
         target_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags."""
-        known_people, known_faces, tags_by_id = self._known_people()
+        known_people, known_faces, labels, tags_by_id = self._known_people()
 
         # 1. Search index for neighbors
         neighbors = self.index.search(embedding, k=k)
@@ -330,6 +334,11 @@ class TagSuggester:
 
         # Extract year of the target image
         target_year = dates.record_year(target_metadata) if target_metadata else None
+        # Where and when, for who a face looks like: the year of its Date Taken as every matcher reads it (dates.era_year), and
+        # its photo's id -- a photo the library does not hold has none, and no face of it to leave out.
+        face_year = (dates.era_year(dates.date_taken(target_metadata.get("raw_metadata", target_metadata)))
+                     if target_metadata else None)
+        photo_id = target_metadata.get("id") if target_metadata else None
         # Default decay parameter: half-life of 5 years (ln(2)/5 = 0.1386)
         decay_lambda = 0.1386
 
@@ -484,7 +493,7 @@ class TagSuggester:
                                     if i not in background and f.get("embedding") is not None]
 
             if valid_detected_faces:
-                if known_faces.names():
+                if known_faces[2] is not None:
                     for face in valid_detected_faces:
                         # The person the face is most like, by their closest face of the
                         # years around the photo, never one of its own; offered from the
@@ -493,9 +502,10 @@ class TagSuggester:
                         # distance cut of 0.90, and a score made up between 0.5 and 1.
                         # Offered only as far ahead of the next person as a name is offered at, by the cuts of the
                         # run's face model, whose vectors these are (clustering.Cuts.is_offered).
-                        best_key, likeness, margin = known_faces.most_like(face["embedding"], target_year, photo_path)
+                        best_key, likeness, margin = clustering.best(known_faces.likeness(
+                            clustering.unit(face["embedding"])[None, :], [face_year], [photo_id])[0], known_faces.columns)
                         if best_key and clustering.cuts_of(self.faces.key).is_offered(likeness, margin):
-                            label = known_faces.labels.get(best_key)
+                            label = labels.get(best_key)
                             best_name = label.name if label else str(best_key)
                             score = round(likeness, 2)
 

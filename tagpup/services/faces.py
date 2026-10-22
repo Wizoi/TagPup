@@ -739,24 +739,3 @@ def named_counts(library, folder=None):
     finally:
         conn.close()
     return {"named": named, "unnamed": unnamed}
-
-
-def known_faces(db_path, key):
-    """Every named face that is not excluded, its vector under face model `key` (a Suggest run's, which its faces are
-    compared by), as tagpup.core.clustering.KnownFaces: what a
-    face is compared with to say who it is, KEYED BY PERSON (the node's id: two people called alike are two), `labels` holding
-    each one's Ref. It was each person's mean face,
-    with no years (docs/findings.md, #71).
-
-    Reads only the named faces, and of each photo only its Date Taken fields. Reading
-    every face and its crop is 225,000 rows and ten seconds on a cold cache, and the
-    suggester did it twice for every photo.
-    """
-    conn = db.connect(db_path, timeout=30.0)
-    try:
-        rows = faces.named_for_known(conn, key)
-    finally:
-        conn.close()
-    return clustering.KnownFaces.of(
-        (person.id, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path, person)
-        for person, emb_bytes, photo_path, year in rows)

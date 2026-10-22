@@ -432,18 +432,18 @@ def excluded_ids(conn):
 
 
 def for_clustering(conn, key):
-    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob) of every face with a vector under `key`, the face
-    model's (WITH_VECTOR; count_without_vector says how many are left out). The crop is left behind: 6 KB a face, and
-    clustering never looks at it."""
-    return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob)
-            for face_id, photo_path, box, embedding, tag_id, name, prob in store_roots.natives(conn, conn.execute(
-                "SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob FROM faces f" + PHOTO + WITH_VECTOR,
-                (key,)).fetchall(), 1)]
+    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob, photo id, dates.era_year of the photo's Date Taken)
+    of every face with a vector under `key`, the face model's (WITH_VECTOR; count_without_vector says how many are left
+    out). The crop is left behind: 6 KB a face, and clustering never looks at it."""
+    return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob, photo_id, dates.era_year(taken))
+            for face_id, photo_path, box, embedding, tag_id, name, prob, photo_id, taken in store_roots.natives(
+                conn, conn.execute("SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob, f.photo_id, p.taken"
+                                   " FROM faces f" + PHOTO + WITH_VECTOR, (key,)).fetchall(), 1)]
 
 
 def vector_counts(conn, key):
     """{"faces", "without" (holding no vector under `key`), "named_without" (of those, the ones naming a person and not
-    excluded: the named faces the gallery of known faces, named_for_known, would lose read under `key`)}. The key is given,
+    excluded: the named faces the gallery of who a face looks like, for_named_matrix, would lose read under `key`)}. The key is given,
     never the library's (model_key): a switch of the face model asks it of the model switched to
     (tagpup.services.settings.change). One scan of faces, each face's vector by its key (face_id, model); no vector read."""
     row = conn.execute("SELECT COUNT(*), TOTAL(NOT " + HAS_VECTOR + "), TOTAL(f.tag_id IS NOT NULL AND f.excluded = 0"
@@ -454,16 +454,6 @@ def vector_counts(conn, key):
 def count_without_vector(conn, key):
     """How many faces have no vector under `key`, and so take no part in clustering (for_clustering)."""
     return vector_counts(conn, key)["without"]
-
-
-def named_for_known(conn, key):
-    """(Ref, embedding bytes, photo path, the year it was taken or None) of every named
-    face that is not excluded, names a person by id (a name from before ids is no person) and holds a vector under `key`:
-    what tagpup.core.clustering.KnownFaces is made of."""
-    return [(Ref(tag_id, name), embedding, photo_path, year)
-            for tag_id, name, embedding, photo_path, year in store_roots.natives(conn, conn.execute(
-                "SELECT f.tag_id, f.name, v.vector, p.path, p.year FROM faces f" + PHOTO + WITH_VECTOR
-                + " WHERE f.excluded = 0 AND f.tag_id IS NOT NULL", (key,)).fetchall(), 3)]
 
 
 def in_photo(conn, photo_path, key):
@@ -965,13 +955,15 @@ def count_excluded(conn):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE excluded = 1").fetchone()[0]
 
 
-def for_named_matrix(conn, key):
+def for_named_matrix(conn, key, person=None):
     """(id, Ref, embedding, photo id, dates.era_year of the photo's Date Taken) of every named face that has a vector
-    under `key` and is not excluded: what a face is compared against to say who it resembles (clustering.FaceRows)."""
+    under `key` and is not excluded -- or of those of one person, `person` the id of their node (idx_faces_tag) -- : what a
+    face is compared against to say who it resembles (clustering.FaceRows: the one gallery, #1737)."""
+    one, params = ("", (key,)) if person is None else (" AND f.tag_id = ?", (key, person))
     return [(face_id, Ref(tag_id, name), embedding, photo_id, dates.era_year(taken))
             for face_id, tag_id, name, embedding, photo_id, taken in conn.execute(
                 "SELECT f.id, f.tag_id, f.name, v.vector, f.photo_id, p.taken FROM faces f" + PHOTO + WITH_VECTOR
-                + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (key,)).fetchall()]
+                + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0" + one, params).fetchall()]
 
 
 def for_decided_matrix(conn, key):
@@ -1042,23 +1034,15 @@ def count_of_people(conn, person_ids_, named=None):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s) AND name = ?" % marks, ids + [named]).fetchone()[0]
 
 
-def person_embeddings(conn, person, key):
-    """(embedding, mtime, year, photo_path) of each of a person's faces that
-    has a vector under `key`: what their era-aware centroids are made from."""
-    where, params = _carries(conn, person_ids.target(conn, person), "f.")
-    return store_roots.natives(conn, conn.execute(
-        "SELECT v.vector, p.mtime, p.year, p.path FROM faces f" + PHOTO + WITH_VECTOR
-        + " WHERE " + where, [key] + list(params)).fetchall(), 3)
-
-
 def person_page(conn, person, limit, offset, key):
-    """(id, photo_path, box JSON, prob, mtime, embedding -- under `key`, or None --, year) of a page of a
-    person's faces. A negative limit is no limit."""
+    """(id, photo_path, box JSON, prob, mtime, embedding -- under `key`, or None --, year, photo id, dates.era_year of the
+    photo's Date Taken) of a page of a person's faces. A negative limit is no limit. The last two are where and when, for
+    how like the person's other faces each is (clustering.FaceRows.likeness_of)."""
     where, params = _carries(conn, person_ids.target(conn, person), "f.")
-    return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year"
+    return [(*row[:-1], dates.era_year(row[-1])) for row in store_roots.natives(conn, conn.execute(
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year, f.photo_id, p.taken"
         " FROM faces f" + PHOTO + VECTOR + " WHERE " + where + " LIMIT ? OFFSET ?",
-        [key] + list(params) + [limit, offset]).fetchall(), 1)
+        [key] + list(params) + [limit, offset]).fetchall(), 1)]
 
 
 def excluded_for_review(conn):

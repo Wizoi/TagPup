@@ -32,7 +32,7 @@ makes it a reference for later guesses (tagpup.services.identify.decided_faces, 
   naming unasked allows (clustering.Cuts.names_unasked), that person is one the photo's keywords
   name and no face of it carries, no other face of the photo is proposed for them, and the face is the margin of
   naming unasked more like that person than the next of the people decided but those the photo's other faces carry
-  (KnownFaces.best's skip, as cluster-faces' pairing asks it; owner, 2026-10-17). A face two people reach, or none, or one between two people, is left for Identify Faces. The photo
+  (clustering.best's skip, as cluster-faces' pairing asks it; owner, 2026-10-17). A face two people reach, or none, or one between two people, is left for Identify Faces. The photo
   with one face and one person is not asked a margin: the tag says whose the face is, and the likeness only that
   it is not the other person in frame (#833).
 
@@ -323,7 +323,7 @@ def _matched(unnamed, free, held, reached, columns, cuts):
         if face_id not in reached:
             continue
         people, row = reached[face_id]
-        best, likeness, margin = clustering.KnownFaces.best(row, columns, skip=held)
+        best, likeness, margin = clustering.best(row, columns, skip=held)
         if len(people) == 1 and best in wanted and cuts.names_unasked(likeness, margin):
             proposed[best].append(face_id)
     return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
