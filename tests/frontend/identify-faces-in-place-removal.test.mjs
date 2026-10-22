@@ -12,7 +12,8 @@
  *
  * Nothing about the cards that stayed changed, so nothing about them needs rebuilding.
  * These tests pin that: the surviving card elements are the same objects afterwards,
- * and the headings and counts still tell the truth.
+ * and the headings and counts still tell the truth. Far down a grid of thousands the
+ * banner with the actions floats, and a removal leaves the owner where they were.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -249,5 +250,75 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
       /\b4\b/.test(count.textContent),
       `the heading count did not follow the cards: ${count.textContent}`,
     );
+  });
+});
+
+describe("far down a long grid: the banner floats, and a removal keeps the place", () => {
+  afterEach(() => closeAllApps());
+
+  //: The first 7 of 40 ungrouped faces, as the server windows a bucket of thousands.
+  async function openLongGrid(t) {
+    const server = new FakeServer()
+      .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
+      .on("/api/unmatched-faces/people", [{ name: NAME, count: 40, unit: "face" }])
+      .on("/api/unmatched-faces/person-matches", {
+        faces: FACES, total_count: 40, unclustered_total: 40, unclustered_shown: FACES.length, has_more: true,
+      })
+      .on("/api/faces/exclude", { success: true, excluded: 3 })
+      .on("/api/people-with-counts", [])
+      .on("/api/people", []);
+    const { window, document } = await loadApp("tagtuner", {
+      server,
+      url: `http://localhost:8080/photo_index/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
+      t,
+    });
+    await new Promise((r) => window.setTimeout(r, 150));
+    // jsdom lays nothing out: the panel's scroll offset is held here, as a browser holds it.
+    const panel = document.getElementById("details-panel");
+    let top = 0;
+    Object.defineProperty(panel, "scrollTop", { get: () => top, set: (v) => { top = v; }, configurable: true });
+    return { window, document, panel };
+  }
+
+  const click = (window, el, init = {}) =>
+    el.dispatchEvent(new window.MouseEvent("click", { bubbles: true, ...init }));
+
+  test("the owner selects two faces 5,000 px down, ignores a cluster, then excludes the two: same place, same cards, true counts", async (t) => {
+    const { window, document, panel } = await openLongGrid(t);
+    const banner = document.querySelector(".matching-banner");
+    const exclude = document.getElementById("btn-exclude-selected");
+    assert.ok(banner.contains(exclude), "Exclude is not in the banner that floats over the grid");
+    assert.ok(banner.contains(document.getElementById("assign-undo-bar")),
+      "the Undo of a removal is offered at the top of the grid, out of sight 5,000 px down");
+    const count = document.getElementById("matching-person-count");
+    assert.match(count.textContent, /first 7 of 40/);
+
+    panel.scrollTop = 5000;
+    click(window, cardFor(document, 10));
+    click(window, cardFor(document, 11), { ctrlKey: true });
+    assert.match(exclude.textContent, /\(2\)/);
+    const stay = [12, 13].map((id) => cardFor(document, id));
+
+    // A cluster elsewhere goes; the two selected faces stay selected.
+    await ignoreCluster(window, document, "Cluster 5");
+    assert.equal(panel.scrollTop, 5000, "ignoring a cluster moved the grid");
+    assert.deepEqual(cards(document).filter((c) => c.classList.contains("selected")).map((c) => Number(c.dataset.faceId)),
+      [10, 11], "the rest of the selection was lost");
+    assert.match(exclude.textContent, /\(2\)/);
+    assert.match(count.textContent, /^4 .*first 4 of 37/, `the banner's count: ${count.textContent}`);
+
+    // Then the two selected, from the banner.
+    click(window, exclude);
+    await new Promise((r) => window.setTimeout(r, 120));
+    const modal = document.getElementById("exclude-reason-modal");
+    if (modal && !modal.classList.contains("hidden")) {
+      click(window, modal.querySelector("#exclude-reason-choices button"));
+      await new Promise((r) => window.setTimeout(r, 150));
+    }
+    assert.equal(panel.scrollTop, 5000, "the grid went back to the top");
+    assert.deepEqual(cards(document).map((c) => Number(c.dataset.faceId)), [12, 13]);
+    [12, 13].forEach((id, i) => assert.strictEqual(cardFor(document, id), stay[i], `face ${id} was rebuilt`));
+    assert.match(exclude.textContent, /\(0\)/);
+    assert.match(count.textContent, /^2 .*first 2 of 35/, `the banner's count: ${count.textContent}`);
   });
 });

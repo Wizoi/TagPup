@@ -77,6 +77,14 @@ export function syncIdentifyTabHighlight(tab) {
     });
 }
 
+/**
+ * The window's total follows the faces that leave it and come back: "first 497 of 1979" after three of the
+ * 1979 were excluded said three faces were still waiting that were not. The total is the ungrouped tab's alone.
+ */
+function windowTotalMoves(by) {
+    if (state.activeFacesTotal && state.activeTab === 'low') state.activeFacesTotal += by;
+}
+
 /** Recount the heading from what is actually on screen, after faces have left. */
 function updateFacesHeadingCount() {
     if (!matchingPersonCount) return;
@@ -151,6 +159,7 @@ export function labelClusterAssign(button, count) {
 export function removeFacesFromGrid(faceIds) {
     const leaving = new Set(faceIds);
     const touched = new Set();
+    let removed = 0;
 
     leaving.forEach(id => {
         const card = matchingFacesGrid.querySelector(`[data-face-id="${id}"]`);
@@ -168,8 +177,10 @@ export function removeFacesFromGrid(faceIds) {
             suggestion: state.suggestionByFaceId.get(id),
         });
         card.remove();
+        removed += 1;
         if (section) touched.add(section);
     });
+    windowTotalMoves(-removed);
 
     touched.forEach(section => {
         const cards = section.querySelectorAll('[data-face-id]');
@@ -242,6 +253,7 @@ export function putFacesBack(faceIds) {
         }
         if (!grid || !grid.isConnected) return;
         grid.insertBefore(card, next && next.parentElement === grid ? next : null);
+        windowTotalMoves(1);
         card.classList.remove('selected');
         if (section) touched.add(section);
         if (face && !state.activePersonFaces.some(f => f.id === id)) state.activePersonFaces.push(face);

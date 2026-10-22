@@ -1006,6 +1006,21 @@ body {
     font-weight: 600;
 }
 
+/* The banner -- the person's heading, the selection's actions, the Undo of the last
+   removal -- floats at the top of the panel while the grid scrolls under it: a person
+   has thousands of faces, and the owner selects and removes them far down the list.
+   Opaque, so the cards do not show through around the Undo bar. */
+.matching-banner {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background-color: var(--bg-primary);
+}
+
+.matching-banner .assign-undo-bar {
+    margin: 8px 0 0;
+}
+
 .matching-header-card {
     background-color: var(--bg-secondary);
     border: 1px solid var(--border-color);

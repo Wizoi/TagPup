@@ -313,7 +313,16 @@ each cluster's own **Assign Cluster** button was enough; once the Unclustered se
 correctly lost its cluster-wide buttons, that left the bucket with no way to act on
 anything. The count line also says when the list is a window rather than a total
 ("first 500 of 800, more appear as you clear these"), because a cap presented as a total
-makes the remainder look lost.
+makes the remainder look lost; the total follows the faces that leave the window and come
+back by Undo ("first 497 of 797" after three are excluded).
+
+The **banner** -- the person's name and count, the selection controls, and the **Undo** bar
+of the last assign or ignore -- floats at the top of the panel while the grid scrolls under
+it: a person can have thousands of faces, and the owner selects and removes them far down the
+list without going back up for the buttons. A removal (assign, ignore, exclude, unmatch,
+restore) takes the cards that left out of the grid in place and rebuilds nothing, so the
+scroll position, the cards that stay and the rest of the selection are kept, and the owner
+carries on down the list; the counts in the banner and the tabs are recounted from the cards.
 
 The **third tab is named for what it holds**,which depends on whether there is
 anybody to rank against. Where the person has reference faces it is **Unlikely** --
