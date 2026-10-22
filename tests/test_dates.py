@@ -64,7 +64,7 @@ class TheYearFromItsName(unittest.TestCase):
 
 
 class TheEraOfAFace(unittest.TestCase):
-    """The year a face is matched by: its photo's Date Taken, from 1990 to the year it is now (owner, 2026-10-22)."""
+    """The year a face is matched by: its photo's Date Taken, from 1950 to the year it is now (owner, 2026-10-22)."""
 
     def test_the_last_year_is_the_current_one(self):
         with unittest.mock.patch.object(dates, "datetime", wraps=datetime) as clock:
@@ -76,8 +76,9 @@ class TheEraOfAFace(unittest.TestCase):
             self.assertIsNone(dates.era_year("2079:06:01 12:00:00"))
 
     def test_a_wrong_clock_and_no_date_are_undated(self):
-        self.assertEqual(1990, dates.era_year("1990:01:01 00:00:00"))
-        self.assertIsNone(dates.era_year("1989:12:31 23:59:59"))
+        self.assertEqual(1950, dates.era_year("1950:01:01 00:00:00"))
+        self.assertEqual(1985, dates.era_year("1985:06:15 12:00:00"))
+        self.assertIsNone(dates.era_year("1949:12:31 23:59:59"))
         self.assertEqual(2018, dates.era_year("2018:07:04 09:30:00+02:00"))
         self.assertIsNone(dates.era_year(None))
 

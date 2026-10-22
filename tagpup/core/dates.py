@@ -30,7 +30,7 @@ EARLIEST, LATEST = 1800, 2100
 #: #1738: photo_index's named faces carried years from 1827 to 2079, a wrong clock or a counter read as a year). A rule in
 #: code, not in the row: the row keeps its date, the library shows it as it is. Narrower than EARLIEST-LATEST, which only
 #: tells a year in a name from a counter.
-ERA_FIRST = 1990
+ERA_FIRST = 1950
 
 #: What a photo whose year is not known is shown and grouped under. TagTuner's server,
 #: the folder scan's records (scripts/metadata.py) and TagTuner's page each spelled it;
@@ -104,7 +104,8 @@ def era_year(taken):
     """The year of `taken` (photos.taken, the photo's Date Taken: 'YYYY:MM:DD HH:MM:SS', some with a time zone after) as
     a year to match a face by: from ERA_FIRST to the current year, else None (undated); None for a photo with no Date
     Taken, never a year read from its file or folder name as photos.year falls back to."""
-    year = int(taken[:4]) if taken else None
+    match = _YEAR_AT_START.match(str(taken or "").strip())
+    year = int(match.group(1)) if match else None
     return year if year is not None and ERA_FIRST <= year <= datetime.date.today().year else None
 
 
