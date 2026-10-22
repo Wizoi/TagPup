@@ -27,6 +27,7 @@ from tagpup.services import search
 from tagpup.store import db, person_ids
 from tagpup.store import faces as store_faces
 from tagpup.store import faces_detected as store_faces_detected
+from tagpup.store import photos as store_photos
 from tagpup.store import suggestions as store_suggestions
 from tagpup.store.taxonomy import TagTaxonomy
 
@@ -335,10 +336,11 @@ class TagSuggester:
         # Extract year of the target image
         target_year = dates.record_year(target_metadata) if target_metadata else None
         # Where and when, for who a face looks like: the year of its Date Taken as every matcher reads it (dates.era_year), and
-        # its photo's id -- a photo the library does not hold has none, and no face of it to leave out.
+        # its photo's id, the library's row at its path -- a run's record (the page's) carries none; a photo the library
+        # does not hold (a look) has none, and no face of it to leave out.
         face_year = (dates.era_year(dates.date_taken(target_metadata.get("raw_metadata", target_metadata)))
                      if target_metadata else None)
-        photo_id = target_metadata.get("id") if target_metadata else None
+        photo_id = next(iter(store_photos.ids_at(self.index.conn, [photo_path])), None) if self.index.conn else None
         # Default decay parameter: half-life of 5 years (ln(2)/5 = 0.1386)
         decay_lambda = 0.1386
 

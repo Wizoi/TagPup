@@ -65,9 +65,9 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
                  excluded=excluded)
         conn.commit()
 
-    def suggested(self, path):
+    def suggested(self, path, meta=None):
         run = stand_in_models.run_for(self.index, self.processor, dim=len(ROWAN))
-        result = run.suggester.suggest_for_photo(path, ROWAN)
+        result = run.suggester.suggest_for_photo(path, ROWAN, target_metadata=meta)
         return [t["tag"] for t in result["suggested_tags"]]
 
     def test_an_unnamed_face_is_still_matched(self):
@@ -100,6 +100,18 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.add_face(r"D:\Pictures\pending.jpg", None, None, 0, vector=False)
         self.assertNotIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\pending.jpg"))
         self.assertEqual(0, self.processor.calls)
+
+    def test_a_face_is_never_matched_with_a_named_face_of_its_own_photo(self):
+        """Two faces in a photo are two people (main session, 2026-10-22): a photo of the library holding Oda's named face
+        and an unnamed face just like it is suggested no Oda, whose only face is on it. A run hands Suggest the page's
+        record of the photo, which carries no id: the photo is the library's row at its path. It offered Oda."""
+        taxonomy.add_path(self.index.conn, "People/Oda Castellane")
+        self.add_face(r"D:\Pictures\twins.jpg", "Oda Castellane", "manual", 0)
+        self.add_face(r"D:\Pictures\twins.jpg", None, None, 0, box="[200, 0, 300, 100]")
+        self.index.conn.execute("UPDATE faces SET excluded = 1 WHERE name = ?", ("Rowan Thackeray",))
+        self.index.conn.commit()
+        record = {"path": r"D:\Pictures\twins.jpg", "raw_metadata": {}, "tags": ["People/Oda Castellane"]}
+        self.assertNotIn("People/Oda Castellane", self.suggested(r"D:\Pictures\twins.jpg", record))
 
     def test_a_photo_whose_faces_are_all_decided_is_not_detected_again(self):
         self.add_face(r"D:\Pictures\crowd.jpg", None, "manual", 1)
