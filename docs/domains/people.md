@@ -106,10 +106,16 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   decimal. Since #1545 (2026-10-17) the person's page, Suggest and the last pass are one column of one table
   (`likeness_table(among=)`; `likeness_many` is that column), so they agree bit for bit. The names were and are identical
   face by face on the three libraries.
-- **A `KnownFaces` asked for one person, then for everyone, holds that person's faces twice** (2026-10-17, #1611): a
-  one-person table keeps the person's own matrix after everyone's table re-points the arrays to views of one matrix
-  (about 113 MB twice on photo_index) until the next `add`. No caller mixes the two on one object (rounds, last pass,
-  person page and Suggest each use one), so the case has no instance and is not handled.
+- **One gallery of who a face looks like** (2026-10-22, phase 4a cut 2, #1737): `clustering.FaceRows` -- the named
+  or decided faces, a row a face, each with its photo's id and its year -- answers every matcher: the strip, the boxes,
+  Identify's cards and a person's grid, automatch, Name faces from tags, Suggest and cluster-faces
+  (`FaceRows.likeness`, a column a person; `likeness_of`, one person's column alone). `KnownFaces`, a second gallery
+  holding the same faces again, is gone, and with it the case of #1611 (one person's faces held twice). By design: a
+  face is compared with a person's closest face of the years around its own (the age-based window, `in_era`); its
+  year is its photo's Date Taken alone (`dates.era_year`, 1950 to the current year, `store.faces.eras_of`), and a
+  face with none is compared with every year, as is a person with no dated face; a face is never compared with
+  itself nor with a face of its own photo (two faces in a photo are two people), wherever it is asked (owner and main
+  session, 2026-10-22; DECISIONS 2026-10-22). A card whose person has no face left to compare shows 0.
 
 - **#1209**, a tree rename stopped half way: the photos written hold the new tag while the tree keeps the old node. One
   place orders a tree edit against its files (`tags._retag`): the tree moves only once every photo is rewritten, the reply
