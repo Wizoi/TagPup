@@ -14,13 +14,22 @@
   allows (an undo of its pass in History leaves it so), is refused, with nothing written; one switched back to FaceNet
   between the plan and the write is written nothing, and the run says why.
 - (e) A photo removed (the sync's forget_photo) between the plan and the write is left alone, and counted so.
+- (f) From the command line (`retire-faces`): a dry run, the default, names the library, says what it would do in counts
+  and how many names given by hand go, and writes nothing, no snapshot either; --apply is refused while an app runs, and
+  where names given by hand would go unless --clear-manual-names is given; with it, one snapshot and the write, chunk by
+  chunk; Ctrl+C stops it between two chunks, and a run again finishes it as the same change.
+- (g) The pass's own change in History is not undone while the retiring that followed it stands (its new faces stand in
+  for the faces the retiring deleted); undone, the retiring first, then the pass.
 
 Fictional names; a library in a home of the test's own; rows as the indexer and the pass store them.
 """
 import os
+import signal
 import sys
 import unittest
 from unittest import mock
+
+from click.testing import CliRunner
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -29,16 +38,21 @@ import photo_rows  # noqa: E402
 
 import numpy as np  # noqa: E402
 
+import tagpup_cli  # noqa: E402
+from tagpup import launcher  # noqa: E402
 from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import face_pass  # noqa: E402
 from tagpup.services import retire_faces  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, journal  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import people  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
+from tagpup.store import snapshots as store_snapshots  # noqa: E402
 
 NEW = validation.SCRFD_ADAFACE
 OPERATION = retire_faces.OPERATION % NEW
@@ -52,7 +66,8 @@ def vector(rng):
 class RetiringTheOldDetectorsFaces(unittest.TestCase):
     """harbour: five photos read by the index, a keyword person on the first, and faces as the pass left them -- matched
     faces holding FaceNet's vector and the new model's, faces the old detector alone found holding FaceNet's -- each with
-    its crop, named automatically, by hand, nobody, excluded or undecided; switched to the new model after its pass."""
+    its crop, named automatically, by hand, nobody, excluded or undecided; the matched faces' new vectors written by the
+    pass's own writer, as one change of the journal; switched to the new model after its pass."""
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="retire_faces_")
@@ -71,13 +86,13 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
             for n in range(2, 6):
                 photo_ids.append(photo_rows.add_read(conn, self.photo[n], {"XMP:Subject": ["Harbour/Ferry"]}))
             self.face = {}
+            matched_in = {n: [] for n in self.photo}
 
             def face(label, n, matched, **columns):
                 face_id = add_face(conn, self.photo[n], box=(n, n, 20 + n, 20 + n), embedding=vector(rng), prob=0.98,
                                    **columns)
                 if matched:
-                    conn.execute("INSERT INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)",
-                                 (face_id, NEW, vector(rng)))
+                    matched_in[n].append((face_id, vector(rng)))
                 conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, bytes([n]) * 64))
                 self.face[label] = face_id
 
@@ -93,6 +108,13 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
             face("old, named automatically", 5, False, name="Tamsin Okoro")
             face("matched beside it", 5, True)
             people.rebuild(conn, photo_ids)   # the photos' people, as every face writer leaves them
+            # The pass: one change for the folder, each photo's matched faces given the new vector by its writer.
+            self.pass_change = journal.record(conn, face_pass.OPERATION % NEW, [],
+                                              {"folder": store_roots.to_row(conn, folder), "matched": 0, "new": 0})
+            for n, matched in matched_in.items():
+                if matched:
+                    store_faces.give_vectors(conn, self.pass_change, self.photo[n], NEW, matched, [],
+                                             {"matched": len(matched), "new": 0})
             conn.commit()
         finally:
             conn.close()
@@ -142,14 +164,18 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         self.assertEqual(["Tamsin Okoro", "Odile Farrant"], before["people"][1])
         planned = retire_faces.plan(self.library)
         self.assertIsNone(planned.refused)
-        self.assertEqual({"faces": 11, "photos": 4, "deleted": 4, "deleted_named": 1, "deleted_decided": 2,
+        self.assertEqual({"faces": 11, "photos": 4, "deleted": 4, "deleted_named": 1, "deleted_by_hand": 1,
+                          "deleted_decided": 2,
                           "cleared_by_hand": 1, "cleared_automatic": 1, "cleared_nobody": 1, "cleared_excluded": 1},
                          planned.counts)
         self.assertIn("4 of the library's 11 faces hold no vector under %s" % NEW, planned.said())
         self.assertEqual(before, self.state(), "the plan wrote")
 
+        refused = retire_faces.apply(self.library, planned)
+        self.assertEqual(retire_faces.MANUAL_NAMES % (2, 1, 1), refused.said())
+        self.assertEqual(([], before), (refused.chunks, self.state()), "names given by hand go only when asked for")
         with mock.patch.object(retire_faces, "CHUNK", 2):
-            retired = retire_faces.apply(self.library, planned)
+            retired = retire_faces.apply(self.library, planned, clear_manual_names=True)
         self.assertEqual((4, 4, 0, 0), (retired.deleted, retired.cleared, retired.left_alone, retired.failed),
                          retired.said())
         self.assertEqual("4 faces deleted and 4 faces' decisions cleared, in 4 of 4 photos; 0 photos left alone "
@@ -190,12 +216,13 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
     def test_a_run_stopped_after_its_first_chunk_is_finished_by_the_next_as_one_change(self):
         asked = iter([False, True])
         with mock.patch.object(retire_faces, "CHUNK", 2):
-            first = retire_faces.apply(self.library, retire_faces.plan(self.library), stop=lambda: next(asked))
+            first = retire_faces.apply(self.library, retire_faces.plan(self.library), stop=lambda: next(asked),
+                                       clear_manual_names=True)
             self.assertTrue(first.stopped)
             self.assertEqual((1, 1), (len(first.chunks), len(first.changes)))
             self.assertEqual((3, 2), (first.deleted, first.cleared))
             self.assertIn("Stopped", first.said())
-            second = retire_faces.apply(self.library, retire_faces.plan(self.library))
+            second = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
         self.assertEqual((1, 2, False), (second.deleted, second.cleared, second.stopped))
         self.assertEqual(first.changes, second.changes)
         self.assertEqual(1, len(self.retire_changes()))
@@ -214,7 +241,7 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         planned = retire_faces.plan(self.library)
         failing = mock.patch.object(store_faces, "put_decisions", fails_the_second)
         with mock.patch.object(retire_faces, "CHUNK", 2), failing, self.assertLogs("tagpup.services.retire_faces", "ERROR"):
-            first = retire_faces.apply(self.library, planned)
+            first = retire_faces.apply(self.library, planned, clear_manual_names=True)
         self.assertEqual((2, "OSError", 1), (first.failed, first.error, len(first.chunks)))
         self.assertIn("The write of 2 photos failed", first.said())
         # The second chunk's faces are as they were: its delete went back with its decisions.
@@ -222,7 +249,7 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         self.assertEqual("Odile Farrant", self.faces()[self.face["matched, named by hand"]]["name"])
         self.assertIn('"cleared": 2, "deleted": 3', self.retire_changes()[0][1])
         with mock.patch.object(retire_faces, "CHUNK", 2):
-            second = retire_faces.apply(self.library, retire_faces.plan(self.library))
+            second = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
         self.assertEqual((1, 2, 0), (second.deleted, second.cleared, second.failed))
         self.assertEqual(1, len(self.retire_changes()))
 
@@ -231,7 +258,7 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
     def test_undone_from_history_every_face_and_decision_comes_back(self):
         before = self.state()
         with mock.patch.object(retire_faces, "CHUNK", 2):
-            retired = retire_faces.apply(self.library, retire_faces.plan(self.library))
+            retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
         (change_id,) = retired.changes
         listed = journal_service.history(self.library, limit=5)
         self.assertIn(OPERATION, str(listed))
@@ -257,7 +284,7 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         back = library_settings.change(self.library, {"faces.model": FACENET}, acknowledged=["face-model"])
         self.assertEqual(1, back.changed, back.refused)
         before = self.state()
-        retired = retire_faces.apply(self.library, planned)
+        retired = retire_faces.apply(self.library, planned, clear_manual_names=True)
         self.assertEqual(([], 4, retire_faces.MODEL_MOVED), (retired.chunks, retired.failed, retired.error))
         self.assertIn("The write of 4 photos failed (%s)" % retire_faces.MODEL_MOVED, retired.said())
         self.assertEqual(before, self.state())
@@ -285,10 +312,112 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         planned = retire_faces.plan(self.library)
         store_photos.forget_photo(self.library.path, self.photo[5])
         with mock.patch.object(retire_faces, "CHUNK", 2):
-            retired = retire_faces.apply(self.library, planned)
+            retired = retire_faces.apply(self.library, planned, clear_manual_names=True)
         self.assertEqual((3, 4, 1), (retired.deleted, retired.cleared, retired.left_alone))
         self.assertEqual([], self.read("SELECT id FROM photos WHERE id = ?", (planned.photo_ids[-1],)))
         self.assertEqual([], self.read("SELECT id FROM faces WHERE photo_id = ?", (planned.photo_ids[-1],)))
+
+    # ---- (f) --------------------------------------------------------------------------------------------------------
+
+    def cli(self, *args):
+        with mock.patch.object(retire_faces, "CHUNK", 2):
+            return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "retire-faces"] + list(args))
+
+    def dailies(self):
+        return store_snapshots.listed(self.library.path, store_snapshots.DAILY)
+
+    def test_from_the_command_line_a_dry_run_names_the_library_and_writes_nothing(self):
+        before = self.state()
+        ran = self.cli()
+        self.assertEqual(0, ran.exit_code, ran.output)
+        self.assertTrue(ran.output.startswith("Retiring the old face detector's faces of harbour (a dry run)."), ran.output)
+        self.assertIn("4 of the library's 11 faces hold no vector under %s" % NEW, ran.output)
+        self.assertIn("2 names given by hand go", ran.output)
+        self.assertIn("The keywords in the photo files stay", ran.output)
+        self.assertIn("Nothing changed. --apply writes it", ran.output)
+        self.assertNotIn("Photos (ids)", ran.output, "ids only with --reveal")
+        self.assertEqual(before, self.state())
+        self.assertEqual([], self.retire_changes())
+        self.assertEqual([], self.dailies(), "a dry run takes no snapshot")
+        self.assertIn("Photos (ids): ", self.cli("--reveal").output)
+
+    def test_from_the_command_line_apply_is_refused_while_an_app_runs(self):
+        launcher.say_where({"main": 5917}, "test", "token")   # this process, as a live server records itself
+        self.addCleanup(launcher.forget, {"main": 5917})
+        before = self.state()
+        ran = self.cli("--apply", "--clear-manual-names")
+        self.assertEqual(1, ran.exit_code, ran.output)
+        self.assertIn("Not run: TagPup is running", ran.output)
+        self.assertEqual(before, self.state())
+        self.assertEqual(([], []), (self.retire_changes(), self.dailies()))
+
+    def test_from_the_command_line_names_given_by_hand_go_only_when_asked_for(self):
+        before = self.state()
+        ran = self.cli("--apply")
+        self.assertEqual(1, ran.exit_code, ran.output)
+        self.assertIn("Nothing was written: 2 names given by hand would go", ran.output)
+        self.assertEqual(before, self.state())
+        self.assertEqual(([], []), (self.retire_changes(), self.dailies()))
+
+        ran = self.cli("--apply", "--clear-manual-names")
+        self.assertEqual(0, ran.exit_code, ran.output)
+        self.assertIn("Took a snapshot of the library first (daily", ran.output)
+        self.assertIn("Chunk 1 of 2: 2 photos, 3 faces deleted, 2 decisions cleared", ran.output)
+        self.assertIn("4 faces deleted and 4 faces' decisions cleared, in 4 of 4 photos", ran.output)
+        ((change_id, _summary),) = self.retire_changes()
+        self.assertIn("Written: change %d" % change_id, ran.output)
+        self.assertEqual(1, len(self.dailies()))
+        for decision in self.faces().values():
+            self.assertEqual(dict(store_faces.UNDECIDED), decision)
+
+        again = self.cli()
+        self.assertEqual(0, again.exit_code, again.output)
+        self.assertIn("Nothing to retire", again.output)
+
+    def test_from_the_command_line_ctrl_c_stops_between_chunks_and_a_run_again_finishes(self):
+        deleting = store_faces.delete
+        pressed = []
+
+        def ctrl_c_in_the_first_chunk(conn, face_ids):
+            if not pressed:
+                pressed.append(True)
+                signal.raise_signal(signal.SIGINT)
+            return deleting(conn, face_ids)
+
+        with mock.patch.object(store_faces, "delete", ctrl_c_in_the_first_chunk):
+            first = self.cli("--apply", "--clear-manual-names")
+        self.assertEqual(1, first.exit_code, first.output)
+        self.assertIn("Stopping after this chunk", first.output)
+        self.assertIn("Chunk 1 of 2", first.output)
+        self.assertNotIn("Chunk 2 of 2", first.output)
+        self.assertIn("Stopped: run it again to continue.", first.output)
+        self.assertIn(self.face["old, named automatically"], self.faces(), "the second chunk was not begun")
+        second = self.cli("--apply", "--clear-manual-names")
+        self.assertEqual(0, second.exit_code, second.output)
+        self.assertIn("A snapshot of the library from today stands", second.output)
+        self.assertEqual(1, len(self.retire_changes()), "one change across both runs")
+        self.assertEqual(set(), set(self.faces()) & self.label("old, named automatically"))
+
+    # ---- (g) --------------------------------------------------------------------------------------------------------
+
+    def test_the_pass_is_not_undone_while_the_retiring_after_it_stands(self):
+        retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
+        (retire_change,) = retired.changes
+        said = "change %d (retire faces) deleted the old faces this pass's new faces stand in for: undo it first" % (
+            retire_change)
+        entries = [{"id": self.pass_change, "operation": face_pass.OPERATION % NEW}]
+        self.assertEqual({self.pass_change: said}, journal_service.refusals(self.library, entries))
+        before = self.state()
+        refused = journal_service.undo(self.library, self.pass_change, apply=True)
+        self.assertEqual([said], refused.refused if isinstance(refused.refused, list) else [refused.refused])
+        self.assertEqual(before, self.state())
+
+        undone = journal_service.undo(self.library, retire_change, apply=True)
+        self.assertFalse(undone.refused, undone.refused)
+        self.assertEqual({self.pass_change: None}, journal_service.refusals(self.library, entries))
+        undone = journal_service.undo(self.library, self.pass_change, apply=True)
+        self.assertFalse(undone.refused, undone.refused)
+        self.assertEqual([], self.read("SELECT face_id FROM face_embeddings WHERE model = ?", (NEW,)))
 
 
 if __name__ == "__main__":
