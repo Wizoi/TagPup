@@ -415,6 +415,24 @@ class FaceRows(tuple):
         """`rows` as FaceRows: themselves, or a plain (ids, people, matrix, key[, years, photos]) made into them."""
         return rows if isinstance(rows, cls) else cls(*rows)
 
+    @classmethod
+    def made(cls, rows, key):
+        """FaceRows of `rows` (face id, person, vector -- bytes as the library stores it, or an array --, photo id, era
+        year), under the face model `key`, each vector made unit: the one way every gallery of who a face looks like is
+        built. A zero vector has no direction to compare and is left out (none in the three libraries, 2026-10-22)."""
+        ids, people, vectors, photos, years = [], [], [], [], []
+        for face_id, person, vector, photo, year in rows:
+            vector = (np.frombuffer(vector, dtype=np.float32) if isinstance(vector, bytes)
+                      else np.asarray(vector, dtype=np.float32).reshape(-1))
+            norm = float(np.linalg.norm(vector))
+            if norm:
+                ids.append(face_id)
+                people.append(person)
+                vectors.append(vector / norm)
+                photos.append(photo)
+                years.append(year)
+        return cls(ids, people, np.stack(vectors) if vectors else None, key, years, photos)
+
     def under(self, key):
         """These rows, when their vectors are face model `key`'s; else none (no rows, of `key`): one model's vectors are
         never compared with the other's. Rows of another key are of a switch committed between two reads of one decision

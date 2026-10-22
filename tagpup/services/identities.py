@@ -144,12 +144,8 @@ def _known_faces(all_faces, names, direct_anchors, key):
     with_anchors = set(direct_anchors.values())
     chosen = [(face, names[face["id"]]) for face in all_faces if names.get(face["id"])
               and (names[face["id"]] not in with_anchors or face["id"] in direct_anchors)]
-    if not chosen:
-        return set(), clustering.FaceRows([], [], None, key)
-    return {name for _face, name in chosen}, clustering.FaceRows(
-        [face["id"] for face, _name in chosen], [Ref(name, None) for _face, name in chosen],
-        np.stack([clustering.unit(face["embedding"]) for face, _name in chosen]), key,
-        [face["year"] for face, _name in chosen], [face["photo_id"] for face, _name in chosen])
+    return {name for _face, name in chosen}, clustering.FaceRows.made(
+        ((face["id"], Ref(name, None), face["embedding"], face["photo_id"], face["year"]) for face, name in chosen), key)
 
 
 #: Faces asked of the gallery at once (`_likeness`): a block of this many by every named face is the largest matrix held.

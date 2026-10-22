@@ -62,26 +62,6 @@ def fingerprint(library):
         conn.close()
 
 
-def _face_rows(rows, key):
-    """clustering.FaceRows of `rows` (face id, Ref, vector bytes, photo id, era year), read under `key`, each vector made
-    unit; a row whose vector is damaged or zero is left out: one is not a reason to refuse every comparison."""
-    ids, refs, vecs, photo_ids, years = [], [], [], [], []
-    for face_id, person, blob, photo_id, year in rows:
-        try:
-            vec = np.frombuffer(blob, dtype=np.float32)
-        except Exception:
-            continue
-        norm = np.linalg.norm(vec)
-        if norm == 0:
-            continue
-        ids.append(face_id)
-        refs.append(person)
-        vecs.append(vec / norm)
-        photo_ids.append(photo_id)
-        years.append(year)
-    return face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None, key, years, photo_ids)
-
-
 def named_faces(library, key=None):
     """(fingerprint, (ids, people, matrix)): every face that carries a name, as unit
     vectors, with the person (a Ref) beside each; matrix None when nobody has been named yet.
@@ -105,7 +85,7 @@ def named_faces(library, key=None):
     try:
         db.begin(conn)
         stamp, key = _decided_stamp(conn), key or faces.model_key(conn)
-        rows = _face_rows(faces.for_named_matrix(conn, key), key)
+        rows = face_rules.FaceRows.made(faces.for_named_matrix(conn, key), key)
     finally:
         conn.close()
     return stamp, rows
@@ -142,7 +122,7 @@ def decided_faces(library):
         db.begin(conn)   # one read transaction: the stamp, the keywords and the rows see one state
         stamp, key = _decided_stamp(conn), faces.model_key(conn)
         keywords = people.keyword_keys(conn)
-        rows = _face_rows(((face_id, person, blob, photo_id, year)
+        rows = face_rules.FaceRows.made(((face_id, person, blob, photo_id, year)
                            for face_id, person, blob, source, photo_id, year in faces.for_decided_matrix(conn, key)
                            if source == DECIDED or person.id in keywords.get(photo_id, ())), key)
     finally:
@@ -586,7 +566,7 @@ def person_faces(library, person, limit=100, page=1):
         ref = key = found[0]
         key_of_vectors = faces.model_key(conn)   # once: both reads of vectors are under it, and judged by its cuts
         total_count = faces.count_named(conn, ref)
-        theirs = _face_rows(faces.for_named_matrix(conn, key_of_vectors, ref), key_of_vectors)
+        theirs = face_rules.FaceRows.made(faces.for_named_matrix(conn, key_of_vectors, ref), key_of_vectors)
         rows = faces.person_page(conn, ref, limit, offset, key_of_vectors)
         cuts = face_rules.cuts_of(key_of_vectors)
     finally:

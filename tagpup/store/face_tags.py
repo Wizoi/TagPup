@@ -197,17 +197,9 @@ def _decided_of(conn, person, key):
         + " WHERE f.tag_id = ? AND f.excluded = 0"
         " AND (f.name_source = 'manual' OR EXISTS (SELECT 1 FROM photo_people pp WHERE pp.photo_id = f.photo_id"
         " AND pp.source = 'keyword' AND pp.tag_id = f.tag_id))", (key, person.id)).fetchall()
-    found = []
-    for face_id, blob, photo_id, taken in rows:
-        vec = np.frombuffer(blob, dtype=np.float32)
-        norm = np.linalg.norm(vec)
-        if norm:
-            found.append((face_id, vec / norm, photo_id, dates.era_year(taken)))
-    if not found:
-        return None
-    return clustering.FaceRows([face for face, _v, _p, _y in found], [person] * len(found),
-                               np.stack([vec for _f, vec, _p, _y in found]), key,
-                               [year for _f, _v, _p, year in found], [photo for _f, _v, photo, _y in found])
+    found = clustering.FaceRows.made(((face_id, person, blob, photo_id, dates.era_year(taken))
+                                      for face_id, blob, photo_id, taken in rows), key)
+    return found if found[2] is not None else None
 
 
 def _photos_to_be_named(conn, person):
@@ -415,20 +407,12 @@ def _remember(conn, cache, choices, done):
     added = collections.defaultdict(list)
     for face_id, blob in vectors.items():
         person = named[face_id]
-        if person.id not in cache or not blob:
-            continue
-        vec = np.frombuffer(blob, dtype=np.float32)
-        norm = np.linalg.norm(vec)
-        if norm:
-            photo, year = eras.get(face_id, (None, None))
-            added[person.id].append((face_id, person, vec / norm, photo, year))
+        if person.id in cache:
+            added[person.id].append((face_id, person, blob) + eras[face_id])
     for person_id, new in added.items():
         known = cache[person_id]
         rows = [] if known is None else list(zip(known[0], known[1], known[2], known.photos, known.years.tolist()))
-        rows += new
-        cache[person_id] = clustering.FaceRows([face for face, _p, _v, _f, _y in rows], [person for _i, person, _v, _f, _y in rows],
-                                               np.stack([vec for _i, _p, vec, _f, _y in rows]), key,
-                                               [year for _i, _p, _v, _f, year in rows], [photo for _i, _p, _v, photo, _y in rows])
+        cache[person_id] = clustering.FaceRows.made(rows + new, key)
 
 
 def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
