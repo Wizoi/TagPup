@@ -253,7 +253,12 @@ is one:
   which perhaps three are them. That is the honest consequence of keyword-driven
   matching, not a fault -- but it is only workable if the list is **ordered**. Where the
   person already has faces named, every candidate carries `person_similarity`, the
-  resemblance to those faces, and the list is sorted by it; the **Likely** (>= 0.75) and
+  resemblance to those faces -- to the person's closest face of the years around the
+  candidate's own, never a face of its own photo, as the boxes and the strip read it (the
+  one gallery, `clustering.FaceRows.likeness`); 0 when none of theirs is left to compare,
+  and the card then shows no number --
+  and the list is sorted by it, as are the unclustered faces before the cap of 500 chooses
+  which are shown; the **Likely** (>= 0.75) and
   **Possible** (0.60 to 0.75) tabs use it too. Each face shows the number. Candidates are
   ranked, never filtered: two can both genuinely be this person in different photos --
   measured here at 0.826 and 0.822 -- so a cutoff would throw a real match away. Where
@@ -363,7 +368,8 @@ capped at 500 because a person in many group photos can have tens of thousands a
 card for each locks up the browser. The cap used to be applied *before* ranking, so with
 4,739 candidates the 500 on screen were an arbitrary sample that happened to be sorted,
 and the best matches in the other 4,239 were unreachable — clearing the queue sliced the
-same way next time. Every candidate is now scored, then the top 500 are built.
+same way next time. Every candidate is now scored, then the top 500 are built, by the likeness the card shows: to the
+person sought, or with nobody sought to the person it most resembles (the years around its own, never its own photo).
 
 **Selection behaves like a file list.** A plain click selects only the face it lands
 on, and clicking the only selected face clears it. `Ctrl` (or `Cmd`) adds and removes

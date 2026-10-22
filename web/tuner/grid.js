@@ -437,7 +437,8 @@ This photo also names ${face.other_names.join(', ')}. `
                 item.appendChild(guess);
             }
 
-            if (face.person_similarity !== undefined) {
+            // 0 is nothing of theirs to compare (each on the face's own photo): no number, not a 0% that reads as someone else.
+            if (face.person_similarity) {
                 const badge = document.createElement('span');
                 badge.className = 'face-resemblance';
                 badge.textContent = `${Math.round(face.person_similarity * 100)}%`;

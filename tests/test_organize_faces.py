@@ -349,7 +349,9 @@ class TheStripSuggestsWhatTheBoxesListFirst(Case):
     def boxes(self, face):
         return self.client.get("/library/api/face-matches", query_string={"id": face}).get_json()
 
-    def test_a_named_face_on_the_same_photo_is_a_candidate_for_both_alike(self):
+    def test_a_named_face_on_the_same_photo_is_a_candidate_for_neither(self):
+        """Two faces in a photo are two people (main session, 2026-10-22): the boxes and the strip leave the photo's own
+        named face out, though it is the closest, and both offer the person of another photo first."""
         elsewhere = self.photo("regatta_030.jpg")
         self.face(elsewhere, degrees=0, name=WREN, name_source="manual")
         photo = self.photo("regatta_031.jpg")
@@ -357,7 +359,8 @@ class TheStripSuggestsWhatTheBoxesListFirst(Case):
         unnamed = self.face(photo, box=(30, 5, 50, 25), degrees=20)
         listed = self.boxes(unnamed)
         shown = self.strip(photo)[unnamed]
-        self.assertEqual(ODA, listed[0]["name"])
+        self.assertEqual(WREN, listed[0]["name"])
+        self.assertNotIn(ODA, [candidate["name"] for candidate in listed], "a face of the photo itself was a candidate")
         self.assertEqual(listed[0]["name"], shown["suggestion"])
         self.assertAlmostEqual(listed[0]["similarity"], shown["similarity"], places=3)
 

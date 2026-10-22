@@ -6,8 +6,11 @@ was first written for is gone) kept a name it gave only while the face reached 0
 those it took away: 2,639 fewer named faces than before it ran, on a copy of photo_index. A name the photo's keywords
 bear out is the tag's own evidence; it stays whatever the likeness, as is every name given by hand.
 
-The likeness of the faces of one photo is stood in for (0.75, between OFFER_A_NAME and 0.80), since with the synthetic
-vectors of the other clustering tests a face of a person's cluster is always far above it. The rest is the real rule.
+Nothing is stood in for: the face is a real vector at 0.75 (between OFFER_A_NAME and 0.80) or 0.40 of the person's one named
+face, joined to her cluster by a chain of faces in untagged photos (DBSCAN groups by single links), so her cluster names it;
+the likeness a round would ask is the one gallery's (FaceRows.likeness_of), and the rule keeps the name without it. Between
+0.70 and 0.80 the final matching pass would give the name back too (TheFinalMatchingPass, below); below 0.70 the kept rule
+alone holds it (the 0.40 test fails with the rule taken out, checked 2026-10-22).
 """
 import math
 import os
@@ -15,7 +18,6 @@ import sys
 import unittest
 
 import numpy as np
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
@@ -23,40 +25,35 @@ from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, 
 from tagpup.core import clustering, validation  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
-REAL = clustering.KnownFaces.likeness
-
-
-def like_by(value, photo_name):
-    """KnownFaces.likeness, but `value` for the faces of the photo called `photo_name`."""
-    def likeness(self, name, embedding, year=None, photo=None):
-        if photo and str(photo).replace("\\", "/").endswith(photo_name):
-            return value
-        return REAL(self, name, embedding, year, photo)
-    return likeness
-
 
 class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
-    def two_people_in_one_photo(self):
+    def two_people_in_one_photo(self, cosine):
+        """Jane's face in a photo of her own, Bob's in his; then a photo of the two of them whose keywords name both, its
+        first face a real vector at `cosine` of Jane's, its second Bob's. Faces in untagged photos lie between Jane's and
+        the first, each a short step from the last: the first is in Jane's cluster, which names it, at `cosine` of her
+        one named face. Returns (that face, Bob's face)."""
         jane, bob = identity_vector(1), identity_vector(2)
         self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
         self.add_face(self.add_photo("bob.jpg", people=["Bob Roe"]), bob)
+        far = like(jane, cosine, 5)
+        steps = between(jane, far, clustering.cuts_of(validation.MTCNN_FACENET).group_distance)
+        for number, step in enumerate(steps):
+            self.add_face(self.add_photo("step_%d.jpg" % number), step)
         crowd = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
-        return (self.add_face(crowd, near(jane, 7), box=(0, 0, 400, 400)),
-                self.add_face(crowd, near(bob, 8), box=(0, 0, 400, 400)))
+        jane_face = self.add_face(crowd, far, box=(0, 0, 400, 400))
+        return jane_face, self.add_face(crowd, near(bob, 8), box=(0, 0, 400, 400))
 
     def test_a_name_the_photos_keywords_confirm_is_kept_between_070_and_080(self):
         facenet = clustering.cuts_of(validation.MTCNN_FACENET)
         self.assertGreaterEqual(0.75, facenet.offer_a_name)
         self.assertFalse(facenet.names_unasked(0.75, math.inf))
-        jane_face, bob_face = self.two_people_in_one_photo()
-        with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.75, "crowd.jpg")):
-            self.resolve()
+        jane_face, bob_face = self.two_people_in_one_photo(0.75)
+        self.resolve()
         self.assertEqual(("Jane Doe", "Bob Roe"), (self.name_of(jane_face), self.name_of(bob_face)))
 
     def test_it_is_kept_below_070_too(self):
-        jane_face, bob_face = self.two_people_in_one_photo()
-        with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.40, "crowd.jpg")):
-            self.resolve()
+        jane_face, bob_face = self.two_people_in_one_photo(0.40)
+        self.resolve()
         self.assertEqual(("Jane Doe", "Bob Roe"), (self.name_of(jane_face), self.name_of(bob_face)))
 
     def test_the_names_of_a_photo_the_keywords_do_not_bear_out_are_not_given(self):
@@ -74,10 +71,9 @@ class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
         self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
         self.add_face(self.add_photo("bob.jpg", people=["Bob Roe"]), bob)
         crowd = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
-        by_hand = self.add_face(crowd, near(jane, 7), manual_name="Jane Doe")
+        by_hand = self.add_face(crowd, like(jane, 0.75, 5), manual_name="Jane Doe")
         self.add_face(crowd, near(bob, 8))
-        with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.75, "crowd.jpg")):
-            self.resolve()
+        self.resolve()
         self.assertEqual("Jane Doe", self.name_of(by_hand))
 
 
@@ -88,6 +84,19 @@ def like(reference, cosine, seed):
     other /= np.linalg.norm(other)
     out = cosine * reference + float(np.sqrt(1 - cosine ** 2)) * other
     return (out / np.linalg.norm(out)).astype(np.float32)
+
+
+def between(start, end, reach):
+    """Unit vectors on the arc from `start` to `end` (both unit), neither end included, each within half of `reach` (a
+    distance between unit vectors) of the one before: a chain DBSCAN joins at `reach`."""
+    angle = float(np.arccos(np.clip(np.dot(start, end), -1.0, 1.0)))
+    count = int(np.ceil(angle / (2 * np.arcsin(reach / 4)))) + 1
+    found = []
+    for n in range(1, count):
+        t = n / count
+        out = (np.sin((1 - t) * angle) * start + np.sin(t * angle) * end) / np.sin(angle)
+        found.append((out / np.linalg.norm(out)).astype(np.float32))
+    return found
 
 
 class TheFinalMatchingPass(FaceClusteringTestBase):

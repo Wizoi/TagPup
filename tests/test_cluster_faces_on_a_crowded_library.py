@@ -105,22 +105,27 @@ class ClusterFacesOnACrowdedLibrary(FaceClusteringTestBase):
                 self.add_face(tagged, identity_vector(62), box=(800, 0, 1100, 300))]
         untagged = self.add_face(self.add_photo("untagged.jpg"), like(anchors[1], 0.95, 63))
         asked, stage = [], []
-        real = clustering.KnownFaces.likeness
+        whole, one = clustering.FaceRows.likeness, clustering.FaceRows.likeness_of
 
-        def counted(known, *args, **kwargs):
-            asked.append(stage[-1] if stage else None)
-            return real(known, *args, **kwargs)
+        def counted(real, kind):
+            def ask(known, *args, **kwargs):
+                asked.append((kind, stage[-1] if stage else None))
+                return real(known, *args, **kwargs)
+            return ask
 
         def heard(name, done=0, total=1):
             stage.append(name)
         self.index.close()
         self.index = PhotoIndex(db_path=self.db_path)
         self.index.load()
-        with mock.patch.object(clustering.KnownFaces, "likeness", counted):
+        with mock.patch.object(clustering.FaceRows, "likeness", counted(whole, "everyone")), \
+                mock.patch.object(clustering.FaceRows, "likeness_of", counted(one, "one person")):
             identities.resolve(self.index, on_step=heard)
         self.assertEqual([PEOPLE[0], None, None], [self.name_of(face) for face in left])
         self.assertIsNone(self.name_of(untagged))
-        self.assertEqual(0, asked.count("matching"), "the last pass asked likeness face by face and person by person")
+        self.assertEqual(0, asked.count(("one person", "matching")),
+                         "the last pass asked likeness face by face and person by person")
+        self.assertIn(("everyone", "matching"), asked, "the last pass asks the faces left against everyone at once")
 
 
 if __name__ == "__main__":

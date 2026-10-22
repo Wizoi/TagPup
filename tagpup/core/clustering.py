@@ -57,7 +57,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from tagpup.core import paths, validation
+from tagpup.core import validation
 
 @dataclass(frozen=True)
 class Cuts:
@@ -230,20 +230,103 @@ def best_of(table):
             np.where(found, margins(table)[rows, columns], np.nan))
 
 
+def best(row, columns, among=None, skip=()):
+    """(person, likeness, margin over the next of them, `margins`) of the highest of `row` -- one face's row of
+    FaceRows.likeness, read by the `columns` ({person: column}, FaceRows.columns) it came with -- of `among` (everyone in
+    it, without) but those in `skip`; the first of a tie in `among`'s order, or the columns'; (None, None, None) with
+    nobody to compare. The columns travel with the row, so a person added since cannot shift what it is read as."""
+    if among is None:   # everyone: the skipped masked, not a list of everyone made a face (the last pass asks 96,000)
+        names, values = list(columns), _without(row, columns, skip)
+    else:
+        names = [name for name in among if name in columns and name not in skip]
+        values = np.asarray(row)[[columns[name] for name in names]] if names else np.asarray(row)[:0]
+    column, likeness, margin = (float(each[0]) for each in best_of(values))
+    if column < 0:
+        return (None, None, None)
+    return (names[int(column)], likeness, margin)
+
+
+def margin_of(row, columns, name, skip=()):
+    """The margin (`margins`) of `name` over everyone else of `row` (as `best` reads it) but those in `skip`: NaN when
+    `name` has no likeness in it."""
+    if name not in columns:
+        return float("nan")
+    return float(margins(_without(row, columns, skip, keep=name))[columns[name]])
+
+
+def _without(row, columns, skip, keep=None):
+    """`row` with the people of `skip` but `keep` left out (NaN, which `margins` reads as no likeness)."""
+    values = np.array(row, dtype=np.float64)
+    for name in skip:
+        if name != keep and name in columns:
+            values[columns[name]] = np.nan
+    return values
+
+
+def _window(age):
+    """Years either side of a photo that a person's faces are drawn from, by how old the
+    person was then -- years since their first photo: faces change fastest in the young."""
+    return 1 if age <= 4 else 2 if age <= 12 else 3 if age <= 16 else 4 if age <= 20 else 5
+
+
+def in_era(years, usable, year):
+    """Of a person's faces `usable` (a mask), taken in `years` (NaN undated), those a face taken in `year` is compared
+    with: the window for the person's age then (`_window`, from their first usable face), widened a year at a time to five
+    until it holds five faces, else every usable one; every usable one for an undated face (`year` None or NaN) or a
+    person with no dated face. The owner kept the age-based window (2026-10-22: on photo_index the era helps from about
+    three years out, docs/AI_PIPELINE.md phase 4a)."""
+    if year is None or year != year:
+        return usable
+    dated = usable & ~np.isnan(years)
+    if not dated.any():
+        return usable
+    width = _window(year - np.nanmin(np.where(usable, years, np.nan)))
+    while True:
+        chosen = dated & (np.abs(years - year) <= width)
+        if chosen.sum() >= 5 or width >= 5:
+            break
+        width += 1
+    return chosen if chosen.sum() >= 5 else usable
+
+
 class FacesByPerson:
     """The faces of a matrix kept one row a face -- the named or decided faces of tagpup.services.identify -- grouped by
-    their person, so that a face's likeness to each person is to their closest face (`table`), in a table `margins` reads.
-    `people` is each row's person: a person's id, or any number that tells them apart. `keys` are the people of the
-    table's columns, in order of their id; `first` the row of each one's first face."""
+    their person, so that a face's likeness to each person is to their closest face of the years around its own
+    (`table`, `in_era`), in a table `margins` reads: the one gallery of who a face looks like (#1737).
+    `people` is each row's person: a person's id, or any number that tells them apart; `years` each row's photo's year
+    (core.dates.era_year, NaN undated), or None for no years at all. `keys` are the people of the table's columns, in
+    order of their id; `first` the row of each one's first face."""
 
-    def __init__(self, people):
+    def __init__(self, people, years=None):
         people = np.asarray(people)
         self.order = np.argsort(people, kind="stable")
         ordered = people[self.order]
         self.starts = np.flatnonzero(np.r_[True, ordered[1:] != ordered[:-1]]) if len(ordered) else np.zeros(0, np.intp)
+        self.ends = np.r_[self.starts[1:], len(ordered)].astype(np.intp)
         self.keys = ordered[self.starts].tolist()
         self.first = self.order[self.starts].tolist()
         self.in_order = bool(np.array_equal(self.order, np.arange(len(self.order))))
+        #: The rows' years in `grouped`'s order, or None.
+        self.years = None if years is None else np.asarray(years, dtype=np.float64)[self.order]
+        self._eras = {}   # year -> the addend of `_era`, made when a face of that year is first asked
+
+    def _era(self, year):
+        """For a face of `year` none of whose comparisons is left out: 0 on each face (in `grouped`'s order) `in_era`
+        chooses, -inf on the rest. Worked out once a year and kept: a person and a year choose the same faces for every
+        face asked (#1530)."""
+        found = self._eras.get(year)
+        if found is None:
+            chosen = [in_era(self.years[start:end], np.ones(end - start, dtype=bool), year)
+                      for start, end in zip(self.starts.tolist(), self.ends.tolist())]
+            found = self._eras[year] = np.where(np.concatenate(chosen), 0, -np.inf).astype(np.float32)
+        return found
+
+    def _picked(self, values, column, year):
+        """The faces of the person of `column` that a face of `year` is compared with, given its likeness to each of them
+        (`values`, -inf where the caller left one out: its own face, photo or folder): `in_era` of those left in."""
+        start, end = self.starts[column], self.ends[column]
+        usable = np.isfinite(values)
+        return usable if self.years is None else in_era(self.years[start:end], usable, year)
 
     def grouped(self, matrix):
         """`matrix`'s rows (or a vector's entries) in the order `table` reads them as `grouped`: a matrix many blocks of
@@ -252,25 +335,48 @@ class FacesByPerson:
         matrix itself, not a copy."""
         return matrix if self.in_order else matrix[self.order]
 
-    def table(self, similarities, grouped=False):
+    def table(self, similarities, grouped=False, years=None):
         """Each face's likeness to each person, from `similarities` (a row a face, a column a face of the matrix; in
-        `grouped`'s order when `grouped`): a person's is their closest face's; -inf where none of their faces is."""
+        `grouped`'s order when `grouped`; -inf on a face the caller leaves out): a person's is their closest face of those
+        `in_era` chooses for the face's year (`years`, one a row, NaN or None undated; None for every row undated: all
+        years); -inf where none is. A row that leaves out one of a person's faces has that person's window worked out
+        from the faces left in, as the faces of its own photo were left out of the window before (#1737)."""
         similarities = np.atleast_2d(similarities)
         if not len(self.keys):
             return np.zeros((len(similarities), 0), dtype=similarities.dtype)
-        return np.maximum.reduceat(similarities if grouped else similarities[:, self.order], self.starts, axis=1)
+        values = similarities if grouped else similarities[:, self.order]
+        if years is None or self.years is None:
+            return np.maximum.reduceat(values, self.starts, axis=1)
+        years = np.array([np.nan if year is None else year for year in years], dtype=np.float64).reshape(-1)
+        found = np.empty((len(values), len(self.keys)), dtype=values.dtype)
+        undated = np.isnan(years)
+        if undated.any():
+            found[undated] = np.maximum.reduceat(values[undated], self.starts, axis=1)
+        for year in np.unique(years[~undated]).tolist():
+            rows = np.flatnonzero(years == year)
+            part = values[rows]
+            found[rows] = np.maximum.reduceat(part + self._era(int(year)), self.starts, axis=1)
+            left_out = np.logical_or.reduceat(np.isneginf(part), self.starts, axis=1)
+            for row, column in zip(*np.nonzero(left_out)):
+                segment = part[row, self.starts[column]:self.ends[column]]
+                picked = self._picked(segment, column, int(year))
+                found[rows[row], column] = segment[picked].max() if picked.any() else -np.inf
+        return found
 
-    def closest(self, similarities, columns, grouped=False):
+    def closest(self, similarities, columns, grouped=False, years=None):
         """The face each row's likeness to the person of `columns` (one a row: a column of `table`, -1 for none) is: the row
-        of the matrix (as given, not `grouped`) of that person's closest face, -1 for none. What the gate reads the year
-        gap of a match by (tagpup.core.holdout)."""
+        of the matrix (as given, not `grouped`) of that person's closest face of the years `table` chose by (`years`),
+        -1 for none. What the gate reads the year gap of a match by (tagpup.core.holdout)."""
         similarities = np.atleast_2d(similarities if grouped else similarities[:, self.order])
-        ends = np.r_[self.starts[1:], similarities.shape[1]].astype(np.intp)
         found = np.full(len(columns), -1, dtype=np.int64)
         for row, column in enumerate(np.asarray(columns).tolist()):
             if column >= 0:
                 low = self.starts[column]
-                found[row] = self.order[low + int(np.argmax(similarities[row, low:ends[column]]))]
+                segment = similarities[row, low:self.ends[column]]
+                year = None if years is None or years[row] is None else float(years[row])
+                if year is not None and year == year:
+                    segment = np.where(self._picked(segment, column, int(year)), segment, -np.inf)
+                found[row] = self.order[low + int(np.argmax(segment))]
         return found
 
 
@@ -284,29 +390,115 @@ class FaceRows(tuple):
 
     `key` is the face model the vectors were read under (tagpup.store.faces.model_key): kept between requests, the rows
     may be one model's while the library has been switched to the other since, so a reader compares them only with
-    vectors of the same key (`under`), by that key's cuts."""
+    vectors of the same key (`under`), by that key's cuts. `years` (each row's photo's core.dates.era_year, None
+    undated) and `photos` (each row's photo id) travel with the rows: a face is compared with a person's faces of the
+    years around its own and never with a face of its own photo (`likeness`)."""
 
-    def __new__(cls, ids, people, matrix, key):
+    def __new__(cls, ids, people, matrix, key, years=None, photos=None):
+        years = None if years is None else [np.nan if year is None else year for year in years]
         if matrix is not None and len(people) > 1:
             order = np.argsort(np.asarray([person.id for person in people]), kind="stable")
             if not np.array_equal(order, np.arange(len(order))):
                 ids, people, matrix = [ids[n] for n in order], [people[n] for n in order], matrix[order]
+                years = None if years is None else [years[n] for n in order]
+                photos = None if photos is None else [photos[n] for n in order]
         rows = super().__new__(cls, (ids, people, matrix))
         rows.key = key
-        rows._grouping = None
+        rows.years = None if years is None else np.asarray(years, dtype=np.float64)
+        rows.photos = None if photos is None else list(photos)
+        rows._grouping = rows._positions = rows._columns = None
         rows._making = threading.Lock()
         return rows
 
     @classmethod
     def of(cls, rows):
-        """`rows` as FaceRows: themselves, or a plain (ids, people, matrix, key) made into them."""
+        """`rows` as FaceRows: themselves, or a plain (ids, people, matrix, key[, years, photos]) made into them."""
         return rows if isinstance(rows, cls) else cls(*rows)
+
+    @classmethod
+    def made(cls, rows, key):
+        """FaceRows of `rows` (face id, person, vector -- bytes as the library stores it, or an array --, photo id, era
+        year), under the face model `key`, each vector made unit: the one way every gallery of who a face looks like is
+        built. A zero vector has no direction to compare and is left out (none in the three libraries, 2026-10-22)."""
+        ids, people, vectors, photos, years = [], [], [], [], []
+        for face_id, person, vector, photo, year in rows:
+            vector = (np.frombuffer(vector, dtype=np.float32) if isinstance(vector, bytes)
+                      else np.asarray(vector, dtype=np.float32).reshape(-1))
+            norm = float(np.linalg.norm(vector))
+            if norm:
+                ids.append(face_id)
+                people.append(person)
+                vectors.append(vector / norm)
+                photos.append(photo)
+                years.append(year)
+        return cls(ids, people, np.stack(vectors) if vectors else None, key, years, photos)
 
     def under(self, key):
         """These rows, when their vectors are face model `key`'s; else none (no rows, of `key`): one model's vectors are
         never compared with the other's. Rows of another key are of a switch committed between two reads of one decision
         (the next read of the named faces is the new model's: their cache's fingerprint holds the model)."""
         return self if self.key == key else FaceRows([], [], None, key)
+
+    def likeness(self, vectors, years=None, photos=None, skip=None):
+        """Each of `vectors`' (a row a face, unit, the rows' model's) likeness to each person of the rows (a column each,
+        in `by_person`'s keys): to the person's closest face of the years around the face's own (`years`, one a row, None
+        undated; FacesByPerson.table), never a face of the face's own photo (`photos`, a photo id a row, or None) nor the
+        face itself (`skip`, a face id a row, or None). The one gallery of who a face looks like: the strip, the boxes,
+        Identify, automatch, Name faces from tags, Suggest and clustering ask it (#1737)."""
+        grouping, grouped = self.by_person
+        if grouped is None:   # nobody named: a row a face, no column
+            return np.zeros((len(np.atleast_2d(vectors)), 0), dtype=np.float32)
+        similarities = np.atleast_2d(vectors) @ grouped.T
+        where = self._where()
+        for row, photo in enumerate(() if photos is None else photos):
+            similarities[row, where[0].get(photo, [])] = -np.inf
+        for row, face in enumerate(() if skip is None else skip):
+            similarities[row, where[1].get(face, [])] = -np.inf
+        return grouping.table(similarities, grouped=True, years=years)
+
+    def likeness_of(self, person, vectors, years=None, photos=None):
+        """`person`'s column of `likeness` (a key of `columns`), worked out against their faces alone: a page of one
+        person's faces, or a name clustering gave asked again, compares a face with one person, not with everyone named.
+        -inf where they have no face to compare (or none at all)."""
+        vectors = np.atleast_2d(vectors)
+        found = np.full(len(vectors), -np.inf, dtype=np.float32)
+        column = self.columns.get(person)
+        if column is None:
+            return found
+        grouping, grouped = self.by_person
+        start, end = int(grouping.starts[column]), int(grouping.ends[column])
+        similarities = vectors @ grouped[start:end].T
+        own = self._where()[0]
+        for row in range(len(vectors)):
+            segment = similarities[row]
+            for position in own.get(None if photos is None else photos[row], ()):
+                if start <= position < end:
+                    segment[position - start] = -np.inf
+            year = None if years is None else years[row]
+            picked = grouping._picked(segment, column, None if year is None or year != year else int(year))
+            if picked.any():
+                found[row] = segment[picked].max()
+        return found
+
+    @property
+    def columns(self):
+        """{person's id: their column of `likeness`}: what `best` and `margin_of` read a row by."""
+        if self._columns is None:
+            self._columns = {key: column for column, key in enumerate(self.by_person[0].keys)}
+        return self._columns
+
+    def _where(self):
+        """({photo id: the positions of its faces in `by_person`'s order}, {face id: its position}), made when first
+        asked: a face's own photo is left out by its few positions, not a comparison along every row."""
+        if self._positions is None:
+            photos, faces = {}, {}
+            grouped_photos = self._grouped()[3]
+            for position, face in enumerate(self.ids_grouped.tolist()):
+                faces.setdefault(face, []).append(position)
+                if grouped_photos is not None:
+                    photos.setdefault(grouped_photos[position], []).append(position)
+            self._positions = (photos, faces)
+        return self._positions
 
     @property
     def by_person(self):
@@ -323,9 +515,10 @@ class FaceRows(tuple):
             with self._making:
                 if self._grouping is None:
                     ids, people, matrix = self
-                    grouping = FacesByPerson([person.id for person in people])
+                    grouping = FacesByPerson([person.id for person in people], self.years)
                     self._grouping = (grouping, grouping.grouped(matrix) if matrix is not None else None,
-                                      grouping.grouped(np.asarray(ids)))
+                                      grouping.grouped(np.asarray(ids)),
+                                      None if self.photos is None else grouping.grouped(np.asarray(self.photos)).tolist())
         return self._grouping
 
 
@@ -401,227 +594,8 @@ def pairs(boxes, others, at=SAME_FACE, first=()):
 
 # ---- Everyone's faces ----------------------------------------------------------------
 
-def _window(age):
-    """Years either side of a photo that a person's faces are drawn from, by how old the
-    person was then -- years since their first photo: faces change fastest in the young."""
-    return 1 if age <= 4 else 2 if age <= 12 else 3 if age <= 16 else 4 if age <= 20 else 5
-
-
-def _unit(embedding):
+def unit(embedding):
+    """`embedding` as a flat float32 vector of length one (itself when it is all zeros): what a face is compared by."""
     vector = np.asarray(embedding, dtype=np.float32).reshape(-1)
     norm = float(np.linalg.norm(vector))
     return vector / norm if norm else vector
-
-
-class KnownFaces:
-    """The faces named for each person, and how like one of them a face is.
-
-    A face is compared with a person's closest single face from the years around its
-    photo -- the window for the person's age then, widened to five years until it holds
-    five faces, else all of them -- and never with a face of its own photo. Every
-    screen, clustering and the suggester ask this, rather than averaging faces each in a
-    way of its own (#71).
-    """
-
-    def __init__(self):
-        self._faces = {}     # name -> [(unit embedding, year or None, photo key or None)]
-        self._arrays = {}    # name -> (matrix, years, photos), made when first asked
-        self._tables = {}    # None (everyone) or a tuple of people -> their faces in one matrix (_table), made when first asked
-        self._building = threading.Lock()   # Suggest's workers share one KnownFaces: the matrix is made once (_table)
-        self._photos = {}    # name -> the keys of the photos they have a face in, made when first asked
-        self._eras = {}      # (name, year) -> _chosen for a photo they have no face in, made when first asked
-        #: {name: what the caller calls that person}, for a caller that keys the people by something that is not what it shows
-        #: (a person's id): see `add`'s label.
-        self.labels = {}
-
-    @classmethod
-    def of(cls, rows):
-        """KnownFaces from (name, embedding, year, photo) rows, or (name, embedding, year, photo, label); year and photo may
-        be None. A `name` is any hashable that tells people apart (a person's id, a name)."""
-        known = cls()
-        for name, embedding, year, photo, *label in rows:
-            known.add(name, embedding, year, photo, label[0] if label else None)
-        return known
-
-    def add(self, name, embedding, year=None, photo=None, label=None):
-        if not name or embedding is None:
-            return
-        self._faces.setdefault(name, []).append(
-            (_unit(embedding), year, paths.key(photo) if photo else None))
-        self._arrays.pop(name, None)
-        self._photos.pop(name, None)
-        self._tables = {}
-        if self._eras:
-            self._eras = {}
-        if label is not None:
-            self.labels.setdefault(name, label)
-
-    def names(self):
-        return list(self._faces)
-
-    def __contains__(self, name):
-        return name in self._faces
-
-    def _of(self, name):
-        arrays = self._arrays.get(name)
-        if arrays is None:
-            faces = self._faces[name]
-            arrays = self._arrays[name] = (
-                np.stack([e for e, _y, _p in faces]),
-                np.array([np.nan if y is None else y for _e, y, _p in faces], dtype=float),
-                np.array([p or "" for _e, _y, p in faces], dtype=object))
-        return arrays
-
-    def _chosen(self, name, year, key):
-        """Which of `name`'s faces a face of the photo `key` (its paths.key, or None), taken in `year`, is compared with.
-        The same for every photo the person has no face in: worked out once a person and a year, and again only for a
-        photo they have a face in, without it. Clustering's rounds asked it once a face and a person, 620,000 times on
-        photo_index (#1530)."""
-        _matrix, years, photos = self._of(name)
-        if key is not None:
-            inside = self._photos.get(name)
-            if inside is None:
-                inside = self._photos[name] = frozenset(p for _e, _y, p in self._faces[name] if p)
-            if key in inside:
-                return self._in_era(years, photos != key, year)
-        found = self._eras.get((name, year))
-        if found is None:
-            found = self._eras[(name, year)] = self._in_era(years, np.ones(len(photos), dtype=bool), year)
-        return found
-
-    @staticmethod
-    def _in_era(years, usable, year):
-        """Of the faces `usable`, taken in `years`, those of the years around `year`: the window for the person's age then,
-        widened to five years until it holds five faces, else every usable one."""
-        if year is None:
-            return usable
-        dated = usable & ~np.isnan(years)
-        if not dated.any():
-            return usable
-        width = _window(year - np.nanmin(np.where(usable, years, np.nan)))
-        while True:
-            in_era = dated & (np.abs(years - year) <= width)
-            if in_era.sum() >= 5 or width >= 5:
-                break
-            width += 1
-        return in_era if in_era.sum() >= 5 else usable
-
-    def likeness(self, name, embedding, year=None, photo=None):
-        """How like `embedding` the closest of `name`'s faces is, from the years around
-        `year`, leaving out `photo`'s own faces. None when they have no face to compare."""
-        return self.likeness_many(name, [(embedding, year, photo)])[0]
-
-    #: Faces compared at once by likeness_table: a block of this many by all of the
-    #: people's faces is the largest matrix it holds.
-    BLOCK = 1024
-
-    def likeness_many(self, name, faces):
-        """likeness for each of `faces`, [(embedding, year, photo)], against `name`: `name`'s column of likeness_table,
-        so a grid of thousands is one pass rather than thousands."""
-        table, columns = self.likeness_table(faces, among=(name,))
-        if name not in columns:
-            return [None] * len(faces)
-        return [value if value == value else None for value in table[:, columns[name]].tolist()]   # NaN is not itself
-
-    def most_like(self, embedding, year=None, photo=None, among=None, skip=()):
-        """(name, likeness, margin) of the person `embedding` is most like, of `among` (everyone,
-        without) but those in `skip`; (None, None, None) with nobody to compare."""
-        table, columns = self.likeness_table([(embedding, year, photo)])
-        return self.best(table[0], columns, among, skip)
-
-    @staticmethod
-    def best(row, columns, among=None, skip=()):
-        """(name, likeness, margin over the next of them, `margins`) of the highest of `row`, a row of likeness_table read
-        by the `columns` it came with, of `among` (everyone in it, without) but those in `skip`; the first of a tie in
-        `among`'s order, or the columns'; (None, None, None) with nobody to compare. The columns travel with the row, so a
-        person added since cannot shift what it is read as."""
-        if among is None:   # everyone: the skipped masked, not a list of everyone made a face (the last pass asks 96,000)
-            names, values = list(columns), KnownFaces._without(row, columns, skip)
-        else:
-            names = [name for name in among if name in columns and name not in skip]
-            values = row[[columns[name] for name in names]] if names else row[:0]
-        column, likeness, margin = (float(each[0]) for each in best_of(values))
-        if column < 0:
-            return (None, None, None)
-        return (names[int(column)], likeness, margin)
-
-    @staticmethod
-    def margin_of(row, columns, name, skip=()):
-        """The margin (`margins`) of `name` over everyone else of `row`, a row of likeness_table read by its `columns`, but
-        those in `skip`: NaN when `name` has no likeness in it."""
-        if name not in columns:
-            return float("nan")
-        return float(margins(KnownFaces._without(row, columns, skip, keep=name))[columns[name]])
-
-    @staticmethod
-    def _without(row, columns, skip, keep=None):
-        """`row` with the people of `skip` but `keep` left out (NaN, which `margins` reads as no likeness)."""
-        values = np.array(row, dtype=np.float64)
-        for name in skip:
-            if name != keep and name in columns:
-                values[columns[name]] = np.nan
-        return values
-
-    def likeness_table(self, faces, among=None):
-        """likeness of each of `faces`, [(embedding, year, photo)], against every person, or the people `among` that are
-        known: (an array, a row a face and a column a person, NaN where likeness is None; {person: their column}, for
-        `best`). A block of faces against the people's faces is one matrix product, and the faces of one year share each
-        person's years around it (`_chosen`, worked out once a year); only a person with a face in the face's own photo
-        is chosen again, without it. Clustering's last pass asked likeness once a face and a person: 96,000 faces by 281
-        people on photo_index, over half an hour (docs/findings.md, #1530)."""
-        names, matrix, starts, by_photo, eras, columns = self._table(None if among is None else tuple(among))
-        table = np.empty((len(faces), len(names)), dtype=np.float32)   # every row is written whole
-        if not names or not faces:
-            return table, columns
-        for start in range(0, len(faces), self.BLOCK):
-            block = faces[start:start + self.BLOCK]
-            similarities = np.stack([_unit(e) for e, _y, _p in block]) @ matrix.T
-            for number, (row, (_e, year, photo)) in enumerate(zip(similarities, block)):
-                if year not in eras:
-                    eras[year] = self._era(names, starts, year)
-                left_out, nobody = eras[year]
-                out = table[start + number]
-                np.maximum.reduceat(row + left_out, starts, out=out)
-                out += nobody
-                key = paths.key(photo) if photo else None
-                for column in by_photo.get(key, ()):
-                    name = names[column]
-                    picked = self._chosen(name, year, key)
-                    segment = row[starts[column]:starts[column] + len(picked)]
-                    out[column] = segment[picked].max() if picked.any() else np.nan
-        return table, columns
-
-    def _table(self, among):
-        """(names, the faces of everyone or of `among` in one matrix, where each person's rows start, {photo key: the
-        columns of the people with a face in it}, {year: `_era`} as each year is first asked, {name: column}), kept for
-        each `among` until an `add`. Made under a lock: Suggest's workers ask most_like of one KnownFaces at once, and
-        each made its own copy of everyone's faces (about 72 MB on photo_index), the last one kept."""
-        table = self._tables.get(among)
-        if table is None:
-            with self._building:
-                table = self._tables.get(among)
-                if table is None:
-                    table = self._tables[among] = self._build_table(among)
-        return table
-
-    def _build_table(self, among):
-        """_table, made: everyone's makes each person's own arrays (`_of`) views of its matrix; one person's is theirs."""
-        names = list(self._faces) if among is None else [name for name in dict.fromkeys(among) if name in self._faces]
-        mats = [self._of(name)[0] for name in names]
-        matrix = mats[0] if len(mats) == 1 else np.concatenate(mats) if mats else np.zeros((0, 0), np.float32)
-        starts = np.cumsum([0] + [len(self._faces[name]) for name in names[:-1]]).astype(np.intp)
-        by_photo = {}
-        for column, name in enumerate(names):
-            _matrix, years, photos = self._arrays[name]
-            if among is None:
-                self._arrays[name] = (matrix[starts[column]:starts[column] + len(photos)], years, photos)
-            for key in {p for p in photos if p}:
-                by_photo.setdefault(key, []).append(column)
-        return names, matrix, starts, by_photo, {}, {name: column for column, name in enumerate(names)}
-
-    def _era(self, names, starts, year):
-        """`_chosen` for each person side by side, for a face of `year` from a photo none of them is in, as two addends:
-        -inf on each face not compared with, NaN for each person with none to compare, else 0."""
-        chosen = np.concatenate([self._chosen(name, year, None) for name in names])
-        return (np.where(chosen, 0, -np.inf).astype(np.float32),
-                np.where(np.logical_or.reduceat(chosen, starts), 0, np.nan).astype(np.float32))

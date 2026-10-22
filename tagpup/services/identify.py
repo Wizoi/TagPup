@@ -62,7 +62,7 @@ def fingerprint(library):
         conn.close()
 
 
-def named_faces(library):
+def named_faces(library, key=None):
     """(fingerprint, (ids, people, matrix)): every face that carries a name, as unit
     vectors, with the person (a Ref) beside each; matrix None when nobody has been named yet.
 
@@ -76,28 +76,19 @@ def named_faces(library):
     The ids are carried so a caller can leave a particular face out of its own answer:
     the matrix is shared, so it cannot be rebuilt to exclude one row. The fingerprint is
     read first, on the same connection, so the matrix is stamped with a state no newer
-    than its rows, in one read transaction with them; the rows carry the face model they were read under (FaceRows.key).
+    than its rows, in one read transaction with them: the photos stamp (decided_stamp), as each row carries its photo's era
+    year, which Time Shift moves without touching a face. The rows carry the face model they were read under (FaceRows.key):
+    the library's, or `key` (a Suggest run's, which its faces are compared by: a switch while it runs leaves it on the
+    model it began with).
     """
     conn = _reading(library)
     try:
         db.begin(conn)
-        stamp, key = faces.fingerprint(conn), faces.model_key(conn)
-        ids, refs, vecs = [], [], []
-        for face_id, person, blob in faces.for_named_matrix(conn, key):
-            try:
-                vec = np.frombuffer(blob, dtype=np.float32)
-            except Exception:
-                # One damaged row is not a reason to refuse every comparison.
-                continue
-            norm = np.linalg.norm(vec)
-            if norm == 0:
-                continue
-            ids.append(face_id)
-            refs.append(person)
-            vecs.append(vec / norm)
+        stamp, key = _decided_stamp(conn), key or faces.model_key(conn)
+        rows = face_rules.FaceRows.made(faces.for_named_matrix(conn, key), key)
     finally:
         conn.close()
-    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None, key)
+    return stamp, rows
 
 
 #: faces.name_source of a name a person gave a face, and so the only kind that stands for them.
@@ -105,8 +96,10 @@ DECIDED = "manual"
 
 
 def decided_stamp(library):
-    """What decided_faces is cached against: the faces fingerprint and the photos generation,
-    which moves when a photo's keywords do (photo_people)."""
+    """What the named and decided faces and the queue are cached against: the faces fingerprint and the photos generation,
+    which moves when a photo's keywords do (photo_people: the decided faces, the queue's people, docs/findings.md #58) or
+    its Date Taken (each named face's era year). A person's grid is not: it takes up to a minute to build, and would be
+    rebuilt after every photo written."""
     conn = _reading(library)
     try:
         return _decided_stamp(conn)
@@ -129,23 +122,12 @@ def decided_faces(library):
         db.begin(conn)   # one read transaction: the stamp, the keywords and the rows see one state
         stamp, key = _decided_stamp(conn), faces.model_key(conn)
         keywords = people.keyword_keys(conn)
-        ids, refs, vecs = [], [], []
-        for face_id, person, blob, source, photo_id in faces.for_decided_matrix(conn, key):
-            if source != DECIDED and person.id not in keywords.get(photo_id, ()):
-                continue
-            try:
-                vec = np.frombuffer(blob, dtype=np.float32)
-            except Exception:
-                continue
-            norm = np.linalg.norm(vec)
-            if norm == 0:
-                continue
-            ids.append(face_id)
-            refs.append(person)
-            vecs.append(vec / norm)
+        rows = face_rules.FaceRows.made(((face_id, person, blob, photo_id, year)
+                           for face_id, person, blob, source, photo_id, year in faces.for_decided_matrix(conn, key)
+                           if source == DECIDED or person.id in keywords.get(photo_id, ())), key)
     finally:
         conn.close()
-    return stamp, face_rules.FaceRows(ids, refs, np.vstack(vecs) if vecs else None, key)
+    return stamp, rows
 
 
 def _groups(people_of_rows):
@@ -273,6 +255,7 @@ def photo_details(library, photo_path, named):
         key = faces.model_key(conn)
         photo_row = photos.details(conn, photo_path)
         face_rows = faces.in_photo_with_names(conn, photo_path, key)
+        eras = faces.eras_of(conn, [row[0] for row in face_rows])   # where and when, for the years around it
         everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
@@ -297,11 +280,21 @@ def photo_details(library, photo_path, named):
 
     # Every named face, from the matrix shared with face_matches. This read all of
     # them from SQLite on every click of a face card -- 35,826 rows, half a second --
-    # for the one number per face shown beside it.
-    _known_ids, _known_people, known_matrix = face_rules.FaceRows.of(named()).under(key)
+    # for the one number per face shown beside it: how like the person it is most like each face is, asked of the one
+    # gallery as the boxes and the strip ask it (FaceRows.likeness: of the years around its own, never a face of its own
+    # photo, so never itself). It was a raw maximum over every named face: a named face showed 1.0, its own.
+    known = face_rules.FaceRows.of(named()).under(key)
+    asked = [(row[0], row[3]) for row in face_rows if row[3] is not None] if known[2] is not None else []
+    alike = {}
+    if asked:
+        where = [eras.get(face_id, (None, None)) for face_id, _blob in asked]
+        table = known.likeness(np.stack([face_rules.unit(np.frombuffer(blob, dtype=np.float32)) for _id, blob in asked]),
+                               [year for _photo, year in where], [photo for photo, _year in where])
+        alike = {face_id: float(value) for (face_id, _blob), value in zip(asked, table.max(axis=1, initial=-np.inf))
+                 if np.isfinite(value)}
 
     found = []
-    for fid, box_str, carried, emb_bytes, excluded in face_rows:
+    for fid, box_str, carried, _vector, excluded in face_rows:
         fname = carried.name if carried else None
         try:
             box = json.loads(box_str)
@@ -311,11 +304,7 @@ def photo_details(library, photo_path, named):
                 box = [int(x) for x in box_str.replace("[", "").replace("]", "").split(",")]
             except Exception:
                 box = [0, 0, 0, 0]
-        max_sim = 0.0
-        if emb_bytes is not None and known_matrix is not None:
-            sims = np.dot(known_matrix, np.frombuffer(emb_bytes, dtype=np.float32))
-            if len(sims) > 0:
-                max_sim = float(np.max(sims))
+        max_sim = alike.get(fid, 0.0)   # nobody named to compare: 0, as before
         # Excluded: the page counts a photo's unmatched faces from these, and an excluded
         # face is not one, as the list's counts say (docs/findings.md, #642, #655).
         found.append({"id": fid, "box": box, "name": fname,
@@ -360,20 +349,23 @@ def face_matches(library, face_id, named):
     try:
         key = faces.model_key(conn)   # once: the face's vector, the named faces it is compared with and the cuts are its
         target_emb = _embedding_of(conn, face_id, key)
+        where = faces.eras_of(conn, [face_id]).get(face_id, (None, None))
         everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
     cuts = face_rules.cuts_of(key)
     return [{"name": found.name, "person": everyone.of_id(found.id), "similarity": similarity,
              "band": cuts.band(similarity, margin)}
-            for found, similarity, margin in nearest_people(face_rules.FaceRows.of(named()).under(key), target_emb, face_id)]
+            for found, similarity, margin in nearest_people(face_rules.FaceRows.of(named()).under(key), target_emb, face_id,
+                                                            where=where)]
 
 
-def nearest_people(known, embedding, skip_id=None, limit=5):
+def nearest_people(known, embedding, skip_id=None, limit=5, where=(None, None)):
     """[(person, similarity, margin)], the `limit` people most like `embedding`, best first, one entry a person, from `known`
-    (named_faces' ids, people and matrix): each person's similarity is to their closest named face, and the margin is how much
-    more like the face they are than the most alike of everyone else named (tagpup.core.clustering.margins: the best's over
-    the second, the rest's behind the best). The one place that says who a face looks like: the boxes' list
+    (named_faces' rows): each person's similarity is to their closest named face of the years around the face's own,
+    never one of its own photo (`where`: its (photo id, year), faces.eras_of; clustering.FaceRows.likeness), and the
+    margin is how much more like the face they are than the most alike of everyone else named
+    (tagpup.core.clustering.margins: the best's over the second, the rest's behind the best). The boxes' list
     (face_matches) and the strip's suggestion (tagpup.services.faces.panel) both read it.
 
     The face `skip_id` is skipped rather than excluded from the matrix, which is shared and cannot be rebuilt per
@@ -382,12 +374,11 @@ def nearest_people(known, embedding, skip_id=None, limit=5):
     _known_ids, known_people, matrix = known
     if matrix is None:
         return []
-    by_person, grouped = known.by_person   # made once for the matrix (clustering.FaceRows)
-    similarities = np.dot(grouped, embedding).astype(np.float64)
-    if skip_id is not None:
-        similarities[known.ids_grouped == skip_id] = -np.inf
+    by_person = known.by_person[0]
+    photo, year = where
+    table = known.likeness(np.asarray(embedding, dtype=np.float32)[None, :], [year], [photo], [skip_id])
     return [(known_people[by_person.first[column]], similarity, margin)
-            for column, similarity, margin in face_rules.ranked(by_person.table(similarities, grouped=True)[0], limit)]
+            for column, similarity, margin in face_rules.ranked(table[0].astype(np.float64), limit)]
 
 
 class UnnamedFaces:
@@ -529,6 +520,7 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
     conn = _reading(library)
     try:
         faces_rows = faces.unnamed_among(conn, candidates, key)
+        eras = faces.eras_of(conn, [row[0] for row in faces_rows])
     finally:
         conn.close()
 
@@ -536,8 +528,8 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
     vectors = np.stack([np.frombuffer(row[3], dtype=np.float32) for row in faces_rows]) if faces_rows else None
     margins = [math.inf] * len(faces_rows)   # nobody named: nobody else it could be
     if vectors is not None and known[2] is not None:
-        by_person, grouped = known.by_person
-        others = by_person.table(vectors @ grouped.T, grouped=True)
+        where = [eras.get(row[0], (None, None)) for row in faces_rows]
+        others = known.likeness(vectors, [year for _photo, year in where], [photo for photo, _year in where])
         margins = face_rules.margins(np.column_stack([vectors @ target_emb, others]))[:, 0].tolist()
     matches = []
     for (fid, photo_path, box_json, emb_bytes), margin in zip(faces_rows, margins):
@@ -574,25 +566,23 @@ def person_faces(library, person, limit=100, page=1):
         ref = key = found[0]
         key_of_vectors = faces.model_key(conn)   # once: both reads of vectors are under it, and judged by its cuts
         total_count = faces.count_named(conn, ref)
-        all_matched_rows = faces.person_embeddings(conn, ref, key_of_vectors)
+        theirs = face_rules.FaceRows.made(faces.for_named_matrix(conn, key_of_vectors, ref), key_of_vectors)
         rows = faces.person_page(conn, ref, limit, offset, key_of_vectors)
         cuts = face_rules.cuts_of(key_of_vectors)
     finally:
         conn.close()
 
-    known = face_rules.KnownFaces()
-    for emb_bytes, _mtime, year, photo_path in all_matched_rows:
-        if emb_bytes and len(emb_bytes) > 0:
-            known.add(key, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
-
-    # The page's faces against the person's, in one pass (KnownFaces.likeness_many).
-    likenesses = iter(known.likeness_many(key, [
-        (np.frombuffer(r[5], dtype=np.float32), r[6], r[1]) for r in rows if r[5] is not None and len(r[5]) > 0]))
+    # The page's faces against the person's, in one pass: of the years around each, never one of its own photo (the one
+    # gallery, FaceRows.likeness_of).
+    asked = [r for r in rows if r[5] is not None and len(r[5]) > 0]
+    likenesses = iter(theirs.likeness_of(key, np.stack([face_rules.unit(np.frombuffer(r[5], dtype=np.float32)) for r in asked]),
+                                         [r[8] for r in asked], [r[7] for r in asked]).tolist() if asked else ())
 
     found = []
     for r in rows:
         held = r[5] is not None and len(r[5]) > 0
         similarity = next(likenesses) if held else None
+        similarity = similarity if similarity is not None and math.isfinite(similarity) else None   # nobody to compare
         found.append({
             "id": r[0],
             "photo_path": r[1],
@@ -639,23 +629,6 @@ def excluded(library, default_reason):
 
 # ---- The queue ---------------------------------------------------------------------------
 
-def queue_stamp(library):
-    """What the queue is cached against: the faces fingerprint and the photos generation.
-    The queue groups nameless faces by the people their photo lists, which a tag saved in
-    TagPup changes without touching a face (docs/findings.md, #58). Only the queue
-    follows the photos; a person's grid takes up to a minute to build, and would be
-    rebuilt after every photo written."""
-    conn = _reading(library)
-    try:
-        return _queue_stamp(conn)
-    finally:
-        conn.close()
-
-
-def _queue_stamp(conn):
-    return (faces.fingerprint(conn), generations.value(conn, "photos"))
-
-
 def _listed(people_json):
     """[(node id, name)] of a photo's people (faces.identify_candidates' JSON, [[id, name]]); none for text that is not. A row
     with no id (from before ids) is no person."""
@@ -680,7 +653,7 @@ def queue(library):
     """
     conn = _reading(library)
     try:
-        stamp = _queue_stamp(conn)
+        stamp = _decided_stamp(conn)
         unmatched_rows = faces.identify_candidates(conn)
         matched_by_photo = faces.names_by_photo(conn)
         excluded_count = faces.count_excluded(conn)
@@ -842,19 +815,11 @@ def grid(library, name, named, on_progress=None):
     # Every named face by person, the matrix in their order, as kept with the matrix (tagpup.core.clustering.FaceRows).
     by_person, grouped = known.by_person
 
-    def reference_faces(person_keys):
-        """Every face already named as this person (or any of the people a shared name is); None when nobody has been named
-        yet -- the ordinary case for somebody being identified for the first time, and
-        the reason this cannot simply replace the keyword queue."""
-        if known_matrix is None or not person_keys:
-            return None
-        rows = [i for i, found in enumerate(known_people) if found.id in person_keys]
-        return known_matrix[rows] if rows else None
-
-    def suggest_for_all(centroids):
+    def suggest_for_all(centroids, where=None):
         """Who does each of these groups most resemble? Scored against the best single
         named face, matching the diagnostics panel exactly, so the badge on a card and
-        the number in the panel cannot disagree.
+        the number in the panel cannot disagree: of the years around the face's own and never of its own photo, for a lone
+        face (`where`: its (photo id, year) each); a group of faces is of many photos and years, and is compared with all.
 
         Answered for every group in one pass. The per-group version ran a (35,758 x
         512) matrix against one vector at a time, once per cluster: on this library
@@ -873,7 +838,9 @@ def grid(library, name, named, on_progress=None):
         for start in range(0, len(block), chunk):
             stop = min(start + chunk, len(block))
             # Each group against each person's closest named face: its best person, the likeness and the margin over the next.
-            columns, scores, margins = face_rules.best_of(by_person.table(np.dot(block[start:stop], grouped.T), grouped=True))
+            asked = (None, None) if where is None else ([year for _photo, year in where[start:stop]],
+                                                       [photo for photo, _year in where[start:stop]])
+            columns, scores, margins = face_rules.best_of(known.likeness(block[start:stop], *asked))
             for offset in range(stop - start):
                 i = start + offset
                 if not usable[i]:
@@ -975,33 +942,56 @@ def grid(library, name, named, on_progress=None):
     # UNCLUSTERED_LIMIT. The person being sought is needed before the cap rather than
     # after it: ranking has to see every candidate to choose the strongest 500.
     unclustered_total = len(noise_indices)
-    seeking = reference_faces(seeking_keys)
+    sought = set(seeking_keys)
+    sought_columns = [column for column, person in enumerate(by_person.keys) if person in sought]
+    of_sought = {}   # a face's (likeness, margin) to the person sought, by its index in embs
+
+    def against_sought(indexes):
+        """Each face's likeness to the person sought and its margin over everyone else named, as the card shows them: the
+        sought columns of the one gallery's table (FaceRows.likeness, the years around the face's own, never its own
+        photo), every face against everyone in one product a block (tagpup.core.clustering.margins)."""
+        wanted = [i for i in indexes if i not in of_sought]
+        for start in range(0, len(wanted), 512):
+            block = wanted[start:start + 512]
+            table = known.likeness(embs[block], [valid_rows[i][9] for i in block], [valid_rows[i][8] for i in block])
+            alike = np.max(table[:, sought_columns], axis=1)   # a name two people share: the nearer
+            ahead = np.nanmax(face_rules.margins(table)[:, sought_columns], axis=1)
+            for i, likeness, margin in zip(block, alike.tolist(), ahead.tolist()):
+                # None to compare with (each of theirs on its own photo): 0, as a face with nobody named.
+                of_sought[i] = (round(float(likeness), 3) if np.isfinite(likeness) else 0.0, margin)
+        return [of_sought[i][0] for i in indexes]
+
+    def against_anyone(indexes):
+        """Each face's likeness to the person it most resembles, by the same table (the years around its own, never its
+        own photo): what a bucket's card shows as `suggested_similarity`. -inf where nobody is left to compare."""
+        found = []
+        for start in range(0, len(indexes), 512):
+            block = indexes[start:start + 512]
+            table = known.likeness(embs[block], [valid_rows[i][9] for i in block], [valid_rows[i][8] for i in block])
+            found.extend(np.max(np.where(np.isfinite(table), table, -np.inf), axis=1).tolist())
+        return found
 
     # Rank the whole set, then take the top of it. This used to slice the first 500
     # off an unordered list and sort those, so with 4,739 unclustered faces the 500 on
     # screen were an arbitrary sample that happened to be sorted -- the strongest
     # matches in the other 4,239 were never shown, and no amount of clearing the
-    # queue reached them because the next pass sliced the same way. Scoring every
-    # face first costs one matrix multiply against the named faces, which is cheaper
-    # than building 4,739 cards and throwing most away.
+    # queue reached them because the next pass sliced the same way. A person sought: by the likeness the card then shows
+    # and sorts by, so the 500 chosen are the 500 it would rank first (it was a raw maximum over every face of theirs, any
+    # year and the face's own photo included, which let a face like their child face take an adult face's slot). Nobody
+    # sought: by its likeness to the person it most resembles, as the card's suggested_similarity gives it.
     report("ranking", 0.0,
            "Ranking %s faces that grouped with nothing" % format(len(noise_indices), ","))
     ranked = list(noise_indices)
-    if known_matrix is not None and len(ranked):
-        block = embs[ranked]                          # (n, dim), already unit
-        order = np.argsort(-np.max(np.dot(block, known_matrix.T), axis=1))
-        ranked = [ranked[i] for i in order]
-    if seeking is not None and len(ranked):
-        block = embs[ranked]
-        order = np.argsort(-np.max(np.dot(block, seeking.T), axis=1))
-        ranked = [ranked[i] for i in order]
+    if len(ranked) and (sought_columns or known_matrix is not None):
+        score = np.asarray(against_sought(ranked) if sought_columns else against_anyone(ranked))
+        ranked = [ranked[i] for i in np.argsort(-score, kind="stable")]
 
     report("building", 0.0, "Building the grid")
 
     # Each unclustered face is its own group of one, so its centroid is itself.
     shown_unclustered = ranked[:UNCLUSTERED_LIMIT]
     lone_suggestions = suggest_for_all(
-        [embs[i] for i in shown_unclustered]) if shown_unclustered else []
+        [embs[i] for i in shown_unclustered], [valid_rows[i][8:10] for i in shown_unclustered]) if shown_unclustered else []
     for position, global_idx in enumerate(shown_unclustered):
         cards.append(card(valid_rows[global_idx], 0.0, -1, "Unclustered",
                           lone_suggestions[position], global_idx))
@@ -1012,22 +1002,13 @@ def grid(library, name, named, on_progress=None):
     # candidates came back in no useful order. Ranked, not filtered: two candidates
     # can both be genuinely this person in different photos (measured here: 0.826 and
     # 0.822 for one), so a cutoff would discard a real match to tidy the list.
-    if seeking is not None:
-        # The band says how sure a card is the person: by its likeness to them and its margin over everyone else named,
-        # every card against everyone in one product a block (tagpup.core.clustering.margins).
-        sought = set(seeking_keys)
-        ahead = []
-        for start in range(0, len(cards), 512):
-            indexes = [face["_emb_idx"] for face in cards[start:start + 512]]
-            table = by_person.table(np.dot(embs[indexes], grouped.T), grouped=True)
-            margins = face_rules.margins(table)[:, [column for column, person in enumerate(by_person.keys) if person in sought]]
-            ahead += np.nanmax(margins, axis=1).tolist()   # a name two people share: the margin of the nearer
-        for face, margin in zip(cards, ahead):
-            # Against the best of this person's faces, not their average: a candidate
-            # matching any one of them well is a candidate worth looking at, and the
-            # panel scores it the same way.
-            face["person_similarity"] = round(
-                float(np.max(np.dot(seeking, embs[face.pop("_emb_idx")]))), 3)
+    if sought_columns:
+        # The band says how sure a card is the person: by its likeness to them and its margin over everyone else named.
+        # Against the best of this person's faces of the years around the face's own, never one of its own photo, as the
+        # boxes and the panel score it (FaceRows.likeness): it was a raw maximum over every one of their faces.
+        against_sought([face["_emb_idx"] for face in cards])
+        for face in cards:
+            face["person_similarity"], margin = of_sought[face.pop("_emb_idx")]
             face["band"] = cuts.band(face["person_similarity"], margin)
         cards.sort(key=lambda x: x["person_similarity"], reverse=True)
     else:

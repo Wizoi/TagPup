@@ -437,6 +437,7 @@ def propose_guesses(library, named, photo_path=None, folder=None):
     try:
         key = faces.model_key(conn)
         unnamed = faces.unnamed(conn, key, photo_path=photo_path, folder=folder)
+        eras = faces.eras_of(conn, [row[0] for row in unnamed])
     finally:
         conn.close()
     if not unnamed:
@@ -444,7 +445,7 @@ def propose_guesses(library, named, photo_path=None, folder=None):
     known = clustering.FaceRows.of(named()).under(key)
     if known[2] is None:
         return len(unnamed), {}
-    return len(unnamed), _closest_named(unnamed, known, clustering.cuts_of(key))
+    return len(unnamed), _closest_named(unnamed, known, clustering.cuts_of(key), eras)
 
 
 def decide_guesses(conn, proposed):
@@ -496,9 +497,10 @@ def _write_guesses(conn, proposed):
 COMPARE_BLOCK = 512
 
 
-def _closest_named(unnamed, named, cuts):
+def _closest_named(unnamed, named, cuts, eras):
     """{photo: [(face_id, person)]} for each of `unnamed` (id, embedding, photo) whose closest
-    named face it may be named after unasked (`cuts`, the face model's: clustering.Cuts). Compared a block at a time: one product per
+    named face of the years around its own, never one of its own photo (`eras`: faces.eras_of; FaceRows.likeness), it may
+    be named after unasked (`cuts`, the face model's: clustering.Cuts). Compared a block at a time: one product per
     face made Re-examine on a folder of 2,600 photos and 9,400 unnamed faces, against
     36,000 named ones, take 32 to 47 seconds; a block at a time, 2 to 5. A face whose
     embedding is not the matrix's width is compared with nobody, where it failed the
@@ -507,15 +509,17 @@ def _closest_named(unnamed, named, cuts):
     width = named[2].shape[1]
     usable = [(face_id, blob, face_photo) for face_id, blob, face_photo in unnamed
               if blob and len(blob) == width * 4]
-    by_person, grouped = named.by_person   # made once for the matrix (clustering.FaceRows)
+    by_person = named.by_person[0]   # made once for the matrix (clustering.FaceRows)
     proposed = {}
     for start in range(0, len(usable), COMPARE_BLOCK):
         block = usable[start:start + COMPARE_BLOCK]
         vectors = np.stack([np.frombuffer(blob, dtype=np.float32) for _fid, blob, _photo in block])
+        where = [eras.get(face_id, (None, None)) for face_id, _blob, _photo in block]
         # A row per unnamed face: the closest named face is found along a row, in memory
         # order. Down a column of the transposed product the argmax alone took 2.6 s.
         # Each face against each person's closest named face, and its best person's likeness and margin over the next.
-        columns, likenesses, margins = clustering.best_of(by_person.table(vectors @ grouped.T, grouped=True))
+        columns, likenesses, margins = clustering.best_of(named.likeness(
+            vectors, [year for _photo, year in where], [photo for photo, _year in where]))
         for row, (face_id, _blob, face_photo) in enumerate(block):
             # As alike, and as far ahead of the next person, as naming a face with no one looking allows
             # (tagpup.core.clustering.Cuts).
@@ -553,6 +557,7 @@ def panel(library, photo_path, named):
         if not rows:
             return {"faces": [], "total": 0, "unmatched": 0}
         everyone = person_ids.Directory.read(conn)
+        eras = faces.eras_of(conn, [row[0] for row in rows])   # where and when, for the years around it (FaceRows.likeness)
     finally:
         conn.close()
     cuts, known = clustering.cuts_of(key), None
@@ -568,7 +573,8 @@ def panel(library, photo_path, named):
         if emb and name is None and not excluded:
             if known is None:   # read only when a face needs it, and only of the vectors' model
                 known = clustering.FaceRows.of(named()).under(key)
-            for suggested, alike, margin in identify.nearest_people(known, np.frombuffer(emb, dtype=np.float32), face_id, 1):
+            for suggested, alike, margin in identify.nearest_people(known, np.frombuffer(emb, dtype=np.float32), face_id, 1,
+                                                                    eras.get(face_id, (None, None))):
                 if cuts.is_offered(alike, margin):
                     suggestion, similarity = suggested.name, round(alike, 4)
                 else:
@@ -733,24 +739,3 @@ def named_counts(library, folder=None):
     finally:
         conn.close()
     return {"named": named, "unnamed": unnamed}
-
-
-def known_faces(db_path, key):
-    """Every named face that is not excluded, its vector under face model `key` (a Suggest run's, which its faces are
-    compared by), as tagpup.core.clustering.KnownFaces: what a
-    face is compared with to say who it is, KEYED BY PERSON (the node's id: two people called alike are two), `labels` holding
-    each one's Ref. It was each person's mean face,
-    with no years (docs/findings.md, #71).
-
-    Reads only the named faces, and of each photo only its Date Taken fields. Reading
-    every face and its crop is 225,000 rows and ten seconds on a cold cache, and the
-    suggester did it twice for every photo.
-    """
-    conn = db.connect(db_path, timeout=30.0)
-    try:
-        rows = faces.named_for_known(conn, key)
-    finally:
-        conn.close()
-    return clustering.KnownFaces.of(
-        (person.id, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path, person)
-        for person, emb_bytes, photo_path, year in rows)

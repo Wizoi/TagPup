@@ -128,7 +128,7 @@ def photo_year(raw_metadata, path=None):
 def record_year(meta):
     """The year a photo was taken, from a record of it: the record's "year", as the
     library records it (photos.year) and the reader gives it; else, for a record without
-    one or a raw_metadata dict itself, photo_year. What the suggester's time decay and
+    one, photo_year of its raw_metadata (every record carries one) and path. What the suggester's time decay and
     clustering's years go by.
 
     A number or None, whatever the record's shape: the library gives its year as a
@@ -140,4 +140,4 @@ def record_year(meta):
             return year
         text = str(year).strip() if year is not None else ""
         return int(text) if text.isdigit() else None
-    return photo_year(meta.get("raw_metadata", meta), meta.get("path"))
+    return photo_year(meta.get("raw_metadata"), meta.get("path"))

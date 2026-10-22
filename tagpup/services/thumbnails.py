@@ -226,7 +226,7 @@ def ids_of(library, photo_paths=(), folder=None):
     except Exception:
         return []
     try:
-        found = list(store_photos.ids_at(conn, photo_paths)) if photo_paths else []
+        found = store_roots.photo_ids_at(conn, photo_paths) if photo_paths else []
         if folder:
             found += store_photos.ids_under(conn, folder)
         return found

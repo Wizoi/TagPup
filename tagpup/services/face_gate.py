@@ -16,6 +16,8 @@ opened read-only (db.readonly_uri), and nothing said names a person, a photo or 
 By year (phase 4a's gate): how often each model's best match is right by the years between a named face and the face it
 was matched with (by_gap), on every face and at the model's own naming cuts; for both models of the gate, or for the library's own model
 alone (read_alone: a library the pass has not reached, photo_index). A year outside the era is no year (core.dates.era_year).
+Since phase 4a's one gallery (#1737) every match is made as the app makes it, of the person's faces of the years around
+the face's own (clustering.FacesByPerson.table) where the face has a year, of all years where it has none.
 """
 import json
 
@@ -56,7 +58,8 @@ def _matched(named, column, people, folders, years):
     """(the unit vectors of `named`'s `column`, what matching them against each other held out by folder found: "right",
     "reachable", "likeness", "margin" and "gap", the years to the face each was matched with, NaN undated)."""
     matrix = _matrix([row[column] for row in named])
-    best, likeness, margin, reachable, chosen = holdout.matched_against(matrix, folders, matrix, people, folders, own=people)
+    best, likeness, margin, reachable, chosen = holdout.matched_against(matrix, folders, matrix, people, folders, own=people,
+                                                                        years=years, gallery_years=years)
     return matrix, {"right": best == people, "reachable": reachable, "likeness": likeness, "margin": margin,
                     "gap": holdout.year_gap(years, years, chosen)}
 
@@ -98,7 +101,9 @@ def read(db_path, old=OLD, new=NEW):
         found.update(short=short, unnamed_likeness=np.empty(0), unnamed_margin=np.empty(0))
         if unnamed:
             _best, found["unnamed_likeness"], found["unnamed_margin"], _seen, _chosen = holdout.matched_against(
-                _matrix([row[column] for row in unnamed]), unnamed_photos, matrix, people, photos)
+                _matrix([row[column] for row in unnamed]), unnamed_photos, matrix, people, photos,
+                years=np.array([np.nan if row[5] is None else row[5] for row in unnamed], dtype=np.float64),
+                gallery_years=years)
         models[key] = found
     return {"pass": counts, "models": models}
 

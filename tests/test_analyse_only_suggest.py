@@ -431,7 +431,7 @@ class AFailureIsSaidAndLeavesNothingHalfRun(Base):
         """The suggester read who is known inside a catch-all and, when the read failed, knew nobody: every photo was
         offered no person and the run said "The library has no named faces yet". A read that fails fails the run."""
         import sqlite3
-        with mock.patch("tagpup.services.faces.known_faces", side_effect=sqlite3.OperationalError("database is locked")):
+        with mock.patch("tagpup.services.identify.named_faces", side_effect=sqlite3.OperationalError("database is locked")):
             self.start(self.cup)
         found = self.status(self.cup)
         self.assertEqual("error", found["status"], found)

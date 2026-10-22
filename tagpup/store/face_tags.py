@@ -32,7 +32,7 @@ makes it a reference for later guesses (tagpup.services.identify.decided_faces, 
   naming unasked allows (clustering.Cuts.names_unasked), that person is one the photo's keywords
   name and no face of it carries, no other face of the photo is proposed for them, and the face is the margin of
   naming unasked more like that person than the next of the people decided but those the photo's other faces carry
-  (KnownFaces.best's skip, as cluster-faces' pairing asks it; owner, 2026-10-17). A face two people reach, or none, or one between two people, is left for Identify Faces. The photo
+  (clustering.best's skip, as cluster-faces' pairing asks it; owner, 2026-10-17). A face two people reach, or none, or one between two people, is left for Identify Faces. The photo
   with one face and one person is not asked a margin: the tag says whose the face is, and the likeness only that
   it is not the other person in frame (#833).
 
@@ -47,7 +47,7 @@ import math
 
 import numpy as np
 
-from tagpup.core import clustering
+from tagpup.core import clustering, dates
 from tagpup.core.vocabulary import Ref
 from tagpup.store import db, faces, removals
 from tagpup.store import roots as store_roots
@@ -189,18 +189,17 @@ def _to_be_named(faces_here):
 def _decided_of(conn, person, key):
     """The unit vectors under the face model `key` of the faces a person decided of `person` (a Ref with the node's id): named by
     hand, or on a photo whose keywords name them (the references identify.decided_faces counts), none excluded. By the node's
-    index (idx_faces_tag), one person at a time."""
+    index (idx_faces_tag), one person at a time: as clustering.FaceRows of the one person, so the face is compared with
+    their closest face of the years around its own, never one of its own photo (FaceRows.likeness), as every other
+    gallery of who a face looks like is (#1737)."""
     rows = conn.execute(
-        "SELECT v.vector FROM faces f" + faces.WITH_VECTOR + " WHERE f.tag_id = ? AND f.excluded = 0"
+        "SELECT f.id, v.vector, f.photo_id, p.taken FROM faces f" + faces.PHOTO + faces.WITH_VECTOR
+        + " WHERE f.tag_id = ? AND f.excluded = 0"
         " AND (f.name_source = 'manual' OR EXISTS (SELECT 1 FROM photo_people pp WHERE pp.photo_id = f.photo_id"
         " AND pp.source = 'keyword' AND pp.tag_id = f.tag_id))", (key, person.id)).fetchall()
-    vectors = []
-    for (blob,) in rows:
-        vec = np.frombuffer(blob, dtype=np.float32)
-        norm = np.linalg.norm(vec)
-        if norm:
-            vectors.append(vec / norm)
-    return np.stack(vectors) if vectors else None
+    found = clustering.FaceRows.made(((face_id, person, blob, photo_id, dates.era_year(taken))
+                                      for face_id, blob, photo_id, taken in rows), key)
+    return found if found[2] is not None else None
 
 
 def _photos_to_be_named(conn, person):
@@ -231,6 +230,7 @@ def _gated(conn, singles, result, cache, key, cuts, on_step=None):
     to be named (#839). The decided faces are read once per person, kept in `cache` ({the node's id: vectors or None},
     a batch's: #841), not once per photo."""
     vectors = _embeddings(conn, [face_id for _photo, face_id, _person, _source in singles], key)
+    eras = faces.eras_of(conn, list(vectors))
     for number, (photo_id, face_id, person, source) in enumerate(singles):
         if on_step is not None and number % STEP == 0:
             on_step("checking", number, len(singles))
@@ -246,13 +246,14 @@ def _gated(conn, singles, result, cache, key, cuts, on_step=None):
             result.counts["no_decided_face"] += 1
         else:
             blob = vectors.get(face_id)
-            vec = np.frombuffer(blob, dtype=np.float32) if blob and len(blob) == decided.shape[1] * 4 else None
+            vec = np.frombuffer(blob, dtype=np.float32) if blob and len(blob) == decided[2].shape[1] * 4 else None
             norm = np.linalg.norm(vec) if vec is not None else 0
             if not norm:
                 result.counts["unreadable_face"] += 1
                 result.counts["left"] += 1
                 continue
-            best = float((decided @ (vec / norm)).max())
+            photo, year = eras.get(face_id, (None, None))
+            best = float(decided.likeness((vec / norm)[None, :], [year], [photo])[0, 0])
             # One face, one person: the tag says whose the face is, so no margin over anyone else is asked (#833).
             if not cuts.is_offered(best, math.inf):
                 result.counts["not_like_them"] += 1
@@ -271,19 +272,20 @@ STEP = 50
 BLOCK = 512
 
 
-def _reached(vectors, references, key, cuts, on_step=None):
+def _reached(vectors, references, key, cuts, on_step, eras):
     """({face id: ({the keys of the people some decided face of whom it is alike enough to name unasked}, its row: its
     likeness to each person)}, {person's key: their column of the rows}) for the faces of `vectors` {face id: embedding bytes}
     that can be compared and reach someone: compared a block at a time, never a face at a time (a library's faces to place
     are tens of thousands). A person's key is the id of their node; a face's likeness to a person is to their closest
-    decided face (clustering.FacesByPerson). `references` are compared only when read under `key`, the vectors' face
+    decided face of the years around its own, never one of its own photo (`eras`: faces.eras_of;
+    clustering.FaceRows.likeness). `references` are compared only when read under `key`, the vectors' face
     model (clustering.FaceRows.under): they are read on another connection, after the plan's."""
     references = clustering.FaceRows.of(references).under(key)
     _ids, people, matrix = references
     if matrix is None or not len(people):
         return {}, {}
     width = matrix.shape[1]
-    by_person, grouped = references.by_person   # made once for the matrix (clustering.FaceRows)
+    by_person = references.by_person[0]   # made once for the matrix (clustering.FaceRows)
     usable = [(face_id, blob) for face_id, blob in vectors.items() if blob and len(blob) == width * 4]
     reached = {}
     for start in range(0, len(usable), BLOCK):
@@ -293,7 +295,9 @@ def _reached(vectors, references, key, cuts, on_step=None):
         stacked = np.stack([np.frombuffer(blob, dtype=np.float32) for _face, blob in block])
         norms = np.linalg.norm(stacked, axis=1)
         stacked = stacked / np.where(norms == 0, 1, norms)[:, None]
-        table, order = by_person.table(stacked @ grouped.T, grouped=True), by_person.keys
+        where = [eras.get(face_id, (None, None)) for face_id, _blob in block]
+        table = references.likeness(stacked, [year for _photo, year in where], [photo for photo, _year in where])
+        order = by_person.keys
         close = cuts.might_name_unasked(table, 0.0)
         for row in np.nonzero(close.any(axis=1) & (norms > 0))[0].tolist():
             reached[block[row][0]] = ({order[column] for column in np.nonzero(close[row])[0].tolist()}, table[row])
@@ -311,7 +315,7 @@ def _matched(unnamed, free, held, reached, columns, cuts):
         if face_id not in reached:
             continue
         people, row = reached[face_id]
-        best, likeness, margin = clustering.KnownFaces.best(row, columns, skip=held)
+        best, likeness, margin = clustering.best(row, columns, skip=held)
         if len(people) == 1 and best in wanted and cuts.names_unasked(likeness, margin):
             proposed[best].append(face_id)
     return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
@@ -381,7 +385,7 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
         if on_step is not None:
             on_step("comparing", 0, len(vectors))
         references = references() if callable(references) else references
-        reached, columns = _reached(vectors, references, key, cuts, on_step)
+        reached, columns = _reached(vectors, references, key, cuts, on_step, faces.eras_of(conn, list(vectors)))
         if on_step is not None:
             on_step("deciding", 0, len(open_ones))
         for photo_id, unnamed, free, held in open_ones:
@@ -392,20 +396,23 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
 
 
 def _remember(conn, cache, choices, done):
-    """Add the vectors of the faces just named to the decided faces a batch holds of their people: they are
-    keyword-confirmed now, and the next photo of the batch is compared with them as a save after it would."""
+    """Add the faces just named to the decided faces a batch holds of their people (`cache`, {the node's id: FaceRows or
+    None}, `_decided_of`'s): they are keyword-confirmed now, and the next photo of the batch is compared with them as a
+    save after it would. Each person's rows are made again with the new faces' ids, vectors, photos and years: the one
+    gallery's rows, not read again from the library. One model key for the batch: it is read in the batch's transaction."""
     named = {choice.face_id: choice.person for choice in choices if choice.face_id in set(done)}
-    for face_id, blob in _embeddings(conn, list(named), faces.model_key(conn)).items():
+    key = faces.model_key(conn)
+    vectors = _embeddings(conn, list(named), key)
+    eras = faces.eras_of(conn, list(vectors))
+    added = collections.defaultdict(list)
+    for face_id, blob in vectors.items():
         person = named[face_id]
-        if person.id not in cache or not blob:
-            continue
-        vec = np.frombuffer(blob, dtype=np.float32)
-        norm = np.linalg.norm(vec)
-        if not norm:
-            continue
-        row = (vec / norm)[None, :]
-        known = cache[person.id]
-        cache[person.id] = row if known is None or known.shape[1] != row.shape[1] else np.vstack([known, row])
+        if person.id in cache:
+            added[person.id].append((face_id, person, blob) + eras[face_id])
+    for person_id, new in added.items():
+        known = cache[person_id]
+        rows = [] if known is None else list(zip(known[0], known[1], known[2], known.photos, known.years.tolist()))
+        cache[person_id] = clustering.FaceRows.made(rows + new, key)
 
 
 def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
@@ -431,15 +438,6 @@ def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
     return done
 
 
-def photo_ids_of(conn, photo_paths):
-    """The ids of the rows of the photos at `photo_paths`, however they are spelled."""
-    ids = []
-    for photo_path in photo_paths:
-        where, params = store_roots.sql_equals(conn, "path", photo_path)
-        ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
-    return ids
-
-
 def name_paths(conn, photo_paths, references=None):
     """name_photos, for the photos at `photo_paths`."""
-    return name_photos(conn, photo_ids_of(conn, photo_paths), references)
+    return name_photos(conn, store_roots.photo_ids_at(conn, photo_paths), references)

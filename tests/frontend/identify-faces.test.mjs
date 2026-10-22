@@ -799,6 +799,17 @@ describe("ranking a person's candidates against that person", () => {
     assert.equal(document.querySelector(".face-resemblance"), null);
   });
 
+  test("no badge on a face with none of theirs to compare", async (t) => {
+    // Each of their faces is on the face's own photo (or of other years): the server sends 0, nothing compared, and a
+    // badge of 0% would read as a face shown to be someone else.
+    const { document, window } = await openPerson(t, [candidate(1035, 0.31), candidate(1036, 0.0)]);
+    document.getElementById("tab-low-conf").click();
+    await new Promise((r) => window.setTimeout(r, 30));
+    assert.equal(cards(document).length, 2);
+    const badges = [...document.querySelectorAll(".face-resemblance")].map(b => b.textContent);
+    assert.deepEqual(badges, ["31%"]);
+  });
+
   test("with nobody to rank against the old banding still applies", async (t) => {
     const { document } = await openPerson(t, [face(1040, 0.95, 2), face(1041, 0.94, 2)]);
     assert.match(document.getElementById("tab-matches").textContent, /Likely \(2\)/);

@@ -26,6 +26,7 @@ from unittest import mock
 
 from tagpup.core import clustering
 from tagpup.services import faces as face_records
+from tagpup.services import identify
 from tagpup.services.suggester import TagSuggester, extract_path_hints
 from tagpup.store.taxonomy import TagTaxonomy
 
@@ -86,10 +87,10 @@ class StubFaceProcessor(stand_in_models.Faces):
 
 
 def photo_meta(path, tags=(), year=None, people=()):
-    meta = {"path": path, "tags": list(tags), "people": list(people)}
-    if year is not None:
-        meta["raw_metadata"] = {"EXIF:DateTimeOriginal": f"{year}:06:15 12:00:00"}
-    return meta
+    """A photo's record as the page builds it (tagpup.services.photos.page_record): its raw metadata always, a Date Taken
+    in it when `year` is given."""
+    raw = {} if year is None else {"EXIF:DateTimeOriginal": f"{year}:06:15 12:00:00"}
+    return {"path": path, "tags": list(tags), "people": list(people), "raw_metadata": raw}
 
 
 class SuggesterTestBase(unittest.TestCase):
@@ -113,7 +114,8 @@ class SuggesterTestBase(unittest.TestCase):
         taxonomy.paths = set(taxonomy_paths)
         index = StubIndex(neighbors=list(neighbors))
         # A library with no named faces, that keeps no face: the stubs are no library to read or write.
-        for patcher in (mock.patch.object(face_records, "known_faces", return_value=clustering.KnownFaces()),
+        nobody = (lambda library, key=None: (None, clustering.FaceRows([], [], None, key)))
+        for patcher in (mock.patch.object(identify, "named_faces", side_effect=nobody),
                         mock.patch.object(face_records, "record_detected", return_value=0),
                         mock.patch.object(TagSuggester, "_tags_by_id", return_value={})):
             patcher.start()

@@ -24,7 +24,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Every SQL statement | `tagpup/store/` | `tests/test_layers.py` |
 | Schema and migrations (each declares additive or destructive) | `tagpup/store/schema.py` | `tests/test_migrations.py`, `tests/test_schema.py` |
 | Bulk edits and migrations recorded, rehearsed, undoable | `tagpup/store/journal.py`, `tagpup/store/file_journal.py`, `tagpup/services/journal.py`, `tagpup/services/file_changes.py` | `tests/test_journal*.py`, `tests/test_file_journal.py` |
-| A photo path's spelling, comparison and SQL form; the root-relative form | `tagpup/core/paths.py`, `tagpup/store/roots.py` | `tests/test_rules_have_one_owner.py` |
+| A photo path's spelling, comparison and SQL form; the root-relative form; a photo's row id by its path (`store.roots.photo_ids_at`) | `tagpup/core/paths.py`, `tagpup/store/roots.py` | `tests/test_rules_have_one_owner.py` |
 | Tags, people, captions taken apart; the person tag | `tagpup/core/vocabulary.py`, `tagpup/store/taxonomy.py` | `tests/test_vocabulary.py` |
 | A person by the id of their tag-tree node | `tagpup/store/person_ids.py` | `tests/test_person_ids.py` |
 | ExifTool | `tagpup/files/exiftool_session.py` | `tests/test_rules_have_one_owner.py` |
@@ -35,7 +35,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | A library's settings; where the libraries are | `tagpup/services/settings.py`; `tagpup/config.py` | `tests/test_config_single_owner.py` |
 | What may be set (one rule per kind of input) | `tagpup/core/validation.py`, `web/common/validate.js` | `tests/test_validation.py` |
 | Derived tables (`photo_tags`, `folders`, `photo_folder`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
-| Who is who (clustering, a face's name looking wrong) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_rules_have_one_owner.py`, `tests/test_face_values_have_one_owner.py` |
+| Who is who (clustering, a face's name looking wrong; the one gallery of who a face looks like, `clustering.FaceRows.likeness` / `likeness_of`, each face's photo and year from `store.faces.eras_of`) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_rules_have_one_owner.py`, `tests/test_face_values_have_one_owner.py` |
 | Keeping a library in step with its folders | `tagpup/services/sync.py`, `tagpup/jobs/watching.py` | `tests/test_sync.py` |
 | A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time; a folder renamed and re-saved is reported missing and renamed back by hand) | `tests/test_sync.py` |
 | Roots (where a library's folders are, per machine) | `tagpup/services/roots*.py`, `tagpup/store/roots_check.py`, `tagpup/config.py` | `tests/test_roots*.py` |

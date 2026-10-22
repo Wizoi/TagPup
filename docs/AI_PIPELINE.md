@@ -546,6 +546,24 @@ takes no turn of the card.
 - **4a Time-nearest matching.** A new face is matched against the time-nearest named faces by Date Taken, not one
   centroid, and needs a margin over the second-best person (2b, recalibrated for the new model). This is the answer
   to children changing across years, independent of model.
+  As built (2026-10-22, cut 1 then cut 2, #1737): one gallery, `clustering.FaceRows` (the named or decided faces, a
+  row a face with its photo's id and year), answers who a face looks like for every matcher: the strip, the boxes,
+  Identify's cards and grid, automatch, Name faces from tags, Suggest, the gate and cluster-faces
+  (`FaceRows.likeness`, `likeness_of`); `KnownFaces`, a second gallery of the same faces, is gone. A face is compared
+  with a person's closest face of the years around its own, never itself nor a face of its own photo, and needs the
+  margin over the next person (2b). Owner decisions (2026-10-22): the age-based window is kept (`in_era`: one to
+  five years by the person's age then, widened to five faces); a face's year is its photo's Date Taken only
+  (`dates.era_year`, the era 1950 to the current year), so 1,124 named faces of photo_index dated by a folder name
+  are compared across every year now; the own-photo rule holds everywhere, by design. photo_index switched to
+  scrfd-adaface after the pass (change 3244).
+  Measured on copies (2026-10-22). The gate on photo_index's AdaFace vectors, the old gallery against the new: names
+  at the cuts 8,604 -> 9,614, wrong 78 -> 93, precision at the cut 0.9909 -> 0.9903; faces matched across 6 to 10
+  years 955 -> 134, across 11 or more 392 -> 195. A face's nearest person changed for named faces 0 of 1,637
+  (kr-track), 2 of 1,212 (renton_parkrun), 591 of 53,387 (photo_index); for unnamed faces 216 of 3,631, 35 of 2,049
+  and 1,864 of a sample of 5,000. Every new query's plan is indexed. cluster-faces on a copy of photo_index (AdaFace,
+  218,265 faces, 55,298 named in play before), the trunk's code against the branch's: 176.9 s against 187.8 s; faces
+  named after 61,280 against 61,517 (newly named 8,092 / 8,320, renamed 897 / 915, unnamed 2,110 / 2,101); face by
+  face, 50 named by the old code alone, 287 by the new alone, 3 given another person.
 - **4b Incremental assignment.** A folder that arrives has its faces matched against known faces by neighbour query and
   joins a person within threshold, or waits; a full re-cluster is the exception, not the response to every event.
 
