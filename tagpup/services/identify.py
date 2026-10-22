@@ -1026,18 +1026,19 @@ def grid(library, name, named, on_progress=None):
         # The band says how sure a card is the person: by its likeness to them and its margin over everyone else named,
         # every card against everyone in one product a block (tagpup.core.clustering.margins).
         sought = set(seeking_keys)
-        ahead = []
+        columns = [column for column, person in enumerate(by_person.keys) if person in sought]
+        alike, ahead = [], []
         for start in range(0, len(cards), 512):
             indexes = [face["_emb_idx"] for face in cards[start:start + 512]]
             table = known.likeness(embs[indexes], [valid_rows[i][9] for i in indexes], [valid_rows[i][8] for i in indexes])
-            margins = face_rules.margins(table)[:, [column for column, person in enumerate(by_person.keys) if person in sought]]
-            ahead += np.nanmax(margins, axis=1).tolist()   # a name two people share: the margin of the nearer
-        for face, margin in zip(cards, ahead):
-            # Against the best of this person's faces, not their average: a candidate
-            # matching any one of them well is a candidate worth looking at, and the
-            # panel scores it the same way.
-            face["person_similarity"] = round(
-                float(np.max(np.dot(seeking, embs[face.pop("_emb_idx")]))), 3)
+            alike += np.max(table[:, columns], axis=1).tolist()   # a name two people share: the nearer
+            ahead += np.nanmax(face_rules.margins(table)[:, columns], axis=1).tolist()
+        for face, likeness, margin in zip(cards, alike, ahead):
+            # Against the best of this person's faces of the years around the face's own, never one of its own photo, as
+            # the boxes and the panel score it (FaceRows.likeness): it was a raw maximum over every one of their faces.
+            # None to compare with (each of theirs on its own photo): 0, as a face with nobody named.
+            face.pop("_emb_idx")
+            face["person_similarity"] = round(float(likeness), 3) if np.isfinite(likeness) else 0.0
             face["band"] = cuts.band(face["person_similarity"], margin)
         cards.sort(key=lambda x: x["person_similarity"], reverse=True)
     else:

@@ -123,13 +123,17 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
         offered = [item["tag"] for item in found["suggested_tags"] if item.get("has_face_match")]
         return [tag.split("/")[-1] for tag in offered]
 
-    def identified(self, face_id, person):
-        """The name Identify's grid of `person` suggests for the face's card."""
+    def card(self, face_id, person):
+        """The face's card in Identify's grid of `person`."""
         tuner = web.create_app("tuner", startup=self.library)
         tuner.testing = True
         answer = tuner.test_client().get("/api/unmatched-faces/person-matches",
                                           query_string={"person_id": self.node(person)}).get_json()
-        return next(card["suggested_name"] for card in answer["faces"] if card["id"] == face_id)
+        return next(card for card in answer["faces"] if card["id"] == face_id)
+
+    def identified(self, face_id, person):
+        """The name Identify's grid of `person` suggests for the face's card."""
+        return self.card(face_id, person)["suggested_name"]
 
     def strip(self, photo_path, face_id):
         answer = self.client.get("/library/api/photo-faces", query_string={"path": photo_path}).get_json()
@@ -151,6 +155,12 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
                    "strip": [self.strip(photo, face)], "boxes": [self.boxes(face)], "from tags": self.from_tags(face)}
         self.assertEqual({where: [ODA] for where in answers}, answers,
                          "a face like Wren's child face was not the person of its own years everywhere")
+        # Identify's grid of Wren ranks and bands the face by how like Wren of 2020 it is, the number the boxes give.
+        listed = self.client.get("/library/api/face-matches", query_string={"id": face}).get_json()
+        card = self.card(face, WREN)
+        self.assertAlmostEqual(next(each["similarity"] for each in listed if each["name"] == WREN),
+                               card["person_similarity"], places=3)
+        self.assertIsNone(card["band"], "a face 0.09 like Wren of its years was shown in a band of Wren's")
 
     def test_a_photo_dated_only_by_its_folder_is_compared_with_every_year_by_suggest_and_identify(self):
         photo = self.photo("2020 Regatta/start_line.jpg", None, ["People/" + WREN, "People/" + ODA])
