@@ -72,9 +72,9 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
         made = []
         real = clustering.FacesByPerson.__init__
 
-        def grouping(self, people):
+        def grouping(self, people, years=None):
             made.append(len(people))
-            real(self, people)
+            real(self, people, years)
         with mock.patch.object(clustering.FacesByPerson, "__init__", grouping):
             for _ in range(3):
                 found = self.requests.get("/api/face-matches?id=%d" % self.unnamed)

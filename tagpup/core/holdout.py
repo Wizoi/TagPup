@@ -1,7 +1,8 @@
 """The named-face hold-out (docs/AI_PIPELINE.md, section 7, and phase 3's gate): each named face matched against the named
 faces of every OTHER group -- a photo, or stricter a folder (bursts and copies of one moment are in one folder) -- by the
-closest face of each person, as tagpup.core.clustering names a face (FacesByPerson, best_of, its margins), over all
-years (no window: the face each was matched with is said, so the year gap to it can be read, year_gap); and the precision
+closest face of each person, as tagpup.core.clustering names a face (FacesByPerson, best_of, its margins), of the years
+around its own where the years are given (the one gallery's window, #1737), else over all years (phase 0's curve); the
+face each was matched with is said, so the year gap to it can be read (year_gap); and the precision
 of the top person at each cut of its likeness and of its margin over the second-best person. Phase 0 read FaceNet's curve
 with it (scripts/measure_pipeline_holdouts.py); the gate reads both face models' curves on the same faces with it, and
 each one's precision by the year gap (tagpup.services.face_gate). Pure: unit vectors and integers in, counts out.
@@ -21,18 +22,20 @@ FINE_LIKENESS_CUTS = tuple(round(0.005 * i, 3) for i in range(201))
 FINE_MARGIN_CUTS = FINE_LIKENESS_CUTS
 
 
-def matched_against(queries, groups, gallery, people, gallery_groups, own=None, block=1024):
+def matched_against(queries, groups, gallery, people, gallery_groups, own=None, block=1024, years=None, gallery_years=None):
     """For each row of `queries` (unit vectors): (its best person among the `gallery`'s, that likeness, its margin over the
     second-best person, whether its own person had a face to compare, the gallery row of that person's face it was matched
     with -- their closest --, -1 for none), each person's likeness being their closest face of another group -- a query is
-    never compared with a face of its own group (`groups`, `gallery_groups`: an integer a row). The margin is the gates'
-    (clustering.margins), so the curve is read off the rule it sets. `people` is the gallery's person a row; `own`, the
-    queries' when they are named (else reachable is all False). A block of rows at a time."""
+    never compared with a face of its own group (`groups`, `gallery_groups`: an integer a row) -- of the years around the
+    query's own (`years`, `gallery_years`: a float a row, NaN undated; clustering.FacesByPerson.table: the one gallery's
+    window, the window worked out from the faces of the other groups), all years where either is not given. The margin is
+    the gates' (clustering.margins), so the curve is read off the rule it sets. `people` is the gallery's person a row;
+    `own`, the queries' when they are named (else reachable is all False). A block of rows at a time."""
     count = len(queries)
     best, first, margin = np.full(count, -1, dtype=np.int64), np.empty(count), np.empty(count)
     chosen = np.full(count, -1, dtype=np.int64)
     reachable = np.zeros(count, dtype=bool)
-    grouping = clustering.FacesByPerson(people)
+    grouping = clustering.FacesByPerson(people, gallery_years if years is not None else None)
     grouped, grouped_groups = grouping.grouped(gallery), grouping.grouped(gallery_groups)
     names = np.asarray(grouping.keys, dtype=np.int64)
     column_of = {name: column for column, name in enumerate(grouping.keys)}
@@ -40,10 +43,11 @@ def matched_against(queries, groups, gallery, people, gallery_groups, own=None, 
         rows = slice(start, start + block)
         likeness = queries[rows] @ grouped.T
         likeness[groups[rows][:, None] == grouped_groups[None, :]] = -np.inf
-        by_person = grouping.table(likeness, grouped=True)
+        asked = None if years is None else years[rows]
+        by_person = grouping.table(likeness, grouped=True, years=asked)
         columns, first[rows], margin[rows] = clustering.best_of(by_person)
         best[rows] = np.where(columns >= 0, names[columns] if len(names) else -1, -1)
-        chosen[rows] = grouping.closest(likeness, columns, grouped=True)
+        chosen[rows] = grouping.closest(likeness, columns, grouped=True, years=asked)
         if own is not None:
             mine = np.fromiter((column_of.get(person, -1) for person in own[rows].tolist()), dtype=np.intp)
             seen = by_person[np.arange(len(mine)), np.maximum(mine, 0)] if by_person.shape[1] else np.full(len(mine), -np.inf)

@@ -905,12 +905,12 @@ def identify_candidates(conn):
 
 
 def unnamed_for_matching(conn, key):
-    """(id, photo_path, box JSON, prob, mtime, embedding, year, people as JSON [[id, name]]) of every
-    nameless face still in play with a vector under `key` (WITH_VECTOR), for a person's Identify grid:
-    the faces the queue counts."""
-    return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year, " + PEOPLE_REFS_JSON + ""
-        " FROM faces f" + PHOTO + WITH_VECTOR + " WHERE f.name IS NULL AND f.excluded = 0", (key,)).fetchall(), 1)
+    """(id, photo_path, box JSON, prob, mtime, embedding, year, people as JSON [[id, name]], photo id, dates.era_year of the
+    photo's Date Taken) of every nameless face still in play with a vector under `key` (WITH_VECTOR), for a person's
+    Identify grid: the faces the queue counts. The last two are where and when, for who it looks like (FaceRows.likeness)."""
+    return [(*row[:-1], dates.era_year(row[-1])) for row in store_roots.natives(conn, conn.execute(
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, v.vector, p.year, " + PEOPLE_REFS_JSON + ", f.photo_id, p.taken"
+        " FROM faces f" + PHOTO + WITH_VECTOR + " WHERE f.name IS NULL AND f.excluded = 0", (key,)).fetchall(), 1)]
 
 
 def count_unnamed(conn):
@@ -966,21 +966,32 @@ def count_excluded(conn):
 
 
 def for_named_matrix(conn, key):
-    """(id, Ref, embedding) of every named face that has a vector under `key` and is not
-    excluded: what a face is compared against to say who it resembles."""
-    return [(face_id, Ref(tag_id, name), embedding) for face_id, tag_id, name, embedding in conn.execute(
-        "SELECT f.id, f.tag_id, f.name, v.vector FROM faces f" + WITH_VECTOR
-        + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (key,)).fetchall()]
+    """(id, Ref, embedding, photo id, dates.era_year of the photo's Date Taken) of every named face that has a vector
+    under `key` and is not excluded: what a face is compared against to say who it resembles (clustering.FaceRows)."""
+    return [(face_id, Ref(tag_id, name), embedding, photo_id, dates.era_year(taken))
+            for face_id, tag_id, name, embedding, photo_id, taken in conn.execute(
+                "SELECT f.id, f.tag_id, f.name, v.vector, f.photo_id, p.taken FROM faces f" + PHOTO + WITH_VECTOR
+                + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (key,)).fetchall()]
 
 
 def for_decided_matrix(conn, key):
-    """(id, Ref, embedding, name_source, photo_id) of every named face that has a vector under `key`
-    and is not excluded: the candidates for what automatch compares a face against. The
+    """(id, Ref, embedding, name_source, photo_id, dates.era_year of the photo's Date Taken) of every named face that has
+    a vector under `key` and is not excluded: the candidates for what automatch compares a face against. The
     caller keeps those a person decided (tagpup.services.identify.decided_faces)."""
-    return [(face_id, Ref(tag_id, name), embedding, source, photo_id)
-            for face_id, tag_id, name, embedding, source, photo_id in conn.execute(
-                "SELECT f.id, f.tag_id, f.name, v.vector, f.name_source, f.photo_id FROM faces f" + WITH_VECTOR
-                + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (key,)).fetchall()]
+    return [(face_id, Ref(tag_id, name), embedding, source, photo_id, dates.era_year(taken))
+            for face_id, tag_id, name, embedding, source, photo_id, taken in conn.execute(
+                "SELECT f.id, f.tag_id, f.name, v.vector, f.name_source, f.photo_id, p.taken FROM faces f" + PHOTO
+                + WITH_VECTOR + " WHERE f.tag_id IS NOT NULL AND f.excluded = 0", (key,)).fetchall()]
+
+
+def eras_of(conn, face_ids):
+    """{face id: (photo id, dates.era_year of the photo's Date Taken)} of `face_ids`: where and when each face asked who it
+    looks like was taken (clustering.FaceRows.likeness). One read a chunk, each face by its key, each photo by its id."""
+    found = {}
+    for chunk in _chunks(face_ids):
+        found.update((face_id, (photo_id, dates.era_year(taken))) for face_id, photo_id, taken in conn.execute(
+            "SELECT f.id, f.photo_id, p.taken FROM faces f" + PHOTO + " WHERE f." + _in(chunk), chunk))
+    return found
 
 
 def embedding_row(conn, face_id, key):
