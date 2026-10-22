@@ -107,7 +107,8 @@ class AFaceIsComparedWithTheClosestFaceOfItsYears(unittest.TestCase):
 
 #: Where a shipped file other than clustering.py may order faces by likeness, and why: Identify's grid ranks the faces that
 #: grouped with nothing before its cap, faces and not people: by the likeness its cards show to the person sought, or with
-#: nobody sought by their best likeness to anyone named, and asks no margin (tagpup.services.identify). One argsort.
+#: nobody sought by their best likeness to anyone named (the table's, as the card shows it), and asks no margin
+#: (tagpup.services.identify). One argsort.
 RANKS_FACES = {os.path.join("tagpup", "services", "identify.py"): 1}
 
 #: Any spelling of taking the top of a row: the numpy ones, and the Python ones a second margin could as well be written in.

@@ -961,6 +961,16 @@ def grid(library, name, named, on_progress=None):
                 of_sought[i] = (round(float(likeness), 3) if np.isfinite(likeness) else 0.0, margin)
         return [of_sought[i][0] for i in indexes]
 
+    def against_anyone(indexes):
+        """Each face's likeness to the person it most resembles, by the same table (the years around its own, never its
+        own photo): what a bucket's card shows as `suggested_similarity`. -inf where nobody is left to compare."""
+        found = []
+        for start in range(0, len(indexes), 512):
+            block = indexes[start:start + 512]
+            table = known.likeness(embs[block], [valid_rows[i][9] for i in block], [valid_rows[i][8] for i in block])
+            found.extend(np.max(np.where(np.isfinite(table), table, -np.inf), axis=1).tolist())
+        return found
+
     # Rank the whole set, then take the top of it. This used to slice the first 500
     # off an unordered list and sort those, so with 4,739 unclustered faces the 500 on
     # screen were an arbitrary sample that happened to be sorted -- the strongest
@@ -968,13 +978,12 @@ def grid(library, name, named, on_progress=None):
     # queue reached them because the next pass sliced the same way. A person sought: by the likeness the card then shows
     # and sorts by, so the 500 chosen are the 500 it would rank first (it was a raw maximum over every face of theirs, any
     # year and the face's own photo included, which let a face like their child face take an adult face's slot). Nobody
-    # sought: by the best likeness to any named face, one matrix multiply (RANKS_FACES).
+    # sought: by its likeness to the person it most resembles, as the card's suggested_similarity gives it.
     report("ranking", 0.0,
            "Ranking %s faces that grouped with nothing" % format(len(noise_indices), ","))
     ranked = list(noise_indices)
     if len(ranked) and (sought_columns or known_matrix is not None):
-        score = (np.asarray(against_sought(ranked)) if sought_columns
-                 else np.max(np.dot(embs[ranked], known_matrix.T), axis=1))
+        score = np.asarray(against_sought(ranked) if sought_columns else against_anyone(ranked))
         ranked = [ranked[i] for i in np.argsort(-score, kind="stable")]
 
     report("building", 0.0, "Building the grid")

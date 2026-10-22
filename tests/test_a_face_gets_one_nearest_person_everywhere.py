@@ -181,6 +181,22 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
         self.assertEqual([alike], shown, "the face past the cap was chosen by a rule the grid does not show")
         self.assertNotIn(child_like, shown)
 
+    def test_with_nobody_sought_the_faces_past_the_cap_are_chosen_by_the_likeness_the_grid_shows(self):
+        # Two unnamed faces of 2020 on photos naming nobody, room for one. The one at 10 degrees from Wren's child face is
+        # 0.98 like it (a raw maximum over every year) but 0.82 like Oda of 2020, the best of its years; the other is 0.94
+        # like Wren of 2020. The card shows, and the page orders the bucket by, the likeness of the years: the second wins.
+        child_like = self.face(self.photo("harbour/jetty.jpg", 2020), -10)
+        alike = self.face(self.photo("harbour/pier.jpg", 2020), 70)
+        with mock.patch.object(identify, "UNCLUSTERED_LIMIT", 1):
+            tuner = web.create_app("tuner", startup=self.library)
+            tuner.testing = True
+            answer = tuner.test_client().get("/api/unmatched-faces/person-matches",
+                                              query_string={"name": "Unknown Faces"}).get_json()
+        shown = [card["id"] for card in answer["faces"]]
+        self.assertEqual(2, answer["unclustered_total"])
+        self.assertEqual([alike], shown, "the face past the cap was chosen by a rule the grid does not show")
+        self.assertNotIn(child_like, shown)
+
     def test_a_named_face_whose_date_taken_is_shifted_is_compared_by_its_new_year(self):
         # The boxes of a face of 2020 say Oda; then Wren's photo of 1994, her child face, is found to be of 2020 and shifted
         # by Time Shift: the same boxes, asked again in the same running app, compare the face with that face too (Wren).
