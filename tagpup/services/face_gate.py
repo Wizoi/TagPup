@@ -15,7 +15,7 @@ opened read-only (db.readonly_uri), and nothing said names a person, a photo or 
 
 By year (phase 4a's gate): each model's precision by the years between a named face and the face it was matched with
 (by_gap), on every face and at the model's own naming cuts; for both models of the gate, or for the library's own model
-alone (read_alone: a library the pass has not reached, photo_index). A year outside the era is no year (store.faces.era_year).
+alone (read_alone: a library the pass has not reached, photo_index). A year outside the era is no year (core.dates.era_year).
 """
 import json
 

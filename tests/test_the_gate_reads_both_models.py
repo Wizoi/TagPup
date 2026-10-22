@@ -310,7 +310,7 @@ class TheGateReadsByYearGap(unittest.TestCase):
         self.assertEqual((6, 3, 0.5), (by[(11, None)]["faces"], by[(11, None)]["right"], by[(11, None)]["precision"]))
         self.assertEqual(3, by[(11, None)]["wrong"])
         # A clock that said 2079 is no year to match by: that face, and the faces matched with it, are undated, not 69
-        # years off (store.faces.era_year).
+        # years off (core.dates.era_year).
         self.assertGreaterEqual(by[(None, None)]["faces"], 1)
         # The year is the photo's Date Taken: the picnic photo has none, so it is undated, not 2015 from its folder's
         # name (two years from the 2013 face it meets); the summer photo was taken in 2014, one year from its 2013 face,
