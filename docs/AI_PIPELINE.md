@@ -541,6 +541,25 @@ takes no turn of the card.
   committed while cluster-faces runs leaves it deciding FaceNet's vectors by FaceNet's cuts. The undo of a switch back
   to FaceNet is refused by the switch's own check (79c4fd75).
 
+**As built (2026-10-22): retiring the old detector's faces (`retire-faces`; DECISIONS 2026-10-22).**
+- The owner's decision: photo_index starts afresh on the new model, and none of the old data stays, the names given by
+  hand among it (a training library). Retiring replaced the from-scratch run first weighed: detection is deterministic,
+  so a fresh run finds the faces the pass already holds, and would not make again the 18,657 of photo_index's matched
+  faces under 40 px (538 of them named; counted read-only 2026-10-22), since `NEW_FACE_FLOOR` applies only to a face
+  the pass makes new. Retiring keeps every face the pass matched or made and takes away only what the old model left.
+- `tagpup.services.retire_faces`: every face with no vector under the library's model is deleted (crop and vectors with
+  it, `store.faces.delete`), and every kept face's decision cleared (`store.faces.UNDECIDED`, `put_decisions`), 500
+  photos a transaction, recorded whole before the write (`journal.record_removing`), one change continued across runs
+  while it is the newest (`journal.newest_kept`); refused off the new model or past the switch's unpassed share, and,
+  for names given by hand, without `--clear-manual-names`. Keywords and the tree stay: the people a photo's keywords
+  name are what Name faces from tags names the kept faces from again. Scenario P8,
+  `tests/test_retiring_the_old_detectors_faces.py`.
+- photo_index (a sandbox copy of the live library, 2026-10-22): of 218,265 faces, 35,486 deleted (1,907 named
+  automatically, 19 decided by hand or excluded); of the faces kept, decisions cleared on 175 faces named by hand,
+  59,428 named automatically, 3 decided to be nobody and 13 exclusions; 44,268 photos walked in 89 chunks. Applied
+  through the CLI in 86 s (peak working set 80 MB), after the snapshot. The gate counts the names given by hand of the
+  faces deleted too: none in photo_index, 3 in kr-track (counted read-only).
+
 ### Phase 4: Matching, with the new model
 
 - **4a Time-nearest matching.** A new face is matched against the time-nearest named faces by Date Taken, not one

@@ -85,6 +85,14 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   from tags names the new faces after the gate. A photo's named faces pair first, so a named face keeps its person
   beside an unnamed duplicate of it.
 
+- **Retiring the old detector's faces (2026-10-22; DECISIONS 2026-10-22)**: `services.retire_faces` deletes the faces
+  holding no vector under the library's model and clears every decision of the faces kept, and touches no keyword in a
+  photo file and no node of the tree: the people a photo's keywords name stay in its people, and Name faces from tags
+  names the kept faces from them again. Names given by hand are cleared only when asked for by name
+  (`--clear-manual-names`; `retire_faces.refusal`): the gate counts the names given by hand of the faces deleted as well as of the faces
+  kept (kr-track: 3 of the faces it would delete, counted read-only 2026-10-22). The face pass's own change is not
+  undone while a retiring after it stands (`retire_faces.undo_refusals`, asked by `services.journal.refusals`): its new
+  faces stand in for the ones the retiring deleted, and undone first it would leave photos with no face under the model.
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
   keeps "exactly one person reaches 0.80" (FaceNet's naming likeness; each model's own since 2026-10-20) beside it, since the margin alone would name a face two people reach 0.04 apart, a
