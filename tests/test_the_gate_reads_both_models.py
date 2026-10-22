@@ -6,6 +6,10 @@ Each library is in a home of the test's own; photos as the index makes their row
 indexer stores them (tests/face_rows.py, FaceNet's vector), and the new model's vectors and new faces written by the pass's
 own writer (store.faces.give_vectors, in a journaled change, as face_pass does). The vectors are stand-ins with a known
 separability: each person a centre, FaceNet's faces far from it, the new model's near it.
+
+And by year (TheGateReadsByYearGap): before phase 4a changes how a face is matched, the owner reads how far in years the
+face a name rests on is, on a library the pass has not reached (FaceNet alone, as photo_index), with a child who grew past
+her old faces, a photo whose clock said 2079, and a person seen at one event only.
 """
 import contextlib
 import hashlib
@@ -26,8 +30,10 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import FACENET, add_face  # noqa: E402
 
+from tagpup.core.library import Library  # noqa: E402
 from tagpup.ml import scrfd_adaface  # noqa: E402
 from tagpup.services import face_gate, face_pass  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 
@@ -236,6 +242,94 @@ class TheGateReadsBothModels(unittest.TestCase):
         self.assertIn("nothing to score", text)
         self.assertIsNone(answers["meadow"]["precisions"][0.99]["better"])
         self.assertEqual((0, 1), (answers["meadow"]["pass"]["photos_passed"], answers["meadow"]["pass"]["not_passed"]))
+
+
+class TheGateReadsByYearGap(unittest.TestCase):
+    """A FaceNet library: four people photographed twice a year from 2010 to 2013 (a spring and an autumn folder, each
+    face a little older than the last); a child photographed in 2008 and again in 2020, when she looks like her cousin
+    more than like her old faces; the cousin, seen in 2008 at one event only (one folder); and a photo whose clock said
+    2079, of the first person as he was in 2010."""
+
+    STEADY = PEOPLE[:4]
+    CHILD, COUSIN = "Tamsin Revell", "Corin Ashby"
+
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.path = self.home.library("fells.db")
+        schema.ensure(self.path)
+        rng = np.random.default_rng(7)
+        centre = {person: rng.normal(size=64) for person in self.STEADY + (self.CHILD, self.COUSIN)}
+        older = {person: rng.normal(size=64) for person in self.STEADY}
+
+        def unit(vector):
+            vector = vector / np.linalg.norm(vector) + rng.normal(scale=0.01, size=64)
+            return (vector / np.linalg.norm(vector)).astype(np.float32).tobytes()
+
+        conn = db.connect(self.path)
+        try:
+            def face(folder, name, year, vector, person):
+                photo = os.path.join(self.home.root, folder, name + ".jpg")
+                photo_rows.add_read(conn, photo, {"EXIF:DateTimeOriginal": "%d:06:01 12:00:00" % year})
+                add_face(conn, photo, (0, 0, 60, 60), unit(vector), name=person, prob=0.99)
+
+            for year in range(2010, 2014):
+                for season in ("Spring", "Autumn"):
+                    for person in self.STEADY:
+                        aged = centre[person] / np.linalg.norm(centre[person]) + 0.25 * (year - 2010) * older[person] / 8
+                        face("%s %d" % (season, year), person.split()[0], year, aged, person)
+            for i in range(3):
+                face("Spring 2008", "Tamsin %d" % i, 2008, centre[self.CHILD], self.CHILD)
+                face("Autumn 2008", "Corin %d" % i, 2008, centre[self.COUSIN], self.COUSIN)
+                grown = 0.3 * centre[self.CHILD] / np.linalg.norm(centre[self.CHILD]) + centre[self.COUSIN] / np.linalg.norm(
+                    centre[self.COUSIN])
+                face("Spring 2020", "Tamsin %d" % i, 2020, grown, self.CHILD)
+            face("Lost clock", "Ilse", 2079, centre[self.STEADY[0]], self.STEADY[0])
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_precision_by_the_years_to_the_face_matched(self):
+        before = fingerprint(self.path)
+        answers, text = run("--alone", "--source", self.path)
+        self.assertEqual(before, fingerprint(self.path), "a read-only run changed the library")
+        [bands] = answers["fells"].values()
+        by = {(band["low"], band["high"]): band for band in bands}
+        # The library's own model alone: FaceNet's, at FaceNet's naming cuts.
+        self.assertEqual([FACENET], list(answers["fells"]))
+        # Each steady face meets its twin of the other season, the same year: right, no year apart.
+        self.assertEqual(1.0, by[(0, 0)]["precision"])
+        self.assertGreaterEqual(by[(0, 0)]["faces"], 28)
+        # The child grew past her old faces: the three of 2008 still find hers of 2020, but those of 2020 her cousin's of
+        # 2008, twelve years off and wrong; named at the cuts, each of those is a wrong name.
+        self.assertEqual((6, 3, 0.5), (by[(11, None)]["faces"], by[(11, None)]["right"], by[(11, None)]["precision"]))
+        self.assertEqual(3, by[(11, None)]["wrong"])
+        # A clock that said 2079 is no year to match by: that face, and the faces matched with it, are undated, not 69
+        # years off (store.faces.era_year).
+        self.assertGreaterEqual(by[(None, None)]["faces"], 1)
+        # The cousin's faces are all in one folder: her person is not in the gallery, so she is not among the faces
+        # read, and the name the cut gives her (her cousin's, 2020) is counted apart, wrong.
+        self.assertEqual(4 * 4 * 2 + 1 + 6, sum(band["faces"] for band in bands))
+        self.assertEqual(3, sum(band["alone_named"] for band in bands))
+        self.assertIn("undated", text)
+        self.assertIn("11+", text)
+        for name in PEOPLE + (self.CHILD, self.COUSIN, "Spring", "Autumn", "Lost clock", ".jpg"):
+            self.assertNotIn(name, text)
+
+    def test_a_library_is_read_by_its_own_model_alone(self):
+        """The gate's library with both models' vectors, switched to the new model: read alone, the new model's vectors
+        are read, never FaceNet's beside them; beside the gate, each model is read by year too."""
+        harbour = library_of(self.home, "harbour.db", PEOPLE, 25, 5, old_noise=0.16, new_noise=0.03, seed=3)
+        self.assertEqual([FACENET], list(run("--alone", "--source", harbour)[0]["harbour"]))
+        answers, text = run("--source", harbour, "--precision", "0.95")
+        self.assertEqual({FACENET, NEW_KEY}, set(answers["harbour"]["gaps"]))
+        library = Library(harbour)
+        library_settings.stamp(library)
+        switched = library_settings.change(library, {"faces.model": NEW_KEY}, acknowledged=("face-model",))
+        self.assertTrue(switched.ok, switched)
+        self.assertEqual([NEW_KEY], list(run("--alone", "--source", harbour)[0]["harbour"]))
+        # Photos the index never read have no year: every face is undated.
+        [bands] = run("--alone", "--source", harbour)[0]["harbour"].values()
+        self.assertEqual(sum(band["faces"] for band in bands), bands[-1]["faces"])
 
 
 if __name__ == "__main__":

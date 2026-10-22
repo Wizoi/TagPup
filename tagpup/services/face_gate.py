@@ -12,12 +12,16 @@ the faces that could be), the library's unnamed faces it would name, and on the 
 tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR is read here). A reading is "too thin" when its faces cannot tell the precision asked from what is
 under it (holdout.too_thin). And the pass's counts, from the library's rows and journal. Nothing is written; a library is
 opened read-only (db.readonly_uri), and nothing said names a person, a photo or a folder: counts only.
+
+By year (phase 4a's gate): each model's precision by the years between a named face and the face it was matched with
+(by_gap), on every face and at the model's own naming cuts; for both models of the gate, or for the library's own model
+alone (read_alone: a library the pass has not reached, photo_index). A year outside the era is no year (store.faces.era_year).
 """
 import json
 
 import numpy as np
 
-from tagpup.core import holdout
+from tagpup.core import clustering, holdout
 from tagpup.core.validation import MTCNN_FACENET, SCRFD_ADAFACE
 from tagpup.services import face_pass
 from tagpup.store import db, journal
@@ -32,6 +36,9 @@ BANDS = ((0, 30), (30, 40), (40, 50), (50, None))
 FLOORS = (30, 40, 50)
 #: Under this many faces evaluated, a library's curve is too thin to read at all.
 FEWEST = 100
+#: The bands of the years between a named face and the face it was matched with: [low, high], high None for no bound.
+#: A face with no year to match by, or matched with one that has none, is "undated" (by_gap).
+GAPS = ((0, 0), (1, 1), (2, 2), (3, 5), (6, 10), (11, None))
 
 
 def _matrix(blobs):
@@ -45,18 +52,33 @@ def _short_side(box):
     return min(x2 - x1, y2 - y1)
 
 
+def _matched(named, column, people, folders, years):
+    """(the unit vectors of `named`'s `column`, what matching them against each other held out by folder found: "right",
+    "reachable", "likeness", "margin" and "gap", the years to the face each was matched with, NaN undated)."""
+    matrix = _matrix([row[column] for row in named])
+    best, likeness, margin, reachable, chosen = holdout.matched_against(matrix, folders, matrix, people, folders, own=people)
+    return matrix, {"right": best == people, "reachable": reachable, "likeness": likeness, "margin": margin,
+                    "gap": holdout.year_gap(years, years, chosen)}
+
+
+def _named_columns(named):
+    """(people, folders, years: a float a face, NaN undated) of under_each's rows."""
+    return (np.array([row[1] for row in named], dtype=np.int64), holdout.numbered(row[3] for row in named),
+            np.array([np.nan if row[5] is None else row[5] for row in named], dtype=np.float64))
+
+
 def read(db_path, old=OLD, new=NEW):
     """What the gate reads of one library, opened read-only: {"pass": the rows' counts (store.faces.pass_counts) and the
     journal's ("changes", "journal_matched", "journal_new" of the pass's kept changes), and "unnamed_nobody", the unnamed
     faces holding both vectors a person called nobody by hand (store.faces.manual_names), left out of the unnamed; "models":
-    {key: the named faces matched against each other by it, a face a row: "right", "reachable", "likeness", "margin",
-    "short"; "unnamed_likeness", "unnamed_margin" of the other unnamed faces holding both vectors against the named}},
+    {key: the named faces matched against each other by it, a face a row (_matched), and "short";
+    "unnamed_likeness", "unnamed_margin" of the other unnamed faces holding both vectors against the named}},
     empty when no named face holds both. The unnamed are held out by photo (each against the named of other photos: it
     has no person, so no folder of its person to leave out), while the cut they are read at is the named faces' by folder."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        named = store_faces.under_both(conn, old, new, named=True)
-        unnamed = store_faces.under_both(conn, old, new, named=False) if named else []
+        named = store_faces.under_each(conn, (old, new), named=True)
+        unnamed = store_faces.under_each(conn, (old, new), named=False) if named else []
         nobody = {face_id for face_id, ref in store_faces.manual_names(conn).items() if ref is None} if unnamed else set()
         counts = store_faces.pass_counts(conn, old, new)
         kept = journal.kept_named(conn, face_pass.OPERATION % new)
@@ -66,22 +88,53 @@ def read(db_path, old=OLD, new=NEW):
                   journal_new=sum(int(s.get("new", 0)) for _id, s in kept),
                   unnamed_nobody=sum(row[0] in nobody for row in unnamed))
     unnamed = [row for row in unnamed if row[0] not in nobody]
-    people = np.array([row[1] for row in named], dtype=np.int64)
-    folders = holdout.numbered(row[3] for row in named)
+    people, folders, years = _named_columns(named)
     photos = np.array([row[2] for row in named], dtype=np.int64)
     unnamed_photos = np.array([row[2] for row in unnamed], dtype=np.int64)
     short = np.array([_short_side(row[4]) for row in named], dtype=np.float64)
     models = {}
-    for key, column in ((old, 5), (new, 6)) if named else ():
-        matrix = _matrix([row[column] for row in named])
-        best, likeness, margin, reachable = holdout.top_two(matrix, people, folders)
-        found = {"right": best == people, "reachable": reachable, "likeness": likeness, "margin": margin, "short": short,
-                 "unnamed_likeness": np.empty(0), "unnamed_margin": np.empty(0)}
+    for key, column in ((old, 6), (new, 7)) if named else ():
+        matrix, found = _matched(named, column, people, folders, years)
+        found.update(short=short, unnamed_likeness=np.empty(0), unnamed_margin=np.empty(0))
         if unnamed:
-            _best, found["unnamed_likeness"], found["unnamed_margin"], _seen = holdout.matched_against(
+            _best, found["unnamed_likeness"], found["unnamed_margin"], _seen, _chosen = holdout.matched_against(
                 _matrix([row[column] for row in unnamed]), unnamed_photos, matrix, people, photos)
         models[key] = found
     return {"pass": counts, "models": models}
+
+
+def read_alone(db_path):
+    """The library's own face model alone (store.faces.model_key, never another's vectors), opened read-only:
+    {"models": {key: its named faces matched against each other held out by folder (_matched)}}, empty when no named face
+    holds a vector under it. What by_gap reads of a library the face pass has not reached."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        key = store_faces.model_key(conn)
+        named = store_faces.under_each(conn, (key,), named=True)
+    finally:
+        conn.close()
+    return {"models": {key: _matched(named, 6, *_named_columns(named))[1]} if named else {}}
+
+
+def by_gap(found, key):
+    """One model's (`key`) precision by the years between a named face and the face it was matched with: [{"low", "high"
+    (None: no bound; both None: "undated", a face or its match with no year to match by), "faces" (whose person has a
+    face in another folder), "right", "precision", "named" and "wrong" of them at the model's naming cuts
+    (clustering.Cuts.names_unasked), "alone_named" (faces alone in their folder it names there, each wrong)}]."""
+    cuts = clustering.cuts_of(key)
+    named = np.array([cuts.names_unasked(likeness, margin)
+                      for likeness, margin in zip(found["likeness"].tolist(), found["margin"].tolist())], dtype=bool)
+    gap, reachable, right = found["gap"], found["reachable"], found["right"]
+    bands = []
+    for low, high in GAPS + ((None, None),):
+        with np.errstate(invalid="ignore"):
+            inside = np.isnan(gap) if low is None else (gap >= low) & ((gap <= high) if high is not None else True)
+        faces = inside & reachable
+        bands.append({"low": low, "high": high, "faces": int(faces.sum()), "right": int((faces & right).sum()),
+                      "precision": int((faces & right).sum()) / int(faces.sum()) if faces.any() else None,
+                      "named": int((faces & named).sum()), "wrong": int((faces & named & ~right).sum()),
+                      "alone_named": int((inside & ~reachable & named).sum())})
+    return bands
 
 
 def pooled(readings):

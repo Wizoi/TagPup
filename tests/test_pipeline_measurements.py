@@ -313,10 +313,16 @@ class TheNamedFaceHoldOut(unittest.TestCase):
         matrix /= np.linalg.norm(matrix, axis=1, keepdims=True)
         people = np.array([1, 1, 2, 2, 3])
         photos = np.array([10, 10, 20, 21, 30])
-        best, first, margin, reachable = holdout.top_two(matrix, people, photos, block=2)
+        best, first, margin, reachable, chosen = holdout.matched_against(matrix, photos, matrix, people, photos,
+                                                                         own=people, block=2)
         self.assertEqual([False, False, True, True, False], [bool(r) for r in reachable])   # 3 has one face
         self.assertEqual(3, best[0])            # its own photo's twin left out: the stranger is nearest
         self.assertEqual(2, best[2])
+        # The face each was matched with, a row of the gallery, across blocks of two: person 2's faces each other's.
+        self.assertEqual([4, 4, 3, 2, 0], chosen.tolist())
+        years = np.array([2010, 2011, 2012, np.nan, 2019])
+        self.assertEqual([9, 8], holdout.year_gap(years, years, chosen)[:2].tolist())
+        self.assertTrue(np.isnan(holdout.year_gap(years, years, chosen)[2]))   # matched with an undated face
         self.assertAlmostEqual(1.0, first[2], places=5)
         self.assertGreater(margin[2], 0)   # clustering.margins: the margin the gates ask
 

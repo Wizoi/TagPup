@@ -1,9 +1,10 @@
 """The named-face hold-out (docs/AI_PIPELINE.md, section 7, and phase 3's gate): each named face matched against the named
 faces of every OTHER group -- a photo, or stricter a folder (bursts and copies of one moment are in one folder) -- by the
-closest face of each person, as tagpup.core.clustering names a face (FacesByPerson, best_of, its margins), without the
-years window KnownFaces adds; and the precision of the top person at each cut of its likeness and of its margin over the
-second-best person. Phase 0 read FaceNet's curve with it (scripts/measure_pipeline_holdouts.py); the gate reads both face
-models' curves on the same faces with it (tagpup.services.face_gate). Pure: unit vectors and integers in, counts out.
+closest face of each person, as tagpup.core.clustering names a face (FacesByPerson, best_of, its margins), over all
+years (no window: the face each was matched with is said, so the year gap to it can be read, year_gap); and the precision
+of the top person at each cut of its likeness and of its margin over the second-best person. Phase 0 read FaceNet's curve
+with it (scripts/measure_pipeline_holdouts.py); the gate reads both face models' curves on the same faces with it, and
+each one's precision by the year gap (tagpup.services.face_gate). Pure: unit vectors and integers in, counts out.
 """
 import numpy as np
 
@@ -22,12 +23,14 @@ FINE_MARGIN_CUTS = FINE_LIKENESS_CUTS
 
 def matched_against(queries, groups, gallery, people, gallery_groups, own=None, block=1024):
     """For each row of `queries` (unit vectors): (its best person among the `gallery`'s, that likeness, its margin over the
-    second-best person, whether its own person had a face to compare), each person's likeness being their closest face of
-    another group -- a query is never compared with a face of its own group (`groups`, `gallery_groups`: an integer a row).
-    The margin is the gates' (clustering.margins), so the curve is read off the rule it sets. `people` is the gallery's
-    person a row; `own`, the queries' when they are named (else reachable is all False). A block of rows at a time."""
+    second-best person, whether its own person had a face to compare, the gallery row of that person's face it was matched
+    with -- their closest --, -1 for none), each person's likeness being their closest face of another group -- a query is
+    never compared with a face of its own group (`groups`, `gallery_groups`: an integer a row). The margin is the gates'
+    (clustering.margins), so the curve is read off the rule it sets. `people` is the gallery's person a row; `own`, the
+    queries' when they are named (else reachable is all False). A block of rows at a time."""
     count = len(queries)
     best, first, margin = np.full(count, -1, dtype=np.int64), np.empty(count), np.empty(count)
+    chosen = np.full(count, -1, dtype=np.int64)
     reachable = np.zeros(count, dtype=bool)
     grouping = clustering.FacesByPerson(people)
     grouped, grouped_groups = grouping.grouped(gallery), grouping.grouped(gallery_groups)
@@ -40,16 +43,19 @@ def matched_against(queries, groups, gallery, people, gallery_groups, own=None, 
         by_person = grouping.table(likeness, grouped=True)
         columns, first[rows], margin[rows] = clustering.best_of(by_person)
         best[rows] = np.where(columns >= 0, names[columns] if len(names) else -1, -1)
+        chosen[rows] = grouping.closest(likeness, columns, grouped=True)
         if own is not None:
             mine = np.fromiter((column_of.get(person, -1) for person in own[rows].tolist()), dtype=np.intp)
             seen = by_person[np.arange(len(mine)), np.maximum(mine, 0)] if by_person.shape[1] else np.full(len(mine), -np.inf)
             reachable[rows] = (mine >= 0) & np.isfinite(seen)
-    return best, first, margin, reachable
+    return best, first, margin, reachable, chosen
 
 
-def top_two(matrix, people, groups, block=1024):
-    """matched_against for the named faces of `matrix` against each other, held out by `groups`."""
-    return matched_against(matrix, groups, matrix, people, groups, own=people, block=block)
+def year_gap(years, gallery_years, chosen):
+    """The years between each query (`years`, a float a row, NaN undated) and the gallery face it was matched with
+    (`chosen`, matched_against's: `gallery_years` of that row): NaN when either is undated or nothing was matched."""
+    matched = np.where(chosen >= 0, np.asarray(gallery_years, dtype=np.float64)[np.maximum(chosen, 0)], np.nan)
+    return np.abs(np.asarray(years, dtype=np.float64) - matched)
 
 
 def curve(correct, values, cuts):
@@ -72,7 +78,7 @@ def precision_curve(correct, likeness, margin, likeness_cuts=LIKENESS_CUTS, marg
 def hold_out(matrix, people, groups, likeness_cuts=LIKENESS_CUTS, margin_cuts=MARGIN_CUTS):
     """The curve and its counts for faces matched only against faces of another group (a photo, a folder): `people`
     and `groups` an integer a row."""
-    best, first, margin, reachable = top_two(matrix, people, groups)
+    best, first, margin, reachable, _chosen = matched_against(matrix, groups, matrix, people, groups, own=people)
     correct = best == people
     return {"faces": len(people), "own_person_only_in_this_group": int((~reachable).sum()),
             "evaluated": int(reachable.sum()), "top_right": int(correct[reachable].sum()),

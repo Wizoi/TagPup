@@ -49,6 +49,17 @@ VECTOR = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
 WITH_VECTOR = " JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?"
 HAS_VECTOR = "EXISTS (SELECT 1 FROM face_embeddings v WHERE v.face_id = f.id AND v.model = ?)"
 
+#: The years a photo's year is a year to match a face by (its era): the first and the last. A photo year outside them is
+#: undated for that use (owner, 2026-10-22, #1738: photo_index's named faces carried years from 1827 to 2079, a wrong
+#: clock or a counter read as a year). Decided here, where a reader of faces reads the year for it (era_year), as a rule
+#: in code: the row keeps its year, the library shows it as it is.
+ERA_FIRST, ERA_LAST = 1990, 2026
+
+
+def era_year(year):
+    """`year` (photos.year) as a year to match a face by: itself between ERA_FIRST and ERA_LAST, else None (undated)."""
+    return year if year is not None and ERA_FIRST <= year <= ERA_LAST else None
+
 
 def model_key(conn):
     """The key a reader on `conn` reads face vectors under: the library's face model (tagpup.store.settings.face_model).
@@ -387,19 +398,19 @@ def give_vectors(conn, change_id, photo_path, key, matched, new, counts):
 
 # ---- The gate: two models' vectors of the same faces (tagpup.services.face_gate) -------------------------------------
 
-def under_both(conn, key, other, named):
-    """[(face id, tag id or None, photo id, the photo's folder key, box JSON, vector under `key`, vector under `other`)] of
-    every face not excluded holding a vector under each of the two keys given, never the library's (model_key): the gate
-    compares two models on the same faces while the library reads one of them. `named`: the faces naming a person (tag_id
-    set), else those naming nobody. The folder key is paths.key of the photo's folder as the library holds it (row form):
-    a key to group faces by, never a path to open. No crop is read. Faces by idx_faces_identify (excluded), each vector by its key
-    (face_id, model)."""
-    return [(face_id, tag_id, photo_id, paths.key(paths.row_parent(path) or ""), box, first, second)
-            for face_id, tag_id, photo_id, path, box, first, second in conn.execute(
-                "SELECT f.id, f.tag_id, f.photo_id, p.path, f.box, a.vector, b.vector FROM faces f" + PHOTO
-                + " JOIN face_embeddings a ON a.face_id = f.id AND a.model = ?"
-                + " JOIN face_embeddings b ON b.face_id = f.id AND b.model = ?"
-                + " WHERE f.excluded = 0 AND f.tag_id IS " + ("NOT NULL" if named else "NULL"), (key, other))]
+def under_each(conn, keys, named):
+    """[(face id, tag id or None, photo id, the photo's folder key, box JSON, the photo's era_year, then its vector under
+    each of `keys`)] of every face not excluded holding a vector under each key given. The gate gives two (it compares two
+    models on the same faces while the library reads one of them); a reading of one model alone, the library's (model_key),
+    never mixed with another's. `named`: the faces naming a person (tag_id set), else those naming nobody. The folder key is
+    paths.key of the photo's folder as the library holds it (row form): a key to group faces by, never a path to open. No
+    crop is read. Faces by idx_faces_identify (excluded), each vector by its key (face_id, model), each photo by its id."""
+    joins = "".join(" JOIN face_embeddings e%d ON e%d.face_id = f.id AND e%d.model = ?" % (n, n, n) for n in range(len(keys)))
+    vectors = "".join(", e%d.vector" % n for n in range(len(keys)))
+    return [(face_id, tag_id, photo_id, paths.key(paths.row_parent(path) or ""), box, era_year(year), *found)
+            for face_id, tag_id, photo_id, path, box, year, *found in conn.execute(
+                "SELECT f.id, f.tag_id, f.photo_id, p.path, f.box, p.year" + vectors + " FROM faces f" + PHOTO + joins
+                + " WHERE f.excluded = 0 AND f.tag_id IS " + ("NOT NULL" if named else "NULL"), tuple(keys))]
 
 
 def pass_counts(conn, old, new):
