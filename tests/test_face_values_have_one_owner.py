@@ -1,6 +1,7 @@
-"""Who a face is is decided in one place, tagpup.core.clustering's KnownFaces; the values that decide
-whether a name looks right are held to it in test_rules_have_one_owner. The margin over the next person is worked out
-in one place too, clustering.margins: no service ranks the people a face is like by itself (TheMarginIsWorkedOutOnce).
+"""Who a face looks like is decided in one place, tagpup.core.clustering's FaceRows.likeness -- the one gallery (#1737);
+the values that decide whether a name looks right are held to it in test_rules_have_one_owner. The margin over the next
+person is worked out in one place too, clustering.margins: no service ranks the people a face is like by itself
+(TheMarginIsWorkedOutOnce).
 
 A face was compared with a person's mean face in clustering, their geometric median in
 TagTuner's grid, and a mean with no years in the suggester, each against a value of its
@@ -13,10 +14,13 @@ import unittest
 
 import numpy as np
 
-from tagpup.core import clustering
+from tagpup.core import clustering, validation
+from tagpup.core.vocabulary import Ref
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import ROOT, python_sources  # noqa: E402
+
+KEY = validation.MTCNN_FACENET
 
 
 def face(*values):
@@ -25,89 +29,84 @@ def face(*values):
     return vector
 
 
+def gallery(faces):
+    """FaceRows of `faces`, [(Ref, vector, year or None, photo id)], a face id each from 1."""
+    return clustering.FaceRows(list(range(1, len(faces) + 1)), [person for person, _v, _y, _p in faces],
+                               np.stack([clustering.unit(vector) for _p, vector, _y, _photo in faces]), KEY,
+                               [year for _p, _v, year, _photo in faces], [photo for _p, _v, _y, photo in faces])
+
+
 def a_library_of_faces():
-    """A person photographed over twenty years, one over six with undated photos, one with a single face, one whose
-    faces are all from long before the faces asked, and one whose only face has no vector (not known); 1,500 faces
-    asked (more than a BLOCK), a third from photos a known face is in, some undated."""
+    """A person photographed over twenty years, one over six with undated photos, one with a single face, and one whose
+    faces are all from long before the faces asked; 1,500 faces asked, a third from photos a known face is in, some
+    undated."""
     rng = np.random.default_rng(7)
-    years = {"Oda Castellane": rng.integers(2005, 2025, 30).tolist(), "Pim Arkwright": [2019],
-             "Wren Halloway": [None, None] + rng.integers(2015, 2021, 10).tolist(),
-             "Lior Fenwick": rng.integers(1985, 1989, 8).tolist()}
-    centres = {name: rng.normal(size=64) for name in years}
-    known, photos = clustering.KnownFaces(), []
-    for name, taken in years.items():
+    years = {Ref(3, "Oda Castellane"): rng.integers(2005, 2025, 30).tolist(), Ref(1, "Pim Arkwright"): [2019],
+             Ref(4, "Wren Halloway"): [None, None] + rng.integers(2015, 2021, 10).tolist(),
+             Ref(2, "Lior Fenwick"): rng.integers(1985, 1989, 8).tolist()}
+    centres = {person: rng.normal(size=64) for person in years}
+    faces = []
+    for person, taken in years.items():
         for year in taken:
-            photos.append("%s_%d.jpg" % (name.split()[0], len(photos)))
-            known.add(name, centres[name] + rng.normal(scale=0.8, size=64), year, photos[-1])
-    known.add("Sable Quint", None, 2020, "sable.jpg")
-    asked = [((centres[list(centres)[n % 4]] if n % 5 else rng.normal(size=64)) + rng.normal(scale=0.8, size=64),
+            faces.append((person, centres[person] + rng.normal(scale=0.8, size=64), year, 100 + len(faces)))
+    asked = [(clustering.unit((centres[list(centres)[n % 4]] if n % 5 else rng.normal(size=64))
+                              + rng.normal(scale=0.8, size=64)),
               None if n % 7 == 0 else int(rng.integers(1984, 2025)),
-              photos[int(rng.integers(len(photos)))] if n % 3 == 0 else "asked_%d.jpg" % n) for n in range(1500)]
-    return known, asked
+              100 + int(rng.integers(len(faces))) if n % 3 == 0 else 5000 + n) for n in range(1500)]
+    return gallery(faces), asked
 
 
 class OneFaceIsAsMuchLikeAPersonWhoeverAsks(unittest.TestCase):
-    """The person page's similarity of each face (likeness_many), Suggest's best person (most_like) and cluster-faces'
-    last pass (likeness_table read by best) give one answer, a face and a person, to float32's last bits (#1548)."""
-
-    def assertSame(self, expected, found, name):   # None as NaN: where one has nothing to compare, so has the other
-        np.testing.assert_allclose(np.array(expected, float), np.array(found, float), rtol=0, atol=1e-6, err_msg=name)
+    """A person's page (likeness_of, one person's column), Suggest's best person and cluster-faces' pairing and last pass
+    (likeness read by best and margin_of) give one answer, a face and a person, to float32's last bits (#1548, #1737)."""
 
     def test_the_page_the_suggester_and_cluster_faces_agree(self):
         known, asked = a_library_of_faces()
-        table, columns = known.likeness_table(asked)
-        self.assertEqual(["Oda Castellane", "Pim Arkwright", "Wren Halloway", "Lior Fenwick"], list(columns))
-        self.assertFalse(np.isnan(table[:, columns["Lior Fenwick"]]).any())   # another era: all of theirs, not none
-        for name in list(columns) + ["Sable Quint", "Nobody Known"]:
-            column = known.likeness_many(name, asked)
-            self.assertSame(table[:, columns[name]] if name in columns else [None] * len(asked), column, name)
-            self.assertSame(column[:40], [known.likeness(name, *face) for face in asked[:40]], name)
-        for number, face in enumerate(asked):
-            best = known.best(table[number], columns)
-            self.assertEqual(float(np.nanmax(table[number])), best[1])
-            self.assertEqual(best[0], known.most_like(*face)[0])
-            ahead = sorted(table[number][~np.isnan(table[number])].tolist())
+        vectors, years, photos = np.stack([v for v, _y, _p in asked]), [y for _v, y, _p in asked], [p for _v, _y, p in asked]
+        table, columns = known.likeness(vectors, years, photos), known.columns
+        self.assertEqual([1, 2, 3, 4], list(columns))   # the people in the order of their ids
+        self.assertTrue(np.isfinite(table[:, columns[2]]).all())   # another era: all of theirs, not none
+        for person in list(columns) + [99]:   # 99: nobody known
+            column = known.likeness_of(person, vectors, years, photos)
+            expected = table[:, columns[person]] if person in columns else np.full(len(asked), -np.inf)
+            np.testing.assert_allclose(expected, column, rtol=0, atol=1e-6, err_msg=str(person))
+        for number in range(len(asked)):
+            row = table[number]
+            best = clustering.best(row, columns)
+            self.assertEqual(float(row[np.isfinite(row)].max()), best[1])
+            ahead = sorted(row[np.isfinite(row)].tolist())
             self.assertAlmostEqual(ahead[-1] - ahead[-2], best[2], places=6)   # the margin over the second-best of everyone
-            self.assertEqual(best[2], known.margin_of(table[number], columns, best[0]))
-            among = ["Pim Arkwright", "Wren Halloway", best[0]]
-            skipped = known.best(table[number], columns, among, {best[0]})
-            self.assertNotEqual(best[0], skipped[0])
-            self.assertEqual(skipped[0], known.most_like(*face, among=among, skip={best[0]})[0])
-        self.assertEqual((None, None, None), clustering.KnownFaces().most_like(asked[0][0]))   # nobody to compare with
-        lone = clustering.KnownFaces()
-        lone.add("Pim Arkwright", asked[0][0], 2019, "pim.jpg")
-        self.assertEqual(float("inf"), lone.most_like(asked[1][0])[2])   # nobody else to be: the arithmetic, no branch
+            self.assertEqual(best[2], clustering.margin_of(row, columns, best[0]))
+            among = [1, 4, best[0]]
+            self.assertNotEqual(best[0], clustering.best(row, columns, among, {best[0]})[0])
+        nobody = clustering.FaceRows([], [], None, KEY)
+        self.assertEqual((None, None, None), clustering.best(nobody.likeness(vectors[:1])[0], nobody.columns))
+        lone = gallery([(Ref(1, "Pim Arkwright"), vectors[0], 2019, 1)])
+        self.assertEqual(float("inf"), clustering.best(lone.likeness(vectors[1:2])[0], lone.columns)[2])   # nobody else
 
 
-class KnownFacesCompareWithTheClosestFace(unittest.TestCase):
-    def setUp(self):
-        self.known = clustering.KnownFaces()
+class AFaceIsComparedWithTheClosestFaceOfItsYears(unittest.TestCase):
+    ODA, WREN = Ref(1, "Oda Castellane"), Ref(2, "Wren Halloway")
+
+    def like(self, faces, vector, year, photo, person):
+        return float(gallery(faces).likeness_of(person.id, vector[None, :], [year], [photo])[0])
 
     def test_the_closest_face_not_an_average(self):
         # Two faces of one person far apart; a face beside one of them is like her.
-        self.known.add("Oda Castellane", face(1, 0), 2020, "a.jpg")
-        self.known.add("Oda Castellane", face(0, 1), 2020, "b.jpg")
-        self.assertAlmostEqual(1.0, self.known.likeness("Oda Castellane", face(1, 0), 2020, "c.jpg"), places=5)
+        faces = [(self.ODA, face(1, 0), 2020, 1), (self.ODA, face(0, 1), 2020, 2)]
+        self.assertAlmostEqual(1.0, self.like(faces, face(1, 0), 2020, 3, self.ODA), places=5)
 
     def test_never_a_face_of_the_same_photo(self):
-        self.known.add("Oda Castellane", face(1, 0), 2020, "a.jpg")
-        self.known.add("Oda Castellane", face(0, 1), 2020, "b.jpg")
-        self.assertAlmostEqual(0.0, self.known.likeness("Oda Castellane", face(1, 0), 2020, "a.jpg"), places=5)
+        # Two faces in one photo are two people (owner, 2026-10-22).
+        faces = [(self.ODA, face(1, 0), 2020, 1), (self.ODA, face(0, 1), 2020, 2)]
+        self.assertAlmostEqual(0.0, self.like(faces, face(1, 0), 2020, 1, self.ODA), places=5)
 
     def test_from_the_years_around_the_photo(self):
         # A child's faces from long ago say less than those of the years around.
-        for n in range(5):
-            self.known.add("Wren Halloway", face(1, 0), 2010, "old%d.jpg" % n)
-            self.known.add("Wren Halloway", face(0, 1), 2024, "new%d.jpg" % n)
-        self.assertAlmostEqual(1.0, self.known.likeness("Wren Halloway", face(0, 1), 2024, "x.jpg"), places=5)
-        self.assertAlmostEqual(0.0, self.known.likeness("Wren Halloway", face(1, 0), 2024, "x.jpg"), places=5)
-
-    def test_a_row_is_read_by_the_people_it_was_made_for(self):
-        self.known.add("Oda Castellane", face(1, 0), None, "a.jpg")
-        table, columns = self.known.likeness_table([(face(0, 1), None, "c.jpg")])
-        self.known.add("Wren Halloway", face(0, 1), None, "b.jpg")   # added after the row was made
-        self.assertEqual("Oda Castellane", self.known.best(table[0], columns)[0])
-
+        faces = [(self.WREN, face(1, 0), 2010, n) for n in range(5)] + [(self.WREN, face(0, 1), 2024, 10 + n) for n in range(5)]
+        self.assertAlmostEqual(1.0, self.like(faces, face(0, 1), 2024, 99, self.WREN), places=5)
+        self.assertAlmostEqual(0.0, self.like(faces, face(1, 0), 2024, 99, self.WREN), places=5)
+        self.assertAlmostEqual(1.0, self.like(faces, face(1, 0), None, 99, self.WREN), places=5)   # undated: every year
 
 
 #: Where a shipped file other than clustering.py may order faces by likeness, and why: Identify's grid ranks the faces that
