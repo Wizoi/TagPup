@@ -106,8 +106,9 @@ class AFaceIsComparedWithTheClosestFaceOfItsYears(unittest.TestCase):
 
 
 #: Where a shipped file other than clustering.py may order faces by likeness, and why: Identify's grid ranks the faces that
-#: grouped with nothing by their best likeness, faces and not people, and asks no margin (tagpup.services.identify).
-RANKS_FACES = {os.path.join("tagpup", "services", "identify.py"): 2}
+#: grouped with nothing before its cap, faces and not people: by the likeness its cards show to the person sought, or with
+#: nobody sought by their best likeness to anyone named, and asks no margin (tagpup.services.identify). One argsort.
+RANKS_FACES = {os.path.join("tagpup", "services", "identify.py"): 1}
 
 #: Any spelling of taking the top of a row: the numpy ones, and the Python ones a second margin could as well be written in.
 TOP_OF_A_ROW = re.compile(r"\b(?:nan)?arg(?:max|sort|partition)\(|\.reduceat\(|\bnp\.(?:sort|partition)\(|\bnlargest\("
@@ -121,7 +122,7 @@ SORTS_OF_OTHER_THINGS = {
     os.path.join("scripts", "measure_pipeline_stages.py"): 2,   # its runs by detect_max_side, its roots' places; pairs from clustering
     os.path.join("tagpup", "services", "face_pass.py"): 3,   # photos and folders by path; pairs by the old face's index
     os.path.join("tagpup", "services", "faces.py"): 3,
-    os.path.join("tagpup", "services", "identify.py"): 7,   # RANKS_FACES's two among them
+    os.path.join("tagpup", "services", "identify.py"): 6,   # RANKS_FACES's one among them
     os.path.join("tagpup", "services", "suggester.py"): 4,
     os.path.join("tagpup", "store", "face_tags.py"): 5,
 }

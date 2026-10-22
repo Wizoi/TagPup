@@ -17,6 +17,7 @@ import math
 import os
 import sys
 import unittest
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -31,6 +32,7 @@ import fake_exiftool  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import faces_from_tags  # noqa: E402
+from tagpup.services import identify  # noqa: E402
 from tagpup.services import photos as photos_service  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import db, faces, people, taxonomy  # noqa: E402
@@ -161,6 +163,21 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
         self.assertAlmostEqual(next(each["similarity"] for each in listed if each["name"] == WREN),
                                card["person_similarity"], places=3)
         self.assertIsNone(card["band"], "a face 0.09 like Wren of its years was shown in a band of Wren's")
+
+    def test_the_faces_past_the_cap_are_chosen_by_the_likeness_the_grid_shows(self):
+        # Two unnamed faces of 2020 on photos naming Wren, and room for one: the one like Wren of her years (0.87) is shown,
+        # not the one like only her child face (1.00 to it, 0.03 to Wren of 2020), which a raw maximum over every year chose.
+        alike = self.face(self.photo("harbour/pier.jpg", 2020, ["People/" + WREN]), 60)
+        child_like = self.face(self.photo("harbour/jetty.jpg", 2020, ["People/" + WREN]), 2)
+        with mock.patch.object(identify, "UNCLUSTERED_LIMIT", 1):
+            tuner = web.create_app("tuner", startup=self.library)
+            tuner.testing = True
+            answer = tuner.test_client().get("/api/unmatched-faces/person-matches",
+                                              query_string={"person_id": self.node(WREN)}).get_json()
+        shown = [card["id"] for card in answer["faces"]]
+        self.assertEqual(2, answer["unclustered_total"])
+        self.assertEqual([alike], shown, "the face past the cap was chosen by a rule the grid does not show")
+        self.assertNotIn(child_like, shown)
 
     def test_a_photo_dated_only_by_its_folder_is_compared_with_every_year_by_suggest_and_identify(self):
         photo = self.photo("2020 Regatta/start_line.jpg", None, ["People/" + WREN, "People/" + ODA])

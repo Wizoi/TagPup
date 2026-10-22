@@ -849,15 +849,6 @@ def grid(library, name, named, on_progress=None):
     # Every named face by person, the matrix in their order, as kept with the matrix (tagpup.core.clustering.FaceRows).
     by_person, grouped = known.by_person
 
-    def reference_faces(person_keys):
-        """Every face already named as this person (or any of the people a shared name is); None when nobody has been named
-        yet -- the ordinary case for somebody being identified for the first time, and
-        the reason this cannot simply replace the keyword queue."""
-        if known_matrix is None or not person_keys:
-            return None
-        rows = [i for i, found in enumerate(known_people) if found.id in person_keys]
-        return known_matrix[rows] if rows else None
-
     def suggest_for_all(centroids, where=None):
         """Who does each of these groups most resemble? Scored against the best single
         named face, matching the diagnostics panel exactly, so the badge on a card and
@@ -985,26 +976,40 @@ def grid(library, name, named, on_progress=None):
     # UNCLUSTERED_LIMIT. The person being sought is needed before the cap rather than
     # after it: ranking has to see every candidate to choose the strongest 500.
     unclustered_total = len(noise_indices)
-    seeking = reference_faces(seeking_keys)
+    sought = set(seeking_keys)
+    sought_columns = [column for column, person in enumerate(by_person.keys) if person in sought]
+    of_sought = {}   # a face's (likeness, margin) to the person sought, by its index in embs
+
+    def against_sought(indexes):
+        """Each face's likeness to the person sought and its margin over everyone else named, as the card shows them: the
+        sought columns of the one gallery's table (FaceRows.likeness, the years around the face's own, never its own
+        photo), every face against everyone in one product a block (tagpup.core.clustering.margins)."""
+        wanted = [i for i in indexes if i not in of_sought]
+        for start in range(0, len(wanted), 512):
+            block = wanted[start:start + 512]
+            table = known.likeness(embs[block], [valid_rows[i][9] for i in block], [valid_rows[i][8] for i in block])
+            alike = np.max(table[:, sought_columns], axis=1)   # a name two people share: the nearer
+            ahead = np.nanmax(face_rules.margins(table)[:, sought_columns], axis=1)
+            for i, likeness, margin in zip(block, alike.tolist(), ahead.tolist()):
+                # None to compare with (each of theirs on its own photo): 0, as a face with nobody named.
+                of_sought[i] = (round(float(likeness), 3) if np.isfinite(likeness) else 0.0, margin)
+        return [of_sought[i][0] for i in indexes]
 
     # Rank the whole set, then take the top of it. This used to slice the first 500
     # off an unordered list and sort those, so with 4,739 unclustered faces the 500 on
     # screen were an arbitrary sample that happened to be sorted -- the strongest
     # matches in the other 4,239 were never shown, and no amount of clearing the
-    # queue reached them because the next pass sliced the same way. Scoring every
-    # face first costs one matrix multiply against the named faces, which is cheaper
-    # than building 4,739 cards and throwing most away.
+    # queue reached them because the next pass sliced the same way. A person sought: by the likeness the card then shows
+    # and sorts by, so the 500 chosen are the 500 it would rank first (it was a raw maximum over every face of theirs, any
+    # year and the face's own photo included, which let a face like their child face take an adult face's slot). Nobody
+    # sought: by the best likeness to any named face, one matrix multiply (RANKS_FACES).
     report("ranking", 0.0,
            "Ranking %s faces that grouped with nothing" % format(len(noise_indices), ","))
     ranked = list(noise_indices)
-    if known_matrix is not None and len(ranked):
-        block = embs[ranked]                          # (n, dim), already unit
-        order = np.argsort(-np.max(np.dot(block, known_matrix.T), axis=1))
-        ranked = [ranked[i] for i in order]
-    if seeking is not None and len(ranked):
-        block = embs[ranked]
-        order = np.argsort(-np.max(np.dot(block, seeking.T), axis=1))
-        ranked = [ranked[i] for i in order]
+    if len(ranked) and (sought_columns or known_matrix is not None):
+        score = (np.asarray(against_sought(ranked)) if sought_columns
+                 else np.max(np.dot(embs[ranked], known_matrix.T), axis=1))
+        ranked = [ranked[i] for i in np.argsort(-score, kind="stable")]
 
     report("building", 0.0, "Building the grid")
 
@@ -1022,23 +1027,13 @@ def grid(library, name, named, on_progress=None):
     # candidates came back in no useful order. Ranked, not filtered: two candidates
     # can both be genuinely this person in different photos (measured here: 0.826 and
     # 0.822 for one), so a cutoff would discard a real match to tidy the list.
-    if seeking is not None:
-        # The band says how sure a card is the person: by its likeness to them and its margin over everyone else named,
-        # every card against everyone in one product a block (tagpup.core.clustering.margins).
-        sought = set(seeking_keys)
-        columns = [column for column, person in enumerate(by_person.keys) if person in sought]
-        alike, ahead = [], []
-        for start in range(0, len(cards), 512):
-            indexes = [face["_emb_idx"] for face in cards[start:start + 512]]
-            table = known.likeness(embs[indexes], [valid_rows[i][9] for i in indexes], [valid_rows[i][8] for i in indexes])
-            alike += np.max(table[:, columns], axis=1).tolist()   # a name two people share: the nearer
-            ahead += np.nanmax(face_rules.margins(table)[:, columns], axis=1).tolist()
-        for face, likeness, margin in zip(cards, alike, ahead):
-            # Against the best of this person's faces of the years around the face's own, never one of its own photo, as
-            # the boxes and the panel score it (FaceRows.likeness): it was a raw maximum over every one of their faces.
-            # None to compare with (each of theirs on its own photo): 0, as a face with nobody named.
-            face.pop("_emb_idx")
-            face["person_similarity"] = round(float(likeness), 3) if np.isfinite(likeness) else 0.0
+    if sought_columns:
+        # The band says how sure a card is the person: by its likeness to them and its margin over everyone else named.
+        # Against the best of this person's faces of the years around the face's own, never one of its own photo, as the
+        # boxes and the panel score it (FaceRows.likeness): it was a raw maximum over every one of their faces.
+        against_sought([face["_emb_idx"] for face in cards])
+        for face in cards:
+            face["person_similarity"], margin = of_sought[face.pop("_emb_idx")]
             face["band"] = cuts.band(face["person_similarity"], margin)
         cards.sort(key=lambda x: x["person_similarity"], reverse=True)
     else:
