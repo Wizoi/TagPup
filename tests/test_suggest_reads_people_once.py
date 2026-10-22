@@ -22,12 +22,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import _root  # noqa: E402,F401
 from tagpup.core import clustering  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.ml import clip as clip_model  # noqa: E402
 from tagpup.ml import faces as face_model  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import search  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
+from tagpup.services import identify  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -64,11 +66,11 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
     def test_three_photos_read_the_people_once_and_never_the_whole_table(self):
         known_reads = []
 
-        def known_faces(db_path, key):
-            known_reads.append(db_path)
-            return clustering.KnownFaces.of([(7, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg", Ref(7, "Rowan Thackeray"))])
+        def named_faces(library, key=None):
+            known_reads.append(library.path)
+            return "stamp", clustering.FaceRows([1], [Ref(7, "Rowan Thackeray")], unit([1, 0, 0])[None, :], key, [None], [101])
 
-        with mock.patch.object(face_records, "known_faces", side_effect=known_faces), \
+        with mock.patch.object(identify, "named_faces", side_effect=named_faces), \
                 mock.patch.object(TagSuggester, "_tags_by_id", return_value={7: "People/Rowan Thackeray"}), \
                 mock.patch.object(face_records, "record_detected", return_value=0), \
                 mock.patch.object(store_faces, "for_clustering", side_effect=AssertionError("read every face")):
@@ -81,7 +83,7 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
             self.assertIn("People/Rowan Thackeray", [t["tag"] for t in result["suggested_tags"]])
 
 
-class KnownFacesFromTheLibrary(unittest.TestCase):
+class NamedFacesFromTheLibrary(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="centroids_")
         self.db = os.path.join(self.dir, "lib.db")
@@ -106,14 +108,13 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_named_faces_only_excluded_left_out(self):
-        known = face_records.known_faces(self.db, FACENET)
-        self.assertEqual(sorted(person.name for person in known.labels.values()), ["Imogen Vale", "Rowan Thackeray"])
+        known = identify.named_faces(Library(self.db), FACENET)[1]
+        self.assertEqual(["Imogen Vale", "Rowan Thackeray"], sorted({person.name for person in known[1]}))
         # Rowan's closest face to each of their two named ones is itself; the excluded
-        # face is not among them.
-        # Keyed by person (the id of their node), the Ref each is in `labels`.
-        rowan = next(key for key, person in known.labels.items() if person.name == "Rowan Thackeray")
-        self.assertAlmostEqual(1.0, known.likeness(rowan, unit([0.8, 0.6, 0])), places=5)
-        self.assertAlmostEqual(0.0, known.likeness(rowan, unit([0, 0, 1])), places=5)
+        # face is not among them. Keyed by person (the id of their node).
+        rowan = next(person.id for person in known[1] if person.name == "Rowan Thackeray")
+        self.assertAlmostEqual(1.0, float(known.likeness_of(rowan, unit([0.8, 0.6, 0]))[0]), places=5)
+        self.assertAlmostEqual(0.0, float(known.likeness_of(rowan, unit([0, 0, 1]))[0]), places=5)
 
 
 class FaceModelsLoadOnce(unittest.TestCase):
@@ -175,23 +176,27 @@ class FaceModelsLoadOnce(unittest.TestCase):
 
 
 class FourWorkersShareEveryonesFaces(unittest.TestCase):
-    """Suggest's pool workers ask most_like of the one KnownFaces the run read, at once: everyone's faces are put in one
-    matrix once, not once a worker (about 72 MB each on photo_index, the last one kept)."""
+    """Suggest's pool workers ask who a face looks like of the one gallery the run read (clustering.FaceRows), at once:
+    everyone's faces are grouped by person once, not once a worker (about 72 MB on photo_index, the last one kept)."""
 
     def test_four_workers_asking_together_make_everyones_faces_once(self):
-        known = clustering.KnownFaces.of([(person, unit([1, 0, 0]) if person == 1 else unit([0, 1, 0]), 2020, None)
-                                          for person in (1, 2, 3)])
-        real, made = clustering.KnownFaces._build_table, []
+        people = [Ref(1, "Rowan Thackeray"), Ref(2, "Imogen Vale"), Ref(3, "Tamsin Orlow")]
+        known = clustering.FaceRows([11, 12, 13], people, np.stack([unit([1, 0, 0]), unit([0, 1, 0]), unit([0, 1, 0])]),
+                                    FACENET, [2020] * 3, [21, 22, 23])
+        real, made = clustering.FacesByPerson.__init__, []
 
-        def slow_build(self, among):
+        def slow_grouping(self, *args, **kwargs):
             made.append(threading.get_ident())
             time.sleep(0.05)
-            return real(self, among)
+            real(self, *args, **kwargs)
+
+        def ask():
+            row = known.likeness(unit([1, 0, 0])[None, :], [2020], [31])[0]
+            answers.append(clustering.best(row, known.columns))
 
         answers = []
-        with mock.patch.object(clustering.KnownFaces, "_build_table", slow_build):
-            workers = [threading.Thread(target=lambda: answers.append(known.most_like(unit([1, 0, 0]), 2020)))
-                       for _ in range(4)]
+        with mock.patch.object(clustering.FacesByPerson, "__init__", slow_grouping):
+            workers = [threading.Thread(target=ask) for _ in range(4)]
             for worker in workers:
                 worker.start()
             for worker in workers:

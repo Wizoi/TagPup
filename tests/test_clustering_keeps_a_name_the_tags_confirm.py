@@ -19,23 +19,32 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
+import face_rows  # noqa: E402
 
 from tagpup.core import clustering, validation  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
-REAL = clustering.KnownFaces.likeness
-
-
-def like_by(value, photo_name):
-    """KnownFaces.likeness, but `value` for the faces of the photo called `photo_name`."""
-    def likeness(self, name, embedding, year=None, photo=None):
-        if photo and str(photo).replace("\\", "/").endswith(photo_name):
-            return value
-        return REAL(self, name, embedding, year, photo)
-    return likeness
+REAL = clustering.FaceRows.likeness_of
 
 
 class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
+    def like_by(self, value, photo_name):
+        """FaceRows.likeness_of (what a round asks of a name it gave), but `value` for the faces of the photo called
+        `photo_name`."""
+        conn = db.connect(self.db_path)
+        try:
+            photo = face_rows.photo_id(conn, os.path.abspath(os.path.join(self.tmpdir, photo_name)))
+        finally:
+            conn.close()
+
+        def likeness_of(rows, person, vectors, years=None, photos=None):
+            found = REAL(rows, person, vectors, years, photos)
+            for row, each in enumerate(() if photos is None else photos):
+                if each == photo:
+                    found[row] = value
+            return found
+        return likeness_of
+
     def two_people_in_one_photo(self):
         jane, bob = identity_vector(1), identity_vector(2)
         self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
@@ -49,13 +58,13 @@ class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
         self.assertGreaterEqual(0.75, facenet.offer_a_name)
         self.assertFalse(facenet.names_unasked(0.75, math.inf))
         jane_face, bob_face = self.two_people_in_one_photo()
-        with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.75, "crowd.jpg")):
+        with mock.patch.object(clustering.FaceRows, "likeness_of", self.like_by(0.75, "crowd.jpg")):
             self.resolve()
         self.assertEqual(("Jane Doe", "Bob Roe"), (self.name_of(jane_face), self.name_of(bob_face)))
 
     def test_it_is_kept_below_070_too(self):
         jane_face, bob_face = self.two_people_in_one_photo()
-        with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.40, "crowd.jpg")):
+        with mock.patch.object(clustering.FaceRows, "likeness_of", self.like_by(0.40, "crowd.jpg")):
             self.resolve()
         self.assertEqual(("Jane Doe", "Bob Roe"), (self.name_of(jane_face), self.name_of(bob_face)))
 
@@ -76,7 +85,7 @@ class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
         crowd = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
         by_hand = self.add_face(crowd, near(jane, 7), manual_name="Jane Doe")
         self.add_face(crowd, near(bob, 8))
-        with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.75, "crowd.jpg")):
+        with mock.patch.object(clustering.FaceRows, "likeness_of", self.like_by(0.75, "crowd.jpg")):
             self.resolve()
         self.assertEqual("Jane Doe", self.name_of(by_hand))
 

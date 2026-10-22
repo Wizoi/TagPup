@@ -26,6 +26,7 @@ from unittest import mock
 
 from tagpup.core import clustering
 from tagpup.services import faces as face_records
+from tagpup.services import identify
 from tagpup.services.suggester import TagSuggester, extract_path_hints
 from tagpup.store.taxonomy import TagTaxonomy
 
@@ -113,7 +114,8 @@ class SuggesterTestBase(unittest.TestCase):
         taxonomy.paths = set(taxonomy_paths)
         index = StubIndex(neighbors=list(neighbors))
         # A library with no named faces, that keeps no face: the stubs are no library to read or write.
-        for patcher in (mock.patch.object(face_records, "known_faces", return_value=clustering.KnownFaces()),
+        nobody = (lambda library, key=None: (None, clustering.FaceRows([], [], None, key)))
+        for patcher in (mock.patch.object(identify, "named_faces", side_effect=nobody),
                         mock.patch.object(face_records, "record_detected", return_value=0),
                         mock.patch.object(TagSuggester, "_tags_by_id", return_value={})):
             patcher.start()

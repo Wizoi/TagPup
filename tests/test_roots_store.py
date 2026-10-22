@@ -161,7 +161,7 @@ class EveryReadAnswersNative(TwoLibraries):
                     sorted(faces.decisions(conn)), faces.unnamed(conn, key, folder=side.pictures),
                     sorted(faces.unnamed_counts(conn, side.pictures).items()),
                     sorted(faces.identify_candidates(conn)), faces.busiest_photo(conn) is not None,
-                    sorted(faces.photos_with_unnamed(conn, every=True)), sorted(faces.named_for_known(conn, key)),
+                    sorted(faces.photos_with_unnamed(conn, every=True)),
                     sorted(faces.person_page(conn, "Rowan Thackeray", 50, 0, key)),
                     faces.rows(conn, [1, 2, 3]), faces.unnamed(conn, key, photo_path=side.real[0]))
         self.same(ask)

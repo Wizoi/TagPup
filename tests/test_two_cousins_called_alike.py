@@ -42,7 +42,7 @@ from unittest import mock  # noqa: E402
 from tagpup.core import clustering  # noqa: E402
 from tagpup.core.result import NotFound  # noqa: E402
 from tagpup.services import faces as faces_service  # noqa: E402
-from tagpup.services import inspect, tagging  # noqa: E402
+from tagpup.services import identify, inspect, tagging  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.store import db, faces, people, person_ids, removals, schema, taxonomy  # noqa: E402
@@ -347,10 +347,11 @@ class AFilingTwiceIsSuggestedByTheNode(unittest.TestCase):
         self.assertEqual(["People/Imogen Vale"], tree_of(TWICE).person_paths("imogen vale"))
 
     def suggested(self, tags_by_id, person_id):
-        known = clustering.KnownFaces.of([(person_id, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg",
-                                           Ref(person_id, "Imogen Vale"))])
+        def named_faces(library, key=None):
+            return None, clustering.FaceRows([1], [Ref(person_id, "Imogen Vale")], unit([1, 0, 0])[None, :], key, [None], [101])
+
         run = TagSuggester(NoIndex(), tree_of(TWICE), embedder=stand_in_models.Clip(3), faces=OneFace())
-        with mock.patch.object(faces_service, "known_faces", return_value=known), \
+        with mock.patch.object(identify, "named_faces", side_effect=named_faces), \
                 mock.patch.object(TagSuggester, "_tags_by_id", return_value=tags_by_id), \
                 mock.patch.object(faces_service, "record_detected", return_value=0):
             result = run.suggest_for_photo(r"D:\Pictures\Run\01.jpg", [1.0, 0.0, 0.0])
