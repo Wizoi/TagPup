@@ -30,9 +30,11 @@ each with what the plan read of the row (`expect`). Then:
 
 A change whose rows its writer writes itself is recorded instead (`record`), applied, in
 the writer's transaction. One may be added to in later transactions of its own
-(`record_inserted`, while `kept`): the face pass opens a folder's change at its first
+(`record_inserted`, `record_removing`, while `kept`): the face pass opens a folder's change at its first
 photo and adds each photo's rows, and counts, in that photo's transaction, so a change
-stopped part-way holds exactly what was committed and is undone as that.
+stopped part-way holds exactly what was committed and is undone as that; retiring the old
+detector's faces (tagpup.services.retire_faces) adds each chunk's deleted rows, read whole
+before they go, and its cleared decisions the same way.
 
 Either way a write is refused, before anything is written, when it would leave a row
 naming a row that is not there -- a face put back on a photo deleted since, a node under
@@ -850,9 +852,7 @@ def record(conn, operation, changes, summary=None, schema_version=None):
     at another is refused. `summary` is kept with it, counts and never names (how many rows
     of each table a change holds is History's, from change_rows: `history`). The caller
     holds the transaction and commits. Returns the change's id."""
-    for change in changes:
-        if change.table not in KEYS:
-            raise ValueError("%s is not a table a change records" % change.table)
+    _recordable(change.table for change in changes)
     now = _now()
     change_id = conn.execute(
         "INSERT INTO changes (operation, status, schema_version, created, applied, summary)"
@@ -867,9 +867,7 @@ def record_rows(conn, change_id, changes):
     """Add `changes` (RowChanges of tables in KEYS) to the rows of change `change_id`, in the caller's transaction: a change of photo
     files that also writes rows (tagpup.store.face_batches) records them as the plan reads them. The rows are written by the caller,
     when the file's step is done, not here."""
-    for change in changes:
-        if change.table not in KEYS:
-            raise ValueError("%s is not a table a change records" % change.table)
+    _recordable(change.table for change in changes)
     _record(conn, change_id, changes)
 
 
@@ -878,17 +876,53 @@ def record_inserted(conn, change_id, rows, counts=None):
     whole as stored, so that an undo deletes exactly them and a rehearsal puts them back byte for byte; and add `counts`
     to the change's summary, in the same transaction, so a change whose rows come a piece at a time (the face pass:
     tagpup.store.faces.give_vectors) says what was committed, never what was planned."""
-    tables = {table for table, _key in rows}
-    unknown = sorted(tables - set(KEYS))
+    _record(conn, change_id, _whole(conn, "insert", rows))
+    _add_counts(conn, change_id, counts)
+
+
+def record_removing(conn, change_id, rows, updates, counts=None):
+    """Add to change `change_id`, in the caller's transaction and BEFORE the caller writes, the rows it is about to delete,
+    [(table, key)] of tables in KEYS, each read whole as it stands, so that an undo puts each back byte for byte -- in the
+    order given, which an undo walks backwards: a child before its parent here (a face's crop and vectors before the face)
+    puts the parent back first -- and the `updates` it is about to make, [(table, key, old, new)], `old` and `new` the
+    columns that change; and add `counts` to the change's summary, so a change written a piece at a time (retiring the old
+    detector's faces: tagpup.services.retire_faces) says what was committed, never what was planned."""
+    _recordable(table for table, _key, _old, _new in updates)
+    changes = _whole(conn, "delete", rows)
+    changes += [RowChange("update", table, tuple(key), dict(old), dict(new)) for table, key, old, new in updates]
+    _record(conn, change_id, changes)
+    _add_counts(conn, change_id, counts)
+
+
+def _recordable(tables):
+    """Refuse a table a change does not record (KEYS)."""
+    unknown = sorted(set(tables) - set(KEYS))
     if unknown:
         raise ValueError("%s is not a table a change records" % unknown[0])
+
+
+def _whole(conn, action, rows):
+    """[RowChange] of `rows`, [(table, key)] of tables in KEYS, each read whole as stored: an insert just written, or a
+    delete about to be."""
+    tables = {table for table, _key in rows}
+    _recordable(tables)
     columns = {table: schema.table_columns(conn, table) for table in tables}
-    changes = [RowChange("insert", table, tuple(key), None, _read(conn, table, tuple(key), columns[table]))
-               for table, key in rows]
-    _record(conn, change_id, changes)
+    found = []
+    for table, key in rows:
+        row = _read(conn, table, tuple(key), columns[table])
+        found.append(RowChange(action, table, tuple(key), None if action == "insert" else row,
+                               row if action == "insert" else None))
+    return found
+
+
+def _add_counts(conn, change_id, counts):
+    """Add `counts` to the summary of change `change_id`, in the caller's transaction: the one way a change added to a
+    piece at a time keeps its counts at what was committed."""
+    if not counts:
+        return
     (text,) = conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()
     summary = json.loads(text or "{}")
-    for name, count in (counts or {}).items():
+    for name, count in counts.items():
         summary[name] = summary.get(name, 0) + count
     conn.execute("UPDATE changes SET summary = ? WHERE id = ?", (json.dumps(summary, sort_keys=True), change_id))
 
@@ -897,6 +931,13 @@ def kept(conn, change_id):
     """Is change `change_id` applied and neither undone nor being undone: may a writer still add rows to it?"""
     row = conn.execute("SELECT status, undone FROM changes WHERE id = ?", (change_id,)).fetchone()
     return row is not None and row[0] == "applied" and row[1] is None
+
+
+def newest_kept(conn, operation):
+    """The id of the journal's newest change when it is called `operation` and is kept (applied, not undone): the change a
+    writer added to a piece at a time continues, across runs, only while nothing was recorded after it; else None."""
+    row = conn.execute("SELECT id, operation FROM changes ORDER BY id DESC LIMIT 1").fetchone()
+    return row[0] if row is not None and row[1] == operation and kept(conn, row[0]) else None
 
 
 def kept_named(conn, operation):
