@@ -30,7 +30,8 @@ What the owner lives through, in one library:
   with the switch's sentence and counts, and the rehearsal and the undo refuse it so, writing nothing.
 - A library stamped before the face model was a setting holds no faces.model row (each of the three live libraries,
   counted 2026-10-20) and reads the default, FaceNet: its first switch inserts the row, History lists it undoable, and
-  the undo deletes it, the default read again; the switch's check never refuses that undo (it puts no model back).
+  the undo deletes it, the default read again, while a face holds FaceNet's vector. Switched again and FaceNet's vectors
+  retired (retire-vectors), that undo is refused with the switch's sentence, the snapshot named, nothing written (#1781).
 - A switch back the owner undid already, asked to be undone again, is refused as undone (the journal's own account comes
   first), not with the switch's sentence, though putting the new model back would be refused too.
 - A Suggest run or an index begun before a switch keeps the model it began with to its end (Runtime.begin's lease, the
@@ -76,6 +77,7 @@ from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import faces_from_tags  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import retire_faces  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -391,7 +393,7 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
             self.assertIn(said, " ".join(reply.get_json()["refused"].split()))
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
 
-    def test_the_first_switch_of_a_library_stamped_before_the_setting_is_undone_to_the_default(self):
+    def test_the_first_switch_of_a_library_stamped_before_the_setting_is_undone_to_the_default_while_facenet_vectors_stand(self):
         # Stamped before faces.model was a setting: the row is not there (made so here, the stamp of today writing it).
         conn = db.connect(self.library.path)
         try:
@@ -411,6 +413,22 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         self.assertEqual(1, self.undo(switched["change"])["changed"])
         self.assertEqual([], self.read(held))
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
+
+        # Switched again (the row inserted again), and FaceNet's vectors retired: putting the default back is refused.
+        again = self.switch(NEW)
+        self.assertEqual([("insert",)], self.read("SELECT DISTINCT action FROM change_rows WHERE change_id = ?", again["change"]))
+        self.assertEqual(2, retire_faces.apply_vectors(self.library, retire_faces.plan_vectors(self.library)).deleted)
+        said = library_settings.NONE_HELD % (2, FACENET)
+        self.assertEqual({again["change"]: said}, library_settings.undo_refusals(self.library, [again["change"]]))
+        listed = self.client.get("/lakeside/api/history").get_json()["changes"]
+        [entry] = [entry for entry in listed if entry["id"] == again["change"]]
+        self.assertFalse(entry["undoable"], entry)
+        url = "/lakeside/api/history/%d/undo" % again["change"]
+        for body in ({}, {"apply": True}):
+            reply = self.client.post(url, json=body)
+            self.assertEqual(400, reply.status_code, reply.data)
+            self.assertEqual(said, reply.get_json()["refused"])
+        self.assertEqual([(NEW,)], self.read(held))
 
     def test_a_switch_back_undone_already_is_refused_as_undone(self):
         self.switch(NEW)

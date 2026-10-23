@@ -9,7 +9,8 @@ before the pass has reached the library would leave its faces with nothing to be
 - (s) The switch: a library more than a twentieth of whose faces are in photos the pass has not reached is refused, with
   how many faces hold a vector under the new model, how many named faces hold none, and how to finish the pass; nothing is
   written, nor in a dry run. A library the pass has nearly covered switches, told the same counts. A library with no
-  faces switches. Switching back to FaceNet is always allowed. The consequences the owner ticks say what switching does.
+  faces switches. Switching back to FaceNet is allowed while any face holds its vector (refused once none does:
+  tests/test_retiring_the_old_models_vectors.py). The consequences the owner ticks say what switching does.
 - (c) Identify compares a library's faces by its own model's vectors. In the library switched after its pass, a face the
   pass gave no vector (an old face it matched with nothing it found) is answered one sentence (identify.NO_VECTOR) with
   400, not a 500, wherever it is asked who it resembles (TagTuner's faces strip and selection pane, New Person's seed,
@@ -284,8 +285,9 @@ class TheSwitchWaitsForThePass(_Libraries):
         self.assertEqual(1, changed.changed, changed.refused)
         self.assertEqual({"faces": 0, "without": 0, "named_without": 0, "not_passed": 0}, changed.details["face_vectors"])
 
-    def test_switching_back_is_always_allowed(self):
-        # cove, indexed after its switch: a photo whose three faces hold the new model's vector alone.
+    def test_switching_back_is_allowed_while_a_face_holds_facenets_vector(self):
+        # cove, indexed after its switch: a photo whose three faces hold the new model's vector alone; its two first
+        # faces hold FaceNet's.
         rng = np.random.default_rng(9)
         conn = db.connect(self.cove.path)
         try:
