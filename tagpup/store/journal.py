@@ -941,7 +941,8 @@ def newest_kept(conn, operation):
 
 
 def operations(conn, change_ids):
-    """{id: operation} of each of `change_ids` the journal holds, on the caller's connection."""
+    """{id: operation} of each of `change_ids` the journal holds, on the caller's connection: the one read of a change's
+    name (`operation` is it for one change, on a connection of its own)."""
     found = {}
     ids = list(change_ids)
     for start in range(0, len(ids), 500):
@@ -1381,8 +1382,7 @@ def operation(db_path, change_id):
     at `db_path` has not."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        row = conn.execute("SELECT operation FROM changes WHERE id = ?", (change_id,)).fetchone()
-        return row[0] if row else None
+        return operations(conn, [change_id]).get(change_id)
     finally:
         conn.close()
 
