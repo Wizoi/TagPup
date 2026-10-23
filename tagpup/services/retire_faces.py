@@ -31,8 +31,10 @@ with its crop and vectors, and every decision as it was; the journal refuses tha
 rows (a face named since by Name faces from tags), naming the change. Two undos are refused besides, each way round
 (`undo_refusals`): the pass's own change ("face pass (<key>)") while a retiring after it stands -- its new faces stand in
 for the faces the retiring deleted, and undone first it would leave photos with no face at all under the model -- and the
-retiring while a pass after it stands that made faces in a photo whose old faces it deleted (a photo it left faceless,
-looked at again by the next pass): undone, the old faces would come back beside the new. The pass is undone first.
+retiring while a photo whose faces it deleted holds a face made since, by any writer -- the next face pass, or
+Suggest, which detects again a photo it left faceless and records no change: undone, the old faces would come back
+beside the new. A face made since is one whose id is above the newest the library held when the change was opened (its
+summary's NEWEST_FACE; faces.id is AUTOINCREMENT).
 """
 import logging
 from dataclasses import dataclass, field
@@ -64,9 +66,12 @@ MANUAL_NAMES = ("Nothing was written: %d names given by hand would go (%d of fac
 #: Why an undo of the pass's change is refused while a retiring after it stands (undo_refusals).
 PASS_STANDS_IN = "change %d (retire faces) deleted the old faces this pass's new faces stand in for: undo it first"
 
-#: Why an undo of a retiring is refused while a pass after it made faces in its photos (undo_refusals).
-RETIRING_UNDER = ("change %d (face pass) made faces in photos whose old faces this retiring deleted: undone now, they "
-                  "would come back beside them; undo it first")
+#: Why an undo of a retiring is refused while photos it took faces from hold faces made since (undo_refusals).
+RETIRING_UNDER = ("%d photos this retiring took faces from have faces made since (by a face pass or Suggest): undone "
+                  "now, the old faces would come back beside them")
+
+#: The summary key of a retiring's change holding the newest face id when it was opened (store.faces.newest_id).
+NEWEST_FACE = "newest_face"
 
 #: What the plan says of the photos it leaves with no face (store.faces.retire_counts: emptied_photos, emptied_faces).
 EMPTIED = ("%d photos end with no face at all (their %d faces are among those deleted): the new model's pass found no "
@@ -238,39 +243,42 @@ def undo_refusals(library, change_ids):
     - a face pass's change ("face pass (<key>)") older than a retiring under the same key that stands (applied, not
       undone): PASS_STANDS_IN, naming the newest such; undone, the pass would take the new model's vectors and faces from
       photos whose old faces are gone;
-    - a retiring older than a face pass under the same key that stands and made faces in a photo whose faces the
-      retiring deleted: RETIRING_UNDER, naming the newest such; undone, the retiring would put the old faces back beside
-      the pass's.
+    - a retiring that stands while a photo whose faces it deleted holds a face made since (an id above its summary's
+      NEWEST_FACE), by any writer, journaled or not: RETIRING_UNDER, with how many photos; undone, the retiring would put
+      the old faces back beside them.
     The journal alone allows both -- each wrote other rows than the other did. Reads only, one connection; a retiring's
-    photos are read only when a pass after it stands."""
+    photos are read only when the library holds a face made since it."""
     if not change_ids:
         return {}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         kept = {}
 
-        def later(operation, change_id):
+        def standing(operation):
             if operation not in kept:
-                kept[operation] = [kept_id for kept_id, _summary in journal.kept_named(conn, operation)]
-            return [kept_id for kept_id in kept[operation] if kept_id > change_id]
+                kept[operation] = dict(journal.kept_named(conn, operation))
+            return kept[operation]
 
-        reasons = {}
+        reasons, newest = {}, None
         for change_id, operation in journal.operations(conn, change_ids).items():
             key = _key_of(operation, face_pass.OPERATION)
             if key is not None:
-                retirings = later(OPERATION % key, change_id)
+                retirings = [kept_id for kept_id in standing(OPERATION % key) if kept_id > change_id]
                 if retirings:
                     reasons[change_id] = PASS_STANDS_IN % retirings[-1]
                 continue
             key = _key_of(operation, OPERATION)
-            passes = later(face_pass.OPERATION % key, change_id) if key is not None else []
-            if not passes:
+            summary = standing(OPERATION % key).get(change_id) if key is not None else None
+            if summary is None:   # not a retiring, or one undone: nothing of it stands
+                continue
+            if newest is None:
+                newest = store_faces.newest_id(conn)
+            if newest <= summary[NEWEST_FACE]:
                 continue
             photos = journal.recorded_values(conn, [change_id], "faces", "delete", "photo_id").get(change_id, set())
-            made = journal.recorded_values(conn, passes, "faces", "insert", "photo_id")
-            standing = [pass_id for pass_id in passes if made.get(pass_id, set()) & photos]
-            if standing:
-                reasons[change_id] = RETIRING_UNDER % standing[-1]
+            held = store_faces.photos_with_faces_after(conn, photos, summary[NEWEST_FACE])
+            if held:
+                reasons[change_id] = RETIRING_UNDER % held
         return reasons
     finally:
         conn.close()
@@ -299,7 +307,8 @@ def _write(conn, model, operation, photo_ids):
     cleared = [(face_id, was) for face_id, _photo, kept, was in rows if kept]
     change_id = journal.newest_kept(conn, operation)
     if change_id is None:
-        change_id = journal.record(conn, operation, [], {"deleted": 0, "cleared": 0})
+        change_id = journal.record(conn, operation, [], {"deleted": 0, "cleared": 0,
+                                                        NEWEST_FACE: store_faces.newest_id(conn)})
     updates = []
     for face_id, was in cleared:
         old = {column: value for column, value in was.items() if value != store_faces.UNDECIDED[column]}

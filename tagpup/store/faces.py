@@ -475,6 +475,25 @@ def retire_rows(conn, key, photo_ids):
     return found
 
 
+def newest_id(conn):
+    """The highest id a face holds now, 0 for none: a face made after this read holds a higher one (faces.id is
+    AUTOINCREMENT, never given twice). The rowid's own end of the table, no scan."""
+    (found,) = conn.execute("SELECT MAX(id) FROM faces").fetchone()
+    return found or 0
+
+
+def photos_with_faces_after(conn, photo_ids, face_id):
+    """How many of `photo_ids` hold a face whose id is above `face_id` (newest_id read earlier): a face made since, by any
+    writer. By idx_faces_photo_id (the id is the index's rowid: no row read)."""
+    found = 0
+    for chunk in _chunks(sorted(photo_ids)):
+        (count,) = conn.execute(
+            "SELECT COUNT(DISTINCT f.photo_id) FROM faces f INDEXED BY idx_faces_photo_id WHERE f.photo_id IN (%s)"
+            " AND f.id > ?" % ",".join("?" * len(chunk)), chunk + [face_id]).fetchone()
+        found += count
+    return found
+
+
 def manual_names(conn):
     """face id -> Ref for every face a person decided by hand. A None is a
     deliberate "this is nobody", as binding as a person."""

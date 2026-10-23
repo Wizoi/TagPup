@@ -560,9 +560,9 @@ takes no turn of the card.
   asks before each chunk whether an app was started and stops there, saying so; an MCP server keeps no record and is
   not seen. Keywords and the tree stay: the people a photo's keywords name are what Name faces from tags names the kept
   faces from again. Undo is refused both ways round (`retire_faces.undo_refusals`): the pass's change while a retiring
-  after it stands, and the retiring while a pass after it stands that made faces in a photo whose faces the retiring
-  deleted (`journal.recorded_values`: the photos of the retiring's deleted faces against those of the pass's inserted
-  ones); the pass is undone first. Scenario P8, `tests/test_retiring_the_old_detectors_faces.py`.
+  after it stands, and the retiring while a photo whose faces it deleted holds a face made since by any writer (a pass,
+  or Suggest detecting a photo it left faceless again): a face whose id is above the change's `newest_face`, read from
+  the faces as they are (`store.faces.photos_with_faces_after`, by `idx_faces_photo_id`). Scenario P8, `tests/test_retiring_the_old_detectors_faces.py`.
 - photo_index (a sandbox copy of the live library, 2026-10-22): of 218,265 faces, 35,486 deleted (1,907 named
   automatically, 19 decided by hand or excluded); of the faces kept, decisions cleared on 175 faces named by hand,
   59,428 named automatically, 3 decided to be nobody and 13 exclusions; 44,268 photos walked in 89 chunks. Applied

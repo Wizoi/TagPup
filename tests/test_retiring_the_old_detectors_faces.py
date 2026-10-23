@@ -22,10 +22,11 @@
   as the same change.
 - (g) The pass's own change in History is not undone while the retiring that followed it stands (its new faces stand in
   for the faces the retiring deleted); undone, the retiring first, then the pass.
-- (h) The other way: the retiring is not undone while a pass after it made faces in a photo whose old faces it deleted
-  (a photo it left faceless, looked at again by the next pass): the old faces would come back beside the new. Undone, the
-  pass first, then the retiring: the photo holds its old face alone. A pass of another library holding the same folder
-  stands in the way of nothing here; a photo the sync removed after the retiring makes its undo refused, nothing written.
+- (h) The other way: the retiring is not undone while a photo whose old faces it deleted holds a face made since -- by
+  the next face pass, or by Suggest, which detects again a photo the retiring left faceless and records no change: the
+  old faces would come back beside the new. Undone, the pass first, then the retiring: the photo holds its old face
+  alone. A pass of another library holding the same folder stands in the way of nothing here; a photo the sync removed
+  after the retiring makes its undo refused, nothing written.
 
 Fictional names; a library in a home of the test's own; rows as the indexer and the pass store them.
 """
@@ -51,6 +52,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import face_pass  # noqa: E402
+from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import retire_faces  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
@@ -524,8 +526,7 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         self.assertEqual([], self.faces_in(self.library, path))
         pass_change = self.a_pass_finds_a_face_in(self.library, path)
         new_face = self.faces_in(self.library, path)
-        said = ("change %d (face pass) made faces in photos whose old faces this retiring deleted: undone now, they would "
-                "come back beside them; undo it first" % pass_change)
+        said = retire_faces.RETIRING_UNDER % 1
         entries = [{"id": retire_change, "operation": OPERATION}]
         self.assertEqual({retire_change: said}, journal_service.refusals(self.library, entries))
         before = self.state()
@@ -540,6 +541,25 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         undone = journal_service.undo(self.library, retire_change, apply=True)
         self.assertFalse(undone.refused, undone.refused)
         self.assertEqual([self.face["old, alone in its photo"]], self.faces_in(self.library, path))
+
+    def test_the_retiring_is_not_undone_while_suggest_detected_faces_in_a_photo_it_left_faceless(self):
+        path = self.a_photo_the_retiring_leaves_faceless()
+        retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
+        (retire_change,) = retired.changes
+        self.assertEqual([], self.faces_in(self.library, path))
+        # Suggest's detection: the photo has no face, so it is looked at again; its writer records no change.
+        embedding = np.random.default_rng(9).standard_normal(512).astype(np.float32).tolist()
+        self.assertEqual(1, face_records.record_detected(
+            self.library.path, path, [{"box": [7, 7, 27, 27], "prob": 0.99, "embedding": embedding}], model=NEW))
+        new_face = self.faces_in(self.library, path)
+        said = retire_faces.RETIRING_UNDER % 1
+        entries = [{"id": retire_change, "operation": OPERATION}]
+        self.assertEqual({retire_change: said}, journal_service.refusals(self.library, entries))
+        before = self.state()
+        refused = journal_service.undo(self.library, retire_change, apply=True)
+        self.assertEqual(said, refused.refused)
+        self.assertEqual((before, new_face), (self.state(), self.faces_in(self.library, path)),
+                         "the old face came back beside Suggest's")
 
     def test_a_pass_of_another_library_holding_the_folder_stands_in_the_way_of_nothing(self):
         other = Library(self.home.library("lighthouse.db"))
