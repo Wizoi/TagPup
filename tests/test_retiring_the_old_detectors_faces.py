@@ -39,7 +39,7 @@ from click.testing import CliRunner
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import FACENET, add_face, people_of, person_of  # noqa: E402
+from face_rows import FACENET, people_of, person_of  # noqa: E402
 import photo_rows  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -55,7 +55,6 @@ from tagpup.services import retire_faces  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
-from tagpup.store import people  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 from tagpup.store import snapshots as store_snapshots  # noqa: E402
@@ -71,9 +70,10 @@ def vector(rng):
 
 class RetiringTheOldDetectorsFaces(unittest.TestCase):
     """harbour: five photos read by the index, a keyword person on the first, and faces as the pass left them -- matched
-    faces holding FaceNet's vector and the new model's, faces the old detector alone found holding FaceNet's -- each with
-    its crop, named automatically, by hand, nobody, excluded or undecided; the matched faces' new vectors written by the
-    pass's own writer, as one change of the journal; switched to the new model after its pass."""
+    faces holding FaceNet's vector and the new model's, faces the old detector alone found holding FaceNet's -- each made
+    by the indexer's writer with its crop, named automatically by it or decided by the writers of a person's decisions (by
+    hand, nobody, excluded) or undecided; the matched faces' new vectors written by the pass's own writer, as one change
+    of the journal; switched to the new model after its pass."""
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="retire_faces_")
@@ -86,34 +86,39 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         rng = np.random.default_rng(7)
         conn = db.connect(self.library.path)
         try:
-            person_of(conn, "Tamsin Okoro")
-            person_of(conn, "Odile Farrant")
-            photo_ids = [photo_rows.add_read(conn, self.photo[1], {"XMP:Subject": ["Tamsin Okoro"]})]
+            tamsin, odile = person_of(conn, "Tamsin Okoro"), person_of(conn, "Odile Farrant")
+            photo_rows.add_read(conn, self.photo[1], {"XMP:Subject": ["Tamsin Okoro"]})
             for n in range(2, 6):
-                photo_ids.append(photo_rows.add_read(conn, self.photo[n], {"XMP:Subject": ["Harbour/Ferry"]}))
+                photo_rows.add_read(conn, self.photo[n], {"XMP:Subject": ["Harbour/Ferry"]})
             self.face = {}
             matched_in = {n: [] for n in self.photo}
 
-            def face(label, n, matched, **columns):
-                face_id = add_face(conn, self.photo[n], box=(n, n, 20 + n, 20 + n), embedding=vector(rng), prob=0.98,
-                                   **columns)
+            def face(label, n, matched, automatic=None, by_hand=None, nobody=False, excluded=None):
+                """A face the indexer detected (its writer, crop and automatic name with it), then a person's decision by
+                the writer of it: a name by hand, "nobody", or an exclusion with its reason."""
+                face_id = store_faces.insert(conn, self.photo[n], [n, n, 20 + n, 20 + n], vector(rng), model=FACENET,
+                                             name=automatic, crop=bytes([n]) * 64, prob=0.98)
                 if matched:
                     matched_in[n].append((face_id, vector(rng)))
-                conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, bytes([n]) * 64))
+                if by_hand is not None:
+                    self.assertEqual(1, store_faces.name(conn, [face_id], by_hand))
+                if nobody:
+                    self.assertEqual(1, store_faces.unname(conn, [face_id], source="manual"))
+                if excluded is not None:
+                    self.assertEqual(1, store_faces.exclude(conn, [face_id], excluded))
                 self.face[label] = face_id
 
             face("old undecided", 1, False)
-            face("matched, named automatically", 1, True, name="Odile Farrant")
-            face("old, named by hand", 2, False, name="Tamsin Okoro", name_source="manual")
-            face("old, excluded", 2, False, name_source="manual", excluded=1, excluded_reason="not a face")
-            face("matched, nobody", 2, True, name_source="manual")
-            face("matched, named by hand", 3, True, name="Odile Farrant", name_source="manual")
-            face("matched, excluded", 3, True, name_source="manual", excluded=1, excluded_reason="a statue")
+            face("matched, named automatically", 1, True, automatic=odile)
+            face("old, named by hand", 2, False, by_hand=tamsin)
+            face("old, excluded", 2, False, excluded="not a face")
+            face("matched, nobody", 2, True, nobody=True)
+            face("matched, named by hand", 3, True, by_hand=odile)
+            face("matched, excluded", 3, True, excluded="a statue")
             face("matched undecided", 3, True)
             face("matched undecided alone", 4, True)
-            face("old, named automatically", 5, False, name="Tamsin Okoro")
+            face("old, named automatically", 5, False, automatic=tamsin)
             face("matched beside it", 5, True)
-            people.rebuild(conn, photo_ids)   # the photos' people, as every face writer leaves them
             # The pass: one change for the folder, each photo's matched faces given the new vector by its writer.
             self.pass_change = journal.record(conn, face_pass.OPERATION % NEW, [],
                                               {"folder": store_roots.to_row(conn, folder), "matched": 0, "new": 0})
