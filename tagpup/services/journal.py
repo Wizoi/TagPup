@@ -12,7 +12,8 @@ A stamp of a library's settings (tagpup.services.settings.STAMPS) is never undon
 is the library's first settings, and undone the library held none -- the next read
 stamped it again. Nor is a change whose undo would put back a face model the library may
 not be switched to now (tagpup.services.settings.undo_refusals: the switch's own check), nor a face pass's change
-while a retiring of the old detector's faces after it stands (tagpup.services.retire_faces.undo_refusals).
+while a retiring of the old detector's faces after it stands, nor that retiring while a pass after it made faces in its
+photos (tagpup.services.retire_faces.undo_refusals).
 
 A change of photo files (tagpup.services.file_changes) is undone file by file, and its
 rows follow: a file that no longer holds what the change left is refused, named, and the
@@ -55,7 +56,7 @@ def refusals(library, entries):
     (_stamp_refusal), then the journal's (tagpup.store.journal.refusal: status, schema
     version, a newer change of the same rows or files), then a face model put back that
     the library may not be switched to now (settings.undo_refusals), then a face pass a retiring after it stands
-    on (retire_faces.undo_refusals) -- so a change offered
+    on, or a retiring a pass after it made faces beside (retire_faces.undo_refusals) -- so a change offered
     is one the rehearsal does not refuse out of hand. Reads only."""
     reasons = {entry["id"]: _stamp_refusal(entry["operation"]) for entry in entries}
     found = journal.refusals(library.path, [cid for cid, why in reasons.items() if why is None])

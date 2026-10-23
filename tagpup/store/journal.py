@@ -947,6 +947,26 @@ def operations(conn, change_ids):
     return found
 
 
+def recorded_values(conn, change_ids, table, action, column):
+    """{change id: {value}} of `column` in the rows of `table` each of `change_ids` recorded as `action` ("insert": the
+    value it wrote; "delete": the value the row held): the photos a change's faces were in, say. By the index of the
+    rows of a change (named: the planner otherwise takes the one of a table's rows, every change's); a value only of the
+    column asked, no other column's (no crop or vector) read."""
+    if action not in ("insert", "delete"):
+        raise ValueError("an insert's or a delete's values, not an %s's" % action)
+    found = {}
+    ids = list(change_ids)
+    for start in range(0, len(ids), CHUNK):
+        chunk = ids[start:start + CHUNK]
+        for change_id, value in conn.execute(
+                "SELECT DISTINCT change_id, %s FROM change_rows INDEXED BY idx_change_rows_change WHERE change_id IN (%s)"
+                " AND table_name = ? AND action = ?"
+                " AND column_name = ?" % ("new" if action == "insert" else "old", ",".join("?" * len(chunk))),
+                chunk + [table, action, column]):
+            found.setdefault(change_id, set()).add(value)
+    return found
+
+
 def kept_named(conn, operation):
     """[(id, summary)] of the changes called `operation` that are applied and not undone, oldest first, each summary read
     from its JSON: the caller picks among them by what the summary says (the face pass: its folder)."""

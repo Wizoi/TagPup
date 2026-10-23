@@ -20,6 +20,10 @@
   chunk; Ctrl+C stops it between two chunks, and a run again finishes it as the same change.
 - (g) The pass's own change in History is not undone while the retiring that followed it stands (its new faces stand in
   for the faces the retiring deleted); undone, the retiring first, then the pass.
+- (h) The other way: the retiring is not undone while a pass after it made faces in a photo whose old faces it deleted
+  (a photo it left faceless, looked at again by the next pass): the old faces would come back beside the new. Undone, the
+  pass first, then the retiring: the photo holds its old face alone. A pass of another library holding the same folder
+  stands in the way of nothing here; a photo the sync removed after the retiring makes its undo refused, nothing written.
 
 Fictional names; a library in a home of the test's own; rows as the indexer and the pass store them.
 """
@@ -419,6 +423,111 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         self.assertFalse(undone.refused, undone.refused)
         self.assertEqual([], self.read("SELECT face_id FROM face_embeddings WHERE model = ?", (NEW,)))
 
+
+    # ---- (h) --------------------------------------------------------------------------------------------------------
+
+    def a_photo_the_retiring_leaves_faceless(self, library=None):
+        """A sixth photo of the folder, read by the index of `library` (this one unless given), whose one face the old
+        detector alone found (the indexer's writer): the retiring leaves it with no face. Its path."""
+        library = library or self.library
+        path = os.path.join(os.path.dirname(self.photo[1]), "ferry 6.jpg")
+        conn = db.connect(library.path)
+        try:
+            photo_rows.add_read(conn, path, {"XMP:Subject": ["Harbour/Ferry"]})
+            face_id = store_faces.insert(conn, path, [6, 6, 26, 26], vector(np.random.default_rng(6)), model=FACENET,
+                                         crop=bytes([6]) * 64, prob=0.97)
+            conn.commit()
+        finally:
+            conn.close()
+        if library is self.library:
+            self.face["old, alone in its photo"] = face_id
+            # One face of twelve in a photo the new model holds none of is above the share a switch allows (5%); the
+            # live libraries hold far fewer (photo_index: 5,754 of 218,265 faces, 2026-10-22).
+            self.enterContext(mock.patch.object(library_settings, "UNPASSED_SHARE_ALLOWED", 0.1))
+        return path
+
+    def a_pass_finds_a_face_in(self, library, path):
+        """A pass after the retiring, under the new model, that finds a face in `path`: its own change, by the pass's
+        writer. The change's id."""
+        conn = db.connect(library.path)
+        try:
+            change_id = journal.record(conn, face_pass.OPERATION % NEW, [],
+                                       {"folder": store_roots.to_row(conn, os.path.dirname(path)), "matched": 0, "new": 0})
+            store_faces.give_vectors(conn, change_id, path, NEW, [],
+                                     [([7, 7, 27, 27], 0.99, vector(np.random.default_rng(8)), bytes([7]) * 64)],
+                                     {"matched": 0, "new": 1})
+            conn.commit()
+        finally:
+            conn.close()
+        return change_id
+
+    def faces_in(self, library, path):
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            (photo_id,) = store_roots.photo_ids_at(conn, [path])
+            return [face_id for (face_id,) in conn.execute("SELECT id FROM faces WHERE photo_id = ? ORDER BY id",
+                                                           (photo_id,))]
+        finally:
+            conn.close()
+
+    def test_the_retiring_is_not_undone_while_a_pass_after_it_made_faces_in_its_photos(self):
+        path = self.a_photo_the_retiring_leaves_faceless()
+        retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
+        (retire_change,) = retired.changes
+        self.assertEqual([], self.faces_in(self.library, path))
+        pass_change = self.a_pass_finds_a_face_in(self.library, path)
+        new_face = self.faces_in(self.library, path)
+        said = ("change %d (face pass) made faces in photos whose old faces this retiring deleted: undone now, they would "
+                "come back beside them; undo it first" % pass_change)
+        entries = [{"id": retire_change, "operation": OPERATION}]
+        self.assertEqual({retire_change: said}, journal_service.refusals(self.library, entries))
+        before = self.state()
+        refused = journal_service.undo(self.library, retire_change, apply=True)
+        self.assertEqual(said, refused.refused)
+        self.assertEqual((before, new_face), (self.state(), self.faces_in(self.library, path)), "the refusal wrote")
+
+        # The pass first, then the retiring: the photo holds its old face alone, no new face beside it.
+        undone = journal_service.undo(self.library, pass_change, apply=True)
+        self.assertFalse(undone.refused, undone.refused)
+        self.assertEqual({retire_change: None}, journal_service.refusals(self.library, entries))
+        undone = journal_service.undo(self.library, retire_change, apply=True)
+        self.assertFalse(undone.refused, undone.refused)
+        self.assertEqual([self.face["old, alone in its photo"]], self.faces_in(self.library, path))
+
+    def test_a_pass_of_another_library_holding_the_folder_stands_in_the_way_of_nothing(self):
+        other = Library(self.home.library("lighthouse.db"))
+        library_actions.create(other.path)
+        library_actions.record_added(other, [os.path.dirname(self.photo[1])])
+        conn = db.connect(other.path)
+        try:
+            for n in sorted(self.photo):   # the same photos, in the same order: the same ids as here
+                photo_rows.add_read(conn, self.photo[n], {"XMP:Subject": ["Harbour/Ferry"]})
+            conn.commit()
+        finally:
+            conn.close()
+        path = self.a_photo_the_retiring_leaves_faceless()
+        self.a_photo_the_retiring_leaves_faceless(other)
+        before = self.state()
+        retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
+        (retire_change,) = retired.changes
+        self.a_pass_finds_a_face_in(other, path)   # the other library's pass, after this one's retiring
+        entries = [{"id": retire_change, "operation": OPERATION}]
+        self.assertEqual({retire_change: None}, journal_service.refusals(self.library, entries))
+        undone = journal_service.undo(self.library, retire_change, apply=True)
+        self.assertFalse(undone.refused, undone.refused)
+        self.assertEqual(before, self.state())
+        self.assertEqual([self.face["old, alone in its photo"]], self.faces_in(self.library, path))
+
+    def test_a_photo_the_sync_removed_after_the_retiring_makes_its_undo_refused_with_nothing_written(self):
+        retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
+        (retire_change,) = retired.changes
+        store_photos.forget_photo(self.library.path, self.photo[5])   # the sync's, for a file deleted
+        before = self.state()
+        refused = journal_service.undo(self.library, retire_change, apply=True)
+        # The journal's own refusal, naming keys: a face is not put back on a photo removed since.
+        self.assertIn("photo_id names photos %d, which is not there" % retired.plan.photo_ids[-1], refused.refused)
+        self.assertEqual(before, self.state())
+        self.assertEqual("applied", self.read("SELECT status FROM changes WHERE id = ?", (retire_change,))[0][0])
 
 if __name__ == "__main__":
     unittest.main()

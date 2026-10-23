@@ -28,9 +28,11 @@ at the first chunk that writes, and added to while it is the journal's newest ch
 run stopped (`stop`, asked between chunks) or killed part-way leaves it whole, and the next run continues it; a change
 recorded after it, or its undo, makes the next chunk open a new one. Undone from History, every deleted face comes back
 with its crop and vectors, and every decision as it was; the journal refuses that undo once a later change wrote the same
-rows (a face named since by Name faces from tags), naming the change. The pass's own change ("face pass (<key>)") is not
-undone while a retiring after it stands (`undo_refusals`): its new faces stand in for the faces the retiring deleted, and
-undone first it would leave photos with no face at all under the model.
+rows (a face named since by Name faces from tags), naming the change. Two undos are refused besides, each way round
+(`undo_refusals`): the pass's own change ("face pass (<key>)") while a retiring after it stands -- its new faces stand in
+for the faces the retiring deleted, and undone first it would leave photos with no face at all under the model -- and the
+retiring while a pass after it stands that made faces in a photo whose old faces it deleted (a photo it left faceless,
+looked at again by the next pass): undone, the old faces would come back beside the new. The pass is undone first.
 """
 import logging
 from dataclasses import dataclass, field
@@ -61,6 +63,10 @@ MANUAL_NAMES = ("Nothing was written: %d names given by hand would go (%d of fac
 
 #: Why an undo of the pass's change is refused while a retiring after it stands (undo_refusals).
 PASS_STANDS_IN = "change %d (retire faces) deleted the old faces this pass's new faces stand in for: undo it first"
+
+#: Why an undo of a retiring is refused while a pass after it made faces in its photos (undo_refusals).
+RETIRING_UNDER = ("change %d (face pass) made faces in photos whose old faces this retiring deleted: undone now, they "
+                  "would come back beside them; undo it first")
 
 NOT_ON_THE_MODEL = ("Nothing was written: the library's face model is %s, not %s. Faces are retired only once a library "
                     "is on the new model (switch it in the library's settings after its pass).")
@@ -223,25 +229,43 @@ def apply(library, planned, stop=_never, heard=None, clear_manual_names=False):
 
 
 def undo_refusals(library, change_ids):
-    """{change id: why it is not undone now} of each of `change_ids` that is a face pass's change ("face pass (<key>)")
-    older than a retiring under the same key that stands (applied, not undone): PASS_STANDS_IN, naming the newest such.
-    The journal alone would allow it -- the retiring wrote other rows than the pass did -- and undone, the pass would take
-    the new model's vectors and faces from photos whose old faces are gone. Reads only, one connection."""
+    """{change id: why it is not undone now} of each of `change_ids` that is
+    - a face pass's change ("face pass (<key>)") older than a retiring under the same key that stands (applied, not
+      undone): PASS_STANDS_IN, naming the newest such; undone, the pass would take the new model's vectors and faces from
+      photos whose old faces are gone;
+    - a retiring older than a face pass under the same key that stands and made faces in a photo whose faces the
+      retiring deleted: RETIRING_UNDER, naming the newest such; undone, the retiring would put the old faces back beside
+      the pass's.
+    The journal alone allows both -- each wrote other rows than the other did. Reads only, one connection; a retiring's
+    photos are read only when a pass after it stands."""
     if not change_ids:
         return {}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        operations = journal.operations(conn, change_ids)
-        standing, reasons = {}, {}
-        for change_id, operation in operations.items():
+        kept = {}
+
+        def later(operation, change_id):
+            if operation not in kept:
+                kept[operation] = [kept_id for kept_id, _summary in journal.kept_named(conn, operation)]
+            return [kept_id for kept_id in kept[operation] if kept_id > change_id]
+
+        reasons = {}
+        for change_id, operation in journal.operations(conn, change_ids).items():
             key = _key_of(operation, face_pass.OPERATION)
-            if key is None:
+            if key is not None:
+                retirings = later(OPERATION % key, change_id)
+                if retirings:
+                    reasons[change_id] = PASS_STANDS_IN % retirings[-1]
                 continue
-            if key not in standing:
-                standing[key] = [kept_id for kept_id, _summary in journal.kept_named(conn, OPERATION % key)]
-            later = [kept_id for kept_id in standing[key] if kept_id > change_id]
-            if later:
-                reasons[change_id] = PASS_STANDS_IN % later[-1]
+            key = _key_of(operation, OPERATION)
+            passes = later(face_pass.OPERATION % key, change_id) if key is not None else []
+            if not passes:
+                continue
+            photos = journal.recorded_values(conn, [change_id], "faces", "delete", "photo_id").get(change_id, set())
+            made = journal.recorded_values(conn, passes, "faces", "insert", "photo_id")
+            standing = [pass_id for pass_id in passes if made.get(pass_id, set()) & photos]
+            if standing:
+                reasons[change_id] = RETIRING_UNDER % standing[-1]
         return reasons
     finally:
         conn.close()
