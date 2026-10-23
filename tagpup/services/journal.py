@@ -11,7 +11,9 @@ library is photographs of real people, many of them minors.
 A stamp of a library's settings (tagpup.services.settings.STAMPS) is never undone: it
 is the library's first settings, and undone the library held none -- the next read
 stamped it again. Nor is a change whose undo would put back a face model the library may
-not be switched to now (tagpup.services.settings.undo_refusals: the switch's own check).
+not be switched to now (tagpup.services.settings.undo_refusals: the switch's own check), nor a face pass's change
+while a retiring of the old detector's faces after it stands, nor that retiring while a pass after it made faces in its
+photos (tagpup.services.retire_faces.undo_refusals).
 
 A change of photo files (tagpup.services.file_changes) is undone file by file, and its
 rows follow: a file that no longer holds what the change left is refused, named, and the
@@ -21,7 +23,7 @@ library's ExifTool, which the caller names.
 import logging
 
 from tagpup.core.result import NotFound, Result
-from tagpup.services import face_people, file_changes
+from tagpup.services import face_people, file_changes, retire_faces
 from tagpup.services import settings as library_settings
 from tagpup.store import journal
 
@@ -53,14 +55,15 @@ def refusals(library, entries):
     an Undo button. The account the rehearsal refuses by -- a stamp of the settings
     (_stamp_refusal), then the journal's (tagpup.store.journal.refusal: status, schema
     version, a newer change of the same rows or files), then a face model put back that
-    the library may not be switched to now (settings.undo_refusals) -- so a change offered
+    the library may not be switched to now (settings.undo_refusals), then a face pass a retiring after it stands
+    on, or a retiring a pass after it made faces beside (retire_faces.undo_refusals) -- so a change offered
     is one the rehearsal does not refuse out of hand. Reads only."""
     reasons = {entry["id"]: _stamp_refusal(entry["operation"]) for entry in entries}
     found = journal.refusals(library.path, [cid for cid, why in reasons.items() if why is None])
     for change_id, why in found.items():
         reasons[change_id] = "; ".join(why) or None
-    switched = library_settings.undo_refusals(library, [cid for cid, why in reasons.items() if why is None])
-    reasons.update(switched)
+    for rule in (library_settings.undo_refusals, retire_faces.undo_refusals):
+        reasons.update(rule(library, [cid for cid, why in reasons.items() if why is None]))
     return reasons
 
 
@@ -78,7 +81,8 @@ def rehearse(library, change_id, exiftool_path=None):
     result = Result(details={"dry_run": True, "change": change_id})
     stamped = _stamp_refusal(journal.operation(library.path, change_id))
     if not stamped and not journal.refusals(library.path, [change_id])[change_id]:
-        stamped = library_settings.undo_refusals(library, [change_id]).get(change_id)
+        stamped = (library_settings.undo_refusals(library, [change_id]).get(change_id)
+                   or retire_faces.undo_refusals(library, [change_id]).get(change_id))
     if stamped:
         result.refuse(stamped)
         return result

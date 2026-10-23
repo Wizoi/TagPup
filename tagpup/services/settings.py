@@ -66,8 +66,9 @@ NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
 
-#: The share of a library's faces that may be in photos the new model's pass has not reached when the library is switched
-#: to it (settings.change refuses a switch above it). Those faces hold no vector under the model switched to, so they
+#: The share of a library's faces that may be in photos none of whose faces holds the new model's vector -- the pass has
+#: not reached them, or found no face in them (store.faces.pass_counts' not_passed; the rows do not tell which) -- when the
+#: library is switched to it (settings.change refuses a switch above it). Those faces hold no vector under the model switched to, so they
 #: take no part in comparing, clustering or the gallery of named faces until the pass reaches their photos. Not zero:
 #: a pass leaves a few photos it could not read or that were added after it (live, 2026-10-20: 16 of kr-track's 11,457
 #: faces, 7 of renton_parkrun's 3,644, both under 0.2%), and the owner switches with those and finishes them by a pass
@@ -76,7 +77,7 @@ _TRUE = frozenset({"true", "yes", "on", "1"})
 UNPASSED_SHARE_ALLOWED = 0.05
 
 
-def _switch_to(library, model):
+def switch_to(library, model):
     """(refusal or None, what the faces hold under `model`): whether the library may be switched to the face model `model`
     (UNPASSED_SHARE_ALLOWED), and one sentence saying how many of its faces hold a vector under it and how many named
     faces hold none, said either way. FaceNet, which made every face the libraries hold before the new model's pass, is
@@ -103,7 +104,8 @@ def _switch_to(library, model):
                                 "s" if held["without"] == 1 else ""))
         return None, held
     said = ("%d of the library's %d faces hold a vector under %s; %d named face%s hold%s none, and would leave the named "
-            "faces Identify compares with until the pass reaches %s; %d face%s %s in photos the pass has not reached." % (
+            "faces Identify compares with until the pass reaches %s; %d face%s %s in photos where no face holds one (the pass "
+            "has not reached them, or found no face in them)." % (
                 held["faces"] - held["without"], held["faces"], model, held["named_without"],
                 "" if held["named_without"] == 1 else "s", "s" if held["named_without"] == 1 else "",
                 "it" if held["named_without"] == 1 else "them", not_passed, "" if not_passed == 1 else "s",
@@ -111,14 +113,14 @@ def _switch_to(library, model):
     held["said"] = said
     if not_passed <= UNPASSED_SHARE_ALLOWED * held["faces"]:
         return None, held
-    return ("Nothing was written: %s A switch allows at most %d%% of the faces in photos the pass has not reached: "
+    return ("Nothing was written: %s A switch allows at most %d%% of the faces in such photos: "
             "finish the pass first (TagPup CLI: face-pass <folder> --apply, for each folder of the library)." % (
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 
 
 def undo_refusals(library, change_ids):
     """{change id: why it is not undone now} of each of `change_ids` whose undo would put back a face model (faces.model)
-    the library may not be switched to now (_switch_to, the check settings.change makes): an undo of a switch back to
+    the library may not be switched to now (switch_to, the check settings.change makes): an undo of a switch back to
     FaceNet, once faces were added that hold FaceNet's vector alone. An undo putting FaceNet back is never refused. The
     refusal is the switch's own sentence and counts. Reads only: the journal's old values in one read, each model checked
     once."""
@@ -127,9 +129,9 @@ def undo_refusals(library, change_ids):
     for change_id, model in restored.items():
         model = _trim(model)
         if model == validation.MTCNN_FACENET:
-            continue  # _switch_to never refuses it: the History list does not read every face to say so.
+            continue  # switch_to never refuses it: the History list does not read every face to say so.
         if model not in checked:
-            checked[model] = _switch_to(library, model)[0]
+            checked[model] = switch_to(library, model)[0]
         if checked[model]:
             reasons[change_id] = checked[model]
     return reasons
@@ -378,7 +380,7 @@ def change(library, values, acknowledged=(), apply=True):
     (faces.model) to one whose pass has not reached more than UNPASSED_SHARE_ALLOWED of the
     library's faces is refused first; either way details["face_vectors"] holds what its faces
     hold under the model switched to, and, for a library with faces, its sentence ("said"; for a switch back to
-    FaceNet, only when a face holds no FaceNet vector: _switch_to). Every caller -- the
+    FaceNet, only when a face holds no FaceNet vector: switch_to). Every caller -- the
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;
     details["locked"] says whether any was a locked one, after which what the models
@@ -434,7 +436,7 @@ def change(library, values, acknowledged=(), apply=True):
     result.details.update({"changed": changed, "locked": any(validation.SETTINGS[k]["locked"] for k in changed)})
     if FACE_MODEL in changed:
         # Before the consequences are asked for: ticking them cannot make a library its pass has not reached switchable.
-        refusal, result.details["face_vectors"] = _switch_to(library, _trim(wanted[FACE_MODEL]))
+        refusal, result.details["face_vectors"] = switch_to(library, _trim(wanted[FACE_MODEL]))
         if refusal:
             result.refuse(refusal)
             return result

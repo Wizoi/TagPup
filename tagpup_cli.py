@@ -73,6 +73,8 @@ from tagpup.services import indexing as indexing_service
 from tagpup.services import thumbnails
 from tagpup.services import embedding_repair
 from tagpup.services import face_pass as face_pass_service
+from tagpup.services import retire_faces as retire_faces_service
+from tagpup import launcher
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
@@ -1135,9 +1137,10 @@ def repair_vectors(ctx, apply_):
 
 
 @contextlib.contextmanager
-def _stop_after_this_photo():
-    """Ctrl+C (and Ctrl+Break) asks a run to stop before its next photo, so the photo under way is committed whole or not
-    begun: the threading.Event the run asks. A second Ctrl+C stops at once (the photo's transaction is rolled back)."""
+def _stop_after_this_photo(what="photo"):
+    """Ctrl+C (and Ctrl+Break) asks a run to stop before its next photo (or `what`: a chunk of photos), so the one under
+    way is committed whole or not begun: the threading.Event the run asks. A second Ctrl+C stops at once (its
+    transaction is rolled back)."""
     import signal
     import threading
     asked = threading.Event()
@@ -1148,7 +1151,7 @@ def _stop_after_this_photo():
         if asked.is_set():
             raise KeyboardInterrupt
         asked.set()
-        console.print("Stopping after this photo (Ctrl+C again stops at once)...", markup=False)
+        console.print("Stopping after this %s (Ctrl+C again stops at once)..." % what, markup=False)
 
     for kind in kinds:
         signal.signal(kind, stop)
@@ -1274,6 +1277,93 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
 def _stopped_before_writing():
     console.print("Stopped: nothing was written; run it again to go on.", markup=False)
     raise SystemExit(1)
+
+
+#: What `retire-faces` says of the people the photos' keywords name: they stay, and name the faces again.
+KEYWORDS_STAY = ("The keywords in the photo files stay as they are, and so do the people they name in each photo: Name "
+                 "faces from tags (TagTuner's Folder Matches, or TagPup's Organize folder view) names the faces kept from "
+                 "them again, and cluster-faces names more by likeness.")
+
+#: Why `retire-faces --apply` is refused while an app runs: a server's record names no library, so any refuses it.
+APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Stop the app first (close it from its tray or its "
+               "window): a running app keeps faces it read in memory, and its writes beside this run would name or "
+               "decide faces this run deletes or clears. Its record names no library, so any running app refuses it.")
+
+#: Why `retire-faces --apply` stopped between two chunks: an app started during the run (launcher.running, asked a chunk).
+APP_STARTED = ("Stopped: TagPup was started during the run (%d app server(s)); the chunks written stand. Stop the app, then "
+               "run it again to go on, as the same change.")
+
+
+@cli.command("retire-faces")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write: after a snapshot of the library (unless one is from today), one change of the journal, which "
+                   "`undo` takes back. Without it, only says what it would do.")
+@click.option("--clear-manual-names", is_flag=True,
+              help="With --apply: the names given by hand go too (cleared from the faces kept, deleted with the others).")
+@click.option("--reveal", is_flag=True, help="The ids of the photos it walks.")
+@click.pass_context
+def retire_faces(ctx, apply_, clear_manual_names, reveal):
+    """Once the library is on the new face model, after its pass (face-pass) and the switch: delete every face the new
+    model gave no vector -- the old detector's alone -- with its crop and vectors, and clear every decision of the faces
+    kept (names, by hand or automatic, "nobody", exclusions), as one change of the journal (docs/AI_PIPELINE.md, phase
+    3). No keyword in a photo file and no tag of the tree is touched. A dry run unless --apply; counts only. Ctrl+C stops
+    it after the chunk of photos under way, and so does an app started during the run; run it again to go on, as the same
+    change. --apply is refused while an app runs; an MCP server keeps no record of itself and is not seen: close it
+    first."""
+    library = _existing_library(ctx)
+    say = functools.partial(console.print, markup=False, soft_wrap=True)
+    say("Retiring the old face detector's faces of %s%s." % (library.name, "" if apply_ else " (a dry run)"))
+    planned = retire_faces_service.plan(library)
+    say(planned.said())
+    if planned.refused:
+        raise SystemExit(1)
+    if not planned.photo_ids:
+        say("Nothing to retire: no face holds no vector under %s, and no face kept holds a decision." % planned.model)
+        return
+    if reveal:
+        say("Photos (ids): %s" % ", ".join(map(str, planned.photo_ids)))
+    say(KEYWORDS_STAY)
+    if not apply_:
+        say("Nothing changed. --apply writes it, after a snapshot of the library unless one is from today: one change "
+            "of the journal, which `undo` takes back%s." % (
+                "; the %d names given by hand go only with --clear-manual-names" % planned.names_by_hand
+                if planned.names_by_hand else ""))
+        return
+    refused = retire_faces_service.refusal(planned, clear_manual_names)
+    if refused:
+        say(refused)
+        raise SystemExit(1)
+    servers = launcher.running()
+    if servers:
+        say(APP_RUNNING % len(servers))
+        raise SystemExit(1)
+    with _stop_after_this_photo("chunk of photos") as asked:
+        taken = library_snapshots.before_a_long_write(library)
+        say("Took a snapshot of the library first (%s)." % ", ".join(taken.details["taken"]) if taken.changed
+            else "A snapshot of the library from today stands; none taken.")
+
+        def heard(chunk, chunks):
+            heard.number += 1
+            say("Chunk %d of %d: %d photos, %d faces deleted, %d decisions cleared, %d photos left alone." % (
+                heard.number, chunks, chunk.photos, chunk.deleted, chunk.cleared, chunk.left_alone))
+        heard.number = 0
+        started = []
+
+        def stop():
+            if asked.is_set():
+                return True
+            started[:] = launcher.running()   # an app started during the run: asked before each chunk
+            return bool(started)
+        retired = retire_faces_service.apply(library, planned, stop=stop, heard=heard,
+                                             clear_manual_names=clear_manual_names)
+    say(retired.said())
+    if retired.stopped and started:
+        say(APP_STARTED % len(started))
+    if retired.changes:
+        say("Written: change %s; `undo <change> --apply` takes it back, while no later change wrote its faces."
+            % ", ".join(map(str, retired.changes)))
+    if retired.failed or retired.stopped:
+        raise SystemExit(1)
 
 
 @cli.group()

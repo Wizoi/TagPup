@@ -251,7 +251,8 @@ class TheSwitchWaitsForThePass(_Libraries):
                 said = " ".join(refused.refused.split())
                 self.assertIn("Nothing was written: 2 of the library's 4 faces hold a vector under %s; 1 named face holds "
                               "none" % NEW, said)
-                self.assertIn("2 faces are in photos the pass has not reached", said)
+                self.assertIn("2 faces are in photos where no face holds one (the pass has not reached them, or found no face "
+                              "in them)", said)
                 self.assertIn("face-pass <folder> --apply", said)
                 self.assertEqual({"faces": 4, "without": 2, "named_without": 1, "not_passed": 2},
                                  {k: v for k, v in refused.details["face_vectors"].items() if k != "said"})
@@ -273,8 +274,8 @@ class TheSwitchWaitsForThePass(_Libraries):
         self.assertEqual(NEW, library_settings.read(self.harbour)["faces.model"])
         said = " ".join(changed.details["face_vectors"]["said"].split())
         self.assertIn("21 of the library's 22 faces hold a vector under %s; 1 named face holds none, and would leave the "
-                      "named faces Identify compares with until the pass reaches it; 1 face is in photos the pass has not "
-                      "reached." % NEW, said)
+                      "named faces Identify compares with until the pass reaches it; 1 face is in photos where no face holds "
+                      "one (the pass has not reached them, or found no face in them)." % NEW, said)
 
     def test_a_library_with_no_faces_switches(self):
         dune = Library(self.home.library("dune.db"))

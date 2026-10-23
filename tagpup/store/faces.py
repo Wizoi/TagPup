@@ -417,6 +417,83 @@ def pass_counts(conn, old, new):
     return dict(zip(("photos", "photos_passed", "matched", "unmatched", "unmatched_named", "new", "not_passed", "neither"),
                     (int(value) for value in row)))
 
+# ---- Retiring the old detector's faces (tagpup.services.retire_faces) ------------------------------------------------
+
+#: A face the new model's pass gave no vector, as a condition on `f`: one parameter, the key of the model kept.
+RETIRED = "NOT " + HAS_VECTOR
+
+#: A face holding any decision (DECISION, below): a person, who decided it, an exclusion or its reason.
+DECIDED = ("(f.name IS NOT NULL OR f.tag_id IS NOT NULL OR f.name_source IS NOT NULL OR f.excluded <> 0"
+           " OR f.excluded_reason IS NOT NULL)")
+
+#: What a kept face's decisions are cleared to: nobody, decided by no one, not excluded.
+UNDECIDED = {"name": None, "tag_id": None, "name_source": None, "excluded": 0, "excluded_reason": None}
+
+
+def retire_counts(conn, key):
+    """What retiring every face without a vector under `key` would do, from one scan of faces (each face's vector by its
+    key (face_id, model), no vector or crop read): {"faces", "photos" (holding a face to delete or to clear), "deleted",
+    "deleted_named" (of those, naming a person automatically), "deleted_by_hand" (naming a person by hand),
+    "deleted_decided" (decided by hand: a name, nobody, or excluded), and of the faces kept, the decisions cleared: "cleared_by_hand" (a person named by hand),
+    "cleared_automatic" (a person named automatically), "cleared_nobody" (decided by hand to be nobody, not excluded),
+    "cleared_excluded", and the photos left with no face at all, every face of theirs deleted: "emptied_photos",
+    "emptied_faces" (the new model's pass found no face in them, or has not reached them: the rows do not tell which)}."""
+    row = conn.execute(
+        "WITH r AS (SELECT f.photo_id, f.tag_id IS NOT NULL AS named, COALESCE(f.name_source, '') = 'manual' AS by_hand,"
+        " f.excluded <> 0 AS excluded, " + RETIRED + " AS gone, " + DECIDED + " AS decided FROM faces f),"
+        " p AS (SELECT MIN(gone) AS emptied, COUNT(*) AS n FROM r GROUP BY photo_id)"
+        " SELECT COUNT(*), (SELECT COUNT(DISTINCT photo_id) FROM r WHERE gone OR decided), TOTAL(gone),"
+        " TOTAL(gone AND named AND NOT by_hand), TOTAL(gone AND named AND by_hand), TOTAL(gone AND (by_hand OR excluded)),"
+        " TOTAL(NOT gone AND named AND by_hand), TOTAL(NOT gone AND named AND NOT by_hand),"
+        " TOTAL(NOT gone AND NOT named AND by_hand AND NOT excluded), TOTAL(NOT gone AND excluded),"
+        " (SELECT TOTAL(emptied) FROM p), (SELECT TOTAL(emptied * n) FROM p) FROM r",
+        (key,)).fetchone()
+    return dict(zip(("faces", "photos", "deleted", "deleted_named", "deleted_by_hand", "deleted_decided", "cleared_by_hand",
+                     "cleared_automatic", "cleared_nobody", "cleared_excluded", "emptied_photos", "emptied_faces"),
+                    (int(value or 0) for value in row)))
+
+
+def retire_photos(conn, key):
+    """The ids, in order, of the photos holding a face without a vector under `key` or a face with a decision: what
+    retiring walks, a chunk at a time (retire_rows). One scan of faces."""
+    return [photo_id for (photo_id,) in conn.execute(
+        "SELECT DISTINCT f.photo_id FROM faces f WHERE " + RETIRED + " OR " + DECIDED + " ORDER BY f.photo_id", (key,))]
+
+
+def retire_rows(conn, key, photo_ids):
+    """[(face id, photo id, kept, {column: value} of DECISION)] of the faces of `photo_ids` still to retire, read as they
+    stand on `conn` (inside the write's transaction: a face done since, or a photo removed with its faces, is not among
+    them): `kept` False for a face holding no vector under `key` (to delete), True for one holding a decision (to clear).
+    By idx_faces_photo_id, each face's vector by its key; no vector or crop is read."""
+    found = []
+    for chunk in _chunks(photo_ids):
+        for face_id, photo_id, kept, *values in conn.execute(
+                "SELECT f.id, f.photo_id, " + HAS_VECTOR + ", " + ", ".join("f." + column for column in DECISION)
+                + " FROM faces f INDEXED BY idx_faces_photo_id WHERE f.photo_id IN (%s) AND (" % ",".join("?" * len(chunk))
+                + RETIRED + " OR " + DECIDED + ") ORDER BY f.id", [key] + chunk + [key]):
+            found.append((face_id, photo_id, bool(kept), dict(zip(DECISION, values))))
+    return found
+
+
+def newest_id(conn):
+    """The highest id a face holds now, 0 for none: a face made after this read holds a higher one (faces.id is
+    AUTOINCREMENT, never given twice). The rowid's own end of the table, no scan."""
+    (found,) = conn.execute("SELECT MAX(id) FROM faces").fetchone()
+    return found or 0
+
+
+def photos_with_faces_after(conn, photo_ids, face_id):
+    """How many of `photo_ids` hold a face whose id is above `face_id` (newest_id read earlier): a face made since, by any
+    writer. By idx_faces_photo_id (the id is the index's rowid: no row read)."""
+    found = 0
+    for chunk in _chunks(sorted(photo_ids)):
+        (count,) = conn.execute(
+            "SELECT COUNT(DISTINCT f.photo_id) FROM faces f INDEXED BY idx_faces_photo_id WHERE f.photo_id IN (%s)"
+            " AND f.id > ?" % ",".join("?" * len(chunk)), chunk + [face_id]).fetchone()
+        found += count
+    return found
+
+
 def manual_names(conn):
     """face id -> Ref for every face a person decided by hand. A None is a
     deliberate "this is nobody", as binding as a person."""
@@ -640,12 +717,18 @@ def carried_on(conn, photo_ids):
 
 
 def put_decisions(conn, values):
-    """Give each face of `values` ({face id: {column: value}}, columns of DECISION) those columns, and rebuild the people of their
-    photos. The caller commits, in the transaction that also holds what the decision goes with. Returns the ids written."""
+    """Give each face of `values` ({face id: {column: value}}, columns of DECISION) those columns, where one differs, and
+    rebuild the people of their photos (every one of them, as before: a batch's caller may have moved what else they
+    derive from). The caller commits, in the transaction that also holds what the decision goes with. Returns the ids whose
+    row changed: a face already holding them is not written, nor counted."""
+    written = []
     for face_id, columns in values.items():
-        conn.execute("UPDATE faces SET " + ", ".join("%s = ?" % column for column in columns) + " WHERE id = ?",
-                     list(columns.values()) + [face_id])
-    return _rebuilt(conn, _photos_of(conn, list(values)), list(values))
+        given = list(columns.values())
+        if conn.execute("UPDATE faces SET " + ", ".join("%s = ?" % column for column in columns) + " WHERE id = ? AND NOT ("
+                        + " AND ".join("%s IS ?" % column for column in columns) + ")", given + [face_id] + given).rowcount:
+            written.append(face_id)
+    _rebuilt(conn, _photos_of(conn, list(values)), bool(values))
+    return written
 
 
 def name(conn, face_ids, person):

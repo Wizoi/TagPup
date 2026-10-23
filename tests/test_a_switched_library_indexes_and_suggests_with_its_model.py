@@ -377,8 +377,9 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
             conn.close()
 
         said = ("Nothing was written: 3 of the library's 4 faces hold a vector under %s; 0 named faces hold none, and would"
-                " leave the named faces Identify compares with until the pass reaches them; 1 face is in photos the pass"
-                " has not reached. A switch allows at most 5%% of the faces" % NEW)
+                " leave the named faces Identify compares with until the pass reaches them; 1 face is in photos where no"
+                " face holds one (the pass has not reached them, or found no face in them). A switch allows at most 5%% of"
+                " the faces" % NEW)
         listed = self.client.get("/lakeside/api/history").get_json()["changes"]
         [entry] = [entry for entry in listed if entry["id"] == back["change"]]
         self.assertFalse(entry["undoable"], entry)
@@ -431,7 +432,7 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         self.assertEqual(400, reply.status_code, reply.data)
         refused = reply.get_json()["refused"]
         self.assertIn("change %d is undone" % back["change"], refused)
-        self.assertNotIn("in photos the pass has not reached", refused)
+        self.assertNotIn("in photos where no face holds one", refused)
 
     def test_a_named_face_with_no_vector_under_the_model_is_not_shown_as_a_match(self):
         conn = db.connect(self.library.path)
