@@ -590,7 +590,9 @@ takes no turn of the card.
 - `tagpup.services.retire_faces.plan_vectors` reads only: refused off the new model (NOT_ON_THE_MODEL) and while any face
   holds FaceNet's vector alone (ALONE, `store.faces.alone_under`). `apply_vectors` walks the vectors by rowid
   (`store.faces.vector_rowids_under`, SEARCH USING INTEGER PRIMARY KEY), VECTOR_CHUNK 5,000 a transaction, the model
-  read again in each (MODEL_MOVED), and records ONE change with no rows, "retire vectors (mtcnn-facenet)", its summary
+  read again in each (MODEL_MOVED) and the faces holding FaceNet's vector alone counted again (ALONE_SINCE, 0.044 s on
+  photo_index: an undo of a retiring between two chunks brings such faces back; that chunk is refused, nothing written,
+  #1789), and records ONE change with no rows, "retire vectors (mtcnn-facenet)", its summary
   the vectors and bytes committed (`journal.add_counts`), continued as the newest kept change of its name
   (`journal.kept_named`), also after a change recorded since: it holds no rows for one to conflict with (#1788).
   Each deleted vector moves the faces generation (its trigger). The CLI forces a snapshot first and none when a stopped
