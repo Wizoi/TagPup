@@ -35,6 +35,19 @@ retiring while a photo whose faces it deleted holds a face made since, by any wr
 Suggest, which detects again a photo it left faceless and records no change: undone, the old faces would come back
 beside the new. A face made since is one whose id is above the newest the library held when the change was opened (its
 summary's NEWEST_FACE; faces.id is AUTOINCREMENT).
+
+Retiring the old model's VECTORS (owner, 2026-10-23, DECISIONS: photo_index's FaceNet vectors, 152,298 rows, 312 MB): once
+every face of a library on the new model holds its vector, the vectors under FaceNet's key (OLD), which no reader keyed by
+the library's model reads, are deleted -- no face, crop, decision, keyword or tag. `plan_vectors` reads only and is
+refused, nothing written, for a library not on the new model and for one any face of which holds FaceNet's vector and none
+of the new model's (its last vector would go: the old detector's faces are retired first). `apply_vectors` walks the
+vectors by rowid, VECTOR_CHUNK a transaction (BEGIN IMMEDIATE), the library's model read again in each (MODEL_MOVED), and
+records ONE change of the journal with no rows, VECTORS_OPERATION, its summary the vectors and bytes deleted (what was
+committed), continued across runs while it is the journal's newest kept change. The way back is the snapshot taken
+before (the CLI forces one): its undo puts nothing back and is refused, VECTORS_RETIRED, and so is the undo of a retiring
+of faces whose deleted vectors were under a key the library now holds none of -- undone, its faces would come back
+holding a vector no reader reads and the library holds no other of (undo_refusals). A switch back to such a model is
+refused by the switch (settings.switch_to).
 """
 import logging
 from dataclasses import dataclass, field
@@ -77,8 +90,27 @@ NEWEST_FACE = "newest_face"
 EMPTIED = ("%d photos end with no face at all (their %d faces are among those deleted): the new model's pass found no "
            "face in them, or has not reached them.")
 
-NOT_ON_THE_MODEL = ("Nothing was written: the library's face model is %s, not %s. Faces are retired only once a library "
-                    "is on the new model (switch it in the library's settings after its pass).")
+NOT_ON_THE_MODEL = ("Nothing was written: the library's face model is %s, not %s. The old model's faces and vectors are "
+                    "retired only once a library is on the new model (switch it in the library's settings after its pass).")
+
+#: The model whose vectors are retired from a library on MODEL: FaceNet's, which made every face before the new model's pass.
+OLD = validation.MTCNN_FACENET
+
+#: The name of the change retiring a model's vectors, with its key: one change, holding no rows, its summary the counts.
+VECTORS_OPERATION = "retire vectors (%s)"
+
+#: Vectors a transaction: each holds the write lock for one read by rowid, one delete, and one bump of the faces generation
+#: a vector (its trigger).
+VECTOR_CHUNK = 5000
+
+#: Why retiring the vectors is refused while a face holds the old model's vector alone (store.faces.alone_under).
+ALONE = ("Nothing was written: %d faces hold a vector under %s and none under %s: its vectors retired, they would hold none, "
+         "and take part in nothing. Retire the old detector's faces first (TagPup CLI: retire-faces).")
+
+#: Why an undo is refused once the vectors under a key are gone: the vectors-retiring's own, and a retiring of faces whose
+#: deleted vectors were under it (undo_refusals).
+VECTORS_RETIRED = ("the library's vectors under %s were retired: restore the snapshot taken before (TagPup CLI: snapshots "
+                   "list, snapshots restore)")
 
 
 def _never():
@@ -172,6 +204,142 @@ class Retired:
         return text
 
 
+@dataclass
+class VectorPlan:
+    """What retiring the old model's vectors would do: how many vectors under `key` go, and their bytes."""
+    model: str
+    key: str
+    vectors: int = 0
+    bytes: int = 0
+    #: Why it is refused, nothing written; None when it may be applied.
+    refused: Optional[str] = None
+    #: The change a run stopped part-way left, which this one continues (the journal's newest kept), or None.
+    continues: Optional[int] = None
+
+    def said(self):
+        """What the owner is told, in counts."""
+        if self.refused:
+            return self.refused
+        return ("%d vectors under %s (%.1f MB) are deleted; every face keeps its vector under %s. No face, crop, decision, "
+                "keyword or tag is touched." % (self.vectors, self.key, self.bytes / 1e6, self.model))
+
+
+@dataclass
+class VectorChunk:
+    """What one chunk's transaction committed: the vectors and bytes deleted, the last rowid read."""
+    deleted: int = 0
+    bytes: int = 0
+    last: int = 0
+    change_id: Optional[int] = None
+
+
+@dataclass
+class VectorsRetired:
+    """What `apply_vectors` committed, chunk by chunk."""
+    plan: VectorPlan
+    chunks: List[VectorChunk] = field(default_factory=list)
+    #: Why the chunk under way was not written (rolled back whole; a run again continues), or None.
+    error: Optional[str] = None
+    stopped: bool = False
+
+    @property
+    def deleted(self):
+        return sum(chunk.deleted for chunk in self.chunks)
+
+    @property
+    def bytes(self):
+        return sum(chunk.bytes for chunk in self.chunks)
+
+    @property
+    def change_id(self):
+        return next((chunk.change_id for chunk in self.chunks if chunk.change_id is not None), None)
+
+    def said(self):
+        """What the owner is told: what was committed, never what was planned."""
+        if self.plan.refused:
+            return self.plan.refused
+        text = "%d vectors under %s deleted (%.1f MB), in %d chunks." % (self.deleted, self.plan.key, self.bytes / 1e6,
+                                                                        len(self.chunks))
+        if self.error:
+            text += " The next chunk's write failed (%s): nothing of it was written; run it again to continue." % self.error
+        elif self.stopped:
+            text += " Stopped: run it again to continue."
+        return text
+
+
+def plan_vectors(library):
+    """What retiring the old model's (OLD) vectors of `library` would do (VectorPlan). Reads only: one scan of the
+    vectors under OLD for the faces holding it alone, one for their count and bytes."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        model = store_faces.model_key(conn)
+        if model != MODEL:
+            return VectorPlan(model, OLD, refused=NOT_ON_THE_MODEL % (model, MODEL))
+        alone = store_faces.alone_under(conn, OLD, model)
+        if alone:
+            return VectorPlan(model, OLD, refused=ALONE % (alone, OLD, model))
+        vectors, size = store_faces.vector_total(conn, OLD)
+        return VectorPlan(model, OLD, vectors, size, continues=journal.newest_kept(conn, VECTORS_OPERATION % OLD))
+    finally:
+        conn.close()
+
+
+def apply_vectors(library, planned, stop=_never, heard=None):
+    """Delete the vectors `planned` (plan_vectors) counted, VECTOR_CHUNK a transaction, until none is left or `stop` says
+    so between two chunks; `heard(chunk, chunks)` is told of each chunk committed (VectorChunk, and how many the plan
+    makes). Nothing is written for a refused plan. Returns what was committed (VectorsRetired)."""
+    found = VectorsRetired(planned)
+    if planned.refused:
+        return found
+    operation = VECTORS_OPERATION % planned.key
+    after = 0
+    while True:
+        if stop():
+            found.stopped = True
+            break
+        try:
+            done = db.write_with_connection(
+                library.path, lambda conn, after=after: _write_vectors(conn, planned, operation, after),
+                label="retire vectors")
+        except Exception as problem:
+            # Rolled back whole: the chunk's vectors are as they were, and a run again continues from them.
+            logger.exception("Retiring vectors: a chunk's write failed; nothing of it was written")
+            found.error = type(problem).__name__
+            break
+        if done is None:
+            found.error = MODEL_MOVED
+            break
+        if done.deleted:
+            found.chunks.append(done)
+            if heard is not None:
+                heard(done, max(1, -(-planned.vectors // VECTOR_CHUNK)))
+        if done.deleted < VECTOR_CHUNK:
+            break
+        after = done.last
+    return found
+
+
+def _write_vectors(conn, planned, operation, after):
+    """One chunk, in one transaction: the next VECTOR_CHUNK vectors under the plan's key above rowid `after`, deleted and
+    added to the change's counts. What it committed (VectorChunk), or None, nothing written, when the library is no longer
+    on the plan's model."""
+    db.begin(conn, immediate=True)
+    if store_faces.model_key(conn) != planned.model:
+        return None
+    rows = store_faces.vector_rowids_under(conn, planned.key, after, VECTOR_CHUNK)
+    done = VectorChunk(last=rows[-1][0] if rows else after)
+    if not rows:
+        return done
+    change_id = journal.newest_kept(conn, operation)
+    if change_id is None:
+        change_id = journal.record(conn, operation, [], {"deleted": 0, "bytes": 0})
+    done.deleted = store_faces.delete_vectors(conn, [rowid for rowid, _size in rows])
+    done.bytes = sum(size for _rowid, size in rows)
+    journal.add_counts(conn, change_id, {"deleted": done.deleted, "bytes": done.bytes})
+    done.change_id = change_id
+    return done
+
+
 def plan(library):
     """What retiring the old detector's faces of `library` would do (Plan). Reads only."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -245,9 +413,14 @@ def undo_refusals(library, change_ids):
       photos whose old faces are gone;
     - a retiring that stands while a photo whose faces it deleted holds a face made since (an id above its summary's
       NEWEST_FACE), by any writer, journaled or not: RETIRING_UNDER, with how many photos; undone, the retiring would put
-      the old faces back beside them.
-    The journal alone allows both -- each wrote other rows than the other did. Reads only, one connection; a retiring's
-    photos are read only when the library holds a face made since it."""
+      the old faces back beside them;
+    - a retiring that stands whose deleted vectors (its recorded face_embeddings rows) were under a key the library now
+      holds no vector under, and a retiring of the vectors (VECTORS_OPERATION), whose undo puts nothing back:
+      VECTORS_RETIRED, naming the key; undone, the faces would come back holding only a vector no reader reads, and the
+      way back is the snapshot taken before.
+    The journal alone allows all three -- each wrote other rows than the other did, and the vectors' change none. Reads
+    only, one connection; a retiring's photos are read only when the library holds a face made since it, its vectors'
+    keys once (the change's rows by their index: 0.15 s for change 3247's 596,845 on photo_index, 2026-10-23)."""
     if not change_ids:
         return {}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -267,9 +440,19 @@ def undo_refusals(library, change_ids):
                 if retirings:
                     reasons[change_id] = PASS_STANDS_IN % retirings[-1]
                 continue
+            key = _key_of(operation, VECTORS_OPERATION)
+            if key is not None:
+                reasons[change_id] = VECTORS_RETIRED % key
+                continue
             key = _key_of(operation, OPERATION)
             summary = standing(OPERATION % key).get(change_id) if key is not None else None
             if summary is None:   # not a retiring, or one undone: nothing of it stands
+                continue
+            gone = sorted(model for model in journal.recorded_values(conn, [change_id], "face_embeddings", "delete",
+                                                                       "model").get(change_id, ())
+                          if not store_faces.holds_vectors_under(conn, model))
+            if gone:
+                reasons[change_id] = VECTORS_RETIRED % gone[0]
                 continue
             if newest is None:
                 newest = store_faces.newest_id(conn)

@@ -494,6 +494,48 @@ def photos_with_faces_after(conn, photo_ids, face_id):
     return found
 
 
+# The vectors of the old model retired, once every face holds the new model's (tagpup.services.retire_faces, plan_vectors and
+# apply_vectors). A vector is `face_embeddings`' row, walked by its rowid: the table's own b-tree, SEARCH USING INTEGER PRIMARY
+# KEY (rowid>?) on photo_index (2026-10-23), each row's key read and its vector left on its page.
+
+def vector_total(conn, key):
+    """(how many vectors are kept under `key`, their bytes): one scan of face_embeddings, each vector's size read from its
+    record's header (LENGTH of a BLOB loads none of it)."""
+    count, size = conn.execute("SELECT COUNT(*), TOTAL(LENGTH(vector)) FROM face_embeddings WHERE model = ?", (key,)).fetchone()
+    return count, int(size)
+
+
+def alone_under(conn, key, kept):
+    """How many faces hold a vector under `key` and none under `kept`: faces whose last vector `key`'s would be. Each face's
+    `kept` vector by its key (face_id, model); no vector read."""
+    (found,) = conn.execute(
+        "SELECT COUNT(*) FROM face_embeddings a WHERE a.model = ? AND NOT EXISTS (SELECT 1 FROM face_embeddings b"
+        " WHERE b.face_id = a.face_id AND b.model = ?)", (key, kept)).fetchone()
+    return found
+
+
+def holds_vectors_under(conn, key):
+    """Does any face hold a vector under `key`? The first row of the key's (sqlite_autoindex_face_embeddings_1, covering;
+    a key the library holds none of is the whole index, 0.02 s on photo_index, 2026-10-23)."""
+    return conn.execute("SELECT 1 FROM face_embeddings WHERE model = ? LIMIT 1", (key,)).fetchone() is not None
+
+
+def vector_rowids_under(conn, key, after, limit):
+    """[(rowid, bytes)] of up to `limit` vectors under `key` whose rowid is above `after`, in rowid order: the next chunk
+    to retire, read on the caller's connection (inside its transaction: a vector deleted since is not among them)."""
+    return conn.execute("SELECT rowid, LENGTH(vector) FROM face_embeddings WHERE model = ? AND rowid > ? ORDER BY rowid"
+                        " LIMIT ?", (key, after, limit)).fetchall()
+
+
+def delete_vectors(conn, rowids):
+    """Delete the vectors of `rowids` (vector_rowids_under's); how many rows went, the statements' own count. Each moves
+    the faces generation (its trigger): a grid of the old model's vectors is not the library's."""
+    deleted = 0
+    for chunk in _chunks(rowids):
+        deleted += conn.execute("DELETE FROM face_embeddings WHERE rowid IN (%s)" % ",".join("?" * len(chunk)), chunk).rowcount
+    return deleted
+
+
 def manual_names(conn):
     """face id -> Ref for every face a person decided by hand. A None is a
     deliberate "this is nobody", as binding as a person."""
