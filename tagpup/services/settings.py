@@ -82,7 +82,7 @@ NONE_HELD = ("Nothing was written: none of the library's %d faces holds a vector
              "taken before they were retired holds them (TagPup CLI: snapshots list, snapshots restore).")
 
 
-def switch_to(library, model):
+def switch_to(library, model, counted=True):
     """(refusal or None, what the faces hold under `model`): whether the library may be switched to the face model `model`
     (UNPASSED_SHARE_ALLOWED), and one sentence saying how many of its faces hold a vector under it and how many named
     faces hold none, said either way. FaceNet, which made every face the libraries hold before the new model's pass, is refused only
@@ -90,10 +90,16 @@ def switch_to(library, model):
     .apply_vectors), and its pass's count is not read for it (not_passed 0: a face in a photo the new model's pass has not
     reached is no part of a switch back); its sentence says only how many faces hold no FaceNet vector (those the new model
     made while the library was on it), and is left out when none do. A library with no faces is not refused. Read-only, by
-    tagpup.store.faces.vector_counts and, for a switch to another model, pass_counts."""
+    tagpup.store.faces.vector_counts and, for a switch to another model, pass_counts. Whether a face holds a FaceNet vector
+    is asked first (holds_vectors_under, 0.02 s on photo_index against vector_counts' 0.35 s, 2026-10-23): with
+    `counted` False (the undo's check, which says only the refusal) a switch back it allows reads no count and
+    returns {} for what the faces hold."""
     back = model == validation.MTCNN_FACENET
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
+        holds = back and store_faces.holds_vectors_under(conn, model)
+        if holds and not counted:
+            return None, {}
         held = store_faces.vector_counts(conn, model)
         passed = held["faces"] and not back
         not_passed = store_faces.pass_counts(conn, validation.MTCNN_FACENET, model)["not_passed"] if passed else 0
@@ -103,7 +109,7 @@ def switch_to(library, model):
     if not held["faces"]:
         return None, held
     if back:
-        if held["without"] == held["faces"]:
+        if not holds:
             return NONE_HELD % (held["faces"], model), held
         if held["without"]:
             held["said"] = ("%d of the library's %d faces hold%s no vector under %s and take%s no part in comparing, "
@@ -133,7 +139,8 @@ def undo_refusals(library, change_ids):
     vector (its vectors retired). A change that inserted the faces.model row (a library stamped before it was a setting:
     photo_index's switch, change 3244) puts the default back, undone: the row goes. The refusal is the switch's own
     sentence and counts. Reads only: the journal's old values and inserted keys, one read each; each model checked once
-    (a switch back to FaceNet reads every face: 0.35 s on photo_index, 2026-10-23)."""
+    (a switch back to FaceNet a face holds a vector under reads one row of the key's index, switch_to(counted=False);
+    refused, the faces are counted for the sentence)."""
     change_ids = list(change_ids)
     if not change_ids:
         return {}
@@ -150,7 +157,7 @@ def undo_refusals(library, change_ids):
     for change_id, model in restored.items():
         model = _trim(model)
         if model not in checked:
-            checked[model] = switch_to(library, model)[0]
+            checked[model] = switch_to(library, model, counted=False)[0]
         if checked[model]:
             reasons[change_id] = checked[model]
     return reasons
