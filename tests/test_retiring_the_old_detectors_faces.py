@@ -5,7 +5,8 @@
   no vector under the new model -- named automatically, by hand, excluded or undecided -- with its crop and its vectors,
   and clears every decision of the faces kept: names (by hand or automatic), "nobody", exclusions and their reasons. A
   face no work touches is untouched; the people of each photo lose the faces' names and keep the keywords' people; no
-  keyword of a photo and no tag of the tree moves; the faces' AUTOINCREMENT counter does not move.
+  keyword of a photo and no tag of the tree moves; the faces' AUTOINCREMENT counter does not move. The plan says how
+  many photos end with no face at all, and why: the new model's pass found none in them, or has not reached them.
 - (b) Stopped after its first chunk (Ctrl+C between two transactions), or a chunk's write failing part-way (rolled back
   whole), a run again finishes it, and the whole retiring is ONE change of the journal.
 - (c) Undone from History, every deleted face comes back with its crop and vectors, and every decision as it was: the
@@ -170,7 +171,8 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         self.assertIsNone(planned.refused)
         self.assertEqual({"faces": 11, "photos": 4, "deleted": 4, "deleted_named": 1, "deleted_by_hand": 1,
                           "deleted_decided": 2,
-                          "cleared_by_hand": 1, "cleared_automatic": 1, "cleared_nobody": 1, "cleared_excluded": 1},
+                          "cleared_by_hand": 1, "cleared_automatic": 1, "cleared_nobody": 1, "cleared_excluded": 1,
+                          "emptied_photos": 0, "emptied_faces": 0},
                          planned.counts)
         self.assertIn("4 of the library's 11 faces hold no vector under %s" % NEW, planned.said())
         self.assertEqual(before, self.state(), "the plan wrote")
@@ -214,6 +216,21 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         self.assertEqual(0, again.counts["deleted"])
         self.assertEqual([], retire_faces.apply(self.library, again).chunks)
         self.assertEqual(changes, self.retire_changes())
+
+    def test_the_plan_says_which_photos_end_with_no_face_and_why(self):
+        path = self.a_photo_the_retiring_leaves_faceless()
+        planned = retire_faces.plan(self.library)
+        self.assertEqual((1, 1, 5), (planned.counts["emptied_photos"], planned.counts["emptied_faces"],
+                                     planned.counts["deleted"]))
+        said = retire_faces.EMPTIED % (1, 1)
+        self.assertIn(said, planned.said())
+        ran = self.cli()
+        self.assertEqual(0, ran.exit_code, ran.output)
+        self.assertIn(said, " ".join(ran.output.split()))
+        retired = retire_faces.apply(self.library, planned, clear_manual_names=True)
+        self.assertEqual(5, retired.deleted, retired.said())
+        self.assertEqual([], self.faces_in(self.library, path), "the photo the plan named ends with no face")
+        self.assertEqual(5, len(self.read("SELECT DISTINCT photo_id FROM faces")), "and only it: the five others keep one")
 
     # ---- (b) --------------------------------------------------------------------------------------------------------
 

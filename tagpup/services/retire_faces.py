@@ -68,6 +68,10 @@ PASS_STANDS_IN = "change %d (retire faces) deleted the old faces this pass's new
 RETIRING_UNDER = ("change %d (face pass) made faces in photos whose old faces this retiring deleted: undone now, they "
                   "would come back beside them; undo it first")
 
+#: What the plan says of the photos it leaves with no face (store.faces.retire_counts: emptied_photos, emptied_faces).
+EMPTIED = ("%d photos end with no face at all (their %d faces are among those deleted): the new model's pass found no "
+           "face in them, or has not reached them.")
+
 NOT_ON_THE_MODEL = ("Nothing was written: the library's face model is %s, not %s. Faces are retired only once a library "
                     "is on the new model (switch it in the library's settings after its pass).")
 
@@ -98,9 +102,10 @@ class Plan:
         return ("%d of the library's %d faces hold no vector under %s and are deleted, with their crops and vectors "
                 "(%d named automatically, %d decided by hand or excluded). Of the faces kept, the decisions are cleared: "
                 "%d people named by hand, %d named automatically, %d decided to be nobody, %d exclusions. %d photos. "
-                "%d names given by hand go. No keyword in a photo file and no tag of the tree is touched." % (
+                "%d names given by hand go. %s No keyword in a photo file and no tag of the tree is touched." % (
                     c["deleted"], c["faces"], self.model, c["deleted_named"], c["deleted_decided"], c["cleared_by_hand"],
-                    c["cleared_automatic"], c["cleared_nobody"], c["cleared_excluded"], c["photos"], self.names_by_hand))
+                    c["cleared_automatic"], c["cleared_nobody"], c["cleared_excluded"], c["photos"], self.names_by_hand,
+                    EMPTIED % (c["emptied_photos"], c["emptied_faces"])))
 
 
 @dataclass
