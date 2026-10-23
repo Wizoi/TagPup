@@ -179,6 +179,8 @@ class RetiringTheOldModelsVectors(unittest.TestCase):
         before = self.state()
         retired = retire_faces.apply_vectors(self.library, planned)
         self.assertEqual(([], retire_faces.MODEL_MOVED), (retired.chunks, retired.error))
+        self.assertIn("Nothing of the next chunk was written: %s. %s" % (retire_faces.MODEL_MOVED,
+                                                                         retire_faces.SWITCH_BACK % NEW), retired.said())
         self.assertEqual(before, self.state())
         self.assertEqual(retire_faces.NOT_ON_THE_MODEL % (FACENET, NEW), retire_faces.plan_vectors(self.library).refused)
         self.assertEqual([], self.vector_changes())

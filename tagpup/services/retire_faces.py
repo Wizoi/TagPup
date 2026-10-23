@@ -76,6 +76,9 @@ CHUNK = 500
 #: Why a run ends at a chunk: the library was switched to another model after the plan (settings, beside the run).
 MODEL_MOVED = "the library's face model changed since the plan"
 
+#: What the owner is told to do after MODEL_MOVED: a run again on the other model is refused (NOT_ON_THE_MODEL).
+SWITCH_BACK = "Switch the library back to %s first (its settings), then run it again to continue."
+
 MANUAL_NAMES = ("Nothing was written: %d names given by hand would go (%d of faces kept, cleared; %d of faces deleted). "
                 "They go only when asked for (TagPup CLI: retire-faces --apply --clear-manual-names).")
 
@@ -205,7 +208,9 @@ class Retired:
         text = "%d faces deleted and %d faces' decisions cleared, in %d of %d photos; %d photos left alone (changed since)." % (
             self.deleted, self.cleared, sum(chunk.photos for chunk in self.chunks), len(self.plan.photo_ids),
             self.left_alone)
-        if self.failed:
+        if self.error == MODEL_MOVED:
+            text += " %d photos were not written: %s. %s" % (self.failed, MODEL_MOVED, SWITCH_BACK % self.plan.model)
+        elif self.failed:
             text += " The write of %d photos failed (%s): nothing of them was written; run it again to continue." % (
                 self.failed, self.error)
         elif self.stopped:
@@ -273,6 +278,8 @@ class VectorsRetired:
                                                                         len(self.chunks))
         if self.refused:
             text += " " + self.refused
+        elif self.error == MODEL_MOVED:
+            text += " Nothing of the next chunk was written: %s. %s" % (MODEL_MOVED, SWITCH_BACK % self.plan.model)
         elif self.error:
             text += " The next chunk's write failed (%s): nothing of it was written; run it again to continue." % self.error
         elif self.stopped:
