@@ -93,6 +93,12 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   kept (kr-track: 3 of the faces it would delete, counted read-only 2026-10-22). The face pass's own change is not
   undone while a retiring after it stands (`retire_faces.undo_refusals`, asked by `services.journal.refusals`): its new
   faces stand in for the ones the retiring deleted, and undone first it would leave photos with no face under the model.
+  The other way round, the retiring is not undone while a pass after it stands that made faces in a photo whose faces it
+  deleted (`RETIRING_UNDER`): the old faces would come back beside the new. By design, that rule reads the journal
+  (`journal.recorded_values`), so a face made on such a photo by a writer that records no change -- Suggest's detection
+  once `faces_detected.forget_faceless` has let it look again, or the indexer reading a changed file -- is not seen, and
+  an undo of the retiring then puts the old faces back beside it. No live instance (no library has been retired yet), so
+  no branch for it; a face pass is the writer that looks at those photos again.
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
   keeps "exactly one person reaches 0.80" (FaceNet's naming likeness; each model's own since 2026-10-20) beside it, since the margin alone would name a face two people reach 0.04 apart, a

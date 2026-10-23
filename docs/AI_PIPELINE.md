@@ -549,11 +549,20 @@ takes no turn of the card.
   the pass makes new. Retiring keeps every face the pass matched or made and takes away only what the old model left.
 - `tagpup.services.retire_faces`: every face with no vector under the library's model is deleted (crop and vectors with
   it, `store.faces.delete`), and every kept face's decision cleared (`store.faces.UNDECIDED`, `put_decisions`), 500
-  photos a transaction, recorded whole before the write (`journal.record_removing`), one change continued across runs
-  while it is the newest (`journal.newest_kept`); refused off the new model or past the switch's unpassed share, and,
-  for names given by hand, without `--clear-manual-names`. Keywords and the tree stay: the people a photo's keywords
-  name are what Name faces from tags names the kept faces from again. Scenario P8,
-  `tests/test_retiring_the_old_detectors_faces.py`.
+  photos a transaction, recorded before the write (`journal.record_removing(conn, change_id, "faces", keys, updates)`:
+  the faces by key, resolved as an apply resolves a delete -- every row `journal.CASCADES` says it takes, a face's crop
+  and vectors, read whole, children first -- and the cleared decisions as updates holding the old values), what the
+  writers changed added to the summary after (`journal.add_counts`), one change continued across runs while it is the
+  newest (`journal.newest_kept`); refused off the new model or past the switch's unpassed share, and, for names given
+  by hand, without `--clear-manual-names`. The dry run says how many photos end with no face at all (every face of
+  theirs deleted: the pass found none in them, or has not reached them; the rows do not tell which; photo_index 2,673
+  photos holding 5,754 faces, kr-track 7 holding 16, renton_parkrun 7 holding 7, counted read-only 2026-10-22). The CLI
+  asks before each chunk whether an app was started and stops there, saying so; an MCP server keeps no record and is
+  not seen. Keywords and the tree stay: the people a photo's keywords name are what Name faces from tags names the kept
+  faces from again. Undo is refused both ways round (`retire_faces.undo_refusals`): the pass's change while a retiring
+  after it stands, and the retiring while a pass after it stands that made faces in a photo whose faces the retiring
+  deleted (`journal.recorded_values`: the photos of the retiring's deleted faces against those of the pass's inserted
+  ones); the pass is undone first. Scenario P8, `tests/test_retiring_the_old_detectors_faces.py`.
 - photo_index (a sandbox copy of the live library, 2026-10-22): of 218,265 faces, 35,486 deleted (1,907 named
   automatically, 19 decided by hand or excluded); of the faces kept, decisions cleared on 175 faces named by hand,
   59,428 named automatically, 3 decided to be nobody and 13 exclusions; 44,268 photos walked in 89 chunks. Applied
