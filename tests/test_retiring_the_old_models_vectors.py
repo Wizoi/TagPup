@@ -16,6 +16,9 @@ What the owner lives through (scenarios P8 and D4):
   model (#1781's check, an update here; the insert shape is P10's) are refused naming the snapshot, nothing written; a
   switch back to FaceNet is refused once no face holds its vector (#1782). A library a stopped run left holding some of
   FaceNet's vectors may still switch back, told how many faces hold none.
+- (f) Between two chunks, the undo of the retiring of the old detector's faces (from History or the MCP server, beside
+  the run: allowed while FaceNet's vectors are held) brings back faces holding FaceNet's vector alone; the next chunk
+  is refused, nothing of it written, and they keep it (#1789).
 
 Fictional names; a library in a home of the test's own; rows as the indexer and the pass store them (tests/face_rows.py,
 tests/photo_rows.py).
@@ -311,6 +314,30 @@ class RetiringTheOldModelsVectors(unittest.TestCase):
         back = library_settings.change(self.library, {"faces.model": FACENET}, acknowledged=["face-model"])
         self.assertEqual(1, back.changed, back.refused)
         self.assertEqual(3, back.details["face_vectors"]["without"])
+
+
+    # ---- (f) --------------------------------------------------------------------------------------------------------
+
+    def test_an_undo_of_the_retiring_between_two_chunks_refuses_the_next_and_its_faces_keep_their_vectors(self):
+        (retiring,) = retire_faces.apply(self.library, retire_faces.plan(self.library)).changes
+        planned = retire_faces.plan_vectors(self.library)
+        self.assertIsNone(planned.refused)
+        undone = []
+
+        def undo_beside_the_run(chunk, chunks):
+            if not undone:
+                undone.append(journal_service.undo(self.library, retiring, apply=True))
+        with mock.patch.object(retire_faces, "VECTOR_CHUNK", 3):
+            retired = retire_faces.apply_vectors(self.library, planned, heard=undo_beside_the_run)
+        self.assertEqual((None, True), (undone[0].refused, undone[0].changed > 0), "the undo is allowed")
+        self.assertEqual([(1,)], self.read("SELECT COUNT(*) FROM face_embeddings WHERE face_id = ? AND model = ?",
+                                           (self.face["old alone"], FACENET)), "a face lost its last vector")
+        refused = retire_faces.ALONE_SINCE % (1, FACENET, NEW)
+        self.assertEqual(([3], refused), ([c.deleted for c in retired.chunks], retired.refused))
+        self.assertIn(refused, retired.said())
+        self.assertEqual(2, self.facenet_vectors())
+        self.assertEqual([{"bytes": 3 * 2048, "deleted": 3}], [summary for _id, summary in self.vector_changes()])
+        self.assertEqual(retire_faces.ALONE % (1, FACENET, NEW), retire_faces.plan_vectors(self.library).refused)
 
 
 if __name__ == "__main__":

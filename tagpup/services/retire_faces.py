@@ -42,7 +42,8 @@ the library's model reads, are deleted -- no face, crop, decision, keyword or ta
 refused, nothing written, for a library not on the new model and for one any face of which holds FaceNet's vector and none
 of the new model's (its last vector would go: the old detector's faces are retired first). `apply_vectors` walks the
 vectors by rowid, VECTOR_CHUNK a transaction (BEGIN IMMEDIATE), the library's model read again in each (MODEL_MOVED), and
-records ONE change of the journal with no rows, VECTORS_OPERATION, its summary the vectors and bytes deleted (what was
+the faces holding FaceNet's vector alone counted again in each (ALONE_SINCE: an undo of a retiring of the old detector's
+faces between two chunks, beside the run, brings them back; their vectors are not walked into), and records ONE change of the journal with no rows, VECTORS_OPERATION, its summary the vectors and bytes deleted (what was
 committed), continued across runs while it is the journal's newest kept change. The way back is the snapshot taken
 before (the CLI forces one): its undo puts nothing back and is refused, VECTORS_RETIRED, and so is the undo of a retiring
 of faces whose deleted vectors were under a key the library now holds none of -- undone, its faces would come back
@@ -106,6 +107,12 @@ VECTOR_CHUNK = 5000
 #: Why retiring the vectors is refused while a face holds the old model's vector alone (store.faces.alone_under).
 ALONE = ("Nothing was written: %d faces hold a vector under %s and none under %s: its vectors retired, they would hold none, "
          "and take part in nothing. Retire the old detector's faces first (TagPup CLI: retire-faces).")
+
+#: Why a run of apply_vectors ends at a chunk, nothing of it written: faces holding the old model's vector alone came back
+#: after the plan (an undo of a retiring of the old detector's faces, from History or the MCP server, between two chunks).
+ALONE_SINCE = ("The next chunk was not written: %d faces hold a vector under %s and none under %s again since the plan (a "
+               "retiring of the old detector's faces was undone beside the run): its vectors retired, they would hold none. "
+               "Retire the old detector's faces again first (TagPup CLI: retire-faces), then run this again to continue.")
 
 #: Why an undo is refused once the vectors under a key are gone: the vectors-retiring's own, and a retiring of faces whose
 #: deleted vectors were under it (undo_refusals).
@@ -241,6 +248,8 @@ class VectorsRetired:
     #: Why the chunk under way was not written (rolled back whole; a run again continues), or None.
     error: Optional[str] = None
     stopped: bool = False
+    #: Why the next chunk was refused, nothing of it written (ALONE_SINCE), or None.
+    refused: Optional[str] = None
 
     @property
     def deleted(self):
@@ -260,7 +269,9 @@ class VectorsRetired:
             return self.plan.refused
         text = "%d vectors under %s deleted (%.1f MB), in %d chunks." % (self.deleted, self.plan.key, self.bytes / 1e6,
                                                                         len(self.chunks))
-        if self.error:
+        if self.refused:
+            text += " " + self.refused
+        elif self.error:
             text += " The next chunk's write failed (%s): nothing of it was written; run it again to continue." % self.error
         elif self.stopped:
             text += " Stopped: run it again to continue."
@@ -309,6 +320,9 @@ def apply_vectors(library, planned, stop=_never, heard=None):
         if done is None:
             found.error = MODEL_MOVED
             break
+        if isinstance(done, str):
+            found.refused = done
+            break
         if done.deleted:
             found.chunks.append(done)
             if heard is not None:
@@ -322,10 +336,14 @@ def apply_vectors(library, planned, stop=_never, heard=None):
 def _write_vectors(conn, planned, operation, after):
     """One chunk, in one transaction: the next VECTOR_CHUNK vectors under the plan's key above rowid `after`, deleted and
     added to the change's counts. What it committed (VectorChunk), or None, nothing written, when the library is no longer
-    on the plan's model."""
+    on the plan's model, or why not (ALONE_SINCE), nothing written, when a face holds the plan's key's vector alone (0.05 s
+    on photo_index, 2026-10-23)."""
     db.begin(conn, immediate=True)
     if store_faces.model_key(conn) != planned.model:
         return None
+    alone = store_faces.alone_under(conn, planned.key, planned.model)
+    if alone:
+        return ALONE_SINCE % (alone, planned.key, planned.model)
     rows = store_faces.vector_rowids_under(conn, planned.key, after, VECTOR_CHUNK)
     done = VectorChunk(last=rows[-1][0] if rows else after)
     if not rows:

@@ -1433,7 +1433,7 @@ def retire_vectors(ctx, apply_):
     if retired.change_id is not None:
         say("Written: change %d, which is not undone: the snapshot taken first is the way back. `compact`, with the apps "
             "closed, gives the space back to the disk." % retired.change_id)
-    if retired.error or retired.stopped:
+    if retired.error or retired.stopped or retired.refused:
         raise SystemExit(1)
 
 
