@@ -1289,6 +1289,10 @@ APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Stop the app firs
                "window): a running app keeps faces it read in memory, and its writes beside this run would name or "
                "decide faces this run deletes or clears. Its record names no library, so any running app refuses it.")
 
+#: Why `retire-faces --apply` stopped between two chunks: an app started during the run (launcher.running, asked a chunk).
+APP_STARTED = ("Stopped: TagPup was started during the run (%d app server(s)); the chunks written stand. Stop the app, then "
+               "run it again to go on, as the same change.")
+
 
 @cli.command("retire-faces")
 @click.option("--apply", "apply_", is_flag=True,
@@ -1303,7 +1307,9 @@ def retire_faces(ctx, apply_, clear_manual_names, reveal):
     model gave no vector -- the old detector's alone -- with its crop and vectors, and clear every decision of the faces
     kept (names, by hand or automatic, "nobody", exclusions), as one change of the journal (docs/AI_PIPELINE.md, phase
     3). No keyword in a photo file and no tag of the tree is touched. A dry run unless --apply; counts only. Ctrl+C stops
-    it after the chunk of photos under way; run it again to go on, as the same change."""
+    it after the chunk of photos under way, and so does an app started during the run; run it again to go on, as the same
+    change. --apply is refused while an app runs; an MCP server keeps no record of itself and is not seen: close it
+    first."""
     library = _existing_library(ctx)
     say = functools.partial(console.print, markup=False, soft_wrap=True)
     say("Retiring the old face detector's faces of %s%s." % (library.name, "" if apply_ else " (a dry run)"))
@@ -1341,9 +1347,18 @@ def retire_faces(ctx, apply_, clear_manual_names, reveal):
             say("Chunk %d of %d: %d photos, %d faces deleted, %d decisions cleared, %d photos left alone." % (
                 heard.number, chunks, chunk.photos, chunk.deleted, chunk.cleared, chunk.left_alone))
         heard.number = 0
-        retired = retire_faces_service.apply(library, planned, stop=asked.is_set, heard=heard,
+        started = []
+
+        def stop():
+            if asked.is_set():
+                return True
+            started[:] = launcher.running()   # an app started during the run: asked before each chunk
+            return bool(started)
+        retired = retire_faces_service.apply(library, planned, stop=stop, heard=heard,
                                              clear_manual_names=clear_manual_names)
     say(retired.said())
+    if retired.stopped and started:
+        say(APP_STARTED % len(started))
     if retired.changes:
         say("Written: change %s; `undo <change> --apply` takes it back, while no later change wrote its faces."
             % ", ".join(map(str, retired.changes)))

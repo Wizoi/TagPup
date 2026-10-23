@@ -18,7 +18,8 @@
 - (f) From the command line (`retire-faces`): a dry run, the default, names the library, says what it would do in counts
   and how many names given by hand go, and writes nothing, no snapshot either; --apply is refused while an app runs, and
   where names given by hand would go unless --clear-manual-names is given; with it, one snapshot and the write, chunk by
-  chunk; Ctrl+C stops it between two chunks, and a run again finishes it as the same change.
+  chunk; Ctrl+C stops it between two chunks, and so does an app started during the run, saying so; a run again finishes it
+  as the same change.
 - (g) The pass's own change in History is not undone while the retiring that followed it stands (its new faces stand in
   for the faces the retiring deleted); undone, the retiring first, then the pass.
 - (h) The other way: the retiring is not undone while a pass after it made faces in a photo whose old faces it deleted
@@ -416,6 +417,30 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         second = self.cli("--apply", "--clear-manual-names")
         self.assertEqual(0, second.exit_code, second.output)
         self.assertIn("A snapshot of the library from today stands", second.output)
+        self.assertEqual(1, len(self.retire_changes()), "one change across both runs")
+        self.assertEqual(set(), set(self.faces()) & self.label("old, named automatically"))
+
+    def test_from_the_command_line_an_app_started_during_the_run_stops_it_at_the_next_chunk(self):
+        deleting = store_faces.delete
+        started = []
+
+        def the_app_starts_in_the_first_chunk(conn, face_ids):
+            if not started:
+                started.append(True)
+                launcher.say_where({"main": 5918}, "test", "token")   # this process, as a live server records itself
+                self.addCleanup(launcher.forget, {"main": 5918})
+            return deleting(conn, face_ids)
+
+        with mock.patch.object(store_faces, "delete", the_app_starts_in_the_first_chunk):
+            first = self.cli("--apply", "--clear-manual-names")
+        self.assertEqual(1, first.exit_code, first.output)
+        self.assertIn("Chunk 1 of 2", first.output)
+        self.assertNotIn("Chunk 2 of 2", first.output)
+        self.assertIn(" ".join((tagpup_cli.APP_STARTED % 1).split()), " ".join(first.output.split()))
+        self.assertIn(self.face["old, named automatically"], self.faces(), "the second chunk was not begun")
+        launcher.forget({"main": 5918})
+        second = self.cli("--apply", "--clear-manual-names")
+        self.assertEqual(0, second.exit_code, second.output)
         self.assertEqual(1, len(self.retire_changes()), "one change across both runs")
         self.assertEqual(set(), set(self.faces()) & self.label("old, named automatically"))
 
