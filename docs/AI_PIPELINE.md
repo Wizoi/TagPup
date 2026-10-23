@@ -591,7 +591,8 @@ takes no turn of the card.
   holds FaceNet's vector alone (ALONE, `store.faces.alone_under`). `apply_vectors` walks the vectors by rowid
   (`store.faces.vector_rowids_under`, SEARCH USING INTEGER PRIMARY KEY), VECTOR_CHUNK 5,000 a transaction, the model
   read again in each (MODEL_MOVED), and records ONE change with no rows, "retire vectors (mtcnn-facenet)", its summary
-  the vectors and bytes committed (`journal.add_counts`), continued while it is the newest (`journal.newest_kept`).
+  the vectors and bytes committed (`journal.add_counts`), continued as the newest kept change of its name
+  (`journal.kept_named`), also after a change recorded since: it holds no rows for one to conflict with (#1788).
   Each deleted vector moves the faces generation (its trigger). The CLI forces a snapshot first and none when a stopped
   run is continued.
 - The way back is the snapshot, never an undo (INVARIANTS row 40's exception, DECISIONS 2026-10-23): the change's own

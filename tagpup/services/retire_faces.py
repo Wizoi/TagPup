@@ -44,7 +44,9 @@ of the new model's (its last vector would go: the old detector's faces are retir
 vectors by rowid, VECTOR_CHUNK a transaction (BEGIN IMMEDIATE), the library's model read again in each (MODEL_MOVED), and
 the faces holding FaceNet's vector alone counted again in each (ALONE_SINCE: an undo of a retiring of the old detector's
 faces between two chunks, beside the run, brings them back; their vectors are not walked into), and records ONE change of the journal with no rows, VECTORS_OPERATION, its summary the vectors and bytes deleted (what was
-committed), continued across runs while it is the journal's newest kept change. The way back is the snapshot taken
+committed), continued across runs: the newest kept change of its name (_continued), also after a change recorded since
+(a setting): it holds no rows for one to conflict with, and the snapshot its first run took holds every vector. The way
+back is the snapshot taken
 before (the CLI forces one): its undo puts nothing back and is refused, VECTORS_RETIRED, and so is the undo of a retiring
 of faces whose deleted vectors were under a key the library now holds none of -- undone, its faces would come back
 holding a vector no reader reads and the library holds no other of (undo_refusals). A switch back to such a model is
@@ -220,7 +222,7 @@ class VectorPlan:
     bytes: int = 0
     #: Why it is refused, nothing written; None when it may be applied.
     refused: Optional[str] = None
-    #: The change a run stopped part-way left, which this one continues (the journal's newest kept), or None.
+    #: The change a run stopped part-way left, which this one continues (_continued), or None.
     continues: Optional[int] = None
 
     def said(self):
@@ -290,7 +292,7 @@ def plan_vectors(library):
         if alone:
             return VectorPlan(model, OLD, refused=ALONE % (alone, OLD, model))
         vectors, size = store_faces.vector_total(conn, OLD)
-        return VectorPlan(model, OLD, vectors, size, continues=journal.newest_kept(conn, VECTORS_OPERATION % OLD))
+        return VectorPlan(model, OLD, vectors, size, continues=_continued(conn, VECTORS_OPERATION % OLD))
     finally:
         conn.close()
 
@@ -348,7 +350,7 @@ def _write_vectors(conn, planned, operation, after):
     done = VectorChunk(last=rows[-1][0] if rows else after)
     if not rows:
         return done
-    change_id = journal.newest_kept(conn, operation)
+    change_id = _continued(conn, operation)
     if change_id is None:
         change_id = journal.record(conn, operation, [], {"deleted": 0, "bytes": 0})
     done.deleted = store_faces.delete_vectors(conn, [rowid for rowid, _size in rows])
@@ -356,6 +358,14 @@ def _write_vectors(conn, planned, operation, after):
     journal.add_counts(conn, change_id, {"deleted": done.deleted, "bytes": done.bytes})
     done.change_id = change_id
     return done
+
+
+def _continued(conn, operation):
+    """The vectors-retiring change a run continues: the newest kept change called `operation` (journal.kept_named), not
+    only while it is the journal's newest -- it holds no rows, so a change recorded since conflicts with nothing -- or
+    None. Asked only while vectors under its key are left (plan_vectors, _write_vectors): a run that finished left none."""
+    kept = journal.kept_named(conn, operation)
+    return kept[-1][0] if kept else None
 
 
 def plan(library):

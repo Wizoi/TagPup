@@ -10,7 +10,8 @@ What the owner lives through (scenarios P8 and D4):
   person's page) answers the same rows before and after; the faces generation moves (a cache of the old vectors is not
   the library's); ONE change of the journal with no rows, its summary the counts committed.
 - (d) From the command line, a forced snapshot first; Ctrl+C between two chunks stops it, and a run again continues the
-  SAME change and takes no second snapshot. A snapshot restore gives the vectors back.
+  SAME change and takes no second snapshot, also after the owner changed a setting in between (#1788). A snapshot
+  restore gives the vectors back.
 - (e) History lists the change as not undone, naming the snapshot; the undo of the earlier retiring of the old
   detector's faces (its recorded vectors under FaceNet's key, change 3247's shape; #1783) and of the switch to the new
   model (#1781's check, an update here; the insert shape is P10's) are refused naming the snapshot, nothing written; a
@@ -233,6 +234,7 @@ class RetiringTheOldModelsVectors(unittest.TestCase):
         self.assertEqual([], self.dailies(), "a dry run takes no snapshot")
 
     def test_from_the_command_line_stopped_between_chunks_a_run_again_continues_the_change_and_a_restore_gives_them_back(self):
+        """Between the two runs the owner changes a setting: a change of the journal after the stopped one."""
         self.retire_the_old_faces()
         deleting = store_faces.delete_vectors
         pressed = []
@@ -255,6 +257,8 @@ class RetiringTheOldModelsVectors(unittest.TestCase):
         self.assertEqual({"bytes": 3 * 2048, "deleted": 3}, summary)
         snapshot = [each.name for each in self.dailies()]
         self.assertEqual(1, len(snapshot))
+        between = library_settings.change(self.library, {"candidates.tags": "Heron"})
+        self.assertEqual(1, between.changed, between.refused)
 
         second = self.cli("--apply")
         self.assertEqual(0, second.exit_code, second.output)
@@ -267,9 +271,9 @@ class RetiringTheOldModelsVectors(unittest.TestCase):
         self.assertIn("Nothing to retire", self.cli().output)
 
         (listed,) = [each for each in library_snapshots.listing(self.library)["snapshots"] if each["name"] == snapshot[0]]
-        self.assertEqual(1, listed["changes_since"], "the restore's loss is counted")
+        self.assertEqual(2, listed["changes_since"], "the restore's loss is counted")
         asked = library_snapshots.restore(self.library, snapshot[0])
-        self.assertEqual([(change_id, OPERATION)], [(lost["id"], lost["operation"]) for lost in asked.details["lost"]])
+        self.assertIn((change_id, OPERATION), [(lost["id"], lost["operation"]) for lost in asked.details["lost"]])
         restored = library_snapshots.restore(self.library, snapshot[0], apply=True)
         self.assertEqual(1, restored.changed, restored.refused)
         self.assertEqual(4, self.facenet_vectors())
