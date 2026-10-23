@@ -471,20 +471,6 @@ def retire_rows(conn, key, photo_ids):
     return found
 
 
-def rows_of_faces(conn, face_ids):
-    """[(table, key)] of the rows each of `face_ids` holds in face_crops and face_embeddings (every model's), then of the
-    faces themselves: the rows a delete of them takes, children first, as the journal records them before the delete
-    (tagpup.store.journal.record_removing). Keys only, no crop or vector read."""
-    crops, vectors = [], []
-    for chunk in _chunks(face_ids):
-        marks = ",".join("?" * len(chunk))
-        crops += [("face_crops", (face_id,)) for (face_id,) in conn.execute(
-            "SELECT face_id FROM face_crops WHERE face_id IN (%s) ORDER BY face_id" % marks, chunk)]
-        vectors += [("face_embeddings", (face_id, model)) for face_id, model in conn.execute(
-            "SELECT face_id, model FROM face_embeddings WHERE face_id IN (%s) ORDER BY face_id, model" % marks, chunk)]
-    return crops + vectors + [("faces", (face_id,)) for face_id in face_ids]
-
-
 def manual_names(conn):
     """face id -> Ref for every face a person decided by hand. A None is a
     deliberate "this is nobody", as binding as a person."""

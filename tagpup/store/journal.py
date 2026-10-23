@@ -876,20 +876,21 @@ def record_inserted(conn, change_id, rows, counts=None):
     whole as stored, so that an undo deletes exactly them and a rehearsal puts them back byte for byte; and add `counts`
     to the change's summary, in the same transaction, so a change whose rows come a piece at a time (the face pass:
     tagpup.store.faces.give_vectors) says what was committed, never what was planned."""
-    _record(conn, change_id, _whole(conn, "insert", rows))
+    _record(conn, change_id, _inserted(conn, rows))
     _add_counts(conn, change_id, counts)
 
 
-def record_removing(conn, change_id, rows, updates, counts=None):
-    """Add to change `change_id`, in the caller's transaction and BEFORE the caller writes, the rows it is about to delete,
-    [(table, key)] of tables in KEYS, each read whole as it stands, so that an undo puts each back byte for byte -- in the
-    order given, which an undo walks backwards: a child before its parent here (a face's crop and vectors before the face)
-    puts the parent back first -- and the `updates` it is about to make, [(table, key, old, new)], `old` and `new` the
-    columns that change; and add `counts` to the change's summary, so a change written a piece at a time (retiring the old
-    detector's faces: tagpup.services.retire_faces) says what was committed, never what was planned."""
-    _recordable(table for table, _key, _old, _new in updates)
-    changes = _whole(conn, "delete", rows)
-    changes += [RowChange("update", table, tuple(key), dict(old), dict(new)) for table, key, old, new in updates]
+def record_removing(conn, change_id, table, keys, updates, counts=None):
+    """Add to change `change_id`, in the caller's transaction and BEFORE the caller writes, the rows of `table` keyed `keys`
+    it is about to delete, with every row a delete of them takes (CASCADES: a face's crop and vectors), each read whole as
+    it stands and in the order an apply records them, children first (_resolve, which also refuses a delete that would
+    leave a row naming one gone), so that an undo puts each back byte for byte; and the `updates` it is about to make,
+    [(table, key, old, new)], `old` and `new` the columns that change; and add `counts` to the change's summary, so a
+    change written a piece at a time (retiring the old detector's faces: tagpup.services.retire_faces) says what was
+    committed, never what was planned."""
+    _recordable([table] + [each for each, _key, _old, _new in updates])
+    changes, _skipped = _resolve(conn, [delete(table, key, {}) for key in keys])
+    changes += [RowChange("update", each, tuple(key), dict(old), dict(new)) for each, key, old, new in updates]
     _record(conn, change_id, changes)
     _add_counts(conn, change_id, counts)
 
@@ -901,18 +902,13 @@ def _recordable(tables):
         raise ValueError("%s is not a table a change records" % unknown[0])
 
 
-def _whole(conn, action, rows):
-    """[RowChange] of `rows`, [(table, key)] of tables in KEYS, each read whole as stored: an insert just written, or a
-    delete about to be."""
+def _inserted(conn, rows):
+    """[RowChange] of `rows`, [(table, key)] of tables in KEYS just inserted, each read back whole as stored."""
     tables = {table for table, _key in rows}
     _recordable(tables)
     columns = {table: schema.table_columns(conn, table) for table in tables}
-    found = []
-    for table, key in rows:
-        row = _read(conn, table, tuple(key), columns[table])
-        found.append(RowChange(action, table, tuple(key), None if action == "insert" else row,
-                               row if action == "insert" else None))
-    return found
+    return [RowChange("insert", table, tuple(key), None, _read(conn, table, tuple(key), columns[table]))
+            for table, key in rows]
 
 
 def _add_counts(conn, change_id, counts):

@@ -274,7 +274,7 @@ def _write(conn, model, operation, photo_ids):
     for face_id, was in cleared:
         old = {column: value for column, value in was.items() if value != store_faces.UNDECIDED[column]}
         updates.append(("faces", (face_id,), old, {column: store_faces.UNDECIDED[column] for column in old}))
-    journal.record_removing(conn, change_id, store_faces.rows_of_faces(conn, gone), updates,
+    journal.record_removing(conn, change_id, "faces", [(face_id,) for face_id in gone], updates,
                             {"deleted": len(gone), "cleared": len(cleared)})
     done.deleted = store_faces.delete(conn, gone)
     done.cleared = len(store_faces.put_decisions(conn, {face_id: dict(store_faces.UNDECIDED) for face_id, _was in cleared}))
