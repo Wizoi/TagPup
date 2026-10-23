@@ -315,7 +315,8 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
         before = self.state()
         retired = retire_faces.apply(self.library, planned, clear_manual_names=True)
         self.assertEqual(([], 4, retire_faces.MODEL_MOVED), (retired.chunks, retired.failed, retired.error))
-        self.assertIn("The write of 4 photos failed (%s)" % retire_faces.MODEL_MOVED, retired.said())
+        self.assertIn("4 photos were not written: %s. %s" % (retire_faces.MODEL_MOVED, retire_faces.SWITCH_BACK % NEW),
+                      retired.said())
         self.assertEqual(before, self.state())
         self.assertEqual([], self.retire_changes())
 

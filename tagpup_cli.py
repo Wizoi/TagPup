@@ -1284,12 +1284,13 @@ KEYWORDS_STAY = ("The keywords in the photo files stay as they are, and so do th
                  "faces from tags (TagTuner's Folder Matches, or TagPup's Organize folder view) names the faces kept from "
                  "them again, and cluster-faces names more by likeness.")
 
-#: Why `retire-faces --apply` is refused while an app runs: a server's record names no library, so any refuses it.
+#: Why `retire-faces --apply` and `retire-vectors --apply` are refused while an app runs: a server's record names no
+#: library, so any refuses it.
 APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Stop the app first (close it from its tray or its "
-               "window): a running app keeps faces it read in memory, and its writes beside this run would name or "
-               "decide faces this run deletes or clears. Its record names no library, so any running app refuses it.")
+               "window): a running app keeps faces and vectors it read in memory, and its writes beside this run would "
+               "name or decide faces this run deletes or clears. Its record names no library, so any running app refuses it.")
 
-#: Why `retire-faces --apply` stopped between two chunks: an app started during the run (launcher.running, asked a chunk).
+#: Why `retire-faces --apply` (or `retire-vectors --apply`) stopped between two chunks: an app started during the run (launcher.running, asked a chunk).
 APP_STARTED = ("Stopped: TagPup was started during the run (%d app server(s)); the chunks written stand. Stop the app, then "
                "run it again to go on, as the same change.")
 
@@ -1363,6 +1364,81 @@ def retire_faces(ctx, apply_, clear_manual_names, reveal):
         say("Written: change %s; `undo <change> --apply` takes it back, while no later change wrote its faces."
             % ", ".join(map(str, retired.changes)))
     if retired.failed or retired.stopped:
+        raise SystemExit(1)
+
+
+#: How long the snapshot `retire-vectors --apply` takes first stands: it is a daily (snapshots.KEEP, three dailies).
+SNAPSHOT_STANDS = ("while it stands: it is a daily, three are kept, and the app's own daily snapshots push it out in about "
+                   "three days (TagPup CLI: snapshots list)")
+
+
+@cli.command("retire-vectors")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write: after a snapshot of the library, taken even when one is from today (it is the way back), one "
+                   "change of the journal, which is not undone. Without it, only says what it would do.")
+@click.pass_context
+def retire_vectors(ctx, apply_):
+    """Once the library is on the new face model and every face holds its vector (after face-pass, the switch and
+    retire-faces): delete the vectors of the old model, FaceNet, which no reader keyed by the library's model reads
+    (docs/AI_PIPELINE.md, phase 3; DECISIONS 2026-10-23). No face, crop, decision, keyword or tag is touched. A dry run
+    unless --apply; counts only. --apply takes a snapshot first, always: it is the way back (the change's undo is
+    refused, and so are a switch back to FaceNet and the undo of the retiring of the old detector's faces). Ctrl+C stops
+    it after the chunk under way, and so does an app started during the run; run it again to go on, as the same change.
+    --apply is refused while an app runs; an MCP server keeps no record of itself and is not seen: close it first. After
+    it, `compact` gives the space back to the disk."""
+    library = _existing_library(ctx)
+    say = functools.partial(console.print, markup=False, soft_wrap=True)
+    say("Retiring the old face model's vectors of %s%s." % (library.name, "" if apply_ else " (a dry run)"))
+    planned = retire_faces_service.plan_vectors(library)
+    say(planned.said())
+    if planned.refused:
+        raise SystemExit(1)
+    if not planned.vectors:
+        say("Nothing to retire: no vector under %s is left." % planned.key)
+        return
+    if not apply_:
+        say("Nothing changed. --apply writes it, after a snapshot of the library (taken even when one is from today: the "
+            "oldest daily may go): one change of the journal, which is not undone; the snapshot is the way back %s. "
+            "Then `compact` gives the space back to the disk." % SNAPSHOT_STANDS)
+        return
+    servers = launcher.running()
+    if servers:
+        say(APP_RUNNING % len(servers))
+        raise SystemExit(1)
+    with _stop_after_this_photo("chunk of vectors") as asked:
+        if planned.continues is not None:
+            # The snapshot the first run took holds every vector; one taken now holds fewer and pushes a daily out.
+            say("Continuing change %d: the snapshot taken before its first run is the way back %s; none taken."
+                % (planned.continues, SNAPSHOT_STANDS))
+        else:
+            try:
+                taken = library_snapshots.take(library, force=True)
+            except Exception as problem:
+                say("Nothing was written: the snapshot of the library could not be taken (%s: %s)."
+                    % (type(problem).__name__, problem))
+                raise SystemExit(1) from None
+            say("Took a snapshot of the library first (%s; %d older removed)."
+                % (", ".join(taken.details["taken"]), taken.details["removed"]))
+
+        def heard(chunk, chunks):
+            heard.number += 1
+            say("Chunk %d of %d: %d vectors deleted." % (heard.number, chunks, chunk.deleted))
+        heard.number = 0
+        started = []
+
+        def stop():
+            if asked.is_set():
+                return True
+            started[:] = launcher.running()   # an app started during the run: asked before each chunk
+            return bool(started)
+        retired = retire_faces_service.apply_vectors(library, planned, stop=stop, heard=heard)
+    say(retired.said())
+    if retired.stopped and started:
+        say(APP_STARTED % len(started))
+    if retired.change_id is not None:
+        say("Written: change %d, which is not undone: the snapshot taken first is the way back %s. `compact`, with the "
+            "apps closed, gives the space back to the disk." % (retired.change_id, SNAPSHOT_STANDS))
+    if retired.error or retired.stopped or retired.refused:
         raise SystemExit(1)
 
 

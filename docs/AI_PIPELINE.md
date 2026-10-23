@@ -582,6 +582,28 @@ takes no turn of the card.
   pass's likeness; 51 left unnamed in photos naming people no face is known for. So on a library starting afresh the
   keywords name the faces through `cluster-faces` (or the index, which runs it), not through Name faces from tags.
 
+**As built (2026-10-23): retiring the old model's vectors (`retire-vectors`; DECISIONS 2026-10-23).**
+- Once every face of a library on the new model holds its vector, FaceNet's vectors are read by nothing (every reader is
+  keyed by `faces.model`). photo_index holds 152,298 of them (311,906,304 bytes) beside 182,779 under `scrfd-adaface`,
+  none alone; kr-track holds 1,211 faces and renton_parkrun 329 whose only vector is FaceNet's (counted read-only
+  2026-10-23), so each needs `retire-faces` first.
+- `tagpup.services.retire_faces.plan_vectors` reads only: refused off the new model (NOT_ON_THE_MODEL) and while any face
+  holds FaceNet's vector alone (ALONE, `store.faces.alone_under`). `apply_vectors` walks the vectors by rowid
+  (`store.faces.vector_rowids_under`, SEARCH USING INTEGER PRIMARY KEY), VECTOR_CHUNK 5,000 a transaction, the model
+  read again in each (MODEL_MOVED) and the faces holding FaceNet's vector alone counted again (ALONE_SINCE, 0.044 s on
+  photo_index: an undo of a retiring between two chunks brings such faces back; that chunk is refused, nothing written,
+  #1789), and records ONE change with no rows, "retire vectors (mtcnn-facenet)", its summary
+  the vectors and bytes committed (`journal.add_counts`), continued as the newest kept change of its name
+  (`journal.kept_named`), also after a change recorded since: it holds no rows for one to conflict with (#1788).
+  Each deleted vector moves the faces generation (its trigger). The CLI forces a snapshot first and none when a stopped
+  run is continued.
+- The way back is the snapshot, never an undo (INVARIANTS row 40's exception, DECISIONS 2026-10-23): the change's own
+  undo is refused (VECTORS_RETIRED), and so are the undo of a retiring whose recorded `face_embeddings` deletes were under
+  a key the library holds none of now (change 3247's shape, #1783), the undo of the switch (an insert of `faces.model`
+  read as the default put back, #1781, `settings.undo_refusals`) and a switch back to FaceNet (`settings.switch_to`,
+  NONE_HELD, #1782). A library keeping some FaceNet vectors may still switch back. Scenario D4,
+  `tests/test_retiring_the_old_models_vectors.py`.
+
 ### Phase 4: Matching, with the new model
 
 - **4a Time-nearest matching.** A new face is matched against the time-nearest named faces by Date Taken, not one
