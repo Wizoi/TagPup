@@ -1,5 +1,5 @@
 {
- "version": "8be9eb9550eb",
+ "version": "d1179870127b",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -332,7 +332,7 @@
    "label": "Face model",
    "type": "text",
    "default": "mtcnn-facenet",
-   "info": "The models indexing and Suggest find faces and make their vectors with: mtcnn-facenet (MTCNN and FaceNet, which made the libraries' first face vectors) or scrfd-adaface (SCRFD and AdaFace). The Face detection settings are MTCNN's. Every reader compares a face by its vector under this model, so switching to scrfd-adaface waits for its pass (face-pass) to give the library's faces their new vectors: a switch is refused, with the counts, while too many faces are in photos the pass has not reached. Switching back is always allowed (docs/AI_PIPELINE.md, phase 3).",
+   "info": "The models indexing and Suggest find faces and make their vectors with: mtcnn-facenet (MTCNN and FaceNet, which made the libraries' first face vectors) or scrfd-adaface (SCRFD and AdaFace). The Face detection settings are MTCNN's. Every reader compares a face by its vector under this model, so switching to scrfd-adaface waits for its pass (face-pass) to give the library's faces their new vectors: a switch is refused, with the counts, while too many faces are in photos where no face holds its vector (the pass has not reached them, or found no face in them). Switching back is always allowed (docs/AI_PIPELINE.md, phase 3).",
    "locked": true,
    "consequences": [
     "Set to scrfd-adaface, Identify, cluster-faces, New Person and Suggest compare faces by the new model's vectors, with its own cuts for naming and offering a person; photos indexed after it find faces with the new model. A face the pass has not given a new vector takes no part, and a named one leaves the named faces compared with, until the pass reaches its photo.",

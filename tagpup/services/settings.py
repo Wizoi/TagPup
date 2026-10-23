@@ -66,8 +66,9 @@ NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
 
-#: The share of a library's faces that may be in photos the new model's pass has not reached when the library is switched
-#: to it (settings.change refuses a switch above it). Those faces hold no vector under the model switched to, so they
+#: The share of a library's faces that may be in photos none of whose faces holds the new model's vector -- the pass has
+#: not reached them, or found no face in them (store.faces.pass_counts' not_passed; the rows do not tell which) -- when the
+#: library is switched to it (settings.change refuses a switch above it). Those faces hold no vector under the model switched to, so they
 #: take no part in comparing, clustering or the gallery of named faces until the pass reaches their photos. Not zero:
 #: a pass leaves a few photos it could not read or that were added after it (live, 2026-10-20: 16 of kr-track's 11,457
 #: faces, 7 of renton_parkrun's 3,644, both under 0.2%), and the owner switches with those and finishes them by a pass
@@ -103,7 +104,8 @@ def switch_to(library, model):
                                 "s" if held["without"] == 1 else ""))
         return None, held
     said = ("%d of the library's %d faces hold a vector under %s; %d named face%s hold%s none, and would leave the named "
-            "faces Identify compares with until the pass reaches %s; %d face%s %s in photos the pass has not reached." % (
+            "faces Identify compares with until the pass reaches %s; %d face%s %s in photos where no face holds one (the pass "
+            "has not reached them, or found no face in them)." % (
                 held["faces"] - held["without"], held["faces"], model, held["named_without"],
                 "" if held["named_without"] == 1 else "s", "s" if held["named_without"] == 1 else "",
                 "it" if held["named_without"] == 1 else "them", not_passed, "" if not_passed == 1 else "s",
@@ -111,7 +113,7 @@ def switch_to(library, model):
     held["said"] = said
     if not_passed <= UNPASSED_SHARE_ALLOWED * held["faces"]:
         return None, held
-    return ("Nothing was written: %s A switch allows at most %d%% of the faces in photos the pass has not reached: "
+    return ("Nothing was written: %s A switch allows at most %d%% of the faces in such photos: "
             "finish the pass first (TagPup CLI: face-pass <folder> --apply, for each folder of the library)." % (
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 

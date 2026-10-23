@@ -490,8 +490,9 @@ takes no turn of the card.
 - `KEPT_FACE_MODELS` holds both models (and with it, removed with the last merge of phase 3, the refusal of a model a
   library cannot keep: `face_model_refusal`, `FACE_MODEL_NOT_KEPT`, `FaceModelNotReady`, the CLI's exit 78, had no
   instance once both models were kept and the rule refuses any other value). `settings.change` refuses a switch of `faces.model` to the new model while more
-  than `UNPASSED_SHARE_ALLOWED` (5%, the owner's to change) of the library's faces are in photos the pass has not
-  reached, before the consequences are asked; refused or not it says how many faces hold a vector under the model, how
+  than `UNPASSED_SHARE_ALLOWED` (5%, the owner's to change) of the library's faces are in photos none of whose faces
+  holds its vector (the pass has not reached them, or found no face in them: the rows do not tell which), before the
+  consequences are asked; refused or not it says how many faces hold a vector under the model, how
   many named faces hold none (they leave the gallery of named faces until the pass reaches them) and how many are in
   photos not passed (`details["face_vectors"]`, from `store.faces.vector_counts` and `pass_counts`, read-only). A library
   with no faces switches; switching back to FaceNet is never refused, reads no pass count (`not_passed` 0) and says

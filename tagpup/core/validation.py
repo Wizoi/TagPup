@@ -334,7 +334,7 @@ SETTINGS = {
         "the libraries' first face vectors) or %s (SCRFD and AdaFace). The %s settings are MTCNN's. Every reader "
         "compares a face by its vector under this model, so switching to %s waits for its pass (face-pass) to give "
         "the library's faces their new vectors: a switch is refused, with the counts, while too many faces are in photos "
-        "the pass has not reached. Switching back is always allowed (docs/AI_PIPELINE.md, phase 3)." % (
+        "where no face holds its vector (the pass has not reached them, or found no face in them). Switching back is always allowed (docs/AI_PIPELINE.md, phase 3)." % (
             MTCNN_FACENET, SCRFD_ADAFACE, SETTING_GROUPS["faces"]["title"], SCRFD_ADAFACE),
         [{"rule": "one_of", "choices": list(FACE_MODELS),
           "message": "The face model is one of %s." % ", ".join(FACE_MODELS)}]),
