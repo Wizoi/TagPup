@@ -694,12 +694,18 @@ def carried_on(conn, photo_ids):
 
 
 def put_decisions(conn, values):
-    """Give each face of `values` ({face id: {column: value}}, columns of DECISION) those columns, and rebuild the people of their
-    photos. The caller commits, in the transaction that also holds what the decision goes with. Returns the ids written."""
+    """Give each face of `values` ({face id: {column: value}}, columns of DECISION) those columns, where one differs, and
+    rebuild the people of their photos (every one of them, as before: a batch's caller may have moved what else they
+    derive from). The caller commits, in the transaction that also holds what the decision goes with. Returns the ids whose
+    row changed: a face already holding them is not written, nor counted."""
+    written = []
     for face_id, columns in values.items():
-        conn.execute("UPDATE faces SET " + ", ".join("%s = ?" % column for column in columns) + " WHERE id = ?",
-                     list(columns.values()) + [face_id])
-    return _rebuilt(conn, _photos_of(conn, list(values)), list(values))
+        given = list(columns.values())
+        if conn.execute("UPDATE faces SET " + ", ".join("%s = ?" % column for column in columns) + " WHERE id = ? AND NOT ("
+                        + " AND ".join("%s IS ?" % column for column in columns) + ")", given + [face_id] + given).rowcount:
+            written.append(face_id)
+    _rebuilt(conn, _photos_of(conn, list(values)), bool(values))
+    return written
 
 
 def name(conn, face_ids, person):

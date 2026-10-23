@@ -877,22 +877,21 @@ def record_inserted(conn, change_id, rows, counts=None):
     to the change's summary, in the same transaction, so a change whose rows come a piece at a time (the face pass:
     tagpup.store.faces.give_vectors) says what was committed, never what was planned."""
     _record(conn, change_id, _inserted(conn, rows))
-    _add_counts(conn, change_id, counts)
+    add_counts(conn, change_id, counts)
 
 
-def record_removing(conn, change_id, table, keys, updates, counts=None):
+def record_removing(conn, change_id, table, keys, updates):
     """Add to change `change_id`, in the caller's transaction and BEFORE the caller writes, the rows of `table` keyed `keys`
     it is about to delete, with every row a delete of them takes (CASCADES: a face's crop and vectors), each read whole as
     it stands and in the order an apply records them, children first (_resolve, which also refuses a delete that would
     leave a row naming one gone), so that an undo puts each back byte for byte; and the `updates` it is about to make,
-    [(table, key, old, new)], `old` and `new` the columns that change; and add `counts` to the change's summary, so a
-    change written a piece at a time (retiring the old detector's faces: tagpup.services.retire_faces) says what was
-    committed, never what was planned."""
+    [(table, key, old, new)], `old` and `new` the columns that change. What the caller's write changed is added to the
+    change's summary after it (add_counts), so a change written a piece at a time (retiring the old detector's faces:
+    tagpup.services.retire_faces) says what was committed, never what was planned."""
     _recordable([table] + [each for each, _key, _old, _new in updates])
     changes, _skipped = _resolve(conn, [delete(table, key, {}) for key in keys])
     changes += [RowChange("update", each, tuple(key), dict(old), dict(new)) for each, key, old, new in updates]
     _record(conn, change_id, changes)
-    _add_counts(conn, change_id, counts)
 
 
 def _recordable(tables):
@@ -911,9 +910,9 @@ def _inserted(conn, rows):
             for table, key in rows]
 
 
-def _add_counts(conn, change_id, counts):
+def add_counts(conn, change_id, counts):
     """Add `counts` to the summary of change `change_id`, in the caller's transaction: the one way a change added to a
-    piece at a time keeps its counts at what was committed."""
+    piece at a time keeps its counts at what was committed (record_inserted; retiring, after its write)."""
     if not counts:
         return
     (text,) = conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()

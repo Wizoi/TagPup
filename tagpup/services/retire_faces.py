@@ -21,8 +21,9 @@ by name (`refusal`, `clear_manual_names`; owner, 2026-10-22: manual names go too
 each chunk ONE transaction (BEGIN IMMEDIATE) in which the chunk's faces are read again (store.faces.retire_rows): a face
 done since, by this run or another, no longer matches, and a photo removed since (sync, the indexer) has no faces to
 read, and is left alone. In that transaction the deleted rows are recorded whole, children first, and the cleared
-decisions as updates holding the old values (store.journal.record_removing), BEFORE the store writes them, with the
-chunk's counts added to the change's summary: History says what was committed. The change, OPERATION, is opened applied
+decisions as updates holding the old values (store.journal.record_removing), BEFORE the store writes them, and what the
+store's writers changed (rows deleted, rows whose decisions moved) is added to the change's summary after: History says
+what was committed. The change, OPERATION, is opened applied
 at the first chunk that writes, and added to while it is the journal's newest change and kept (journal.newest_kept): a
 run stopped (`stop`, asked between chunks) or killed part-way leaves it whole, and the next run continues it; a change
 recorded after it, or its undo, makes the next chunk open a new one. Undone from History, every deleted face comes back
@@ -274,9 +275,9 @@ def _write(conn, model, operation, photo_ids):
     for face_id, was in cleared:
         old = {column: value for column, value in was.items() if value != store_faces.UNDECIDED[column]}
         updates.append(("faces", (face_id,), old, {column: store_faces.UNDECIDED[column] for column in old}))
-    journal.record_removing(conn, change_id, "faces", [(face_id,) for face_id in gone], updates,
-                            {"deleted": len(gone), "cleared": len(cleared)})
+    journal.record_removing(conn, change_id, "faces", [(face_id,) for face_id in gone], updates)
     done.deleted = store_faces.delete(conn, gone)
     done.cleared = len(store_faces.put_decisions(conn, {face_id: dict(store_faces.UNDECIDED) for face_id, _was in cleared}))
+    journal.add_counts(conn, change_id, {"deleted": done.deleted, "cleared": done.cleared})
     done.change_id = change_id
     return done
