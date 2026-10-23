@@ -1367,6 +1367,11 @@ def retire_faces(ctx, apply_, clear_manual_names, reveal):
         raise SystemExit(1)
 
 
+#: How long the snapshot `retire-vectors --apply` takes first stands: it is a daily (snapshots.KEEP, three dailies).
+SNAPSHOT_STANDS = ("while it stands: it is a daily, three are kept, and the app's own daily snapshots push it out in about "
+                   "three days (TagPup CLI: snapshots list)")
+
+
 @cli.command("retire-vectors")
 @click.option("--apply", "apply_", is_flag=True,
               help="Write: after a snapshot of the library, taken even when one is from today (it is the way back), one "
@@ -1393,8 +1398,8 @@ def retire_vectors(ctx, apply_):
         return
     if not apply_:
         say("Nothing changed. --apply writes it, after a snapshot of the library (taken even when one is from today: the "
-            "oldest daily may go): one change of the journal, which is not undone; the snapshot is the way back. Then "
-            "`compact` gives the space back to the disk.")
+            "oldest daily may go): one change of the journal, which is not undone; the snapshot is the way back %s. "
+            "Then `compact` gives the space back to the disk." % SNAPSHOT_STANDS)
         return
     servers = launcher.running()
     if servers:
@@ -1403,8 +1408,8 @@ def retire_vectors(ctx, apply_):
     with _stop_after_this_photo("chunk of vectors") as asked:
         if planned.continues is not None:
             # The snapshot the first run took holds every vector; one taken now holds fewer and pushes a daily out.
-            say("Continuing change %d: the snapshot taken before its first run is the way back; none taken."
-                % planned.continues)
+            say("Continuing change %d: the snapshot taken before its first run is the way back %s; none taken."
+                % (planned.continues, SNAPSHOT_STANDS))
         else:
             try:
                 taken = library_snapshots.take(library, force=True)
@@ -1431,8 +1436,8 @@ def retire_vectors(ctx, apply_):
     if retired.stopped and started:
         say(APP_STARTED % len(started))
     if retired.change_id is not None:
-        say("Written: change %d, which is not undone: the snapshot taken first is the way back. `compact`, with the apps "
-            "closed, gives the space back to the disk." % retired.change_id)
+        say("Written: change %d, which is not undone: the snapshot taken first is the way back %s. `compact`, with the "
+            "apps closed, gives the space back to the disk." % (retired.change_id, SNAPSHOT_STANDS))
     if retired.error or retired.stopped or retired.refused:
         raise SystemExit(1)
 
