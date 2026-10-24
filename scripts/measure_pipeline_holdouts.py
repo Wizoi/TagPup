@@ -46,7 +46,6 @@ import random
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -223,10 +222,6 @@ PERCENTILES = np.linspace(0, 100, 1001)
 
 #: The neighbours Suggest reads (suggester.SuggestionModel.suggest).
 NEIGHBOURS = 15
-
-#: A pass that cannot read more than this share of its photos stops and scores nothing: a share gone is not a library
-#: of fewer photos.
-UNREAD_LIMIT = 0.01
 
 
 def candidate(text):
@@ -426,59 +421,15 @@ class CopyChanged(RuntimeError):
     library's, and the next candidate must not be scored against it."""
 
 
-class Unreachable(Exception):
-    """More of a pass's photos could not be read than UNREAD_LIMIT allows."""
+def say_every(report, todo, every=20):
+    """A pass's progress (photo_reembed.embed_pass's counts) said every `every` batches."""
+    count = [0]
 
-
-def embed_pass(clip, todo, keep, report, workers=6, batch=256):
-    """Each of `todo` [(file, the copy's path)] embedded by `clip`: decoded, padded and resized (ClipModel.input_of,
-    never loading the model) on `workers` threads ahead of the forward on this one, as the indexer reads ahead, and
-    handed to `keep([(the copy's path, (mtime, size), vector)])` `batch` at a time, the last ones too when the pass is
-    stopped: what was kept is not embedded again by the next run. A photo that cannot be read is counted by why; more
-    than UNREAD_LIMIT of them raise Unreachable. {"embedded", "unread", "seconds"}."""
-    unread, waiting, embedded = {}, [], 0
-    limit = max(20, int(UNREAD_LIMIT * len(todo)))
-    started = time.perf_counter()
-
-    def read(item):
-        stat = os.stat(item[0])
-        return item, (stat.st_mtime, stat.st_size), clip.input_of(item[0], load=False)
-
-    items = iter(todo)
-    pending = collections.deque()
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        def fill():
-            while len(pending) < 2 * workers:
-                item = next(items, None)
-                if item is None:
-                    return
-                pending.append(pool.submit(read, item))
-        try:
-            fill()
-            while pending:
-                future = pending.popleft()
-                fill()
-                try:
-                    item, stamp, picture = future.result()
-                except OSError as problem:   # images.Unreadable, a file gone, a share that does not answer
-                    unread[type(problem).__name__] = unread.get(type(problem).__name__, 0) + 1
-                    if sum(unread.values()) > limit:
-                        raise Unreachable("%d of %d photos could not be read (%s): the pass stops." % (
-                            sum(unread.values()), len(todo), unread)) from problem
-                    continue
-                waiting.append((item[1], stamp, clip.embed_input(picture)))
-                embedded += 1
-                if len(waiting) >= batch:
-                    keep(waiting)
-                    waiting = []
-                if embedded % 5000 == 0:
-                    report("  %d of %d embedded, %.0f s" % (embedded, len(todo), time.perf_counter() - started))
-        finally:
-            for future in pending:
-                future.cancel()
-            if waiting:
-                keep(waiting)
-    return {"embedded": embedded, "unread": unread, "seconds": time.perf_counter() - started}
+    def said(counts):
+        count[0] += 1
+        if count[0] % every == 0:
+            report("  %d of %d embedded, %.0f s" % (counts["embedded"], len(todo), counts["seconds"]))
+    return said
 
 
 def card_use(samples, start):
@@ -508,7 +459,7 @@ def run_candidate(runtime, library, target, model, sample, report):
     kept in the copy (resumable: a stopped pass is taken up where it stopped), the timing photos timed one at a time,
     and the held-out photos scored by Suggest and by the word path. The result, or Unreachable; a model that does not
     load, or runs out of memory on the card, raises what it raised."""
-    from tagpup.services import search, suggester
+    from tagpup.services import photo_reembed, search, suggester
     settings = candidate_settings(runtime.settings(library), model)
     key = runtime.model_key(library, settings)
     clip = runtime.clip(library, settings)
@@ -520,8 +471,7 @@ def run_candidate(runtime, library, target, model, sample, report):
         raise RuntimeError("the model's vectors would be kept under %s, not %s" % (embeddings.model_key, key))
 
     def keep(found):
-        for path, stamp, vector in found:
-            embeddings.keep(path, vector, stamp)
+        return sum(embeddings.keep(path, vector, stamp) for path, stamp, vector in found)
 
     sampler = sandbox.Sampler(interval=250).start()
     try:
@@ -537,7 +487,10 @@ def run_candidate(runtime, library, target, model, sample, report):
                     if row["id"] in copy_rows and not copy_rows[row["id"]][1]]
             report("  %s: %d photos to embed of %d" % (label_of(model), len(todo), len(sample["rows"])))
             vectored = sum(1 for _path, held in copy_rows.values() if held)
-            result["pass"] = embed_pass(clip, todo, keep, report)
+            # The pass embed-photos makes a library's vectors with (photo_reembed.embed_pass); more of the copy's
+            # photos than its UNREAD_LIMIT not read stops the candidate (Unreachable): a share gone is not a library
+            # of fewer photos.
+            result["pass"] = photo_reembed.embed_pass(clip, todo, keep, progress=say_every(report, todo))
             index.close()
             index.load()
             result.update(vectors=index.indexed, dimension=index.dim, rows_in_the_copy=index.count,
