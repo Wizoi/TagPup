@@ -11,8 +11,11 @@ import json
 import os
 import random
 import sys
+import shutil
 import tempfile
 import unittest
+from argparse import Namespace
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -406,6 +409,67 @@ class TheOtherChecks(unittest.TestCase):
     def test_a_tag_under_a_branch_of_people_is_not_scored(self):
         self.assertTrue(holdouts._a_person("People/Rowan Thackeray", {"people"}))
         self.assertFalse(holdouts._a_person("Sport/Track", {"people"}))
+
+
+class TheWorkFolderIsDeletedOnlyIfThisProgramMadeIt(unittest.TestCase):
+    """`--work` is deleted when every candidate is done: a run given the results folder, the library's folder or the
+    TagPup home would delete what it was measuring into, what it was measuring, or the owner's home."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.base, True)
+        self.out = os.path.join(self.base, "results")
+        self.library_folder = os.path.join(self.base, "libraries")
+        self.home = os.path.join(self.base, "home")
+        for folder in (self.out, self.library_folder, self.home):
+            os.makedirs(folder)
+        self.source = os.path.join(self.library_folder, "photo_index.db")
+        for path in (os.path.join(self.out, "model-x.json"), self.source, os.path.join(self.home, "machine_roots.json")):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("kept")
+
+    def run_models(self, work):
+        args = Namespace(work=work, candidates=list(holdouts.CANDIDATES), packages=None, sample=1, timing=1, seed=1,
+                         pool=None, keep_work=False)
+        with mock.patch.dict(os.environ, {"TAGPUP_HOME": self.home}):
+            holdouts.models_main(args, self.source, None, "photo_index", self.out)
+
+    def test_a_work_folder_that_is_or_holds_what_the_run_keeps_is_refused_and_nothing_is_deleted(self):
+        for work in (self.out, self.library_folder, self.home, self.base,
+                     os.path.join(self.out, "inside"), os.path.join(self.home, "data")):
+            with self.subTest(work=work), self.assertRaises(SystemExit):
+                self.run_models(work)
+        for path in (os.path.join(self.out, "model-x.json"), self.source, os.path.join(self.home, "machine_roots.json")):
+            self.assertTrue(os.path.exists(path), path)
+        self.assertEqual(["model-x.json"], os.listdir(self.out))
+
+    def test_the_repository_and_a_folder_that_holds_it_are_refused(self):
+        for work in (ROOT, os.path.dirname(ROOT), os.path.join(ROOT, "tests")):
+            with self.subTest(work=work), self.assertRaises(SystemExit):
+                self.run_models(work)
+
+    def test_a_folder_with_files_this_program_did_not_put_there_is_refused_and_kept(self):
+        work = os.path.join(self.base, "somebody's")
+        os.makedirs(work)
+        with open(os.path.join(work, "wedding.jpg"), "w", encoding="utf-8") as handle:
+            handle.write("kept")
+        with self.assertRaises(SystemExit):
+            self.run_models(work)
+        self.assertTrue(os.path.exists(os.path.join(work, "wedding.jpg")))
+        self.assertIn("kept", holdouts.remove_work(work))
+        self.assertTrue(os.path.exists(os.path.join(work, "wedding.jpg")))
+
+    def test_a_folder_it_made_is_taken_up_again_and_deleted_at_the_end(self):
+        work = os.path.join(self.base, "copy")
+        for _round in range(2):   # a stopped run is taken up where it stopped
+            holdouts.claim_work_folder(work, self.source, self.out)
+        self.assertTrue(os.path.exists(os.path.join(work, holdouts.WORK_MARKER)))
+        self.assertIn("deleted: True", holdouts.remove_work(work))
+        self.assertFalse(os.path.exists(work))
+        empty = os.path.join(self.base, "empty")
+        os.makedirs(empty)
+        holdouts.claim_work_folder(empty, self.source, self.out)   # empty: taken and marked
+        self.assertTrue(os.path.exists(os.path.join(empty, holdouts.WORK_MARKER)))
 
 
 if __name__ == "__main__":

@@ -686,6 +686,40 @@ def table(out, report):
                 number(needed.get("word_cut"), "%.2f") if held == "by_folder" else ""))
 
 
+#: Written in the work folder when this program makes it: the folder is deleted at the end only if it holds this.
+WORK_MARKER = "made-by-measure_pipeline_holdouts"
+
+
+def claim_work_folder(work, source, out):
+    """The work folder `work` (the copy of the library, deleted when the run is done) made ready, or SystemExit with a
+    plain sentence: it is refused when it is, contains or lies inside the output folder `out`, the source library's
+    folder, the TagPup home or the repository (a run would delete the results, the library or the home), and when it
+    already holds files that this program did not put there (no WORK_MARKER). A folder that is missing or empty is
+    taken and marked."""
+    for what, place in (("the output folder", out), ("the source library's folder", os.path.dirname(source)),
+                        ("the TagPup home", tagpup_config.home()), ("the repository", sandbox.REPO)):
+        if paths.same(work, place) or paths.is_under(work, place) or paths.is_under(place, work):
+            raise SystemExit("--work %s is, contains or lies inside %s (%s): give a folder of its own, outside all four."
+                             % (work, what, place))
+    marker = os.path.join(work, WORK_MARKER)
+    if os.path.exists(marker):
+        return work
+    if os.path.isdir(work) and os.listdir(work):
+        raise SystemExit("--work %s already holds files and this program did not make it: it is deleted when the run is "
+                         "done. Give a new or empty folder." % work)
+    os.makedirs(work, exist_ok=True)
+    with open(marker, "w", encoding="utf-8") as handle:
+        handle.write("This folder was made by scripts/measure_pipeline_holdouts.py and is deleted by it.")
+    return work
+
+
+def remove_work(work):
+    """Delete the work folder if this program made it (WORK_MARKER there), and say what happened."""
+    if not os.path.exists(os.path.join(work, WORK_MARKER)):
+        return "kept (this program did not make it): %s" % work
+    return "deleted: %s" % sandbox.remove_sandbox(work)
+
+
 def models_main(args, source, library, name, out):
     """The `models` check: one run at a time on a work folder (its lock names the process), the census read once and
     kept in it, every candidate measured, and the copy removed once each is done."""
@@ -694,7 +728,7 @@ def models_main(args, source, library, name, out):
     candidates = [candidate(text) for text in args.candidates]
     if args.packages:
         sys.path.append(os.path.abspath(args.packages))
-    work = sandbox.outside_the_repository(os.path.abspath(args.work))
+    work = claim_work_folder(os.path.abspath(args.work), os.path.abspath(source), os.path.abspath(out))
     lock = os.path.join(work, "run.lock")
     if os.path.exists(lock):
         with open(lock, encoding="utf-8") as handle:
@@ -719,7 +753,7 @@ def models_main(args, source, library, name, out):
     finally:
         os.remove(lock)
     if all(os.path.exists(os.path.join(out, slug(model))) for model in candidates) and not args.keep_work:
-        print("work folder deleted: %s" % sandbox.remove_sandbox(work))
+        print("work folder %s" % remove_work(work))
 
 
 def main():
