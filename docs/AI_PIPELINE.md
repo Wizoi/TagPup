@@ -5,6 +5,16 @@ was spread over (the research report, the owner's decisions of 2026-10-07 and th
 stay as the record, this is what is followed. Owner for the domain: Views, search and AI (models, GPU turn, Suggest,
 vectors), with People for faces and Data for the schema ([OWNERS.md](OWNERS.md)).
 
+**Current status (2026-10-24): phases 0 to 4 are done and installed; phase 5 (the photo model) is next; phase 6 waits
+for it.** Phase 3 (SCRFD 10g and AdaFace IR-101, one pass, migration 33) is on all three libraries; photo_index starts
+afresh on the new face model (retire-faces, change 3247) and its FaceNet vectors are retired (change 3248, then
+`compact`: 182,779 AdaFace vectors, 0 FaceNet). Phase 4a (one gallery, time-nearest matching) is merged. Phase 4b (cut 1,
+2026-10-23) ends an index with a read-only run-scoped matching of the faces it added, writes nothing to a photo file,
+and is installed (20261024-103335-fda9384b); the precision of its decided faces, held out by folder on photo_index, is
+27,120 decided, 47 wrong = 0.9983. Left open from phase 4: the TagTuner notice of arrivals, deferred until a proposal is
+missed after an unwatched sync (DECISIONS 2026-10-23). The paragraph below is the status as of 2026-10-17, kept as the
+record of phases 0 to 3's slices.
+
 Status (2026-10-17): **phase 0 done** (measured, section 7); the plan below is reordered by what it showed (owner
 accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again) and
 2a (`cluster-faces` 2,113 s to 202 s, names unchanged). **Built, off:** 1a (the detector downscale, the setting
