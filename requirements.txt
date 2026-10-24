@@ -1,6 +1,10 @@
 torch --index-url https://download.pytorch.org/whl/cu121
 torchvision --index-url https://download.pytorch.org/whl/cu121
 open-clip-torch
+# SigLIP 2's tokenizer, read from the model's tokenizer.json (tagpup.ml.clip): the same token ids as open_clip's
+# transformers.AutoTokenizer for every tag prompt of the three libraries (5,086 compared, 2026-10-24), without
+# transformers. 0.22.1 is the version compared.
+tokenizers==0.22.1
 faiss-cpu
 pyexiftool
 rich
