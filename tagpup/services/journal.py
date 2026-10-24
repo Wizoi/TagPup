@@ -57,8 +57,8 @@ logger = logging.getLogger(__name__)
 #: makes any more stays while a live journal holds it (RETIRED). A name neither knows (only a test makes one) gets the
 #: journal's account alone.
 UNDO_CHECKS = {
-    library_settings.WITH_DEFAULTS: library_settings.NOT_UNDONE,
-    library_settings.FROM_REPLACED: library_settings.NOT_UNDONE,
+    # A stamp of the settings, the library's first (settings.STAMPS: the table cannot name one it leaves out).
+    **{stamp: library_settings.NOT_UNDONE for stamp in library_settings.STAMPS - library_settings.RETIRED_STAMPS},
     library_settings.CHANGE: library_settings.undo_check,
     "migration %d: %s": "change %(change)d (%(operation)s): a migration is not undone",
     face_pass.OPERATION: retire_faces.pass_check,
