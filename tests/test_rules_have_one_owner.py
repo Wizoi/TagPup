@@ -391,13 +391,20 @@ class ThePagesKeepNoCopyOfTheirOwn(unittest.TestCase):
                                             "const CAMERA_FIELDS =", "const UNKNOWN_CAMERA =", "const ALL_CAMERAS ="))
 
 
+#: The photo vectors' key (tagpup.store.embeddings.model_key) is a name made from settings given, not a read of the
+#: library: a function naming two (a switch's before and after, settings.photo_switch_on) reads nothing twice.
+PHOTO_KEY_MODULES = ("embeddings", "store_embeddings")
+
+
 def functions_reading_the_key_twice(source):
-    """[(function, lines)] of each function in `source` that calls model_key more than once."""
+    """[(function, lines)] of each function in `source` that calls model_key more than once (the photo vectors' key,
+    PHOTO_KEY_MODULES, not counted)."""
     found = []
     for fn in ast.walk(ast.parse(source)):
         if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             lines = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call)
-                     and getattr(n.func, "attr", getattr(n.func, "id", "")) == "model_key"]
+                     and getattr(n.func, "attr", getattr(n.func, "id", "")) == "model_key"
+                     and getattr(getattr(n.func, "value", None), "id", None) not in PHOTO_KEY_MODULES]
             if len(lines) > 1:
                 found.append((fn.name, lines))
     return found
@@ -412,6 +419,8 @@ class AFaceModelKeyIsReadOnceAndTravelsWithItsVectors(unittest.TestCase):
         source = "def f(conn):\n    a = faces.model_key(conn)\n    return faces.model_key(conn), a\n"
         self.assertEqual([("f", [2, 3])], functions_reading_the_key_twice(source))
         self.assertEqual([], functions_reading_the_key_twice("def f(conn):\n    return faces.model_key(conn)\n"))
+        photo = "def f(a, b):\n    return store_embeddings.model_key(**a), store_embeddings.model_key(**b)\n"
+        self.assertEqual([], functions_reading_the_key_twice(photo))
 
     def test_no_function_in_the_package_reads_it_twice(self):
         problems = ["%s: %s reads the face model key at lines %s" % (relative, name, lines)
