@@ -24,6 +24,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Every SQL statement | `tagpup/store/` | `tests/test_layers.py` |
 | Schema and migrations (each declares additive or destructive) | `tagpup/store/schema.py` | `tests/test_migrations.py`, `tests/test_schema.py` |
 | Bulk edits and migrations recorded, rehearsed, undoable | `tagpup/store/journal.py`, `tagpup/store/file_journal.py`, `tagpup/services/journal.py`, `tagpup/services/file_changes.py` | `tests/test_journal*.py`, `tests/test_file_journal.py` |
+| Whether a change may be undone now (the History list, the rehearsal, the undo) | `tagpup/services/journal.py` (`why_not` over `UNDO_CHECKS`, every kind of change by its operation's name) | `tests/test_every_change_kind_has_an_undo_check.py`, `tests/test_journal_undo_refusals.py` |
 | A photo path's spelling, comparison and SQL form; the root-relative form; a photo's row id by its path (`store.roots.photo_ids_at`) | `tagpup/core/paths.py`, `tagpup/store/roots.py` | `tests/test_rules_have_one_owner.py` |
 | Tags, people, captions taken apart; the person tag | `tagpup/core/vocabulary.py`, `tagpup/store/taxonomy.py` | `tests/test_vocabulary.py` |
 | A person by the id of their tag-tree node | `tagpup/store/person_ids.py` | `tests/test_person_ids.py` |
