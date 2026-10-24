@@ -65,13 +65,6 @@ def put_by_id(conn, photo_id, model, mtime, size, vector):
                         (photo_id, model, mtime, size, vector, photo_id)).rowcount > 0
 
 
-def get_by_id(conn, photo_id, model):
-    """The Stored vector of the photo with this id under `model`, or None."""
-    row = conn.execute("SELECT mtime, size, vector FROM embeddings WHERE photo_id = ? AND model = ?",
-                       (photo_id, model)).fetchone()
-    return Stored(*row) if row else None
-
-
 def stamps_by_path(conn, photo_paths):
     """{paths.key(path): {(mtime, size)}} of the vectors kept for `photo_paths`, under any
     model: the files as they were when each was made. One indexed lookup a photo, as

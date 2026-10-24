@@ -71,7 +71,6 @@ from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import thumbnails
-from tagpup.services import embedding_repair
 from tagpup.services import photo_reembed
 from tagpup.services import face_pass as face_pass_service
 from tagpup.services import retire_faces as retire_faces_service
@@ -1080,64 +1079,6 @@ def thumbs_warm(ctx, folder, limit, apply_):
         raise SystemExit(1)
     if counts["stopped"]:
         console.print("Stopped at --limit; run it again to go on.", markup=False)
-
-
-@cli.command("repair-vectors")
-@click.option("--apply", "apply_", is_flag=True,
-              help="Make the vectors again and replace those that differ. Without it, only counts the turned photos.")
-@click.pass_context
-def repair_vectors(ctx, apply_):
-    """Make the vectors of turned photos (an EXIF Orientation of 2 to 8) describe the photo as it is shown. A dry run
-    unless --apply: it reads each photo's header (never the picture) and counts the turned ones that hold a vector for
-    their file as it is. With --apply each is embedded again on a turn of the graphics card, and its vector replaced
-    when the new one differs; run again it finds each already matching. A photo whose file changed meanwhile is
-    embedded as it now is. Face vectors and boxes are not touched."""
-    library = _existing_library(ctx)
-    if apply_:
-        applied = library_actions.bring_up_to_date(library.path)
-        if applied:
-            console.print("Brought the library up to date: %s." % ", ".join(applied), markup=False, soft_wrap=True)
-    def progress(counts):
-        console.print("  looked at %d photo(s): %d turned" % (counts["photos"], counts["turned"]) + (
-            ", %d made again, %d already matched" % (counts["replaced"], counts["already_upright"])
-            if "replaced" in counts else ""), markup=False)
-
-    def say_waiting(line):
-        console.print(line, markup=False, soft_wrap=True)
-
-    try:
-        with library_roots.pinned(library):
-            counts = embedding_repair.repair(library, get_runtime(), apply=apply_, progress=progress,
-                                             report=say_waiting)
-    except library_roots.RootsChanged:
-        console.print(library_roots.STOPPED, markup=False, soft_wrap=True)
-        raise SystemExit(library_roots.EXIT_ROOTS_CHANGED) from None
-    except (library_roots.Unplaced, ValueError) as why:
-        console.print("Not run: %s" % why, markup=False, soft_wrap=True)
-        raise SystemExit(1) from None
-    except KeyboardInterrupt:
-        console.print("Stopped. What was replaced is kept: run it again to go on.", markup=False)
-        raise SystemExit(130) from None
-    console.print("%d photo(s) looked at: %d turned, of which %d hold a vector for their file as it is, %d hold none and "
-                  "%d hold one for an earlier file (the next look at those makes one upright); %d have no file, %d could "
-                  "not be read, %d have a header that does not read." % (
-                      counts["photos"], counts["turned"], counts["to_recompute"], counts["no_vector"],
-                      counts["stale_stamp"], counts["missing"], counts["failed"], counts["no_header"]),
-                  markup=False, soft_wrap=True)
-    if counts["away"]:
-        console.print("Not walked: %s did not answer (taken as away) and its %d photo(s) were left; run it again when it "
-                      "is back." % (", ".join(counts["away"]), counts["skipped_away"]), markup=False, soft_wrap=True)
-    if not apply_:
-        console.print("--apply would make %d vector(s) again. Nothing was written." % counts["to_recompute"],
-                      markup=False, soft_wrap=True)
-        return
-    console.print("Replaced %d (read back as written), %d already matched, %d not kept (the file changed meanwhile or the "
-                  "write failed; run it again), %d damaged, %d could not be made%s." % (
-                      counts["replaced"], counts["already_upright"], counts["not_kept"], counts["damaged"],
-                      counts["unreadable"], (": " + ", ".join("%s x%d" % item for item in counts["reasons"].items()))
-                      if counts["reasons"] else ""), markup=False, soft_wrap=True)
-    console.print("A running TagPup keeps the vectors it loaded until a photo is edited or the app is restarted: "
-                  "restart it to search by the new ones.", markup=False, soft_wrap=True)
 
 
 @cli.command("embed-photos")

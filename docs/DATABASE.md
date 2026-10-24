@@ -91,7 +91,7 @@ Each photo's CLIP vector, one per set of model settings, with the stamp of the f
 | :--- | :--- | :--- | :--- |
 | `photo_id` | INTEGER | PRIMARY KEY (with `model`), FOREIGN KEY | The photo, `photos(id)`. A trigger, `embeddings_go_with_their_photo`, deletes a photo's vectors with its row on any connection; a rename moves nothing. |
 | `model` | TEXT | PRIMARY KEY (with `photo_id`) | `embeddings.model_key` of the five settings that change what a photo embeds to: model, weights, full frame or cropped, maximum aspect ratio, image size. Vectors compare only under one key. |
-| `mtime` | REAL | | The file's mtime when the vector was computed. A metadata write of the app's own carries it forward (`restamp`); a rotation deletes the vector, since the embedder applies the Orientation. Vectors of photos turned before CLIP was shown photos upright are made again by `repair-vectors` (#1529); the row holds no age, so none can be told by the row. |
+| `mtime` | REAL | | The file's mtime when the vector was computed. A metadata write of the app's own carries it forward (`restamp`); a rotation deletes the vector, since the embedder applies the Orientation. The row holds no age: a vector made before CLIP was shown photos upright (#1529, repaired 2026-10-16) could not be told by the row; phase 5's re-embed (`embed-photos`) makes every vector of the new model from the upright photo. |
 | `size` | INTEGER | | The file's size then, likewise. |
 | `vector` | BLOB | NOT NULL | float32 bytes. |
 

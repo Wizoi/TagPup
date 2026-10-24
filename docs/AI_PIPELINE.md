@@ -16,7 +16,7 @@ missed after an unwatched sync (DECISIONS 2026-10-23). The paragraph below is th
 record of phases 0 to 3's slices.
 
 Status (2026-10-17): **phase 0 done** (measured, section 7); the plan below is reordered by what it showed (owner
-accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again) and
+accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again; deleted 2026-10-24 by phase 5) and
 2a (`cluster-faces` 2,113 s to 202 s, names unchanged). **Built, off:** 1a (the detector downscale, the setting
 `faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
 ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Measured:** phase 3's speed check (2026-10-18,
@@ -226,9 +226,9 @@ same scripts.
   the Orientation (0 of 59,519 rows of photo_index, counted 2026-10-16) nor the vector's age, so `repair-vectors`
   reads each file's header and tells a vector stale by making it again (#1529). It cannot come back by the same road
   once phase 6 puts how a photo is read into the key a vector is kept under; until then, a change in how CLIP is shown
-  a photo is reviewed as a change of model key. `repair-vectors` is deleted at phase 5's re-embed (delete:
-  embedding_repair.py, the CLI command, its tests and V9 entry, the SPEC heading, the DATABASE.md sentence, the 1f
-  note).
+  a photo is reviewed as a change of model key. `repair-vectors` was deleted at phase 5's re-embed (2026-10-24,
+  DECISIONS): `embed-photos` makes every vector of the new model from the upright photo, and after the switch the old
+  key is not read.
 
 **How it fails:** an index killed between the decode thread and the write (nothing half written: the existing
 transaction is unchanged); a decode thread raising on a damaged file (that photo is reported, the run goes on); two
@@ -916,7 +916,7 @@ Suggest on the held-out photos (`table`):
 | A name lost in a migration or a swap | 3 | Old vectors kept; boxes carried by IoU; unmatched named faces listed, never dropped; backup; copy first |
 | The new detector is no faster than MTCNN | 3 | The speed check comes before the design is fixed; the plan is re-read if it fails |
 | A threshold carried to a model it does not fit | 2, 3, 4, 5 | Thresholds read off the hold-out curve per model, on unnamed faces too |
-| A stale vector kept past a change in how photos are read | 1f, 5, 6 | `repair-vectors` now; the fingerprint in the model key at phase 6 |
+| A stale vector kept past a change in how photos are read | 1f, 5, 6 | `repair-vectors` (1f, deleted at 5: the re-embed makes every vector upright); the fingerprint in the model key at phase 6 |
 | Peak card memory 9,982 of 10,240 MiB on the phase 0 sample, MTCNN at full resolution on the largest photos, with the desktop apps holding up to 6 GB (#1533): by design until phase 3 | 1, 3 | The 1a cap exists and stays OFF (owner, DECISIONS 2026-10-16); 1b's prefetch bounds the bytes it holds; phase 3 replaces MTCNN. Until then the owner closes the desktop apps for a large index |
 | Two heavy jobs on one card | all | The GPU turn; no two test runs at once |
 | The migration is judged by feel | 3 | Phase 0 timings and counts before and after |

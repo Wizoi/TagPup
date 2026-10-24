@@ -152,7 +152,7 @@ _SCENARIO_FILES = {
     "V6": "test_models_released_when_idle",
     "V7": "test_selection_scenarios",
     "V8": "test_library_views_scenarios",
-    "V9": "test_repair_turned_vectors test_suggest_then_apply_all",
+    "V9": "test_suggest_then_apply_all",
     "V10": "test_faces_found_at_the_librarys_cap",
     "V11": "test_switching_a_librarys_face_model",
     "V12": "test_switching_a_librarys_photo_model",
