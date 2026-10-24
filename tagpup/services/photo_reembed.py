@@ -67,11 +67,15 @@ def model_of(text):
     return pair
 
 
+def switched_to(model):
+    """The settings a switch to the photo model `model` (name, weights) changes: the model, at its own image size."""
+    return {"model.name": model[0], "model.pretrained": model[1], "model.force_image_size": ""}
+
+
 def wanted(own, model):
-    """The library's settings `own` (LibrarySettings) with the photo model `model` (name, weights) at its own image
-    size: what the new vectors are made under, and the settings a switch would hold."""
-    return LibrarySettings(dict(own.values, **{"model.name": model[0], "model.pretrained": model[1],
-                                               "model.force_image_size": ""}))
+    """The library's settings `own` (LibrarySettings) switched to the photo model `model` (switched_to): what the new
+    vectors are made under, and the settings a switch would hold."""
+    return LibrarySettings(dict(own.values, **switched_to(model)))
 
 
 def _key_of(runtime, library, model):
@@ -92,8 +96,7 @@ def switch(library, model, apply=False):
     unless `apply`. details["tag_words"] is what Suggest holds made under the new model and the library's own, read
     before the change (tag_words). The CLI's `set-photo-model`."""
     words = tag_words(library, model)
-    result = library_settings.change(library, {"model.name": model[0], "model.pretrained": model[1],
-                                               "model.force_image_size": ""}, acknowledged=ACKNOWLEDGED, apply=apply)
+    result = library_settings.change(library, switched_to(model), acknowledged=ACKNOWLEDGED, apply=apply)
     result.details["tag_words"] = words
     return result
 

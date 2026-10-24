@@ -51,7 +51,6 @@ NEW = ("ViT-SO400M-14-SigLIP2", "webli")
 OLD_KEY = store_embeddings.model_key(*OLD, True, 1.4, 512)
 NEW_KEY = store_embeddings.model_key(*NEW, True, 1.4, None)
 DIMS = {OLD[0]: 1024, NEW[0]: 1152}
-TO_NEW = {"model.name": NEW[0], "model.pretrained": NEW[1], "model.force_image_size": ""}
 
 
 def vector(dim, seed):
