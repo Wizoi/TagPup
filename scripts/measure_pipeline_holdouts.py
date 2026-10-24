@@ -448,19 +448,19 @@ def run_candidate(runtime, library, target, model, sample, report):
     and the held-out photos scored by Suggest and by the word path. The result, or Unreachable; a model that does not
     load, or runs out of memory on the card, raises what it raised."""
     from tagpup.services import search, suggester
-    from tagpup.store import embeddings as store_embeddings
     settings = candidate_settings(runtime.settings(library), model)
     key = runtime.model_key(library, settings)
     clip = runtime.clip(library, settings)
     result = {"candidate": label_of(model), "model_key": key}
     index = search.PhotoIndex(target, key)
     index.open()
+    embeddings = search.PhotoEmbeddings(clip, index)
+    if embeddings.model_key != key:
+        raise RuntimeError("the model's vectors would be kept under %s, not %s" % (embeddings.model_key, key))
 
     def keep(found):
-        def store(conn):
-            for path, (mtime, size), vector in found:
-                store_embeddings.put(conn, path, key, mtime, size, np.asarray(vector, dtype=np.float32).tobytes())
-        index.write_on_own_connection(store, label="vectors under %s" % key)
+        for path, stamp, vector in found:
+            embeddings.keep(path, vector, stamp)
 
     sampler = sandbox.Sampler(interval=250).start()
     try:
@@ -475,16 +475,28 @@ def run_candidate(runtime, library, target, model, sample, report):
             todo = [(row["path"], copy_rows[row["id"]][0]) for row in sample["rows"]
                     if row["id"] in copy_rows and not copy_rows[row["id"]][1]]
             report("  %s: %d photos to embed of %d" % (label_of(model), len(todo), len(sample["rows"])))
+            vectored = sum(1 for _path, held in copy_rows.values() if held)
             result["pass"] = embed_pass(clip, todo, keep, report)
             index.close()
             index.load()
             result.update(vectors=index.indexed, dimension=index.dim, rows_in_the_copy=index.count,
                           rows_in_the_copy_before=len(copy_rows))
-            held = []
+            # A vector is kept at its row by path (PhotoEmbeddings.keep): a path that matched no row would have made
+            # one, and a write that failed is only logged. Either is a pass that did not do what it says.
+            if index.count != len(copy_rows):
+                raise RuntimeError("the copy held %d photos and holds %d after the pass: a vector made a row"
+                                   % (len(copy_rows), index.count))
+            if index.indexed != vectored + result["pass"]["embedded"]:
+                raise RuntimeError("%d vectors before, %d embedded, %d held after: a vector was not kept"
+                                   % (vectored, result["pass"]["embedded"], index.indexed))
+            held, unvectored = [], 0
             for record in index.records(sample["held"]):
-                kept = store_embeddings.get_by_id(index.conn, record["id"], key)
-                if kept is not None:
-                    held.append((record, np.frombuffer(kept.vector, dtype=np.float32).tolist()))
+                kept = embeddings.cached(sample["copies"][record["id"]])
+                if kept is None:   # the file changed since its vector was made (the baseline's, the library's)
+                    unvectored += 1
+                else:
+                    held.append((record, kept))
+            result["held_out_without_a_current_vector"] = unvectored
             model_run = suggester.model_for_run(index, clip, runtime.faces(library, settings),
                                                 runtime.candidate_words(library),
                                                 detect_max_side=settings.detect_max_side, remember=False)
@@ -507,7 +519,7 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
     not run again, and one that fails is reported and the next one run. `census` (rows, counts) is the source's."""
     from tagpup.runtime import Runtime
     from tagpup.services import search
-    from tagpup.store.taxonomy import TagTaxonomy
+    from tagpup.services import tags as tags_service
     rows, counts = census
     target = os.path.join(work, "data", "measured.db")
     ready = os.path.join(work, "copy-is-ready")
@@ -516,8 +528,11 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
             os.remove(target)   # a copy stopped part-way
         os.makedirs(os.path.dirname(target), exist_ok=True)
         sandbox.copy_library(source, target)
-        sandbox.place_roots(target, work)
+        write_json(os.path.join(work, "placed.json"), sandbox.place_roots(target, work))
         open(ready, "w").close()
+    with open(os.path.join(work, "placed.json"), encoding="utf-8") as handle:
+        placed = json.load(handle)
+    owner_places = tagpup_config.machine_roots()   # the owner's map, read before the sandbox's home is entered
     sandbox.enter(work)
     library = Library(target)
     runtime = Runtime()
@@ -525,9 +540,7 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
     # The held-out photos: of the photos with a tag that is not a person, many-face weighted (sandbox.choose_sample).
     index = search.PhotoIndex(target)
     index.open()
-    taxonomy = TagTaxonomy(target)
-    taxonomy.load()
-    roots = taxonomy.people_roots()
+    roots = tags_service.people_roots(library)
     tagged = {}
     for record in index.records():
         tags = {tag for tag in record["tags"] if not _a_person(tag, roots)}
@@ -539,7 +552,11 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
     by_folder = collections.defaultdict(set)
     for row in rows:
         by_folder[row["folder"]].add(row["id"])
+    # Each held-out photo copied where the copy's row puts it, its stamp kept: its vector is read as Suggest reads
+    # one (PhotoEmbeddings.cached), the file as it was when the vector was made.
+    copies = sandbox.copy_at_rows(held, placed, owner_places)
     sample = {"rows": rows, "held": [row["id"] for row in held],
+              "copies": {row["id"]: copies[row["path"]] for row in held},
               "folders": {row["id"]: frozenset(by_folder[row["folder"]]) for row in held},
               "timing": sandbox.choose_sample(rows, timing, rng=random.Random(seed))}
     write_json(os.path.join(out, "models-sample.json"), {
