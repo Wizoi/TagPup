@@ -171,7 +171,10 @@ _FILES = {
             "test_sync_records test_the_tree_is_the_librarys test_validation test_view_indexes"
         ),
         "migration": "test_a_library_that_cannot_be_migrated_is_still_served test_schema",
-        "guard": "test_db_access test_derived_writers test_journal_keys_and_cascades test_photo_rows test_sandbox_roots",
+        "guard": (
+            "test_db_access test_derived_writers test_every_change_kind_has_an_undo_check test_journal_keys_and_cascades "
+            "test_photo_rows test_sandbox_roots"
+        ),
     },
     "people": {
         "unit": (

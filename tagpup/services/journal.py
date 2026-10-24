@@ -65,6 +65,7 @@ UNDO_CHECKS = {
     retire_faces.VECTORS_OPERATION: retire_faces.vectors_check,
     face_people.UNNAMED: None,
     face_people.ADDED: None,
+    face_people.REMOVED: None,
     journal.PERSON_DELETED: None,
     journal.PERSON_MERGED: None,
     tagging.ADD_TO_ALL: None,
