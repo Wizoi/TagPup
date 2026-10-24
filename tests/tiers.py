@@ -66,6 +66,8 @@ SCENARIO = frozenset({
     "test_a_face_pass_from_the_command_line",
     "test_retiring_the_old_detectors_faces",
     "test_retiring_the_old_models_vectors",
+    # Undo of every change kind after every later kind, real writers and real ExifTool (#1805).
+    "test_undo_after_every_later_kind",
     "test_the_gate_reads_both_models",
     "test_a_switched_library_indexes_and_suggests_with_its_model",
     "test_a_library_from_a_newer_tagpup",

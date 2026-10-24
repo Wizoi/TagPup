@@ -85,7 +85,7 @@ SCENARIOS = {
 #: scenario id -> its scenario files; a file listed under more than one runs more than one scenario (the first is its owner's).
 _SCENARIO_FILES = {
     "D1": "test_a_library_from_a_newer_tagpup test_newer_library_guard_in_a_long_lived_process",
-    "D2": "test_journal test_maintenance",
+    "D2": "test_journal test_maintenance test_undo_after_every_later_kind",
     "D3": "test_journal test_a_crash_part_way_is_settled_at_the_next_start",
     "D4": "test_snapshots test_retiring_the_old_models_vectors",
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
