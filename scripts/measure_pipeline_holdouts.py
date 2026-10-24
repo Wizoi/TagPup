@@ -204,8 +204,10 @@ CANDIDATES = (
     "ViT-SO400M-14-SigLIP2:webli:",
 )
 
-#: Suggest's neighbour cut and its zero-shot cut (suggester.TagSuggester.suggest_for_photo), both read on ViT-H-14's
-#: likenesses: a cut read on one model's likenesses is not another's (phase 5 reads its own again), so every model is
+#: Suggest's neighbour cut and ViT-H-14's zero-shot word cut (tagpup.ml.photo_models.word_cut, whose table owns the cut of
+#: each model; a program may not import tagpup.ml, tests/test_layers.py), both read on ViT-H-14's
+#: likenesses. WORD_CUT is this measurement's own constant for the baseline it compares the candidates with, not
+#: Suggest's cut. A cut read on one model's likenesses is not another's (phase 5 reads its own again), so every model is
 #: scored with no neighbour cut, and the cut it would need is read off the held-out set (cuts_needed).
 NEIGHBOUR_CUT, WORD_CUT = 0.35, 0.23
 
