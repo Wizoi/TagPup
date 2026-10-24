@@ -395,8 +395,8 @@ class TwoLibrariesNamingTwoModels(_Library):
         self.jetty = paths.stored(os.path.join(self.home.root, "Jetty"))
         os.makedirs(self.jetty)
         library_actions.record_added(self.cove, [self.jetty])
-        changed = library_settings.change(self.cove, {"model.name": "ViT-L-14"}, acknowledged=["clip"])
-        self.assertEqual(1, changed.changed, changed.refused)
+        changed = library_settings.change(self.cove, {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": ""}, acknowledged=["clip"])
+        self.assertTrue(changed.changed, changed.refused)
         self.built = []
         #: The CLIP models that cannot be made (a download refused, say), by name.
         self.unmakeable = ()
@@ -438,12 +438,12 @@ class TwoLibrariesNamingTwoModels(_Library):
         clips = [model for model in self.built if "model_name" in model.settings]
         self.assertEqual(1, len(clips))
         harbour_clip = clips[0].settings["model_name"]
-        self.assertNotEqual("ViT-L-14", harbour_clip)
+        self.assertNotEqual("ViT-SO400M-14-SigLIP2", harbour_clip)
 
         refused = self.suggest_in_cove()
         self.assertEqual("error", refused["status"], refused)
         self.assertIn("Suggest Regatta (harbour) is using the CLIP model %s" % harbour_clip, refused["message"])
-        self.assertIn("cove names ViT-L-14", refused["message"])
+        self.assertIn("cove names ViT-SO400M-14-SigLIP2", refused["message"])
         self.assertIn("Nothing was suggested", refused["message"])
         self.assertEqual(1, len([model for model in self.built if "model_name" in model.settings]),
                          "cove's model was built beside harbour's")
@@ -460,9 +460,11 @@ class TwoLibrariesNamingTwoModels(_Library):
                                                 for each in entry["tags"]])
 
     def test_a_library_differing_only_in_an_image_setting_is_told_which(self):
-        changed = library_settings.change(self.cove, {"model.name": self.runtime.settings(self.library).embedder["model_name"],
+        harbours = self.runtime.settings(self.library).embedder
+        changed = library_settings.change(self.cove, {"model.name": harbours["model_name"],
+                                                      "model.pretrained": harbours["pretrained"],
                                                       "model.force_image_size": "336"}, acknowledged=["clip"])
-        self.assertEqual(2, changed.changed, changed.refused)
+        self.assertEqual(3, changed.changed, changed.refused)
         with mock.patch.object(suggester_service, "model_for_run", lambda *args, **kwargs: _FakeModel()):
             harbours = self.runtime.begin(self.library, what="Suggest Regatta (harbour)")
         self.addCleanup(harbours.end)
@@ -483,10 +485,10 @@ class TwoLibrariesNamingTwoModels(_Library):
         self.assertEqual(0, harbours.unloads, "a model was let go between two runs on it")
         self.assertEqual(2, len(self.built), "harbour's second run built its models again")
 
-        # Then in cove, which names ViT-L-14: harbour's CLIP model is let go before cove's is used.
+        # Then in cove, which names ViT-SO400M-14-SigLIP2: harbour's CLIP model is let go before cove's is used.
         self.assertEqual("completed", self.suggest_in_cove()["status"])
         harbour_clip = harbours.settings["model_name"]
-        self.assertEqual([[harbour_clip], [harbour_clip], ["ViT-L-14"]], self.loaded_when_used,
+        self.assertEqual([[harbour_clip], [harbour_clip], ["ViT-SO400M-14-SigLIP2"]], self.loaded_when_used,
                          "two CLIP models were loaded at once")
         self.assertEqual(1, harbours.unloads)
         faces = [model for model in self.built if "model_name" not in model.settings]
@@ -494,7 +496,7 @@ class TwoLibrariesNamingTwoModels(_Library):
         self.assertEqual(0, faces[0].unloads, "the face models the two share were let go")
 
     def test_a_suggest_on_other_models_waits_for_the_startup_warm_up(self):
-        """The server starts and warms harbour's models; the owner clicks Suggest in cove, naming ViT-L-14, while they load.
+        """The server starts and warms harbour's models; the owner clicks Suggest in cove, naming ViT-SO400M-14-SigLIP2, while they load.
         The warm-up held no run's place, so cove's run began, dropped harbour's models and loaded its own while the warm-up
         went on with harbour's: two sets at once (#1423). Now the warm-up is a run of its own while it loads."""
         started, release = threading.Event(), threading.Event()
@@ -514,7 +516,7 @@ class TwoLibrariesNamingTwoModels(_Library):
             release.set()
             warming.join(DEADLINE)
         self.assertEqual("completed", self.suggest_in_cove()["status"])
-        self.assertEqual([["ViT-L-14"]], self.loaded_when_used, "two CLIP models were loaded at once")
+        self.assertEqual([["ViT-SO400M-14-SigLIP2"]], self.loaded_when_used, "two CLIP models were loaded at once")
 
     def test_a_suggest_whose_models_cannot_be_made_loses_none_of_those_kept(self):
         """cove's CLIP model cannot be made. The run is refused, and harbour's models, kept between its runs, are still
@@ -522,10 +524,10 @@ class TwoLibrariesNamingTwoModels(_Library):
         made them again beside them."""
         self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
         [harbours] = self.clips()
-        self.unmakeable = ("ViT-L-14",)
+        self.unmakeable = ("ViT-SO400M-14-SigLIP2",)
         refused = self.suggest_in_cove()
         self.assertEqual("error", refused["status"], refused)
-        self.assertIn("ViT-L-14 cannot be made", refused["message"])
+        self.assertIn("ViT-SO400M-14-SigLIP2 cannot be made", refused["message"])
         self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
         self.assertEqual([harbours], self.clips(), "harbour's CLIP model was made a second time")
         self.assertEqual(0, harbours.unloads)

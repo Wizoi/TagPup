@@ -49,7 +49,7 @@ The **TagPup GUI** is a lightweight, responsive local web interface designed to 
 The **AI CLI Engine** is the underlying machine learning backend that indexes visual features, matches face coordinates, and computes predictions.
 
 ### Key Scenarios & Capabilities
-*   **Incremental Indexing**: Generates 1024-dimensional visual embeddings using **CLIP** (`ViT-H-14`) and face crops using **MTCNN + Facenet**. Incremental indexes scan quickly by skipping files with matching sizes and timestamps.
+*   **Incremental Indexing**: Generates visual embeddings using **CLIP**, the photo model named in the library's settings (`ViT-H-14`, 1024-dimensional, by default; SigLIP 2 SO400M, 1152-dimensional, once a library is switched to it), and face crops using **MTCNN + Facenet**. Incremental indexes scan quickly by skipping files with matching sizes and timestamps.
 *   **Semantic natural language search**: Cosine similarity queries against the FAISS vector database index, allowing you to find files by writing natural text prompts (in the TagPup page's search).
 *   **Automated Tag Suggestion**: Infers keywords using visual similarity, decay-weighted capture timestamps, path hints, and event-level consensus.
 *   **Face Profile Self-Tuning**: Clusters face vectors using **DBSCAN** and labels identity centroids automatically by analyzing photo metadata. Recognizes known faces in untagged images to boost tagging predictions.

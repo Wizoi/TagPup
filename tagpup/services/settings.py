@@ -88,6 +88,9 @@ PHOTO_MODEL = ("model.name", "model.pretrained", "model.preserve_full_frame", "m
 PHOTOS_HELD = "%d of the library's %d photos hold a vector under %s; %d hold none."
 TOO_FEW_PHOTO_VECTORS = ("Nothing was written: %s A switch allows at most %d%% of them without one: make the new "
                          "model's vectors first.")
+#: Why a photo model the table does not hold is refused (photo_models.holds).
+UNKNOWN_PHOTO_MODEL = ("Nothing was written: %s (weights %s) is not a photo model TagPup holds the word cut of. It holds: "
+                       "%s.")
 #: Why a forced image size is refused for a model measured at its own size alone (photo_models.takes_a_size).
 NATIVE_SIZE_ONLY = ("Nothing was written: %s (weights %s) is shown photos at its own size only: leave Image size "
                     "empty.")
@@ -98,13 +101,19 @@ NONE_HELD = ("Nothing was written: none of the library's %d faces holds a vector
              "taken before they were retired holds them (TagPup CLI: snapshots list, snapshots restore).")
 
 
-def switch_to(library, model):
-    """switch_on, on a read-only connection of `library`'s own: what settings.change and a retiring's plan ask."""
+def _asked_of(library, ask, *args):
+    """`ask(conn, *args)`, on a read-only connection of `library`'s own: how a switch's gate is asked before anything is
+    written."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        return switch_on(conn, model)
+        return ask(conn, *args)
     finally:
         conn.close()
+
+
+def switch_to(library, model):
+    """switch_on, on a read-only connection of `library`'s own: what settings.change and a retiring's plan ask."""
+    return _asked_of(library, switch_on, model)
 
 
 def switch_on(conn, model, counted=True):
@@ -154,6 +163,20 @@ def switch_on(conn, model, counted=True):
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 
 
+def photo_model_refusal(name, pretrained, size=None):
+    """Why the photo model `name` with weights `pretrained`, shown photos at `size` (None: its own), cannot be scored or
+    used, or None: the pair is not in the table (tagpup.ml.photo_models, whose row carries its measured word cut) or the
+    size is forced on a model measured at its own alone. What a program that scores a model (scripts/
+    measure_pipeline_holdouts.py) asks before it starts; the gate of a switch (photo_switch_on) says it with the
+    nothing-was-written sentence."""
+    if not photo_models.holds(name, pretrained):
+        return ("%s (weights %s) is not in the table of photo models: add its row to tagpup/ml/photo_models.py, with its "
+                "measured word cut, first. The table holds: %s." % (name, pretrained, photo_models.listing()))
+    if size is not None and not photo_models.takes_a_size(name, pretrained):
+        return "%s (weights %s) is shown photos at its own size only: give its candidate no size." % (name, pretrained)
+    return None
+
+
 def photo_switch_on(conn, held, putting):
     """(refusal or None, what the photos hold or None): whether the library holding the settings `held` ({key: value})
     may be given `putting` ({key: value}) for its photo model's settings (PHOTO_MODEL). None, None when the key its
@@ -167,6 +190,8 @@ def photo_switch_on(conn, held, putting):
     old, new = store_embeddings.model_key(**before), store_embeddings.model_key(**after)
     if old == new:
         return None, None
+    if not photo_models.holds(after["model_name"], after["pretrained"]):
+        return UNKNOWN_PHOTO_MODEL % (after["model_name"], after["pretrained"], photo_models.listing()), None
     if after["force_image_size"] is not None and not photo_models.takes_a_size(after["model_name"], after["pretrained"]):
         return NATIVE_SIZE_ONLY % (after["model_name"], after["pretrained"]), None
     photos, holds = store_photos.counts(conn, new)
@@ -179,11 +204,7 @@ def photo_switch_on(conn, held, putting):
 
 def photo_switch_to(library, held, putting):
     """photo_switch_on, on a read-only connection of `library`'s own: what settings.change asks."""
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        return photo_switch_on(conn, held, putting)
-    finally:
-        conn.close()
+    return _asked_of(library, photo_switch_on, held, putting)
 
 
 def undo_check(conn, change_id, _operation, _summary):
@@ -196,7 +217,10 @@ def undo_check(conn, change_id, _operation, _summary):
     (UNDO_CHECKS) on a read-only connection, before an undo writes; reads the journal's old value and inserted key by
     the change's rows' index, and a switch back to FaceNet a face holds a vector under one row of the key's index
     (switch_on(counted=False); refused, the faces are counted for the sentence)."""
-    model = journal.old_values(conn, [change_id], store_settings.TABLE, (FACE_MODEL,), "value").get(change_id)
+    # One read of the journal for the face model and the five of the photo model.
+    old = journal.old_values(conn, [change_id], store_settings.TABLE, [(key,) for key in (FACE_MODEL,) + PHOTO_MODEL],
+                             "value").get(change_id, {})
+    model = old.get((FACE_MODEL,))
     if FACE_MODEL in journal.recorded_values(conn, [change_id], store_settings.TABLE, "insert", "key").get(change_id, ()):
         model = DEFAULTS[FACE_MODEL]
     if model is not None:
@@ -205,11 +229,7 @@ def undo_check(conn, change_id, _operation, _summary):
             return refusal
     # The photo model's settings the undo puts back (photo_switch_on): a switch undone is a switch, held to the same
     # share. Every library holds the five (stamped with them), so an undo puts back an updated row, never deletes one.
-    putting = {}
-    for key in PHOTO_MODEL:
-        old = journal.old_values(conn, [change_id], store_settings.TABLE, (key,), "value").get(change_id)
-        if old is not None:
-            putting[key] = old
+    putting = {key: old[(key,)] for key in PHOTO_MODEL if old.get((key,)) is not None}
     if not putting:
         return None
     return photo_switch_on(conn, store_settings.held_on(conn), putting)[0]

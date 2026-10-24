@@ -91,7 +91,7 @@ class TheGearDialog(unittest.TestCase):
         old_clip = self.runtime.clip(self.quarry)
 
         # A change of the model is locked: refused naming the group and what it means, until it is acknowledged.
-        values = {"model.name": "ViT-B-32", "candidates.tags": "Kayak, Lighthouse", "model.preserve_full_frame": False}
+        values = {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": "", "candidates.tags": "Kayak, Lighthouse", "model.preserve_full_frame": False}
         refused = self.post(values)
         self.assertEqual(400, refused.status_code)
         for text in (validation.SETTING_GROUPS["clip"]["title"], validation.SETTING_GROUPS["clip"]["consequences"][0]):
@@ -101,21 +101,21 @@ class TheGearDialog(unittest.TestCase):
         done = self.post(values, acknowledged=["clip"])
         self.assertEqual(200, done.status_code, done.data)
         answer = done.get_json()
-        self.assertEqual((True, 3, True), (answer["success"], answer["changed"], answer["locked"]))
+        self.assertEqual((True, 5, True), (answer["success"], answer["changed"], answer["locked"]))
         held = rows(self.quarry)
-        self.assertEqual(("ViT-B-32", "false"), (held["model.name"], held["model.preserve_full_frame"]), "as the validator reads them")
+        self.assertEqual(("ViT-SO400M-14-SigLIP2", "false"), (held["model.name"], held["model.preserve_full_frame"]), "as the validator reads them")
         newest = history(self.quarry)[0]
         self.assertEqual((answer["change"], settings.CHANGE), (newest["id"], newest["operation"]))
         self.assertEqual(settings.STAMPED, rows(self.other), "the other library is its own")
         self.assertEqual(1, old_clip.unloaded, "the runtime lets go of the model no library uses")
         self.assertEqual(0, self.post(values, acknowledged=["clip"]).get_json()["changed"], "the same values write nothing")
         self.assertEqual(2, len(history(self.quarry)))
-        self.assertEqual((["Kayak", "Lighthouse"], "ViT-B-32"), self.words_of_the_next_run())
+        self.assertEqual((["Kayak", "Lighthouse"], "ViT-SO400M-14-SigLIP2"), self.words_of_the_next_run())
 
         # Undone in History: rehearsed, then applied; the next run reads the old words again.
         undo = "/quarry/api/history/%d/undo" % answer["change"]
         self.assertTrue(self.client.post(undo, json={}).get_json()["dry_run"])
-        self.assertEqual(3, self.client.post(undo, json={"apply": True}).get_json()["changed"])
+        self.assertEqual(5, self.client.post(undo, json={"apply": True}).get_json()["changed"])
         self.assertEqual(settings.STAMPED, rows(self.quarry))
         self.assertEqual((default_words, default_model), self.words_of_the_next_run())
 
@@ -238,11 +238,11 @@ class WhatEachLibraryHolds(unittest.TestCase):
                 self.assertEqual((message, 0), (result.refused, result.changed))
         self.assertEqual((settings.STAMPED, 1), (rows(library), len(history(library))))
         # Locked groups: each is named until acknowledged, a name that is no group is refused, an unchanged one needs nothing.
-        result = settings.change(library, {"model.name": "ViT-B-32", "faces.min_face_size": "40", "candidates.tags": "Kayak"})
+        result = settings.change(library, {"model.preserve_full_frame": False, "faces.min_face_size": "40", "candidates.tags": "Kayak"})
         self.assertEqual(["clip", "faces"], [g["group"] for g in result.details["unacknowledged"]])
-        partly = settings.change(library, {"model.name": "ViT-B-32", "faces.min_face_size": "40"}, acknowledged=["clip"])
+        partly = settings.change(library, {"model.preserve_full_frame": False, "faces.min_face_size": "40"}, acknowledged=["clip"])
         self.assertEqual(["faces"], [g["group"] for g in partly.details["unacknowledged"]])
-        unknown = settings.change(library, {"model.name": "ViT-B-32"}, acknowledged=["clip", "everything"])
+        unknown = settings.change(library, {"model.preserve_full_frame": False}, acknowledged=["clip", "everything"])
         self.assertEqual("There is no group of settings called everything to acknowledge.", unknown.refused)
         self.assertEqual(1, settings.change(library, {"candidates.tags": "Kayak", "model.name": settings.DEFAULTS["model.name"]}).changed)
         self.assertEqual(2, len(history(library)), "the stamp and that one change")

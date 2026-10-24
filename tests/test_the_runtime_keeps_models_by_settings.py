@@ -59,7 +59,7 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
         self.harbour = self.new_library("harbour.db")
         self.meadow = self.new_library("meadow.db")
         self.orchard = self.new_library("orchard.db")
-        settings.change(self.meadow, {"model.name": "ViT-B-32", "model.pretrained": "openai",
+        settings.change(self.meadow, {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": "",
                                       "faces.min_face_size": "40"}, acknowledged=["clip", "faces"])
 
     def build(self, kind, settings_given):
@@ -77,7 +77,7 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
         harbour, meadow = self.runtime.clip(self.harbour), self.runtime.clip(self.meadow)
         self.assertIsNot(harbour, meadow)
         self.assertEqual(harbour.settings["model_name"], "ViT-H-14")
-        self.assertEqual(meadow.settings["model_name"], "ViT-B-32")
+        self.assertEqual(meadow.settings["model_name"], "ViT-SO400M-14-SigLIP2")
         self.assertEqual(self.runtime.faces(self.meadow).settings["min_face_size"], 40)
         self.assertEqual(self.runtime.faces(self.harbour).settings["min_face_size"], 20)
         self.assertNotEqual(self.runtime.model_key(self.harbour), self.runtime.model_key(self.meadow))
@@ -94,8 +94,8 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
 
     def test_a_changed_setting_is_seen_by_the_next_ask(self):
         self.runtime.clip(self.harbour)
-        settings.change(self.harbour, {"model.name": "ViT-L-14"}, acknowledged=["clip"])
-        self.assertEqual(self.runtime.clip(self.harbour).settings["model_name"], "ViT-L-14")
+        settings.change(self.harbour, {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": ""}, acknowledged=["clip"])
+        self.assertEqual(self.runtime.clip(self.harbour).settings["model_name"], "ViT-SO400M-14-SigLIP2")
         self.assertEqual(2, len(self.built["clip"]))
 
     def test_each_librarys_photo_index_is_under_its_model(self):
@@ -116,7 +116,7 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
             self.runtime.begin(self.meadow).end()
         photo_index, clip, faces, words = model_for_run.call_args.args
         self.assertEqual(words, ["Kayak", "Lighthouse"])
-        self.assertEqual(clip.settings["model_name"], "ViT-B-32")
+        self.assertEqual(clip.settings["model_name"], "ViT-SO400M-14-SigLIP2")
         self.assertEqual(faces.settings["min_face_size"], 40)
         self.runtime.forget(self.meadow)
 
@@ -139,7 +139,7 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
     def test_warming_up_the_startup_library_loads_its_set_alone(self):
         self.warmable()
         self.runtime.warm_up([self.meadow])
-        self.assertEqual(["ViT-B-32"], [m.settings["model_name"] for m in self.built["clip"]])
+        self.assertEqual(["ViT-SO400M-14-SigLIP2"], [m.settings["model_name"] for m in self.built["clip"]])
         self.assertEqual(1, len(self.built["faces"]))
 
 
@@ -194,9 +194,10 @@ class TheRuntimeLetsGoOfWhatNoLibraryUses(ALibrary):
         self.built[kind].append(model)
         return model
 
-    def change_model(self, library, name="ViT-L-14"):
-        result = settings.change(library, {"model.name": name}, acknowledged=["clip"])
-        self.assertEqual(1, result.changed, result.refused)
+    def change_model(self, library):
+        result = settings.change(library, {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": ""}, acknowledged=["clip"])
+        self.assertFalse(result.refused, result.refused)
+        self.assertTrue(result.changed)
 
     def test_a_model_no_library_uses_is_unloaded_when_its_settings_change(self):
         old_clip, old_faces = self.runtime.clip(self.harbour), self.runtime.faces(self.harbour)
@@ -206,7 +207,7 @@ class TheRuntimeLetsGoOfWhatNoLibraryUses(ALibrary):
         self.assertEqual(0, old_faces.unloaded, "the face models it still uses were unloaded")
         new_clip = self.runtime.clip(self.harbour)
         self.assertIsNot(new_clip, old_clip)
-        self.assertEqual(new_clip.settings["model_name"], "ViT-L-14")
+        self.assertEqual(new_clip.settings["model_name"], "ViT-SO400M-14-SigLIP2")
         self.assertEqual(0, new_clip.unloaded)
 
     def test_a_change_made_elsewhere_is_let_go_at_the_librarys_next_ask(self):

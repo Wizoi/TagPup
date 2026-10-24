@@ -32,6 +32,12 @@ or a person.
   photos, the held-out ones and others drawn at random as their neighbours; the baseline's neighbours are still every
   photo's, so a pooled run checks the harness and compares nothing.
 
+A candidate must be a pair the table of photo models holds (tagpup/ml/photo_models.py: its word cut is read from it, and
+a pair it lacks would fail on the first photo with a zero-shot word), and a size only where the model takes one: `models`
+refuses at the start otherwise. The DFN5B, SigLIP 2 B/16 and L/16 rows of docs/AI_PIPELINE.md, section 7, were measured
+before the table refused unknown pairs. To measure a new model now, add its row to the table first, with a word cut (the
+cut a first run says it would need, `table`'s Word cut column), then name it in --candidates.
+
 Each check that loads a model takes the card in the owner's line (tagpup.runtime), in a sandbox deleted after.
 
 Run ONE candidate a process for the card's figure: "Card MiB over" is the peak above what the card held 1.5 s before the
@@ -58,6 +64,7 @@ from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import holdout, paths, processes, suggesting, vocabulary  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import identify  # noqa: E402
+from tagpup.services import settings as settings_service  # noqa: E402
 
 # ---- (c) the named faces ------------------------------------------------------------------------------------------
 
@@ -194,18 +201,18 @@ def vectors_check(source, rows, size, seed, report):
 # ---- (b) Suggest under each candidate photo model (phase 5) -----------------------------------------------------
 
 #: docs/AI_PIPELINE.md, phase 5: `model:weights:size`, an empty size the model's own. The first is the libraries'
-#: model and size today, whose vectors the copy already holds: the baseline, embedded by nothing here.
+#: model and size today, whose vectors the copy already holds: the baseline, embedded by nothing here. Only pairs the
+#: table of photo models holds (models_main refuses any other).
 CANDIDATES = (
     "ViT-H-14:laion2b_s32b_b79k:512",
     "ViT-H-14:laion2b_s32b_b79k:224",
-    "ViT-H-14-quickgelu:dfn5b:",
-    "ViT-B-16-SigLIP2:webli:",
-    "ViT-L-16-SigLIP2-256:webli:",
     "ViT-SO400M-14-SigLIP2:webli:",
 )
 
-#: Suggest's neighbour cut and its zero-shot cut (suggester.TagSuggester.suggest_for_photo), both read on ViT-H-14's
-#: likenesses: a cut read on one model's likenesses is not another's (phase 5 reads its own again), so every model is
+#: Suggest's neighbour cut and ViT-H-14's zero-shot word cut (tagpup.ml.photo_models.word_cut, whose table owns the cut of
+#: each model; a program may not import tagpup.ml, tests/test_layers.py), both read on ViT-H-14's
+#: likenesses. WORD_CUT is this measurement's own constant for the baseline it compares the candidates with, not
+#: Suggest's cut. A cut read on one model's likenesses is not another's (phase 5 reads its own again), so every model is
 #: scored with no neighbour cut, and the cut it would need is read off the held-out set (cuts_needed).
 NEIGHBOUR_CUT, WORD_CUT = 0.35, 0.23
 
@@ -767,6 +774,10 @@ def models_main(args, source, library, name, out):
     if not args.work:
         raise SystemExit("models needs --work: a folder outside the repository for the copy, kept between runs.")
     candidates = [candidate(text) for text in args.candidates]
+    refused = [(label_of(model), why) for model in candidates
+               for why in [settings_service.photo_model_refusal(model["name"], model["pretrained"], model["size"])] if why]
+    if refused:
+        raise SystemExit("Nothing was copied and the card was not used. %s" % " ".join(why for _label, why in refused))
     if args.packages:
         sys.path.append(os.path.abspath(args.packages))
     work = claim_work_folder(os.path.abspath(args.work), os.path.abspath(source), os.path.abspath(out))

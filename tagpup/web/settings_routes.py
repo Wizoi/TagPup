@@ -61,7 +61,9 @@ def change_settings():
         except Exception as e:
             # Saved either way; what it let go of is let go at the library's next ask.
             logger.error("Could not let go of what %s no longer uses: %s", library.name, e)
-    # A switch of the face model says what the faces hold under the model switched to, for the dialog to show.
+    # A switch of the face or the photo model says what its faces or photos hold under the model switched to, for the
+    # dialog to show.
     return jsonify({"success": True, "changed": result.changed, "settings": result.details.get("changed", []),
                     "locked": result.details.get("locked", False), "change": result.details.get("change"),
-                    "face_vectors": result.details.get("face_vectors")})
+                    "face_vectors": result.details.get("face_vectors"),
+                    "photo_vectors": result.details.get("photo_vectors")})
