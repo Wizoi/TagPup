@@ -102,7 +102,8 @@ def switch_on(conn, model, counted=True):
     tagpup.store.faces.vector_counts and, for a switch to another model, pass_counts. Whether a face holds a FaceNet vector
     is asked first (holds_vectors_under, 0.02 s on photo_index against vector_counts' 0.35 s, 2026-10-23): with
     `counted` False (the undo's check, which says only the refusal) a switch back it allows reads no count and
-    returns {} for what the faces hold. The caller's connection: an undo asks it inside its write (undo_check)."""
+    returns {} for what the faces hold. The caller's connection: an undo asks it (undo_check) on a read-only
+    connection, before it writes."""
     back = model == validation.MTCNN_FACENET
     holds = back and store_faces.holds_vectors_under(conn, model)
     if holds and not counted:
@@ -144,7 +145,7 @@ def undo_check(conn, change_id, _operation, _summary):
     an undo putting FaceNet back once no face holds its vector (its vectors retired). A change that inserted the
     faces.model row (a library stamped before it was a setting: photo_index's switch, change 3244) puts the default back,
     undone: the row goes. The refusal is the switch's own sentence and counts. Asked by tagpup.services.journal.why_not
-    (UNDO_CHECKS) on the caller's connection, inside an undo's write; reads the journal's old value and inserted key by
+    (UNDO_CHECKS) on a read-only connection, before an undo writes; reads the journal's old value and inserted key by
     the change's rows' index, and a switch back to FaceNet a face holds a vector under one row of the key's index
     (switch_on(counted=False); refused, the faces are counted for the sentence)."""
     model = journal.old_values(conn, [change_id], store_settings.TABLE, (FACE_MODEL,), "value").get(change_id)

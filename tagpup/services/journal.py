@@ -49,8 +49,9 @@ logger = logging.getLogger(__name__)
 #: key, matched whole -- and what its way back says of itself:
 #: - a sentence: never undone, said before the journal's account (a stamp of the settings; a migration's record, which
 #:   has no rows to put back); formatted with the change's id and operation (%(change)d, %(operation)s);
-#: - check(conn, change_id, operation, summary): asked after the journal's account allows it, on the same connection --
-#:   inside the undo's write when it undoes -- the way forward's own check where there is one (a switch of face model);
+#: - check(conn, change_id, operation, summary): asked after the journal's account allows it, on the same read-only
+#:   connection, before an undo writes (never inside its write) -- the way forward's own check where there is one (a
+#:   switch of face model);
 #: - None: the journal's account is the whole.
 #: A kind the code makes and this does not name fails tests/test_every_change_kind_has_an_undo_check.py; a name no code
 #: makes any more stays while a live journal holds it (RETIRED). A name neither knows (only a test makes one) gets the
