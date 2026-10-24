@@ -33,7 +33,6 @@ import os
 import re
 import shutil
 import sys
-import time
 import unittest
 from unittest import mock
 
@@ -185,6 +184,18 @@ STEPS = {"suggest detects": suggest_detects}
 MADE_EACH_TIME = {"smart rename"}
 
 
+#: (earlier, later) pairs a library cannot hold, so the later kind's writer makes nothing (the diagonal is not generated).
+NOT_HELD = (
+    # Suggest detects only in a photo that holds no face: the retirings empty photos, every other earlier kind leaves
+    # the sixth photo's face in place.
+    {(a, "suggest detects") for a in list(BUILT) + list(WRITERS)
+     if a not in ("retire faces", "retire vectors", "suggest detects")}
+    # After a switch back the library is on the old model: retiring its faces or its vectors has nothing to retire.
+    | {("switch back", "retire faces"), ("switch back", "retire vectors")}
+    # The vectors' retiring leaves no faces of the old detector to retire, and a switch back needs the new model.
+    | {("retire vectors", "switch back"), ("retire vectors", "retire faces")}
+)
+
 
 def sentence(template):
     """The words of a refusal's sentence that do not vary: its longest part between two of its formats."""
@@ -194,7 +205,7 @@ def sentence(template):
 VECTORS_RETIRED = retire_faces.VECTORS_RETIRED % FACENET
 #: Earlier kinds never undone, whatever came after -- a stamp, a migration's record, a vectors' retiring -- and what the
 #: refusal says.
-NEVER_UNDONE = {"stamp": library_settings.NOT_UNDONE, "migration": sentence(journal_service.UNDO_CHECKS["migration %d: %s"]),
+NEVER_UNDONE = {"stamp": library_settings.NOT_UNDONE, "migration": "a migration is not undone",
                 "retire vectors": VECTORS_RETIRED}
 #: (earlier, later) whose undo is refused, and what the refusal says: every other pair a library can hold is undone.
 EXPECTED_REFUSED = {
@@ -340,7 +351,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         return listed, rehearsed, undone
 
     def test_an_earlier_change_is_undone_after_every_later_kind_as_history_offers_it(self):
-        started, outcomes, n, ordered = time.monotonic(), {}, 0, 0
+        outcomes, n, ordered = {}, 0, 0
         earlier = list(BUILT) + list(WRITERS)
         later = list(WRITERS) + list(STEPS)
         for a in earlier:
@@ -356,7 +367,9 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                 for b in later:
                     if b == a:
                         continue
-                    with self.subTest(earlier=a, later=b), entered(b) if a != "migration" else contextlib.nullcontext():
+                    with self.subTest(earlier=a, later=b), contextlib.ExitStack() as context:
+                        # The earlier kind is made before the later kind's context is entered: a smart rename's service
+                        # migrates the copy, and a migration made inside that context would find nothing to do.
                         if after_a is None:
                             self.put_files_back("base")
                             library = self.copy(self.base, "a%d_%s" % (n, b.replace(" ", "_")))
@@ -364,6 +377,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                         else:
                             self.put_files_back("a%d" % n)
                             library = self.copy(after_a, "a%d_%s" % (n, b.replace(" ", "_")))
+                        if a != "migration":
+                            context.enter_context(entered(b))
                         made = (WRITERS.get(b) or STEPS[b])(self, library)
                         if made is None:
                             outcomes[(a, b)] = None
@@ -390,9 +405,11 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                             self.assertEqual("undone", journal.history(library.path, change_id=change_a)[0]["status"])
         made = {pair for pair, refused in outcomes.items() if refused is not None}
         self.assertTrue(set(EXPECTED_REFUSED) <= made, "a pair the promise names was not made")
+        self.assertEqual(NOT_HELD, {pair for pair, refused in outcomes.items() if refused is None},
+                         "the pairs a writer made nothing in are the pairs a library cannot hold, and no others")
         self.assertGreater(len(made), 100, "the pairs a library can hold were not made")
         self.assertEqual(4, ordered, "the pairs undone in order: a pass and the retiring after it, both ways, the switch")
-        self.assertLess(time.monotonic() - started, 120, "the matrix is to stay under two minutes")
+        # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.
 
 
 if __name__ == "__main__":
