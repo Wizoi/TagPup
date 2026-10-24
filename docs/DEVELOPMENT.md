@@ -36,6 +36,21 @@ libraries, which hold their own settings -- stays where it is. Saving a file in 
 running. To update, install again; the two versions before stay, and `current.txt`
 names the one the launchers start.
 
+**Switching a library's photo model** (phase 5; docs/SPEC_TAGPUP_CLI.md, `embed-photos` and `set-photo-model`),
+through `TagPup CLI.cmd`, with `--db` naming the library, one library at a time:
+
+1. Back up first: `snapshots list` shows a daily from today. The running app takes one each day (the scheduled job
+   `snapshots`); with none from today, run that job now from the Activity page. The CLI has no command to take one.
+2. `embed-photos --model ViT-SO400M-14-SigLIP2:webli`: the dry run counts the photos to embed, those with no file, and
+   the time (about 40 minutes for photo_index). Then the same with `--apply`, logged (redirect it). Ctrl+C stops it
+   after the photo under way; run it again to make the rest. Repeat until it embeds nothing new.
+3. `set-photo-model ViT-SO400M-14-SigLIP2:webli`: the dry run says the gate's counts and whether the switch passes, and
+   how many words Suggest will make again. Then with `--apply`: note the change id it prints; `undo <id> --apply`
+   switches back.
+4. `.venv/Scripts/python.exe tools/doctor.py --db <library>`: the library's checks after the switch.
+
+The old model's vectors stay beside the new until they are retired (a later step); nothing reads them after the switch.
+
 **Logs are in `data/logs/`**: `tagpup.log` and `tagtuner.log`, one per
 program, rotating at 5 MB and keeping five old files. They hold everything the console
 shows, plus every request slower than a second (`slow: GET /api/... took 2.31s`) and

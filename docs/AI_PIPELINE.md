@@ -31,7 +31,7 @@ and reviewed but NOT merged: two blockers to fix first (a photo removed while th
 a ghost row; the change's name must not carry the folder) and two owner decisions taken (named old faces are
 paired first; new faces stay unnamed). **Slice B** (the `face-pass` command) is built. **Slice C** (the gate's scoring,
 `scripts/measure_face_gate.py`, read-only) is built on `feature/gate-scoring`, as built below; the owner picks the naming
-precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); **Step 2a (2026-10-24) is built:** the loader (`tagpup/ml/photo_models.py`, SigLIP 2 through `runtime.clip`), the tokenizer (`tokenizers` alone) and the readiness gate on a photo-model switch; **step 2b is next:** the re-embed command, the live switch, retiring the old vectors. Suggest's recalibration is not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
+precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); **Step 2a (2026-10-24) is built:** the loader (`tagpup/ml/photo_models.py`, SigLIP 2 through `runtime.clip`), the tokenizer (`tokenizers` alone) and the readiness gate on a photo-model switch; **Step 2b (2026-10-24) is built:** `embed-photos` (the new model's vectors made beside the old, `tagpup/services/photo_reembed.py`) and `set-photo-model` (the switch as one gated journaled change); `repair-vectors` deleted. The live run and switch are the main session's, then retiring the old vectors. Suggest's recalibration is not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
@@ -660,6 +660,17 @@ re-derived on the held-out set; a SigLIP sigmoid score tried for multi-label tag
 The text tower alone stays resident in the server between runs; the image tower loads for an index. The re-embed is a
 CLI run (long indexes go through the CLI), resumable by what `embeddings` holds under the new key, dry-run first, on a
 copy first.
+
+**As built (steps 2a and 2b, 2026-10-24).** Built: the model is a library setting (`model.name`, `model.pretrained`,
+read through `tagpup/ml/photo_models.py`, whose row carries the word cut); the re-embed is `embed-photos --model
+NAME:WEIGHTS` (`tagpup/services/photo_reembed.py`: dry run first, resumable, on a turn of the card, every vector made
+from the upright photo); the switch is `set-photo-model NAME:WEIGHTS` or the gear, one journaled change refused while
+more than 5% of the photos hold no vector under the new key (`settings.photo_switch_on`, its undo held to the same
+gate). The tag-prompt cache is not recomputed by a run: Suggest makes each word under the library's model at its first
+run on it and keeps it (photo_index holds 540 words, 1,080 rows, under ViT-H; counted 2026-10-24), which
+`set-photo-model` counts. Kept as decided: the offer floor 0.60 and neighbour cut 0.35 (DECISIONS 2026-10-24). Not
+built: a SigLIP sigmoid score; a text tower resident apart from the image tower; retiring the old vectors (after the
+live switch). The run's recipe: docs/DEVELOPMENT.md, "Switching a library's photo model".
 
 **How it fails:** a re-embed killed at 40,000 photos (Suggest keeps using the old key until the library switches; a
 partial new key is never read); the card shared with Suggest (one turn at a time); disk (a second vector set: about
