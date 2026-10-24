@@ -17,6 +17,7 @@ import test_bulk_edits as T  # noqa: E402
 
 from tagpup.core.result import Conflict, Refused  # noqa: E402
 from tagpup.services import batches, bulk_edit, file_changes, tagging  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 from tagpup.web import lifecycle  # noqa: E402
 
@@ -84,7 +85,7 @@ class Chunks(T.Bulk):
         self.assertEqual((self.PHOTOS - 25, 25), (again["changed"], again["unchanged"]))
         self.assertEqual(self.PHOTOS, self.files.writes, "no file was written twice")
         first = self.changes("bulk tags%")[0][0]
-        undone = file_changes.undo(self.library, first, "exiftool", apply=True)
+        undone = file_changes.undo(self.library, first, "exiftool", journal_service.why_not, apply=True)
         self.assertEqual(25, undone.changed, "what the stopped batch wrote can be undone")
 
     def test_a_stop_asked_while_the_files_are_read_writes_and_plans_nothing(self):

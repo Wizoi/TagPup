@@ -29,7 +29,7 @@ run stopped (`stop`, asked between chunks) or killed part-way leaves it whole, a
 recorded after it, or its undo, makes the next chunk open a new one. Undone from History, every deleted face comes back
 with its crop and vectors, and every decision as it was; the journal refuses that undo once a later change wrote the same
 rows (a face named since by Name faces from tags), naming the change. Two undos are refused besides, each way round
-(`undo_refusals`): the pass's own change ("face pass (<key>)") while a retiring after it stands -- its new faces stand in
+(`pass_check`, `retiring_check`): the pass's own change ("face pass (<key>)") while a retiring after it stands -- its new faces stand in
 for the faces the retiring deleted, and undone first it would leave photos with no face at all under the model -- and the
 retiring while a photo whose faces it deleted holds a face made since, by any writer -- the next face pass, or
 Suggest, which detects again a photo it left faceless and records no change: undone, the old faces would come back
@@ -49,7 +49,7 @@ committed), continued across runs: the newest kept change of its name (_continue
 back is the snapshot taken
 before (the CLI forces one): its undo puts nothing back and is refused, VECTORS_RETIRED, and so is the undo of a retiring
 of faces whose deleted vectors were under a key the library now holds none of -- undone, its faces would come back
-holding a vector no reader reads and the library holds no other of (undo_refusals). A switch back to such a model is
+holding a vector no reader reads and the library holds no other of (vectors_check, retiring_check). A switch back to such a model is
 refused by the switch (settings.switch_to).
 """
 import logging
@@ -82,10 +82,10 @@ SWITCH_BACK = "Switch the library back to %s first (its settings), then run it a
 MANUAL_NAMES = ("Nothing was written: %d names given by hand would go (%d of faces kept, cleared; %d of faces deleted). "
                 "They go only when asked for (TagPup CLI: retire-faces --apply --clear-manual-names).")
 
-#: Why an undo of the pass's change is refused while a retiring after it stands (undo_refusals).
+#: Why an undo of the pass's change is refused while a retiring after it stands (pass_check).
 PASS_STANDS_IN = "change %d (retire faces) deleted the old faces this pass's new faces stand in for: undo it first"
 
-#: Why an undo of a retiring is refused while photos it took faces from hold faces made since (undo_refusals).
+#: Why an undo of a retiring is refused while photos it took faces from hold faces made since (retiring_check).
 RETIRING_UNDER = ("%d photos this retiring took faces from have faces made since (by a face pass or Suggest): undone "
                   "now, the old faces would come back beside them")
 
@@ -120,7 +120,7 @@ ALONE_SINCE = ("The next chunk was not written: %d faces hold a vector under %s 
                "Retire the old detector's faces again first (TagPup CLI: retire-faces), then run this again to continue.")
 
 #: Why an undo is refused once the vectors under a key are gone: the vectors-retiring's own, and a retiring of faces whose
-#: deleted vectors were under it (undo_refusals).
+#: deleted vectors were under it (vectors_check, retiring_check).
 VECTORS_RETIRED = ("the library's vectors under %s were retired: restore the snapshot taken before (TagPup CLI: snapshots "
                    "list, snapshots restore)")
 
@@ -441,65 +441,44 @@ def apply(library, planned, stop=_never, heard=None, clear_manual_names=False):
     return found
 
 
-def undo_refusals(library, change_ids):
-    """{change id: why it is not undone now} of each of `change_ids` that is
-    - a face pass's change ("face pass (<key>)") older than a retiring under the same key that stands (applied, not
-      undone): PASS_STANDS_IN, naming the newest such; undone, the pass would take the new model's vectors and faces from
-      photos whose old faces are gone;
-    - a retiring that stands while a photo whose faces it deleted holds a face made since (an id above its summary's
-      NEWEST_FACE), by any writer, journaled or not: RETIRING_UNDER, with how many photos; undone, the retiring would put
-      the old faces back beside them;
-    - a retiring that stands whose deleted vectors (its recorded face_embeddings rows) were under a key the library now
-      holds no vector under, and a retiring of the vectors (VECTORS_OPERATION), whose undo puts nothing back:
+def pass_check(conn, change_id, operation, _summary):
+    """Why a face pass's change ("face pass (<key>)") is not undone now, or None: a retiring under the same key after it
+    stands (applied, not undone): PASS_STANDS_IN, naming the newest such. Undone, the pass would take the new model's
+    vectors and faces from photos whose old faces are gone. The journal alone allows it -- each wrote other rows than the
+    other did. Asked by tagpup.services.journal.why_not (UNDO_CHECKS) on the caller's connection."""
+    key = _key_of(operation, face_pass.OPERATION)
+    retirings = [kept_id for kept_id, _summary in journal.kept_named(conn, OPERATION % key) if kept_id > change_id]
+    return PASS_STANDS_IN % retirings[-1] if retirings else None
+
+
+def retiring_check(conn, change_id, _operation, summary):
+    """Why a retiring of the old detector's faces ("retire faces (<key>)"), applied, is not undone now, or None:
+    - its deleted vectors (its recorded face_embeddings rows) were under a key the library now holds no vector under:
       VECTORS_RETIRED, naming the key; undone, the faces would come back holding only a vector no reader reads, and the
-      way back is the snapshot taken before.
-    The journal alone allows all three -- each wrote other rows than the other did, and the vectors' change none. Reads
-    only, one connection; a retiring's photos are read only when the library holds a face made since it, its vectors'
-    keys once (the change's rows by their index: 0.15 s for change 3247's 596,845 on photo_index, 2026-10-23)."""
-    if not change_ids:
-        return {}
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        kept = {}
+      way back is the snapshot taken before. They are under ONE key, read at its first recorded row
+      (journal.first_recorded_value; every row read was 0.15 s for change 3247's 596,845 on photo_index, 2026-10-23): a
+      retiring is of a library on MODEL and deletes the faces holding no vector under it, and a face holds vectors under
+      the library's models alone, which are validation.FACE_MODELS' two, so under FaceNet's;
+    - a photo whose faces it deleted holds a face made since (an id above its summary's NEWEST_FACE), by any writer,
+      journaled or not: RETIRING_UNDER, with how many photos; undone, the old faces would come back beside them (its
+      photos read only when the library holds a face made since it).
+    Asked by tagpup.services.journal.why_not (UNDO_CHECKS) after the journal's account, so only of a retiring that
+    stands; the caller's connection."""
+    model = journal.first_recorded_value(conn, change_id, "face_embeddings", "delete", "model")
+    if model is not None and not store_faces.holds_vectors_under(conn, model):
+        return VECTORS_RETIRED % model
+    if store_faces.newest_id(conn) <= summary[NEWEST_FACE]:
+        return None
+    photos = journal.recorded_values(conn, [change_id], "faces", "delete", "photo_id").get(change_id, set())
+    held = store_faces.photos_with_faces_after(conn, photos, summary[NEWEST_FACE])
+    return RETIRING_UNDER % held if held else None
 
-        def standing(operation):
-            if operation not in kept:
-                kept[operation] = dict(journal.kept_named(conn, operation))
-            return kept[operation]
 
-        reasons, newest = {}, None
-        for change_id, operation in journal.operations(conn, change_ids).items():
-            key = _key_of(operation, face_pass.OPERATION)
-            if key is not None:
-                retirings = [kept_id for kept_id in standing(OPERATION % key) if kept_id > change_id]
-                if retirings:
-                    reasons[change_id] = PASS_STANDS_IN % retirings[-1]
-                continue
-            key = _key_of(operation, VECTORS_OPERATION)
-            if key is not None:
-                reasons[change_id] = VECTORS_RETIRED % key
-                continue
-            key = _key_of(operation, OPERATION)
-            summary = standing(OPERATION % key).get(change_id) if key is not None else None
-            if summary is None:   # not a retiring, or one undone: nothing of it stands
-                continue
-            gone = sorted(model for model in journal.recorded_values(conn, [change_id], "face_embeddings", "delete",
-                                                                       "model").get(change_id, ())
-                          if not store_faces.holds_vectors_under(conn, model))
-            if gone:
-                reasons[change_id] = VECTORS_RETIRED % gone[0]
-                continue
-            if newest is None:
-                newest = store_faces.newest_id(conn)
-            if newest <= summary[NEWEST_FACE]:
-                continue
-            photos = journal.recorded_values(conn, [change_id], "faces", "delete", "photo_id").get(change_id, set())
-            held = store_faces.photos_with_faces_after(conn, photos, summary[NEWEST_FACE])
-            if held:
-                reasons[change_id] = RETIRING_UNDER % held
-        return reasons
-    finally:
-        conn.close()
+def vectors_check(_conn, _change_id, operation, _summary):
+    """Why a retiring of a model's vectors (VECTORS_OPERATION) is not undone: never -- it holds no rows to put back, the
+    vectors are gone: VECTORS_RETIRED, naming the key; the way back is the snapshot taken before. A check and not a
+    sentence said before the journal's account, so a vectors' change undone already says so, as before."""
+    return VECTORS_RETIRED % _key_of(operation, VECTORS_OPERATION)
 
 
 def _key_of(operation, named):

@@ -16,7 +16,8 @@ What the owner lives through (scenarios P8 and D4):
   detector's faces (its recorded vectors under FaceNet's key, change 3247's shape; #1783) and of the switch to the new
   model (#1781's check, an update here; the insert shape is P10's) are refused naming the snapshot, nothing written; a
   switch back to FaceNet is refused once no face holds its vector (#1782). A library a stopped run left holding some of
-  FaceNet's vectors may still switch back, told how many faces hold none.
+  FaceNet's vectors may still switch back, told how many faces hold none. History asks a retiring over many faces
+  (photo_index's change 3247: 596,845 rows) the key of its deleted vectors at its first recorded row, not every row.
 - (f) Between two chunks, the undo of the retiring of the old detector's faces (from History or the MCP server, beside
   the run: allowed while FaceNet's vectors are held) brings back faces holding FaceNet's vector alone; the next chunk
   is refused, nothing of it written, and they keep it (#1789).
@@ -309,6 +310,30 @@ class RetiringTheOldModelsVectors(unittest.TestCase):
         back = library_settings.change(self.library, {"faces.model": FACENET}, acknowledged=["face-model"])
         self.assertEqual((0, none_held), (back.changed, back.refused))
         self.assertEqual(before, self.state(), "a refusal wrote")
+
+    def test_history_asks_a_retiring_over_many_faces_the_key_of_its_vectors_at_its_first_row(self):
+        rng = np.random.default_rng(12)
+        conn = db.connect(self.library.path)
+        try:
+            for n in range(120):
+                add_face(conn, self.photo[2 + n % 2], (n, 40, n + 20, 60), vector(rng), prob=0.9)
+            conn.commit()
+        finally:
+            conn.close()
+        retiring = self.retire_the_old_faces()
+        retire_faces.apply_vectors(self.library, retire_faces.plan_vectors(self.library))
+        (rows,) = self.read("SELECT COUNT(*) FROM change_rows WHERE change_id = ?", (retiring,))[0]
+        (summary,) = self.read("SELECT summary FROM changes WHERE id = ?", (retiring,))[0]
+        steps = []
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            conn.set_progress_handler(lambda: steps.append(1) and 0, 1)
+            said = retire_faces.retiring_check(conn, retiring, retire_faces.OPERATION % NEW, json.loads(summary))
+        finally:
+            conn.close()
+        self.assertEqual(retire_faces.VECTORS_RETIRED % FACENET, said)
+        self.assertGreater(rows, 1000, "a retiring over many faces")
+        self.assertLess(len(steps), rows, "the check read every row of the retiring")
 
     def test_a_library_keeping_some_of_facenets_vectors_may_still_switch_back(self):
         self.retire_the_old_faces()

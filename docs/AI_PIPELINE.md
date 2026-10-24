@@ -498,7 +498,7 @@ takes no turn of the card.
   with no faces switches; switching back to FaceNet is never refused, reads no pass count (`not_passed` 0) and says
   only how many faces hold no FaceNet vector (those the new model made meanwhile), when any do. An undo in History that would put the new model
   back (the undo of a switch back to FaceNet) is refused by the same check, with the same sentence and counts
-  (`settings.undo_refusals`, asked by `services.journal.refusals` and its rehearsal); undoing the switch to the new model
+  (`settings.undo_check`, asked by `services.journal.why_not` over `UNDO_CHECKS`); undoing the switch to the new model
   is never refused by it. Counted 2026-10-20, read-only: kr-track 11,457
   faces, 10,246 with the new vector, 3 named without, 16 in photos not passed (0.14%: allowed); renton_parkrun 3,644,
   3,315, 0, 7 (0.19%: allowed); photo_index 187,784, none, 55,298, all (refused). The unmatched old faces of a passed
@@ -560,7 +560,7 @@ takes no turn of the card.
   photos holding 5,754 faces, kr-track 7 holding 16, renton_parkrun 7 holding 7, counted read-only 2026-10-22). The CLI
   asks before each chunk whether an app was started and stops there, saying so; an MCP server keeps no record and is
   not seen. Keywords and the tree stay: the people a photo's keywords name are what Name faces from tags names the kept
-  faces from again. Undo is refused both ways round (`retire_faces.undo_refusals`): the pass's change while a retiring
+  faces from again. Undo is refused both ways round (`retire_faces.pass_check`, `retiring_check`): the pass's change while a retiring
   after it stands, and the retiring while a photo whose faces it deleted holds a face made since by any writer (a pass,
   or Suggest detecting a photo it left faceless again): a face whose id is above the change's `newest_face`, read from
   the faces as they are (`store.faces.photos_with_faces_after`, by `idx_faces_photo_id`). Scenario P8, `tests/test_retiring_the_old_detectors_faces.py`.
@@ -600,7 +600,7 @@ takes no turn of the card.
 - The way back is the snapshot, never an undo (INVARIANTS row 40's exception, DECISIONS 2026-10-23): the change's own
   undo is refused (VECTORS_RETIRED), and so are the undo of a retiring whose recorded `face_embeddings` deletes were under
   a key the library holds none of now (change 3247's shape, #1783), the undo of the switch (an insert of `faces.model`
-  read as the default put back, #1781, `settings.undo_refusals`) and a switch back to FaceNet (`settings.switch_to`,
+  read as the default put back, #1781, `settings.undo_check`) and a switch back to FaceNet (`settings.switch_to`,
   NONE_HELD, #1782). A library keeping some FaceNet vectors may still switch back. Scenario D4,
   `tests/test_retiring_the_old_models_vectors.py`.
 

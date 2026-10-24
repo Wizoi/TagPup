@@ -495,20 +495,23 @@ class TheSchemaMovedOn(unittest.TestCase):
             self.assertIn("touches tag_taxonomy", journal.schema_gap_blocker(schema.LATEST, schema.LATEST + 1))
 
     def test_the_history_lists_a_change_made_at_the_baseline_as_undoable_and_one_before_it_as_not(self):
+        from tagpup.core.library import Library
+        from tagpup.services import journal as journal_service
         home = own_home.for_test(self)
         path = home.library("harbour.db")
         schema.ensure(path)
         applied = journal.apply(path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
-        self.assertEqual({applied.change_id: []}, journal.refusals(path, [applied.change_id]))
+        entries = [{"id": applied.change_id}]
+        self.assertEqual({applied.change_id: None}, journal_service.refusals(Library(path), entries))
         conn = db.connect(path)
         try:
             conn.execute("UPDATE changes SET schema_version = 31 WHERE id = ?", (applied.change_id,))
             conn.commit()
         finally:
             conn.close()
-        said = journal.refusals(path, [applied.change_id])[applied.change_id]
-        self.assertIn("made at schema 31 and the library is at %d" % schema.LATEST, said[0])
-        self.assertIn("before the baseline", said[0])
+        said = journal_service.refusals(Library(path), entries)[applied.change_id]
+        self.assertIn("made at schema 31 and the library is at %d" % schema.LATEST, said)
+        self.assertIn("before the baseline", said)
 
     def test_a_migration_is_never_undone_whatever_the_gap(self):
         from tagpup.services import journal as journal_service
@@ -525,9 +528,8 @@ class TheSchemaMovedOn(unittest.TestCase):
             self.assertEqual(2, len(migrations))
             reasons = journal_service.refusals(library, migrations)
             for entry in migrations:
-                self.assertIn("a migration is not undone", reasons[entry["id"]], entry)
-                self.assertEqual(["change %d (%s): a migration is not undone" % (entry["id"], entry["operation"])],
-                                 journal.refusals(path, [entry["id"]])[entry["id"]])
+                self.assertEqual("change %d (%s): a migration is not undone" % (entry["id"], entry["operation"]),
+                                 reasons[entry["id"]], entry)
                 result = journal_service.undo(library, entry["id"], apply=True)
                 self.assertIn("a migration is not undone", result.refused)
             after = journal.history(path, limit=100)

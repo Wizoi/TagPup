@@ -335,7 +335,8 @@ def build():
     @tool("The library's journal: every change a maintenance operation applied, newest first (up to "
           "`limit`), each with its id, operation, status (applied, derived_pending, undone), "
           "the schema version it was made at, when it was made, applied and undone, its summary "
-          "(counts), and how many rows of each table it inserted, updated and deleted. With `change`, "
+          "(counts), how many rows of each table it inserted, updated and deleted, and `why_not`: why "
+          "`undo` would refuse it now (a sentence), or null when it may be tried. With `change`, "
           "that change alone and the keys (ids) of every row it wrote; with reveal=true too, each "
           "column's value before and after (a BLOB by its size), which can name people.")
     def history(library: str, change: Optional[int] = None, reveal: bool = False,

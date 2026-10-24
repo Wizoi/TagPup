@@ -42,6 +42,7 @@ from migration_names import step  # noqa: E402
 
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, generations, journal, schema  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -126,9 +127,8 @@ class AnAdditiveMigration(Migrated):
     def test_cannot_be_undone(self):
         # A schema is not undone: the change is at the version before, and refused.
         self.migrate(step(schema.ADDITIVE, self.add, ("albums",)))
-        with self.assertRaises(journal.Refusal) as refused:
-            journal.undo(self.db_path, self.newest_change())
-        self.assertIn("a migration is not undone", str(refused.exception))
+        refused = journal_service.undo(Library(self.db_path), self.newest_change(), apply=True).refused
+        self.assertIn("a migration is not undone", refused)
 
     def test_that_changes_a_row_is_rolled_back(self):
         face = self.ids["kept"]
@@ -208,8 +208,7 @@ class ADestructiveMigration(Migrated):
 
     def test_cannot_be_undone_but_by_its_backup(self):
         self.migrate(step(schema.DESTRUCTIVE, self.drop, ("suggestions",)))
-        with self.assertRaises(journal.Refusal):
-            journal.undo(self.db_path, self.newest_change())
+        self.assertTrue(journal_service.undo(Library(self.db_path), self.newest_change(), apply=True).refused)
 
 
 # ---- A failed check ------------------------------------------------------------------------

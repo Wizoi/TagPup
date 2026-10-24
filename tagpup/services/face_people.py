@@ -443,7 +443,7 @@ def _tags_of(held):
     return vocabulary.extract_tags({fields.read_key(field): texts for field, texts in held.items()})
 
 
-def follow_change(library, change_id, undone=False, moved=None):
+def follow_change(library, change_id, undone=False, moved=None, undo=None):
     """THE place that decides what a change of photo files did to the people on its photos (#908; the one owner of "this
     photo's tag was really taken off / put on by this change"): it reads the journaled change's own files -- only those the
     change really wrote and left done (or, `undone`, that its Undo really put back), and from what each held before to what it
@@ -451,7 +451,8 @@ def follow_change(library, change_id, undone=False, moved=None):
     (unname_for_removed_tags). A person's tag put back is NOT followed by naming a face -- not by the pill, Ctrl+Z or a
     selection: a decision made since is not in the journal, so a face is never named from an old record. The one exception is
     exact: History's Undo of a removal undoes the unnaming that removal made (undo_unnaming), the journaled inverse, refused if
-    anything wrote those faces since. `moved` ({old path: new path}) says where a photo went when the same save renamed it. A
+    anything wrote those faces since: `undo(library, change_id)`, the undo History's own (tagpup.services.journal.undo_rows,
+    which asks the one account, why_not, before it writes); given only with `undone`. `moved` ({old path: new path}) says where a photo went when the same save renamed it. A
     Result: details `unnamed` and `renamed` ([{"id", "name"}]), `faces_changes` (the journal's ids), `faces_problem`."""
     moved = {paths.key(old): new for old, new in (moved or {}).items()}
     removed, put_back, left = {}, False, False
@@ -475,11 +476,11 @@ def follow_change(library, change_id, undone=False, moved=None):
             result.details["faces_problem"] = ("Some files were not put back, so the faces of this removal were not named again: "
                                                "undo it again in History when they can be.")
         else:
-            undo_unnaming(library, change_id, result)
+            undo_unnaming(library, change_id, result, undo)
     return result
 
 
-def undo_unnaming(library, files_change, result):
+def undo_unnaming(library, files_change, result, undo):
     """History's Undo of a removal (`files_change`, now undone) names the faces it unnamed again by undoing that unnaming: the
     journal's own inverse, which refuses (and the faces stay as they are, said in `result.details["faces_problem"]`) if anything
     wrote those faces since -- a name given by hand included, since the journal compares the rows with what the change left."""
@@ -492,7 +493,7 @@ def undo_unnaming(library, files_change, result):
     if change is None:
         return
     try:
-        journal.undo(library.path, change)
+        undo(library, change)
     except journal.Refusal as why:
         logger.warning("Could not name the faces of change %s again: %s", files_change, why)
         result.details["faces_problem"] = ("The faces of this removal were not named again because they changed since: %s" % why)

@@ -151,9 +151,6 @@ CASCADES = {
     ("tag_taxonomy", "tag_taxonomy"): ("parent_id", FORBIDDEN),
 }
 
-#: What the name of the journal's record of a migration begins with ("migration 8: ...").
-MIGRATION = "migration "
-
 #: The steps of an apply and an undo, in order; `_reached` is told of each.
 STEPS = ("forward written", "forward committed", "undo written", "undo committed")
 
@@ -935,18 +932,6 @@ def newest_kept(conn, operation):
     return row[0] if row is not None and row[1] == operation and kept(conn, row[0]) else None
 
 
-def operations(conn, change_ids):
-    """{id: operation} of each of `change_ids` the journal holds, on the caller's connection: the one read of a change's
-    name (`operation` is it for one change, on a connection of its own)."""
-    found = {}
-    ids = list(change_ids)
-    for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
-        found.update(conn.execute("SELECT id, operation FROM changes WHERE id IN (%s)" % ",".join("?" * len(chunk)),
-                                  chunk).fetchall())
-    return found
-
-
 def recorded_values(conn, change_ids, table, action, column):
     """{change id: {value}} of `column` in the rows of `table` each of `change_ids` recorded as `action` ("insert": the
     value it wrote; "delete": the value the row held): the photos a change's faces were in, say. By the index of the
@@ -965,6 +950,20 @@ def recorded_values(conn, change_ids, table, action, column):
                 chunk + [table, action, column]):
             found.setdefault(change_id, set()).add(value)
     return found
+
+
+def first_recorded_value(conn, change_id, table, action, column):
+    """The value of `column` in the first row of `table` change `change_id` recorded as `action` (as recorded_values),
+    or None when it recorded none: for a change whose rows of `table` all hold one value, the read that stops at its
+    first row where recorded_values reads every row of the change (a retiring's deleted vectors' key: 0.15 s for change
+    3247's 596,845 rows on photo_index, against under a millisecond, 2026-10-23). By the index of a change's rows."""
+    if action not in ("insert", "delete"):
+        raise ValueError("an insert's or a delete's values, not an %s's" % action)
+    row = conn.execute(
+        "SELECT %s FROM change_rows INDEXED BY idx_change_rows_change WHERE change_id = ? AND table_name = ?"
+        " AND action = ? AND column_name = ? LIMIT 1" % ("new" if action == "insert" else "old"),
+        (change_id, table, action, column)).fetchone()
+    return None if row is None else row[0]
 
 
 def kept_named(conn, operation):
@@ -1089,10 +1088,11 @@ def schema_gap_blocker(version, current):
 
 def refusal(conn, change_id):
     """Why change `change_id` cannot be undone now, as the journal alone can say --
-    without reading a row's values or a photo file -- or [] when it may be tried. The
-    one account of it: an undo of rows (_undo_in) and of files
-    (tagpup.services.file_changes) are refused by it, and the history lists by it which
-    changes can be undone (tagpup.services.journal.undo_refusals).
+    without reading a row's values or a photo file -- or [] when it may be tried: the
+    journal's part of the one account, tagpup.services.journal.why_not, which adds what
+    each kind of change says of its own way back (UNDO_CHECKS: a migration's record, a
+    stamp, a switch of face model...) and is asked before every undo in tagpup/. An undo
+    of rows (_undo_in) is refused by this part again in its transaction.
 
     No such change; not finished; not applied. A change of files: a newer change
     not undone wrote one of its files (file_journal.newer_overlapping). A change of rows:
@@ -1103,10 +1103,6 @@ def refusal(conn, change_id):
     if row is None:
         return ["there is no change %d" % change_id]
     _operation, status, version = row
-    if _operation.startswith(MIGRATION):
-        # The journal's record that a migration ran, with no rows to put back (schema._Run._record):
-        # a schema is not undone.
-        return ["change %d (%s): a migration is not undone" % (change_id, _operation)]
     files = _writes_files(conn, change_id)
     if status in ("derived_pending", "planned"):
         return ["change %d is not finished; it is, the next time the library is opened" % change_id]
@@ -1125,14 +1121,11 @@ def refusal(conn, change_id):
             for other, name in _newer_overlapping(conn, change_id)]
 
 
-def refusals(db_path, change_ids):
-    """{change id: refusal(...)} of each of `change_ids`, read on one connection. Reads
-    only."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        return {change_id: refusal(conn, change_id) for change_id in change_ids}
-    finally:
-        conn.close()
+def described(conn, change_id):
+    """(operation, summary) of change `change_id` -- its name and its summary read from its JSON -- or None for a change
+    the journal has not. The caller's connection."""
+    row = conn.execute("SELECT operation, summary FROM changes WHERE id = ?", (change_id,)).fetchone()
+    return None if row is None else (row[0], json.loads(row[1]) if row[1] else {})
 
 
 def _unfiled(conn, writes):
@@ -1369,37 +1362,23 @@ def settle_once(db_path):
     return settle(db_path)
 
 
-def old_values(db_path, change_ids, table, key, column):
+def old_values(conn, change_ids, table, key, column):
     """{change id: what `column` of the row `key` (a tuple) of `table` held before it} of each of `change_ids` that updated
-    it: what an undo of each would put back. One read, by the rows' index (table_name, row_key). Reads only."""
-    if not change_ids:
-        return {}
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        found = {}
-        for start in range(0, len(change_ids), CHUNK):
-            chunk = list(change_ids[start:start + CHUNK])
-            found.update(conn.execute(
-                "SELECT change_id, old FROM change_rows WHERE table_name = ? AND row_key = ? AND action = 'update'"
-                " AND column_name = ? AND change_id IN (%s)" % ",".join("?" * len(chunk)),
-                [table, schema.row_key(key), column] + chunk).fetchall())
-        return found
-    finally:
-        conn.close()
+    it: what an undo of each would put back. One read, by the rows' index (table_name, row_key). The caller's
+    connection; reads only."""
+    found = {}
+    change_ids = list(change_ids)
+    for start in range(0, len(change_ids), CHUNK):
+        chunk = change_ids[start:start + CHUNK]
+        found.update(conn.execute(
+            "SELECT change_id, old FROM change_rows WHERE table_name = ? AND row_key = ? AND action = 'update'"
+            " AND column_name = ? AND change_id IN (%s)" % ",".join("?" * len(chunk)),
+            [table, schema.row_key(key), column] + chunk).fetchall())
+    return found
 
 
 def _shown(value):
     return "<%d bytes>" % len(value) if isinstance(value, bytes) else value
-
-
-def operation(db_path, change_id):
-    """The name change `change_id` was applied under, or None for a change the library
-    at `db_path` has not."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        return operations(conn, [change_id]).get(change_id)
-    finally:
-        conn.close()
 
 
 def history(db_path, limit=20, change_id=None, values=False):
