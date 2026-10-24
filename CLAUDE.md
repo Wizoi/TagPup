@@ -5,7 +5,7 @@ behind each rule, live in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); this is wh
 line naming its owner and its guard; a rule with no guard keeps its words here. A rule broken twice moves into a guard.
 
 **New code goes where [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) puts it.** That file is a map
-(about 35 KB): the layers, what each package owns, the data model on one page, the processes, and where to
+(about 41 KB): the layers, what each package owns, the data model on one page, the processes, and where to
 look for each concern. Check it before adding a module, a route or a query.
 **[docs/INVARIANTS.md](docs/INVARIANTS.md)** is one page of the rules whose violation loses data, each with its
 owner and the test that enforces it; review against it. **[docs/DECISIONS.md](docs/DECISIONS.md)** is the
@@ -78,7 +78,7 @@ Each names its one owner and the guard that fails the build when it is broken.
   `add_unread`), a page's record as the page builds it (#246, #247; `tests/test_fixtures_make_photo_rows_like_the_indexer.py`);
   a test that selects or creates a library runs in a home of its own (`tests/test_tests_have_homes_of_their_own.py`).
 
-**SQL on this library is not SQL on a test fixture.** 225,000 faces, most carrying a
+**SQL on this library is not SQL on a test fixture.** 198,000 faces, most carrying a
 6 KB crop, and every one of these has shipped:
 - `LIKE` is not equality. It ignores case and reads `_` and `%` as wildcards, so
   `IMG_0001.jpg` also matches `IMGX0001.jpg` -- in an `UPDATE`, other photos change.
@@ -178,8 +178,9 @@ reviewed once by each owner: it adds no debt, or it is refused. No schema work w
   restates what a function does is too granular and misses the scenario between functions. New work adds or lifts a
   scenario test, and deletes the granular tests it makes redundant. Every test file has one owner in `tests/owners.py`
   (`tests/test_the_test_map.py`).
-- **A `low` finding is fixed or recorded as by design**, with its reason in DECISIONS.md or the domain's document and the
-  row closed `decided:`; there is no third state, no list of accepted debt (owner, 2026-10-15). A finding is verified
+- **A `low` finding is fixed or recorded as by design**, with its reason in its own row, closed `decided:` (a
+  decision that changes behaviour still gets a DECISIONS row); there is no third state, no list of accepted debt (owner,
+  2026-10-15, amended 2026-10-23). A finding is verified
   against the trunk, and against a live count where it names one, before it is reported or briefed.
 
 ## Before committing

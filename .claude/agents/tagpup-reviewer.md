@@ -149,4 +149,5 @@ Rank by severity. For each finding:
   mismatch;
 - **confidence**: confirmed (you demonstrated it) / likely / possible.
 
-If you found nothing, say what you checked. Do not pad the report.
+If you found nothing, say what you checked. Do not pad the report. An item you would call by design yourself goes under
+"by design" with its reason, not as a finding row (owner, 2026-10-23).
