@@ -507,8 +507,8 @@ class TheWorkFolderIsDeletedOnlyIfThisProgramMadeIt(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("kept")
 
-    def run_models(self, work):
-        args = Namespace(work=work, candidates=list(holdouts.CANDIDATES), packages=None, sample=1, timing=1, seed=1,
+    def run_models(self, work, candidates=None):
+        args = Namespace(work=work, candidates=list(candidates or holdouts.CANDIDATES), packages=None, sample=1, timing=1, seed=1,
                          pool=None, keep_work=False)
         with mock.patch.dict(os.environ, {"TAGPUP_HOME": self.home}):
             holdouts.models_main(args, self.source, None, "photo_index", self.out)
@@ -521,6 +521,24 @@ class TheWorkFolderIsDeletedOnlyIfThisProgramMadeIt(unittest.TestCase):
         for path in (os.path.join(self.out, "model-x.json"), self.source, os.path.join(self.home, "machine_roots.json")):
             self.assertTrue(os.path.exists(path), path)
         self.assertEqual(["model-x.json"], os.listdir(self.out))
+
+    def test_a_candidate_the_table_of_photo_models_lacks_is_refused_before_anything_is_made(self):
+        """#1837: word_cut has no fallback for a pair the table does not hold, so the run would die on its first photo
+        with a zero-shot word, after copying the library and embedding every photo."""
+        work = os.path.join(self.base, "copy")
+        for wrong, said in (("ViT-H-14-quickgelu:dfn5b:", "tagpup/ml/photo_models.py"),
+                            ("ViT-SO400M-14-SigLIP2:webli:512", "own size only")):
+            with self.subTest(wrong=wrong), self.assertRaises(SystemExit) as refused:
+                self.run_models(work, list(holdouts.CANDIDATES) + [wrong])
+            self.assertIn(said, str(refused.exception))
+            self.assertFalse(os.path.exists(work))
+            self.assertEqual(["model-x.json"], os.listdir(self.out))
+
+    def test_the_default_candidates_are_all_pairs_the_table_holds(self):
+        from tagpup.services import settings
+        for text in holdouts.CANDIDATES:
+            model = holdouts.candidate(text)
+            self.assertIsNone(settings.photo_model_refusal(model["name"], model["pretrained"], model["size"]), text)
 
     def test_the_repository_and_a_folder_that_holds_it_are_refused(self):
         for work in (ROOT, os.path.dirname(ROOT), os.path.join(ROOT, "tests")):

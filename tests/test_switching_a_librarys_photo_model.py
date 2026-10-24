@@ -9,7 +9,9 @@ model.py). What the owner lives through:
 
 - (s) The switch in the gear: a library 40% of whose photos hold the new model's vector is refused, with the counts and
   what to do, nothing written, nor in a dry run; at 97% and at 100% it switches. SO400M with Image size still 512 (the
-  default) is refused: the model is shown photos at its own size only.
+  default) is refused: the model is shown photos at its own size only. A model name typed that the table does not hold
+  (a sibling of SO400M) is refused, saying the pairs it holds, even with every photo holding a vector under it; the page
+  is told the counts of a switch it allows (photo_vectors).
 - (u) The switch undone from History: refused while the photos added since hold the new model's vector alone, too many
   to go back (the same share), in the listing, the rehearsal and the undo alike, nothing written; allowed when they are
   few enough.
@@ -31,6 +33,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+
+import web_client  # noqa: E402
 
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -185,6 +189,36 @@ class TheSwitchWaitsForTheVectors(_Libraries):
             self.assertEqual(before, rows_of(harbour.path))
 
 
+    def test_a_model_the_table_does_not_hold_is_refused_saying_which_it_holds(self):
+        harbour = self.library("harbour.db", "Heronry", 3)
+        sibling = ("ViT-SO400M-14-SigLIP2-378", "webli")
+        key = store_embeddings.model_key(*sibling, True, 1.4, None)
+        conn = db.connect(harbour.path)
+        try:
+            for path in harbour.photos:
+                mtime, size = store_embeddings.stamp_of(path)
+                store_embeddings.put(conn, path, key, mtime, size, vector(1152, 7).tobytes())
+            conn.commit()
+        finally:
+            conn.close()
+        before = rows_of(harbour.path)
+        for apply in (False, True):
+            result = switch(harbour, {"model.name": sibling[0], "model.pretrained": sibling[1],
+                                      "model.force_image_size": ""}, apply=apply)
+            self.assertEqual("Nothing was written: ViT-SO400M-14-SigLIP2-378 (weights webli) is not a photo model TagPup "
+                             "holds the word cut of. It holds: ViT-H-14 (laion2b_s32b_b79k), ViT-SO400M-14-SigLIP2 "
+                             "(webli).", result.refused)
+            self.assertEqual(before, rows_of(harbour.path))
+
+    def test_the_page_is_told_the_counts_of_a_switch_it_is_allowed(self):
+        app, home = web_client.app_for(self, "tuner", startup="harbour.db")
+        reply = app.test_client().post("/harbour/api/settings", json={"values": TO_NEW, "acknowledged": ["clip"]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        counts = reply.get_json()["photo_vectors"]
+        self.assertEqual({"key": NEW_KEY, "holds": 0, "without": 0}, {k: counts[k] for k in ("key", "holds", "without")})
+        self.assertIn(NEW_KEY, counts["said"])
+
+
 class TheUndoOfASwitchIsASwitch(_Libraries):
     """(u) The owner switched harbour to SO400M with every photo holding both vectors, indexed photos since (under the
     new model alone), and clicks Undo on the switch in History."""
@@ -209,6 +243,11 @@ class TheUndoOfASwitchIsASwitch(_Libraries):
         self.assertEqual(said, journal_service.undo(self.harbour, self.change, apply=True).refused)
         self.assertEqual(before, rows_of(self.harbour.path), "a refused undo wrote")
         self.assertEqual(NEW[0], held(self.harbour)["model.name"])
+
+    def test_the_listing_reads_the_journal_once_for_each_row_of_history(self):
+        with mock.patch("tagpup.services.settings.journal.old_values", wraps=library_settings.journal.old_values) as read:
+            self.why_not()
+        self.assertEqual(1, read.call_count)
 
     def test_allowed_when_few_enough_hold_the_new_vector_alone(self):
         self.add_photos(self.harbour, 1, old=False, new=True)   # 1 of 31: inside 5%

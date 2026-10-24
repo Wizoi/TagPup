@@ -7,8 +7,8 @@ previously exercised only through one end-to-end CLI test with the models mocked
 Everything here runs against fakes: a stub index that returns canned neighbours and a
 stub embedder that returns fixed vectors, so the arithmetic is deterministic and no
 model is ever loaded. The constants asserted (5-year half-life, +0.20 path boost,
-0.40/0.20/0.10 consensus bands, the 0.23 zero-shot floor) are the ones documented in
-docs/SPEC_TAGPUP_CLI.md section 5.
+0.40/0.20/0.10 consensus bands, the zero-shot word cut of ViT-H-14, the stub embedder's model, which
+tagpup.ml.photo_models holds for each model) are the ones documented in docs/SPEC_TAGPUP_CLI.md section 5.
 """
 import os
 import shutil
@@ -63,8 +63,8 @@ class StubIndex:
 class StubEmbedder:
     """Records the prompts it is asked to embed, and returns an orthogonal vector."""
 
-    model_name = "stub-model"
-    pretrained = "stub-weights"
+    model_name = "ViT-H-14"
+    pretrained = "laion2b_s32b_b79k"
 
     def __init__(self):
         self.prompts = []

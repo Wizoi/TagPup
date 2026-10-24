@@ -145,6 +145,23 @@ describe("the settings dialog", () => {
     assert.ok(save().disabled, "unticking one left Save enabled");
   });
 
+  test("a switch of the photo model says what the photos hold under it before the reload", async (t) => {
+    const said = "30 of the library's 30 photos hold a vector under the new key; 0 hold none.";
+    const { window, field, save, changeButton, boxes } = await tunerWithSettings(t, { saved: {
+      success: true, changed: 1, settings: ["faces.model"], locked: true, change: 9, face_vectors: null,
+      photo_vectors: { key: "new", holds: 30, without: 0, said } } });
+    const shown = [];
+    window.alert = (text) => shown.push(text);
+    click(window, changeButton("face-model"));
+    const select = field("faces.model");
+    select.value = "scrfd-adaface";
+    select.dispatchEvent(new window.Event("change", { bubbles: true }));
+    boxes("face-model").forEach((box) => click(window, box));
+    click(window, save());
+    await flush(window, 6);
+    assert.deepEqual(shown, [said]);
+  });
+
   test("the face model is one of the choices the rules publish, locked behind its own consequences", async (t) => {
     const said = "2 of the library's 2 faces hold a vector under scrfd-adaface.";
     const { window, field, save, changeButton, boxes, posted } = await tunerWithSettings(t, { saved: {

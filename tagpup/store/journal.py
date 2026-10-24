@@ -1362,18 +1362,21 @@ def settle_once(db_path):
     return settle(db_path)
 
 
-def old_values(conn, change_ids, table, key, column):
-    """{change id: what `column` of the row `key` (a tuple) of `table` held before it} of each of `change_ids` that updated
-    it: what an undo of each would put back. One read, by the rows' index (table_name, row_key). The caller's
-    connection; reads only."""
+def old_values(conn, change_ids, table, keys, column):
+    """{change id: {key: what `column` of the row `key` (a tuple) of `table` held before it}} of each of `change_ids` that
+    updated any of `keys`: what an undo of each would put back, one read for all the keys, by the rows' index
+    (table_name, row_key). A key a change did not update is not in its dict. The caller's connection; reads only."""
     found = {}
     change_ids = list(change_ids)
+    wanted = [schema.row_key(key) for key in keys]
     for start in range(0, len(change_ids), CHUNK):
         chunk = change_ids[start:start + CHUNK]
-        found.update(conn.execute(
-            "SELECT change_id, old FROM change_rows WHERE table_name = ? AND row_key = ? AND action = 'update'"
-            " AND column_name = ? AND change_id IN (%s)" % ",".join("?" * len(chunk)),
-            [table, schema.row_key(key), column] + chunk).fetchall())
+        for change_id, row_key, old in conn.execute(
+                "SELECT change_id, row_key, old FROM change_rows WHERE table_name = ? AND row_key IN (%s)"
+                " AND action = 'update' AND column_name = ? AND change_id IN (%s)" % (
+                    ",".join("?" * len(wanted)), ",".join("?" * len(chunk))),
+                [table] + wanted + [column] + chunk).fetchall():
+            found.setdefault(change_id, {})[tuple(json.loads(row_key))] = old
     return found
 
 

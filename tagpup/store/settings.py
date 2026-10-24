@@ -15,8 +15,8 @@ TABLE = "settings"
 FACE_MODEL = "faces.model"
 
 
-def _rows(conn):
-    """{key: value} of the settings, the two that name folders (library.roots,
+def held_on(conn):
+    """{key: value} of the settings on the caller's connection (what an undo's check reads in the transaction it asks in), the two that name folders (library.roots,
     library.ignored) as this machine reads them: a library may hold a folder under a root as
     the root's row, and what is shown and compared is the native path (tagpup.store.roots).
     Their journaled values hold the row."""
@@ -35,7 +35,7 @@ def read(db_path):
     schema.ensure(db_path)
     conn = db.connect(db_path)
     try:
-        return _rows(conn)
+        return held_on(conn)
     finally:
         conn.close()
 
@@ -44,14 +44,9 @@ def read_only(db_path):
     """read(), without writing anything to the library."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        return _rows(conn)
+        return held_on(conn)
     finally:
         conn.close()
-
-
-def held_on(conn):
-    """read(), on the caller's connection: what an undo's check reads in the transaction it asks in."""
-    return _rows(conn)
 
 
 def face_model(conn):
