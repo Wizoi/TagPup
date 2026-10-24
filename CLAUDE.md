@@ -156,7 +156,8 @@ A feature is taken one at a time, its live count in the brief, planned by the ow
 first, the single place that owns each rule named), built by one worker who checks its diff against the seven conditions,
 reviewed once by each owner: it adds no debt, or it is refused. No schema work while DECISIONS 2026-10-15's note stands.
 - **A branch adds about 1,200 lines or fewer, one concern.** A larger piece is cut into merges that each leave the trunk
-  whole; a deletion is never over budget (DECISIONS 2026-10-16).
+  whole; a deletion is never over budget (DECISIONS 2026-10-16). A hook refuses a `git merge` adding over 1,200 lines
+  without an `Over budget: <reason>` line, or whose subject is only a `Worktree:` line (`.claude/hooks/merge-budget.mjs`).
 - **At most two review rounds**, the ownership question ("which single place should own this?") in the second; a round
   after it only for a finding that can change a file or lose data. A finding carries a severity: `data` (can lose or
   corrupt data), `wrong` (a wrong result the owner sees), `low`. Only `data` and `wrong` block a merge; a merge or phase-end report quotes `tools/add_findings.py --open`.
