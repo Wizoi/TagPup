@@ -32,6 +32,7 @@ from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import identify  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
+from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -81,6 +82,33 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
         # And the matching still works: each photo's face is Rowan.
         for result in results:
             self.assertIn("People/Rowan Thackeray", [t["tag"] for t in result["suggested_tags"]])
+
+    def test_three_photos_of_fifteen_neighbours_read_the_people_roots_once(self):
+        """Each neighbour of each photo asked the library which roots hold people, a connection each: 45 reads for
+        three photos of fifteen neighbours (#1822). The roots are the run's, read when the suggester is made."""
+        class Neighbours(Index):
+            def search(self, embedding, k=15):
+                return [(0.9, {"path": r"D:\Pictures\Run\n%02d.jpg" % n, "tags": ["Activity/Sailing"]})
+                        for n in range(k)]
+
+        reads = []
+        real = TagTaxonomy.people_roots
+
+        def people_roots(taxonomy):
+            reads.append(1)
+            return real(taxonomy)
+
+        with mock.patch.object(identify, "named_faces", return_value=("stamp", clustering.FaceRows(
+                [], [], np.zeros((0, 3), dtype=np.float32), None, [], []))), \
+                mock.patch.object(TagSuggester, "_tags_by_id", return_value={}), \
+                mock.patch.object(face_records, "record_detected", return_value=0), \
+                mock.patch.object(TagTaxonomy, "people_roots", people_roots):
+            run = stand_in_models.run_for(Neighbours(), FakeFaceProcessor(), dim=3).suggester
+            before = len(reads)
+            results = [run.suggest_for_photo(r"D:\Pictures\Run\%02d.jpg" % n, [1.0, 0.0, 0.0]) for n in range(3)]
+        self.assertEqual(0, len(reads) - before, "the photos' neighbours read the people roots again")
+        for result in results:
+            self.assertIn("Activity/Sailing", [t["tag"] for t in result["suggested_tags"]])
 
 
 class NamedFacesFromTheLibrary(unittest.TestCase):

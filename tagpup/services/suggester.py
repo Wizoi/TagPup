@@ -21,6 +21,7 @@ import numpy as np
 
 from tagpup.core import clustering, dates, paths, suggesting, vocabulary
 from tagpup.core.library import Library
+from tagpup.ml import photo_models
 from tagpup.services import identify
 from tagpup.services import faces as face_records
 from tagpup.services import search
@@ -168,6 +169,9 @@ class TagSuggester:
         #: is added to the library: tagpup.jobs.suggestions). What is computed stays in memory.
         self.remember = remember
         self.taxonomy = taxonomy
+        #: The roots the tree files people under (#66), read once for the run: each photo's every neighbour asked the
+        #: library again, a connection each (the module's people_roots).
+        self.face_roots = taxonomy.people_roots()
         self.embedder = embedder
         self.faces = faces
         #: The cap on the picture `faces` detects in (LibrarySettings.detect_max_side; None, the default, is none).
@@ -205,10 +209,9 @@ class TagSuggester:
         with self._people_lock:
             if self._people is None:
                 names = set()
-                face_roots = self.taxonomy.people_roots()   # the tree's (docs/findings.md, #66)
                 for path in self.taxonomy.paths:
                     parts = vocabulary.segments(path)
-                    if len(parts) >= 2 and vocabulary.key(parts[0]) in face_roots:
+                    if len(parts) >= 2 and vocabulary.key(parts[0]) in self.face_roots:
                         names.add(vocabulary.key(parts[-1]))
                 # Read when the run begins (model_for_run): a read that fails fails the run, never "nobody is known".
                 # Under the run's face model, as the photos' faces are (on_file): a switch while the run is under way
@@ -277,7 +280,7 @@ class TagSuggester:
         needed_tags = []
         # The roots the library flags as holding faces. This listed family, friends and
         # pets, and so prompted for everyone under People as a thing (#66).
-        face_roots = self.taxonomy.people_roots()
+        face_roots = self.face_roots
         for tag in self.candidate_tags:
             is_person = False
             for path in self.taxonomy.paths:
@@ -364,7 +367,7 @@ class TagSuggester:
 
             # Expand tags according to the taxonomy, leaving out the branches that hold people
             # (the tree's face roots, #66) and known people
-            face_roots = self.taxonomy.people_roots()
+            face_roots = self.face_roots
             expanded_tags = set()
             for tag in raw_tags:
                 tag_parts = vocabulary.segments(tag)
@@ -546,6 +549,7 @@ class TagSuggester:
             image_norm = np.linalg.norm(image_np)
             if image_norm > 0:
                 image_np = image_np / image_norm
+            word_cut = photo_models.word_cut(self.embedder.model_name, self.embedder.pretrained)
 
             for tag, tag_emb in active_candidates.items():
                 # Skip if this tag is a person tag (to defer entirely to face matching)
@@ -564,8 +568,8 @@ class TagSuggester:
                 # Cosine similarity
                 sim = float(np.dot(image_np, tag_np))
 
-                # Zero-shot CLIP threshold. 0.23 is a solid default for prompt-matched visual concepts
-                if sim >= 0.23:
+                # The model's word cut: its cosines are on its own scale (tagpup.ml.photo_models).
+                if sim >= word_cut:
                     # Map a person's name back to the path they are filed under, under
                     # whichever root this library uses rather than an assumed one.
                     filed = self.taxonomy.person_paths(tag)
@@ -796,4 +800,4 @@ def model_for_run(photo_index, clip, faces, configured_words, *, detect_max_side
     # Who is known, read once for the run, now: a read that fails fails the run's start, with its sentence.
     suggester.knows_named_faces()
     return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index, remember=remember),
-                           taxonomy.people_roots())
+                           suggester.face_roots)
