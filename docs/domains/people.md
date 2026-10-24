@@ -77,7 +77,7 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   grid or the person page: an old face the pass matched with nothing it found (1,195 of kr-track's, counted 2026-10-20),
   and a face in a photo the pass has not reached. A switch is refused while the latter are more than 5% of the faces
   (`services.settings.UNPASSED_SHARE_ALLOWED`) -- an undo in History that would put the new model back too, by the
-  same check (`settings.undo_refusals`, asked by `services.journal.refusals`) -- and says either way how many named faces would leave the gallery
+  same check (`settings.undo_check`, asked by `services.journal.why_not`) -- and says either way how many named faces would leave the gallery
   (`settings.change`, `details["face_vectors"]`); the consequence is stated where the owner switches (the settings
   dialog's face model group, which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
 - **The face pass names nobody (2026-10-18, owner; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY")**: the new face
@@ -91,7 +91,7 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   names the kept faces from them again. Names given by hand are cleared only when asked for by name
   (`--clear-manual-names`; `retire_faces.refusal`): the gate counts the names given by hand of the faces deleted as well as of the faces
   kept (kr-track: 3 of the faces it would delete, counted read-only 2026-10-22). The face pass's own change is not
-  undone while a retiring after it stands (`retire_faces.undo_refusals`, asked by `services.journal.refusals`): its new
+  undone while a retiring after it stands (`retire_faces.pass_check`, asked by `services.journal.why_not`): its new
   faces stand in for the ones the retiring deleted, and undone first it would leave photos with no face under the model.
   The other way round, the retiring is not undone while a photo whose faces it deleted holds a face made since, by any
   writer (`RETIRING_UNDER`): the next face pass, or Suggest, which detects again a photo the retiring left faceless
