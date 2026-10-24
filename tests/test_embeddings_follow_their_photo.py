@@ -24,6 +24,7 @@ import fake_exiftool  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.services import photos as photo_actions  # noqa: E402
+from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
 from tagpup.store import db, embeddings, photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -124,6 +125,21 @@ class Vectors(unittest.TestCase):
         self.keep(OTHER, 1.0, 1)
         photos.forget_photo(self.lib.library.path, self.photo)
         self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embeddings"))
+
+    def test_keeping_a_vector_says_whether_it_was_kept(self):
+        """A pass counts what it kept: keep said nothing, and a failed write looked like one made (#1823)."""
+        clip = mock.Mock(settings={"model_name": "ViT-T", "pretrained": "tiny", "preserve_full_frame": True,
+                                   "max_aspect_ratio": 1.4, "force_image_size": None})
+        index = PhotoIndex(self.lib.library.path)
+        index.load()
+        self.addCleanup(index.close)
+        self.assertIs(True, PhotoEmbeddings(clip, index).keep(self.photo, [0.5] * 4))
+        self.assertEqual(OTHER, PhotoEmbeddings(clip, index).model_key)
+        self.assertIsNotNone(self.stored(OTHER))
+        self.assertIs(False, PhotoEmbeddings(clip, index, remember=False).keep(self.photo, [0.5] * 4))
+        with mock.patch.object(embeddings, "put", side_effect=OSError("the disk is full")), \
+                self.assertLogs("tagpup_cli.embedder", level="WARNING"):
+            self.assertIs(False, PhotoEmbeddings(clip, index).keep(self.photo, [0.5] * 4))
 
     def test_each_model_keeps_its_own(self):
         self.keep(OTHER, 2.0, 2)

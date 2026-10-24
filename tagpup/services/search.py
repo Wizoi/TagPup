@@ -69,14 +69,17 @@ class PhotoEmbeddings:
     def keep(self, file_path, embedding, stamp=None):
         """Keep the vector in the library, stamped with `stamp`: the file's (mtime, size)
         as it was opened to be embedded, else as it is now. Taken after, a photo rotated
-        while it was embedded kept the vector from before the turn as current (#86)."""
+        while it was embedded kept the vector from before the turn as current (#86).
+
+        True when the vector was written; False when it was not -- a looking run, a file gone, no library, or a failed
+        write (logged) -- so a pass can count what it kept rather than what it tried (#1823)."""
         if not self.remember:
-            return
+            return False
         try:
             if stamp is None:
                 stamp = store_embeddings.stamp_of(file_path)
             if stamp is None or not self._library():
-                return
+                return False
 
             def store(conn):
                 store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1],
@@ -92,8 +95,10 @@ class PhotoEmbeddings:
             else:
                 store(self.photo_index.conn)
                 self.photo_index.conn.commit()
+            return True
         except Exception as e:
             logger.warning(f"Failed to write cache for {file_path}: {e}")
+            return False
 
     def of(self, file_path, force_recompute=False):
         """A photo's vector: the one kept, unless `force_recompute`; else made and kept (made(prepared))."""
