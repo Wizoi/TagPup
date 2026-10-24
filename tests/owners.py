@@ -115,10 +115,7 @@ _SCENARIO_FILES = {
     ),
     "F9": "test_roots_old_place test_roots_pinned_runs",
     "F10": "test_one_photo_whatever_its_spelling",
-    "F11": (
-        "test_index_progress_end_to_end test_new_faces_are_matched_after_an_index "
-        "test_an_index_reads_the_next_photos_ahead"
-    ),
+    "F11": "test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
