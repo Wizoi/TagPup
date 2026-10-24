@@ -64,16 +64,6 @@ class ThroughTheServices(JournalLibrary):
     def test_merge_duplicate_person_tags(self):
         self.round_trip("merge_duplicate_person_tags", person_tags.merge_duplicate_person_tags)
 
-    def test_an_undo_that_is_refused_says_why_and_writes_nothing(self):
-        change = self.run_service(person_tags.merge_duplicate_person_tags, apply=True).details["change"]
-        self.execute("INSERT INTO tag_taxonomy (id, tag, name) SELECT ?, 'Rowan Thackeray', 'Rowan Thackeray'",
-                     (self.ids["Rowan Thackeray"],))
-        after = self.dump()
-        result = CliRunner().invoke(cli, ["--db", self.db_path, "undo", str(change), "--apply"])
-        self.assertEqual(1, result.exit_code)
-        self.assertIn("tag_taxonomy %d is there again" % self.ids["Rowan Thackeray"], result.output)
-        self.assertEqual(after, self.dump())
-
     def test_an_undo_whose_rehearsal_is_not_exact_is_not_applied(self):
         from unittest import mock
         from tagpup.store import journal

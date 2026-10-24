@@ -105,10 +105,7 @@ class TheHistoryRoutes(HistoryCase):
                 self.assertIn("was made at schema", listed[third]["why_not"])
                 stamp = [c for c in listed.values() if c["operation"] in settings.STAMPS][0]
                 self.assertEqual((False, settings.NOT_UNDONE), (stamp["undoable"], stamp["why_not"]))
-                # The listing and the rehearsal agree on every change.
-                for change in listed.values():
-                    status, rehearsed = self.undo(client, change["id"], apply=False)
-                    self.assertEqual(change["undoable"], not rehearsed["refused"], (change, rehearsed))
+                # That the listing and the rehearsal agree is the undo matrix's (test_undo_after_every_later_kind).
 
     def test_a_change_there_is_not_is_refused(self):
         for kind, client, _home, _library in self.apps():

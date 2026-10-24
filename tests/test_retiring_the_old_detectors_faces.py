@@ -20,13 +20,10 @@
   where names given by hand would go unless --clear-manual-names is given; with it, one snapshot and the write, chunk by
   chunk; Ctrl+C stops it between two chunks, and so does an app started during the run, saying so; a run again finishes it
   as the same change.
-- (g) The pass's own change in History is not undone while the retiring that followed it stands (its new faces stand in
-  for the faces the retiring deleted); undone, the retiring first, then the pass.
-- (h) The other way: the retiring is not undone while a photo whose old faces it deleted holds a face made since -- by
-  the next face pass, or by Suggest, which detects again a photo the retiring left faceless and records no change: the
-  old faces would come back beside the new. Undone, the pass first, then the retiring: the photo holds its old face
-  alone. A pass of another library holding the same folder stands in the way of nothing here; a photo the sync removed
-  after the retiring makes its undo refused, nothing written.
+- (g) A pass of another library holding the same folder stands in the way of nothing for the retiring's
+  undo; a photo the sync removed after the retiring makes its undo refused, nothing written. Whether the
+  pass is undone while the retiring after it stands, and the retiring while a face was made since in a photo
+  it emptied (by the next pass or Suggest), is the undo matrix's (tests/test_undo_after_every_later_kind.py).
 
 Fictional names; a library in a home of the test's own; rows as the indexer and the pass store them.
 """
@@ -52,7 +49,6 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import face_pass  # noqa: E402
-from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import retire_faces  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
@@ -454,28 +450,6 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
 
     # ---- (g) --------------------------------------------------------------------------------------------------------
 
-    def test_the_pass_is_not_undone_while_the_retiring_after_it_stands(self):
-        retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
-        (retire_change,) = retired.changes
-        said = "change %d (retire faces) deleted the old faces this pass's new faces stand in for: undo it first" % (
-            retire_change)
-        entries = [{"id": self.pass_change, "operation": face_pass.OPERATION % NEW}]
-        self.assertEqual({self.pass_change: said}, journal_service.refusals(self.library, entries))
-        before = self.state()
-        refused = journal_service.undo(self.library, self.pass_change, apply=True)
-        self.assertEqual([said], refused.refused if isinstance(refused.refused, list) else [refused.refused])
-        self.assertEqual(before, self.state())
-
-        undone = journal_service.undo(self.library, retire_change, apply=True)
-        self.assertFalse(undone.refused, undone.refused)
-        self.assertEqual({self.pass_change: None}, journal_service.refusals(self.library, entries))
-        undone = journal_service.undo(self.library, self.pass_change, apply=True)
-        self.assertFalse(undone.refused, undone.refused)
-        self.assertEqual([], self.read("SELECT face_id FROM face_embeddings WHERE model = ?", (NEW,)))
-
-
-    # ---- (h) --------------------------------------------------------------------------------------------------------
-
     def a_photo_the_retiring_leaves_faceless(self, library=None):
         """A sixth photo of the folder, read by the index of `library` (this one unless given), whose one face the old
         detector alone found (the indexer's writer): the retiring leaves it with no face. Its path."""
@@ -519,48 +493,6 @@ class RetiringTheOldDetectorsFaces(unittest.TestCase):
                                                            (photo_id,))]
         finally:
             conn.close()
-
-    def test_the_retiring_is_not_undone_while_a_pass_after_it_made_faces_in_its_photos(self):
-        path = self.a_photo_the_retiring_leaves_faceless()
-        retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
-        (retire_change,) = retired.changes
-        self.assertEqual([], self.faces_in(self.library, path))
-        pass_change = self.a_pass_finds_a_face_in(self.library, path)
-        new_face = self.faces_in(self.library, path)
-        said = retire_faces.RETIRING_UNDER % 1
-        entries = [{"id": retire_change, "operation": OPERATION}]
-        self.assertEqual({retire_change: said}, journal_service.refusals(self.library, entries))
-        before = self.state()
-        refused = journal_service.undo(self.library, retire_change, apply=True)
-        self.assertEqual(said, refused.refused)
-        self.assertEqual((before, new_face), (self.state(), self.faces_in(self.library, path)), "the refusal wrote")
-
-        # The pass first, then the retiring: the photo holds its old face alone, no new face beside it.
-        undone = journal_service.undo(self.library, pass_change, apply=True)
-        self.assertFalse(undone.refused, undone.refused)
-        self.assertEqual({retire_change: None}, journal_service.refusals(self.library, entries))
-        undone = journal_service.undo(self.library, retire_change, apply=True)
-        self.assertFalse(undone.refused, undone.refused)
-        self.assertEqual([self.face["old, alone in its photo"]], self.faces_in(self.library, path))
-
-    def test_the_retiring_is_not_undone_while_suggest_detected_faces_in_a_photo_it_left_faceless(self):
-        path = self.a_photo_the_retiring_leaves_faceless()
-        retired = retire_faces.apply(self.library, retire_faces.plan(self.library), clear_manual_names=True)
-        (retire_change,) = retired.changes
-        self.assertEqual([], self.faces_in(self.library, path))
-        # Suggest's detection: the photo has no face, so it is looked at again; its writer records no change.
-        embedding = np.random.default_rng(9).standard_normal(512).astype(np.float32).tolist()
-        self.assertEqual(1, face_records.record_detected(
-            self.library.path, path, [{"box": [7, 7, 27, 27], "prob": 0.99, "embedding": embedding}], model=NEW))
-        new_face = self.faces_in(self.library, path)
-        said = retire_faces.RETIRING_UNDER % 1
-        entries = [{"id": retire_change, "operation": OPERATION}]
-        self.assertEqual({retire_change: said}, journal_service.refusals(self.library, entries))
-        before = self.state()
-        refused = journal_service.undo(self.library, retire_change, apply=True)
-        self.assertEqual(said, refused.refused)
-        self.assertEqual((before, new_face), (self.state(), self.faces_in(self.library, path)),
-                         "the old face came back beside Suggest's")
 
     def test_a_pass_of_another_library_holding_the_folder_stands_in_the_way_of_nothing(self):
         other = Library(self.home.library("lighthouse.db"))

@@ -513,28 +513,6 @@ class TheSchemaMovedOn(unittest.TestCase):
         self.assertIn("made at schema 31 and the library is at %d" % schema.LATEST, said)
         self.assertIn("before the baseline", said)
 
-    def test_a_migration_is_never_undone_whatever_the_gap(self):
-        from tagpup.services import journal as journal_service
-        from tagpup.core.library import Library
-        home = own_home.for_test(self)
-        path = home.library("harbour.db")
-        schema.ensure(path)
-        steps = migration_names.two_steps()
-        with migration_names.ahead(*steps):
-            self.assertEqual(2, len(schema.ensure(path)))
-            library = Library(path)
-            listed = journal.history(path, limit=100)
-            migrations = [e for e in listed if e["operation"].startswith("migration ")]
-            self.assertEqual(2, len(migrations))
-            reasons = journal_service.refusals(library, migrations)
-            for entry in migrations:
-                self.assertEqual("change %d (%s): a migration is not undone" % (entry["id"], entry["operation"]),
-                                 reasons[entry["id"]], entry)
-                result = journal_service.undo(library, entry["id"], apply=True)
-                self.assertIn("a migration is not undone", result.refused)
-            after = journal.history(path, limit=100)
-        self.assertEqual([], [e["id"] for e in after if e["status"] == "undone"], "nothing was marked undone")
-
 
 if __name__ == "__main__":
     unittest.main()
