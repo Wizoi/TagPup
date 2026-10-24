@@ -66,13 +66,17 @@ class PhotoEmbeddings:
                 logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
         return None
 
-    def keep(self, file_path, embedding, stamp=None):
+    def keep(self, file_path, embedding, stamp=None, photo_id=None):
         """Keep the vector in the library, stamped with `stamp`: the file's (mtime, size)
         as it was opened to be embedded, else as it is now. Taken after, a photo rotated
         while it was embedded kept the vector from before the turn as current (#86).
 
-        True when the vector was written; False when it was not -- a looking run, a file gone, no library, or a failed
-        write (logged) -- so a pass can count what it kept rather than what it tried (#1823)."""
+        By path, a photo with no row is given one (store.embeddings.put: Suggest's photo of a folder just added). With
+        `photo_id`, the vector is kept at that row alone, and none is made when it is gone (put_by_id): a pass over
+        the rows it read.
+
+        True when the vector was written; False when it was not -- a looking run, a file gone, no library, a row gone,
+        or a failed write (logged) -- so a pass can count what it kept rather than what it tried (#1823)."""
         if not self.remember:
             return False
         try:
@@ -81,9 +85,13 @@ class PhotoEmbeddings:
             if stamp is None or not self._library():
                 return False
 
+            vector = np.array(embedding, dtype=np.float32).tobytes()
+
             def store(conn):
-                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1],
-                                     np.array(embedding, dtype=np.float32).tobytes())
+                if photo_id is not None:
+                    return store_embeddings.put_by_id(conn, photo_id, self.model_key, stamp[0], stamp[1], vector)
+                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector)
+                return True
 
             # On a connection of its own. Every worker in the suggestion pool writes its
             # embedding here, and they were all going through the index's shared
@@ -91,11 +99,10 @@ class PhotoEmbeddings:
             # telling the loser the database was locked.
             writer = getattr(self.photo_index, "write_on_own_connection", None)
             if writer is not None:
-                writer(store, label="embedding cache for %s" % os.path.basename(file_path))
-            else:
-                store(self.photo_index.conn)
-                self.photo_index.conn.commit()
-            return True
+                return bool(writer(store, label="embedding cache for %s" % os.path.basename(file_path)))
+            kept = store(self.photo_index.conn)
+            self.photo_index.conn.commit()
+            return kept
         except Exception as e:
             logger.warning(f"Failed to write cache for {file_path}: {e}")
             return False
