@@ -5,7 +5,8 @@ or a person.
     .venv/Scripts/python.exe scripts/measure_pipeline_holdouts.py faces  --source data/photo_index.db --out <folder>
     .venv/Scripts/python.exe scripts/measure_pipeline_holdouts.py vectors --source data/photo_index.db --out <folder>
     .venv/Scripts/python.exe scripts/measure_pipeline_holdouts.py models --source data/photo_index.db --out <folder>
-        --work <folder> [--candidates model:weights:size ...] [--packages <folder>]
+        --work <folder> [--candidates model:weights:size ...] [--packages <folder>] [--pool N]
+    .venv/Scripts/python.exe scripts/measure_pipeline_holdouts.py table --source data/photo_index.db --out <folder>
 
 * `faces` (c), read-only, no model: every named face of the library (services.identify.named_faces, today's FaceNet
   vectors) is matched against the named faces of every OTHER photo -- held out by photo, never by face, so a face is
@@ -21,11 +22,15 @@ or a person.
 * `models` (b), phase 5: a copy of the library in `--work` (kept between runs, so a stopped run is taken up where it
   stopped) given every photo's vector under each candidate model (a model key of its own, in the copy only), and a
   held-out set of its photos with a tag that is not a person, weighted to many faces, scored by Suggest
-  (services.suggester, a Just look run) under each model, left out by photo and by folder, at Suggest's neighbour cut
-  and at none: precision and recall of the tags offered and of its first 1 and 5 against the photo's own tags (people
-  left out: they come from faces), the word path alone, seconds a photo, the vector's dimension, the card's memory.
+  (services.suggester, a Just look run) under each model, left out by photo and by folder, at no neighbour cut:
+  precision and recall of the tags offered (at Suggest's floor and others) and of its first 1 and 5 against the photo's
+  own tags (people left out: they come from faces), the word path alone (with its precision at each cut), seconds a
+  photo, the vector's dimension, the card's memory. Suggest's two cuts are ViT-H-14's likenesses: the table says the cut
+  each model would need to keep what the baseline's keeps (cuts_needed).
   One file a candidate in `--out`, written as it is done. SigLIP 2's tokenizer needs `transformers`, which the venv
-  does not hold: `--packages` names a folder holding it.
+  does not hold: `--packages` names a folder holding it. `--pool N`, for a smoke run: each candidate embeds only N
+  photos, the held-out ones and others drawn at random as their neighbours; the baseline's neighbours are still every
+  photo's, so a pooled run checks the harness and compares nothing.
 
 Each check that loads a model takes the card in the owner's line (tagpup.runtime), in a sandbox deleted after.
 """
@@ -195,9 +200,18 @@ CANDIDATES = (
     "ViT-SO400M-14-SigLIP2:webli:",
 )
 
-#: Suggest's own neighbour cut (suggester.SuggestionModel.suggest), and none: a cut read on one model's likenesses is
-#: not another's (phase 5 reads its own again), so every model is scored at both.
-CUTS = (0.35, 0.0)
+#: Suggest's neighbour cut and its zero-shot cut (suggester.TagSuggester.suggest_for_photo), both read on ViT-H-14's
+#: likenesses: a cut read on one model's likenesses is not another's (phase 5 reads its own again), so every model is
+#: scored with no neighbour cut, and the cut it would need is read off the held-out set (cuts_needed).
+NEIGHBOUR_CUT, WORD_CUT = 0.35, 0.23
+
+#: The floors the tags offered are scored at (Suggest's is suggesting.OFFER_A_TAG), and the word path's cuts.
+FLOORS = tuple(round(0.30 + 0.05 * n, 2) for n in range(14))
+WORD_CUTS = tuple(round(-0.20 + 0.01 * n, 2) for n in range(81))
+
+#: The percentiles the neighbours' likenesses are kept at: tenths, since Suggest's cut leaves out under 2% of the
+#: baseline's.
+PERCENTILES = np.linspace(0, 100, 1001)
 
 #: The neighbours Suggest reads (suggester.SuggestionModel.suggest).
 NEIGHBOURS = 15
@@ -289,60 +303,91 @@ def own_tags(record, taxonomy, face_roots):
 
 
 def neighbour_likeness(seen):
-    """The likeness of the nearest neighbour of each search `seen` ([[likeness]]), and the share of every neighbour
-    read at Suggest's cut or above."""
+    """The likeness of the nearest neighbour of each search `seen` ([[likeness]]), the share of every neighbour read
+    below Suggest's neighbour cut, and every neighbour's likeness at each of PERCENTILES."""
     every = [sim for sims in seen for sim in sims]
     return {"nearest": sandbox.summary([sims[0] for sims in seen if sims]),
-            "share_at_0.35": sum(1 for sim in every if sim >= 0.35) / len(every) if every else None}
+            "share_below_cut": sum(1 for sim in every if sim < NEIGHBOUR_CUT) / len(every) if every else None,
+            "percentiles": [float(v) for v in np.percentile(every, PERCENTILES)] if every else []}
 
 
 def suggest_scores(model, held, folders, truths):
     """Suggest's tags for each held-out photo of `held` [(record, vector)], left out by photo and by folder
-    (`folders`: {id: the ids of its folder}), at each of CUTS: the tags offered (SuggestionModel.offered: what the
-    panel shows and Apply All writes), its first and its first 5 by score, against `truths`; how many tags offered
-    were words CLIP was asked about (zero-shot, by the suggester's own cut) rather than neighbours'; and the
+    (`folders`: {id: the ids of its folder}), with no neighbour cut: the tags offered (SuggestionModel.offered: what
+    the panel shows and Apply All writes), and at each of FLOORS; its first and its first 5 by score, against
+    `truths`; how many tags offered were words CLIP was asked about (zero-shot) rather than neighbours'; and the
     neighbours' likenesses."""
     leaving = LeavingOut(model.suggester.index)
     model.suggester.index = leaving
     model.suggester.faces = NoFaceLooks(model.suggester.faces)
     answer = {}
     for held_out in ("by_photo", "by_folder"):
-        for cut in CUTS:
-            offered, first, top5, from_words = [], [], [], 0
-            leaving.seen = []
-            for record, vector in held:
-                leaving.left_out = frozenset([record["id"]]) if held_out == "by_photo" else folders[record["id"]]
-                found = model.suggester.suggest_for_photo(record["path"], vector, k=NEIGHBOURS, min_sim=cut,
-                                                          target_metadata=record)
-                tags, _people, _caption = model.offered(found)
-                offered.append({tag["tag"] for tag in tags})
-                words = {item["tag"] for item in found.get("suggested_tags", []) if item.get("is_new_recommendation")}
-                from_words += len(offered[-1] & words)
-                ranked = [item["tag"] for item in found.get("suggested_tags", []) if not item.get("has_face_match")]
-                first.append(set(ranked[:1]))
-                top5.append(set(ranked[:5]))
-            answer["%s, cut %.2f" % (held_out, cut)] = {
-                "offered": tag_scores(offered, truths), "top_1": tag_scores(first, truths),
-                "top_5": tag_scores(top5, truths), "offered_from_words": from_words,
-                "neighbours": neighbour_likeness(leaving.seen)}
+        offered, scored, from_words = [], [], 0
+        leaving.seen = []
+        for record, vector in held:
+            leaving.left_out = frozenset([record["id"]]) if held_out == "by_photo" else folders[record["id"]]
+            found = model.suggester.suggest_for_photo(record["path"], vector, k=NEIGHBOURS, min_sim=0.0,
+                                                      target_metadata=record)
+            tags, _people, _caption = model.offered(found)
+            offered.append({tag["tag"] for tag in tags})
+            words = {item["tag"] for item in found.get("suggested_tags", []) if item.get("is_new_recommendation")}
+            from_words += len(offered[-1] & words)
+            scored.append([(item["tag"], item["score"]) for item in found.get("suggested_tags", [])
+                           if not item.get("has_face_match")])
+        answer[held_out] = {
+            "offered": tag_scores(offered, truths),
+            "floors": {"%.2f" % floor: tag_scores([{tag for tag, score in items if score >= floor}
+                                                   for items in scored], truths) for floor in FLOORS},
+            "top_1": tag_scores([{tag for tag, _s in items[:1]} for items in scored], truths),
+            "top_5": tag_scores([{tag for tag, _s in items[:5]} for items in scored], truths),
+            "offered_from_words": from_words, "neighbours": neighbour_likeness(leaving.seen)}
     return answer
 
 
 def word_scores(model, clip, held, truths):
     """The word path alone: each of the library's tags that are not people, as CLIP's sentence for its last part
-    (suggesting.clip_prompt), ranked by likeness to each held-out photo; its first and first 5 against `truths`. No
-    cut: a ranking reads alike on any model's likenesses, where the suggester's 0.23 is today's model's."""
+    (suggesting.clip_prompt), ranked by likeness to each held-out photo; its first and first 5 against `truths`, and
+    at each of WORD_CUTS every (photo, tag) at the cut or above: how many, and how many right."""
     tags = sorted(tag for tag in model.suggester.taxonomy.paths
                   if vocabulary.segments(tag) and not _a_person(tag, model.face_roots))
     words = np.array([clip.embed_text(suggesting.clip_prompt(vocabulary.segments(tag)[-1])) for tag in tags],
                      dtype=np.float32)
     words /= np.linalg.norm(words, axis=1, keepdims=True)
-    first, top5 = [], []
-    for _record, vector in held:
-        order = np.argsort(-(words @ np.asarray(vector, dtype=np.float32)))[:5]
-        first.append({tags[order[0]]})
-        top5.append({tags[i] for i in order})
-    return {"tags": len(tags), "top_1": tag_scores(first, truths), "top_5": tag_scores(top5, truths)}
+    photos = np.array([vector for _record, vector in held], dtype=np.float32)
+    photos /= np.linalg.norm(photos, axis=1, keepdims=True)
+    likeness = photos @ words.T
+    right = np.array([[tag in truth for tag in tags] for truth in truths], dtype=bool)
+    order = np.argsort(-likeness, axis=1)[:, :5]
+    first = [{tags[row[0]]} for row in order]
+    top5 = [{tags[i] for i in row} for row in order]
+    return {"tags": len(tags), "top_1": tag_scores(first, truths), "top_5": tag_scores(top5, truths),
+            "truth": sum(len(t) for t in truths),
+            "cuts": {"%.2f" % cut: {"pairs": int((likeness >= cut).sum()), "right": int((right & (likeness >= cut)).sum())}
+                     for cut in WORD_CUTS}}
+
+
+def cuts_needed(found, baseline):
+    """The cuts the candidate `found` would need to keep what the baseline's keep, read off the held-out set (by
+    folder): the neighbour cut keeping the share of neighbours the baseline's NEIGHBOUR_CUT keeps; the offered floor
+    giving the precision the baseline's has at Suggest's floor; the word cut giving the precision the baseline's word
+    path has at WORD_CUT. None where no cut reaches it."""
+    mine, theirs = found["suggest"]["by_folder"], baseline["suggest"]["by_folder"]
+    share = theirs["neighbours"]["share_below_cut"]
+    percentiles = mine["neighbours"]["percentiles"]
+    neighbour = (float(np.interp(100 * share, PERCENTILES, percentiles)) if percentiles and share is not None
+                 else None)
+    wanted = theirs["offered"]["precision"]
+    floor = next((float(cut) for cut, got in sorted(mine["floors"].items(), key=lambda kv: float(kv[0]))
+                  if wanted is not None and got["precision"] is not None and got["precision"] >= wanted), None)
+
+    def precision(point):
+        return point["right"] / point["pairs"] if point["pairs"] else None
+    at = baseline["words"]["cuts"]["%.2f" % WORD_CUT]
+    word_wanted = precision(at)
+    word = next((float(cut) for cut, got in sorted(found["words"]["cuts"].items(), key=lambda kv: float(kv[0]))
+                 if word_wanted is not None and precision(got) is not None and precision(got) >= word_wanted), None)
+    return {"neighbour_cut": neighbour, "offered_floor": floor, "offered_precision_wanted": wanted,
+            "word_cut": word, "word_precision_wanted": word_wanted}
 
 
 def time_photos(clip, rows):
@@ -451,7 +496,7 @@ def run_candidate(runtime, library, target, model, sample, report):
     settings = candidate_settings(runtime.settings(library), model)
     key = runtime.model_key(library, settings)
     clip = runtime.clip(library, settings)
-    result = {"candidate": label_of(model), "model_key": key}
+    result = {"candidate": label_of(model), "model_key": key, "pool": len(sample["rows"])}
     index = search.PhotoIndex(target, key)
     index.open()
     embeddings = search.PhotoEmbeddings(clip, index)
@@ -513,10 +558,21 @@ def run_candidate(runtime, library, target, model, sample, report):
     return result
 
 
-def models_check(source, work, out, candidates, census, size, timing, seed, report):
+def pooled(rows, held, pool, seed):
+    """The photos a candidate embeds: every one of `rows`, or with `pool` that many, the `held` ones first and the
+    rest drawn at random from the others (their neighbours in Suggest)."""
+    if not pool:
+        return rows
+    taken = {row["id"] for row in held}
+    others = [row for row in rows if row["id"] not in taken]
+    return list(held) + random.Random(seed).sample(others, max(0, min(len(others), pool - len(held))))
+
+
+def models_check(source, work, out, candidates, census, size, timing, seed, report, pool=None):
     """(b), phase 5: the copy of the library in `work` (made once, kept between runs), and each of `candidates`
     measured by run_candidate into `out`, one file each, written as it is done: a candidate whose file is there is
-    not run again, and one that fails is reported and the next one run. `census` (rows, counts) is the source's."""
+    not run again, and one that fails is reported and the next one run. `census` (rows, counts) is the source's;
+    `pool`, the photos each candidate embeds (pooled)."""
     from tagpup.runtime import Runtime
     from tagpup.services import search
     from tagpup.services import tags as tags_service
@@ -555,7 +611,7 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
     # Each held-out photo copied where the copy's row puts it, its stamp kept: its vector is read as Suggest reads
     # one (PhotoEmbeddings.cached), the file as it was when the vector was made.
     copies = sandbox.copy_at_rows(held, placed, owner_places)
-    sample = {"rows": rows, "held": [row["id"] for row in held],
+    sample = {"rows": pooled(rows, held, pool, seed), "held": [row["id"] for row in held],
               "copies": {row["id"]: copies[row["path"]] for row in held},
               "folders": {row["id"]: frozenset(by_folder[row["folder"]]) for row in held},
               "timing": sandbox.choose_sample(rows, timing, rng=random.Random(seed))}
@@ -567,7 +623,7 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
         "held_out": len(held), "held_out_by_stratum": collections.Counter(row["stratum"] for row in held),
         "held_out_folders": len({row["folder"] for row in held}),
         "held_out_folder_photos": sandbox.summary([len(by_folder[row["folder"]]) for row in held]),
-        "timing_photos": len(sample["timing"])})
+        "timing_photos": len(sample["timing"]), "pool": len(sample["rows"])})
     report("  %d photos, %d with a tag not a person, %d held out" % (len(rows), len(eligible), len(held)))
 
     done = {}
@@ -589,23 +645,45 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
 
 
 def table(out, report):
-    """Each candidate's results in `out`, one line each, for the eye."""
+    """Each candidate's results in `out` as two Markdown tables, cost and quality, the baseline (CANDIDATES[0])
+    first: what docs/AI_PIPELINE.md, section 7, holds."""
+    found = []
     for name in sorted(os.listdir(out)):
-        if not (name.startswith("model-") and name.endswith(".json")):
-            continue
-        with open(os.path.join(out, name), encoding="utf-8") as handle:
-            found = json.load(handle)
-        scores = found["suggest"]
-        line = ["%-34s" % found["candidate"], "dim %4d" % found["dimension"],
-                "%.3f s" % found["timing"]["a_photo"]["mean"], "card +%s MiB" % found["card_mib"].get("peak_over_before")]
-        for kind in ("by_photo, cut 0.35", "by_folder, cut 0.35", "by_folder, cut 0.00"):
-            got = scores[kind]
-            line.append("%s: top1 %.3f top5 P %.3f R %.3f offered P %.3f R %.3f" % (
-                kind, got["top_1"]["precision"] or 0, got["top_5"]["precision"] or 0, got["top_5"]["recall"] or 0,
-                got["offered"]["precision"] or 0, got["offered"]["recall"] or 0))
-        line.append("words top1 %.3f top5 R %.3f" % (found["words"]["top_1"]["precision"] or 0,
-                                                     found["words"]["top_5"]["recall"] or 0))
-        report(" | ".join(line))
+        if name.startswith("model-") and name.endswith(".json"):
+            with open(os.path.join(out, name), encoding="utf-8") as handle:
+                found.append(json.load(handle))
+    first = label_of(candidate(CANDIDATES[0]))
+    found.sort(key=lambda each: each["candidate"] != first)
+    baseline = found[0] if found and found[0]["candidate"] == first else None
+
+    def number(value, form="%.3f"):
+        return "-" if value is None else form % value
+    report("| Candidate | Dim | s a photo, one at a time (read / forward) | s a photo, the pass | Card MiB over | "
+           "Pool | Held out |")
+    report("|---|---|---|---|---|---|---|")
+    for each in found:
+        timing, run = each["timing"], each["pass"]
+        report("| %s | %d | %s (%s / %s) | %s | %s | %d | %d |" % (
+            each["candidate"], each["dimension"], number(timing["a_photo"]["mean"]),
+            number(timing["decode_pad_resize"]["mean"]), number(timing["forward"]["mean"]),
+            number(run["seconds"] / run["embedded"] if run["embedded"] else None),
+            number(each["card_mib"].get("peak_over_before"), "%d"), each["pool"], each["held_out"]))
+    report("")
+    report("| Candidate | Held out by | Top 1 P | Top 5 P / R | Offered P / R (n) | Words top 1 P | Words top 5 R | "
+           "Neighbour cut | Floor | Word cut |")
+    report("|---|---|---|---|---|---|---|---|---|---|")
+    for each in found:
+        needed = cuts_needed(each, baseline) if baseline else {}
+        for held in ("by_photo", "by_folder"):
+            got = each["suggest"][held]
+            report("| %s | %s | %s | %s / %s | %s / %s (%d) | %s | %s | %s | %s | %s |" % (
+                each["candidate"], held.replace("by_", ""), number(got["top_1"]["precision"]),
+                number(got["top_5"]["precision"]), number(got["top_5"]["recall"]),
+                number(got["offered"]["precision"]), number(got["offered"]["recall"]), got["offered"]["offered"],
+                number(each["words"]["top_1"]["precision"]), number(each["words"]["top_5"]["recall"]),
+                number(needed.get("neighbour_cut")) if held == "by_folder" else "",
+                number(needed.get("offered_floor"), "%.2f") if held == "by_folder" else "",
+                number(needed.get("word_cut"), "%.2f") if held == "by_folder" else ""))
 
 
 def models_main(args, source, library, name, out):
@@ -634,7 +712,8 @@ def models_main(args, source, library, name, out):
             print("census of %s (read-only)" % name)
             census = sandbox.census(library)
             write_json(kept, census)
-        done = models_check(source, work, out, candidates, census, args.sample, args.timing, args.seed, print)
+        done = models_check(source, work, out, candidates, census, args.sample, args.timing, args.seed, print,
+                            pool=args.pool)
         print(json.dumps(done, indent=1))
         table(out, print)
     finally:
@@ -645,7 +724,7 @@ def models_main(args, source, library, name, out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("check", choices=("faces", "vectors", "models"))
+    parser.add_argument("check", choices=("faces", "vectors", "models", "table"))
     parser.add_argument("--source", required=True, help="the library, opened read-only and never written")
     parser.add_argument("--out", required=True, help="the folder for the JSON, outside the repository")
     parser.add_argument("--sample", type=int, default=200, help="vectors: photos; models: held-out photos")
@@ -653,10 +732,14 @@ def main():
     parser.add_argument("--candidates", nargs="+", default=list(CANDIDATES), help="models: model:weights:size")
     parser.add_argument("--timing", type=int, default=100, help="models: photos timed one at a time")
     parser.add_argument("--packages", help="models: a folder of packages the venv lacks (transformers)")
+    parser.add_argument("--pool", type=int, help="models: photos each candidate embeds (a smoke run), not all")
     parser.add_argument("--keep-work", action="store_true", help="models: keep the copy when every candidate is done")
     parser.add_argument("--seed", type=int, default=20261016)
     args = parser.parse_args()
     out = sandbox.outside_the_repository(args.out)
+    if args.check == "table":   # the models check's results in --out, as tables, again
+        table(out, print)
+        return
     source = os.path.abspath(args.source)
     library = Library(source)
     name = os.path.splitext(os.path.basename(source))[0]

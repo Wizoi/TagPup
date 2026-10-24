@@ -366,6 +366,37 @@ class TheOtherChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             holdouts.candidate("ViT-H-14:224")
 
+    def test_a_pool_holds_the_held_out_photos_and_neighbours_up_to_its_size(self):
+        rows = [{"id": n} for n in range(100)]
+        held = [rows[7], rows[40]]
+        pool = holdouts.pooled(rows, held, 10, seed=1)
+        self.assertEqual(10, len(pool))
+        self.assertEqual([7, 40], [row["id"] for row in pool[:2]])
+        self.assertEqual(10, len({row["id"] for row in pool}))
+        self.assertIs(rows, holdouts.pooled(rows, held, None, seed=1))
+        self.assertEqual(100, len(holdouts.pooled(rows, held, 1000, seed=1)))
+
+    def test_the_baseline_needs_suggests_own_cuts_and_a_model_with_higher_likenesses_needs_higher(self):
+        def found(shift, floors, words):
+            likeness = np.linspace(0.30, 0.90, 2001) + shift
+            return {"suggest": {"by_folder": {
+                        "neighbours": {"share_below_cut": float(np.mean(likeness < holdouts.NEIGHBOUR_CUT)),
+                                       "percentiles": list(np.percentile(likeness, holdouts.PERCENTILES))},
+                        "offered": {"precision": floors["0.60"]},
+                        "floors": {cut: {"precision": precision} for cut, precision in floors.items()}}},
+                    "words": {"cuts": {cut: {"pairs": pairs, "right": right} for cut, (pairs, right) in words.items()}}}
+        baseline = found(0.0, {"0.55": 0.7, "0.60": 0.8, "0.65": 0.9},
+                         {"0.12": (20, 9), "0.22": (10, 5), "0.23": (8, 6), "0.24": (4, 3)})
+        itself = holdouts.cuts_needed(baseline, baseline)
+        self.assertAlmostEqual(holdouts.NEIGHBOUR_CUT, itself["neighbour_cut"], places=3)
+        self.assertEqual((0.60, 0.23), (itself["offered_floor"], itself["word_cut"]))
+        higher = holdouts.cuts_needed(found(0.2, {"0.55": 0.6, "0.60": 0.7, "0.65": 0.8},
+                                            {"0.12": (8, 6), "0.23": (2, 2)}), baseline)
+        self.assertAlmostEqual(holdouts.NEIGHBOUR_CUT + 0.2, higher["neighbour_cut"], places=3)
+        self.assertEqual((0.65, 0.12), (higher["offered_floor"], higher["word_cut"]))
+        never = holdouts.cuts_needed(found(0.0, {"0.60": 0.1}, {"0.23": (0, 0)}), baseline)
+        self.assertEqual((None, None), (never["offered_floor"], never["word_cut"]))
+
     def test_tag_scores(self):
         found = holdouts.tag_scores([{"Sport", "Sport/Track"}, set()], [{"Sport"}, {"Beach"}])
         self.assertEqual((2, 1, 2), (found["offered"], found["right"], found["truth"]))
