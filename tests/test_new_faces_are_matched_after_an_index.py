@@ -339,7 +339,7 @@ class TheCliIndexByHand(unittest.TestCase):
         result = self.index(quay)
         self.assertEqual(0, result.exit_code, result.output)
         self.assertEqual(["None of the 2 new faces looks enough like anyone named to be proposed: they wait in Identify "
-                          "Faces. 1 photo(s) carry a person's keyword that no face has: %s, or %s, names them."
+                          "Faces. 1 photo(s) carry a person's keyword that no face has: %s, or %s, may name them."
                           % (indexing.CLUSTER_ELSEWHERE, indexing.CLUSTER_AGAIN)], self.said(result))
         self.assertEqual({(None, None)}, {named for (name, _box), named in self.faces().items() if name == "quay.jpg"})
 

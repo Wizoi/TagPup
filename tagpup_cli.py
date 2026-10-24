@@ -401,7 +401,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         if waited:
             console.print("Took the graphics card.", markup=False, soft_wrap=True)
         # The faces this run makes are those above this id and up to the one read before the turn is let go: every writer
-        # of faces holds the card's turn, which is the machine's (tagpup.ml.gpu), so no other run's face is between them.
+        # of faces holds the card's turn, which is the machine's (tagpup.ml.gpu), so no other run's face is between them --
+        # while the models run on the card: on a machine whose models run on the processor there is no turn (gpu.NoHold), and
+        # two runs of one library at once would count each other's faces among the new ones (nothing is written).
         after = face_records.newest_face(Library(db_path))
 
         # Generate Embeddings with incremental saving (batches of 100) to protect against halts/crashes

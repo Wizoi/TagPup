@@ -59,7 +59,7 @@ def new_faces_said(matched):
         said = ("%d of the %d new faces have a likely name: open Re-examine on their folder to confirm them."
                 % (decided, looked))
     if keyword:
-        said += (" %d photo(s) carry a person's keyword that no face has: %s, or %s, names them."
+        said += (" %d photo(s) carry a person's keyword that no face has: %s, or %s, may name them."
                  % (keyword, CLUSTER_ELSEWHERE, CLUSTER_AGAIN))
     return said
 
