@@ -3,10 +3,11 @@ a later one of another kind, then opens History and clicks Undo on the first. Fo
 library really holds in sequence, each made by its real writer, the History dialog, the rehearsal and the undo agree
 (tagpup.services.journal.why_not is their one account): the listing offers the Undo button exactly when the rehearsal and
 the undo do not refuse; a refusal writes nothing -- no row, no generation, no change's status, no file; an undo allowed
-is a round trip the rehearsal found exact; and whether it is allowed is what the owner was promised (EXPECTED_REFUSED):
-a stamp, a migration and a vectors' retiring are never undone; a face pass not while the retiring after it stands; a
-retiring not while a face was made since in a photo it emptied, nor once its vectors' model was retired; a switch of
-face model not where the switch back would be refused.
+is a round trip the rehearsal found exact; and whether it is allowed is what the owner was promised (EXPECTED_REFUSED),
+saying so in the sentence of the check that owns it: a stamp, a migration and a vectors' retiring are never undone; a
+face pass not while the retiring after it stands; a retiring not while a face was made since in a photo it emptied, nor
+once its vectors' model was retired; a switch of face model not where the switch back would be refused. A refusal that a
+later change of its own stands in the way of is lifted by undoing that one first: undone in that order, both are.
 
 The kinds: a stamp of the settings, a change of the settings, a switch of face model and a switch back, a face pass, a
 retiring of the old detector's faces and of the old model's vectors, a migration's record (a synthetic additive step,
@@ -16,10 +17,11 @@ guard (tests/test_every_change_kind_has_an_undo_check.py): dedupe_faces and merg
 holds a duplicate face or a bare person tag, counted 2026-10-24), the bulk edits, tag renames and face namings (each a
 change of photo files or of faces whose way back is the journal's alone, None in UNDO_CHECKS, as Save's is).
 
-Lifted (each scenario a pair here): test_retiring_the_old_detectors_faces' pass under a standing retiring, retiring
-after a pass, and retiring after Suggest's detection; test_retiring_the_old_models_vectors' undo of the retiring and the
-switch once the vectors are retired; test_history_routes' listing agreeing with the rehearsal; test_journal's migration
-never undone.
+Lifted (each scenario a pair here, their tests deleted): test_retiring_the_old_detectors_faces' pass under a standing
+retiring, retiring after a pass, and retiring after Suggest's detection, each undone in order; test_retiring_the_old_
+models_vectors' undo of the retirings and the switch once the vectors are retired; test_history_routes' listing agreeing
+with the rehearsal; test_journal's migration never undone; test_journal_through_the_services' refused undo writing
+nothing; test_a_switched_library_indexes_and_suggests_with_its_model's refusals of the switch.
 
 One library is built (harbour: six photos read by the index, faces as the old detector and the new model's pass left
 them, switched to the new model), copied after each earlier change, and the copy taken again for each later one, with
@@ -28,6 +30,7 @@ indexer and the pass store them.
 """
 import contextlib
 import os
+import re
 import shutil
 import sys
 import time
@@ -181,17 +184,30 @@ STEPS = {"suggest detects": suggest_detects}
 #: Kinds made again for each later kind: a rename's undo knows the renamed file by what a copy does not keep.
 MADE_EACH_TIME = {"smart rename"}
 
-#: Earlier kinds never undone, whatever came after: a stamp, a migration's record, a vectors' retiring.
-NEVER_UNDONE = {"stamp", "migration", "retire vectors"}
-#: (earlier, later) whose undo is refused, and by what: every other pair a library can hold is undone.
+
+
+def sentence(template):
+    """The words of a refusal's sentence that do not vary: its longest part between two of its formats."""
+    return max(re.split(r"%\(?\w*\)?[sd]", template), key=len).strip()
+
+
+VECTORS_RETIRED = retire_faces.VECTORS_RETIRED % FACENET
+#: Earlier kinds never undone, whatever came after -- a stamp, a migration's record, a vectors' retiring -- and what the
+#: refusal says.
+NEVER_UNDONE = {"stamp": library_settings.NOT_UNDONE, "migration": sentence(journal_service.UNDO_CHECKS["migration %d: %s"]),
+                "retire vectors": VECTORS_RETIRED}
+#: (earlier, later) whose undo is refused, and what the refusal says: every other pair a library can hold is undone.
 EXPECTED_REFUSED = {
     # A face pass, while the retiring after it stands (retire_faces.pass_check).
-    ("pass", "retire faces"), ("pass", "retire vectors"),
-    ("later pass", "retire faces"), ("later pass", "retire vectors"),
+    **{(a, b): sentence(retire_faces.PASS_STANDS_IN)
+       for a in ("pass", "later pass") for b in ("retire faces", "retire vectors")},
     # The switch, once a switch back changed its row (the journal), or no face holds FaceNet's vector (NONE_HELD).
-    ("switch", "switch back"), ("switch", "retire vectors"),
+    ("switch", "switch back"): "changed the same rows: undo it first",
+    ("switch", "retire vectors"): sentence(library_settings.NONE_HELD),
     # The retiring, once a face was made since in a photo it emptied (RETIRING_UNDER), or its vectors were retired.
-    ("retire faces", "later pass"), ("retire faces", "suggest detects"), ("retire faces", "retire vectors"),
+    ("retire faces", "later pass"): sentence(retire_faces.RETIRING_UNDER),
+    ("retire faces", "suggest detects"): sentence(retire_faces.RETIRING_UNDER),
+    ("retire faces", "retire vectors"): VECTORS_RETIRED,
 }
 
 
@@ -324,7 +340,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         return listed, rehearsed, undone
 
     def test_an_earlier_change_is_undone_after_every_later_kind_as_history_offers_it(self):
-        started, outcomes, n = time.monotonic(), {}, 0
+        started, outcomes, n, ordered = time.monotonic(), {}, 0, 0
         earlier = list(BUILT) + list(WRITERS)
         later = list(WRITERS) + list(STEPS)
         for a in earlier:
@@ -357,14 +373,25 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                         self.assertEqual((listed is None, listed is None), (not rehearsed.refused, not undone.refused),
                                          "History, the rehearsal and the undo disagree: %r, %r, %r" % (
                                              listed, rehearsed.refused, undone.refused))
-                        self.assertEqual(a in NEVER_UNDONE or (a, b) in EXPECTED_REFUSED, bool(undone.refused),
-                                         undone.refused)
+                        said = NEVER_UNDONE.get(a) or EXPECTED_REFUSED.get((a, b))
+                        self.assertEqual(bool(said), bool(undone.refused), undone.refused)
+                        if said:
+                            self.assertIn(said, " ".join(" ".join(undone.refused).split()) if isinstance(
+                                undone.refused, list) else " ".join(undone.refused.split()))
+                        if said and a not in NEVER_UNDONE and made is not True and b not in NEVER_UNDONE:
+                            # Undone in order: the later change first, then the earlier one.
+                            self.assertFalse(journal_service.undo(library, made, apply=True,
+                                                                  exiftool_path=EXIFTOOL).refused)
+                            listed, rehearsed, undone = self.undo_from_history(library, change_a)
+                            self.assertEqual((None, False), (listed, bool(undone.refused)), undone.refused)
+                            ordered += 1
                         if not undone.refused:
                             self.assertTrue(rehearsed.details["rehearsal"]["exact"], rehearsed.details["rehearsal"])
                             self.assertEqual("undone", journal.history(library.path, change_id=change_a)[0]["status"])
         made = {pair for pair, refused in outcomes.items() if refused is not None}
-        self.assertTrue(EXPECTED_REFUSED <= set(outcomes) and EXPECTED_REFUSED <= made, "a pair the promise names was not made")
+        self.assertTrue(set(EXPECTED_REFUSED) <= made, "a pair the promise names was not made")
         self.assertGreater(len(made), 100, "the pairs a library can hold were not made")
+        self.assertEqual(4, ordered, "the pairs undone in order: a pass and the retiring after it, both ways, the switch")
         self.assertLess(time.monotonic() - started, 120, "the matrix is to stay under two minutes")
 
 
