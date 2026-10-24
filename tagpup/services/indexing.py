@@ -9,16 +9,13 @@ import re
 import subprocess
 import sys
 import tempfile
-import threading
 import uuid
-from contextlib import contextmanager
 
 from tagpup.core import gpu_turns
 from tagpup.core import paths
 from tagpup.core import processes
 from tagpup.core import runs
 from tagpup.core import validation
-from tagpup.core.per_library import PerLibrary
 from tagpup.core.result import Result
 from tagpup.services import roots as roots_service
 
@@ -29,24 +26,6 @@ CLUSTER_ELSEWHERE = "%s in TagTuner's header" % CLUSTERING_BUTTON
 
 #: The command that clusters the library's faces, run by hand: an index matches only the faces it made.
 CLUSTER_AGAIN = "cluster-faces in the TagPup CLI"
-
-#: Set while a library's faces are named from tags (tagpup.web.name_faces_routes): writes of faces are refused meanwhile (tagpup.web.tuner_routes.clustering_refusal),
-#: since clustering rewrites the names they would be setting. Here, beside the one runner of the indexer, so that
-#: every way this process indexes holds it -- sync's queue (tagpup.runtime) as well as both apps' routes.
-clustering = PerLibrary(lambda library: threading.Event())
-
-
-@contextmanager
-def while_clustering(library):
-    """Refuse writes of faces in `library` while this is held. The library is named, not taken from a request,
-    so it holds on a thread no request set up."""
-    flag = clustering.of(library)
-    flag.set()
-    try:
-        yield
-    finally:
-        flag.clear()
-
 
 #: The kind of log the indexer writes, one file a run (tagpup.logs.run_log).
 INDEXER_LOG = "indexer"

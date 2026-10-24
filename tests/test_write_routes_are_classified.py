@@ -1,7 +1,7 @@
 """Every route that writes is classified against "Name faces from tags" (docs/INVARIANTS.md; Integration-and-apps review 2026-10-09, C13).
 
 While the naming job writes names the writes its plan would be written over
-are answered 409 (tagpup.web.name_faces_routes.GUARDED, and TagTuner's own through tuner_routes.clustering_refusal). The list was
+are answered 409 (tagpup.web.name_faces_routes.GUARDED, and TagTuner's own through tuner_routes.naming_refusal). The list was
 kept by hand, and four routes were missing from it. Now a new POST route fails here until it is guarded, or listed below with the
 reason it need not be. The naming apply is itself guarded against the rows it read (journal `expect` on the face's name, tag and
 exclusion and on the photo's tags, tagpup.services.faces_from_tags._edits), so a route is safe when it changes none of those, and
@@ -62,7 +62,7 @@ def rule_of(rule):
 
 
 def refuses_in_the_route(view):
-    return "clustering_refusal" in inspect.getsource(view)
+    return "naming_refusal" in inspect.getsource(view)
 
 
 class EveryWriteRouteIsClassified(unittest.TestCase):
@@ -75,7 +75,7 @@ class EveryWriteRouteIsClassified(unittest.TestCase):
                     continue
                 blueprint = rule.endpoint.split(".")[0]
                 before = {each.__name__ for each in app.before_request_funcs.get(blueprint, [])}
-                guarded = ("refuse_writes_while_clustering" in before or refuses_in_the_route(app.view_functions[rule.endpoint]))
+                guarded = ("refuse_face_writes_while_naming" in before or refuses_in_the_route(app.view_functions[rule.endpoint]))
                 found.setdefault(rule_of(rule.rule), set()).add(guarded)
         return found
 

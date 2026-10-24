@@ -4,8 +4,8 @@ Organize shows boxes over the open photo and a small panel for the one clicked: 
 name off, rule it out. These are TagTuner's own views of one face (tagpup.web.face_routes) -- the
 same service functions (tagpup.services.faces), so a face named from a box is the face TagTuner's
 grid names, and the matching a box's suggestions show is TagTuner's (`/api/face-matches`, also
-served here by face_routes). They are registered in this blueprint, which refuses them while the
-library's faces are being clustered as TagTuner's does, and is TagPup's alone.
+served here by face_routes). They are registered in this blueprint, which refuses them while names are
+given from tags as TagTuner's does, and is TagPup's alone.
 
 What the page adds is the photo's person tag: choosing a person for a face writes the tag through
 the page's own save of the photo's keywords, and then names the face here, so that the tag and the
@@ -21,7 +21,7 @@ from tagpup.web import face_routes, responses, state, tuner_routes
 logger = logging.getLogger(__name__)
 
 routes = Blueprint("photo_faces", __name__)
-routes.before_request(tuner_routes.refuse_writes_while_clustering)
+routes.before_request(tuner_routes.refuse_face_writes_while_naming)
 
 
 @routes.get("/api/photo-faces")

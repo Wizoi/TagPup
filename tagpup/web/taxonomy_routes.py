@@ -9,9 +9,9 @@ A rename or a delete rewrites photos, so what TagPup's page was last shown of a 
 no longer holds: the rewrite moves the photos and taxonomy counters, by which that cache
 lets it go (tagpup.web.tagpup_routes.FolderCache), from either app's page.
 
-A rename or a delete also writes faces' names, which cluster-faces rewrites while it
-runs. TagTuner's own writes were refused meanwhile and these were not, on either port;
-they ask the same guard now (tagpup.web.tuner_routes.clustering_refusal).
+A rename or a delete also writes faces' names, which Name faces from tags would write over
+while it writes. TagTuner's own writes were refused meanwhile and these were not, on either
+port; they ask the same guard now (tagpup.web.tuner_routes.naming_refusal).
 """
 from flask import Blueprint, jsonify, request
 
@@ -85,7 +85,7 @@ def taxonomy_delete_check():
 
 @routes.post("/api/taxonomy/delete-confirm")
 def taxonomy_delete_confirm():
-    refused = tuner_routes.clustering_refusal(state.current())
+    refused = tuner_routes.naming_refusal(state.current())
     if refused:
         return refused
     body = request.get_json(silent=True) or {}
@@ -105,7 +105,7 @@ def taxonomy_delete_confirm():
 
 @routes.post("/api/taxonomy/rename")
 def taxonomy_rename():
-    refused = tuner_routes.clustering_refusal(state.current())
+    refused = tuner_routes.naming_refusal(state.current())
     if refused:
         return refused
     body = request.get_json(silent=True) or {}

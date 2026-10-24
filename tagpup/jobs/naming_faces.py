@@ -25,17 +25,16 @@ the write is one SQLite transaction and cannot be stopped once begun; Cancel ask
 written, asked during it lets the write finish (all of it). So Cancel never leaves a half change.
 
 **One at a time.** A library has at most one of these jobs, and none while it is indexed, synced, being worked on by Suggest,
-verified or edited in bulk, or while its faces are being clustered (the flag TagTuner's writes honour); the claim is
+verified or edited in bulk; the claim is
 in the library's `job_runs` (tagpup.services.job_runs) so another process is refused too, and each phase is a run of its own
 that the Activity page lists with counts, never a name. The faces are held against writes from the Yes to the end: TagTuner's
-assignments and TagPup's face writes are refused (`hold`) while names are being given.
+assignments and TagPup's face writes are refused while names are being given (`writing`, which the web layer asks).
 
 **A restart.** The thread dies with its process: the job is gone from memory, its run is `running` and the next claim marks it
 `abandoned`. The change of step 2 either committed or did not (one transaction; the journal settles what was committed). The status of a job this process no longer knows says so, from the run.
 
 The job holds its Library, not the page's: the page may switch library or be closed and the job goes on.
 """
-import contextlib
 import logging
 import threading
 import time
@@ -115,9 +114,9 @@ def _plural(count, one, many=None):
 class Job:
     """One run of the button: what it is for, where it has got to, what it counted."""
 
-    def __init__(self, library, handle, folder, hold, only_folder=False):
+    def __init__(self, library, handle, folder, only_folder=False):
         self.library, self.handle = library, handle
-        self.folder, self.hold = folder, hold
+        self.folder = folder
         #: The plan and the apply are limited to `folder` and its subfolders (see the module's docstring).
         self.only_folder = bool(only_folder and folder is not None)
         self.cancel = threading.Event()
@@ -268,10 +267,10 @@ class Job:
                          % type(problem).__name__, what, failed=True)
 
     def run_apply(self):
-        """Phase 2's thread: the change of the names. `hold` keeps writes of faces out."""
+        """Phase 2's thread: the change of the names. Writes of faces are refused meanwhile (`writing`)."""
         what = "name faces from tags"
         try:
-            with runs.running(runs.job_tag(self.library.name, self.run_id)), self.hold():
+            with runs.running(runs.job_tag(self.library.name, self.run_id)):
                 written = 0
                 if self.planned is not None and self.planned.size:
                     if self.cancel.is_set():
@@ -380,12 +379,12 @@ def _same_scope(job, folder, only_folder):
     return not only_folder or paths.same(job.folder, folder)
 
 
-def start(library, folder=None, hold=None, busy=None, only_folder=False):
+def start(library, folder=None, busy=None, only_folder=False):
     """Begin the plan, on a thread of its own, and return the Job (its status is the page's). `folder`: the folder the page
     has open, whose faces are counted before and after. `only_folder`: and the plan and the apply are limited to it and its
-    subfolders (#994; Refused when no folder is given or the library holds no photo under it, nothing begun). `hold`: a context manager held from the Yes to the end, keeping
-    writes of faces out (the web layer's clustering flag). `busy`: a function giving the sentences for what runs in the
-    library that this module cannot see (indexing, Suggest, a sync, a Verify, the flag).
+    subfolders (#994; Refused when no folder is given or the library holds no photo under it, nothing begun). `busy`: a
+    function giving the sentences for what runs in the library that this module cannot see (indexing, Suggest, a sync, a
+    Verify).
 
     A job already waiting for its answer in the library is returned as it is (the click came again, or from another page);
     Conflict, nothing begun, when one is planning or writing, or when the library is busy (here or in another
@@ -396,7 +395,6 @@ def start(library, folder=None, hold=None, busy=None, only_folder=False):
         if folder is None:
             raise Refused("Say which folder: naming faces in one folder needs the folder the page has open.")
         folder_scope.resolve(library, folder)       # NoPhotosThere (a Refused) before any claim is taken
-    hold = hold or contextlib.nullcontext
     with _lock:
         _refuse_if_working(library)
         waiting = _waiting(library)
@@ -412,7 +410,7 @@ def start(library, folder=None, hold=None, busy=None, only_folder=False):
             if waiting is not None:
                 _give_back(library, claim)
                 return _the_waiting_one(waiting, folder, only_folder)
-            job = Job(library, claim.run_id, folder, hold, only_folder)
+            job = Job(library, claim.run_id, folder, only_folder)
             _register(library, job)
         job._record("name faces from tags: plan")
         job.thread = threading.Thread(target=job.run_plan, name="NameFaces", daemon=True)
@@ -580,7 +578,7 @@ def scope(library, folder):
 
 def writing(library):
     """Is a job of this library writing names now? What the library's other writers of faces, tags and rows wait for
-    (tagpup.web.tuner_routes.clustering_refusal): the plan was read, so a name given meanwhile would make it stale."""
+    (tagpup.web.tuner_routes.naming_refusal): the plan was read, so a name given meanwhile would make it stale."""
     with _lock:
         return any(job.state == APPLYING for job in _held(library).values())
 
