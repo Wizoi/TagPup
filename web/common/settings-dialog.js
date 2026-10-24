@@ -317,9 +317,11 @@ export function saveSettings() {
         }
         if (result.locked) {
             say('Saved. Reloading...');
-            // A switch of the face model says what the faces hold under the new one: read before the reload.
-            const vectors = result.face_vectors;
-            if (vectors && vectors.said) window.alert(vectors.said);
+            // A switch of the face or the photo model says what the faces or photos hold under the new one: read before
+            // the reload.
+            for (const vectors of [result.face_vectors, result.photo_vectors]) {
+                if (vectors && vectors.said) window.alert(vectors.said);
+            }
             window.location.reload();
             return result;
         }
