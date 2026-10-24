@@ -163,6 +163,20 @@ def switch_on(conn, model, counted=True):
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 
 
+def photo_model_refusal(name, pretrained, size=None):
+    """Why the photo model `name` with weights `pretrained`, shown photos at `size` (None: its own), cannot be scored or
+    used, or None: the pair is not in the table (tagpup.ml.photo_models, whose row carries its measured word cut) or the
+    size is forced on a model measured at its own alone. What a program that scores a model (scripts/
+    measure_pipeline_holdouts.py) asks before it starts; the gate of a switch (photo_switch_on) says it with the
+    nothing-was-written sentence."""
+    if not photo_models.holds(name, pretrained):
+        return ("%s (weights %s) is not in the table of photo models: add its row to tagpup/ml/photo_models.py, with its "
+                "measured word cut, first. The table holds: %s." % (name, pretrained, photo_models.listing()))
+    if size is not None and not photo_models.takes_a_size(name, pretrained):
+        return "%s (weights %s) is shown photos at its own size only: give its candidate no size." % (name, pretrained)
+    return None
+
+
 def photo_switch_on(conn, held, putting):
     """(refusal or None, what the photos hold or None): whether the library holding the settings `held` ({key: value})
     may be given `putting` ({key: value}) for its photo model's settings (PHOTO_MODEL). None, None when the key its

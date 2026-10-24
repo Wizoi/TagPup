@@ -856,7 +856,8 @@ column) was embedded under each candidate in a sandbox copy, so the neighbours a
 3.4 GB, SO400M 4.3 GB: counted by hand 2026-10-24, not by the script. The card column is MiB over what other programs
 held, reliable only with one candidate in a process (#1829); the results do not say how many ran in one process.
 It is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session's choice, 2026-10-24); the table shows no more than
-that.
+that. The DFN5B, SigLIP 2 B/16 and L/16 rows were measured before `models` refused a candidate the table of photo models
+does not hold (#1837); a new model's row goes into the table first.
 
 Speed and card (`table`):
 
