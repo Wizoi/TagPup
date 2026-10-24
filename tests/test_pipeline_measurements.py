@@ -453,6 +453,43 @@ class TheTableSaysWhatItPrints(unittest.TestCase):
         self.assertTrue(other.rstrip().endswith("| 2 (1) |"), other)
 
 
+class ACopyThatAPassChangedIsNotTrustedAgain(unittest.TestCase):
+    """A candidate's pass that made a row (a ghost) in the sandbox's copy stops the run and takes `copy-is-ready` away:
+    the next run copies the library again instead of scoring a candidate with a tagless extra neighbour (#1827)."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.ready = os.path.join(self.folder, "copy-is-ready")
+        with open(self.ready, "w", encoding="utf-8"):
+            pass
+        self.models = [holdouts.candidate(text) for text in holdouts.CANDIDATES[:3]]
+
+    def test_a_changed_copy_loses_its_mark_and_stops_the_run(self):
+        ran = []
+
+        def run(model):
+            ran.append(holdouts.label_of(model))
+            if len(ran) == 2:
+                raise holdouts.CopyChanged("a vector made a row")
+            return {"candidate": holdouts.label_of(model)}
+        done = holdouts.run_each(self.models, self.folder, self.ready, run, lambda _line: None)
+        self.assertFalse(os.path.exists(self.ready))
+        self.assertEqual(2, len(ran))
+        self.assertEqual(["written", "CopyChanged: a vector made a row"], list(done.values()))
+        self.assertTrue(os.path.exists(os.path.join(self.folder, holdouts.slug(self.models[0]))))
+        self.assertFalse(os.path.exists(os.path.join(self.folder, holdouts.slug(self.models[1]))))
+
+    def test_a_model_that_does_not_load_leaves_the_copy_and_the_next_one_runs(self):
+        def run(model):
+            if model is self.models[0]:
+                raise MemoryError("the card")
+            return {}
+        done = holdouts.run_each(self.models, self.folder, self.ready, run, lambda _line: None)
+        self.assertTrue(os.path.exists(self.ready))
+        self.assertEqual(["MemoryError: the card", "written", "written"], list(done.values()))
+
+
 class TheWorkFolderIsDeletedOnlyIfThisProgramMadeIt(unittest.TestCase):
     """`--work` is deleted when every candidate is done: a run given the results folder, the library's folder or the
     TagPup home would delete what it was measuring into, what it was measuring, or the owner's home."""

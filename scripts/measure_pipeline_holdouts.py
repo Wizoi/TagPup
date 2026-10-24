@@ -416,6 +416,11 @@ def time_photos(clip, rows):
             "forward": sandbox.summary(forwards), "a_photo": sandbox.summary([a + b for a, b in zip(reads, forwards)])}
 
 
+class CopyChanged(RuntimeError):
+    """A pass changed the sandbox's copy of the library (a vector made a row, or was not kept): the copy is no longer the
+    library's, and the next candidate must not be scored against it."""
+
+
 class Unreachable(Exception):
     """More of a pass's photos could not be read than UNREAD_LIMIT allows."""
 
@@ -535,11 +540,11 @@ def run_candidate(runtime, library, target, model, sample, report):
             # A vector is kept at its row by path (PhotoEmbeddings.keep): a path that matched no row would have made
             # one, and a write that failed is only logged. Either is a pass that did not do what it says.
             if index.count != len(copy_rows):
-                raise RuntimeError("the copy held %d photos and holds %d after the pass: a vector made a row"
-                                   % (len(copy_rows), index.count))
+                raise CopyChanged("the copy held %d photos and holds %d after the pass: a vector made a row"
+                                  % (len(copy_rows), index.count))
             if index.indexed != vectored + result["pass"]["embedded"]:
-                raise RuntimeError("%d vectors before, %d embedded, %d held after: a vector was not kept"
-                                   % (vectored, result["pass"]["embedded"], index.indexed))
+                raise CopyChanged("%d vectors before, %d embedded, %d held after: a vector was not kept"
+                                  % (vectored, result["pass"]["embedded"], index.indexed))
             held, unvectored = [], 0
             for record in index.records(sample["held"]):
                 kept = embeddings.cached(sample["copies"][record["id"]])
@@ -632,6 +637,15 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
         "timing_photos": len(sample["timing"]), "pool": len(sample["rows"])})
     report("  %d photos, %d with a tag not a person, %d held out" % (len(rows), len(eligible), len(held)))
 
+    return run_each(candidates, out, ready, lambda model: run_candidate(runtime, library, target, model, sample, report),
+                    report)
+
+
+def run_each(candidates, out, ready, run, report):
+    """`run(model)` for each of `candidates` that has no file in `out`, its result written as it is done: {label:
+    "written" or why not}. A model that fails to load or run is skipped and the next one run; a pass that
+    changed the copy (CopyChanged) takes `ready` away, so the next run makes the copy again instead of trusting a copy
+    with a row the library never had, and stops: the candidates after it would be scored against it."""
     done = {}
     for model in candidates:
         path = os.path.join(out, slug(model))
@@ -640,10 +654,15 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
             continue
         report("%s" % label_of(model))
         try:
-            result = run_candidate(runtime, library, target, model, sample, report)
+            result = run(model)
         except Exception as problem:   # a model that does not load, the card out of memory, a share gone
             done[label_of(model)] = "%s: %s" % (type(problem).__name__, str(problem)[:300])
             report("  skipped: %s" % done[label_of(model)])
+            if isinstance(problem, CopyChanged):
+                if os.path.exists(ready):
+                    os.remove(ready)
+                report("  the copy is not trusted: the next run makes it again; the candidates after this one wait")
+                break
             continue
         write_json(path, result)
         done[label_of(model)] = "written"
