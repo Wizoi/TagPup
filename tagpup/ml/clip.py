@@ -14,6 +14,7 @@ handing it on.
 """
 from tagpup.ml import free_device_memory, gpu, refuse_in_tests
 import contextlib
+import json
 import logging
 import threading
 
@@ -26,6 +27,61 @@ logger = logging.getLogger("tagpup_cli.embedder")
 
 #: The settings a model is made from: tagpup.services.settings.LibrarySettings.embedder's keys.
 SETTINGS = ("model_name", "pretrained", "preserve_full_frame", "max_aspect_ratio", "force_image_size")
+
+
+class HubTokenizer:
+    """The tokenizer of a model whose text side open_clip reads from a Hugging Face repository (its config's
+    text_cfg.hf_tokenizer_name: SigLIP 2), made with `tokenizers` alone from the repository's tokenizer.json, as
+    open_clip's HFTokenizer makes it with transformers.AutoTokenizer: each text cleaned by open_clip's clean function,
+    cut and padded to the model's context. The same token ids on every tag prompt of the three libraries (5,086
+    compared, 2026-10-24; requirements.txt); transformers is not a requirement. Called as open_clip's tokenizers are:
+    texts in, a LongTensor of ids out."""
+
+    def __init__(self, tokenizer_file, special_tokens_file, context_length, clean="whitespace"):
+        from tokenizers import Tokenizer
+        with open(special_tokens_file, encoding="utf-8") as handle:
+            pad = json.load(handle).get("pad_token")
+        pad = pad.get("content") if isinstance(pad, dict) else pad
+        self._tokenizer = Tokenizer.from_file(tokenizer_file)
+        pad_id = self._tokenizer.token_to_id(pad) if pad else None
+        if pad_id is None:
+            raise RuntimeError("The tokenizer in %s names no padding token TagPup can find (%r)." % (
+                tokenizer_file, pad))
+        self._tokenizer.enable_truncation(context_length)
+        self._tokenizer.enable_padding(length=context_length, pad_id=pad_id, pad_token=pad)
+        self._clean = open_clip.tokenizer.get_clean_fn(clean)
+
+    def __call__(self, texts):
+        if isinstance(texts, str):
+            texts = [texts]
+        encoded = self._tokenizer.encode_batch([self._clean(text) for text in texts])
+        return torch.tensor([entry.ids for entry in encoded], dtype=torch.long)
+
+
+def tokenizer_of(model_name):
+    """The tokenizer of the open_clip model `model_name`: a HubTokenizer when its config names a Hugging Face
+    tokenizer, read from the files open_clip's own download put in the Hugging Face cache (huggingface_hub), else
+    open_clip's own (ViT-H-14's, as before). A tokenizer argument other than `clean` is one HubTokenizer does not
+    follow: refused, with a sentence, rather than giving other token ids than the model was trained with."""
+    config = open_clip.get_model_config(model_name) or {}
+    text = config.get("text_cfg") or {}
+    repository = text.get("hf_tokenizer_name")
+    if not repository:
+        return open_clip.get_tokenizer(model_name)
+    arguments = dict(text.get("tokenizer_kwargs") or {})
+    others = sorted(set(arguments) - {"clean"})
+    if others:
+        raise RuntimeError("The tokenizer of %s takes %s, which TagPup does not follow: it would give other words "
+                           "than the model reads." % (model_name, ", ".join(others)))
+    from huggingface_hub import hf_hub_download
+    try:
+        files = [hf_hub_download(repository, name) for name in ("tokenizer.json", "special_tokens_map.json")]
+    except Exception as e:
+        logger.error("Reading the tokenizer of %s from %s failed: %s", model_name, repository, e, exc_info=True)
+        raise RuntimeError("The tokenizer of %s is not in the Hugging Face cache and could not be downloaded from %s "
+                           "(%s): connect to the internet once, or copy the cache from a machine that has it." % (
+                               model_name, repository, type(e).__name__)) from e
+    return HubTokenizer(files[0], files[1], text.get("context_length", 64), **arguments)
 
 
 class ClipModel:
@@ -89,6 +145,8 @@ class ClipModel:
 
             logger.info(f"Loading CLIP model {self.model_name} (pretrained on {self.pretrained}) on {self.device.upper()}...")
             try:
+                # First: a tokenizer whose files are missing fails before gigabytes of weights are loaded.
+                tokenizer = tokenizer_of(self.model_name)
                 kwargs = {}
                 if self.force_image_size is not None:
                     kwargs["force_image_size"] = self.force_image_size
@@ -103,12 +161,14 @@ class ClipModel:
                 model.eval()
 
                 self.preprocess = preprocess
-                self.tokenizer = open_clip.get_tokenizer(self.model_name)
+                self.tokenizer = tokenizer
                 self.model = model
                 logger.info("CLIP model loaded successfully.")
             except Exception as e:
-                logger.error(f"Failed to load CLIP model: {e}", exc_info=True)
-                raise e
+                logger.error("Failed to load CLIP model %s (%s): %s", self.model_name, self.pretrained, e,
+                             exc_info=True)
+                raise RuntimeError("The photo model %s (weights %s) could not be loaded: %s" % (
+                    self.model_name, self.pretrained, e)) from e
 
     @contextlib.contextmanager
     def _running(self):

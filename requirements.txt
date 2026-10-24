@@ -5,6 +5,9 @@ open-clip-torch
 # transformers.AutoTokenizer for every tag prompt of the three libraries (5,086 compared, 2026-10-24), without
 # transformers. 0.22.1 is the version compared.
 tokenizers==0.22.1
+# Reads SigLIP 2's tokenizer files from the Hugging Face cache (tagpup.ml.clip.tokenizer_of); open_clip's own
+# requirement, named here because TagPup imports it.
+huggingface_hub
 faiss-cpu
 pyexiftool
 rich
