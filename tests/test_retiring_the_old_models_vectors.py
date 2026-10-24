@@ -157,10 +157,6 @@ class RetiringTheOldModelsVectors(unittest.TestCase):
             conn.close()
         return change_id
 
-    def refusals(self, *change_ids):
-        operations = dict(self.read("SELECT id, operation FROM changes"))
-        return journal_service.refusals(self.library, [{"id": cid, "operation": operations[cid]} for cid in change_ids])
-
     # ---- (a) --------------------------------------------------------------------------------------------------------
 
     def test_a_face_holding_facenets_vector_alone_refuses_the_plan(self):
@@ -284,29 +280,20 @@ class RetiringTheOldModelsVectors(unittest.TestCase):
 
     # ---- (e) --------------------------------------------------------------------------------------------------------
 
-    def test_once_retired_their_undo_the_retirings_and_the_switchs_and_a_switch_back_are_refused(self):
-        retiring = self.retire_the_old_faces()
+    def test_once_retired_a_switch_back_is_refused_naming_the_snapshot(self):
+        # The undo of the retirings and of the switch, refused once the vectors are retired: the undo matrix's
+        # (tests/test_undo_after_every_later_kind.py, the pairs after "retire vectors").
+        self.retire_the_old_faces()
         self.assertEqual([("update",)], self.read("SELECT DISTINCT action FROM change_rows WHERE change_id = ?",
                                                   (self.switch_change,)))
-        self.assertEqual({retiring: None, self.switch_change: None}, self.refusals(retiring, self.switch_change),
-                         "undoable while FaceNet's vectors stand")
         retired = retire_faces.apply_vectors(self.library, retire_faces.plan_vectors(self.library))
         self.assertEqual(4, retired.deleted)
-        vectors = retired.change_id
-        listed = journal_service.history(self.library, limit=5)
-        self.assertIn(OPERATION, str(listed))
-
+        self.assertIn(OPERATION, str(journal_service.history(self.library, limit=5)))
         gone = retire_faces.VECTORS_RETIRED % FACENET
         none_held = library_settings.NONE_HELD % (5, FACENET)
-        self.assertEqual({vectors: gone, retiring: gone, self.switch_change: none_held},
-                         self.refusals(vectors, retiring, self.switch_change))
-        before = self.state()
-        for change_id, said in ((vectors, gone), (retiring, gone), (self.switch_change, none_held)):
-            for apply in (False, True):
-                refused = journal_service.undo(self.library, change_id, apply=apply)
-                self.assertEqual(said, refused.refused if isinstance(refused.refused, str) else refused.refused[0])
         self.assertIn("snapshots restore", gone)
         self.assertIn("snapshots restore", none_held)
+        before = self.state()
         back = library_settings.change(self.library, {"faces.model": FACENET}, acknowledged=["face-model"])
         self.assertEqual((0, none_held), (back.changed, back.refused))
         self.assertEqual(before, self.state(), "a refusal wrote")
