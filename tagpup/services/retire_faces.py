@@ -455,18 +455,18 @@ def retiring_check(conn, change_id, _operation, summary):
     """Why a retiring of the old detector's faces ("retire faces (<key>)"), applied, is not undone now, or None:
     - its deleted vectors (its recorded face_embeddings rows) were under a key the library now holds no vector under:
       VECTORS_RETIRED, naming the key; undone, the faces would come back holding only a vector no reader reads, and the
-      way back is the snapshot taken before (its vectors' keys read once, by the change's rows' index: 0.15 s for change
-      3247's 596,845 on photo_index, 2026-10-23);
+      way back is the snapshot taken before. They are under ONE key, read at its first recorded row
+      (journal.first_recorded_value; every row read was 0.15 s for change 3247's 596,845 on photo_index, 2026-10-23): a
+      retiring is of a library on MODEL and deletes the faces holding no vector under it, and a face holds vectors under
+      the library's models alone, which are validation.FACE_MODELS' two, so under FaceNet's;
     - a photo whose faces it deleted holds a face made since (an id above its summary's NEWEST_FACE), by any writer,
       journaled or not: RETIRING_UNDER, with how many photos; undone, the old faces would come back beside them (its
       photos read only when the library holds a face made since it).
     Asked by tagpup.services.journal.why_not (UNDO_CHECKS) after the journal's account, so only of a retiring that
     stands; the caller's connection."""
-    gone = sorted(model for model in journal.recorded_values(conn, [change_id], "face_embeddings", "delete",
-                                                               "model").get(change_id, ())
-                  if not store_faces.holds_vectors_under(conn, model))
-    if gone:
-        return VECTORS_RETIRED % gone[0]
+    model = journal.first_recorded_value(conn, change_id, "face_embeddings", "delete", "model")
+    if model is not None and not store_faces.holds_vectors_under(conn, model):
+        return VECTORS_RETIRED % model
     if store_faces.newest_id(conn) <= summary[NEWEST_FACE]:
         return None
     photos = journal.recorded_values(conn, [change_id], "faces", "delete", "photo_id").get(change_id, set())

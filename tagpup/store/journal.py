@@ -952,6 +952,20 @@ def recorded_values(conn, change_ids, table, action, column):
     return found
 
 
+def first_recorded_value(conn, change_id, table, action, column):
+    """The value of `column` in the first row of `table` change `change_id` recorded as `action` (as recorded_values),
+    or None when it recorded none: for a change whose rows of `table` all hold one value, the read that stops at its
+    first row where recorded_values reads every row of the change (a retiring's deleted vectors' key: 0.15 s for change
+    3247's 596,845 rows on photo_index, against under a millisecond, 2026-10-23). By the index of a change's rows."""
+    if action not in ("insert", "delete"):
+        raise ValueError("an insert's or a delete's values, not an %s's" % action)
+    row = conn.execute(
+        "SELECT %s FROM change_rows INDEXED BY idx_change_rows_change WHERE change_id = ? AND table_name = ?"
+        " AND action = ? AND column_name = ? LIMIT 1" % ("new" if action == "insert" else "old"),
+        (change_id, table, action, column)).fetchone()
+    return None if row is None else row[0]
+
+
 def kept_named(conn, operation):
     """[(id, summary)] of the changes called `operation` that are applied and not undone, oldest first, each summary read
     from its JSON: the caller picks among them by what the summary says (the face pass: its folder)."""
