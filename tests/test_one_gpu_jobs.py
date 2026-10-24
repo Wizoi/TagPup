@@ -207,6 +207,9 @@ class _Taxonomy:
 
 
 class _Suggester:
+    #: The roots the tree files people under, read once for the run as TagSuggester reads them (_Taxonomy's).
+    face_roots = {"people"}
+
     def __init__(self, *args, **kwargs):
         pass
 
