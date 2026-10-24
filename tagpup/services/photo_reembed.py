@@ -33,6 +33,9 @@ logger = logging.getLogger("tagpup_cli.embedder")
 #: answering, and the rest would only be counted as failed.
 UNREAD_LIMIT = 0.01
 
+#: Vectors kept a transaction: what a stop or a failure part-way keeps at most, besides the photo under way.
+BATCH = 256
+
 #: Seconds a photo, read ahead and embedded by SigLIP 2 SO400M on the owner's card (0.034 to 0.041 measured, phase 5
 #: step 2): what the dry run's estimate is made of.
 SECONDS_A_PHOTO = 0.04
@@ -66,11 +69,13 @@ def wanted(own, model):
 
 
 def _key_of(runtime, library, model):
-    settings = wanted(runtime.settings(library), model)
-    key = store_embeddings.model_key(**settings.embedder)
-    if key == runtime.model_key(library):
+    own = runtime.settings(library)
+    # The library's own model at another image size has no use: a switch is to another model, and index makes the
+    # vectors of the library's own.
+    if (own.embedder["model_name"], own.embedder["pretrained"]) == model:
         raise ValueError("%s:%s is the library's photo model already: its vectors are made by index." % model)
-    return settings, key
+    settings = wanted(own, model)
+    return settings, store_embeddings.model_key(**settings.embedder)
 
 
 def _rows(library, key):
@@ -119,7 +124,7 @@ def run(library, runtime, model, progress=None, should_stop=None, report=None):
             if todo:
                 clip.load()
             counts = embed_pass(clip, [(path, (photo_id, path)) for photo_id, path in todo], keep,
-                                progress=progress, should_stop=should_stop)
+                                progress=progress, should_stop=should_stop, batch=BATCH)
     finally:
         index.close()
     return dict(counts, key=key, held=held)
