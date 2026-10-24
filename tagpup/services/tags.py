@@ -38,6 +38,12 @@ def tree(library):
     return [dict(node, usage_count=counts.get(node["tag"], 0)) for node in taxonomy.nodes(library.path)]
 
 
+def people_roots(library):
+    """The lowercased roots `library` files people under, the one read Suggest makes (TagTaxonomy.people_roots): what
+    it leaves out of its tags. A program (scripts/) may not import the store, so it asks here."""
+    return taxonomy.TagTaxonomy(library.path).people_roots()
+
+
 def create(library, name, parent_id=None, has_face=0):
     """Add a tag to the tree: `name`, below the node `parent_id` if given, one node per
     level. Adding a tag in the tree view.

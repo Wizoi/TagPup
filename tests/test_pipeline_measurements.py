@@ -11,8 +11,11 @@ import json
 import os
 import random
 import sys
+import shutil
 import tempfile
 import unittest
+from argparse import Namespace
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -352,9 +355,50 @@ class TheOtherChecks(unittest.TestCase):
             def search(self, vector, k=15):
                 return [(1.0, {"id": 5}), (0.9, {"id": 6}), (0.8, {"id": 7})][:k]
         leaving = holdouts.LeavingOut(Index())
-        leaving.left_out = 5
+        leaving.left_out = frozenset([5])
         self.assertEqual([6, 7], [record["id"] for _sim, record in leaving.search([0], k=2)])
+        leaving.left_out = frozenset([5, 6])   # its folder: an event's photos are left out with it
+        self.assertEqual([7], [record["id"] for _sim, record in leaving.search([0], k=2)])
+        self.assertEqual([[0.9, 0.8], [0.8]], leaving.seen)
         self.assertEqual("x", leaving.db_path)
+
+    def test_a_candidate_is_model_weights_and_size(self):
+        self.assertEqual({"name": "ViT-B-16-SigLIP2", "pretrained": "webli", "size": None},
+                         holdouts.candidate("ViT-B-16-SigLIP2:webli:"))
+        self.assertEqual(224, holdouts.candidate("ViT-H-14:laion2b_s32b_b79k:224")["size"])
+        with self.assertRaises(ValueError):
+            holdouts.candidate("ViT-H-14:224")
+
+    def test_a_pool_holds_the_held_out_photos_and_neighbours_up_to_its_size(self):
+        rows = [{"id": n} for n in range(100)]
+        held = [rows[7], rows[40]]
+        pool = holdouts.pooled(rows, held, 10, seed=1)
+        self.assertEqual(10, len(pool))
+        self.assertEqual([7, 40], [row["id"] for row in pool[:2]])
+        self.assertEqual(10, len({row["id"] for row in pool}))
+        self.assertIs(rows, holdouts.pooled(rows, held, None, seed=1))
+        self.assertEqual(100, len(holdouts.pooled(rows, held, 1000, seed=1)))
+
+    def test_the_baseline_needs_suggests_own_cuts_and_a_model_with_higher_likenesses_needs_higher(self):
+        def found(shift, floors, words):
+            likeness = np.linspace(0.30, 0.90, 2001) + shift
+            return {"suggest": {"by_folder": {
+                        "neighbours": {"share_below_cut": float(np.mean(likeness < holdouts.NEIGHBOUR_CUT)),
+                                       "percentiles": list(np.percentile(likeness, holdouts.PERCENTILES))},
+                        "offered": {"precision": floors["0.60"]},
+                        "floors": {cut: {"precision": precision} for cut, precision in floors.items()}}},
+                    "words": {"cuts": {cut: {"pairs": pairs, "right": right} for cut, (pairs, right) in words.items()}}}
+        baseline = found(0.0, {"0.55": 0.7, "0.60": 0.8, "0.65": 0.9},
+                         {"0.12": (20, 9), "0.22": (10, 5), "0.23": (8, 6), "0.24": (4, 3)})
+        itself = holdouts.cuts_needed(baseline, baseline)
+        self.assertAlmostEqual(holdouts.NEIGHBOUR_CUT, itself["neighbour_cut"], places=3)
+        self.assertEqual((0.60, 0.23), (itself["offered_floor"], itself["word_cut"]))
+        higher = holdouts.cuts_needed(found(0.2, {"0.55": 0.6, "0.60": 0.7, "0.65": 0.8},
+                                            {"0.12": (8, 6), "0.23": (2, 2)}), baseline)
+        self.assertAlmostEqual(holdouts.NEIGHBOUR_CUT + 0.2, higher["neighbour_cut"], places=3)
+        self.assertEqual((0.65, 0.12), (higher["offered_floor"], higher["word_cut"]))
+        never = holdouts.cuts_needed(found(0.0, {"0.60": 0.1}, {"0.23": (0, 0)}), baseline)
+        self.assertEqual((None, None), (never["offered_floor"], never["word_cut"]))
 
     def test_tag_scores(self):
         found = holdouts.tag_scores([{"Sport", "Sport/Track"}, set()], [{"Sport"}, {"Beach"}])
@@ -365,6 +409,146 @@ class TheOtherChecks(unittest.TestCase):
     def test_a_tag_under_a_branch_of_people_is_not_scored(self):
         self.assertTrue(holdouts._a_person("People/Rowan Thackeray", {"people"}))
         self.assertFalse(holdouts._a_person("Sport/Track", {"people"}))
+
+
+class TheTableSaysWhatItPrints(unittest.TestCase):
+    """docs/AI_PIPELINE.md section 7 states only numbers a printed table holds (#1825, #1826)."""
+
+    def result(self, label, shift, word_pairs):
+        likeness = np.linspace(0.40, 0.90, 2001) + shift   # none below Suggest's 0.35: the real run's shape
+        scores = {"precision": 0.5, "recall": 0.4, "offered": 10, "right": 5, "truth": 12, "photos": 3,
+                  "photos_with_a_right_tag": 2}
+        suggest = {"offered": scores, "top_1": scores, "top_5": scores, "floors": {"0.60": scores},
+                   "neighbours": {"share_below_cut": float(np.mean(likeness < holdouts.NEIGHBOUR_CUT)),
+                                  "percentiles": list(np.percentile(likeness, holdouts.PERCENTILES))}}
+        cuts = {"%.2f" % cut: {"pairs": word_pairs if cut <= 0.40 else 0, "right": 1 if cut <= 0.40 else 0}
+                for cut in holdouts.WORD_CUTS}
+        return {"candidate": label, "dimension": 8, "pool": 5, "held_out": 3, "card_mib": {"peak_over_before": 100},
+                "timing": {"a_photo": {"mean": 0.2}, "decode_pad_resize": {"mean": 0.1}, "forward": {"mean": 0.1}},
+                "pass": {"seconds": 1.0, "embedded": 10},
+                "suggest": {"by_photo": suggest, "by_folder": suggest},
+                "words": {"top_1": scores, "top_5": scores, "cuts": cuts}}
+
+    def test_a_neighbour_cut_that_drops_nothing_says_so_and_the_word_pairs_and_folders_are_printed(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        baseline = holdouts.label_of(holdouts.candidate(holdouts.CANDIDATES[0]))
+        found = {baseline: self.result(baseline, 0.0, 0), "other": self.result("other", 0.1, 2)}
+        for label, each in found.items():
+            with open(os.path.join(folder, "model-%s.json" % label.replace(" ", "_")), "w", encoding="utf-8") as handle:
+                json.dump(each, handle)
+        with open(os.path.join(folder, "models-sample.json"), "w", encoding="utf-8") as handle:
+            json.dump({"photos_with_a_tag_not_a_person": 100, "their_folders": 7, "held_out": 3, "held_out_folders": 2},
+                      handle)
+        needed = holdouts.cuts_needed(found[baseline], found[baseline])
+        self.assertTrue(needed["neighbour_drops_nothing"])
+        self.assertAlmostEqual(0.40, needed["neighbour_cut"], places=3)
+        lines = []
+        holdouts.table(folder, lines.append)
+        text = "\n".join(lines)
+        self.assertIn("100 photos with a tag that is not a person, in 7 folders; 3 held out, in 2 folders", text)
+        self.assertIn("0.400 (least; drops nothing)", text)
+        self.assertIn("Word pairs at 0.40 or more", text)
+        other = next(line for line in lines if line.startswith("| other | folder"))
+        self.assertTrue(other.rstrip().endswith("| 2 (1) |"), other)
+
+
+class ACopyThatAPassChangedIsNotTrustedAgain(unittest.TestCase):
+    """A candidate's pass that made a row (a ghost) in the sandbox's copy stops the run and takes `copy-is-ready` away:
+    the next run copies the library again instead of scoring a candidate with a tagless extra neighbour (#1827)."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.ready = os.path.join(self.folder, "copy-is-ready")
+        with open(self.ready, "w", encoding="utf-8"):
+            pass
+        self.models = [holdouts.candidate(text) for text in holdouts.CANDIDATES[:3]]
+
+    def test_a_changed_copy_loses_its_mark_and_stops_the_run(self):
+        ran = []
+
+        def run(model):
+            ran.append(holdouts.label_of(model))
+            if len(ran) == 2:
+                raise holdouts.CopyChanged("a vector made a row")
+            return {"candidate": holdouts.label_of(model)}
+        done = holdouts.run_each(self.models, self.folder, self.ready, run, lambda _line: None)
+        self.assertFalse(os.path.exists(self.ready))
+        self.assertEqual(2, len(ran))
+        self.assertEqual(["written", "CopyChanged: a vector made a row"], list(done.values()))
+        self.assertTrue(os.path.exists(os.path.join(self.folder, holdouts.slug(self.models[0]))))
+        self.assertFalse(os.path.exists(os.path.join(self.folder, holdouts.slug(self.models[1]))))
+
+    def test_a_model_that_does_not_load_leaves_the_copy_and_the_next_one_runs(self):
+        def run(model):
+            if model is self.models[0]:
+                raise MemoryError("the card")
+            return {}
+        done = holdouts.run_each(self.models, self.folder, self.ready, run, lambda _line: None)
+        self.assertTrue(os.path.exists(self.ready))
+        self.assertEqual(["MemoryError: the card", "written", "written"], list(done.values()))
+
+
+class TheWorkFolderIsDeletedOnlyIfThisProgramMadeIt(unittest.TestCase):
+    """`--work` is deleted when every candidate is done: a run given the results folder, the library's folder or the
+    TagPup home would delete what it was measuring into, what it was measuring, or the owner's home."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.base, True)
+        self.out = os.path.join(self.base, "results")
+        self.library_folder = os.path.join(self.base, "libraries")
+        self.home = os.path.join(self.base, "home")
+        for folder in (self.out, self.library_folder, self.home):
+            os.makedirs(folder)
+        self.source = os.path.join(self.library_folder, "photo_index.db")
+        for path in (os.path.join(self.out, "model-x.json"), self.source, os.path.join(self.home, "machine_roots.json")):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("kept")
+
+    def run_models(self, work):
+        args = Namespace(work=work, candidates=list(holdouts.CANDIDATES), packages=None, sample=1, timing=1, seed=1,
+                         pool=None, keep_work=False)
+        with mock.patch.dict(os.environ, {"TAGPUP_HOME": self.home}):
+            holdouts.models_main(args, self.source, None, "photo_index", self.out)
+
+    def test_a_work_folder_that_is_or_holds_what_the_run_keeps_is_refused_and_nothing_is_deleted(self):
+        for work in (self.out, self.library_folder, self.home, self.base,
+                     os.path.join(self.out, "inside"), os.path.join(self.home, "data")):
+            with self.subTest(work=work), self.assertRaises(SystemExit):
+                self.run_models(work)
+        for path in (os.path.join(self.out, "model-x.json"), self.source, os.path.join(self.home, "machine_roots.json")):
+            self.assertTrue(os.path.exists(path), path)
+        self.assertEqual(["model-x.json"], os.listdir(self.out))
+
+    def test_the_repository_and_a_folder_that_holds_it_are_refused(self):
+        for work in (ROOT, os.path.dirname(ROOT), os.path.join(ROOT, "tests")):
+            with self.subTest(work=work), self.assertRaises(SystemExit):
+                self.run_models(work)
+
+    def test_a_folder_with_files_this_program_did_not_put_there_is_refused_and_kept(self):
+        work = os.path.join(self.base, "somebody's")
+        os.makedirs(work)
+        with open(os.path.join(work, "wedding.jpg"), "w", encoding="utf-8") as handle:
+            handle.write("kept")
+        with self.assertRaises(SystemExit):
+            self.run_models(work)
+        self.assertTrue(os.path.exists(os.path.join(work, "wedding.jpg")))
+        self.assertIn("kept", holdouts.remove_work(work))
+        self.assertTrue(os.path.exists(os.path.join(work, "wedding.jpg")))
+
+    def test_a_folder_it_made_is_taken_up_again_and_deleted_at_the_end(self):
+        work = os.path.join(self.base, "copy")
+        for _round in range(2):   # a stopped run is taken up where it stopped
+            holdouts.claim_work_folder(work, self.source, self.out)
+        self.assertTrue(os.path.exists(os.path.join(work, holdouts.WORK_MARKER)))
+        self.assertIn("deleted: True", holdouts.remove_work(work))
+        self.assertFalse(os.path.exists(work))
+        empty = os.path.join(self.base, "empty")
+        os.makedirs(empty)
+        holdouts.claim_work_folder(empty, self.source, self.out)   # empty: taken and marked
+        self.assertTrue(os.path.exists(os.path.join(empty, holdouts.WORK_MARKER)))
 
 
 if __name__ == "__main__":
