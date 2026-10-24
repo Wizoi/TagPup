@@ -69,7 +69,7 @@ from tagpup.core.result import Conflict, Refused, Result
 from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names, shares
 from tagpup.services import batches, face_batch, rotation
 from tagpup.services import roots as roots_service
-from tagpup.store import db, derived, embeddings, file_journal, journal, photos, schema
+from tagpup.store import db, derived, embeddings, file_journal, photos, schema
 
 logger = logging.getLogger(__name__)
 
@@ -998,17 +998,22 @@ def writes_files(library, change_id):
     return file_journal.writes_files(library.path, change_id)
 
 
-def _undoable(library, change_id, exiftool_path):
+def _undoable(library, change_id, exiftool_path, check):
     """(the change, [(file, None)] it can put back, [(file, why)] it cannot), reading every
-    file it left done; or (None, why it cannot be undone at all, None)."""
+    file it left done; or (None, why it cannot be undone at all, None). `check(conn,
+    change_id)` is the one account of whether it may be undone now
+    (tagpup.services.journal.why_not: a newer change of the same files among it), asked on
+    a read-only connection, once, before anything is written."""
     change = file_journal.change(library.path, change_id)
     if change is None:
         return None, "there is no change %d" % change_id, None
-    # The journal's one account of what may be undone: a newer change of the same files
-    # in the way among it (tagpup.store.journal.refusal).
-    reasons = journal.refusals(library.path, [change_id]).get(change_id)
-    if reasons:
-        return None, "; ".join(reasons), None
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        why = check(conn, change_id)
+    finally:
+        conn.close()
+    if why:
+        return None, why, None
     done = [row for row in file_journal.files_of(library.path, change_id) if row.state == "done"]
     ready, refused = [], []
     renames = [row for row in done if row.is_rename]
@@ -1043,13 +1048,14 @@ def _undoable(library, change_id, exiftool_path):
 
 
 @_exclusive
-def rehearse_undo(library, change_id, exiftool_path):
+def rehearse_undo(library, change_id, exiftool_path, check):
     """What undoing change `change_id` would do, reading every file and writing none. A
     Result like tagpup.services.journal.rehearse's: details["rehearsal"] has `rows` (the
     files it would put back), `exact` (none would be refused), `differences` (each file
-    it would refuse, named, and why), and `files`."""
+    it would refuse, named, and why), and `files`. Refused out of hand when `check` says
+    so (_undoable)."""
     result = Result(details={"dry_run": True, "change": change_id, "files": True})
-    change, ready, refused = _undoable(library, change_id, exiftool_path)
+    change, ready, refused = _undoable(library, change_id, exiftool_path, check)
     if change is None:
         result.refuse(ready)
         result.details["rehearsal"] = {"refused": ready, "rows": 0, "changed": 0, "exact": False,
@@ -1068,17 +1074,18 @@ def rehearse_undo(library, change_id, exiftool_path):
 
 
 @_exclusive
-def undo(library, change_id, exiftool_path, apply=False):
+def undo(library, change_id, exiftool_path, check, apply=False):
     """Undo change `change_id`: a rehearsal unless `apply` (rehearse_undo). Applied, each
     file that still holds what the change left is written back to what it held, its row
     following, through the same states; each that does not is refused, named in the
-    Result's errors, and never overwritten. `changed` is the files put back."""
-    rehearsal = rehearse_undo(library, change_id, exiftool_path)
+    Result's errors, and never overwritten. `changed` is the files put back. `check` is
+    asked before anything is written (_undoable)."""
+    rehearsal = rehearse_undo(library, change_id, exiftool_path, check)
     if not apply or rehearsal.refused:
         return rehearsal
     result = Result(attempted=rehearsal.attempted, details={"dry_run": False, "change": change_id, "files": True})
     schema.ensure(library.path)
-    change, ready, refused = _undoable(library, change_id, exiftool_path)
+    change, ready, refused = _undoable(library, change_id, exiftool_path, check)
     if change is None:
         result.refuse(ready)
         return result

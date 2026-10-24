@@ -82,7 +82,16 @@ NONE_HELD = ("Nothing was written: none of the library's %d faces holds a vector
              "taken before they were retired holds them (TagPup CLI: snapshots list, snapshots restore).")
 
 
-def switch_to(library, model, counted=True):
+def switch_to(library, model):
+    """switch_on, on a read-only connection of `library`'s own: what settings.change and a retiring's plan ask."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return switch_on(conn, model)
+    finally:
+        conn.close()
+
+
+def switch_on(conn, model, counted=True):
     """(refusal or None, what the faces hold under `model`): whether the library may be switched to the face model `model`
     (UNPASSED_SHARE_ALLOWED), and one sentence saying how many of its faces hold a vector under it and how many named
     faces hold none, said either way. FaceNet, which made every face the libraries hold before the new model's pass, is refused only
@@ -93,18 +102,14 @@ def switch_to(library, model, counted=True):
     tagpup.store.faces.vector_counts and, for a switch to another model, pass_counts. Whether a face holds a FaceNet vector
     is asked first (holds_vectors_under, 0.02 s on photo_index against vector_counts' 0.35 s, 2026-10-23): with
     `counted` False (the undo's check, which says only the refusal) a switch back it allows reads no count and
-    returns {} for what the faces hold."""
+    returns {} for what the faces hold. The caller's connection: an undo asks it inside its write (undo_check)."""
     back = model == validation.MTCNN_FACENET
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        holds = back and store_faces.holds_vectors_under(conn, model)
-        if holds and not counted:
-            return None, {}
-        held = store_faces.vector_counts(conn, model)
-        passed = held["faces"] and not back
-        not_passed = store_faces.pass_counts(conn, validation.MTCNN_FACENET, model)["not_passed"] if passed else 0
-    finally:
-        conn.close()
+    holds = back and store_faces.holds_vectors_under(conn, model)
+    if holds and not counted:
+        return None, {}
+    held = store_faces.vector_counts(conn, model)
+    passed = held["faces"] and not back
+    not_passed = store_faces.pass_counts(conn, validation.MTCNN_FACENET, model)["not_passed"] if passed else 0
     held["not_passed"] = not_passed
     if not held["faces"]:
         return None, held
@@ -132,35 +137,22 @@ def switch_to(library, model, counted=True):
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 
 
-def undo_refusals(library, change_ids):
-    """{change id: why it is not undone now} of each of `change_ids` whose undo would put back a face model (faces.model)
-    the library may not be switched to now (switch_to, the check settings.change makes): an undo of a switch back to
-    FaceNet, once faces were added that hold FaceNet's vector alone; an undo putting FaceNet back once no face holds its
-    vector (its vectors retired). A change that inserted the faces.model row (a library stamped before it was a setting:
-    photo_index's switch, change 3244) puts the default back, undone: the row goes. The refusal is the switch's own
-    sentence and counts. Reads only: the journal's old values and inserted keys, one read each; each model checked once
-    (a switch back to FaceNet a face holds a vector under reads one row of the key's index, switch_to(counted=False);
-    refused, the faces are counted for the sentence)."""
-    change_ids = list(change_ids)
-    if not change_ids:
-        return {}
-    restored = journal.old_values(library.path, change_ids, store_settings.TABLE, (FACE_MODEL,), "value")
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        inserted = journal.recorded_values(conn, change_ids, store_settings.TABLE, "insert", "key")
-    finally:
-        conn.close()
-    for change_id, keys in inserted.items():
-        if FACE_MODEL in keys:
-            restored[change_id] = DEFAULTS[FACE_MODEL]
-    checked, reasons = {}, {}
-    for change_id, model in restored.items():
-        model = _trim(model)
-        if model not in checked:
-            checked[model] = switch_to(library, model, counted=False)[0]
-        if checked[model]:
-            reasons[change_id] = checked[model]
-    return reasons
+def undo_check(conn, change_id, _operation, _summary):
+    """Why change `change_id` of the settings (CHANGE) is not undone now, or None: its undo would put back a face model
+    (faces.model) the library may not be switched to now -- the way forward's own check (switch_on), asked of the model
+    the way back puts back: an undo of a switch back to FaceNet, once faces were added that hold FaceNet's vector alone;
+    an undo putting FaceNet back once no face holds its vector (its vectors retired). A change that inserted the
+    faces.model row (a library stamped before it was a setting: photo_index's switch, change 3244) puts the default back,
+    undone: the row goes. The refusal is the switch's own sentence and counts. Asked by tagpup.services.journal.why_not
+    (UNDO_CHECKS) on the caller's connection, inside an undo's write; reads the journal's old value and inserted key by
+    the change's rows' index, and a switch back to FaceNet a face holds a vector under one row of the key's index
+    (switch_on(counted=False); refused, the faces are counted for the sentence)."""
+    model = journal.old_values(conn, [change_id], store_settings.TABLE, (FACE_MODEL,), "value").get(change_id)
+    if FACE_MODEL in journal.recorded_values(conn, [change_id], store_settings.TABLE, "insert", "key").get(change_id, ()):
+        model = DEFAULTS[FACE_MODEL]
+    if model is None:
+        return None
+    return switch_on(conn, _trim(model), counted=False)[0]
 
 
 def model_alone(model):

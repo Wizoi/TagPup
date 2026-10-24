@@ -21,6 +21,8 @@ from face_rows import FACENET, add_face, person_of  # noqa: E402
 from stand_in_models import NewFaces  # noqa: E402
 
 from tagpup.services import face_pass  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -335,7 +337,7 @@ class FacePass(unittest.TestCase):
         store_faces.name(conn, [old[0]], "Rowan Thackeray")
         conn.commit()
         conn.close()
-        self.assertEqual([], journal.refusals(self.db_path, [change_id])[change_id])
+        self.assertIsNone(journal_service.refusals(Library(self.db_path), [{"id": change_id}])[change_id])
         conn = db.connect(self.db_path)
         store_faces.name(conn, [new[0]], "Rowan Thackeray")
         conn.commit()

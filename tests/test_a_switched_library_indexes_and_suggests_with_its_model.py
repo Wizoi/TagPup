@@ -409,7 +409,7 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         listed = self.client.get("/lakeside/api/history").get_json()["changes"]
         [entry] = [entry for entry in listed if entry["id"] == switched["change"]]
         self.assertTrue(entry["undoable"], entry)
-        self.assertEqual({}, library_settings.undo_refusals(self.library, [switched["change"]]))
+        self.assertEqual({switched["change"]: None}, journal_service.refusals(self.library, [{"id": switched["change"]}]))
         self.assertEqual(1, self.undo(switched["change"])["changed"])
         self.assertEqual([], self.read(held))
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
@@ -419,7 +419,7 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         self.assertEqual([("insert",)], self.read("SELECT DISTINCT action FROM change_rows WHERE change_id = ?", again["change"]))
         self.assertEqual(2, retire_faces.apply_vectors(self.library, retire_faces.plan_vectors(self.library)).deleted)
         said = library_settings.NONE_HELD % (2, FACENET)
-        self.assertEqual({again["change"]: said}, library_settings.undo_refusals(self.library, [again["change"]]))
+        self.assertEqual({again["change"]: said}, journal_service.refusals(self.library, [{"id": again["change"]}]))
         listed = self.client.get("/lakeside/api/history").get_json()["changes"]
         [entry] = [entry for entry in listed if entry["id"] == again["change"]]
         self.assertFalse(entry["undoable"], entry)
@@ -444,8 +444,8 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        self.assertIn(back["change"], library_settings.undo_refusals(self.library, [back["change"]]),
-                      "the case is not one the switch's check refuses")
+        self.assertTrue(journal_service.refusals(self.library, [{"id": back["change"]}])[back["change"]],
+                        "the case is not one the switch's check refuses")
         reply = self.client.post("/lakeside/api/history/%d/undo" % back["change"], json={})
         self.assertEqual(400, reply.status_code, reply.data)
         refused = reply.get_json()["refused"]

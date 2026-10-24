@@ -6,7 +6,7 @@ Every bulk edit, file write and settings change is a change of the library's jou
 (tagpup.services.journal), and until now only the CLI and the MCP server could list or
 undo one. GET lists the library the URL names' last changes, newest first: what each
 was, when, what it touched by count, and whether it can be undone -- or why not, as the
-journal's refusal says it (tagpup.services.journal.refusals). No values are
+journal's one account says it (tagpup.services.journal.why_not, on every entry). No values are
 sent -- a change's rows can name people -- and the summary holds counts only. POST
 rehearses the undo of one (`apply` false: nothing is written, and the answer says what
 would be put back and what refused) or makes it (`apply` true): a change of rows only
@@ -31,10 +31,12 @@ LIMIT = 20
 MOST = 100
 
 
-def _listed(entry, why_not):
+def _listed(entry):
     """An entry as the dialog lists it: offered to be undone unless the journal says why
-    not (journal_service.refusals, the account the rehearsal refuses by). A change of
-    files whose files have changed since is still offered; its rehearsal reads them."""
+    not (its `why_not`, journal_service.why_not: the account the rehearsal and the undo
+    refuse by). A change of files whose files have changed since is still offered; its
+    rehearsal reads them."""
+    why_not = entry["why_not"]
     return {"id": entry["id"], "operation": entry["operation"], "status": entry["status"],
             "created": entry["created"], "applied": entry["applied"], "undone": entry["undone"],
             "summary": entry["summary"], "rows": entry["rows"], "files": entry["files"],
@@ -50,11 +52,10 @@ def library_history():
         return responses.error(400, "Say how many changes to list as a number: ?limit=20.")
     try:
         found = journal_service.history(library, limit=max(1, min(limit, MOST)))
-        why_not = journal_service.refusals(library, found["changes"])
     except Exception as e:
         return responses.error(500, str(e))
     return jsonify({"library": library.name,
-                    "changes": [_listed(entry, why_not.get(entry["id"])) for entry in found["changes"]]})
+                    "changes": [_listed(entry) for entry in found["changes"]]})
 
 
 def _answer(result, change_id):
