@@ -205,7 +205,7 @@ describe("Re-examine this folder", () => {
   test("a refusal from the server is shown, and the button comes back", async (t) => {
     const s = server();
     s.first("/api/folder/automatch",
-      { success: false, error: "The server is clustering faces; this waits until it finishes." }, { status: 409 });
+      { success: false, error: "Names are being given from tags; this waits until it finishes." }, { status: 409 });
     const ctx = await loadApp("tagtuner", { t, url: "http://localhost:8080/kr-track/?mode=folder-match", server: s });
     const alerts = [];
     ctx.window.alert = (text) => alerts.push(text);
@@ -215,7 +215,7 @@ describe("Re-examine this folder", () => {
     button.click();
     await flush(ctx.window, 6);
     assert.equal(alerts.length, 1);
-    assert.match(alerts[0], /clustering/);
+    assert.match(alerts[0], /Names are being given from tags/);
     assert.equal(button.disabled, false);
   });
 });

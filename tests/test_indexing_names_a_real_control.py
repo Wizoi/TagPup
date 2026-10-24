@@ -1,4 +1,4 @@
-"""Adding a folder names the control that clusters faces, and that control exists.
+"""Adding a folder names the control that names faces from tags, and that control exists.
 
 The messages told the owner to "run Recluster". No page has had a Recluster button since
 TagTuner lost the route no page called (docs/findings.md, #8 and #22). Faces are named from
@@ -8,34 +8,22 @@ TagPup's folder view (#789), or by `tagpup_cli.py faces-from-tags` and `cluster-
 import os
 import re
 import sys
-import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 
-from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
-
-
-def finished(returncode, lines=("done\n",)):
-    proc = MagicMock()
-    proc.returncode = returncode
-    proc.stdout.readline.side_effect = list(lines) + [""]
-    return proc
 
 
 class AddingAFolderNamesARealControl(unittest.TestCase):
     def messages(self):
-        """What adding a folder says when its index recorded nothing, so faces were not clustered: it offers to name
-        them from the photos' tags. (A clustering that failed names the command that clusters again:
-        test_an_index_is_followed_by_clustering.)"""
-        with tempfile.TemporaryDirectory() as folder:
-            library = Library(os.path.join(folder, "library.db"))
-            with patch("subprocess.Popen", side_effect=[finished(0)]):
-                indexed = indexing.index_folder(library, folder, WORKSPACE_DIR)
-        return [indexed.details["message"]]
+        """What adding a folder says of the faces it made when their photos carry a person's keyword that no face has:
+        it offers to name them from the photos' tags (indexing.new_faces_said; the whole run:
+        test_new_faces_are_matched_after_an_index)."""
+        return [indexing.new_faces_said(Result(attempted=3, details={"faces": decided, "keyword_photos": 2}))
+                for decided in (0, 1)]
 
     def test_no_message_names_a_button_that_is_gone(self):
         for message in self.messages():

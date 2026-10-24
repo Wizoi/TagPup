@@ -30,7 +30,6 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
-from tagpup.services import indexing  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 FACE_DIM = 512
@@ -69,9 +68,8 @@ class TunerAPITestBase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagtuner_api_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
-        # What the server keeps of the library outlives the rows: a cached grid, the
-        # clustering flag or the index queue an earlier test left would be served to
-        # this one.
+        # What the server keeps of the library outlives the rows: a cached grid or the
+        # index queue an earlier test left would be served to this one.
         tuner_client.forget(self.TEST_DB)
         self.requests = tuner_client.Requests(self.app)
         conn = db.connect(self.TEST_DB)
@@ -743,22 +741,6 @@ class TestIdentifyFacesQueue(TunerAPITestBase):
         self.post("/api/face/match", {"face_id": face_id, "person_name": "Jane Doe"})
         after = {e["name"] for e in self.get("/api/unmatched-faces/people")}
         self.assertNotEqual(before, after, "the queue served a stale answer after a match")
-
-
-class TestClusteringLock(TunerAPITestBase):
-    # Clustering runs from the index queue (and the runner and CLI); the Recluster
-    # route that also started it was never called by a page, and is gone.
-    def test_writes_are_rejected_while_clustering_runs(self):
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
-        face_id = self.add_face(photo, unit_vector(99), name="Jane Doe")
-
-        being_clustered = indexing.clustering.of(Library(self.TEST_DB))
-        being_clustered.set()
-        try:
-            status, _ = self.post("/api/face/unmatch", {"face_id": face_id})
-            self.assertEqual(status, 409)
-        finally:
-            being_clustered.clear()
 
 
 class TestFolderQueue(TunerAPITestBase):

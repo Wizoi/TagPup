@@ -362,8 +362,38 @@ def remove_folder(library, folder):
     return result
 
 
-def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
-    """Automatch the unnamed faces in a photo, or under a folder. A face is given the name of the named
+def newest_face(library):
+    """The highest id a face of `library` holds now (tagpup.store.faces.newest_id), read on a read-only connection: what the
+    CLI's index reads as its turn on the graphics card begins and again before it lets it go, the bounds of the faces it
+    made (automatch_new)."""
+    _library_there(library)
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return faces.newest_id(conn)
+    finally:
+        conn.close()
+
+
+def automatch_new(library, after, upto):
+    """What Re-examine would name among the faces whose ids are above `after` and at most `upto` (newest_face, read as an
+    index began and as it ended: the faces that index made), decided by Re-examine's own matcher against the faces a
+    person decided (identify.decided_faces), and written nowhere: no face, no row, no file (owner, DECISIONS 2026-10-23).
+    The cut is the library's face model's (clustering.Cuts.names_unasked).
+
+    `attempted`: the new faces looked at; details as _automatch's rehearsed (`faces`, the faces it would name), and
+    `keyword_photos`: how many of those faces' photos carry a person's keyword that no face of theirs has
+    (tagpup.store.face_tags.plan, its photos to be named), whom Name faces from tags or cluster-faces names."""
+    result = _automatch(library, lambda: identify.decided_faces(library)[1], ids=(after, upto), rehearse=True)
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        result.details["keyword_photos"] = face_tags.plan(conn, faces.photos_of(conn, after, upto)).counts["photos"]
+    finally:
+        conn.close()
+    return result
+
+
+def _automatch(library, named, photo_path=None, folder=None, rehearse=False, ids=None):
+    """Automatch the unnamed faces in a photo, or under a folder, or between two face ids (automatch_new). A face is given the name of the named
     face it most resembles, when it may be named unasked (clustering.Cuts.names_unasked of the library's face model: the
     likeness and the margin over the next person), unless that name is already
     in its photo or proposed for two faces there.
@@ -383,7 +413,7 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     say how the two differ. Applied, `named_ids` too, {face id: person} of the faces written (the person's id)."""
     _library_there(library)
     result = Result(details={"dry_run": bool(rehearse), "faces": 0, "photos": 0, "people": {}, "renamed": 0})
-    looked_at, proposed = propose_guesses(library, named, photo_path=photo_path, folder=folder)
+    looked_at, proposed = propose_guesses(library, named, photo_path=photo_path, folder=folder, ids=ids)
     result.attempted = looked_at
     if not proposed:
         return result
@@ -427,16 +457,16 @@ def written_report(library, face_ids, folder):
             "photos": sorted({path for path, _name in named}), "remaining_counts": remaining}
 
 
-def propose_guesses(library, named, photo_path=None, folder=None):
+def propose_guesses(library, named, photo_path=None, folder=None, ids=None):
     """(the number of unnamed faces looked at, {photo path: [(face id, person)]}): each unnamed face in a photo, or under a
-    folder at any depth, that may be named unasked after the named face it most resembles (clustering.Cuts.names_unasked,
+    folder at any depth, or between two face ids (`ids`, tagpup.store.faces.unnamed), that may be named unasked after the named face it most resembles (clustering.Cuts.names_unasked,
     the library's face model's: the model the unnamed faces' vectors were read under, and the decided faces compared with
     them, clustering.FaceRows.under); the person is their id. Reads only; the compare happens before any write lock is taken.
     `named()` gives the decided faces (_automatch)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         key = faces.model_key(conn)
-        unnamed = faces.unnamed(conn, key, photo_path=photo_path, folder=folder)
+        unnamed = faces.unnamed(conn, key, photo_path=photo_path, folder=folder, ids=ids)
         eras = faces.eras_of(conn, [row[0] for row in unnamed])
     finally:
         conn.close()

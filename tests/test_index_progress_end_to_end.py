@@ -8,9 +8,9 @@ run for three small generated photos in a home of its own, its models stood in f
 sitecustomize the child imports (the weights refuse under test; the protocol -- arguments,
 environment, exit code, stdout -- is the real one).
 
-The index recorded photos, so the CLI clusters the library's faces after it, saying so on the line the server reads
-(owner, DECISIONS 2026-10-16). Then the same folder is added again: nothing changed on disk, so the CLI reads no file,
-says the index is current, and clusters nothing.
+The index recorded photos, so the CLI matches the faces it made after it (the stand-in finds none), saying so on the
+line the server ends its message with (indexing.NEW_FACES; owner, DECISIONS 2026-10-23). Then the same folder is added
+again: nothing changed on disk, so the CLI reads no file, says the index is current, and says nothing of faces.
 
 Lifted: test_functional_cli (which built exiftool.ExifToolHelper and called sqlite3.connect itself, against the rules, and
 tested the same two runs): every photo is indexed, tagged or not (three untagged photos), and an index again reads nothing.
@@ -77,12 +77,11 @@ class TheBarReachesTheEnd(unittest.TestCase):
 
         self.assertTrue(result.ok, (result.errors, heard))
         percents = [percent for _message, percent in heard if percent is not None]
-        # Each bar the CLI draws is read as "label: N% (done/total)", and the last one stands at 100 of 90.
-        self.assertIn(90, percents, heard)
+        # Each bar the CLI draws is read as "label: N% (done/total)", at its own percent.
+        self.assertIn(100, percents, heard)
         self.assertTrue(any("Generating embeddings: 100% (3/3)" == message for message, _p in heard), heard)
         self.assertEqual(100, result.details["percent"])
-        self.assertIn((indexing.CLUSTERING_STARTS, indexing.CLUSTERING_PERCENT), heard)
-        self.assertEqual("Folder indexed and face identities resolved.", result.details["message"])
+        self.assertEqual("Folder indexed. No new face is waiting for a name.", result.details["message"])
         conn = db.connect(library.path)
         try:
             # Every scanned photo is indexed, tagged or not, and as genuinely untagged (no borrowed metadata).
@@ -97,7 +96,7 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertTrue(again.ok, (again.errors, heard_again))
         self.assertIn("All images are up to date! Index is current.", [message for message, _p in heard_again], heard_again)
         self.assertFalse(any("Generating embeddings" in (message or "") for message, _p in heard_again), heard_again)
-        self.assertFalse(again.details["clustered"], heard_again)
+        self.assertEqual("Folder indexed: no photo was added or read again.", again.details["message"])
 
 
 if __name__ == "__main__":

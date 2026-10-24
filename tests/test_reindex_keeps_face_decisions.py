@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup.store import db as tagpup_db
 from tagpup.core import paths
+from tagpup.services import indexing
 from tagpup.services.search import PhotoIndex
 from tagpup_cli import cli
 
@@ -134,13 +135,13 @@ class TestReindexingAChangedPhoto(FaceDecisionCase):
     def reindex(self, batch_read, embed_input):
         embed_input.return_value = [0.2] * expected_dim()
         batch_read.side_effect = lambda files, *a, **k: [fake_meta(f) for f in files]
-        # What the index's write keeps: the clustering that follows an index re-derives the automatic names by its own
-        # rules (the photo here names nobody, so it takes the automatic one back; tests/test_clustering_meets_naming.py).
-        with patch("tagpup_cli._cluster_after_index") as clustered:
-            result = self.run_cli(["index", self.library])
+        # What the index keeps: the matching that follows it writes nothing
+        # (tests/test_new_faces_are_matched_after_an_index.py).
+        result = self.run_cli(["index", self.library])
         self.assertEqual(result.exit_code, 0, result.output)
         embed_input.assert_called_once()  # the change was seen and the photo re-indexed
-        clustered.assert_called_once()    # and, a photo recorded, the faces are clustered after the index
+        # and, a photo recorded, its new faces are matched after the index
+        self.assertIn(indexing.NEW_FACES, result.output)
 
     def assert_curation_kept(self, ids):
         faces = self.faces()

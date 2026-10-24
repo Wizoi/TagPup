@@ -239,7 +239,7 @@ class TagTunersAddFolder(Folders, unittest.TestCase):
         self.make(self.home.root, library.path)
         self.addCleanup(indexing_jobs.forget, library)
         indexed = FakeIndex()
-        with mock.patch("tagpup.web.tuner_routes.indexing.index_folder", indexed):
+        with mock.patch("tagpup.services.indexing.index_folder", indexed):
             reply = app.test_client().post("/library/api/folder/index-start", json={"folder_paths": [self.lighthouse]})
             self.assertEqual(200, reply.status_code, reply.data)
             indexing_jobs.queue_for(library).wait()

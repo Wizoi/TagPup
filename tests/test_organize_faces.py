@@ -31,7 +31,6 @@ import fake_exiftool  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, faces, people, taxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.services import indexing  # noqa: E402
 
 WREN = "Wren Halloway"
 ODA = "Oda Castellane"
@@ -308,19 +307,6 @@ class NamingFromABox(Case):
         self.assertEqual([], self.files.tags_of(photo))
         photo_rows.tag(self.path, photo, ["People/" + WREN])          # saved again: not renamed
         self.assertEqual((None, "manual"), self.row(face)[:2])
-
-    def test_a_write_is_refused_while_the_library_is_being_clustered(self):
-        photo = self.photo("regatta_010.jpg")
-        face = self.face(photo)
-        flag = indexing.clustering.of(self.library)
-        flag.set()
-        self.addCleanup(indexing.clustering.forget, self.library)
-        try:
-            self.assertEqual(409, self.post("face/match", {"face_id": face, "person_name": WREN}).status_code)
-        finally:
-            flag.clear()
-        self.assertIsNone(self.row(face)[0])
-        self.assertEqual(200, self.post("face/match", {"face_id": face, "person_name": WREN}).status_code)
 
     def test_a_name_that_is_not_a_name_is_refused(self):
         photo = self.photo("regatta_011.jpg")

@@ -290,8 +290,8 @@ def folder_index_status():
 @routes.post("/api/folder/index-start")
 def folder_index_start():
     """Queue a folder to be added to this library (tagpup.services.libraries.add, through
-    tagpup.jobs.indexing). The page asks /api/folder/add instead. The index is followed by clustering when it
-    recorded a photo, as every index is (tagpup.services.indexing.index_folder)."""
+    tagpup.jobs.indexing). The page asks /api/folder/add instead. The index is followed by a read-only matching
+    of the faces it made when it recorded a photo, as every index is (tagpup.services.indexing.index_folder)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(

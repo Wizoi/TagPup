@@ -723,12 +723,11 @@ Measured in sandboxes on copies of the libraries, on the owner's RTX 3080 (10 GB
 1.2 GB of it, 2.4 to 7.4% processor busy. Raw JSON (counts and numbers only) is kept outside the repository by the
 worker that ran it. The column "After" is filled as each phase merges.
 
-**The index rows are the index alone.** Since 2026-10-16 `index` clusters the whole library's faces after an index that
-recorded a photo (DECISIONS 2026-10-16, #1544; 202 s on photo_index), so a whole run's time carries those seconds
-whatever the folder's size. `scripts/measure_pipeline_stages.py` times the index to the clustering's line
-(`tagpup.services.indexing.CLUSTERING_STARTS`; in `stages` a timer on the CLI's `_cluster_after_index`) and gives the
-clustering's seconds apart, so the rows below are measured again like for like; the clustering's own row is
-`cluster-faces`.
+**The index rows are the index alone.** From 2026-10-16 to 2026-10-23 `index` clustered the whole library's faces after
+an index that recorded a photo (DECISIONS 2026-10-16, #1544; 202 s on photo_index); since 2026-10-23 it matches only
+the faces it made, read-only (DECISIONS 2026-10-23; the CLI's `_match_new_faces`). `scripts/measure_pipeline_stages.py`
+times that matching apart in `stages` (a timer on `_match_new_faces`), so the rows below are the index alone; the
+clustering's own row is `cluster-faces`.
 
 | Measure | Today | After | Notes |
 |---|---|---|---|

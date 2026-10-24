@@ -171,8 +171,7 @@ class AnIndexReadingAhead(unittest.TestCase):
         return folder
 
     def index(self, library, folder, code=0):
-        with mock.patch.object(tagpup_cli, "_cluster_after_index"):
-            result = CliRunner().invoke(tagpup_cli.cli, ["--db", library, "index", folder])
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", library, "index", folder])
         self.assertEqual(code, result.exit_code, result.output)
         return result
 
@@ -404,8 +403,7 @@ class AnIndexReadingAhead(unittest.TestCase):
 
         def run(library, folder):
             try:
-                with mock.patch.object(tagpup_cli, "_cluster_after_index"):
-                    tagpup_cli.cli.main(args=["--db", library, "index", folder], standalone_mode=False)
+                tagpup_cli.cli.main(args=["--db", library, "index", folder], standalone_mode=False)
             except BaseException as problem:   # noqa: BLE001 - said below
                 problems.append(problem)
         threads = [threading.Thread(target=run, args=job) for job in jobs]

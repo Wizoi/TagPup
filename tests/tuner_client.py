@@ -10,7 +10,7 @@ one app here, on a library the test made:
 
 A request naming no library goes to the one the app was started on, so the paths are
 the ones the page asks for. What the server keeps of a library between requests --
-the Identify Faces caches, the clustering flag, the index queue -- outlives the rows a
+the Identify Faces caches, the index queue -- outlives the rows a
 test wrote, so `forget` drops it between tests.
 """
 import os
@@ -24,7 +24,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.services import indexing  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 
@@ -38,11 +37,10 @@ def app_on(db_path):
 
 def forget(db_path):
     """Drop what the server keeps of this library: its cached grids and queue, any
-    grid's progress, the clustering flag, and the index queue."""
+    grid's progress, and the index queue."""
     library = Library(db_path)
     tuner_routes.identify_cache.forget(library)
     tuner_routes.identify_progress.forget(library)
-    indexing.clustering.forget(library)
     indexing_jobs.forget(library)
 
 

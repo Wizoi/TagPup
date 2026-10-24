@@ -218,6 +218,11 @@ shown, the tag where filed), `person-tag-form` (a person written as a tag path),
 
 ## History
 
+- 2026-10-23, phase 4b cut 1 (DECISIONS 2026-10-23): an index is followed by Re-examine's matcher over the faces it made
+  (`services.faces.automatch_new`: the ids between two reads of `store.faces.newest_id`, `faces.unnamed(ids=)`), which
+  writes nothing and is said on the CLI's `New faces: ` line; `cluster-faces` is run by hand. The scenario is
+  `tests/test_new_faces_are_matched_after_an_index.py` (F11).
+
 - 2026-10-20, phase 3 merge 3, items 1 and 2: the cuts a name is given and offered at are the face model's
   (`clustering.Cuts`, `CUTS`, `cuts_of`; FaceNet's 0.80 / 0.04 and 0.70 / 0.02 unchanged, AdaFace's 0.520 / 0.205 and
   0.310 / 0.090 from the gate), asked by every reader by the key its vectors were read under; Name faces from tags'

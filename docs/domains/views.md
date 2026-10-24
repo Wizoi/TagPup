@@ -79,12 +79,11 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
   today: 0 (no library on another set).
 - **A model load that hangs refuses Suggest on another set until the server restarts**: the run (or the warm-up) holding
   the hung load keeps its lease until it returns or the process ends. Cost today: 0 libraries on another set.
-- **Suggest of a folder just added waits through the clustering after its index** (`jobs/suggestions._get_ready` waits
-  while `IndexQueue.indexing(folder)` answers, to the end of the CLI's process; 2026-10-16): about 200 s on photo_index,
-  seconds on the small libraries. Suggest compares the folder's faces with the library's named faces, which the
-  clustering is rewriting, and the clustering names this folder's new faces from their tags: started before it ends, the
-  run would read names half rewritten and offer people the clustering is about to name. The wait says what it waits for
-  (its status line carries the clustering's progress), and Cancel stops it.
+- **Suggest of a folder just added waits for its index** (`jobs/suggestions._get_ready` waits while
+  `IndexQueue.indexing(folder)` answers, to the end of the CLI's process; 2026-10-16): started before it ends, the run
+  would read the folder's faces half written. Since 2026-10-23 the process ends with a read-only matching of the faces
+  it made (DECISIONS 2026-10-23), no longer a clustering that rewrites names. The wait says what it waits for, and
+  Cancel stops it.
 - **Phase 0 times the pipeline through hooks, not by importing the stages** (#1527). A program under `scripts/` may not
   import store, files or ml, nor hold SQL (`tests/test_layers.py`), so `measure_pipeline_stages` hooks the objects the
   runtime and services hand it, and the census reads through services. A later brief that needs a stage the hooks cannot

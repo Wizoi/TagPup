@@ -173,21 +173,21 @@ class YesWritesTheChange(Case789):
         self.assertEqual(2, wait(job)["applied"]["changed"])
 
     def test_faces_are_held_against_other_writes_from_the_yes_to_the_end(self):
+        """`writing` is what the web layer refuses a face write by (tagpup.web.tuner_routes.naming_refusal)."""
         self.seed()
-        held = []
+        seen = []
+        real = faces_from_tags.faces_from_tags
 
-        @contextlib.contextmanager
-        def hold():
-            held.append("in")
-            try:
-                yield
-            finally:
-                held.append("out")
-        job = self.start(hold=hold)
-        self.assertEqual([], held, "a plan holds nothing: the owner keeps working while the question waits")
-        naming_faces.confirm(self.library, job.handle)
-        wait(job)
-        self.assertEqual(["in", "out"], held)
+        def watching(*args, **more):
+            seen.append(naming_faces.writing(self.library))
+            return real(*args, **more)
+        job = self.start()
+        self.assertFalse(naming_faces.writing(self.library), "a plan holds nothing: the owner keeps working while the question waits")
+        with mock.patch.object(faces_from_tags, "faces_from_tags", watching):
+            naming_faces.confirm(self.library, job.handle)
+            wait(job)
+        self.assertEqual([True], seen)
+        self.assertFalse(naming_faces.writing(self.library), "and let go after")
 
     def test_the_open_folders_faces_are_counted_before_and_after(self):
         self.seed()
@@ -353,13 +353,16 @@ class Cancel(Case789):
         before = self.names()
         job = self.start()
 
+        real = naming_faces.runs.running
+
         @contextlib.contextmanager
-        def hold_then_cancel():
+        def begun_then_cancelled(*tags):       # the apply's thread has begun, and Cancel comes before its write
             naming_faces.cancel(self.library, job.handle)
-            yield
-        job.hold = hold_then_cancel
-        naming_faces.confirm(self.library, job.handle)
-        found = wait(job)
+            with real(*tags):
+                yield
+        with mock.patch.object(naming_faces.runs, "running", begun_then_cancelled):
+            naming_faces.confirm(self.library, job.handle)
+            found = wait(job)
         self.assertEqual(naming_faces.CANCELLED, found["state"])
         self.assertIn("nothing was changed", found["message"])
         self.assertEqual(before, self.names())

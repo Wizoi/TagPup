@@ -16,7 +16,6 @@ from flask import Blueprint, jsonify, request
 from tagpup.core import paths
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import naming_faces
-from tagpup.services import indexing
 from tagpup.web import lifecycle as lifecycles
 from tagpup.web import responses, security, state, tuner_routes
 
@@ -36,7 +35,7 @@ def _this_pc_only():
 #: a photo's keywords and the bulk tag writes, and deleting photos; and what can put faces' names, tags or the tree back or
 #: elsewhere without going through those: History's Undo, a branch's flags.
 #: Keyed as Flask names the route (`<int:change_id>` stays in it). Answered 409 while names are given (the one owner of the
-#: refusal is tuner_routes.clustering_refusal, which TagTuner's own writes ask too); reads are never refused. Every other write
+#: refusal is tuner_routes.naming_refusal, which TagTuner's own writes ask too); reads are never refused. Every other write
 #: route is guarded, or allowed with a reason, in tests/test_write_routes_are_classified.py.
 GUARDED = frozenset((
     "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk-edit",
@@ -64,22 +63,13 @@ def refuse_writes_while_naming():
     writes = WRITES_WHEN.get(rule[at:])
     if writes is not None and not writes(request.get_json(silent=True) or {}):
         return None     # a rehearsal reads
-    return tuner_routes.clustering_refusal(library, only_naming=True)
+    return tuner_routes.naming_refusal(library)
 
 
 def _busy(library):
     """What runs in this process that the job must not run beside, as sentences: the index queue, Suggest and a sync
-    (tagpup.web.lifecycle.running_for), and whatever is already clustering the library's faces (the flag TagTuner's writes
-    honour)."""
-    said = lifecycles.running_for(library)
-    if indexing.clustering.of(library).is_set():
-        said.append("the faces are being clustered")
-    return said
-
-
-def _hold(library):
-    """The context held from the Yes to the end: writes of faces are refused meanwhile (tagpup.services.indexing.while_clustering)."""
-    return lambda: indexing.while_clustering(library)
+    (tagpup.web.lifecycle.running_for)."""
+    return lifecycles.running_for(library)
 
 
 def _reply(call):
@@ -118,7 +108,7 @@ def name_faces_start():
     folder = body.get("folder") if isinstance(body.get("folder"), str) and body.get("folder") else None
 
     def start():
-        job = naming_faces.start(library, folder, hold=_hold(library), busy=lambda: _busy(library),
+        job = naming_faces.start(library, folder, busy=lambda: _busy(library),
                                  only_folder=body.get("only_folder") is True)
         return jsonify({"success": True, "status": job.status()})
     return _reply(start)

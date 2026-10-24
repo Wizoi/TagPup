@@ -121,7 +121,7 @@ def people_face_samples():
 # ---- The writes of one face ------------------------------------------------------------------
 #
 # Views, not routes: TagTuner (tagpup.web.tuner_routes) and TagPup's Organize (tagpup.web.photo_face_routes)
-# each register them in their own blueprint, which refuses them while the library's faces are being clustered.
+# each register them in their own blueprint, which refuses them while names are given from tags.
 
 
 def faces_write(library, action):

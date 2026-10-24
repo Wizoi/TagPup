@@ -482,6 +482,13 @@ def newest_id(conn):
     return found or 0
 
 
+def photos_of(conn, after, upto):
+    """The ids of the photos holding a face whose id is above `after` and at most `upto` (newest_id, read twice): the
+    photos a run gave those faces. By the primary key's range."""
+    return [photo for (photo,) in conn.execute(
+        "SELECT DISTINCT photo_id FROM faces WHERE id > ? AND id <= ?", (after, upto))]
+
+
 def photos_with_faces_after(conn, photo_ids, face_id):
     """How many of `photo_ids` hold a face whose id is above `face_id` (newest_id read earlier): a face made since, by any
     writer. By idx_faces_photo_id (the id is the index's rowid: no row read)."""
@@ -969,11 +976,15 @@ def _photos_under(conn, folder):
 NOT_DECIDED_NOBODY = "COALESCE(%sname_source, '') <> 'manual'"
 
 
-def unnamed(conn, key, photo_path=None, folder=None):
+def unnamed(conn, key, photo_path=None, folder=None, ids=None):
     """(id, embedding bytes -- under `key`, or None --, photo_path) of the unnamed, unexcluded faces in one photo, or
-    under a folder at any depth, that automatch may name: not those unmatched by hand
-    (docs/findings.md, #643)."""
-    if photo_path is not None:
+    under a folder at any depth, or whose ids are above the first of `ids` and at most the second (newest_id read as an
+    index began and as it ended: the faces it made; by idx_faces_identify's rowid range), that automatch may name: not
+    those unmatched by hand (docs/findings.md, #643)."""
+    if ids is not None:
+        where, params = "f.id > ? AND f.id <= ?", list(ids)
+        source = " FROM faces f" + PHOTO
+    elif photo_path is not None:
         where, params = _on_photo(conn, photo_path, "f.photo_id")
         source = " FROM faces f" + PHOTO
     else:

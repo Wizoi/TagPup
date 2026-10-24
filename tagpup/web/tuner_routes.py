@@ -3,8 +3,7 @@ and their matches, Identify Faces, indexing and the tag merges.
 
 Each route is thin: it reads the request, calls a service, and shapes the reply. What a
 server keeps for a library between requests lives in `tagpup.web.state`: here, the
-Identify Faces caches and progress (tagpup.jobs.identify) and whether the library is
-being clustered. Each was a dict keyed by a thread-local "active library" in the old
+Identify Faces caches and progress (tagpup.jobs.identify). Each was a dict keyed by a thread-local "active library" in the old
 server, set at the top of every request and again by hand on every background thread
 (docs/findings.md, #44); a value is now looked up by the Library the request names, and
 a thread is handed its Library when it starts.
@@ -29,7 +28,6 @@ from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import face_assignment, face_people
 from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
-from tagpup.services import indexing
 from tagpup.services import libraries as library_actions
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -98,31 +96,27 @@ _int_arg = face_routes.int_arg
 _read_face_ids = face_routes.read_face_ids
 
 
-#: What a write of faces, tags or rows is answered with while "Name faces from tags" gives names or groups faces (#871, #872).
+#: What a write of faces, tags or rows is answered with while "Name faces from tags" gives names (#871, #872).
 NAMING_REFUSAL = "Names are being given from tags; this waits until it finishes."
 
 
-def clustering_refusal(library, only_naming=False):
-    """The 409 a write that sets faces' names is answered with while `library`'s faces
-    are being clustered, or names are being given from the tags (tagpup.jobs.naming_faces), or None.
-    TagTuner's writes are refused here before each POST; the tree's routes, which both apps
-    serve, ask it for a rename and a delete, and tagpup.web.name_faces_routes for the writes
-    of TagPup that name faces from tags must not be written over. `only_naming`: not for
-    the flag clustering from an index run holds."""
+def naming_refusal(library):
+    """The 409 a write that sets faces' names, tags or rows is answered with while names are being given from the tags in
+    `library` (tagpup.jobs.naming_faces.writing), or None. TagTuner's writes are refused here before each POST; the tree's
+    routes, which both apps serve, ask it for a rename and a delete, and tagpup.web.name_faces_routes for the writes of
+    TagPup that the naming must not be written over."""
     if library is not None and naming_faces.writing(library):
         return responses.error(409, NAMING_REFUSAL)
-    if not only_naming and library is not None and indexing.clustering.of(library).is_set():
-        return responses.error(409, "The server is clustering faces; this waits until it finishes.")
     return None
 
 
 @routes.before_request
-def refuse_writes_while_clustering():
-    """A blueprint's before_request: a POST is refused while the library's faces are clustered or named from tags
-    (clustering_refusal). TagTuner's routes, and TagPup's writes of the faces on the open photo (photo_face_routes)."""
+def refuse_face_writes_while_naming():
+    """A blueprint's before_request: a POST is refused while the library's names are given from tags (naming_refusal).
+    TagTuner's routes, and TagPup's writes of the faces on the open photo (photo_face_routes)."""
     if request.method != "POST":
         return None
-    return clustering_refusal(state.current())
+    return naming_refusal(state.current())
 
 
 # ---- Photos ------------------------------------------------------------------------------
@@ -537,8 +531,8 @@ def folder_index_status():
 @routes.post("/api/folder/index-start")
 def folder_index_start():
     """Queue one or more folders to be added to this library (tagpup.jobs.indexing).
-    Accepts `folder_path` (one) or `folder_paths` (several). Each index is followed by clustering when it recorded a
-    photo, as every index is (tagpup.services.indexing.index_folder)."""
+    Accepts `folder_path` (one) or `folder_paths` (several). Each index is followed by a read-only matching of the
+    faces it made when it recorded a photo, as every index is (tagpup.services.indexing.index_folder)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     requested = body.get("folder_paths")
