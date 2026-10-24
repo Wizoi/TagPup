@@ -32,8 +32,9 @@ PARAMETER = "operation"
 NOT_NAMES = {("tagpup.store.db", "write"), ("tagpup.store.db", "write_with_connection"),
              ("tagpup.services.journal", "undo_rule"), ("tagpup.services.batches", "claim"),
              ("tagpup.services.file_changes", "batch_exclusively")}
-#: What is scanned besides tagpup/: the programs and the entry points (index --reset stamps its settings in tagpup_cli).
-PROGRAMS = ("scripts", "tagpup_cli.py", "tagpup_web.py")
+#: What is scanned besides tagpup/: the programs, the tools and the entry points (index --reset stamps its settings in
+#: tagpup_cli).
+PROGRAMS = ("scripts", "tools", "tagpup_cli.py", "tagpup_web.py")
 #: The one module that may call an undo of the store or of the files: it asks why_not before each.
 UNDOER = "tagpup.services.journal"
 #: (module, function) of the undos that write without asking why_not.
