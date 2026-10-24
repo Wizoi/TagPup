@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-10-23 | low: the History list asks why_not of each entry, and a face pass's entry asks retire_faces.pass_check, one `kept_named` query each (no longer one read across entries). EXPLAIN QUERY PLAN on the three live libraries, read-only: `SEARCH changes USING INDEX idx_changes_status (status=?)`, then `operation` filtered over the applied changes; photo_index holds 3,247 changes, 2,499 of them face passes, and 20 such lookups took 4 ms (kr-track 21 passes, renton_parkrun 8: under 1 ms). At the route's most (100 entries) that is about 20 ms. | decided: by design: an index search, 0.2 ms an entry measured on the largest journal; no index added (no schema work while DECISIONS 2026-10-15's note stands) |
+| B-2 | 2026-10-23 | low: the guard that every kind of change names its way back (tests/test_every_change_kind_has_an_undo_check.py) found `face_people.REMOVED` ("person taken off for an unnamed face"), a journaled change of photo files, missing from UNDO_CHECKS: why_not gave it the journal's account alone, which is what None says, so nothing was undone wrongly; added as None. The guard fails without the entry (run against HEAD 6fbeb30d). | fixed: journal: a guard that every kind of change the code makes names its way back in UNDO_CHECKS, and only the journal service undoes |
+| B-3 | 2026-10-23 | low: "apply suggestions" (tagpup/web/tagpup_routes.py, file_changes.batch_exclusively) is a batch's label in the line of batches, not a change's name; the change it holds is journaled as "apply all suggestions" by tagging.change_each. The guard leaves batches.claim and batch_exclusively out of the names it follows (NOT_NAMES), with db.write, db.write_with_connection (a callable `operation`) and journal.undo_rule (the table's reader). | decided: by design: a label the owner sees on the batch strip, never written to `changes` |
