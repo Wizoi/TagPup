@@ -412,6 +412,29 @@ def branch_states(repo, rev, started):
     return {name: state(name) for name in started}
 
 
+def worker_restarts(records):
+    """What the context hook cost (finding #1807). `at_the_hook`: worker runs with a call of more than LARGE_CONTEXT
+    tokens of context, the line at which the hook tells a worker to commit and report. `relaunches`: the worker runs
+    of a branch after its first, the ones that finished what the first could not. `unattached_reviews`: review runs in
+    no worker's worktree (the main checkout), whose rounds cannot be tied to a branch. Each is a tally of the runs."""
+    runs = {}
+    for r in records:
+        if r["agent_type"] in WORK_TYPES and r["agent_file"]:
+            run = runs.setdefault(r["agent_file"], {"branch": r["branch"], "at": r["at"], "peak": 0, "records": []})
+            run["at"] = min(run["at"], r["at"])
+            run["peak"] = max(run["peak"], sum(r[k] for k in TOKENS) - r["output_tokens"])
+            run["records"].append(r)
+    later = set()
+    for branch in {run["branch"] for run in runs.values() if run["branch"]}:
+        ordered = sorted((run["at"], name) for name, run in runs.items() if run["branch"] == branch)
+        later.update(name for _at, name in ordered[1:])
+    return {
+        "at_the_hook": tally([r for run in runs.values() if run["peak"] > LARGE_CONTEXT for r in run["records"]]),
+        "relaunches": tally([r for name in later for r in runs[name]["records"]]),
+        "unattached_reviews": tally([r for r in records if r["agent_type"] in REVIEW_TYPES and not r["branch"]]),
+    }
+
+
 def agents_section(records, compactions, repo, rev):
     """Tokens by agent type, by branch and of the runs the owner stopped; the main sessions and their compactions."""
     by_type = {t: tally([r for r in records if r["agent_type"] == t]) for t in AGENT_ORDER}
@@ -446,6 +469,7 @@ def agents_section(records, compactions, repo, rev):
         "work": tally([r for r in records if r["agent_type"] in WORK_TYPES]),
         "by_branch": dict(sorted(by_branch.items(), key=lambda kv: -kv[1]["tokens"])), "branches_per_state": per_state,
         "stopped_by_the_owner": tally([r for r in records if r["stopped"]]),
+        "worker_restarts": worker_restarts(records),
         "main_sessions": sessions,
         "main_average_context": round(sum(contexts) / len(contexts)) if contexts else 0,
         "subagent_compactions": sum(1 for c in compactions if not c["main"]),
@@ -701,6 +725,15 @@ def agents_markdown(a, split, other_merges):
     stopped = a["stopped_by_the_owner"]
     out.append("\n### RUNS STOPPED BY THE OWNER\n\n%d runs (`stoppedByUser`), %d calls, %d tokens, %s USD.\n"
                % (stopped["runs"], stopped["calls"], stopped["tokens"], money(stopped)))
+    restarts = a["worker_restarts"]
+    out.append("\n### WORKERS AT THE CONTEXT HOOK AND THEIR RELAUNCHES\n\n"
+               + table(["", "runs", "calls", "tokens", "cost USD"],
+                       [[name, v["runs"], v["calls"], v["tokens"], money(v)] for name, v in (
+                           ("worker runs that passed %dk of context (the hook told them to commit and report)"
+                            % (LARGE_CONTEXT // 1000), restarts["at_the_hook"]),
+                           ("relaunches (a branch's worker runs after its first)", restarts["relaunches"]),
+                           ("review runs in no worktree (rounds not tied to a branch)",
+                            restarts["unattached_reviews"]))]))
     out.append("\n### MAIN SESSIONS\n\n%d main sessions in the window (distinct session ids of the top-level "
                "transcripts); average context per call %d tokens (input, cache write and cache read). Compactions are the "
                "`compact_boundary` records (`compactMetadata.trigger`, `preTokens`); subagent compactions: %d.\n\n"

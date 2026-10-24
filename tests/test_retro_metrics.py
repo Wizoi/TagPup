@@ -246,6 +246,22 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
         self.assertEqual("worktree-agent-abc1", facts["branch"], "the branch is still tied by the cwd")
         self.assertFalse(facts["stopped"])
 
+    def test_workers_that_passed_the_hook_and_the_relaunches_that_finished_them(self):
+        def call(file, kind, branch, at, context):
+            return {"agent_type": kind, "agent_file": file, "branch": branch, "at": at, "model": "fable-test-1",
+                    "input_tokens": context, "output_tokens": 1, "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0}
+        big = retro_metrics.LARGE_CONTEXT + 1
+        records = [call("a.jsonl", "worker", "worktree-agent-aa", 100, big),
+                   call("b.jsonl", "worker", "worktree-agent-aa", 200, 10),    # the relaunch of aa
+                   call("c.jsonl", "worker", "worktree-agent-bb", 300, 10),    # a branch of one run: no relaunch
+                   call("d.jsonl", "reviewer", None, 400, 10),                 # reviewed in the main checkout
+                   call("e.jsonl", "reviewer", "worktree-agent-aa", 500, 10)]  # tied to its branch
+        got = retro_metrics.worker_restarts(records)
+        self.assertEqual((1, big + 1), (got["at_the_hook"]["runs"], got["at_the_hook"]["tokens"]))
+        self.assertEqual((1, 11), (got["relaunches"]["runs"], got["relaunches"]["tokens"]))
+        self.assertEqual((1, 11), (got["unattached_reviews"]["runs"], got["unattached_reviews"]["tokens"]))
+
     def test_main_sessions_and_their_compactions(self):
         a = self.report["usage"]["agents"]
         self.assertEqual({"s-1": {"calls": 1, "average_context": 1110, "max_context": 1110, "compactions": 1,
