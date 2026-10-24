@@ -31,7 +31,7 @@ and reviewed but NOT merged: two blockers to fix first (a photo removed while th
 a ghost row; the change's name must not carry the folder) and two owner decisions taken (named old faces are
 paired first; new faces stay unnamed). **Slice B** (the `face-pass` command) is built. **Slice C** (the gate's scoring,
 `scripts/measure_face_gate.py`, read-only) is built on `feature/gate-scoring`, as built below; the owner picks the naming
-precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); the re-embed and Suggest's recalibration are not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
+precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); **Step 2a (2026-10-24) is built:** the loader (`tagpup/ml/photo_models.py`, SigLIP 2 through `runtime.clip`), the tokenizer (`tokenizers` alone) and the readiness gate on a photo-model switch; **step 2b is next:** the re-embed command, the live switch, retiring the old vectors. Suggest's recalibration is not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
