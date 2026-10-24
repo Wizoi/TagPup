@@ -1,5 +1,5 @@
-"""Adding a folder's photos to a library: the CLI's `index`, which clusters the library's faces after an index
-that recorded a photo, with what the CLI prints turned into progress a person can read.
+"""Adding a folder's photos to a library: the CLI's `index`, which matches the faces an index made with the named ones
+and writes nothing, with what the CLI prints turned into progress a person can read.
 
 Both apps ran their own copy of these steps, until TagTuner's called TagPup's. When a
 folder is indexed is tagpup.jobs.indexing's to decide.
@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 import uuid
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 
 from tagpup.core import gpu_turns
 from tagpup.core import paths
@@ -22,18 +22,15 @@ from tagpup.core.per_library import PerLibrary
 from tagpup.core.result import Result
 from tagpup.services import roots as roots_service
 
-#: Where faces are named from the photos' tags when adding a folder did not cluster them: the button of both apps, whose
-#: label this is (tests/test_indexing_names_a_real_control.py holds the messages and the pages together). The messages named
+#: Where faces are named from the photos' tags: the button of both apps, whose label this is (tests/test_indexing_names_a_real_control.py holds the messages and the pages together). The messages named
 #: a Recluster button no page has (docs/findings.md, #22), then the Tk runner's button; the apps have their own now (#789).
 CLUSTERING_BUTTON = "Name faces from tags"
 CLUSTER_ELSEWHERE = "%s in TagTuner's header" % CLUSTERING_BUTTON
 
-#: How a clustering after an index that failed or stopped is run again: the command alone clusters (Name faces from
-#: tags names faces from tags, and an index again of photos already read clusters nothing).
+#: The command that clusters the library's faces, run by hand: an index matches only the faces it made.
 CLUSTER_AGAIN = "cluster-faces in the TagPup CLI"
 
-#: Set while a library's faces are being clustered after an index this process runs, or named from tags
-#: (tagpup.web.name_faces_routes): writes of faces are refused meanwhile (tagpup.web.tuner_routes.clustering_refusal),
+#: Set while a library's faces are named from tags (tagpup.web.name_faces_routes): writes of faces are refused meanwhile (tagpup.web.tuner_routes.clustering_refusal),
 #: since clustering rewrites the names they would be setting. Here, beside the one runner of the indexer, so that
 #: every way this process indexes holds it -- sync's queue (tagpup.runtime) as well as both apps' routes.
 clustering = PerLibrary(lambda library: threading.Event())
@@ -64,15 +61,28 @@ EXIT_CANCELLED = 76
 #: What a run stopped while it waited says.
 CANCELLED_WAITING = "Cancelled while it waited for the graphics card; nothing was indexed."
 
-#: What the CLI's `index` prints, a line of its own, as it begins to cluster the library's faces after an index that
-#: recorded a photo (owner, DECISIONS 2026-10-16: an index is followed by `cluster-faces`), and what it exits with
-#: when the clustering failed: the photos stay indexed. index_folder holds the library's faces as being clustered
-#: (while_clustering) from this line to the process's end.
-CLUSTERING_STARTS = "Resolving and matching face identities..."
-EXIT_CLUSTERING_FAILED = 77
+#: What the CLI's `index` begins a line of its own with, after an index that recorded a photo: what Re-examine would name
+#: among the faces it made, matched with the named ones and written nowhere (owner, DECISIONS 2026-10-23;
+#: tagpup.services.faces.automatch_new), as new_faces_said says it, or that the matching failed. index_folder reads the
+#: line whole, before the bar cuts it, and ends its message with it.
+NEW_FACES = "New faces: "
 
-#: Where the bar stands while the faces are clustered: the index's own bars are scaled to 90.
-CLUSTERING_PERCENT = 95
+
+def new_faces_said(matched):
+    """What an index says of the faces it made, from tagpup.services.faces.automatch_new's Result: counted, plainly."""
+    looked, decided, keyword = matched.attempted, matched.details["faces"], matched.details["keyword_photos"]
+    if not looked:
+        said = "No new face is waiting for a name."
+    elif not decided:
+        said = ("None of the %d new faces looks enough like anyone named to be proposed: they wait in Identify Faces."
+                % looked)
+    else:
+        said = ("%d of the %d new faces have a likely name: open Re-examine on their folder to confirm them."
+                % (decided, looked))
+    if keyword:
+        said += (" %d photo(s) carry a person's keyword that no face has: %s, or %s, names them."
+                 % (keyword, CLUSTER_ELSEWHERE, CLUSTER_AGAIN))
+    return said
 
 _INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
 
@@ -130,26 +140,19 @@ def summarize_indexer_line(line):
 
 
 def index_folder(library, folder, code_folder, report=None, subfolders=True):
-    """Add a folder's photos to the library: the CLI's `index`, which clusters the library's faces after an index
-    that recorded a photo (tagpup_cli.py; owner, DECISIONS 2026-10-16). Adding a folder, in either app, and sync's
+    """Add a folder's photos to the library: the CLI's `index`, which matches the faces an index made with the named
+    ones and writes nothing (tagpup_cli.py; owner, DECISIONS 2026-10-23). Adding a folder, in either app, and sync's
     new files.
 
     The CLI runs in a process of its own, from `code_folder` -- the code this program
     runs, which the caller has from tagpup.config -- so the GPU work stays out of the
-    server. It reads the library's settings itself (tagpup.runtime). Whether a run clusters is the CLI's to decide,
-    the one place every entry point reaches: this reads that it does (CLUSTERING_STARTS).
+    server. It reads the library's settings itself (tagpup.runtime). What the CLI says of the faces it made (NEW_FACES)
+    ends the message.
 
-    `report(message, percent)` hears progress as it comes: the index's bars scaled to 90, then CLUSTERING_PERCENT
-    while the faces are clustered. From the CLI's CLUSTERING_STARTS to the end of its process the library's faces are
-    held as being clustered (while_clustering): writes of faces are refused, since clustering rewrites the names an
-    assignment would be setting.
-
-    A clustering that failed does not undo the index: the photos stay indexed, and the Result's error says so
-    (EXIT_CLUSTERING_FAILED). Both copies of this once reported "identities resolved" when cluster-faces had failed.
+    `report(message, percent)` hears progress as it comes, the percent of each of the CLI's bars.
 
     details: `message`, what to tell the person; `percent`, where the bar stops;
-    `cancelled`, true when the indexer was stopped while it waited for the graphics card;
-    `clustered`, whether the CLI clustered the faces after its index.
+    `cancelled`, true when the indexer was stopped while it waited for the graphics card.
     `folder` may be a list of folders, indexed in one run of the indexer.
 
     A `report` with a `stop_file` attribute (tagpup.jobs.indexing) is told the file that
@@ -172,8 +175,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         return result
     env = os.environ.copy()
     env["TAGPUP_DB_PATH"] = library.path
-    # Lines compared whole (CLUSTERING_STARTS) arrive as printed: rich colours a line's "..." when told the pipe is a
-    # terminal (FORCE_COLOR), and no colour is wanted on a progress bar.
+    # A line read whole (NEW_FACES) arrives as printed: rich colours a line when told the pipe is a terminal
+    # (FORCE_COLOR), and no colour is wanted on a progress bar.
     env.update(NO_COLOR="1", TERM="dumb")
     # The indexer logs to a file of its run's own in data/logs as well as to this pipe, each
     # line carrying the tags of the run it is part of (tagpup.core.runs).
@@ -183,7 +186,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     if hasattr(report, "stop_file"):
         report.stop_file = stop_file
 
-    clustered = []
+    said = []
 
     def run(args):
         proc = processes.start(
@@ -191,17 +194,16 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1, cwd=code_folder,
         )
-        # The flag is let go after the process has ended, whatever ended it.
-        with ExitStack() as held, proc.stdout:
+        with proc.stdout:
             for line in iter(proc.stdout.readline, ""):
+                whole = line.split("\r")[-1].strip()
+                if whole.startswith(NEW_FACES):
+                    # Whole: the bar's summary cuts a line at 90 characters.
+                    said.append(whole[len(NEW_FACES):])
                 clean = summarize_indexer_line(line)
-                if clean == CLUSTERING_STARTS and not clustered:
-                    clustered.append(True)
-                    held.enter_context(while_clustering(library))
-                    report(clean, CLUSTERING_PERCENT)
-                elif clean:
-                    match = None if clustered else re.search(r"(\d+)%", clean)
-                    report(clean, int(float(match.group(1)) * 0.9) if match else None)
+                if clean:
+                    match = re.search(r"(\d+)%", clean)
+                    report(clean, int(match.group(1)) if match else None)
             proc.wait()
         return proc.returncode
 
@@ -215,19 +217,9 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
             os.remove(stop_file)
         except OSError:
             pass
-    result.details["clustered"] = bool(clustered)
     if code == EXIT_CANCELLED:
         result.skip(", ".join(folders), CANCELLED_WAITING)
         result.details.update(percent=0, cancelled=True, message=CANCELLED_WAITING)
-        return result
-    if clustered and code != 0:
-        # EXIT_CLUSTERING_FAILED, the roots' stop, or the process ended otherwise once its index was done: the photos
-        # are indexed.
-        why = ("stopped: the library's roots were changed by another process" if code == roots_service.EXIT_ROOTS_CHANGED
-               else "failed (exit code %s)" % code)
-        result.fail(", ".join(folders), "Folder indexed, but resolving face identities %s. To try again, run %s."
-                    % (why, CLUSTER_AGAIN))
-        result.details["percent"] = 100
         return result
     if code == roots_service.EXIT_ROOTS_CHANGED:
         # The indexer holds the library's roots for its whole run (tagpup.services.roots.pinned) and
@@ -242,7 +234,5 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
 
     result.changed = 1
     result.details.update(percent=100, message=(
-        "Folder indexed and face identities resolved." if clustered
-        else "Folder indexed: no photo was added or read again, so faces were not clustered again. To name faces "
-             "from the photos' tags, use %s." % CLUSTER_ELSEWHERE))
+        "Folder indexed. " + said[-1] if said else "Folder indexed: no photo was added or read again."))
     return result

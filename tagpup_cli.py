@@ -378,6 +378,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     stop_file = os.environ.get(indexing_service.STOP_FILE)
     turn = photos = bar = None
     total_new_indexed = 0
+    after = upto = 0
     try:
         # One process at a time has a model on the graphics card (tagpup.ml.gpu): its turn is
         # taken before the first photo, waited for in order -- each change of who has it said
@@ -399,6 +400,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             raise SystemExit(indexing_service.EXIT_CANCELLED) from None
         if waited:
             console.print("Took the graphics card.", markup=False, soft_wrap=True)
+        # The faces this run makes are those above this id and up to the one read before the turn is let go: every writer
+        # of faces holds the card's turn, which is the machine's (tagpup.ml.gpu), so no other run's face is between them.
+        after = face_records.newest_face(Library(db_path))
 
         # Generate Embeddings with incremental saving (batches of 100) to protect against halts/crashes
         console.print("[bold cyan]Generating embeddings...[/bold cyan]")
@@ -538,6 +542,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             for saved_meta in batch_metas:
                 locker.release(saved_meta["path"])
             total_new_indexed += len(batch_embeddings)
+        upto = face_records.newest_face(Library(db_path))
 
         if locked_out:
             console.print(
@@ -594,13 +599,12 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         for root, count in sorted(roots.items(), key=lambda x: -x[1]):
             console.print(f"  • {root}: {count} path(s)")
 
-    # An index is followed by clustering (owner, DECISIONS 2026-10-16), here, so that every way of indexing -- both
-    # apps' queue and sync's, which run this command, and this command by hand -- does it alike. Only after a run that
-    # recorded a photo: one that recorded none (every sync and watcher run that found nothing new, a folder added
-    # again) changed nothing clustering reads. The card's turn was let go above, its models unloaded: clustering is
-    # the processor's work and holds no turn while another library's index waits for the card.
+    # An index is followed by matching the faces it made (owner, DECISIONS 2026-10-23), here, so that every way of
+    # indexing -- both apps' queue and sync's, which run this command, and this command by hand -- does it alike. Only
+    # after a run that recorded a photo: one that recorded none made no face. The card's turn was let go above: the
+    # matching is the processor's work, and writes nothing.
     if total_new_indexed:
-        _cluster_after_index(runtime, db_path)
+        _match_new_faces(db_path, after, upto)
 
 
 def _read_again(conn, metas, given, exiftool_path):
@@ -620,21 +624,18 @@ def _read_again(conn, metas, given, exiftool_path):
             meta.update(record)
 
 
-def _cluster_after_index(runtime, db_path):
-    """Cluster the library's faces after an index (`cluster-faces`'s work), said on stdout first as the server's index
-    queue reads it (tagpup.services.indexing.CLUSTERING_STARTS: it refuses writes of faces until this process ends). A
-    failure is said and exits with EXIT_CLUSTERING_FAILED: the photos indexed stay indexed. The library's roots changed
-    by another process meanwhile is the index's one roots stop (_holds_the_roots), not a failure."""
-    console.print(indexing_service.CLUSTERING_STARTS, markup=False, soft_wrap=True)
+def _match_new_faces(db_path, after, upto):
+    """Say what Re-examine would name among the faces this index made, those whose ids are above `after` and at most
+    `upto` (tagpup.services.faces.automatch_new), on a line of its own that the server's index queue ends its message with
+    (tagpup.services.indexing.NEW_FACES). It writes nothing, so a failure is said on the same line and the run still
+    exits 0: the photos are indexed, and their faces wait for Re-examine or cluster-faces."""
     try:
-        _resolve_identities(runtime, db_path)
-    except library_roots.RootsChanged:
-        raise
+        said = indexing_service.new_faces_said(face_records.automatch_new(Library(db_path), after, upto))
     except Exception as e:
-        logger.exception("Resolving face identities after the index failed")
-        console.print("The photos are indexed, but resolving face identities failed: %s: %s" % (type(e).__name__, e),
-                      markup=False, soft_wrap=True)
-        raise SystemExit(indexing_service.EXIT_CLUSTERING_FAILED) from None
+        logger.exception("Matching the new faces after the index failed")
+        said = ("The photos are indexed, but matching their faces failed: %s: %s. Open Re-examine on their folder, or run %s."
+                % (type(e).__name__, e, indexing_service.CLUSTER_AGAIN))
+    console.print(indexing_service.NEW_FACES + said, markup=False, soft_wrap=True, highlight=False)
 
 @cli.command()
 @click.option("--apply", "apply_", is_flag=True, help="Back the library up, then compact it. Without it, only says how much would be freed.")
@@ -1506,14 +1507,14 @@ def snapshots_restore(ctx, name, apply_):
 @cli.command("cluster-faces")
 @click.pass_context
 def cluster_faces(ctx):
-    """Run self-tuning identity resolution to cluster and name faces using photo tags (`index` runs it after an index
-    that recorded a photo)."""
+    """Run self-tuning identity resolution to cluster and name faces using photo tags. Run by hand: `index` matches only
+    the faces it made, and writes nothing."""
     _resolve_identities(get_runtime(), get_db_path(ctx.obj.get("test", False), ctx.obj.get("db")))
 
 
 def _resolve_identities(runtime, db_path):
     """Cluster and name the library's faces from its photos' tags (tagpup.services.identities.resolve), saying what it
-    named: `cluster-faces`, and `index` after an index that recorded a photo."""
+    named: `cluster-faces`."""
     photo_index = library_index(runtime, db_path)
     if not photo_index.load():
         console.print("[bold red]Error:[/bold red] No photo index found.")
