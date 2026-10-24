@@ -71,6 +71,7 @@ SCENARIOS = {
     "V9": ("views", "Vectors and suggestions follow their photo through rename, settle, rotate, delete and undo."),
     "V10": ("views", "A photo's faces are found at its library's detector settings: boxes in the picture as stored, recorded under the settings that found them."),
     "V11": ("views", "A library switches to the new face model once its pass has reached its faces, refused with the counts before; then it compares by the new vectors alone, beside a library on the old model and a look with the new one."),
+    "V12": ("views", "A library switches to SigLIP 2 SO400M once the new model's vectors are made for its photos, refused with the counts before, and its undo held to the same share; each library then searches by its own model's vectors, a run on the model it began with."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -153,6 +154,7 @@ _SCENARIO_FILES = {
     "V9": "test_repair_turned_vectors test_suggest_then_apply_all",
     "V10": "test_faces_found_at_the_librarys_cap",
     "V11": "test_switching_a_librarys_face_model",
+    "V12": "test_switching_a_librarys_photo_model",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".

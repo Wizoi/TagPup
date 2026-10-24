@@ -401,8 +401,10 @@ class TestEraAwarePrompting(SuggesterTestBase):
 
 
 class TestZeroShotCandidates(SuggesterTestBase):
-    def _suggester_with_candidate(self, vector):
+    def _suggester_with_candidate(self, vector, model=None):
         embedder = StubEmbedder()
+        if model:
+            embedder.model_name, embedder.pretrained = model
         s = self.make_suggester(candidates=["Sunset"], embedder=embedder)
         # Bypass the embedder so the similarity is exactly what the test chooses.
         s.candidate_embeddings = {"Sunset": vector}
@@ -420,6 +422,15 @@ class TestZeroShotCandidates(SuggesterTestBase):
         s = self._suggester_with_candidate([0.2, math.sqrt(1 - 0.04), 0.0])
         result = s.suggest_for_photo("/nowhere/target.jpg", [1.0, 0.0, 0.0])
         self.assertNotIn("Sunset", self.scores(result))
+
+    def test_each_photo_model_holds_its_words_to_its_own_cut(self):
+        # cos = 0.15: over SigLIP 2 SO400M's 0.11, under ViT-H-14's 0.23 (tagpup.ml.photo_models; a library switched
+        # to SO400M kept none of its words while the cut was ViT-H's).
+        word = [0.15, math.sqrt(1 - 0.0225), 0.0]
+        for model, kept in ((("ViT-SO400M-14-SigLIP2", "webli"), True), (("ViT-H-14", "laion2b_s32b_b79k"), False)):
+            s = self._suggester_with_candidate(word, model)
+            result = s.suggest_for_photo("/nowhere/target.jpg", [1.0, 0.0, 0.0])
+            self.assertEqual(kept, "Sunset" in self.scores(result), model)
 
     def test_zero_shot_recommendations_are_flagged_as_new(self):
         s = self._suggester_with_candidate([1.0, 0.0, 0.0])

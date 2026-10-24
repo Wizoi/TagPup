@@ -242,8 +242,10 @@ SETTING_GROUPS = {
         "app": "tuner",
         "title": "The CLIP model",
         "consequences": [
-            "Every photo's vector was made with the model it has now, so Suggest finds nothing "
-            "until every folder is indexed again.",
+            "Each photo's vector is kept under the settings that made it, and Suggest and search compare by the "
+            "vectors of the settings the library has: a change is refused, with the counts, while too many of the "
+            "library's photos hold no vector under the new settings. Make the new model's vectors first; the "
+            "old ones stay.",
             "Indexing a folder again makes a vector for each of its photos with the new model; "
             "on a large library that takes hours.",
         ],
