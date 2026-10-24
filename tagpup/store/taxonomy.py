@@ -402,6 +402,12 @@ def embedded_tags(conn):
     return {tag for (tag,) in conn.execute("SELECT DISTINCT tag FROM tag_embeddings") if tag}
 
 
+def tag_embedding_counts(conn, model_name, pretrained):
+    """(rows, words) of the CLIP embeddings cached under this model: a word under each of its prompts."""
+    return tuple(conn.execute("SELECT COUNT(*), COUNT(DISTINCT tag) FROM tag_embeddings WHERE model_name = ? AND"
+                              " pretrained = ?", (model_name, pretrained)).fetchone())
+
+
 def tag_embedding(conn, tag, prompt, model_name, pretrained):
     """The CLIP embedding cached for `tag` under this prompt and model, as float32 bytes,
     or None."""

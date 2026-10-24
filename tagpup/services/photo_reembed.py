@@ -1,6 +1,6 @@
 """A new photo model's vectors made for a library's photos, beside its own model's (docs/AI_PIPELINE.md, phase 5): what
 the readiness gate of a photo-model switch counts (tagpup.services.settings.photo_switch_on) before it lets the library
-switch. The CLI's `embed-photos`.
+switch. The CLI's `embed-photos`; the switch itself is `set-photo-model` (switch), the settings' journaled change.
 
 The vectors are kept under the new model's key (tagpup.store.embeddings.model_key: the library's settings with the
 wanted model and its own image size), beside the library's key, which nothing here changes: every reader reads the
@@ -22,10 +22,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from tagpup.ml import photo_models
 from tagpup.services import search
+from tagpup.services import settings as library_settings
 from tagpup.services.settings import LibrarySettings
 from tagpup.store import db
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import photos as store_photos
+from tagpup.store import taxonomy as store_taxonomy
 
 logger = logging.getLogger("tagpup_cli.embedder")
 
@@ -39,6 +41,10 @@ BATCH = 256
 #: Seconds a photo, read ahead and embedded by SigLIP 2 SO400M on the owner's card (0.034 to 0.041 measured, phase 5
 #: step 2): what the dry run's estimate is made of.
 SECONDS_A_PHOTO = 0.04
+
+#: The group of settings a switch of photo model acknowledges (validation.SETTING_GROUPS): the consequences the gear's
+#: dialog asks the owner to tick, named by the command line that switches.
+ACKNOWLEDGED = ("clip",)
 
 
 class Unreachable(Exception):
@@ -76,6 +82,34 @@ def _key_of(runtime, library, model):
         raise ValueError("%s:%s is the library's photo model already: its vectors are made by index." % model)
     settings = wanted(own, model)
     return settings, store_embeddings.model_key(**settings.embedder)
+
+
+def switch(library, model, apply=False):
+    """Switch `library` to the photo model `model` (name, weights) at its own image size, as one journaled change of its
+    settings (tagpup.services.settings.change, acknowledging ACKNOWLEDGED): held to the gate of a switch
+    (settings.photo_switch_on), which refuses while more than its share of the photos hold no vector under the new key,
+    details["photo_vectors"] the counts either way; the undo is held to the same gate (settings.undo_check). A dry run
+    unless `apply`. details["tag_words"] is what Suggest holds made under the new model and the library's own, read
+    before the change (tag_words). The CLI's `set-photo-model`."""
+    words = tag_words(library, model)
+    result = library_settings.change(library, {"model.name": model[0], "model.pretrained": model[1],
+                                               "model.force_image_size": ""}, acknowledged=ACKNOWLEDGED, apply=apply)
+    result.details["tag_words"] = words
+    return result
+
+
+def tag_words(library, model):
+    """{"rows", "words"} of the words Suggest holds made under `model` (tag_embeddings), and "own": the words it holds
+    under the library's model now, read-only. Nothing makes them ahead: Suggest makes each word it asks about under the
+    library's model at its first run on it, and keeps it."""
+    own = library_settings.read(library).embedder
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        rows, words = store_taxonomy.tag_embedding_counts(conn, *model)
+        _rows_own, own_words = store_taxonomy.tag_embedding_counts(conn, own["model_name"], own["pretrained"])
+    finally:
+        conn.close()
+    return {"rows": rows, "words": words, "own": own_words}
 
 
 def _rows(library, key):

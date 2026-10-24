@@ -9,7 +9,9 @@ use while it runs. What the owner lives through:
   library's model, key and settings are as they were, and a reader of the library's key finds no new vector.
 - A photo removed while the run is under way is skipped and never given a row back.
 - A file that does not decode is counted, and tried again by the next run.
-- At 40% the gear's switch is still refused; after a full run, from the command line, it passes.
+- At 40% the switch is refused, from the command line (set-photo-model) as in the gear, with the counts; after a full
+  run its dry run passes and writes nothing, and says how many words Suggest makes again under the new model; applied it
+  is one change of the journal, and its undo puts the old model back.
 - A run waits for its turn on the graphics card before it reads what is left: one that waited behind another run finds
   what that run made.
 
@@ -42,6 +44,7 @@ from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
 OLD = ("ViT-H-14", "laion2b_s32b_b79k")
 NEW = ("ViT-SO400M-14-SigLIP2", "webli")
@@ -271,24 +274,64 @@ class AFileThatDoesNotDecode(_Library):
 
 class TheSwitchWaitsForTheRun(_Library):
 
-    def test_at_forty_percent_the_switch_is_refused_and_after_a_full_run_it_passes(self):
+    def set_model(self, *args):
+        with mock.patch.object(tagpup_cli, "get_runtime", return_value=self.runtime):
+            return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "set-photo-model", "%s:%s" % NEW]
+                                      + list(args))
+
+    def changes(self):
+        return [change for (change,) in read(self.library.path, "SELECT id FROM changes ORDER BY id")]
+
+    def test_at_forty_percent_the_switch_is_refused_and_after_a_full_run_it_passes_and_is_undone(self):
+        # Suggest made two words under the library's own model (each under two prompts), one of them under the new.
+        conn = db.connect(self.library.path)
+        try:
+            for word in ("Heron", "Harbour"):
+                for prompt in ("a photo of %s" % word, "a %s, 1998" % word):
+                    store_taxonomy.keep_tag_embedding(conn, word, prompt, *OLD, vector(1024, 3).tobytes())
+            store_taxonomy.keep_tag_embedding(conn, "Heron", "a photo of Heron", *NEW, vector(1152, 3).tobytes())
+            conn.commit()
+        finally:
+            conn.close()
         with mock.patch.object(photo_reembed, "BATCH", 4):
             self.embed(should_stop=lambda: len(self.clips[-1].forwards) >= 4)
-        result = library_settings.change(self.library, dict(TO_NEW), acknowledged=["clip"], apply=False)
-        self.assertEqual(library_settings.TOO_FEW_PHOTO_VECTORS % (
-            library_settings.PHOTOS_HELD % (4, 10, NEW_KEY, 6), 5), result.refused)
+        before, settings_before, changes_before = rows_of(self.library.path), self.settings_held(), self.changes()
+        refused = self.set_model("--apply")
+        self.assertEqual(1, refused.exit_code, refused.output)
+        self.assertIn(library_settings.TOO_FEW_PHOTO_VECTORS % (library_settings.PHOTOS_HELD % (4, 10, NEW_KEY, 6), 5),
+                      " ".join(refused.output.split()))
+        self.assertEqual(before, rows_of(self.library.path), "a refused switch wrote")
+
         ran = self.cli("--apply")
         self.assertEqual(0, ran.exit_code, ran.output)
         said = " ".join(ran.output.split())
         self.assertIn("Embedded 6 of 6: 6 kept, 0 not kept", said)
         self.assertIn("10 of the library's 10 photos now hold a vector under %s." % NEW_KEY, said)
+
         before = rows_of(self.library.path)
-        result = library_settings.change(self.library, dict(TO_NEW), acknowledged=["clip"], apply=False)
-        self.assertFalse(result.refused, result.refused)
-        self.assertEqual({"key": NEW_KEY, "holds": 10, "without": 0}, {
-            k: result.details["photo_vectors"][k] for k in ("key", "holds", "without")})
-        self.assertEqual(before, rows_of(self.library.path), "the gear's dry run wrote")
-        self.assertEqual(OLD[0], self.settings_held()["model.name"])
+        dry = self.set_model()
+        self.assertEqual(0, dry.exit_code, dry.output)
+        said = " ".join(dry.output.split())
+        self.assertIn(library_settings.PHOTOS_HELD % (10, 10, NEW_KEY, 0), said)
+        self.assertIn("Suggest holds 1 word(s) (1 row(s)) made under %s:%s, of the 2 it holds under the library's "
+                      "model: it makes the other 1 at its first run after the switch." % NEW, said)
+        self.assertIn("--apply would switch it. Nothing was written.", said)
+        self.assertEqual(before, rows_of(self.library.path), "the dry run wrote")
+
+        switched = self.set_model("--apply")
+        self.assertEqual(0, switched.exit_code, switched.output)
+        made = [change for change in self.changes() if change not in changes_before]
+        self.assertEqual(1, len(made), "the switch is one change of the journal")
+        self.assertIn("change %d. Undo with `undo %d --apply`" % (made[0], made[0]), " ".join(switched.output.split()))
+        held = self.settings_held()
+        self.assertEqual((NEW[0], NEW[1], ""), (held["model.name"], held["model.pretrained"],
+                                               held["model.force_image_size"]))
+        self.assertEqual(NEW_KEY, self.runtime.model_key(self.library))
+
+        undone = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "undo", str(made[0]), "--apply"])
+        self.assertEqual(0, undone.exit_code, undone.output)
+        self.assertEqual(settings_before, self.settings_held(), "the undo did not put the old model back")
+        self.assertEqual(OLD_KEY, self.runtime.model_key(self.library))
 
 
 class ARunWaitsForTheCard(_Library):

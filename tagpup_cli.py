@@ -1199,6 +1199,46 @@ def embed_photos(ctx, model, apply_):
         raise SystemExit(130)
 
 
+@cli.command("set-photo-model")
+@click.argument("model", metavar="NAME:WEIGHTS")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Switch: one change of the library's journal. Without it, only says whether the switch would pass.")
+@click.pass_context
+@_holds_the_roots
+def set_photo_model(ctx, model, apply_):
+    """Switch the library to the photo model NAME:WEIGHTS (ViT-SO400M-14-SigLIP2:webli) at its own image size, as the
+    gear does: one change of the journal, refused while more than 5% of the photos hold no vector under the new model
+    (embed-photos makes them). A dry run unless --apply: says the counts and whether it would pass. Search and Suggest
+    read the new model's vectors from their next run; `undo <change> --apply` switches back, held to the same gate."""
+    library = _existing_library(ctx)
+    try:
+        wanted = photo_reembed.model_of(model)
+    except ValueError as why:
+        console.print("Not run: %s" % why, markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
+    result = photo_reembed.switch(library, wanted, apply=apply_)
+    held = result.details.get("photo_vectors")
+    if held:
+        console.print(held["said"], markup=False, soft_wrap=True)
+    words = result.details["tag_words"]
+    console.print("Suggest holds %d word(s) (%d row(s)) made under %s:%s, of the %d it holds under the library's model: "
+                  "it makes the other %d at its first run after the switch." % (
+                      words["words"], words["rows"], wanted[0], wanted[1], words["own"],
+                      max(words["own"] - words["words"], 0)), markup=False, soft_wrap=True)
+    if result.refused:
+        console.print(result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    if not result.details.get("changed"):
+        console.print("The library's photo model is %s:%s already: nothing to change." % wanted, markup=False)
+        return
+    if not apply_:
+        console.print("--apply would switch it. Nothing was written.", markup=False)
+        return
+    change = result.details["change"]
+    console.print("Switched %s to %s:%s: change %d. Undo with `undo %d --apply` (the undo is held to the same gate)." % (
+        library.name, wanted[0], wanted[1], change, change), markup=False, soft_wrap=True)
+
+
 def _embedded_lines(counts):
     """What `embed-photos` says of a run: what it kept, and why the rest was not."""
     console.print("Embedded %d of %d: %d kept, %d not kept (the photo was removed meanwhile, or the write failed); %d "
