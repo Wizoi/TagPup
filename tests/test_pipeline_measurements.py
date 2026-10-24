@@ -352,9 +352,19 @@ class TheOtherChecks(unittest.TestCase):
             def search(self, vector, k=15):
                 return [(1.0, {"id": 5}), (0.9, {"id": 6}), (0.8, {"id": 7})][:k]
         leaving = holdouts.LeavingOut(Index())
-        leaving.left_out = 5
+        leaving.left_out = frozenset([5])
         self.assertEqual([6, 7], [record["id"] for _sim, record in leaving.search([0], k=2)])
+        leaving.left_out = frozenset([5, 6])   # its folder: an event's photos are left out with it
+        self.assertEqual([7], [record["id"] for _sim, record in leaving.search([0], k=2)])
+        self.assertEqual([[0.9, 0.8], [0.8]], leaving.seen)
         self.assertEqual("x", leaving.db_path)
+
+    def test_a_candidate_is_model_weights_and_size(self):
+        self.assertEqual({"name": "ViT-B-16-SigLIP2", "pretrained": "webli", "size": None},
+                         holdouts.candidate("ViT-B-16-SigLIP2:webli:"))
+        self.assertEqual(224, holdouts.candidate("ViT-H-14:laion2b_s32b_b79k:224")["size"])
+        with self.assertRaises(ValueError):
+            holdouts.candidate("ViT-H-14:224")
 
     def test_tag_scores(self):
         found = holdouts.tag_scores([{"Sport", "Sport/Track"}, set()], [{"Sport"}, {"Beach"}])
