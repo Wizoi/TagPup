@@ -49,6 +49,11 @@ def read_only(db_path):
         conn.close()
 
 
+def held_on(conn):
+    """read(), on the caller's connection: what an undo's check reads in the transaction it asks in."""
+    return _rows(conn)
+
+
 def face_model(conn):
     """The library's face model on `conn` (faces.model), trimmed as the validator trims, its default for a library that holds
     none: the key every reader of a face's vector reads `face_embeddings` under (tagpup.store.faces). Read on the reader's own

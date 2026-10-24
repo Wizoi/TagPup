@@ -32,9 +32,12 @@ from typing import Dict
 
 from tagpup.core import paths, validation
 from tagpup.core.result import Result
+from tagpup.ml import photo_models
 from tagpup.services import sync as sync_service
 from tagpup.store import db, journal, schema
+from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
+from tagpup.store import photos as store_photos
 from tagpup.store import settings as store_settings
 
 #: The value each setting has when a library does not say: what a new library is stamped with.
@@ -75,6 +78,19 @@ _TRUE = frozenset({"true", "yes", "on", "1"})
 #: again; a library its pass has not walked (photo_index, all of its faces) is far above it. 5% is the default the owner
 #: may change here: a library a twentieth of whose faces would drop out of Identify is one the owner should pass first.
 UNPASSED_SHARE_ALLOWED = 0.05
+
+#: The photo model's settings (LibrarySettings.embedder): together they name the key its vectors are kept under
+#: (tagpup.store.embeddings.model_key), and a change of any of them is a switch of photo model (photo_switch_on).
+PHOTO_MODEL = ("model.name", "model.pretrained", "model.preserve_full_frame", "model.max_aspect_ratio",
+               "model.force_image_size")
+
+#: Why a switch of photo model is refused while too many photos hold no vector under it, and what a switch says.
+PHOTOS_HELD = "%d of the library's %d photos hold a vector under %s; %d hold none."
+TOO_FEW_PHOTO_VECTORS = ("Nothing was written: %s A switch allows at most %d%% of them without one: make the new "
+                         "model's vectors first.")
+#: Why a forced image size is refused for a model measured at its own size alone (photo_models.takes_a_size).
+NATIVE_SIZE_ONLY = ("Nothing was written: %s (weights %s) is shown photos at its own size only: leave Image size "
+                    "empty.")
 
 #: Why a switch back to FaceNet is refused once none of the library's faces holds a vector under it (switch_to).
 NONE_HELD = ("Nothing was written: none of the library's %d faces holds a vector under %s (retired, or never made): "
@@ -138,6 +154,38 @@ def switch_on(conn, model, counted=True):
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 
 
+def photo_switch_on(conn, held, putting):
+    """(refusal or None, what the photos hold or None): whether the library holding the settings `held` ({key: value})
+    may be given `putting` ({key: value}) for its photo model's settings (PHOTO_MODEL). None, None when the key its
+    vectors are kept under stays the same. A forced image size for a model that takes none is refused
+    (NATIVE_SIZE_ONLY: the owner picking SigLIP 2 SO400M with the default 512 still set); then a switch more than
+    UNPASSED_SHARE_ALLOWED of whose photos hold no vector under the new key, with the counts -- the faces switch's share
+    (switch_on): a pass leaves a few photos it could not read. An empty library passes (0 of 0). Read-only, by
+    tagpup.store.photos.counts on the caller's connection."""
+    before = LibrarySettings(_filled(held)).embedder
+    after = LibrarySettings(_filled({**held, **putting})).embedder
+    old, new = store_embeddings.model_key(**before), store_embeddings.model_key(**after)
+    if old == new:
+        return None, None
+    if after["force_image_size"] is not None and not photo_models.takes_a_size(after["model_name"], after["pretrained"]):
+        return NATIVE_SIZE_ONLY % (after["model_name"], after["pretrained"]), None
+    photos, holds = store_photos.counts(conn, new)
+    said = PHOTOS_HELD % (holds, photos, new, photos - holds)
+    found = {"key": new, "holds": holds, "without": photos - holds, "said": said}
+    if photos - holds <= UNPASSED_SHARE_ALLOWED * photos:
+        return None, found
+    return TOO_FEW_PHOTO_VECTORS % (said, round(UNPASSED_SHARE_ALLOWED * 100)), found
+
+
+def photo_switch_to(library, held, putting):
+    """photo_switch_on, on a read-only connection of `library`'s own: what settings.change asks."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return photo_switch_on(conn, held, putting)
+    finally:
+        conn.close()
+
+
 def undo_check(conn, change_id, _operation, _summary):
     """Why change `change_id` of the settings (CHANGE) is not undone now, or None: its undo would put back a face model
     (faces.model) the library may not be switched to now -- the way forward's own check (switch_on), asked of the model
@@ -151,9 +199,20 @@ def undo_check(conn, change_id, _operation, _summary):
     model = journal.old_values(conn, [change_id], store_settings.TABLE, (FACE_MODEL,), "value").get(change_id)
     if FACE_MODEL in journal.recorded_values(conn, [change_id], store_settings.TABLE, "insert", "key").get(change_id, ()):
         model = DEFAULTS[FACE_MODEL]
-    if model is None:
+    if model is not None:
+        refusal = switch_on(conn, _trim(model), counted=False)[0]
+        if refusal:
+            return refusal
+    # The photo model's settings the undo puts back (photo_switch_on): a switch undone is a switch, held to the same
+    # share. Every library holds the five (stamped with them), so an undo puts back an updated row, never deletes one.
+    putting = {}
+    for key in PHOTO_MODEL:
+        old = journal.old_values(conn, [change_id], store_settings.TABLE, (key,), "value").get(change_id)
+        if old is not None:
+            putting[key] = old
+    if not putting:
         return None
-    return switch_on(conn, _trim(model), counted=False)[0]
+    return photo_switch_on(conn, store_settings.held_on(conn), putting)[0]
 
 
 def model_alone(model):
@@ -397,7 +456,10 @@ def change(library, values, acknowledged=(), apply=True):
     "faces", "exiftool") `acknowledged` does not name: the refusal lists each such group and what
     changing it means, and details["unacknowledged"] holds them. A change of the face model
     (faces.model) to one whose pass has not reached more than UNPASSED_SHARE_ALLOWED of the
-    library's faces is refused first; either way details["face_vectors"] holds what its faces
+    library's faces is refused first; so is a switch of photo model (PHOTO_MODEL) more than that share of whose
+    photos hold no vector under its new key, or one forcing an image size on a model that takes none
+    (photo_switch_on; details["photo_vectors"]: the new key, how many photos hold a vector under it and how many none,
+    and its sentence). For the face model, details["face_vectors"] holds what its faces
     hold under the model switched to, and, for a library with faces, its sentence ("said"; for a switch back to
     FaceNet, only when a face holds no FaceNet vector, and refused when none holds one: switch_to). Every caller -- the
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
@@ -453,6 +515,15 @@ def change(library, values, acknowledged=(), apply=True):
             continue
         changed.append(key)
     result.details.update({"changed": changed, "locked": any(validation.SETTINGS[k]["locked"] for k in changed)})
+    if any(key in PHOTO_MODEL for key in changed):
+        # Before the consequences, as the face model's: ticking them cannot make a library without the new model's
+        # vectors switchable.
+        refusal, photo_vectors = photo_switch_to(library, held, {key: wanted[key] for key in changed})
+        if photo_vectors is not None:
+            result.details["photo_vectors"] = photo_vectors
+        if refusal:
+            result.refuse(refusal)
+            return result
     if FACE_MODEL in changed:
         # Before the consequences are asked for: ticking them cannot make a library its pass has not reached switchable.
         refusal, result.details["face_vectors"] = switch_to(library, _trim(wanted[FACE_MODEL]))

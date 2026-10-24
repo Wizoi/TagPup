@@ -117,8 +117,8 @@ again before it writes.
 The CLIP model (model, weights, keep the full frame, widest aspect ratio, image size),
 face detection (smallest face, confidence, stage thresholds) and the ExifTool program are
 **locked**: shown, not editable. Each group opens only through its **Change...**, which
-lists what changing it does, each with a box to tick -- every photo's vector was made
-with the old model, so Suggest finds nothing until every folder is indexed again; face
+lists what changing it does, each with a box to tick -- a change of the CLIP model is
+refused, with the counts, while too many photos hold no vector under it; face
 detection applies only to photos indexed afterwards; every read and write of a photo file
 goes through ExifTool. Save is enabled only when something changed, every value may be
 set, and every box of every group opened is ticked. After a locked setting is saved the

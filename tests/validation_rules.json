@@ -1,5 +1,5 @@
 {
- "version": "d1179870127b",
+ "version": "86d84ea7d967",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -220,7 +220,7 @@
    "info": "The CLIP architecture Suggest compares photos and words with (an open_clip model name). Every photo's vector is made with it when its folder is indexed.",
    "locked": true,
    "consequences": [
-    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Each photo's vector is kept under the settings that made it, and Suggest and search compare by the vectors of the settings the library has: a change is refused, with the counts, while too many of the library's photos hold no vector under the new settings. Make the new model's vectors first; the old ones stay.",
     "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
    ],
    "rules": [
@@ -243,7 +243,7 @@
    "info": "The trained weights the model is loaded with (an open_clip pretrained tag for the model above).",
    "locked": true,
    "consequences": [
-    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Each photo's vector is kept under the settings that made it, and Suggest and search compare by the vectors of the settings the library has: a change is refused, with the counts, while too many of the library's photos hold no vector under the new settings. Make the new model's vectors first; the old ones stay.",
     "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
    ],
    "rules": [
@@ -266,7 +266,7 @@
    "info": "Show the model the whole photo, padded to the widest aspect ratio below, rather than the square crop from its middle.",
    "locked": true,
    "consequences": [
-    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Each photo's vector is kept under the settings that made it, and Suggest and search compare by the vectors of the settings the library has: a change is refused, with the counts, while too many of the library's photos hold no vector under the new settings. Make the new model's vectors first; the old ones stay.",
     "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
    ],
    "rules": [
@@ -284,7 +284,7 @@
    "info": "With the full frame kept, how far a photo is padded towards square: 1 is square.",
    "locked": true,
    "consequences": [
-    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Each photo's vector is kept under the settings that made it, and Suggest and search compare by the vectors of the settings the library has: a change is refused, with the counts, while too many of the library's photos hold no vector under the new settings. Make the new model's vectors first; the old ones stay.",
     "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
    ],
    "rules": [
@@ -308,7 +308,7 @@
    "info": "The size in pixels a photo is scaled to before the model sees it. Empty is the model's own size.",
    "locked": true,
    "consequences": [
-    "Every photo's vector was made with the model it has now, so Suggest finds nothing until every folder is indexed again.",
+    "Each photo's vector is kept under the settings that made it, and Suggest and search compare by the vectors of the settings the library has: a change is refused, with the counts, while too many of the library's photos hold no vector under the new settings. Make the new model's vectors first; the old ones stay.",
     "Indexing a folder again makes a vector for each of its photos with the new model; on a large library that takes hours."
    ],
    "rules": [
