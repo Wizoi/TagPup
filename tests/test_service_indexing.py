@@ -4,7 +4,7 @@ The CLI is stood in for. What is checked is what it is asked to do, from where a
 which library, and what the Result and the progress reports say.
 
 Contract row 16: the indexer's stdout is the interface, and `WhatTheProgressBarSays` is its table. What follows an
-index -- clustering, its guard and its failure, from every entry point -- is tests/test_an_index_is_followed_by_clustering.py.
+index -- the matching of the faces it made, from every entry point -- is tests/test_new_faces_are_matched_after_an_index.py.
 
 Lifted: test_tagpup_server_api's TestIndexerNoiseFiltering and TestIndexerProgressText (22 tests, one per line shape).
 Broken in a scratch copy and the table fails: _INDEXER_NOISE emptied (every chatter row), _INDEXER_TQDM's percent group
@@ -83,7 +83,7 @@ class AddingAFolder(unittest.TestCase):
             "Generating embeddings:  50%|#####     | 25/50 [00:12<00:12]\n",
             "Found 50 image(s) total.\n",
         )))
-        self.assertEqual(self.reports, [("Generating embeddings: 50% (25/50)", 45),
+        self.assertEqual(self.reports, [("Generating embeddings: 50% (25/50)", 50),
                                         ("Found 50 image(s) total.", None)])
 
 

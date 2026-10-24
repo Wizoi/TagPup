@@ -59,7 +59,7 @@ SCENARIOS = {
     "F8": ("files", "Just look edits a file only, and delete, rename and the recycle bin keep their rules."),
     "F9": ("files", "A run holds one map of the roots; a root moved meanwhile stops a write with a sentence."),
     "F10": ("files", "One photo whatever its path's spelling."),
-    "F11": ("files", "Add a folder: it is queued, indexed by the CLI with progress, followed by clustering from every entry point when it recorded a photo, and a second run reads nothing."),
+    "F11": ("files", "Add a folder: it is queued, indexed by the CLI with progress, followed from every entry point, when it recorded a photo, by a matching of the faces it made that writes nothing, and a second run reads nothing."),
     "V1": ("views", "A view lists each photo once, in the owner's order, with its count."),
     "V2": ("views", "A typed search ANDs its words and ranks nothing."),
     "V3": ("views", "Suggest, and the analyse-only run, from start to end."),
@@ -115,7 +115,10 @@ _SCENARIO_FILES = {
     ),
     "F9": "test_roots_old_place test_roots_pinned_runs",
     "F10": "test_one_photo_whatever_its_spelling",
-    "F11": "test_index_progress_end_to_end test_an_index_is_followed_by_clustering test_an_index_reads_the_next_photos_ahead",
+    "F11": (
+        "test_index_progress_end_to_end test_new_faces_are_matched_after_an_index "
+        "test_an_index_reads_the_next_photos_ahead"
+    ),
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
