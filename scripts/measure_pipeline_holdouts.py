@@ -209,6 +209,10 @@ NEIGHBOUR_CUT, WORD_CUT = 0.35, 0.23
 FLOORS = tuple(round(0.30 + 0.05 * n, 2) for n in range(14))
 WORD_CUTS = tuple(round(-0.20 + 0.01 * n, 2) for n in range(81))
 
+#: The cut the table prints the word path's pairs at: Suggest offers a tag from 0.60 (OFFER_A_TAG), and no word reaches
+#: this far under the baseline (docs/AI_PIPELINE.md, section 7, #1821).
+WORD_FLOOR_SEEN = 0.40
+
 #: The percentiles the neighbours' likenesses are kept at: tenths, since Suggest's cut leaves out under 2% of the
 #: baseline's.
 PERCENTILES = np.linspace(0, 100, 1001)
@@ -370,7 +374,9 @@ def cuts_needed(found, baseline):
     """The cuts the candidate `found` would need to keep what the baseline's keep, read off the held-out set (by
     folder): the neighbour cut keeping the share of neighbours the baseline's NEIGHBOUR_CUT keeps; the offered floor
     giving the precision the baseline's has at Suggest's floor; the word cut giving the precision the baseline's word
-    path has at WORD_CUT. None where no cut reaches it."""
+    path has at WORD_CUT. None where no cut reaches it. Where the baseline's own cut drops nothing (a share of 0 below it, as on the
+    libraries' run) the neighbour cut is only the least likeness this model gave a neighbour, which drops nothing
+    either: `neighbour_drops_nothing` says so."""
     mine, theirs = found["suggest"]["by_folder"], baseline["suggest"]["by_folder"]
     share = theirs["neighbours"]["share_below_cut"]
     percentiles = mine["neighbours"]["percentiles"]
@@ -386,7 +392,7 @@ def cuts_needed(found, baseline):
     word_wanted = precision(at)
     word = next((float(cut) for cut, got in sorted(found["words"]["cuts"].items(), key=lambda kv: float(kv[0]))
                  if word_wanted is not None and precision(got) is not None and precision(got) >= word_wanted), None)
-    return {"neighbour_cut": neighbour, "offered_floor": floor, "offered_precision_wanted": wanted,
+    return {"neighbour_cut": neighbour, "neighbour_drops_nothing": share == 0, "offered_floor": floor, "offered_precision_wanted": wanted,
             "word_cut": word, "word_precision_wanted": word_wanted}
 
 
@@ -658,6 +664,14 @@ def table(out, report):
 
     def number(value, form="%.3f"):
         return "-" if value is None else form % value
+    sample = os.path.join(out, "models-sample.json")
+    if os.path.exists(sample):
+        with open(sample, encoding="utf-8") as handle:
+            kept = json.load(handle)
+        report("Sample (models-sample.json): %d photos with a tag that is not a person, in %d folders; %d held out, in %d "
+               "folders." % (kept["photos_with_a_tag_not_a_person"], kept["their_folders"], kept["held_out"],
+                             kept["held_out_folders"]))
+        report("")
     report("| Candidate | Dim | s a photo, one at a time (read / forward) | s a photo, the pass | Card MiB over | "
            "Pool | Held out |")
     report("|---|---|---|---|---|---|---|")
@@ -670,20 +684,23 @@ def table(out, report):
             number(each["card_mib"].get("peak_over_before"), "%d"), each["pool"], each["held_out"]))
     report("")
     report("| Candidate | Held out by | Top 1 P | Top 5 P / R | Offered P / R (n) | Words top 1 P | Words top 5 R | "
-           "Neighbour cut | Floor | Word cut |")
-    report("|---|---|---|---|---|---|---|---|---|---|")
+           "Neighbour cut | Floor | Word cut | Word pairs at 0.40 or more (right) |")
+    report("|---|---|---|---|---|---|---|---|---|---|---|")
     for each in found:
         needed = cuts_needed(each, baseline) if baseline else {}
         for held in ("by_photo", "by_folder"):
             got = each["suggest"][held]
-            report("| %s | %s | %s | %s / %s | %s / %s (%d) | %s | %s | %s | %s | %s |" % (
+            pairs = each["words"]["cuts"].get("%.2f" % WORD_FLOOR_SEEN)
+            report("| %s | %s | %s | %s / %s | %s / %s (%d) | %s | %s | %s | %s | %s | %s |" % (
                 each["candidate"], held.replace("by_", ""), number(got["top_1"]["precision"]),
                 number(got["top_5"]["precision"]), number(got["top_5"]["recall"]),
                 number(got["offered"]["precision"]), number(got["offered"]["recall"]), got["offered"]["offered"],
                 number(each["words"]["top_1"]["precision"]), number(each["words"]["top_5"]["recall"]),
-                number(needed.get("neighbour_cut")) if held == "by_folder" else "",
+                (number(needed.get("neighbour_cut")) + (" (least; drops nothing)" if needed.get("neighbour_drops_nothing")
+                                                                       else "")) if held == "by_folder" else "",
                 number(needed.get("offered_floor"), "%.2f") if held == "by_folder" else "",
-                number(needed.get("word_cut"), "%.2f") if held == "by_folder" else ""))
+                number(needed.get("word_cut"), "%.2f") if held == "by_folder" else "",
+                "-" if pairs is None else "%d (%d)" % (pairs["pairs"], pairs["right"])))
 
 
 #: Written in the work folder when this program makes it: the folder is deleted at the end only if it holds this.

@@ -411,6 +411,48 @@ class TheOtherChecks(unittest.TestCase):
         self.assertFalse(holdouts._a_person("Sport/Track", {"people"}))
 
 
+class TheTableSaysWhatItPrints(unittest.TestCase):
+    """docs/AI_PIPELINE.md section 7 states only numbers a printed table holds (#1825, #1826)."""
+
+    def result(self, label, shift, word_pairs):
+        likeness = np.linspace(0.40, 0.90, 2001) + shift   # none below Suggest's 0.35: the real run's shape
+        scores = {"precision": 0.5, "recall": 0.4, "offered": 10, "right": 5, "truth": 12, "photos": 3,
+                  "photos_with_a_right_tag": 2}
+        suggest = {"offered": scores, "top_1": scores, "top_5": scores, "floors": {"0.60": scores},
+                   "neighbours": {"share_below_cut": float(np.mean(likeness < holdouts.NEIGHBOUR_CUT)),
+                                  "percentiles": list(np.percentile(likeness, holdouts.PERCENTILES))}}
+        cuts = {"%.2f" % cut: {"pairs": word_pairs if cut <= 0.40 else 0, "right": 1 if cut <= 0.40 else 0}
+                for cut in holdouts.WORD_CUTS}
+        return {"candidate": label, "dimension": 8, "pool": 5, "held_out": 3, "card_mib": {"peak_over_before": 100},
+                "timing": {"a_photo": {"mean": 0.2}, "decode_pad_resize": {"mean": 0.1}, "forward": {"mean": 0.1}},
+                "pass": {"seconds": 1.0, "embedded": 10},
+                "suggest": {"by_photo": suggest, "by_folder": suggest},
+                "words": {"top_1": scores, "top_5": scores, "cuts": cuts}}
+
+    def test_a_neighbour_cut_that_drops_nothing_says_so_and_the_word_pairs_and_folders_are_printed(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        baseline = holdouts.label_of(holdouts.candidate(holdouts.CANDIDATES[0]))
+        found = {baseline: self.result(baseline, 0.0, 0), "other": self.result("other", 0.1, 2)}
+        for label, each in found.items():
+            with open(os.path.join(folder, "model-%s.json" % label.replace(" ", "_")), "w", encoding="utf-8") as handle:
+                json.dump(each, handle)
+        with open(os.path.join(folder, "models-sample.json"), "w", encoding="utf-8") as handle:
+            json.dump({"photos_with_a_tag_not_a_person": 100, "their_folders": 7, "held_out": 3, "held_out_folders": 2},
+                      handle)
+        needed = holdouts.cuts_needed(found[baseline], found[baseline])
+        self.assertTrue(needed["neighbour_drops_nothing"])
+        self.assertAlmostEqual(0.40, needed["neighbour_cut"], places=3)
+        lines = []
+        holdouts.table(folder, lines.append)
+        text = "\n".join(lines)
+        self.assertIn("100 photos with a tag that is not a person, in 7 folders; 3 held out, in 2 folders", text)
+        self.assertIn("0.400 (least; drops nothing)", text)
+        self.assertIn("Word pairs at 0.40 or more", text)
+        other = next(line for line in lines if line.startswith("| other | folder"))
+        self.assertTrue(other.rstrip().endswith("| 2 (1) |"), other)
+
+
 class TheWorkFolderIsDeletedOnlyIfThisProgramMadeIt(unittest.TestCase):
     """`--work` is deleted when every candidate is done: a run given the results folder, the library's folder or the
     TagPup home would delete what it was measuring into, what it was measuring, or the owner's home."""

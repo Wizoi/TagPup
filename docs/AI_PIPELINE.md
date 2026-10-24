@@ -839,9 +839,12 @@ Measured by a throwaway script in the worker's scratch folder (not kept, so not 
 ### Phase 5 model spike (2026-10-24)
 
 `scripts/measure_pipeline_holdouts.py models` and `table`. **Sample:** 1,001 photos held out by folder from photo_index,
-each with a non-people tag, weighted to photos with many faces. The whole library (59,518 readable photos) was embedded
-under each candidate in a sandbox copy, so the neighbours are the library's. HF cache sizes: ViT-H-14 laion2b 3.7 GB,
-DFN5B 3.7 GB, SigLIP 2 B/16 1.5 GB, L/16-256 3.4 GB, SO400M 4.3 GB. The card column is MiB over what other programs held.
+each with a non-people tag, weighted to photos with many faces. The whole library (59,518 readable photos, the Pool
+column) was embedded under each candidate in a sandbox copy, so the neighbours are the library's. The sample line that
+`table` prints first: 46,063 photos with a tag that is not a person, in 2,289 folders; 1,001 held out, in 656 folders
+(read from models-sample.json). HF cache sizes: ViT-H-14 laion2b 3.7 GB, DFN5B 3.7 GB, SigLIP 2 B/16 1.5 GB, L/16-256
+3.4 GB, SO400M 4.3 GB: counted by hand 2026-10-24, not by the script. The card column is MiB over what other programs
+held, reliable only with one candidate in a process (#1829); the results do not say how many ran in one process.
 It is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session's choice, 2026-10-24); the table shows no more than
 that.
 
@@ -858,24 +861,26 @@ Speed and card (`table`):
 
 Suggest on the held-out photos (`table`):
 
-| Candidate | Held out by | Top 1 P | Top 5 P / R | Offered P / R (n) | Words top 1 P | Words top 5 R | Neighbour cut | Floor | Word cut |
-|---|---|---|---|---|---|---|---|---|---|
-| ViT-H-14 laion2b_s32b_b79k 512 | photo | 0.835 | 0.320 / 0.452 | 0.946 / 0.316 (1084) | 0.415 | 0.313 |  |  |  |
-| ViT-H-14 laion2b_s32b_b79k 512 | folder | 0.616 | 0.236 / 0.342 | 0.775 / 0.203 (849) | 0.415 | 0.313 | 0.396 | 0.60 | 0.23 |
-| ViT-B-16-SigLIP2 webli native | photo | 0.779 | 0.356 / 0.459 | 0.932 / 0.267 (930) | 0.338 | 0.271 |  |  |  |
-| ViT-B-16-SigLIP2 webli native | folder | 0.568 | 0.245 / 0.335 | 0.764 / 0.172 (729) | 0.338 | 0.271 | 0.569 | 0.65 | 0.11 |
-| ViT-H-14-quickgelu dfn5b native | photo | 0.804 | 0.273 / 0.419 | 0.940 / 0.299 (1033) | 0.358 | 0.277 |  |  |  |
-| ViT-H-14-quickgelu dfn5b native | folder | 0.587 | 0.201 / 0.310 | 0.749 / 0.195 (844) | 0.358 | 0.277 | 0.395 | 0.65 | 0.27 |
-| ViT-H-14 laion2b_s32b_b79k 224 | photo | 0.824 | 0.315 / 0.449 | 0.931 / 0.316 (1102) | 0.407 | 0.316 |  |  |  |
-| ViT-H-14 laion2b_s32b_b79k 224 | folder | 0.625 | 0.235 / 0.341 | 0.760 / 0.204 (872) | 0.407 | 0.316 | 0.380 | 0.65 | 0.24 |
-| ViT-L-16-SigLIP2-256 webli native | photo | 0.832 | 0.386 / 0.473 | 0.937 / 0.299 (1036) | 0.322 | 0.239 |  |  |  |
-| ViT-L-16-SigLIP2-256 webli native | folder | 0.616 | 0.271 / 0.356 | 0.777 / 0.195 (813) | 0.322 | 0.239 | 0.576 | 0.60 | 0.12 |
-| ViT-SO400M-14-SigLIP2 webli native | photo | 0.837 | 0.397 / 0.479 | 0.933 / 0.307 (1068) | 0.355 | 0.243 |  |  |  |
-| ViT-SO400M-14-SigLIP2 webli native | folder | 0.626 | 0.274 / 0.354 | 0.778 / 0.207 (863) | 0.355 | 0.243 | 0.598 | 0.60 | 0.11 |
+| Candidate | Held out by | Top 1 P | Top 5 P / R | Offered P / R (n) | Words top 1 P | Words top 5 R | Neighbour cut | Floor | Word cut | Word pairs at 0.40 or more (right) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ViT-H-14 laion2b_s32b_b79k 512 | photo | 0.835 | 0.320 / 0.452 | 0.946 / 0.316 (1084) | 0.415 | 0.313 |  |  |  | 0 (0) |
+| ViT-H-14 laion2b_s32b_b79k 512 | folder | 0.616 | 0.236 / 0.342 | 0.775 / 0.203 (849) | 0.415 | 0.313 | 0.396 (least; drops nothing) | 0.60 | 0.23 | 0 (0) |
+| ViT-B-16-SigLIP2 webli native | photo | 0.779 | 0.356 / 0.459 | 0.932 / 0.267 (930) | 0.338 | 0.271 |  |  |  | 0 (0) |
+| ViT-B-16-SigLIP2 webli native | folder | 0.568 | 0.245 / 0.335 | 0.764 / 0.172 (729) | 0.338 | 0.271 | 0.569 (least; drops nothing) | 0.65 | 0.11 | 0 (0) |
+| ViT-H-14-quickgelu dfn5b native | photo | 0.804 | 0.273 / 0.419 | 0.940 / 0.299 (1033) | 0.358 | 0.277 |  |  |  | 2 (2) |
+| ViT-H-14-quickgelu dfn5b native | folder | 0.587 | 0.201 / 0.310 | 0.749 / 0.195 (844) | 0.358 | 0.277 | 0.395 (least; drops nothing) | 0.65 | 0.27 | 2 (2) |
+| ViT-H-14 laion2b_s32b_b79k 224 | photo | 0.824 | 0.315 / 0.449 | 0.931 / 0.316 (1102) | 0.407 | 0.316 |  |  |  | 0 (0) |
+| ViT-H-14 laion2b_s32b_b79k 224 | folder | 0.625 | 0.235 / 0.341 | 0.760 / 0.204 (872) | 0.407 | 0.316 | 0.380 (least; drops nothing) | 0.65 | 0.24 | 0 (0) |
+| ViT-L-16-SigLIP2-256 webli native | photo | 0.832 | 0.386 / 0.473 | 0.937 / 0.299 (1036) | 0.322 | 0.239 |  |  |  | 0 (0) |
+| ViT-L-16-SigLIP2-256 webli native | folder | 0.616 | 0.271 / 0.356 | 0.777 / 0.195 (813) | 0.322 | 0.239 | 0.576 (least; drops nothing) | 0.60 | 0.12 | 0 (0) |
+| ViT-SO400M-14-SigLIP2 webli native | photo | 0.837 | 0.397 / 0.479 | 0.933 / 0.307 (1068) | 0.355 | 0.243 |  |  |  | 0 (0) |
+| ViT-SO400M-14-SigLIP2 webli native | folder | 0.626 | 0.274 / 0.354 | 0.778 / 0.207 (863) | 0.355 | 0.243 | 0.598 (least; drops nothing) | 0.60 | 0.11 | 0 (0) |
 
 **What it shows.**
-- (a) Suggest's neighbour cut, 0.35, never applies to the baseline: no folder-held neighbour likeness is below 0.396. The
-  zero-shot words never reach the panel: no pair reaches 0.40, so none is offered (#1821).
+- (a) Suggest's neighbour cut, 0.35, never applies to the baseline: no folder-held neighbour likeness is below 0.396 (the
+  share below 0.35 is 0 in the saved results; the Neighbour cut column of every model is then only the least likeness
+  it gave a neighbour, "drops nothing", not a cut it needs). The zero-shot words never reach the panel: under the
+  baseline no pair reaches 0.40 (the last column), so none is offered (#1821); DFN5B has 2 pairs at 0.40 or more.
 - (b) 224 equals 512 on recall and top 5; offered precision is 0.760 against 0.775 by folder.
 - (c) DFN5B is worse than the baseline; SigLIP 2 B/16 is not better. L/16 and SO400M match the baseline's offered
   precision (0.777 and 0.778 against 0.775 by folder) and beat it on top-5 precision (0.271 and 0.274 against 0.236), at
@@ -883,11 +888,11 @@ Suggest on the held-out photos (`table`):
 - (d) The pass is limited by decoding: about 33 to 40 minutes for the whole library under any model.
 - (e) Caveat: tags Suggest wrote before the journal (it starts 2026-09-25) cannot be told from hand tags (`photo_tags` has
   no source column), which favours the baseline.
-- (f) The two folder counts, 2,289 (folders holding a photo with a non-people tag) and 2,564 (all folders), are both
-  right.
+- (f) The two folder counts, 2,289 (folders holding a photo with a non-people tag, printed in the sample line) and 2,564
+  (all folders, counted by hand 2026-10-24, not by the script), are both right.
 - (g) SigLIP's cosines are lower than ViT-H's, so Suggest's thresholds need re-deriving under it. The last three columns
-  give the cut each model needs; for SO400M the neighbour cut is 0.598 and the word cut 0.11, against 0.396 and 0.23 for
-  the baseline. These are the starting values for the recalibration, as measured.
+  give the cuts each model needs; for SO400M the least neighbour likeness is 0.598 (drops nothing) and the word cut 0.11,
+  against 0.396 and 0.23 for the baseline. These are the starting values for the recalibration, as measured.
 
 ## 8. Risks
 
