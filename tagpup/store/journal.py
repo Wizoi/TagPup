@@ -932,18 +932,6 @@ def newest_kept(conn, operation):
     return row[0] if row is not None and row[1] == operation and kept(conn, row[0]) else None
 
 
-def operations(conn, change_ids):
-    """{id: operation} of each of `change_ids` the journal holds, on the caller's connection: the one read of a change's
-    name (`operation` is it for one change, on a connection of its own)."""
-    found = {}
-    ids = list(change_ids)
-    for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
-        found.update(conn.execute("SELECT id, operation FROM changes WHERE id IN (%s)" % ",".join("?" * len(chunk)),
-                                  chunk).fetchall())
-    return found
-
-
 def recorded_values(conn, change_ids, table, action, column):
     """{change id: {value}} of `column` in the rows of `table` each of `change_ids` recorded as `action` ("insert": the
     value it wrote; "delete": the value the row held): the photos a change's faces were in, say. By the index of the
@@ -1377,16 +1365,6 @@ def old_values(conn, change_ids, table, key, column):
 
 def _shown(value):
     return "<%d bytes>" % len(value) if isinstance(value, bytes) else value
-
-
-def operation(db_path, change_id):
-    """The name change `change_id` was applied under, or None for a change the library
-    at `db_path` has not."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        return operations(conn, [change_id]).get(change_id)
-    finally:
-        conn.close()
 
 
 def history(db_path, limit=20, change_id=None, values=False):
