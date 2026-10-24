@@ -21,7 +21,7 @@ and reviewed but NOT merged: two blockers to fix first (a photo removed while th
 a ghost row; the change's name must not carry the folder) and two owner decisions taken (named old faces are
 paired first; new faces stay unnamed). **Slice B** (the `face-pass` command) is built. **Slice C** (the gate's scoring,
 `scripts/measure_face_gate.py`, read-only) is built on `feature/gate-scoring`, as built below; the owner picks the naming
-precision from its numbers. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
+precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); the re-embed and Suggest's recalibration are not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
@@ -835,6 +835,59 @@ here, OpenCV's area scaling in the spike), 2,081 merged. The whole of a worst ph
 alignment and AdaFace in chunks of 32 for about 210 faces) is 0.25 s. So the second scale costs about 0.006 s on the
 card and 0.02 s on the processor a photo, not the 0.039 s the onnxruntime run suggested.
 Measured by a throwaway script in the worker's scratch folder (not kept, so not repeatable from the tree): it took the card's turn itself and read the weights from its own folder, converted by `scripts/make_scrfd_torchscript.py` from the spike's `det_10g.onnx`; the three weight files are not in the owner's checkpoints folder.
+
+### Phase 5 model spike (2026-10-24)
+
+`scripts/measure_pipeline_holdouts.py models` and `table`. **Sample:** 1,001 photos held out by folder from photo_index,
+each with a non-people tag, weighted to photos with many faces. The whole library (59,518 readable photos) was embedded
+under each candidate in a sandbox copy, so the neighbours are the library's. HF cache sizes: ViT-H-14 laion2b 3.7 GB,
+DFN5B 3.7 GB, SigLIP 2 B/16 1.5 GB, L/16-256 3.4 GB, SO400M 4.3 GB. The card column is MiB over what other programs held.
+It is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session's choice, 2026-10-24); the table shows no more than
+that.
+
+Speed and card (`table`):
+
+| Candidate | Dim | s a photo, one at a time (read / forward) | s a photo, the pass | Card MiB over | Pool | Held out |
+|---|---|---|---|---|---|---|
+| ViT-H-14 laion2b_s32b_b79k 512 | 1024 | 0.221 (0.159 / 0.061) | - | 4182 | 59518 | 1001 |
+| ViT-B-16-SigLIP2 webli native | 768 | 0.171 (0.148 / 0.023) | 0.034 | 790 | 59518 | 1001 |
+| ViT-H-14-quickgelu dfn5b native | 1024 | 0.182 (0.148 / 0.034) | 0.040 | 4131 | 59518 | 1001 |
+| ViT-H-14 laion2b_s32b_b79k 224 | 1024 | 0.179 (0.148 / 0.031) | 0.039 | 3985 | 59518 | 1001 |
+| ViT-L-16-SigLIP2-256 webli native | 1024 | 0.190 (0.147 / 0.044) | 0.041 | 1813 | 59518 | 1001 |
+| ViT-SO400M-14-SigLIP2 webli native | 1152 | 0.182 (0.145 / 0.037) | 0.039 | 2250 | 59518 | 1001 |
+
+Suggest on the held-out photos (`table`):
+
+| Candidate | Held out by | Top 1 P | Top 5 P / R | Offered P / R (n) | Words top 1 P | Words top 5 R | Neighbour cut | Floor | Word cut |
+|---|---|---|---|---|---|---|---|---|---|
+| ViT-H-14 laion2b_s32b_b79k 512 | photo | 0.835 | 0.320 / 0.452 | 0.946 / 0.316 (1084) | 0.415 | 0.313 |  |  |  |
+| ViT-H-14 laion2b_s32b_b79k 512 | folder | 0.616 | 0.236 / 0.342 | 0.775 / 0.203 (849) | 0.415 | 0.313 | 0.396 | 0.60 | 0.23 |
+| ViT-B-16-SigLIP2 webli native | photo | 0.779 | 0.356 / 0.459 | 0.932 / 0.267 (930) | 0.338 | 0.271 |  |  |  |
+| ViT-B-16-SigLIP2 webli native | folder | 0.568 | 0.245 / 0.335 | 0.764 / 0.172 (729) | 0.338 | 0.271 | 0.569 | 0.65 | 0.11 |
+| ViT-H-14-quickgelu dfn5b native | photo | 0.804 | 0.273 / 0.419 | 0.940 / 0.299 (1033) | 0.358 | 0.277 |  |  |  |
+| ViT-H-14-quickgelu dfn5b native | folder | 0.587 | 0.201 / 0.310 | 0.749 / 0.195 (844) | 0.358 | 0.277 | 0.395 | 0.65 | 0.27 |
+| ViT-H-14 laion2b_s32b_b79k 224 | photo | 0.824 | 0.315 / 0.449 | 0.931 / 0.316 (1102) | 0.407 | 0.316 |  |  |  |
+| ViT-H-14 laion2b_s32b_b79k 224 | folder | 0.625 | 0.235 / 0.341 | 0.760 / 0.204 (872) | 0.407 | 0.316 | 0.380 | 0.65 | 0.24 |
+| ViT-L-16-SigLIP2-256 webli native | photo | 0.832 | 0.386 / 0.473 | 0.937 / 0.299 (1036) | 0.322 | 0.239 |  |  |  |
+| ViT-L-16-SigLIP2-256 webli native | folder | 0.616 | 0.271 / 0.356 | 0.777 / 0.195 (813) | 0.322 | 0.239 | 0.576 | 0.60 | 0.12 |
+| ViT-SO400M-14-SigLIP2 webli native | photo | 0.837 | 0.397 / 0.479 | 0.933 / 0.307 (1068) | 0.355 | 0.243 |  |  |  |
+| ViT-SO400M-14-SigLIP2 webli native | folder | 0.626 | 0.274 / 0.354 | 0.778 / 0.207 (863) | 0.355 | 0.243 | 0.598 | 0.60 | 0.11 |
+
+**What it shows.**
+- (a) Suggest's neighbour cut, 0.35, never applies to the baseline: no folder-held neighbour likeness is below 0.396. The
+  zero-shot words never reach the panel: no pair reaches 0.40, so none is offered (#1821).
+- (b) 224 equals 512 on recall and top 5; offered precision is 0.760 against 0.775 by folder.
+- (c) DFN5B is worse than the baseline; SigLIP 2 B/16 is not better. L/16 and SO400M match the baseline's offered
+  precision (0.777 and 0.778 against 0.775 by folder) and beat it on top-5 precision (0.271 and 0.274 against 0.236), at
+  1,813 and 2,250 MiB against 4,182.
+- (d) The pass is limited by decoding: about 33 to 40 minutes for the whole library under any model.
+- (e) Caveat: tags Suggest wrote before the journal (it starts 2026-09-25) cannot be told from hand tags (`photo_tags` has
+  no source column), which favours the baseline.
+- (f) The two folder counts, 2,289 (folders holding a photo with a non-people tag) and 2,564 (all folders), are both
+  right.
+- (g) SigLIP's cosines are lower than ViT-H's, so Suggest's thresholds need re-deriving under it. The last three columns
+  give the cut each model needs; for SO400M the neighbour cut is 0.598 and the word cut 0.11, against 0.396 and 0.23 for
+  the baseline. These are the starting values for the recalibration, as measured.
 
 ## 8. Risks
 
