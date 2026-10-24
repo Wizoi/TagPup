@@ -33,6 +33,10 @@ or a person.
   photo's, so a pooled run checks the harness and compares nothing.
 
 Each check that loads a model takes the card in the owner's line (tagpup.runtime), in a sandbox deleted after.
+
+Run ONE candidate a process for the card's figure: "Card MiB over" is the peak above what the card held 1.5 s before the
+model loaded, and a model unloaded earlier in the same process leaves its allocator cache, which then counts as the other
+programs' (#1829). The time and quality figures do not depend on it.
 """
 import argparse
 import collections
@@ -294,7 +298,8 @@ def tag_scores(offered, truths):
 
 
 def _a_person(tag, face_roots):
-    """Is `tag` under a branch that holds people (the tree's face roots, as Suggest leaves them out)?"""
+    """Is `tag` under a branch that holds people (the tree's face roots, as Suggest leaves them out)? No owner function
+    answers this for a tag: suggester.py and person_tags.py each test the root inline."""
     parts = vocabulary.segments(tag)
     return bool(parts) and vocabulary.key(parts[0]) in face_roots
 

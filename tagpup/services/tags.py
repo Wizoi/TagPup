@@ -39,13 +39,9 @@ def tree(library):
 
 
 def people_roots(library):
-    """The lowercased roots `library` files people under (store.taxonomy.people_roots), read-only: what Suggest
-    leaves out of its tags, for a program that scores tags that are not people."""
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        return taxonomy.people_roots(conn)
-    finally:
-        conn.close()
+    """The lowercased roots `library` files people under, the one read Suggest makes (TagTaxonomy.people_roots): what
+    it leaves out of its tags. A program (scripts/) may not import the store, so it asks here."""
+    return taxonomy.TagTaxonomy(library.path).people_roots()
 
 
 def create(library, name, parent_id=None, has_face=0):
