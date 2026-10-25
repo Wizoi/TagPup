@@ -74,6 +74,7 @@ from tagpup.services import thumbnails
 from tagpup.services import photo_reembed
 from tagpup.services import face_pass as face_pass_service
 from tagpup.services import retire_faces as retire_faces_service
+from tagpup.services import retire_photo_vectors
 from tagpup import launcher
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
@@ -1451,19 +1452,76 @@ def retire_vectors(ctx, apply_):
         say("Nothing to retire: no vector under %s is left." % planned.key)
         return
     if not apply_:
-        say("Nothing changed. --apply writes it, after a snapshot of the library (taken even when one is from today: the "
-            "oldest daily may go): one change of the journal, which is not undone; the snapshot is the way back %s. "
-            "Then `compact` gives the space back to the disk." % SNAPSHOT_STANDS)
+        say(VECTORS_DRY_RUN)
         return
+    retired = _retire_vectors_applied(library, [planned], retire_faces_service.apply_vectors, say)
+    if retired[-1].error or retired[-1].stopped or retired[-1].refused:
+        raise SystemExit(1)
+
+
+@cli.command("retire-photo-vectors")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write: after a snapshot of the library, taken even when one is from today (it is the way back), one "
+                   "change of the journal a model, which is not undone. Without it, only says what it would do.")
+@click.pass_context
+def retire_photo_vectors_command(ctx, apply_):
+    """Once the library is on its new photo model (after embed-photos and set-photo-model): delete the photo vectors of
+    every other model, which no reader keyed by the library's model reads, and the words Suggest cached under those
+    models (docs/AI_PIPELINE.md; owner, 2026-10-24). No photo, keyword, face or tag is touched. Refused while more of
+    the library's photos than a switch allows hold no vector under its own model. A dry run unless --apply; counts
+    only. --apply takes a snapshot first, always: it is the way back (the change's undo is refused, and so are a switch
+    back to a retired model and the undo of the switch away from it). Ctrl+C stops it after the chunk under way, and
+    so does an app started during the run; run it again to go on, as the same change. --apply is refused while an app
+    runs; an MCP server keeps no record of itself and is not seen: close it first. After it, `compact` gives the space
+    back to the disk."""
+    library = _existing_library(ctx)
+    say = functools.partial(console.print, markup=False, soft_wrap=True)
+    say("Retiring the vectors of the photo models %s is not on%s." % (library.name, "" if apply_ else " (a dry run)"))
+    own, (photos, holds), plans = retire_photo_vectors.plan(library)
+    say("The library's photo model: %s. %s" % (own, library_settings.PHOTOS_HELD % (holds, photos, own, photos - holds)))
+    if not plans:
+        say("Nothing to retire: no vector under another key is left.")
+        return
+    if plans[0].refused:
+        say(plans[0].refused)
+        raise SystemExit(1)
+    for planned in plans:
+        say(planned.said())
+    if not apply_:
+        say(VECTORS_DRY_RUN)
+        return
+    retired = _retire_vectors_applied(library, plans, retire_photo_vectors.apply, say)
+    if retired[-1].error or retired[-1].stopped or retired[-1].refused:
+        raise SystemExit(1)
+    for done in retired:
+        say("The switch back to %s is no longer possible (the undo of the settings change is refused: no photo holds a "
+            "vector under it); the snapshot is the way back; `compact`, with the apps closed, gives the space back."
+            % done.plan.key)
+
+
+#: What a dry run of retire-vectors (and retire-photo-vectors) says --apply does.
+VECTORS_DRY_RUN = ("Nothing changed. --apply writes it, after a snapshot of the library (taken even when one is from "
+                   "today: the oldest daily may go): one change of the journal, which is not undone; the snapshot is the "
+                   "way back %s. Then `compact` gives the space back to the disk." % SNAPSHOT_STANDS)
+
+
+def _retire_vectors_applied(library, plans, apply_one, say):
+    """--apply of retire-vectors and retire-photo-vectors: `plans` (VectorPlan, a model's vectors each) applied in turn
+    by `apply_one(library, planned, stop=, heard=)` (VectorsRetired), each said. Refused while an app runs (APP_RUNNING). A
+    snapshot first, forced, as it is the way back, unless the run continues a change a stopped run left (its first run
+    took one). Ctrl+C, or an app started during the run, stops it after the chunk under way, and the plans after it are
+    not begun. Returns [VectorsRetired], the last the one that ended the run."""
     servers = launcher.running()
     if servers:
         say(APP_RUNNING % len(servers))
         raise SystemExit(1)
+    found, started = [], []
     with _stop_after_this_photo("chunk of vectors") as asked:
-        if planned.continues is not None:
+        continuing = [planned.continues for planned in plans if planned.continues is not None]
+        if continuing:
             # The snapshot the first run took holds every vector; one taken now holds fewer and pushes a daily out.
-            say("Continuing change %d: the snapshot taken before its first run is the way back %s; none taken."
-                % (planned.continues, SNAPSHOT_STANDS))
+            say("Continuing change %s: the snapshot taken before its first run is the way back %s; none taken."
+                % (", ".join(map(str, continuing)), SNAPSHOT_STANDS))
         else:
             try:
                 taken = library_snapshots.take(library, force=True)
@@ -1477,23 +1535,26 @@ def retire_vectors(ctx, apply_):
         def heard(chunk, chunks):
             heard.number += 1
             say("Chunk %d of %d: %d vectors deleted." % (heard.number, chunks, chunk.deleted))
-        heard.number = 0
-        started = []
 
         def stop():
             if asked.is_set():
                 return True
             started[:] = launcher.running()   # an app started during the run: asked before each chunk
             return bool(started)
-        retired = retire_faces_service.apply_vectors(library, planned, stop=stop, heard=heard)
-    say(retired.said())
-    if retired.stopped and started:
+        for planned in plans:
+            heard.number = 0
+            retired = apply_one(library, planned, stop=stop, heard=heard)
+            found.append(retired)
+            say(retired.said())
+            if retired.error or retired.stopped or retired.refused:
+                break
+    if found[-1].stopped and started:
         say(APP_STARTED % len(started))
-    if retired.change_id is not None:
-        say("Written: change %d, which is not undone: the snapshot taken first is the way back %s. `compact`, with the "
-            "apps closed, gives the space back to the disk." % (retired.change_id, SNAPSHOT_STANDS))
-    if retired.error or retired.stopped or retired.refused:
-        raise SystemExit(1)
+    changes = [retired.change_id for retired in found if retired.change_id is not None]
+    if changes:
+        say("Written: change %s, which is not undone: the snapshot taken first is the way back %s. `compact`, with the "
+            "apps closed, gives the space back to the disk." % (", ".join(map(str, changes)), SNAPSHOT_STANDS))
+    return found
 
 
 @cli.group()

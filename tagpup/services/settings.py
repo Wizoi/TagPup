@@ -197,14 +197,27 @@ def photo_switch_on(conn, held, putting):
     photos, holds = store_photos.counts(conn, new)
     said = PHOTOS_HELD % (holds, photos, new, photos - holds)
     found = {"key": new, "holds": holds, "without": photos - holds, "said": said}
-    if photos - holds <= UNPASSED_SHARE_ALLOWED * photos:
+    if covers(photos, holds):
         return None, found
     return TOO_FEW_PHOTO_VECTORS % (said, round(UNPASSED_SHARE_ALLOWED * 100)), found
+
+
+def covers(photos, holds):
+    """Do `holds` of a library's `photos` holding a vector under a key cover it to a switch's rule: all but
+    UNPASSED_SHARE_ALLOWED of them (an empty library is covered). The gate of a photo switch (photo_switch_on) and of
+    retiring the other keys' vectors (tagpup.services.retire_photo_vectors)."""
+    return photos - holds <= UNPASSED_SHARE_ALLOWED * photos
 
 
 def photo_switch_to(library, held, putting):
     """photo_switch_on, on a read-only connection of `library`'s own: what settings.change asks."""
     return _asked_of(library, photo_switch_on, held, putting)
+
+
+def photo_key_on(conn):
+    """The key the library's photo vectors are kept under (tagpup.store.embeddings.model_key), from the settings it holds,
+    on the caller's connection: what a retiring of the other keys' vectors reads again in each transaction."""
+    return store_embeddings.model_key(**LibrarySettings(_filled(store_settings.held_on(conn))).embedder)
 
 
 def undo_check(conn, change_id, _operation, _summary):
