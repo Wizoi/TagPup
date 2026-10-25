@@ -19,6 +19,11 @@ settling by `now == target` rather than `fields.reads_same(now, target)` -> test
 `_read_back` left out of the `except BaseException` arm of write_fields -> test_a_change_stopped_part_way; `result.changed -= 1`
 -> both test_a_write_that_changed_nothing tests; `file_journal.set_after(conn, row.id, kept)` -> test_a_write_records_what;
 the guard that leaves a file another program changed since its write -> test_a_file_changed_outside.
+
+A bake (tagpup.files.bake) is kept as ExifTool keeps it too: its regions are one structure, journaled as ONE text, the
+canonical serialised form ExifTool writes as given, so the text a read gives is the text written (4000 and 4000.0 alike, a
+float of 17 digits exactly); a dict in a plan is refused (it was planned as "clear the regions"), and so is a session that
+does not know TagPup's namespace (ABakeIsWritten).
 """
 import json
 import os
@@ -29,8 +34,10 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of, write_outside  # noqa: E402
 
+import baked_files  # noqa: E402
 import photo_rows  # noqa: E402
-from tagpup.files import field_values  # noqa: E402
+from tagpup.core import fields, orientation, paths  # noqa: E402
+from tagpup.files import bake, field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -188,6 +195,147 @@ class AWriteThatChangedNothing(KeptCase):
             result = self.add([a])
         self.assertEqual((0, 1), (result.changed, len(result.errors)))
         self.assertEqual(("failed", []), (self.status(result.details["change"]), self.states(result.details["change"])))
+
+
+#: Another program's MWG region (a name holding the serialised form's special characters) and its Microsoft Photo one.
+FOREIGN_MWG = ("-XMP-mwg-rs:RegionInfo={AppliedToDimensions={W=16,H=12,Unit=pixel},RegionList=[{Type=Face,"
+               "Name=Ash|, Corrin |{x|}||y,Area={X=0.5,Y=0.5,W=0.25,H=0.25,Unit=normalized}}]}")
+FOREIGN_MP = "-XMP-MP:RegionInfoMP={Regions=[{PersonDisplayName=Ash Corrin,Rectangle=0.1|, 0.2|, 0.3|, 0.4}]}"
+
+
+class ABakeIsWritten(KeptCase):
+    """A bake written through the one writer, journaled, undone, settled after a crash (PHASE6_DESIGN, section 9)."""
+
+    def values(self, faces, seed=1):
+        # A face n of a 16 x 12 picture in a cell of an 8 x 8 grid: 60 of them span Extended XMP.
+        boxes = [[n % 8 * 2, n // 8 * 1.5, n % 8 * 2 + 1.5, n // 8 * 1.5 + 1.25] for n in range(faces)]
+        return bake.values(baked_files.unit(bake.PHOTO_DIM, seed),
+                           [(box, baked_files.unit(bake.FACE_DIM, 10 * seed + n)) for n, box in enumerate(boxes)],
+                           (16, 12), baked_files.DIGEST, baked_files.PHOTO_MODEL, baked_files.FACE_MODEL)
+
+    def bake(self, photo_paths, values):
+        return file_changes.write_fields(self.library, "bake", EXIFTOOL, photo_paths, list(values),
+                                         lambda path, held: file_changes.Plan(after=values))
+
+    def crash(self, step, photo_paths, values):
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at(step)):
+            with self.assertRaises(Crash):
+                self.bake(photo_paths, values)
+        return self.last_change()
+
+    def bake_of(self, path):
+        records = {}
+        with ExifToolSession(executable=EXIFTOOL, common_args=list(bake.READ_ARGS)) as et:
+            field_values.read(et, [path], [], also=bake.FIELDS, records=records)
+        return bake.parse(records[paths.key(path)])
+
+    def regions_of(self, path):
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            found = et.get_tags([path], tags=["XMP:RegionInfo", "XMP:RegionInfoMP"], params=["-struct"])[0]
+        return {key: value for key, value in found.items() if key != "SourceFile"}
+
+    def outside(self, path, *args):
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            et.execute(*args, "-overwrite_original", path)
+
+    def assert_baked(self, path, values, faces):
+        held = self.bake_of(path)
+        self.assertIsInstance(held, bake.Bake, getattr(held, "reason", ""))
+        self.assertEqual((baked_files.PHOTO_MODEL, baked_files.DIGEST, faces),
+                         (held.photo_model, held.fingerprint, len(held.faces)))
+        if faces:
+            self.assertEqual([values[fields.REGION_INFO][0]], [bake.region_text(self.regions_of(path)["XMP:RegionInfo"])])
+
+    def test_a_bake_reads_back_as_made_is_journaled_as_its_texts_and_an_undo_clears_it_in_one_command(self):
+        a = self.make_read("a.jpg")
+        values = self.values(2)
+        result = self.bake([a], values)
+        self.assertEqual((1, []), (result.changed, result.errors))
+        change = result.details["change"]
+        self.assertEqual(values, self.after_of(change), "the journal's after is what bake.values gave, text for text")
+        self.assert_baked(a, values, 2)
+        held = self.bake_of(a)
+        for n, face in enumerate(held.faces):
+            box = [n % 8 * 2, n // 8 * 1.5, n % 8 * 2 + 1.5, n // 8 * 1.5 + 1.25]
+            self.assertEqual(orientation.area_of(box, 16, 12), face.area, "a region read back is the float written")
+            self.assertGreater(float(face.vector @ baked_files.unit(bake.FACE_DIM, 10 + n)), 0.999)
+
+        with mock.patch.object(field_values, "write", wraps=field_values.write) as write:
+            undone = self.undo(change)
+        self.assertEqual((1, []), (undone.changed, undone.errors))
+        self.assertEqual([{field: [] for field in values}], [call.args[2] for call in write.call_args_list],
+                         "an undo of a bake on a photo holding none is one clearing command")
+        self.assertEqual(bake.NOT_BAKED, self.bake_of(a).reason)
+        self.assertEqual({}, self.regions_of(a))
+        self.assertEqual((["Beach"], ["Beach"]), (keywords_of(a), self.indexed(a)))
+
+    def test_another_programs_regions_are_replaced_and_put_back_and_its_microsoft_regions_kept(self):
+        for faces in (2, 0):
+            with self.subTest(faces=faces):
+                a = self.make_read("regions_%d.jpg" % faces)
+                self.outside(a, FOREIGN_MWG, FOREIGN_MP)
+                before = self.regions_of(a)
+                self.assertEqual("Ash, Corrin {x}|y", before["XMP:RegionInfo"]["RegionList"][0]["Name"])
+                values = self.values(faces)
+                change = self.bake([a], values).details["change"]
+                self.assert_baked(a, values, faces)
+                after = self.regions_of(a)
+                self.assertEqual(before["XMP:RegionInfoMP"], after["XMP:RegionInfoMP"])
+                self.assertEqual(faces > 0, "XMP:RegionInfo" in after, "no faces leaves no regions")
+                undone = self.undo(change)
+                self.assertEqual((1, []), (undone.changed, undone.errors))
+                self.assertEqual(before, self.regions_of(a))
+
+    def test_a_bake_spanning_extended_xmp_settles_forward_after_a_crash(self):
+        values = self.values(60)
+        for step in ("file writing", "file written"):
+            with self.subTest(step):
+                a = self.make_read(step.replace(" ", "_") + ".jpg")
+                change = self.crash(step, [a], values)
+                self.assertEqual(["writing"], self.states(change))
+                written = os.stat(a).st_mtime_ns
+                self.assertEqual(1, self.settle())
+                self.assertEqual(("applied", ["done"]), (self.status(change), self.states(change)))
+                self.assert_baked(a, values, 60)
+                self.assertEqual(values, self.after_of(change))
+                if step == "file written":
+                    self.assertEqual(written, os.stat(a).st_mtime_ns, "a file holding the bake was written again")
+                with ExifToolSession(executable=EXIFTOOL) as et:
+                    self.assertTrue(et.get_tags([a], tags=["XMP:HasExtendedXMP"])[0].get("XMP:HasExtendedXMP"))
+                self.assertGreater(os.path.getsize(a), 80 * 1024)
+
+    def test_regions_another_program_wrote_before_settling_are_a_conflict_not_overwritten(self):
+        a = self.make_read("a.jpg")
+        change = self.crash("file writing", [a], self.values(2))
+        self.outside(a, FOREIGN_MWG)
+        self.settle()
+        self.assertEqual(["conflict"], self.states(change))
+        self.assertEqual(bake.NOT_BAKED, self.bake_of(a).reason)
+        self.assertEqual("Ash, Corrin {x}|y", self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Name"])
+
+    def test_a_structure_as_a_dict_and_a_session_that_does_not_know_the_namespace_are_refused(self):
+        a = self.make_read("a.jpg")
+        written = os.stat(a).st_mtime_ns
+        regions = {"AppliedToDimensions": {"W": 16, "H": 12, "Unit": "pixel"}, "RegionList": []}
+        with self.assertRaises(TypeError):
+            self.bake([a], {fields.REGION_INFO: regions})
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            with self.assertRaises(ValueError):
+                field_values.write(et, a, self.values(1))
+        self.assertEqual((None, written), (self.last_change(), os.stat(a).st_mtime_ns))
+
+    def test_a_structure_reads_back_as_the_text_written(self):
+        a = self.make_read("a.jpg")
+        written = {"AppliedToDimensions": {"W": 4000.0, "H": 3000, "Unit": "pixel"},
+                   "RegionList": [{"Type": "Face", "Name": "Ash, Corrin {x}|y",
+                                   "Area": {"X": 0.20833333333333334, "Y": 1 / 3, "W": 1e-05, "H": 0.5, "Unit": "normalized"}}]}
+        text = bake.region_text(written)
+        self.assertEqual(text, bake.region_text(dict(written, AppliedToDimensions={"W": 4000, "H": 3000.0, "Unit": "pixel"})))
+        with field_values.session(EXIFTOOL) as et:
+            field_values.write(et, a, {fields.REGION_INFO: [text]})
+            self.assertEqual({fields.REGION_INFO: [text]}, field_values.read_one(et, a, [fields.REGION_INFO]))
+        area = self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Area"]
+        self.assertEqual((0.20833333333333334, 1 / 3, 1e-05), tuple(bake._number(area[k], k) for k in "XYW"))
 
 
 if __name__ == "__main__":
