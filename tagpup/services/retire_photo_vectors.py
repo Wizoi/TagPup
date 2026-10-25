@@ -83,7 +83,7 @@ def plan(library):
         own = library_settings.photo_key_on(conn)
         photos, holds = store_photos.counts(conn, own)
         refused = None
-        if photos - holds > library_settings.UNPASSED_SHARE_ALLOWED * photos:
+        if not library_settings.covers(photos, holds):
             refused = NOT_COVERED % (library_settings.PHOTOS_HELD % (holds, photos, own, photos - holds),
                                      round(library_settings.UNPASSED_SHARE_ALLOWED * 100))
         seen = {store_embeddings.model_of(own)}

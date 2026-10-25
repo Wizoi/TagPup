@@ -197,9 +197,16 @@ def photo_switch_on(conn, held, putting):
     photos, holds = store_photos.counts(conn, new)
     said = PHOTOS_HELD % (holds, photos, new, photos - holds)
     found = {"key": new, "holds": holds, "without": photos - holds, "said": said}
-    if photos - holds <= UNPASSED_SHARE_ALLOWED * photos:
+    if covers(photos, holds):
         return None, found
     return TOO_FEW_PHOTO_VECTORS % (said, round(UNPASSED_SHARE_ALLOWED * 100)), found
+
+
+def covers(photos, holds):
+    """Do `holds` of a library's `photos` holding a vector under a key cover it to a switch's rule: all but
+    UNPASSED_SHARE_ALLOWED of them (an empty library is covered). The gate of a photo switch (photo_switch_on) and of
+    retiring the other keys' vectors (tagpup.services.retire_photo_vectors)."""
+    return photos - holds <= UNPASSED_SHARE_ALLOWED * photos
 
 
 def photo_switch_to(library, held, putting):
