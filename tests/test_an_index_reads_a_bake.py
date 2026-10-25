@@ -15,7 +15,9 @@ What the owner lives through, adding a folder whose photos were baked:
   detection stores;
 * a face named or excluded on a photo indexed again keeps its decision when the bake is read;
 * an index killed part-way leaves every row whole and the next run completes the folder;
-* the index's read (`-struct`) answers every field of METADATA_FIELDS as the plain read does.
+* the index's read (`-struct`) answers every field of METADATA_FIELDS as the plain read does;
+* a library made before the fingerprints' table (at 33, as the three live libraries are) is brought to 34 as the index
+  opens it, and the baked photo's fingerprint is recorded.
 
 CLIP and the face model are stood in for (tests/test_no_test_loads_a_model.py); a stand-in asked while `refused` raises
 and is noted. Pillow and ExifTool are real; the bakes are written by tests/baked_files.py (the writer is a later cut);
@@ -34,6 +36,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baked_files  # noqa: E402
+import migration_names  # noqa: E402
 import own_home  # noqa: E402
 from stand_in_models import NewFaces  # noqa: E402
 
@@ -51,7 +54,7 @@ from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import bake_reading, file_changes, file_only, indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, schema  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -399,6 +402,26 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(3, self.query("SELECT COUNT(*) FROM faces_detected")[0][0])
         self.assertEqual(3, self.query("SELECT COUNT(*) FROM photos WHERE mtime IS NOT NULL")[0][0])
         self.assertEqual(2, self.query("SELECT COUNT(*) FROM faces")[0][0])
+
+    def test_a_library_at_33_is_brought_up_as_the_index_opens_it_and_its_fingerprints_recorded(self):
+        with migration_names.up_to(33):
+            self.db_path = self.home.library("old_harbour.db")
+            library_actions.bring_up_to_date(self.db_path)
+            library_settings.stamp(Library(self.db_path), {"faces.model": FACES},
+                                   operation=library_settings.FROM_REPLACED)
+            made = library_actions.create(self.db_path)
+            self.assertTrue(made.ok, made.message())
+        self.assertEqual([], self.query("SELECT name FROM sqlite_master WHERE name = 'photo_fingerprints'"))
+        self.assertEqual(33, self.query("SELECT MAX(version) FROM schema_version")[0][0])
+        folder = self.folder("Harbour Before")
+        path = self.picture(folder, "before.jpg", "navy")
+        held = self.bake(path, [baked_files.area(0)])
+        self.refused = self.detector.refused = True
+        self.index(folder)
+        self.assertEqual(schema.LATEST, self.query("SELECT MAX(version) FROM schema_version")[0][0])
+        self.assertHoldsTheBake(path, held, SIZE)
+        self.assertEqual([(images.FINGERPRINT_KEY, images.fingerprint(images.opened(path, upright=True)))],
+                         self.query("SELECT key, hash FROM photo_fingerprints"))
 
     def test_the_indexs_read_answers_every_field_as_the_plain_read_does(self):
         folder = self.folder("Harbour Fields")
