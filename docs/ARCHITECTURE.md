@@ -175,7 +175,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, face_batches, settings, roots + roots_check + root_rows, derived, search_index, folders,
                        library_view, snapshots, generations, locks, job_runs,
-                       added_folders, faces_detected, checks
+                       added_folders, faces_detected, photo_fingerprints, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
                        thumbs, names, shares, lock_owners, recycle_bin
   ml/                  models: clip, faces, scrfd_adaface (phase 3's: built for a look, Runtime.look_at_faces, and for a library set to it, faces.model, which a switch allows once the pass has reached its faces), vector_index, grouping, and gpu (the card's turn)
@@ -262,7 +262,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 |---|---|---|
 | File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, `refresh_rows`, `record_tags_in_index` (`store/photos.py`) |
 | Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
-| Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `face_embeddings` (a face's vector under the model that made it, read under the library's `faces.model`: `store.faces.model_key`), `suggestions`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
+| Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `face_embeddings` (a face's vector under the model that made it, read under the library's `faces.model`: `store.faces.model_key`), `suggestions`, `faces_detected`, `photo_fingerprints` (the hash of a photo's upright decode; not journaled, a rotation forgets it) | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py`, `store/photo_fingerprints.py` |
 | Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs` (the recurring jobs' runs, and the syncs: `sync-whole`, `sync-folder`) | `store/schema.py`, `store/generations.py`, `store/job_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |
 
