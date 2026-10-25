@@ -51,8 +51,9 @@ def gives_vector(found, photo_key):
 
 def taken(found, meta, fingerprint, picture, *, photo_key, face_key):
     """What the index takes of the bake `found` (parsed) of the photo of `meta`, whose upright decode has `fingerprint`
-    (images.fingerprint) and whose `picture` the face model made ready (None without one; NotDetected when the file
-    could not be decoded for it: the file deleted between the two decodes). `photo_key` is the library's photo-model key;
+    (images.fingerprint) and whose `picture` the face model made ready (None without one, --skip-faces). A file deleted
+    between the two decodes fails here, and its photo is left for the next index, as one deleted before them is.
+    `photo_key` is the library's photo-model key;
     `face_key` the key of the face model the index was handed (None, --skip-faces: no face is read)."""
     if not isinstance(found, bake.Bake):
         return Taken(verdict=NOT_BAKED if found.reason == bake.NOT_BAKED else UNREADABLE)
@@ -60,8 +61,7 @@ def taken(found, meta, fingerprint, picture, *, photo_key, face_key):
         return Taken(verdict=STALE)
     vector = found.photo_vector.tolist() if found.photo_model == photo_key else None
     detected = None
-    if face_key is not None and found.face_model == face_key and picture is not None \
-            and not getattr(picture, "failed", False):
+    if face_key is not None and found.face_model == face_key and picture is not None:
         detected = detections(found, picture.stored)
     return Taken(vector, detected, READ if vector is not None or detected is not None else OTHER_MODELS)
 
