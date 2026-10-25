@@ -187,7 +187,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.stall_at(k)
         done = self.tags_edit(add=["Trips/Coast"])
         self.assertEqual((k - 1, self.PHOTOS - k + 1), (done["changed"], done["error_count"]))
-        self.assertIn("share stopped answering after %d of %d photos" % (k - 1, self.PHOTOS), done["errors"][0]["why"])
+        self.assertIn("ExifTool stopped answering after %d of %d photos" % (k - 1, self.PHOTOS), done["errors"][0]["why"])
         self.assertEqual([("done", k - 1)], self.change_files(), "a conflict, or a file not reached left in the change")
         ((change_id, _op, status),) = self.changes("bulk tags%")
         self.assertEqual("applied", status)
@@ -276,14 +276,22 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         path = self.path(self.ids[0])
         saved = tagging.save_photo(self.library, path, "", ["Trips/Coast"], None, "exiftool", "")
         self.assertFalse(saved.ok)
-        self.assertIn("share stopped answering", str(saved.errors[0][1]))
+        self.assertIn("ExifTool stopped answering as it was written", str(saved.errors[0][1]))
         self.assertEqual([("writing", 1)], self.change_files())
+
+    def test_the_photo_a_stall_came_before_the_write_of_is_said_not_begun(self):
+        self.stall_at(2)
+        two = [self.path(photo_id) for photo_id in self.ids[:2]]
+        result = tagging.change_tags(self.library, two, ["Trips/Coast"], [], "exiftool", stop_at_first_error=False)
+        self.assertEqual(1, result.changed)
+        self.assertEqual(["ExifTool stopped answering before it was written"],
+                         [str(why).split(": ", 1)[1].split(",")[0] for _path, why in result.errors])
 
     def test_a_stall_at_the_first_file_writes_nothing_and_leaves_no_change_to_undo(self):
         self.stall_at(1)
         done = self.tags_edit(add=["Trips/Coast"])
         self.assertEqual((0, self.PHOTOS, 0), (done["changed"], done["error_count"], self.files.writes))
-        self.assertIn("share stopped answering before anything was written", done["errors"][0]["why"])
+        self.assertIn("ExifTool stopped answering before anything was written", done["errors"][0]["why"])
         self.assertEqual([], self.change_files())
         self.assertEqual(["failed"], [status for _id, _op, status in self.changes("bulk tags%")])
         self.assertEqual(0, self.coast())

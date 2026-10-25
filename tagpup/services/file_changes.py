@@ -446,6 +446,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         _reached("plan committed")
         if on_planned is not None:
             on_planned(change_id)
+        stalled = None
         for n, row in enumerate(rows):
             if n and n % batches.CHUNK == 0 and not between_chunks(batch):
                 file_journal.withdraw(library.path, [r.id for r in rows[n:]])
@@ -458,9 +459,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                 outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
                                       wrote=wrote, now=now, whole=read_whole, stall_stops=True)
             except _Stalled:
-                # The photo under way is the write's error too: a caller that reports errors and not a refusal (a save)
-                # still says it.
-                result.fail(path, "%s: the share stopped answering as it was written; nothing after it was" % row.named())
+                stalled = row
                 result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
                 break
             if outcome == "done":
@@ -483,7 +482,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
         stopped = result.details.get("stopped")
         if stopped and stopped.get("share"):
-            _share_stopped(library, change_id, result, stopped)
+            _share_stopped(library, change_id, result, stopped, stalled)
         else:
             file_journal.finish(library.path, change_id, also=face_batch.tidy)
             if stopped:
@@ -510,23 +509,28 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     return result
 
 
-def _share_stopped(library, change_id, result, stopped):
-    """A forward write ExifTool stopped answering for part-way (_Stalled), ended as a Ctrl+C ends one (_settle_stopped):
-    the files not reached are taken out, the change is applied with what was written, and the write is refused saying so.
-    The file whose write was under way, if it was, cannot be read now: it stays `writing`, the change unfinished, for the
-    next settle to decide by what it holds (as a crash leaves it); it is not read again, which would wait another deadline
-    in a session not kept dead (a caller's, as a save's)."""
+def _share_stopped(library, change_id, result, stopped, stalled):
+    """A forward write ExifTool stopped answering for part-way at the file of `stalled` (_Stalled), ended as a Ctrl+C ends
+    one (_settle_stopped): the files not reached are taken out, the change is applied with what was written, and the write
+    is refused saying so. The file whose write was under way, if it was, cannot be read now: it stays `writing`, the change
+    unfinished, for the next settle to decide by what it holds (as a crash leaves it); it is not read again, which would
+    wait another deadline in a session not kept dead (a caller's, as a save's). What stopped answering is ExifTool: a share
+    gone away, a drive that stopped, or ExifTool itself exiting (exiftool_session); the sentences say no more than that."""
     _settle_stopped(library, change_id)
     left = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "writing")
     if left:
         file_journal.release(library.path, change_id)
+    # The photo it stopped on is the write's error too: a caller that reports errors and not a refusal (a save) says it.
+    result.fail(stalled.path, "%s: ExifTool stopped answering %s it was written, and nothing after it was; check that the "
+                              "share or drive is there" % (stalled.named(), "as" if left else "before"))
     if not result.changed and not left:
-        result.refuse("The share stopped answering before anything was written; run it again once it answers.")
+        result.refuse("ExifTool stopped answering before anything was written; check that the share or drive is there, "
+                      "then run it again.")
         return
     settled = ("; %d more is settled the next time it can be read, and then the change can be undone" % left
                if left else ", which can be undone")
-    result.refuse("The share stopped answering after %d of %d photos: %d file(s) were written, recorded as change %d in "
-                  "History%s; the rest were not written. Run it again once the share answers."
+    result.refuse("ExifTool stopped answering after %d of %d photos: %d file(s) were written, recorded as change %d in "
+                  "History%s; the rest were not written. Check that the share or drive is there, then run it again."
                   % (stopped["after"], stopped["of"], result.changed, change_id, settled))
 
 
