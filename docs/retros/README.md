@@ -10,3 +10,4 @@ One file per retro, named `<date>-<scope>.md`, newest last. The process and the 
 | 2026-10-18 | [The AI pipeline, phases 1 and 2](2026-10-18-ai-pipeline.md) | phase end; 11 findings found open after a "nothing blocks" report |
 | 2026-10-20 | [Phase 3, the face models](2026-10-20-phase-3.md) | phase end; one merge above the size budget |
 | 2026-10-23 | [Phase 4, the gallery, the retired old model, the matching after an index](2026-10-23-phase-4.md) | phase end; 105 findings, three workers stopped at 150k |
+| 2026-10-24 | [Phase 5, the SigLIP 2 photo model and the undo owner](2026-10-24-phase-5.md) | phase end; 13 of 25 workers past 150k |
