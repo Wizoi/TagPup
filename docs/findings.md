@@ -32,3 +32,4 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 1847 | 2026-10-24 | low: the plan's coverage guard (`retire_photo_vectors.NOT_COVERED`) does not catch a run BEFORE the switch: there the library's own key is the old model's, which covers the photos, and the key that would go is the new model's pass (embed-photos). The dry run names the key that goes and the own key; the snapshot taken first is the way back, and embed-photos makes them again. No live instance: the three libraries are switched (own key SigLIP 2, the only other key ViT-H-14, counted 2026-10-24). A guard that tells "before" from "after" needs the journal's switch history. | open: question for the main session (a guard by the journal's switch, or decided as by design). |
