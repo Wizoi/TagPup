@@ -1383,7 +1383,7 @@ BAKE_NOT_YET = "Not run: writing the bake is cut 3; this is a dry run. Run it wi
 
 #: How `bake-photos` says each kind of photo that cannot be baked (tagpup.services.baking's kinds).
 CANNOT_BAKE = {
-    baking.NEVER_EXAMINED: "never examined by the face model (index them with faces first)",
+    baking.NEVER_EXAMINED: "never examined by the face model",
     baking.FACES_WITHOUT_VECTORS: "with a face holding no vector under the face model (retire-faces first)",
     baking.NO_VECTOR: "with no photo vector under the photo model",
     baking.CHANGED: "whose file changed since its photo vector was made (index them again first)",
