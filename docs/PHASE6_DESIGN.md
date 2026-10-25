@@ -89,12 +89,16 @@ side exists, so its column must be the read side's, not a guess for cut 3.
   FK; `services/rotation.py` clears the row beside `embeddings.forget`. No doctor check (as `faces_detected`).
 - Branches: 1a census (~300), 1b orientation + fingerprint + parse + migration 34 (~400), 1c read side (~500).
 
-## 8. Open before cut 3 writes any file (from the cut-1 reviews, findings #1859, #1866)
+## 8. Decided 2026-10-24 after the cut-1 reviews and the census (findings #1859, #1866)
 
-- **Many faces.** A face costs about 1,600 characters of XMP, so 310 photos in photo_index (35 or more faces; the largest
-  holds 412) overflow a JPEG's 64 KB block into Extended XMP, which other programs often do not read. The owner decides:
-  cap the faces baked, accept Extended XMP, or skip those photos (the vectors are the point; the regions are for other
-  programs).
-- **The writer replaces the regions.** A photo with no faces bakes without `RegionInfo` (a present struct with FacesFound 0
-  is refused by the reader), and another program's mwg-rs regions in a file are replaced by the bake. The census says how
-  many files hold regions of their own before this is decided.
+- **Storage stays float16 vectors and MWG regions** (owner: yes). Measured: a face costs about 1,760 bytes (1,368 of them
+  the base64 vector, 356 the region markup); int8 would save 40% but moves 36, 11 and 6 of ~1.1 million face pairs across
+  the 0.35, 0.5 and 0.6 lines, so a baked vector would differ slightly from a computed one; int4 is out. One value per
+  face; packing them into one value saves nothing.
+- **Many faces: accept Extended XMP.** With 60 faces ExifTool keeps the regions and the photo vector in the main segment
+  and moves only the face vectors to Extended XMP, so other programs still see the boxes; a 412-face photo adds ~725 KB.
+  The read side must be tested on a bake that spans Extended XMP (cut 1c).
+- **Other programs' regions.** The writer replaces `mwg-rs` regions and writes a photo with no faces without `RegionInfo`.
+  Microsoft Photo regions (`MP:RegionInfoMP`) are left in the file and not read (owner: not used). Census, 2026-10-24
+  (photo_index 3,000 of 59,519; the other two whole): MWG regions 4 / 0 / 0, MP regions 442 + 1 TIFF / 0 / 0, Extended XMP
+  118 / 12 / 0, two XMP blocks 0, 1 unreadable in all; Orientation 6: 12 photos.
