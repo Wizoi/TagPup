@@ -48,6 +48,7 @@ SCENARIO = frozenset({
     "test_partial_writes_leave_rows_unread",
     "test_no_writes_to_damaged_photos",
     "test_an_index_reads_the_next_photos_ahead",
+    "test_an_index_reads_a_bake",
     "test_rotate_keeps_the_photo",
     "test_rotate_is_journaled",
     "test_rotate_crash_settles_with_the_boxes",
