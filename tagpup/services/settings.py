@@ -207,6 +207,12 @@ def photo_switch_to(library, held, putting):
     return _asked_of(library, photo_switch_on, held, putting)
 
 
+def photo_key_on(conn):
+    """The key the library's photo vectors are kept under (tagpup.store.embeddings.model_key), from the settings it holds,
+    on the caller's connection: what a retiring of the other keys' vectors reads again in each transaction."""
+    return store_embeddings.model_key(**LibrarySettings(_filled(store_settings.held_on(conn))).embedder)
+
+
 def undo_check(conn, change_id, _operation, _summary):
     """Why change `change_id` of the settings (CHANGE) is not undone now, or None: its undo would put back a face model
     (faces.model) the library may not be switched to now -- the way forward's own check (switch_on), asked of the model
