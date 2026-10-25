@@ -19,7 +19,7 @@ from test_a_file_holds_what_exiftool_kept import BakeCase  # noqa: E402
 
 import baked_files  # noqa: E402
 from stand_in_models import NewFaces  # noqa: E402
-from tagpup.core import paths, validation  # noqa: E402
+from tagpup.core import validation  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.services import baking  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
@@ -91,19 +91,9 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
             conn.close()
 
     def plan(self, path, fingerprint=True):
-        """The plan of the photo at `path`, as a bake run makes it: the file read as write_fields reads it, its shape and
-        its upright decode's fingerprint as a function (None: a dry run's photo outside its sample)."""
-        def held():
-            with field_values.session(baked_files.EXIFTOOL) as et:
-                return field_values.read(et, [path], list(bake.WRITTEN.values())).get(paths.key(path))
-
-        def shape():
-            width, height, _oriented, turn = images.shown_shape(path)
-            return width, height, turn
-        def digest():
-            return images.fingerprint(images.opened(path, upright=True))
-        digest = digest if fingerprint else None
-        return self.read(lambda conn: baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), held, shape, digest))
+        """The plan of the photo at `path`, as a bake run makes it (fingerprint False: a dry run's photo outside its
+        sample)."""
+        return baked_files.plan(self.library.path, path, DETECTOR, fingerprint)
 
     def plan_without_opening(self, path):
         """The plan of the photo at `path` by callables that fail the test when called (the file's fields, its shape, its

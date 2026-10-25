@@ -16,15 +16,23 @@ What the owner lives through, adding a folder whose photos were baked:
 * a face named or excluded on a photo indexed again keeps its decision when the bake is read;
 * an index killed part-way leaves every row whole and the next run completes the folder;
 * the index's read (`-struct`) answers every field of METADATA_FIELDS as the plain read does;
+* a photo baked as a bake run bakes it (planned from the library, written through file_changes.write_fields), then tagged
+  in the app, is still current: the write restamps its vector; then edited outside, it plans CHANGED (its vector's stamp,
+  not its fingerprint, is what the planner compares) until indexed again: an edit of its metadata alone leaves the bake
+  its picture's (read again, no card, current again), an edit of its pixels makes it stale (worked out, to bake again);
+* a folder baked on the desktop and copied by hand to the server (each copy a new mtime) is read there under the
+  server library's keys, no card asked; a copy baked under another photo model gives its faces and not its vector, and a
+  copy whose picture was repainted is not trusted (PHASE6_DESIGN, sections 5 and 6).
 * a library made before the fingerprints' table (at 33, as the three live libraries are) is brought to 34 as the index
   opens it, and the baked photo's fingerprint is recorded.
 
 CLIP and the face model are stood in for (tests/test_no_test_loads_a_model.py); a stand-in asked while `refused` raises
-and is noted. Pillow and ExifTool are real; the bakes are written by tests/baked_files.py (the writer is a later cut);
-the library is stamped with the new face model and made by the picker's Create in a home of its own.
+and is noted. Pillow and ExifTool are real; the bakes are written through the one writer (tests/baked_files.py, or
+planned and written as a bake run does: bake_as_planned); the library is stamped with the new face model and made by the picker's Create in a home of its own.
 """
 import json
 import os
+import shutil
 import sys
 import unittest
 from unittest import mock
@@ -43,7 +51,7 @@ from stand_in_models import NewFaces  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup.core import fields, orientation, paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import bake, images  # noqa: E402
+from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
@@ -52,7 +60,7 @@ from tagpup.ml.faces import NotDetected  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
-from tagpup.services import bake_reading, file_changes, file_only, indexing  # noqa: E402
+from tagpup.services import bake_reading, baking, file_changes, file_only, indexing, tagging  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
@@ -61,6 +69,8 @@ from tagpup.store import embeddings as store_embeddings  # noqa: E402
 EXIFTOOL = own_home.installed_exiftool()
 FACES = validation.SCRFD_ADAFACE
 SIZE = (640, 480)
+#: The detector the stand-in face model's detections are recorded under.
+DETECTOR = face_service.detector_of(NewFaces(), None)
 
 
 class _Hold:
@@ -72,6 +82,8 @@ class _Faces(NewFaces):
     """The new face model, which raises when the test refuses it (and notes the photo either way)."""
     refused = False
     undecodable = ()
+    #: A face vector as long as the face model's (a bake holds no other).
+    vector = staticmethod(lambda seed: baked_files.unit(bake.FACE_DIM, seed).tolist())
 
     def picture(self, path, *, max_side):
         if os.path.basename(path) in self.undecodable:
@@ -102,10 +114,7 @@ class AnIndexReadsABake(unittest.TestCase):
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="index_reads_a_bake_")
-        self.db_path = self.home.library("harbour.db")
-        library_actions.bring_up_to_date(self.db_path)
-        library_settings.stamp(Library(self.db_path), {"faces.model": FACES}, operation=library_settings.FROM_REPLACED)
-        self.assertEqual(1, library_actions.create(self.db_path).ok)
+        self.db_path = self.made("harbour.db")
         self.photo_key = store_embeddings.model_key(**library_settings.read(Library(self.db_path)).embedder)
         self.refused, self.on_card = False, []
         self.computed = baked_files.unit(bake.PHOTO_DIM, 99).tolist()
@@ -125,6 +134,14 @@ class AnIndexReadsABake(unittest.TestCase):
                         mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector)):
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def made(self, name):
+        """A library made by the picker's Create, stamped with the new face model."""
+        db_path = self.home.library(name)
+        library_actions.bring_up_to_date(db_path)
+        library_settings.stamp(Library(db_path), {"faces.model": FACES}, operation=library_settings.FROM_REPLACED)
+        self.assertEqual(1, library_actions.create(db_path).ok)
+        return db_path
 
     # ---- the photos and their bakes ----------------------------------------------------------------------------------
 
@@ -150,16 +167,39 @@ class AnIndexReadsABake(unittest.TestCase):
                     [path], tags=["Orientation"], params=["-n"])[0].items() if key != "SourceFile"})
         return path
 
-    def bake(self, path, areas, seed=1, of=None, **changed):
-        """Bake into `path` its vector (seed `seed`) and faces at `areas`, against its upright picture -- or `of`'s, a
-        picture the file no longer holds."""
-        upright = images.opened(of or path, upright=True)
+    def bake(self, path, areas, seed=1, **changed):
+        """Bake into `path` its vector (seed `seed`) and faces at `areas`, against its upright picture."""
+        upright = images.opened(path, upright=True)
         faces = [(area, baked_files.unit(bake.FACE_DIM, 10 * seed + n)) for n, area in enumerate(areas)]
         held = baked_files.baked(baked_files.unit(bake.PHOTO_DIM, seed), faces, upright.size, photo_model=self.photo_key,
                                  face_model=FACES, fingerprint=images.fingerprint(upright))
         held.update(changed)
         baked_files.write(path, held)
         return held
+
+    def plan(self, path):
+        return baked_files.plan(self.db_path, path, DETECTOR)
+
+    def bake_as_planned(self, photo_paths):
+        """Bake the photos as a bake run does: each planned from what the library holds of it, its fingerprint its upright
+        decode's, written through the one writer."""
+        planned = {paths.key(path): self.plan(path) for path in photo_paths}
+        for path in photo_paths:
+            self.assertIsInstance(planned[paths.key(path)], baking.ToBake, path)
+        written = file_changes.write_fields(Library(self.db_path), "bake", EXIFTOOL, photo_paths, list(bake.WRITTEN.values()),
+                                            lambda path, _held: file_changes.Plan(after=planned[paths.key(path)].values))
+        self.assertEqual((len(photo_paths), []), (written.changed, written.errors))
+
+    def outside(self, path, *args):
+        """Another program's edit of the file's metadata."""
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            et.execute(*args, "-overwrite_original", path)
+
+    def repaint(self, path, colour):
+        """An editor's save of a new picture into the file, its XMP (the bake with it) kept as it was."""
+        with Image.open(path) as held:
+            xmp = held.info["xmp"]
+        Image.new("RGB", SIZE, colour).save(path, "JPEG", xmp=xmp)
 
     def index(self, folder):
         result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder])
@@ -261,14 +301,10 @@ class AnIndexReadsABake(unittest.TestCase):
     def test_a_bake_not_of_the_library_or_not_of_the_picture_is_worked_out_and_counted(self):
         folder = self.folder("Harbour Mixed")
         read = self.picture(folder, "read.jpg", "navy")
-        stale = self.picture(folder, "stale.jpg", "maroon")
         corrupt = self.picture(folder, "corrupt.jpg", "olive")
         foreign = self.picture(folder, "foreign.jpg", "teal")
         unbaked = self.picture(folder, "unbaked.jpg", "purple")
         held = self.bake(read, [baked_files.area(0)], seed=1)
-        # The picture edited after it was baked: the bake's fingerprint is of the picture it held then.
-        before = self.picture(self.folder("Before"), "stale before.jpg", "red")
-        self.bake(stale, [baked_files.area(0)], seed=2, of=before)
         self.bake(corrupt, [baked_files.area(0)], seed=3, **{bake.PHOTO_VECTOR: "not a vector"})
         other = self.bake(foreign, [baked_files.area(1)], seed=4, **{bake.PHOTO_MODEL: "ViT-B-32|openai|cropped|1.0|native"})
         # Baked under the library's old face model: its vector read, its faces detected.
@@ -276,25 +312,106 @@ class AnIndexReadsABake(unittest.TestCase):
         own = self.bake(old_faces, [baked_files.area(2)], seed=5, **{bake.FACE_MODEL: validation.MTCNN_FACENET})
         box = [300, 200, 400, 330]
         self.detector.found = {name: [(box, 0.99, n)] for n, name in enumerate(
-            ("stale.jpg", "corrupt.jpg", "foreign.jpg", "unbaked.jpg", "old faces.jpg"))}
+            ("corrupt.jpg", "foreign.jpg", "unbaked.jpg", "old faces.jpg"))}
         result = self.index(folder)
         self.assertTrue(np.allclose(bake.parse(own).photo_vector, self.vector(old_faces), atol=1e-6))
         self.assertEqual([box], [found for found, *_ in self.faces(old_faces)])
         self.assertHoldsTheBake(read, held, SIZE)
-        for path in (stale, corrupt, unbaked):
+        for path in (corrupt, unbaked):
             self.assertTrue(np.allclose(self.computed, self.vector(path)), path)
             self.assertEqual([box], [found for found, *_ in self.faces(path)], path)
         # Another photo model's bake: its vector worked out, its faces (the library's model's) read.
         self.assertTrue(np.allclose(self.computed, self.vector(foreign)))
         self.assertEqual([box_of(baked_files.area(1), *SIZE)], [found for found, *_ in self.faces(foreign)])
         self.assertTrue(np.allclose(bake.parse(other).faces[0].vector, self.faces(foreign)[0][1], atol=1e-3))
-        self.assertEqual(["corrupt.jpg", "old faces.jpg", "stale.jpg", "unbaked.jpg"], sorted(self.detector.asked))
-        # CLIP is asked of the four whose vector the bake did not give, the old faces' photo not among them.
-        self.assertEqual(4, self.on_card.count("embed"))
-        self.assertIn("Baked into the files: 3 photo(s) read from their file, 5 worked out on the graphics card; 1 bake(s) "
+        self.assertEqual(["corrupt.jpg", "old faces.jpg", "unbaked.jpg"], sorted(self.detector.asked))
+        # CLIP is asked of the three whose vector the bake did not give, the old faces' photo not among them.
+        self.assertEqual(3, self.on_card.count("embed"))
+        self.assertIn("Baked into the files: 3 photo(s) read from their file, 4 worked out on the graphics card; 0 bake(s) "
                       "stale (the picture changed after it was baked), 1 unreadable, 0 made under other models; 1 photo(s) "
                       "needed no graphics card.",
                       " ".join(result.output.split()))
+
+    def test_a_bake_outlives_a_keyword_written_in_the_app_and_an_edit_of_its_picture_outside_does_not(self):
+        folder = self.folder("Harbour Edited")
+        kept = self.picture(folder, "kept.jpg", "navy")
+        edited = self.picture(folder, "edited.jpg", "teal")
+        self.detector.found = {"kept.jpg": [([300, 200, 400, 330], 0.99, 1)], "edited.jpg": [([100, 50, 200, 180], 0.99, 2)]}
+        self.index(folder)
+        self.bake_as_planned([kept, edited])
+        for path in (kept, edited):
+            self.assertIsInstance(self.plan(path), baking.Current, path)
+
+        # The owner tags both in the app: the write restamps each photo's vector over its own change, the bake stays.
+        for path in (kept, edited):
+            saved = tagging.save_photo(Library(self.db_path), path, "", ["Places/Harbour"], None, EXIFTOOL, "")
+            self.assertEqual(1, saved.changed, saved.errors)
+            self.assertIsInstance(self.plan(path), baking.Current, path)
+            self.assertEqual(1, len(baked_files.held(path).faces))
+
+        # Then edits each outside: one's caption, the other's pixels. Both plan CHANGED until indexed again: the planner
+        # compares the vector's stamp (mtime, size), not the fingerprint.
+        self.outside(kept, "-XMP:Description=Boats at dusk")
+        self.repaint(edited, "maroon")
+        for path in (kept, edited):
+            self.assertEqual(baking.CHANGED, self.plan(path).kind, path)
+        del self.detector.asked[:], self.on_card[:]
+        said = self.said(self.index(folder))
+        self.assertEqual(["Baked into the files: 1 photo(s) read from their file, 1 worked out on the graphics card; 1 bake(s) "
+                          "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 1 "
+                          "photo(s) needed no graphics card."], said)
+        self.assertEqual(["edited.jpg"], self.detector.asked, "the repainted photo's faces are looked for again")
+        self.assertEqual(1, self.on_card.count("embed"))
+        # The caption's edit left the bake its picture's: read again, it is current. The repainted one is to bake again,
+        # under its new picture's fingerprint.
+        self.assertIsInstance(self.plan(kept), baking.Current)
+        again = self.plan(edited)
+        self.assertIsInstance(again, baking.ToBake)
+        digest = images.fingerprint(images.opened(edited, upright=True))
+        self.assertEqual(digest, bake.fingerprint_of(again.values[bake.WRITTEN[bake.FINGERPRINT]][0])[1])
+        self.assertNotEqual(digest, baked_files.held(edited).fingerprint)
+
+    def test_a_folder_baked_on_the_desktop_and_copied_to_the_server_is_read_there_without_the_card(self):
+        # Owner, 2026-10-24: bake on the desktop, copy by hand; the server's library reads the bake with no card.
+        desktop = self.folder("Desktop Harbour")
+        names = ("quay.jpg", "boats.jpg", "repainted.jpg")
+        baked = [self.picture(desktop, name, colour) for name, colour in zip(names, ("navy", "teal", "olive"))]
+        self.detector.found = {name: [([300, 200, 400, 330], 0.99, n)] for n, name in enumerate(names)}
+        self.index(desktop)
+        self.bake_as_planned(baked)
+        made_here = {os.path.basename(path): (self.vector(path), self.faces(path)) for path in baked}
+
+        # Copied by hand: each copy a file of its own, its mtime the copy's. One copy is then baked under another photo
+        # model (the library's model changed since), one repainted.
+        server = self.folder("Server Harbour")
+        copies = {name: shutil.copyfile(path, os.path.join(server, name)) for name, path in zip(names, baked)}
+        for path in copies.values():
+            os.utime(path, (os.stat(path).st_atime, os.stat(path).st_mtime + 3600))
+        with field_values.session(EXIFTOOL) as et:
+            field_values.write(et, copies["boats.jpg"], {bake.WRITTEN[bake.PHOTO_MODEL]: ["ViT-B-32|openai|cropped|1.0|native"]})
+        self.repaint(copies["repainted.jpg"], "purple")
+
+        # The server's library, whose card would answer otherwise than the desktop's did.
+        self.db_path = self.made("server.db")
+        del self.on_card[:]
+        self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 98).tolist()
+        self.detector = _Faces({name: [([300, 200, 400, 330], 0.99, 50 + n)] for n, name in enumerate(names)})
+        said = self.said(self.index(server))
+        self.assertEqual(["Baked into the files: 2 photo(s) read from their file, 2 worked out on the graphics card; 1 bake(s) "
+                          "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 1 "
+                          "photo(s) needed no graphics card."], said)
+        self.assertEqual(["repainted.jpg"], self.detector.asked)
+        self.assertEqual(2, self.on_card.count("embed"), "the vectors of boats and of the repainted copy")
+        self.assertTrue(np.allclose(made_here["quay.jpg"][0], self.vector(copies["quay.jpg"]), atol=1e-3))
+        for name in ("quay.jpg", "boats.jpg"):
+            (_box, vector, _name, _excluded), = self.faces(copies[name])
+            self.assertTrue(np.allclose(made_here[name][1][0][1], vector, atol=1e-3), name)
+        for name in ("boats.jpg", "repainted.jpg"):
+            self.assertTrue(np.allclose(self.computed, self.vector(copies[name])), name)
+        self.assertFalse(np.allclose(made_here["repainted.jpg"][1][0][1], self.faces(copies["repainted.jpg"])[0][1],
+                                     atol=1e-3))
+        # Read on the server, the quay's bake is current there: a backfill on the server skips it.
+        self.assertIsInstance(self.plan(copies["quay.jpg"]), baking.Current)
 
     def test_bakes_all_of_other_models_are_said_and_a_failed_detection_is_not_the_cards_work(self):
         folder = self.folder("Harbour Other Models")
@@ -327,8 +444,8 @@ class AnIndexReadsABake(unittest.TestCase):
         held = self.bake(cut, [baked_files.area(0)], seed=1)
         self.bake(whole, [baked_files.area(1)], seed=2)
         self.detector.undecodable = ("cut.jpg",)
-        result = self.index(folder)
-        self.assertNotIn("Error indexing", result.output)
+        with self.assertNoLogs("tagpup_cli", "ERROR"):
+            result = self.index(folder)
         self.assertEqual(2, self.query("SELECT COUNT(*) FROM photos")[0][0], result.output)
         self.assertTrue(np.allclose(bake.parse(held).photo_vector, self.vector(cut), atol=1e-6))
         self.assertEqual([], self.faces(cut))
