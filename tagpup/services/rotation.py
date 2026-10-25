@@ -15,6 +15,7 @@ the value after), and the picture's size before it is the size the file shows no
 import logging
 
 from tagpup.core import fields
+from tagpup.core.orientation import ROTATED_ORIENTATION
 from tagpup.files import images
 from tagpup.store import embeddings, faces
 
@@ -26,16 +27,6 @@ logger = logging.getLogger(__name__)
 #: used to decode the photo, turn it and save it again with only its EXIF block, which dropped every XMP and IPTC field.
 FIELD = fields.ORIENTATION
 
-#: The EXIF Orientation a photo has after a quarter turn, by the one it had before.
-#: Worked out against ImageOps.exif_transpose -- what is shown for the new value is
-#: what was shown for the old one, turned -- and checked the same way in
-#: tests/test_rotate_keeps_the_photo.py. The mirrored values (2, 4, 5, 7) stay mirrored.
-ROTATED_ORIENTATION = {
-    "left": {1: 8, 2: 5, 3: 6, 4: 7, 5: 4, 6: 1, 7: 2, 8: 3},
-    "right": {1: 6, 2: 7, 3: 8, 4: 5, 5: 2, 6: 3, 7: 4, 8: 1},
-}
-
-
 def orientation(texts):
     """The EXIF Orientation (1 to 8) a journaled value says: 1 for a photo that holds none."""
     try:
@@ -46,7 +37,7 @@ def orientation(texts):
 
 
 def next_orientation(direction, texts):
-    """The Orientation after a quarter turn `direction` of a photo holding `texts`."""
+    """The Orientation after a quarter turn `direction` of a photo holding `texts` (tagpup.core.orientation's table)."""
     return ROTATED_ORIENTATION[direction][orientation(texts)]
 
 

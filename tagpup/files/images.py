@@ -4,6 +4,7 @@ face cut out of it.
 Thumbnails for the folder view move here with the services that make them
 (docs/ARCHITECTURE.md, phase 2).
 """
+import hashlib
 import io
 import json
 import os
@@ -382,6 +383,23 @@ def opened(photo_path, upright):
         raise damage(data, error) from error
     img.info[ZERO_TAIL_INFO] = zero_tail(data)
     return img
+
+
+#: What a fingerprint is a hash of, as a bake and a library's fingerprint row name it (docs/PHASE6_DESIGN.md, section 7):
+#: sha256 of the upright RGB decode, under the Pillow requirements.txt pins. A change of what is hashed, or a Pillow whose
+#: decode differs, is a new key, so a fingerprint made the old way is never compared with one made the new way.
+FINGERPRINT_KEY = "upright-sha256-1"
+
+
+def fingerprint(img):
+    """The sha256 digest (32 bytes) of the picture `img`, as `opened(path, upright=True)` gives it: its size, then its
+    RGB pixels. Nothing of the file's but its picture goes in -- its metadata, its name, its ICC profile, an alpha channel
+    (`opened` drops it) -- so a keyword write or a rename leaves it, and a rotation, which changes the upright picture,
+    changes it. The size is hashed with the pixels: a picture of one colour turned a quarter has the same pixel bytes,
+    and is a different picture (FINGERPRINT_KEY)."""
+    digest = hashlib.sha256(b"%dx%d\n" % img.size)
+    digest.update(img.tobytes())
+    return digest.digest()
 
 
 def pad_to_square(image, background_color=(0, 0, 0)):
