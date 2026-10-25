@@ -35,6 +35,7 @@ SCENARIO = frozenset({
     "test_bulk_edits_real_exiftool",
     "test_bulk_writes_start_from_the_file",
     "test_a_bake_is_planned_from_the_library",
+    "test_a_bake_is_rehearsed_folder_by_folder",
     # The file journal and the writes it covers.
     "test_file_journal",
     "test_time_shift",
