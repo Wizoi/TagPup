@@ -78,7 +78,7 @@ Each names its one owner and the guard that fails the build when it is broken.
   `add_unread`), a page's record as the page builds it (#246, #247; `tests/test_fixtures_make_photo_rows_like_the_indexer.py`);
   a test that selects or creates a library runs in a home of its own (`tests/test_tests_have_homes_of_their_own.py`).
 
-**SQL on this library is not SQL on a test fixture.** 198,000 faces, most carrying a
+**SQL on this library is not SQL on a test fixture.** Hundreds of thousands of faces, most carrying a
 6 KB crop, and every one of these has shipped:
 - `LIKE` is not equality. It ignores case and reads `_` and `%` as wildcards, so
   `IMG_0001.jpg` also matches `IMGX0001.jpg` -- in an `UPDATE`, other photos change.

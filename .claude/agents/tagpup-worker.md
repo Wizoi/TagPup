@@ -44,13 +44,14 @@ of them, missed:
 - **What the owner sees**: the page, the message, the time it takes, on a network share.
 - **A model swap's output**: the dry run prints the new model's output distribution (sizes, counts) beside the old
   model's, and the owner looks at one real folder before `--apply` (the pass made 31 smudges under 40 px, 2026-10-18).
-- **Scenario, not code**: add or lift a test that is a scenario a person lives through, in the domain owner's test group;
-  delete the granular tests that scenario makes redundant, and say which in the report (CLAUDE.md).
 - **Every test file has one owner**: a test file you add (or rename, or delete) is added to (or removed from)
   `tests/owners.py` (owner, kind, scenario ids; `tests/test_the_test_map.py` fails the merge otherwise), and a
   finding number cited in a test you delete must be cited by the scenario test that covers it (the ratchet).
 - **Scratch files go in your own subfolder** of the scratchpad (`scratchpad/<your-branch-name>/`), never a generic name in the
   shared folder: two workers' `p2.py` collided and one patched the other's worktree (2026-10-15).
+- **Moved code is new code**: code that moves from `scripts/` (a spike, a harness) into `tagpup/` meets this whole list
+  and the write path's owner (batching, a share that stops answering) as if written today, and each test the move
+  deletes names its successor (4 `wrong`/`data` rows on a moved harness, retro 2026-10-24).
 - **Is the case real?** A fallback, a compatibility arm or a defensive branch needs a live count above zero or the user
   action that produces it (CLAUDE.md, 'A special case needs a real instance'). If it has neither, refuse the write that
   could make it and write no branch. Say in the report which cases you did not handle for that reason.
@@ -109,10 +110,9 @@ reach-in), work in this order and say so in your report:
    siblings are the second run.
 2. **Verify each named item against the trunk first.** A finding or brief that no longer holds (the code is gone, the
    count is zero) is reported as stale, not fixed; the main session closes the row.
-3. **Do the whole sweep in the branch**, cut into commits one concern each, within the branch size rule. One concern
-   per run (a hook tells you when your context passes 150k: commit what you have and report).
+3. **Do the whole sweep in the branch**, cut into commits one concern each, within the branch size rule. One cut
+   per run (design and build are two runs); at 150k of context the hook says commit what you have and report.
 4. **Check your own diff against the seven health conditions** (docs/OWNERS.md) before you report, for EVERY brief: a
    feature, a domain pass, a removal: reach-ins, a rule written twice, hidden coupling, a concept that could collapse, a
    branch with no live instance, scenario tests mapped, an open data/wrong finding. Name each as met (with the evidence)
    or what remains and why. The owner's review should find nothing a grep of your own diff would have found.
-5. **Every `low` you leave is fixed or by design** (the reason cited): never 'left'.
