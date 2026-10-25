@@ -66,14 +66,13 @@ class PhotoEmbeddings:
                 logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
         return None
 
-    def keep(self, file_path, embedding, stamp=None, photo_id=None):
+    def keep(self, file_path, embedding, stamp=None):
         """Keep the vector in the library, stamped with `stamp`: the file's (mtime, size)
         as it was opened to be embedded, else as it is now. Taken after, a photo rotated
         while it was embedded kept the vector from before the turn as current (#86).
 
-        By path, a photo with no row is given one (store.embeddings.put: Suggest's photo of a folder just added). With
-        `photo_id`, the vector is kept at that row alone, and none is made when it is gone (put_by_id): a pass over
-        the rows it read.
+        By path, a photo with no row is given one (store.embeddings.put: Suggest's photo of a folder just added); a
+        pass over the rows it read keeps by id (keep_batch).
 
         True when the vector was written; False when it was not -- a looking run, a file gone, no library, a row gone,
         or a failed write (logged) -- so a pass can count what it kept rather than what it tried (#1823)."""
@@ -88,8 +87,6 @@ class PhotoEmbeddings:
             vector = np.array(embedding, dtype=np.float32).tobytes()
 
             def store(conn):
-                if photo_id is not None:
-                    return store_embeddings.put_by_id(conn, photo_id, self.model_key, stamp[0], stamp[1], vector)
                 store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector)
                 return True
 
@@ -106,6 +103,22 @@ class PhotoEmbeddings:
         except Exception as e:
             logger.warning(f"Failed to write cache for {file_path}: {e}")
             return False
+
+    def keep_batch(self, found):
+        """Keep each of `found` [(photo id, vector, (mtime, size) of the file as it was opened)] at that row, by id, in
+        ONE transaction (one connection, one take of the write lock, one commit; #1839): a pass over the rows it read
+        (tagpup.services.photo_reembed). A row gone meanwhile is not kept, and none is made for it (put_by_id). How many
+        were kept; none in a looking run or without a library. A write that fails raises: what earlier batches kept is
+        kept, and the photos of this one are made again by the next run."""
+        if not found or not self.remember or not self._library():
+            return 0
+        rows = [(photo_id, np.asarray(vector, dtype=np.float32).tobytes(), stamp) for photo_id, vector, stamp in found]
+
+        def store(conn):
+            return sum(store_embeddings.put_by_id(conn, photo_id, self.model_key, stamp[0], stamp[1], vector)
+                       for photo_id, vector, stamp in rows)
+
+        return self.photo_index.write_on_own_connection(store, label="the vectors of %d photos" % len(rows))
 
     def of(self, file_path, force_recompute=False):
         """A photo's vector: the one kept, unless `force_recompute`; else made and kept (made(prepared))."""

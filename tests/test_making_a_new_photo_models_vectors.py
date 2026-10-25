@@ -7,7 +7,8 @@ use while it runs. What the owner lives through:
   nothing is written.
 - A run stopped after a batch keeps what it made; the next makes only the rest, nothing twice. While it runs the
   library's model, key and settings are as they were, and a reader of the library's key finds no new vector.
-- A photo removed while the run is under way is skipped and never given a row back.
+- A photo removed while the run is under way is skipped and never given a row back; the batch it was in is one write
+  (one connection, one take of the write lock, one commit), the others of it kept (#1839).
 - A file that does not decode is counted, and tried again by the next run.
 - The drive is not connected (every file not found): the run stops past 1% (and 20) with one sentence asking whether
   the drive or share is connected, exits 1, and what an earlier run kept stays kept; one file really gone of a hundred
@@ -254,6 +255,35 @@ class APhotoGoneMeanwhile(_Library):
         self.assertNotIn(paths.key(removed), rows, "the photo removed was given a row back")
         self.assertEqual({paths.key(path) for path in self.photos[:9]}, set(rows))
         self.assertEqual(set(rows), self.new_vectors())
+
+
+class ABatchIsOneWrite(_Library):
+
+    def test_a_batch_of_256_is_one_write_and_a_photo_removed_in_it_is_the_one_not_kept(self):
+        self.add_photos(photo_reembed.BATCH - 10)
+        removed = self.photos[200]
+        writes, syncing = [], []
+        write_with_connection = db.write_with_connection
+
+        def counted(target, operation, label="database write"):
+            if not syncing:
+                writes.append(label)
+            return write_with_connection(target, operation, label=label)
+
+        def a_sync_removes_it(done):
+            if done == 100:
+                syncing.append(True)
+                self.assertEqual(1, store_photos.forget_photo(self.library.path, removed)["photos"])
+                syncing.clear()
+
+        self.runtime.clip(None, photo_reembed.wanted(self.runtime.settings(self.library), NEW)).on_forward = \
+            a_sync_removes_it
+        with mock.patch.object(db, "write_with_connection", counted):
+            counts = self.embed()
+        self.assertEqual((256, 255, 1), (counts["embedded"], counts["kept"], counts["not_kept"]))
+        self.assertEqual(1, len(writes), "a batch was not one write: %d" % len(writes))
+        self.assertEqual({paths.key(path) for path in self.photos if path != removed}, self.new_vectors())
+        self.assertNotIn(paths.key(removed), self.rows(), "the photo removed was given a row back")
 
 
 class AFileThatDoesNotDecode(_Library):

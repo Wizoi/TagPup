@@ -6,8 +6,8 @@ The vectors are kept under the new model's key (tagpup.store.embeddings.model_ke
 wanted model and its own image size), beside the library's key, which nothing here changes: every reader reads the
 library's key alone, so a pass part-way is never read by anything until the switch. A photo holds the new vector when
 any vector is kept under the key (store.photos.stamps with_vectors, the gate's count); a stopped pass is taken up where
-it stopped, and a second run finds nothing left. Each vector is kept at the row it was read from, by id
-(PhotoEmbeddings.keep with photo_id): a photo removed meanwhile is skipped, never given a row back.
+it stopped, and a second run finds nothing left. Each vector is kept at the row it was read from, by id, a batch
+a transaction (PhotoEmbeddings.keep_batch): a photo removed meanwhile is skipped, never given a row back.
 
 A file that does not decode, or cannot be read, is counted by why, logged, and tried again by the next run (no list of
 skipped photos: DECISIONS 2026-10-17); a file not found is counted as gone. Gone and unread together past UNREAD_LIMIT
@@ -39,7 +39,7 @@ UNREAD_LIMIT = 0.01
 #: What a pass stopped by UNREAD_LIMIT says: the photos not found or not read so far, of the pass's.
 STOPPED = "%d of %d photo files were not found or could not be read: is the drive or share connected?"
 
-#: Vectors kept a transaction: what a stop or a failure part-way keeps at most, besides the photo under way.
+#: Vectors kept a transaction (PhotoEmbeddings.keep_batch): what a write that fails loses at most.
 BATCH = 256
 
 #: Seconds a photo, read ahead and embedded by SigLIP 2 SO400M on the owner's card (0.034 to 0.041 measured, phase 5
@@ -156,15 +156,14 @@ def run(library, runtime, model, progress=None, should_stop=None, report=None):
             raise RuntimeError("the model's vectors would be kept under %s, not %s" % (embeddings.model_key, key))
 
         def keep(found):
-            return sum(embeddings.keep(path, vector, stamp, photo_id=photo_id) for (photo_id, path), stamp, vector
-                       in found)
+            return embeddings.keep_batch([(photo_id, vector, stamp) for photo_id, stamp, vector in found])
 
         with runtime.gpu_turn("making the vectors of %s:%s (%s)" % (model[0], model[1], library.name), (clip,),
                               cancelled=should_stop, report=report):
             todo, held = _rows(library, key)
             if todo:
                 clip.load()
-            counts = embed_pass(clip, [(path, (photo_id, path)) for photo_id, path in todo], keep,
+            counts = embed_pass(clip, [(path, photo_id) for photo_id, path in todo], keep,
                                 progress=progress, should_stop=should_stop, batch=BATCH)
     finally:
         index.close()
