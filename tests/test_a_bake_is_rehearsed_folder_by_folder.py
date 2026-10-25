@@ -84,7 +84,7 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
         width, height, _oriented, turn = images.shown_shape(path)
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
-            plan = baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), held, (width, height, turn),
+            plan = baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), lambda: held, lambda: (width, height, turn),
                                      images.fingerprint(images.opened(path, upright=True)))
         finally:
             conn.close()
@@ -98,9 +98,12 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
         self.write(lambda conn: store_faces.insert(conn, other, [1, 1, 3, 3], face_service.vector_bytes([0.5] * 8),
                                                    model="facenet-vggface2"))
         self.outside(self.photo("changed.jpg", faces=1), "-XMP:Description=Harbour at dusk")
+        # Its bytes gone bad and its stamp kept (the library's checks pass): only reading the file finds it out.
         broken = self.photo("broken.jpg", faces=1)
+        stat = os.stat(broken)
         with open(broken, "wb") as handle:
-            handle.write(b"not a picture at all")
+            handle.write(b"x" * stat.st_size)
+        os.utime(broken, ns=(stat.st_atime_ns, stat.st_mtime_ns))
         self.photo(os.path.join("Second", "many.jpg"), faces=37)
 
     def home_as_it_is(self):

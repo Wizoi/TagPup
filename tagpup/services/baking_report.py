@@ -3,8 +3,9 @@ the folders given, planned by tagpup.services.baking as a bake would plan it, an
 cannot be baked and why -- folder by folder. It writes nothing: the library is opened read-only (no write lock, no
 migration, no journal), and the files are only read, through field_values.session and Pillow.
 
-A sample of the photos (SAMPLE, every Nth by photo id, the same photos each run) is decoded whole, to take its
-fingerprint: the plan of a sampled photo compares the Fingerprint its file holds as well, and its fingerprint is compared
+A folder's files are read (their bake fields, through one ExifTool read of the folder) only when the first photo of it
+the library can plan asks for them: a folder of photos never examined, or with no vector, opens no file. A sample of the
+photos (SAMPLE, every Nth by photo id, the same photos each run) is decoded whole, to take its fingerprint: the plan of a sampled photo compares the Fingerprint its file holds as well, and its fingerprint is compared
 with the row photo_fingerprints holds of it, if any. The others are planned without decoding, as a share is slow to read.
 """
 import collections
@@ -20,8 +21,8 @@ from tagpup.store import roots as store_roots
 #: How many photos of a run are decoded for their fingerprint.
 SAMPLE = 200
 
-#: What opening a photo's picture raises for a file it cannot read: missing, locked, or not a picture Pillow decodes
-#: (Pillow raises SyntaxError for some broken headers).
+#: What decoding a sampled photo raises for a file it cannot read: missing, locked, or not a picture Pillow decodes
+#: (Pillow raises SyntaxError for some broken headers). It is then not sampled; its plan says why it cannot be baked.
 _UNREADABLE = (OSError, ValueError, SyntaxError)
 
 
@@ -93,12 +94,12 @@ def dry_run(library, exiftool_path, detector, folders=None, stop=None, heard=Non
                     stopped = True
                     break
                 tally = Tally(folder=os.path.dirname(group[0][1]))
-                held = field_values.read(et, [path for _id, path in group], list(bake.WRITTEN.values()), stop=stop)
+                read = _FolderRead(et, [path for _id, path in group], stop)
                 for photo_id, path in group:
                     if stop is not None and stop.is_set():
                         stopped = True
                         break
-                    _plan(conn, tally, keys, photo_id, path, held.get(paths.key(path)), photo_id in sampled)
+                    _plan(conn, tally, keys, photo_id, path, read, photo_id in sampled)
                 if tally.photos:
                     found.append(tally)
                     total.add(tally)
@@ -111,22 +112,42 @@ def dry_run(library, exiftool_path, detector, folders=None, stop=None, heard=Non
         conn.close()
 
 
-def _plan(conn, tally, keys, photo_id, path, held, in_sample):
-    """Plan the photo at `path` and count it in `tally`. A photo ExifTool did not answer for is not planned: nothing is
-    known of its file, not even that it cannot be read."""
-    if held is None or isinstance(held, field_values.NotAnswered):
+class _FolderRead:
+    """The bake fields of a folder's files, read in one ExifTool read the first time a photo of it asks."""
+
+    def __init__(self, et, photo_paths, stop):
+        self.et, self.photo_paths, self.stop, self.found = et, photo_paths, stop, None
+
+    def of(self, photo_path):
+        """What field_values.read gave for `photo_path`: its fields, or the Exception its read gave (NotAnswered for a
+        photo the read did not reach)."""
+        if self.found is None:
+            self.found = field_values.read(self.et, self.photo_paths, list(bake.WRITTEN.values()), stop=self.stop)
+        return self.found.get(paths.key(photo_path)) or field_values.NotAnswered("Its file was not read.")
+
+
+def _shape(photo_path):
+    width, height, _oriented, turn = images.shown_shape(photo_path)
+    return width, height, turn
+
+
+def _plan(conn, tally, keys, photo_id, path, read, in_sample):
+    """Plan the photo at `path` and count it in `tally`. A photo whose file ExifTool did not answer for is counted apart,
+    not as unreadable: nothing is known of its file, not even that it cannot be read."""
+    digest, given = None, []
+    if in_sample:
+        try:
+            digest = images.fingerprint(images.opened(path, upright=True))
+        except _UNREADABLE:
+            pass
+
+    def held():
+        given.append(read.of(path))
+        return given[-1]
+    plan = baking.plan_photo(conn, path, keys, held, lambda: _shape(path), digest)
+    if isinstance(plan, baking.Cannot) and given and isinstance(given[-1], field_values.NotAnswered):
         tally.not_answered += 1
         return
-    shape = digest = None
-    if not isinstance(held, Exception):
-        try:
-            width, height, _oriented, turn = images.shown_shape(path)
-            shape = (width, height, turn)
-            if in_sample:
-                digest = images.fingerprint(images.opened(path, upright=True))
-        except _UNREADABLE as error:
-            held = field_values.Unreadable(str(error) or type(error).__name__)
-    plan = baking.plan_photo(conn, path, keys, held, shape, digest)
     tally.photos += 1
     if digest is not None:
         tally.sampled += 1

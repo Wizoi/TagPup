@@ -1388,7 +1388,6 @@ CANNOT_BAKE = {
     baking.NO_VECTOR: "with no photo vector under the photo model",
     baking.CHANGED: "whose file changed since its photo vector was made (index them again first)",
     baking.UNREADABLE: "whose file could not be read",
-    baking.REGIONS: "whose file holds regions the writer cannot read",
     baking.GONE: "gone from the library during the run",
 }
 
