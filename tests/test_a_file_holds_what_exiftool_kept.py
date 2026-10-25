@@ -203,6 +203,17 @@ FOREIGN_MWG = ("-XMP-mwg-rs:RegionInfo={AppliedToDimensions={W=16,H=12,Unit=pixe
                "Name=Ash|, Corrin |{x|}||y,Area={X=0.5,Y=0.5,W=0.25,H=0.25,Unit=normalized}}]}")
 FOREIGN_MP = "-XMP-MP:RegionInfoMP={Regions=[{PersonDisplayName=Ash Corrin,Rectangle=0.1|, 0.2|, 0.3|, 0.4}]}"
 
+#: Apple Photos' regions, the one foreign shape the live libraries hold: no name, an Area's numbers 17 digits long (which
+#: ExifTool answers as texts), and Apple's face Extensions.
+APPLE = ("-XMP-mwg-rs:RegionInfo={AppliedToDimensions={W=4032,H=3024,Unit=pixel},RegionList=[%s]}" % ",".join(
+    "{Type=Face,Area={X=%s,Y=%s,W=%s,H=%s,Unit=normalized},Extensions={XMP-apple-fi:AngleInfoRoll=%d,"
+    "XMP-apple-fi:AngleInfoYaw=%d,XMP-apple-fi:ConfidenceLevel=%d,XMP-apple-fi:FaceID=%d,XMP-apple-fi:Timestamp=%d}}"
+    % (x, y, w, h, roll, yaw, confidence, face, stamp) for x, y, w, h, roll, yaw, confidence, face, stamp in (
+        ("0.38281250000000006", "0.41406249999999994", "0.12890624999999997", "0.17187500000000003", 270, 0, 553, 7,
+         2147483647),
+        ("0.71093750000000011", "0.30468749999999994", "0.09765625000000001", "0.13020833333333331", 0, 45, 812, 12,
+         1617181920))))
+
 #: An XMP block holding only MWG regions: `%s`, the RDF of one region (seeded whole: ExifTool writes neither a line break in
 #: a value nor a field of a namespace it does not know).
 REGIONS_XMP = """<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?>
@@ -431,6 +442,21 @@ class ABakeIsWritten(KeptCase):
                 field_values.read_one(et, a, [fields.REGION_INFO])
                 with self.assertRaisesRegex(RuntimeError, "is not defined"):
                     field_values.write(et, a, self.values(1))
+
+    def test_apple_photos_regions_are_replaced_by_a_bake_and_put_back_equal(self):
+        a = self.make_read("a.jpg")
+        self.outside(a, APPLE)
+        before = self.regions_of(a)
+        listed = before["XMP:RegionInfo"]["RegionList"]
+        self.assertEqual(("0.38281250000000006", 2147483647),
+                         (listed[0]["Area"]["X"], listed[0]["Extensions"]["XMP-apple-fi:Timestamp"]), "not Apple's shape")
+        values = self.values(2)
+        change = self.bake([a], values).details["change"]
+        self.assert_baked(a, values, 2)
+        undone = self.undo(change)
+        self.assertEqual((1, []), (undone.changed, undone.errors))
+        self.assertEqual(["undone"], self.states(change))
+        self.assertEqual(before, self.regions_of(a))
 
 
 if __name__ == "__main__":
