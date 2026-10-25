@@ -1,6 +1,6 @@
 """Count what a library's photo files hold of XMP, before anything is baked into them (docs/PHASE6_DESIGN.md, 3.5).
 
-Read-only: one ExifTool reads a sample of the photos spread over the library's folders (1,000 by default; every photo
+Read-only: one ExifTool reads a sample of the photos spread over the library's folders (3,000 by default, so the two small libraries are read whole; every photo
 of a smaller library) and this prints, by extension, how many hold MWG face regions, Microsoft Photo regions, Extended
 XMP, two XMP blocks, how big their XMP block is and the Orientation they say (tagpup.services.inspect.xmp_census).
 Counts only: no path, no name, no value of a file is printed -- the library is photographs of real people, many of
@@ -26,7 +26,7 @@ from tagpup.core.result import NotFound, Refused  # noqa: E402
 from tagpup.services import inspect  # noqa: E402
 
 FLAGS = (("mwg_regions", "MWG regions"), ("mp_regions", "MP regions"), ("extended_xmp", "Extended XMP"),
-         ("duplicate_xmp", "two XMP blocks"), ("other_warnings", "another warning"))
+         ("duplicate_xmp", "two XMP blocks"))
 
 
 def lines(census):

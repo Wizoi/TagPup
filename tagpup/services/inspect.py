@@ -343,7 +343,7 @@ def files_that_fail_to_open(library):
 # ---- What the photo files hold of XMP ------------------------------------------------------
 
 #: Photos the census reads of a library larger than this, spread over its folders (docs/PHASE6_DESIGN.md, 3.5).
-CENSUS_SAMPLE = 1000
+CENSUS_SAMPLE = 3000
 
 #: The census's questions, as ExifTool is asked them. A region struct is asked by its flattened fields: ExifTool answers a
 #: struct's own name (XMP-MP:RegionInfoMP) only under -struct, and nothing without it (measured, ExifTool 13.59).
@@ -357,8 +357,10 @@ WARNING = "ExifTool:Warning"
 XMP_BLOCK = "XMP:XMP"
 CENSUS_TAGS = MWG_REGIONS + MP_REGIONS + (EXTENDED_XMP, ORIENTATION, FILE_TYPE, WARNING, XMP_BLOCK)
 
-#: Only under -validate does ExifTool say a JPEG holds a second XMP block ("Duplicate XMP at JPEG-APP1-XMP").
-CENSUS_PARAMS = ("-validate",)
+#: Only under -validate does ExifTool say a JPEG holds a second XMP block ("Duplicate XMP at JPEG-APP1-XMP"). It
+#: keeps ONE warning a file, and 119 of 120 real photos already carry an earlier minor one that would hide it, so every
+#: other warning is suppressed.
+CENSUS_PARAMS = ("-validate", "-api", "NoWarning=^(?!Duplicate XMP)")
 DUPLICATE_XMP = "Duplicate XMP"
 
 #: The XMP sizes counted, each below its bound in bytes; a block at 64 KB or over is "over" (a JPEG segment holds 64 KB).
@@ -394,7 +396,7 @@ def _size_bin(size):
 
 def _tally():
     return {"n": 0, "read": 0, "unreadable": 0, "not_answered": 0, "mwg_regions": 0, "mp_regions": 0,
-            "extended_xmp": 0, "duplicate_xmp": 0, "other_warnings": 0,
+            "extended_xmp": 0, "duplicate_xmp": 0,
             "xmp_size": dict.fromkeys([name for name, _bound in XMP_SIZES] + ["over", "none"], 0), "orientation": {}}
 
 
@@ -407,9 +409,7 @@ def _counted(tally, record):
     tally["mp_regions"] += held(*MP_REGIONS)
     tally["extended_xmp"] += held(EXTENDED_XMP)
     warnings = [str(said) for said in fields.field_values(record.get(WARNING))]
-    duplicate = any(DUPLICATE_XMP in said for said in warnings)
-    tally["duplicate_xmp"] += duplicate
-    tally["other_warnings"] += bool(warnings) and not duplicate
+    tally["duplicate_xmp"] += any(DUPLICATE_XMP in said for said in warnings)
     tally["xmp_size"][_size_bin(_xmp_bytes(record.get(XMP_BLOCK)))] += 1
     turned = record.get(ORIENTATION)
     key = "none" if turned in (None, "") else str(turned)

@@ -121,7 +121,7 @@ class ACensusOfALibrary(unittest.TestCase):
                                                      "XMP:XMP": binary(48 * 1024)},
             os.path.join(COAST, "IMG_0004.jpg"): {"ExifTool:Warning": "Duplicate XMP at JPEG-APP1-XMP",
                                                    "XMP:XMP": binary(64 * 1024 - 1), "EXIF:Orientation": 6},
-            os.path.join(COAST, "IMG_0005.jpg"): {"ExifTool:Warning": "Truncated JPEG", "XMP:XMP": binary(64 * 1024)},
+            os.path.join(COAST, "IMG_0005.jpg"): {"XMP:XMP": binary(64 * 1024)},
             os.path.join(COAST, "Scan_0006.tif"): {"File:MIMEType": "image/tiff", "File:FileType": "TIFF"},
         }
         self.add(*held)
@@ -131,10 +131,10 @@ class ACensusOfALibrary(unittest.TestCase):
         self.assertEqual((6, 6, 6, 0, 0, False), (answer["photos"], answer["sampled"], answer["read"],
                                                   answer["unreadable"], answer["not_answered"], answer["stopped"]))
         self.assertEqual([2, 4], sorted(len(batch) for batch, _params in session.commands), "one command a batch")
-        self.assertTrue(all(params == ["-validate"] for _batch, params in session.commands))
+        self.assertTrue(all(params == list(inspect.CENSUS_PARAMS) for _batch, params in session.commands))
         jpg, tif = answer["by_extension"][".jpg"], answer["by_extension"][".tif"]
-        self.assertEqual((5, 5, 1, 1, 1, 1, 1), (jpg["n"], jpg["read"], jpg["mwg_regions"], jpg["mp_regions"],
-                                                 jpg["extended_xmp"], jpg["duplicate_xmp"], jpg["other_warnings"]))
+        self.assertEqual((5, 5, 1, 1, 1, 1), (jpg["n"], jpg["read"], jpg["mwg_regions"], jpg["mp_regions"],
+                                              jpg["extended_xmp"], jpg["duplicate_xmp"]))
         self.assertEqual({"<16K": 1, "<48K": 1, "<64K": 2, "over": 1, "none": 0}, jpg["xmp_size"])
         self.assertEqual({"6": 2, "1": 1, "none": 2}, jpg["orientation"])
         self.assertEqual((1, 1, 0), (tif["n"], tif["xmp_size"]["none"], tif["mwg_regions"]))
@@ -249,7 +249,7 @@ class TheRealExifToolOnHandMadeFiles(unittest.TestCase):
             et.execute("-XMP-MP:RegionInfoMP={Regions=[{PersonDisplayName=%s}]}" % NAME, "-overwrite_original",
                        f["IMG_0002.jpg"])
             et.execute("-XMP-dc:Description=" + "x" * 70000, "-overwrite_original", f["IMG_0003.jpg"])
-            et.execute("-XMP-dc:Subject=Activity/Sailing", "-overwrite_original", f["IMG_0004.jpg"])
+            et.execute("-XMP-dc:Subject=Activity/Sailing", "-IFD0:Rating=3", "-overwrite_original", f["IMG_0004.jpg"])
             et.execute("-XMP-dc:Subject=Activity/Sailing", "-overwrite_original", f["Scan_0006.png"])
         self.second_xmp_block(f["IMG_0004.jpg"])
         db_path = self.home.library("library.db")
@@ -278,8 +278,8 @@ class TheRealExifToolOnHandMadeFiles(unittest.TestCase):
         jpg, png = answer["by_extension"][".jpg"], answer["by_extension"][".png"]
         self.assertEqual((7, 6, 1, False), (answer["sampled"], answer["read"], answer["unreadable"], answer["stopped"]))
         self.assertEqual((6, 5, 1), (jpg["n"], jpg["read"], jpg["unreadable"]))
-        self.assertEqual((1, 1, 1, 1, 0), (jpg["mwg_regions"], jpg["mp_regions"], jpg["extended_xmp"],
-                                           jpg["duplicate_xmp"], jpg["other_warnings"]))
+        self.assertEqual((1, 1, 1, 1), (jpg["mwg_regions"], jpg["mp_regions"], jpg["extended_xmp"],
+                                       jpg["duplicate_xmp"]))
         self.assertEqual({"<16K": 4, "<48K": 0, "<64K": 0, "over": 0, "none": 1}, jpg["xmp_size"])
         self.assertEqual({"6": 1, "none": 4}, jpg["orientation"])
         self.assertEqual((1, 1, {"<16K": 1, "<48K": 0, "<64K": 0, "over": 0, "none": 0}),
