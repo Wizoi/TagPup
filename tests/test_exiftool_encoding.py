@@ -142,6 +142,8 @@ class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
                     self.assertEqual(after, self.held(a, list(after)))
                 else:
                     self.assertIn("cannot be given to ExifTool", str(result.errors))
+                    change = result.details["change"]
+                    self.assertEqual(("failed", []), (self.status(change), self.states(change)))
                     self.assertEqual((before, written), (self.held(a, list(after)), os.stat(a).st_mtime_ns))
 
     def test_a_bake_over_a_region_named_over_two_lines_is_undone_equal(self):
@@ -157,6 +159,21 @@ class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
         self.assertEqual(["undone"], self.states(change))
         self.assertEqual(before, self.regions_of(a))
         self.assertEqual(bake.NOT_BAKED, self.bake_of(a).reason)
+
+    def test_a_bake_over_a_region_named_with_a_dollar_and_a_line_break_is_written_and_its_undo_refused(self):
+        # A coverage test: pins behaviour that already holds (no live text holds both; ExifToolSession refuses the pair).
+        a = self.make_read("a.jpg")
+        self.seed_regions(a, "<mwg-rs:Name>Fare $4&#10;Ash</mwg-rs:Name>")
+        values = self.values(2)
+        change = self.bake([a], values).details["change"]
+        self.assert_baked(a, values, 2)
+        written = os.stat(a).st_mtime_ns
+        undone = self.undo(change)
+        self.assertEqual(0, undone.changed)
+        self.assertIn("cannot be given to ExifTool", str(undone.errors))
+        self.assertEqual(["conflict"], self.states(change))
+        self.assertEqual(written, os.stat(a).st_mtime_ns)
+        self.assert_baked(a, values, 2)
 
 
 if __name__ == "__main__":
