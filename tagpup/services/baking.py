@@ -28,11 +28,19 @@ from tagpup.store import roots as store_roots
 #: (tagpup.services.faces.detector_of, handed in: the ml layer is not read here).
 Keys = collections.namedtuple("Keys", "photo face detector")
 
-#: About how many bytes of XMP a bake is: the photo vector's text, and for each face its vector's text and its region.
-#: A JPEG's XMP block holds 64 KB (bake.MAX_VALUE): a bake over it is written as Extended XMP, which at these sizes is a
-#: photo of 37 faces or more (36 fit: 3,072 + 36 x 1,730 = 65,352).
-PHOTO_BYTES = 3072
-FACE_BYTES = 1730
+#: How many bytes one XMP packet of a JPEG holds, as ExifTool counts it: past it ExifTool moves the large properties (the
+#: vectors) to Extended XMP.
+XMP_PACKET_LIMIT = 65502
+
+#: About how many bytes of main XMP packet a bake makes, MEASURED from real writes (2026-10-25: ExifTool 13.x,
+#: BakeCase.bake of 0 to 38 faces onto a JPEG holding one keyword, the packet read from its APP1 segment, tests/
+#: test_a_bake_is_planned_from_the_library.py): 6,355 bytes with no face (the packet wrapper, the photo vector, the model,
+#: fingerprint and FacesFound markup, the keyword) and about 1,712 for each face (its vector's 1,368 characters of base64 and
+#: its region's markup, which varies by 100 with the digits of its box: 1,660 to 1,775 between faces); 34 faces were
+#: 64,560 bytes in one packet, 35 overflowed to Extended XMP (a 20,136-byte main packet and a 49,061-byte extension).
+#: A file already holding more XMP (60 keywords: 2,600 bytes more) overflows sooner (34 faces); that is not known here.
+PHOTO_BYTES = 6355
+FACE_BYTES = 1712
 
 #: The kinds of Cannot.
 GONE = "gone"
@@ -53,8 +61,8 @@ class ToBake:
 
     @property
     def extended(self):
-        """Is it more than a JPEG's XMP block holds, written as Extended XMP?"""
-        return self.bytes > bake.MAX_VALUE
+        """Is it more than a JPEG's XMP packet holds, written as Extended XMP?"""
+        return self.bytes > XMP_PACKET_LIMIT
 
 
 @dataclasses.dataclass(frozen=True)
