@@ -154,7 +154,7 @@ checklist"; DECISIONS 2026-10-15 and 2026-10-16). The seven: no reach-ins, no ru
 concept that could collapse, no branch without an instance, scenario tests owned and mapped, no open `data`/`wrong` finding.
 A feature is taken one at a time, its live count in the brief, planned by the owners of the domains it touches (a sweep
 first, the single place that owns each rule named), built by one worker who checks its diff against the seven conditions,
-reviewed once by each owner: it adds no debt, or it is refused. No schema work while DECISIONS 2026-10-15's note stands.
+reviewed once by each owner: it adds no debt, or it is refused. No schema work while DECISIONS 2026-10-15's note stands, but migration 34 (phase 6, `photo_fingerprints`), the owner's decision of 2026-10-24; one migration in flight at a time still holds.
 - **A branch adds about 1,200 lines or fewer, one concern.** A larger piece is cut into merges that each leave the trunk
   whole; a deletion is never over budget (DECISIONS 2026-10-16). A hook refuses a `git merge` adding over 1,200 lines
   without an `Over budget: <reason>` line, or whose subject is only a `Worktree:` line (`.claude/hooks/merge-budget.mjs`).

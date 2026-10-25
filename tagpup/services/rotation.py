@@ -5,7 +5,8 @@ file_changes.write_fields). The Orientation is all the file holds of it; the res
 SAME transaction that marks the file `done` -- forward, settled after a crash, or back in an undo -- so a crash can
 never leave a turned file with boxes of the old picture, or the reverse (docs/INVARIANTS.md):
 
-- the photo's vectors go, since the embedder applies the Orientation and they describe the photo before the turn;
+- the photo's vectors go, since the embedder applies the Orientation and they describe the photo before the turn, and its
+  fingerprint (tagpup.store.photo_fingerprints), the hash of the upright decode;
 - for a TIFF, which Pillow shows already turned, the face boxes turn with it and their cached crops are dropped. For
   every other format the boxes are in the stored pixels, which do not move (tagpup.files.images.shown_shape).
 
@@ -17,7 +18,7 @@ import logging
 from tagpup.core import fields
 from tagpup.core.orientation import ROTATED_ORIENTATION
 from tagpup.files import images
-from tagpup.store import embeddings, faces
+from tagpup.store import embeddings, faces, photo_fingerprints
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ def follower(row, state):
 
     def follow(conn):
         embeddings.forget(conn, row.path)
+        photo_fingerprints.forget(conn, row.path)   # the decode the fingerprint hashed turns too
         row.followed = faces.turn_boxes_in(conn, row.path, *turn) if turn else 0
         row.turned = turn if forward else None
     return follow

@@ -57,7 +57,7 @@ class ANewLibrary(SchemaTestCase):
                           "tag_taxonomy",
                           "tag_embeddings", "generations", "schema_version", "changes", "change_rows", "settings",
                           "change_files", "job_runs", "added_folders",
-                          "faces_detected", "roots", "photo_tags", "folders", "photo_folder",
+                          "faces_detected", "photo_fingerprints", "roots", "photo_tags", "folders", "photo_folder",
                           "search_words", "search_names"}
                          | {"search_%s_%s" % (table, shadow) for table in ("words", "names")
                             for shadow in ("data", "idx", "docsize", "config")},

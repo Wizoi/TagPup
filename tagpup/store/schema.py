@@ -658,6 +658,15 @@ def _face_vectors_in_a_table_of_their_own(conn):
     return {"face vectors": copied}
 
 
+def _photo_fingerprints(conn):
+    """Migration 34 (owner, 2026-10-24; docs/PHASE6_DESIGN.md, section 7): `photo_fingerprints`, one row for each photo whose
+    picture has been fingerprinted -- the key of the way it was taken (`upright-sha256-1`) and the hash -- a fact about the
+    picture, which a bake writes into the file and the read side compares. No foreign key and no trigger, as `faces_detected`:
+    a row whose photo is gone is read as none, a photo's id never being handed out again. Spelled here, not imported from
+    tagpup.store.photo_fingerprints: a migration is frozen. Additive: a new table, empty, and nothing that was there changes."""
+    conn.execute("CREATE TABLE photo_fingerprints (photo_id INTEGER PRIMARY KEY, key TEXT NOT NULL, hash BLOB NOT NULL)")
+
+
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
@@ -671,6 +680,11 @@ MIGRATIONS = (
               "live library) and a redundant index; one backup first, no undo",
               ("faces_pending", "faces", "face_embeddings"),
               (RowsKept(but=("faces_pending",)), FaceVectorsCopied()) + STANDARD),
+    Migration(34, "photo fingerprints", _photo_fingerprints, ADDITIVE,
+              "adds the empty table photo_fingerprints, one row a photo, no foreign key; nothing that was there changes, so "
+              "no backup",
+              ("photo_fingerprints",),
+              (RowsKept(but=("photo_fingerprints",)),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version
