@@ -106,7 +106,8 @@ _SCENARIO_FILES = {
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_an_index_reads_the_next_photos_ahead",
     "F3": (
         "test_batches test_bulk_edits test_bulk_edits_real_exiftool test_bulk_edits_stalled_exiftool "
-        "test_bulk_writes_start_from_the_file test_a_bake_is_planned_from_the_library"
+        "test_bulk_writes_start_from_the_file test_a_bake_is_planned_from_the_library "
+        "test_a_bake_is_rehearsed_folder_by_folder"
     ),
     "F4": "test_folder_watcher test_sync",
     "F5": "test_scenario_two_libraries_share_a_folder",

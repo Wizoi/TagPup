@@ -78,9 +78,11 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
             self.detect(path, faces, detector, model)
         return path
 
-    def detect(self, path, count, detector=DETECTOR, model=FACES):
-        """`detector` found `count` faces in the photo (box(n)), their vectors under `model`, in place of any it had."""
-        found = [{"box": box(n), "embedding": baked_files.unit(bake.FACE_DIM, 10 + n).tolist(), "prob": 0.9}
+    def detect(self, path, count, detector=DETECTOR, model=FACES, boxes=None):
+        """`detector` found `count` faces in the photo (`boxes`, in that order, or box(n)), their vectors under `model`,
+        in place of any it had."""
+        boxes = boxes or [box(n) for n in range(count)]
+        found = [{"box": boxes[n], "embedding": baked_files.unit(bake.FACE_DIM, 10 + n).tolist(), "prob": 0.9}
                  for n in range(count)]
         conn = db.connect(self.library.path)
         try:
@@ -122,12 +124,10 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
     def test_a_photo_plans_its_bake_is_current_once_written_and_its_fingerprint_row_outlives_an_undo(self):
         a = self.photo("a.jpg", faces=2)
         sample_less = self.plan(a, fingerprint=False)
-        self.assertEqual((None, baking.PHOTO_BYTES + 2 * baking.FACE_BYTES), (sample_less.values, sample_less.bytes),
-                         "a dry run's photo outside its sample plans no values")
+        self.assertIsNone(sample_less.values, "a dry run's photo outside its sample plans no values")
         plan = self.plan(a)
         self.assertIsInstance(plan, baking.ToBake)
-        self.assertEqual(self.expected(a, [box(0), box(1)]), plan.values, "faces in id order, boxes as stored")
-        self.assertFalse(plan.extended)
+        self.assertEqual(self.expected(a, [box(0), box(1)]), plan.values, "faces of one size in id order, boxes as stored")
         self.assertIsNone(self.fingerprint_row(a))
 
         result = self.bake([a], plan.values)
@@ -141,6 +141,39 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         self.assertEqual((1, []), (undone.changed, undone.errors))
         self.assertEqual((images.FINGERPRINT_KEY, digest), tuple(self.fingerprint_row(a)), "an undo leaves the row")
         self.assertIsInstance(self.plan(a), baking.ToBake, "the bake undone, it plans again")
+
+    def test_the_largest_face_is_baked_first_and_the_bake_then_reads_current(self):
+        # Owner, 2026-10-25: largest first, ties by id. The small face was found first: it holds the lower id.
+        a = self.photo("a.jpg")
+        small, large = [1, 1, 2, 2], [4, 3, 12, 11]
+        self.detect(a, 2, boxes=[small, large])
+        in_id_order = sorted(self.read(lambda conn: store_faces.in_photo_with_names(conn, a, FACES)))
+        self.assertEqual([small, large], [images.parse_box(row[1]) for row in in_id_order], "the small face, the lower id")
+        plan = self.plan(a)
+        photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
+        self.assertEqual(bake.values(baked_files.unit(bake.PHOTO_DIM, 1),
+                                     [(large, baked_files.unit(bake.FACE_DIM, 11)), (small, baked_files.unit(bake.FACE_DIM, 10))],
+                                     (16, 12), images.fingerprint(images.opened(a, upright=True)), photo_key, FACES),
+                         plan.values, "the large face's region and vector first")
+        self.assertEqual((1, []), (lambda result: (result.changed, result.errors))(self.bake([a], plan.values)))
+        written = self.bake_of(a)
+        self.assertEqual([0.5, 0.0625], [face.area[2] for face in written.faces], "the file lists the large face first")
+        self.assertEqual(bake.encode_vector(baked_files.unit(bake.FACE_DIM, 11)), bake.encode_vector(written.faces[0].vector),
+                         "and its vector")
+        self.assertIsInstance(self.plan(a), baking.Current, "written in that order, it plans current")
+
+    def test_faces_of_one_pixel_area_and_two_shapes_keep_id_order(self):
+        # Owner, 2026-10-25: ties by id. In a 16 x 12 picture 1 x 5 and 5 x 1 cover the same pixels, but as fractions
+        # (1/16)*(5/12) and (5/16)*(1/12) differ in the last bit: ordered by rounding, the later face came first.
+        a = self.photo("a.jpg")
+        wide, tall = [0, 0, 5, 1], [8, 0, 9, 5]
+        self.detect(a, 2, boxes=[wide, tall])
+        plan = self.plan(a)
+        photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
+        self.assertEqual(bake.values(baked_files.unit(bake.PHOTO_DIM, 1),
+                                     [(wide, baked_files.unit(bake.FACE_DIM, 10)), (tall, baked_files.unit(bake.FACE_DIM, 11))],
+                                     (16, 12), images.fingerprint(images.opened(a, upright=True)), photo_key, FACES),
+                         plan.values, "the lower id first")
 
     def test_a_stale_bake_plans_again(self):
         a = self.photo("a.jpg", faces=2)
@@ -223,31 +256,6 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         # Stored [0, 0, 1.5, 1.25] of 16 x 12 under Orientation 6 is shown at [12 - 1.25, 0, 12, 1.5] of 12 x 16.
         self.assertEqual(self.expected(a, [[10.75, 0, 12, 1.5]], applied=(12, 16)), self.plan(a).values)
 
-    def has_extended_xmp(self, path):
-        with field_values.session(baked_files.EXIFTOOL) as et:
-            return bool(et.get_tags([path], tags=["XMP:HasExtendedXMP"])[0].get("XMP:HasExtendedXMP"))
-
-    def test_the_estimate_says_extended_xmp_as_the_written_file_has_it(self):
-        # Measured (baking.PHOTO_BYTES): 34 faces fit one packet of a file holding a keyword, 35 overflow to Extended XMP.
-        for faces, extended in ((34, False), (35, True), (36, True), (37, True)):
-            with self.subTest(faces=faces):
-                path = self.photo("f%d.jpg" % faces, faces=faces)
-                plan = self.plan(path)
-                self.assertEqual(extended, plan.extended, "the estimate")
-                result = self.bake([path], plan.values)
-                self.assertEqual((1, []), (result.changed, result.errors))
-                self.assertEqual(extended, self.has_extended_xmp(path), "the file written")
-
-    def test_a_file_already_holding_keywords_is_extended_where_the_estimate_says_at_35_faces_and_more(self):
-        # 60 keywords (2,600 bytes of XMP) make 34 faces Extended too, which the estimate cannot know (no keyword is read).
-        tags = tuple("Places/Harbour%d/Quay%d" % (k, k) for k in range(60))
-        for faces in (35, 36, 37):
-            with self.subTest(faces=faces):
-                path = self.photo("k%d.jpg" % faces, faces=faces, tags=tags)
-                plan = self.plan(path)
-                self.assertTrue(plan.extended, "the estimate")
-                self.bake([path], plan.values)
-                self.assertTrue(self.has_extended_xmp(path), "the file written")
 
 
 if __name__ == "__main__":

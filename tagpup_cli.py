@@ -68,6 +68,7 @@ from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import bake_reading
+from tagpup.services import baking, baking_report
 from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
@@ -1375,6 +1376,91 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
 def _stopped_before_writing():
     console.print("Stopped: nothing was written; run it again to go on.", markup=False)
     raise SystemExit(1)
+
+
+#: Why `bake-photos --apply` is refused: this cut plans and counts only.
+BAKE_NOT_YET = "Not run: writing the bake is cut 3; this is a dry run. Run it without --apply."
+
+#: How `bake-photos` says each kind of photo that cannot be baked (tagpup.services.baking's kinds).
+CANNOT_BAKE = {
+    baking.NEVER_EXAMINED: "never examined by the face model",
+    baking.FACES_WITHOUT_VECTORS: "with a face holding no vector under the face model (retire-faces first)",
+    baking.NO_VECTOR: "with no photo vector under the photo model",
+    baking.CHANGED: "whose file changed since its photo vector was made (index them again first)",
+    baking.UNREADABLE: "whose file could not be read",
+    baking.GONE: "gone from the library during the run",
+}
+
+
+def _bake_lines(tally):
+    """What `bake-photos` says of a Tally (a folder's, or the run's): counts only."""
+    lines = ["  %d photo(s): %d to bake, %d already current (skipped: --apply goes on from where it stopped), %d cannot "
+             "be baked." % (tally.photos, tally.to_bake, tally.current, sum(tally.cannot.values()))]
+    if tally.to_bake:
+        lines.append("  To bake, by format: %s." % ", ".join(
+            "%s %d" % (extension or "(none)", count) for extension, count in sorted(tally.formats.items())))
+    lines += ["  Cannot be baked: %d %s." % (tally.cannot[kind], why) for kind, why in CANNOT_BAKE.items()
+              if tally.cannot[kind]]
+    if tally.not_answered:
+        lines.append("  Not read: %d photo(s) ExifTool did not answer for in its deadline (is the share there?)."
+                     % tally.not_answered)
+    return lines
+
+
+@cli.command("bake-photos")
+@click.argument("directories", nargs=-1, type=click.Path(exists=True, file_okay=False))
+@click.option("--apply", "apply_", is_flag=True, help="Refused for now: writing the bake is cut 3.")
+@click.option("--reveal", is_flag=True, help="Name each folder's path. Paths can name people.")
+@click.pass_context
+@_holds_the_roots
+def bake_photos(ctx, directories, apply_, reveal):
+    """What baking each photo's vectors, faces and fingerprint into its file would do (docs/PHASE6_DESIGN.md, section
+    9), for the library's photos, or those under each DIRECTORY at any depth: per folder, the photos to bake, those
+    already current, and those that cannot be baked, and why. A dry run: it writes nothing, to the library or to a file,
+    and loads no model's weights. Ctrl+C, or a share that stops answering, stops it with the totals so far."""
+    say = functools.partial(console.print, markup=False, soft_wrap=True)
+    if apply_:
+        say(BAKE_NOT_YET)
+        raise SystemExit(1)
+    library = _existing_library(ctx)
+    nested = _nested(directories)
+    if nested:
+        say(nested)
+        raise SystemExit(1)
+    settings = runtimes.peek_settings(library)
+    # The detector's name, asked of the face model's object: building it imports torch and asks whether a card is there;
+    # its weights load on first use, never here. Its class, not a constant here, says the name (the runtime's build_faces).
+    detector = face_records.detector_of(get_runtime().faces(library, settings), settings.detect_max_side)
+    say("Planning a bake of %s (a dry run: nothing is written)." % library.name)
+
+    def heard(tally, number, folders):
+        say("Folder %d of %d%s:" % (number, folders, " " + tally.folder if reveal else ""))
+        for line in _bake_lines(tally):
+            say(line)
+    with _stop_after_this_photo() as asked:
+        run = baking_report.dry_run(library, runtimes.exiftool(library, settings), detector,
+                                    folders=list(directories) or None, stop=asked, heard=heard)
+    if not run.folders:
+        if run.stopped:
+            _stopped_before_writing()
+        say("The library holds no photo%s." % (" under the folder(s) given" if directories else ""))
+        return
+    total = run.total
+    say("All %d folder(s)%s:" % (len(run.folders), " (stopped: the photos planned so far)"
+                                   if run.stopped or run.stalled else ""))
+    for line in _bake_lines(total):
+        say(line)
+    say("  Sample: %d photo(s) decoded for their fingerprint (every Nth by id, the same each run); %d had a fingerprint "
+        "row, %d of them matched it." % (total.sampled, total.had_row, total.matched))
+    if run.stalled is not None:
+        say("Stopped: ExifTool did not answer in its deadline for the photos of folder %d%s: is its share or drive there? "
+            "No later folder was read. Nothing was written; run it again when it answers."
+            % (len(run.folders), " (%s)" % run.stalled if reveal else ""))
+        raise SystemExit(1)
+    if run.stopped:
+        say("Stopped: nothing was written; run it again to plan the rest.")
+        raise SystemExit(1)
+    say("Nothing changed: this is a dry run. Writing the bake is cut 3.")
 
 
 #: What `retire-faces` says of the people the photos' keywords name: they stay, and name the faces again.

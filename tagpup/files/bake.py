@@ -11,7 +11,8 @@ the order of the regions. The regions are MWG's (`XMP-mwg-rs:RegionInfo`), so th
 picture as a person sees it, AppliedToDimensions in pixels and each Area a centre and a size as fractions of it
 (tagpup.core.orientation.area_of / to_stored turn them at the file's edge). A vector is float16, little-endian, in base64:
 1,152 values are 3,072 characters, 512 are 1,368, one XMP value each, never one blob of every face. All the values together are
-another matter: about 35 faces fill a JPEG's 64 KB XMP block, and ExifTool then writes Extended XMP (cut 3 decides).
+another matter: about 35 faces fill a JPEG's 64 KB XMP block, and ExifTool then moves FaceVectors whole to Extended
+XMP, the regions and the photo's values staying in the main block (probed 2026-10-25; its detail, DECISIONS 2026-10-25).
 
 Reading it. ExifTool answers the namespace by name with no configuration of ours. The record is ExifTool's own, read with
 `-struct` (READ_ARGS) and the bake's FIELDS: without it RegionInfo is answered as flattened lists, and a list of one face
