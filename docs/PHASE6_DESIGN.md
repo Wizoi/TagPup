@@ -77,3 +77,14 @@ Backfill interrupted at 30,000 and resumed; one folder baked on the desktop, cop
 Tensions to settle in the cut-1 plan: Q2 writes the master directly while Q1 has the desktop bake first (the backfill
 is the one writer of existing masters; new folders are baked before the copy); Q5 opens the migration before the write
 side exists, so its column must be the read side's, not a guess for cut 3.
+
+## 7. Cut 1, decided 2026-10-24 (owner: "Approved" to the recommendations)
+
+- Vectors are **float16**, little-endian, base64, one XMP value per face (each under ~64 KB), never one blob.
+- Fingerprint = sha256 of the upright RGB decode, key `upright-sha256-1`; **Pillow is pinned** in requirements.txt.
+- The read side decodes every photo to verify the fingerprint (the card is skipped, the decode is not).
+- Namespace `XMP-tagpup`, URI `http://ns.tagpup.app/bake/1.0/`; tags PhotoModel, FaceModel, Fingerprint, PhotoVector,
+  FacesFound, FaceVectors; regions in `XMP-mwg-rs`. A TIFF counts as orientation 1.
+- **Migration 34** = table `photo_fingerprints (photo_id PRIMARY KEY, key TEXT, hash BLOB)`, additive, unjournaled, no
+  FK; `services/rotation.py` clears the row beside `embeddings.forget`. No doctor check (as `faces_detected`).
+- Branches: 1a census (~300), 1b orientation + fingerprint + parse + migration 34 (~400), 1c read side (~500).
