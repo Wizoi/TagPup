@@ -45,7 +45,6 @@ FACE_BYTES = 1712
 #: The kinds of Cannot.
 GONE = "gone"
 UNREADABLE = "unreadable"
-REGIONS = "regions"
 NEVER_EXAMINED = "never examined"
 NO_VECTOR = "no photo vector"
 CHANGED = "changed"
@@ -89,8 +88,6 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     nothing is planned to be written (ToBake.values None) and the Fingerprint the file holds is not compared."""
     if not store_roots.photo_ids_at(conn, [photo_path]):
         return Cannot(GONE, "It is no longer in the library.")
-    if isinstance(held, field_values.UnreadableRegions):
-        return Cannot(REGIONS, "Its file holds regions the writer cannot read: %s" % held)
     if isinstance(held, Exception):
         return Cannot(UNREADABLE, "Its file could not be read: %s" % held)
     stored = embeddings.get(conn, photo_path, keys.photo)

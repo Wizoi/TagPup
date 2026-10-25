@@ -154,10 +154,10 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
 
         c = self.photo("c.jpg", faces=1)
         keys = self.read(lambda conn: baking.keys(conn, DETECTOR))
-        for held, kind in ((field_values.UnreadableRegions("Its XMP-mwg-rs:RegionInfo could not be read"), baking.REGIONS),
-                           (field_values.Unreadable("locked"), baking.UNREADABLE)):
+        for held in (field_values.Unreadable("locked"), field_values.Unreadable("Its XMP-mwg-rs:RegionInfo could not be read")):
             plan = self.read(lambda conn, held=held: baking.plan_photo(conn, c, keys, held, (16, 12, 1)))
-            self.assertEqual(kind, plan.kind)
+            self.assertEqual(baking.UNREADABLE, plan.kind)
+            self.assertIn(str(held), plan.reason)
 
     def test_a_face_with_another_models_vector_refuses_the_whole_photo(self):
         a = self.photo("a.jpg", faces=2)

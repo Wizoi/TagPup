@@ -42,11 +42,6 @@ class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
 
 
-class UnreadableRegions(Unreadable):
-    """A photo read whole whose regions (a struct field) are not a structure the writer can keep: the file is readable,
-    and a write of its regions would not know what it replaces."""
-
-
 class NotAnswered(Unreadable):
     """A photo of a batch ExifTool did not answer for in its deadline (a share gone away, a disk that stopped): nothing is
     known of the file, not even that it cannot be read, so a reader leaves it unread."""
@@ -65,7 +60,7 @@ def _value(row, field):
         try:
             return [bake.region_text(value)]
         except ValueError as error:
-            raise UnreadableRegions("Its %s could not be read: %s" % (field, error)) from None
+            raise Unreadable("Its %s could not be read: %s" % (field, error)) from None
     return fields.field_values(value)
 
 
