@@ -480,7 +480,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
         stopped = result.details.get("stopped")
         if stopped and stopped.get("share"):
-            _share_stopped(library, change_id, et, result, stopped)
+            _share_stopped(library, change_id, result, stopped)
         else:
             file_journal.finish(library.path, change_id, also=face_batch.tidy)
             if stopped:
@@ -507,12 +507,14 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     return result
 
 
-def _share_stopped(library, change_id, et, result, stopped):
+def _share_stopped(library, change_id, result, stopped):
     """A forward write ExifTool stopped answering for part-way (_Stalled), ended as a Ctrl+C ends one (_settle_stopped):
     the files not reached are taken out, the change is applied with what was written, and the write is refused saying so.
     The file whose write was under way, if it was, cannot be read now: it stays `writing`, the change unfinished, for the
-    next settle to decide by what it holds (as a crash leaves it); no deadline more is waited for it."""
-    left = _settle_stopped(library, change_id, et)
+    next settle to decide by what it holds (as a crash leaves it); it is not read again, which would wait another deadline
+    in a session not kept dead (a caller's, as a save's)."""
+    _settle_stopped(library, change_id)
+    left = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "writing")
     if left:
         file_journal.release(library.path, change_id)
     if not result.changed and not left:
