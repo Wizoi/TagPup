@@ -3,7 +3,7 @@ lands on the picture as a person sees it, and of the Orientation a quarter turn 
 
 A face box is kept in the pixels Pillow shows a photo in (tagpup.files.images.shown_shape): the stored pixels, which an
 Orientation change leaves where they are -- except a TIFF, whose Orientation Pillow applies as it loads it, so its boxes
-are already upright and it counts as orientation 1 here (`for_boxes`). A region written into a file for other programs
+are already upright and it counts as orientation 1 here (`boxes_turn`). A region written into a file for other programs
 (XMP-mwg-rs, phase 6) is upright, the picture as shown, so a box is turned at the file's edge only, by `to_upright` and
 `to_stored`, and nowhere else.
 
@@ -25,10 +25,14 @@ ROTATED_ORIENTATION = {
 TRANSPOSED = frozenset({5, 6, 7, 8})
 
 
-def for_boxes(orientation, oriented):
-    """The Orientation a photo's face boxes are turned by: 1 when Pillow already turned the picture as it loaded it
-    (`oriented`, a TIFF: shown_shape), else the file's own."""
-    return 1 if oriented else orientation
+def boxes_turn(declared, tiff):
+    """The Orientation (1 to 8) a photo's face boxes are turned by between the picture as stored and the picture shown
+    upright, from what its decode declares (`declared`, Pillow's getexif Orientation, which reads XMP tiff:Orientation
+    when the file has no EXIF one: tagpup.files.images): 1 for a TIFF (`tiff`), whose Orientation Pillow applies as it
+    loads it, so its boxes are upright already; 1 for a value that is no Orientation; else the value declared. The one
+    rule of it: images.shown_shape and images.opened (the index's read of a bake, tagpup.services.bake_reading) ask it,
+    and the bake's writer (phase 6, cut 2) turns the boxes it writes by the same."""
+    return 1 if tiff or declared not in range(1, 9) else declared
 
 
 def upright_size(width, height, orientation):

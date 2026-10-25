@@ -20,54 +20,11 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from baked_files import DIGEST, EXIFTOOL, FACE_MODEL, PHOTO_MODEL, area, record, unit  # noqa: E402
+import baked_files  # noqa: E402
 from tagpup.core import fields, orientation, paths  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-
-EXIFTOOL = own_home.installed_exiftool()
-PHOTO_MODEL = "siglip2|webli|full-frame|2.0|native"
-FACE_MODEL = "scrfd-adaface"
-DIGEST = bytes(range(32))
-
-#: TagPup's namespace for ExifTool to write it; reading needs none (bake's docstring).
-CONFIG = r"""%Image::ExifTool::UserDefined = (
-    'Image::ExifTool::XMP::Main' => {
-        tagpup => { SubDirectory => { TagTable => 'Image::ExifTool::UserDefined::tagpup' } },
-    },
-);
-%Image::ExifTool::UserDefined::tagpup = (
-    GROUPS => { 0 => 'XMP', 1 => 'XMP-tagpup', 2 => 'Image' },
-    NAMESPACE => { 'tagpup' => 'http://ns.tagpup.app/bake/1.0/' },
-    WRITABLE => 'string',
-    PhotoModel => { }, FaceModel => { }, Fingerprint => { }, PhotoVector => { },
-    FacesFound => { Writable => 'integer' },
-    FaceVectors => { List => 'Seq' },
-);
-1;
-"""
-
-
-def unit(dim, seed):
-    vector = np.random.default_rng(seed).standard_normal(dim).astype(np.float32)
-    return vector / np.linalg.norm(vector)
-
-
-def area(n):
-    return (0.2 + 0.1 * n, 0.4, 0.125, 0.25)
-
-
-def record(faces=2, **changed):
-    """A record as ExifTool answers a baked photo read with bake.READ_ARGS."""
-    held = {"SourceFile": "C:/Pictures/Harbour.jpg", bake.PHOTO_MODEL: PHOTO_MODEL, bake.FACE_MODEL: FACE_MODEL,
-            bake.FINGERPRINT: "%s:%s" % (images.FINGERPRINT_KEY, DIGEST.hex()),
-            bake.PHOTO_VECTOR: bake.encode_vector(unit(bake.PHOTO_DIM, 1)), bake.FACES_FOUND: faces}
-    if faces:
-        held[bake.FACE_VECTORS] = [bake.encode_vector(unit(bake.FACE_DIM, 10 + n)) for n in range(faces)]
-        held[bake.REGIONS] = {"AppliedToDimensions": {"W": 4000, "H": 3000, "Unit": "pixel"},
-                              "RegionList": [{"Type": "Face", "Area": dict(zip("XYWH", area(n)), Unit="normalized")}
-                                             for n in range(faces)]}
-    held.update(changed)
-    return {key: value for key, value in held.items() if value is not None}
 
 
 def half_bytes(values):
@@ -186,23 +143,13 @@ class ABakeAsExifToolReadsItBack(unittest.TestCase):
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="bake_")
-        self.config = os.path.join(self.home.root, "bake.config")
-        with open(self.config, "w", encoding="utf-8") as handle:
-            handle.write(CONFIG)
+        self.config = baked_files.config_in(self.home.root)
 
     def baked(self, name, boxes):
         path = os.path.join(self.home.root, name)
         Image.new("RGB", (48, 32), (120, 90, 60)).save(path, quality=90)
-        found = record(faces=len(boxes))
-        args = ["-XMP-tagpup:%s=%s" % (key.split(":")[1], found[key]) for key in bake.REQUIRED]
-        if boxes:
-            regions = ",".join("{Type=Face,Area={X=%r,Y=%r,W=%r,H=%r,Unit=normalized}}" % orientation.area_of(box, 48, 32)
-                               for box in boxes)
-            args.append("-XMP-mwg-rs:RegionInfo={AppliedToDimensions={W=48,H=32,Unit=pixel},RegionList=[%s]}" % regions)
-            args += ["-XMP-tagpup:FaceVectors=" + text for text in found[bake.FACE_VECTORS]]
-        with ExifToolSession(executable=EXIFTOOL, config_file=self.config) as et:
-            et.execute(*args, "-overwrite_original", path)
-        return path
+        faces = [(orientation.area_of(box, 48, 32), unit(bake.FACE_DIM, 10 + n)) for n, box in enumerate(boxes)]
+        return baked_files.write(path, self.config, baked_files.baked(unit(bake.PHOTO_DIM, 1), faces, (48, 32)))
 
     def read(self, path):
         records = {}

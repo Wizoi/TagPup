@@ -12,7 +12,7 @@ import stat
 
 from PIL import Image, ImageDraw, ImageOps
 
-from tagpup.core import paths
+from tagpup.core import orientation, paths
 
 #: Pillow refuses a picture over about 179 million pixels as a possible decompression
 #: bomb; a stitched panorama is larger. The photos are the owner's own. Four modules
@@ -60,6 +60,20 @@ ZERO_TAIL = 64 * 1024
 
 #: What `opened` marks a picture with in its `info`: how many zero bytes its file ends in.
 ZERO_TAIL_INFO = "zero_tail"
+
+#: What `opened` marks a picture with in its `info`: the Orientation its face boxes are turned by between the picture as
+#: stored and the picture upright (orientation.boxes_turn), read from the file before it was turned.
+BOXES_TURN_INFO = "boxes_turn"
+
+
+def _boxes_turn(img):
+    """orientation.boxes_turn of the Pillow image `img`, as the file opened: the Orientation its getexif declares (EXIF,
+    else XMP tiff:Orientation), 1 when none or the EXIF does not parse."""
+    try:
+        declared = img.getexif().get(0x0112, 1)
+    except Exception:
+        declared = 1
+    return orientation.boxes_turn(declared, img.format == "TIFF")
 
 
 class Unreadable(OSError):
@@ -159,9 +173,10 @@ def tail_check(photo_path):
 
 
 def shown_shape(photo_path):
-    """(width, height, oriented, orientation): the size Pillow shows a photo at, whether it turned the
-    picture by its Orientation as it loaded it, and the EXIF Orientation (1 to 8) the file declares -- 1
-    when it declares none -- from one open of the file.
+    """(width, height, oriented, turn): the size Pillow shows a photo at, whether it turned the
+    picture by its Orientation as it loaded it, and the Orientation its face boxes are turned by
+    (orientation.boxes_turn: the one the file declares, 1 when it declares none or is a TIFF) -- from
+    one open of the file.
 
     Face boxes are in the coordinates Pillow shows a photo in. For most formats that is the stored
     pixels, which an Orientation change leaves where they are; Pillow applies a TIFF's Orientation as it
@@ -174,11 +189,8 @@ def shown_shape(photo_path):
         if oriented:
             img.load()
         width, height = img.size
-        try:
-            orientation = img.getexif().get(0x0112, 1)
-        except Exception:
-            orientation = 1
-    return width, height, oriented, (orientation if orientation in range(1, 9) else 1)
+        turn = _boxes_turn(img)
+    return width, height, oriented, turn
 
 
 def picture_size(photo_path):
@@ -359,7 +371,8 @@ def opened(photo_path, upright):
 
     `upright` turns it by its Orientation, as a person sees it -- what CLIP is shown.
     Without, it is the pixels as Pillow shows them, the coordinates face boxes are in
-    (shown_shape).
+    (shown_shape). Either way its `info[BOXES_TURN_INFO]` is the Orientation those boxes are
+    turned by to the picture upright (orientation.boxes_turn), read before it was turned.
 
     The file is read once, and decoded from what was read. Its `info[ZERO_TAIL_INFO]`
     is how many zero bytes the file ends in (zero_tail): ZERO_TAIL or more, and the
@@ -372,6 +385,7 @@ def opened(photo_path, upright):
         data = handle.read()
     try:
         with Image.open(io.BytesIO(data)) as img:
+            turn = _boxes_turn(img)
             if upright:
                 img = ImageOps.exif_transpose(img)
             if img.mode != "RGB":
@@ -382,6 +396,7 @@ def opened(photo_path, upright):
             raise
         raise damage(data, error) from error
     img.info[ZERO_TAIL_INFO] = zero_tail(data)
+    img.info[BOXES_TURN_INFO] = turn
     return img
 
 

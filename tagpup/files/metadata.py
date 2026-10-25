@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
-from tagpup.files import field_values
+from tagpup.files import bake, field_values
 from tagpup.files.exiftool_session import ExifToolSession, StaysDead
 
 logger = logging.getLogger("tagpup_cli.metadata")
@@ -68,6 +68,13 @@ NO_STAT = "their file could not be looked at (its modified time and size could n
 #: Where ExifTool puts an error about a file in what it answers.
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
+#: What a read for the index asks beside METADATA_FIELDS (batch_read's `bakes`): a bake's fields, kept out of the record's
+#: raw_metadata (the turn of its regions is the decode's: tagpup.services.bake_reading), and the options they are read under -- `-struct`, without which the regions are
+#: answered as flattened lists (tagpup.files.bake); no field of METADATA_FIELDS is a structure, and each is answered
+#: alike under it (tests/test_an_index_reads_a_bake.py).
+BAKE_FIELDS = tuple(bake.FIELDS)
+BAKE_PARAMS = ("-struct",)
+
 
 class MetadataExtractor:
     """Reads photos' metadata; never writes into a photo. Giving a photo an identity is
@@ -77,7 +84,7 @@ class MetadataExtractor:
         self.exiftool_path = exiftool_path
 
     def batch_read(self, file_paths: List[str],
-                   people: Optional[vocabulary.PeopleVocabulary] = None) -> List[Dict[str, Any]]:
+                   people: Optional[vocabulary.PeopleVocabulary] = None, bakes=False) -> List[Dict[str, Any]]:
         """A record of each of `file_paths`, in order, read in one ExifTool session through the one batch reader
         (tagpup.files.field_values.read: a batch ExifTool refuses is read again a photo at a time, one it does not
         answer is not retried).
@@ -88,6 +95,9 @@ class MetadataExtractor:
         and size None) and says why in `unread` (NOT_ANSWERED, NO_STAT, NOT_STARTED), so nothing records it as read. The
         session stays dead after a timeout (StaysDead): one deadline is waited for, not one a command. `people` is what the library's tag tree says about people, read once for the batch; without it, only the
         usual face roots name anybody.
+
+        `bakes` (the indexer's read) asks BAKE_FIELDS as well, in the same command, and puts what the file answers of
+        them in the record's "baked" ({} for a file holding none), never in its raw_metadata.
         """
         if not file_paths:
             return []
@@ -101,7 +111,8 @@ class MetadataExtractor:
         records, not_started = {}, None
         try:
             with ExifToolSession(executable=executable) as et:
-                found = field_values.read(StaysDead(et), file_paths, [], METADATA_FIELDS, records)
+                found = field_values.read(StaysDead(et), file_paths, [], list(METADATA_FIELDS) + list(
+                    BAKE_FIELDS if bakes else ()), records, params=BAKE_PARAMS if bakes else ())
         except Exception as e:
             logger.error("Could not start ExifTool to read %d file(s): %s", len(file_paths), e)
             not_started = str(e) or type(e).__name__
@@ -119,9 +130,14 @@ class MetadataExtractor:
                 logger.error("Unreadable metadata, indexing without it: %s (%s)", path, held or "no answer")
                 results.append(self._empty(path, held or "ExifTool answered nothing for it", stamp))
             else:
-                # What the reader asked to tell a photo from another kind of file is not the photo's metadata.
-                record = {key: value for key, value in record.items() if key != field_values.MIME_TYPE}
+                # What the reader asked to tell a photo from another kind of file is not the photo's metadata, nor
+                # is a bake.
+                baked = {key: record[key] for key in BAKE_FIELDS if key in record} if bakes else {}
+                record = {key: value for key, value in record.items()
+                          if key != field_values.MIME_TYPE and not (bakes and key in BAKE_FIELDS)}
                 results.append(self._structure(path, record, people, stamp))
+                if bakes:
+                    results[-1]["baked"] = baked
         return results
 
     @staticmethod

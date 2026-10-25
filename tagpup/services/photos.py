@@ -253,10 +253,10 @@ def box_shape(photo_path):
         if state == "error":
             logger.info("No size for %s: %s", photo_path, shape)
         return none
-    width, height, oriented, orientation = shape
+    width, height, _oriented, turn = shape
     if width <= 0 or height <= 0:
         return none
-    return {"size": [width, height], "turned": orientation != 1 and not oriented}
+    return {"size": [width, height], "turned": turn != 1}
 
 
 def face_crop(library, face_id):
