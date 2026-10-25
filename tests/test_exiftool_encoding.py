@@ -22,7 +22,11 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tagpup.core import processes  # noqa: E402
 import own_home  # noqa: E402
+from tagpup.core import fields  # noqa: E402
+from tagpup.files import bake, field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
+from tagpup.services import file_changes  # noqa: E402
+import test_a_file_holds_what_exiftool_kept as kept  # noqa: E402
 
 
 #: Where the machine has ExifTool; the checkout's settings are not read.
@@ -91,6 +95,68 @@ class TestNonAsciiSurvivesTheRoundTrip(unittest.TestCase):
         photo = _jpeg(self.dir, OUTSIDE_CP1252 + ".jpg")
         row = self.et.get_tags([photo], tags=["File:FileName"])[0]
         self.assertEqual(row.get("File:FileName"), OUTSIDE_CP1252 + ".jpg")
+
+
+BACKSLASH, CR, LF = chr(92), chr(13), chr(10)
+
+#: A caption another program wrote over three lines: an LF, a CRLF, a backslash, a "#" and blanks at a line's edges.
+CAPTION = "Harbour at dusk" + LF + "from the pier " + BACKSLASH + " north end " + CR + LF + "#2 of 3  "
+#: A keyword holding the same (one of a list: ExifTool takes each as an argument of its own).
+KEYWORD = "Places/Pier" + LF + "North " + BACKSLASH + " End"
+
+
+class ATextHoldingALineBreakReachesTheFileWhole(kept.BakeCase):
+    """pyexiftool gives ExifTool one argument a line: a caption holding a line break was written as its first line and its
+    second read as a file name ("File not found"), the save failed half done, and an undo putting one back did the same; a
+    region named over two lines was baked over and could not be put back (#1882). ExifToolSession sends such a text as a
+    C string (exiftool_session.CSTR)."""
+
+    def held(self, path, names):
+        with field_values.session(EXIFTOOL) as et:
+            return field_values.read_one(et, path, names)
+
+    def test_a_caption_and_a_keyword_are_saved_read_back_equal_and_undone(self):
+        a = self.make_read("a.jpg")
+        after = {field: [CAPTION] for field in fields.caption_fields(CAPTION)}
+        after["XMP:Subject"] = ["Beach", KEYWORD]
+        before = self.held(a, list(after))
+        result = file_changes.write_fields(self.library, "caption", EXIFTOOL, [a], list(after),
+                                           lambda path, held: file_changes.Plan(after=after))
+        self.assertEqual((1, []), (result.changed, result.errors))
+        self.assertEqual(after, self.held(a, list(after)))
+        undone = self.undo(result.details["change"])
+        self.assertEqual((1, []), (undone.changed, undone.errors))
+        self.assertEqual(before, self.held(a, list(after)))
+
+    def test_a_dollar_reaches_the_file_as_it_is_and_beside_a_line_break_is_refused(self):
+        # A C string gives a "$" or "@" a backslash of its own (exiftool_session.NOT_IN_CSTR): 7 live captions hold a "$".
+        a = self.make_read("a.jpg")
+        for caption, changed in (("Fare $4 @ the pier", 1), ("Fare $4" + LF + "return", 0)):
+            with self.subTest(caption=caption):
+                after = {field: [caption] for field in fields.caption_fields(caption)}
+                before, written = self.held(a, list(after)), os.stat(a).st_mtime_ns
+                result = file_changes.write_fields(self.library, "caption", EXIFTOOL, [a], list(after),
+                                                   lambda path, held: file_changes.Plan(after=after))
+                self.assertEqual(changed, result.changed, result.errors)
+                if changed:
+                    self.assertEqual(after, self.held(a, list(after)))
+                else:
+                    self.assertIn("cannot be given to ExifTool", str(result.errors))
+                    self.assertEqual((before, written), (self.held(a, list(after)), os.stat(a).st_mtime_ns))
+
+    def test_a_bake_over_a_region_named_over_two_lines_is_undone_equal(self):
+        a = self.make_read("a.jpg")
+        name = "Ash" + CR + LF + "Corrin " + BACKSLASH + " Vale"
+        before = self.seed_regions(a, "<mwg-rs:Name>Ash&#13;" + LF + "Corrin " + BACKSLASH + " Vale</mwg-rs:Name>")
+        self.assertEqual(name, before["XMP:RegionInfo"]["RegionList"][0]["Name"], "not seeded as meant")
+        values = self.values(2)
+        change = self.bake([a], values).details["change"]
+        self.assert_baked(a, values, 2)
+        undone = self.undo(change)
+        self.assertEqual((1, []), (undone.changed, undone.errors))
+        self.assertEqual(["undone"], self.states(change))
+        self.assertEqual(before, self.regions_of(a))
+        self.assertEqual(bake.NOT_BAKED, self.bake_of(a).reason)
 
 
 if __name__ == "__main__":

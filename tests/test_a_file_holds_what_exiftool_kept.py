@@ -214,8 +214,8 @@ APPLE = ("-XMP-mwg-rs:RegionInfo={AppliedToDimensions={W=4032,H=3024,Unit=pixel}
         ("0.71093750000000011", "0.30468749999999994", "0.09765625000000001", "0.13020833333333331", 0, 45, 812, 12,
          1617181920))))
 
-#: An XMP block holding only MWG regions: `%s`, the RDF of one region (seeded whole: ExifTool writes neither a line break in
-#: a value nor a field of a namespace it does not know).
+#: An XMP block holding only MWG regions: `%s`, the RDF of one region (seeded whole: ExifTool writes no field of a namespace
+#: it does not know).
 REGIONS_XMP = """<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?>
 <x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>
 <rdf:Description rdf:about='' xmlns:mwg-rs='http://www.metadataworkinggroup.com/schemas/regions/'
@@ -227,8 +227,8 @@ REGIONS_XMP = """<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?>
 <?xpacket end='w'?>"""
 
 
-class ABakeIsWritten(KeptCase):
-    """A bake written through the one writer, journaled, undone, settled after a crash (PHASE6_DESIGN, section 9)."""
+class BakeCase(KeptCase):
+    """A bake written through the one writer, and what a file holds of it; no tests of its own."""
 
     def values(self, faces, seed=1):
         # A face n of a 16 x 12 picture in a cell of an 8 x 8 grid: 60 of them span Extended XMP.
@@ -278,6 +278,10 @@ class ABakeIsWritten(KeptCase):
                          (held.photo_model, held.fingerprint, len(held.faces)))
         if faces:
             self.assertEqual([values[fields.REGION_INFO][0]], [bake.region_text(self.regions_of(path)["XMP:RegionInfo"])])
+
+
+class ABakeIsWritten(BakeCase):
+    """A bake written through the one writer, journaled, undone, settled after a crash (PHASE6_DESIGN, section 9)."""
 
     def test_a_bake_reads_back_as_made_is_journaled_as_its_texts_and_an_undo_clears_it_in_one_command(self):
         a = self.make_read("a.jpg")
@@ -380,33 +384,6 @@ class ABakeIsWritten(KeptCase):
                     field_values.write(et, a, {fields.REGION_INFO: [text]})
                     self.assertEqual({fields.REGION_INFO: [text]}, field_values.read_one(et, a, [fields.REGION_INFO]))
                 self.assertEqual(name, self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Name"])
-
-    def test_a_region_text_holding_a_line_break_is_refused_before_anything_is_written(self):
-        # ExifTool takes one value a line: a write of one holding a line break wrote its first line, and failed (#1882).
-        a = self.make_read("a.jpg")
-        written = os.stat(a).st_mtime_ns
-        text = bake.region_text({"RegionList": [{"Type": "Face", "Name": "Ash" + chr(10) + "Corrin"}]})
-        result = file_changes.write_fields(self.library, "bake", EXIFTOOL, [a], [fields.REGION_INFO],
-                                           lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
-        self.assertEqual(0, result.changed)
-        self.assertIn("line break", str(result.errors))
-        self.assertEqual((written, {}), (os.stat(a).st_mtime_ns, self.regions_of(a)))
-        self.assertEqual(("failed", []), (self.status(result.details["change"]), self.states(result.details["change"])))
-
-    def test_another_programs_region_holding_a_line_break_is_not_half_put_back(self):
-        a = self.make_read("a.jpg")
-        before = self.seed_regions(a, "<mwg-rs:Name>Ash" + chr(10) + "Corrin</mwg-rs:Name>")
-        self.assertEqual("Ash" + chr(10) + "Corrin", before["XMP:RegionInfo"]["RegionList"][0]["Name"])
-        values = self.values(2)
-        change = self.bake([a], values).details["change"]
-        self.assert_baked(a, values, 2)
-        written = os.stat(a).st_mtime_ns
-        undone = self.undo(change)
-        self.assertEqual(0, undone.changed)
-        self.assertIn("line break", str(undone.errors))
-        self.assertEqual(["conflict"], self.states(change))
-        self.assertEqual(written, os.stat(a).st_mtime_ns, "the undo wrote half of the regions")
-        self.assert_baked(a, values, 2)
 
     def test_a_region_field_exiftool_does_not_know_fails_the_write_not_recorded_as_written(self):
         # ExifTool writes the rest of the structure, warns, and succeeds: a write recorded it as made (#1881).

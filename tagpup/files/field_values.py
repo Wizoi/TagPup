@@ -26,9 +26,6 @@ from tagpup.files import bake, exiftool_session, identity
 
 logger = logging.getLogger(__name__)
 
-#: The line breaks ExifTool reads as the end of an argument (pyexiftool sends one a line).
-LINE_BREAKS = (chr(13), chr(10))
-
 #: What ExifTool warns of a field it was given and did not write, in a command it reports as a success: a struct's field
 #: it does not know ("is not a field of"), one in a namespace it cannot write ("is not a writable XMP tag"), TagPup's own
 #: in a process started without its configuration ("is not defined"). Only these: 119 of 120 photos read carry a minor
@@ -173,9 +170,9 @@ def write(et, photo_path, values):
 
     A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
     (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,
-    under any other, so another is refused here, by a ValueError, before anything is written; so is a struct text holding
-    a line break (LINE_BREAKS), which ExifTool would write the first line of. A write of either that ExifTool warns left
-    a field unwritten (NOT_WRITTEN) raises RuntimeError after it: the caller settles the file by what it holds."""
+    under any other, so another is refused here, by a ValueError, before anything is written. A write of a struct field
+    or of TagPup's own that ExifTool warns left a field unwritten (NOT_WRITTEN) raises RuntimeError after it: the caller
+    settles the file by what it holds. A text holding a line break is sent as ExifToolSession sends it (exiftool_session.CSTR)."""
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -186,9 +183,6 @@ def write(et, photo_path, values):
         named = fields.WRITTEN_AS.get(field, field)
         if fields.is_struct(field) and len(texts) > 1:
             raise ValueError("%s is one structure, one text, not %d" % (field, len(texts)))
-        if fields.is_struct(field) and any(br in text for text in texts for br in LINE_BREAKS):
-            # ExifTool would write the text's first line and fail on the rest, which it takes for a file's name (#1882).
-            raise ValueError("Its %s holds a line break, which ExifTool cannot be given; nothing was written" % field)
         if not texts:
             clear.append("-%s=" % field)
         elif fields.read_key(field) in fields.LIST_FIELDS or len(texts) > 1:

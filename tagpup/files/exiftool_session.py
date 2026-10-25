@@ -30,6 +30,10 @@ the log had of "Error creating file: <file>_exiftool_tmp" when two writes met. T
 message names no photo -- a file's name can hold a caption, and so a name -- and the
 whole of what ExifTool said is logged.
 
+pyexiftool sends ExifTool one argument a line, so a value holding a line break -- a caption another program wrote over
+two lines -- was written as its first line, and its second read as a file name ("File not found"). Such an argument is
+sent as a C string (`#[CSTR]`, ExifTool 11.08 or later: see CSTR); every other goes as it is.
+
 Everything else -- get_tags, set_tags, check_execute, auto-start -- is ExifToolHelper's.
 """
 import logging
@@ -56,6 +60,30 @@ ENCODING = "utf-8"
 
 #: pyexiftool's own defaults: group names on every tag, numeric values.
 DEFAULT_COMMON_ARGS = ("-G", "-n")
+
+#: The prefix that has ExifTool read the rest of an argument's line as a C string, in which a line break is an escape:
+#: ExifTool 11.08 or later (added in 11.07, made to work with -stay_open in 11.08, its escapes handled as now since 12.26;
+#: the suite runs it on 13.59). An older one takes the line for a comment and leaves the argument out, which the
+#: journal's read back finds; none of the live libraries names an ExifTool of its own (`paths.exiftool`, 2026-10-25). It
+#: goes before the argument's dash: `#[CSTR]-XMP:Subject=x`.
+CSTR = "#[CSTR]"
+
+_BACKSLASH, _CR, _LF = chr(92), chr(13), chr(10)
+
+#: What ExifTool's C string gives a backslash of its own, however it is sent: "$" comes back "\$", "@" "\@" (13.59).
+NOT_IN_CSTR = ("$", "@")
+
+
+def _argument(text):
+    """One argument as a line of ExifTool's -stay_open input. As it is, unless it holds a line break: then a C string
+    (CSTR), each backslash doubled and each CR and LF written as an escape. Only then, since a C string adds a backslash
+    to a "$" or "@" (NOT_IN_CSTR), and 7 captions of the live libraries hold a "$" (2026-10-25). A line break beside
+    either cannot be sent either way, and is refused before anything is: no live caption holds both."""
+    if _CR not in text and _LF not in text:
+        return text
+    if any(c in text for c in NOT_IN_CSTR):
+        raise ValueError("A value holding a line break and a $ or @ cannot be given to ExifTool; nothing was written")
+    return CSTR + text.replace(_BACKSLASH, _BACKSLASH * 2).replace(_CR, _BACKSLASH + "r").replace(_LF, _BACKSLASH + "n")
 
 
 class ExifToolTimeout(RuntimeError):
@@ -195,7 +223,7 @@ class _DrainingExifTool(exiftool.ExifTool):
             if isinstance(p, bytes):
                 cmd.append(p)
             elif isinstance(p, str):
-                cmd.append(p.encode(self._encoding))
+                cmd.append(_argument(p).encode(self._encoding))
             else:
                 raise TypeError("ERROR: Parameter was not bytes/str: %s => %s" % (type(p), p))
         cmd.extend((b"-echo4",
