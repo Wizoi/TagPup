@@ -1,9 +1,10 @@
 """Planning a bake: what one photo's file is to hold, worked out from what its library knows of it (docs/PHASE6_DESIGN.md,
 section 9), and the fingerprint row a bake's write leaves behind it.
 
-`plan_photo` reads the library -- the photo's vector, its faces with their vectors, whether its detector looked -- and the
-fields the file holds (read by the caller, as write_fields reads them: field_values.read of bake.WRITTEN's fields), and
-says one of: ToBake (the values a write is to leave, and about how many bytes of XMP they are), Current (the file holds
+`plan_photo` reads the library -- the photo's vector, its faces with their vectors, whether its detector looked -- and only
+then the file: the fields it holds (read as write_fields reads them: field_values.read of bake.WRITTEN's fields) and its
+shape, and the fingerprint of its upright decode (the costliest read), each handed in as a function the library's
+checks must pass before it is called. It says one of: ToBake (the values a write is to leave, and about how many bytes of XMP they are), Current (the file holds
 them already), Cannot (why the library cannot say what the file is to hold, in a plain sentence). Nothing here writes a
 file or a row of the library but `follower`: the write is tagpup.services.file_changes.write_fields's, which imports this
 module for the follower, so this one never imports it.
@@ -18,7 +19,7 @@ import dataclasses
 import numpy as np
 
 from tagpup.core import fields, orientation
-from tagpup.files import bake, field_values, images
+from tagpup.files import bake, images, shares
 from tagpup.services import settings
 from tagpup.store import embeddings, faces_detected, photo_fingerprints
 from tagpup.store import faces as store_faces
@@ -28,16 +29,23 @@ from tagpup.store import roots as store_roots
 #: (tagpup.services.faces.detector_of, handed in: the ml layer is not read here).
 Keys = collections.namedtuple("Keys", "photo face detector")
 
-#: About how many bytes of XMP a bake is: the photo vector's text, and for each face its vector's text and its region.
-#: A JPEG's XMP block holds 64 KB (bake.MAX_VALUE): a bake over it is written as Extended XMP, which at these sizes is a
-#: photo of 37 faces or more (36 fit: 3,072 + 36 x 1,730 = 65,352).
-PHOTO_BYTES = 3072
-FACE_BYTES = 1730
+#: How many bytes one XMP packet of a JPEG holds, as ExifTool counts it: past it ExifTool moves the large properties (the
+#: vectors) to Extended XMP.
+XMP_PACKET_LIMIT = 65502
+
+#: About how many bytes of main XMP packet a bake makes, MEASURED from real writes (2026-10-25: ExifTool 13.x,
+#: BakeCase.bake of 0 to 38 faces onto a JPEG holding one keyword, the packet read from its APP1 segment, tests/
+#: test_a_bake_is_planned_from_the_library.py): 6,355 bytes with no face (the packet wrapper, the photo vector, the model,
+#: fingerprint and FacesFound markup, the keyword) and about 1,712 for each face (its vector's 1,368 characters of base64 and
+#: its region's markup, which varies by 100 with the digits of its box: 1,660 to 1,775 between faces); 34 faces were
+#: 64,560 bytes in one packet, 35 overflowed to Extended XMP (a 20,136-byte main packet and a 49,061-byte extension).
+#: A file already holding more XMP (60 keywords: 2,600 bytes more) overflows sooner (34 faces); that is not known here.
+PHOTO_BYTES = 6355
+FACE_BYTES = 1712
 
 #: The kinds of Cannot.
 GONE = "gone"
 UNREADABLE = "unreadable"
-REGIONS = "regions"
 NEVER_EXAMINED = "never examined"
 NO_VECTOR = "no photo vector"
 CHANGED = "changed"
@@ -53,8 +61,8 @@ class ToBake:
 
     @property
     def extended(self):
-        """Is it more than a JPEG's XMP block holds, written as Extended XMP?"""
-        return self.bytes > bake.MAX_VALUE
+        """Is it more than a JPEG's XMP packet holds, written as Extended XMP?"""
+        return self.bytes > XMP_PACKET_LIMIT
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,20 +83,23 @@ def keys(conn, detector):
 
 
 def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
-    """ToBake, Current or Cannot for the photo at `photo_path`. `held`, the fields its file holds (field_values.read of
-    bake.WRITTEN's values) or the Exception that read gave; `shape`, (stored width, stored height, turn) as
-    images.shown_shape gives them; `fingerprint`, the digest of its upright decode (images.fingerprint), or None: then
-    nothing is planned to be written (ToBake.values None) and the Fingerprint the file holds is not compared."""
+    """ToBake, Current or Cannot for the photo at `photo_path`. `held()`, the fields its file holds (field_values.read of
+    bake.WRITTEN's values), or the Exception that read gave (returned or raised); `shape()`, (stored width, stored height,
+    turn) as images.shown_shape gives them, or raising (the picture cannot be opened). None of the three is called for a photo the
+    library refuses (GONE, NO_VECTOR, CHANGED, NEVER_EXAMINED, FACES_WITHOUT_VECTORS) or cannot reach (UNREADABLE: a file
+    deleted outside the app, a drive or share away; shares.stamp_of is the one bounded look): its file is not opened for nothing.
+    `fingerprint()`, the digest of its upright decode (images.fingerprint), called last, only for a photo that reaches the
+    file; or None for the function: then nothing is planned to be written (ToBake.values None) and the Fingerprint the
+    file holds is not compared. It may raise as `shape` does: the photo is UNREADABLE."""
     if not store_roots.photo_ids_at(conn, [photo_path]):
         return Cannot(GONE, "It is no longer in the library.")
-    if isinstance(held, field_values.UnreadableRegions):
-        return Cannot(REGIONS, "Its file holds regions the writer cannot read: %s" % held)
-    if isinstance(held, Exception):
-        return Cannot(UNREADABLE, "Its file could not be read: %s" % held)
     stored = embeddings.get(conn, photo_path, keys.photo)
     if stored is None:
         return Cannot(NO_VECTOR, "It has no photo vector under the library's photo model.")
-    if (stored.mtime, stored.size) != embeddings.stamp_of(photo_path):
+    stamp = shares.stamp_of(photo_path)   # bounded: a share that is away is asked once, within a second
+    if stamp is None or stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
+        return Cannot(UNREADABLE, "Its file could not be reached.")
+    if (stored.mtime, stored.size) != stamp:
         return Cannot(CHANGED, "Its file changed since its photo vector was made: index it again first.")
     rows = sorted(store_faces.in_photo_with_names(conn, photo_path, keys.face), key=lambda row: row[0])   # by face id
     if not rows and not faces_detected.detected(conn, photo_path, keys.detector):
@@ -96,17 +107,24 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     missing = sum(vector is None for _id, _box, _ref, vector, _excluded in rows)
     if missing:
         return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model: retire-faces first." % missing)
-    stored_w, stored_h, turn = shape
+    try:
+        stored_w, stored_h, turn = shape()
+        file_holds = held()
+        digest = fingerprint() if fingerprint is not None and not isinstance(file_holds, Exception) else None
+    except Exception as error:
+        file_holds = error
+    if isinstance(file_holds, Exception):
+        return Cannot(UNREADABLE, "Its file could not be read: %s" % file_holds)
     found = [(orientation.to_upright(images.parse_box(box), stored_w, stored_h, turn), np.frombuffer(vector, np.float32))
              for _id, box, _ref, vector, _excluded in rows]
     made = bake.values(np.frombuffer(stored.vector, np.float32), found, orientation.upright_size(stored_w, stored_h, turn),
-                       fingerprint if fingerprint is not None else bytes(32), keys.photo, keys.face)
+                       digest if digest is not None else bytes(32), keys.photo, keys.face)
     compared = dict(made)
-    if fingerprint is None:
+    if digest is None:
         del compared[bake.WRITTEN[bake.FINGERPRINT]]
-    if fields.reads_same(held, compared):
+    if fields.reads_same(file_holds, compared):
         return Current()
-    return ToBake(made if fingerprint is not None else None, PHOTO_BYTES + FACE_BYTES * len(found))
+    return ToBake(made if digest is not None else None, PHOTO_BYTES + FACE_BYTES * len(found))
 
 
 def follower(row, state):

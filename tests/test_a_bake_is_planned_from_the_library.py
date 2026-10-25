@@ -61,10 +61,10 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         finally:
             conn.close()
 
-    def photo(self, name, faces=None, detector=DETECTOR, model=FACES, vector=True, turn=None):
-        """A photo read by the index (declaring Orientation `turn`): its photo vector stamped as the file is now, and
-        `faces` (a count) found by `detector` under `model`; None, no detection at all."""
-        path = self.make_read(name)
+    def photo(self, name, faces=None, detector=DETECTOR, model=FACES, vector=True, turn=None, tags=("Beach",)):
+        """A photo read by the index (holding `tags`, declaring Orientation `turn`): its photo vector stamped as the file
+        is now, and `faces` (a count) found by `detector` under `model`; None, no detection at all."""
+        path = self.make_read(name, tags=tags)
         if turn:
             self.outside(path, "-EXIF:Orientation#=%d" % turn)
         photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
@@ -90,13 +90,25 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
 
     def plan(self, path, fingerprint=True):
         """The plan of the photo at `path`, as a bake run makes it: the file read as write_fields reads it, its shape and
-        its upright decode's fingerprint (None: a dry run's photo outside its sample)."""
-        with field_values.session(baked_files.EXIFTOOL) as et:
-            held = field_values.read(et, [path], list(bake.WRITTEN.values())).get(paths.key(path))
-        width, height, _oriented, turn = images.shown_shape(path)
-        digest = images.fingerprint(images.opened(path, upright=True)) if fingerprint else None
-        return self.read(lambda conn: baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), held,
-                                                        (width, height, turn), digest))
+        its upright decode's fingerprint as a function (None: a dry run's photo outside its sample)."""
+        def held():
+            with field_values.session(baked_files.EXIFTOOL) as et:
+                return field_values.read(et, [path], list(bake.WRITTEN.values())).get(paths.key(path))
+
+        def shape():
+            width, height, _oriented, turn = images.shown_shape(path)
+            return width, height, turn
+        def digest():
+            return images.fingerprint(images.opened(path, upright=True))
+        digest = digest if fingerprint else None
+        return self.read(lambda conn: baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), held, shape, digest))
+
+    def plan_without_opening(self, path):
+        """The plan of the photo at `path` by callables that fail the test when called (the file's fields, its shape, its
+        fingerprint's decode): the library refuses it first."""
+        def opened(*_args):
+            self.fail("the file was opened for a photo the library refuses")
+        return self.read(lambda conn: baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), opened, opened, opened))
 
     def expected(self, path, boxes, applied=(16, 12)):
         photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
@@ -110,13 +122,11 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
     def test_a_photo_plans_its_bake_is_current_once_written_and_its_fingerprint_row_outlives_an_undo(self):
         a = self.photo("a.jpg", faces=2)
         sample_less = self.plan(a, fingerprint=False)
-        self.assertEqual((None, 3072 + 2 * 1730), (sample_less.values, sample_less.bytes),
+        self.assertEqual((None, baking.PHOTO_BYTES + 2 * baking.FACE_BYTES), (sample_less.values, sample_less.bytes),
                          "a dry run's photo outside its sample plans no values")
         plan = self.plan(a)
         self.assertIsInstance(plan, baking.ToBake)
         self.assertEqual(self.expected(a, [box(0), box(1)]), plan.values, "faces in id order, boxes as stored")
-        measured = sum(len(text) for texts in plan.values.values() for text in texts)
-        self.assertLess(abs(measured - plan.bytes), 0.1 * plan.bytes, "the estimate is near the texts' length")
         self.assertFalse(plan.extended)
         self.assertIsNone(self.fingerprint_row(a))
 
@@ -153,13 +163,42 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         self.assertEqual(baking.NO_VECTOR, self.plan(b).kind)
         gone = self.make("gone.jpg", row=False)
         self.assertEqual(baking.GONE, self.plan(gone).kind)
+        away = self.photo("away.jpg", faces=1)
+        os.remove(away)
+        plan = self.plan_without_opening(away)
+        self.assertEqual(baking.UNREADABLE, plan.kind, "a file that cannot be reached is not one that changed")
+        self.assertNotIn("index it again", plan.reason)
 
         c = self.photo("c.jpg", faces=1)
         keys = self.read(lambda conn: baking.keys(conn, DETECTOR))
-        for held, kind in ((field_values.UnreadableRegions("Its XMP-mwg-rs:RegionInfo could not be read"), baking.REGIONS),
-                           (field_values.Unreadable("locked"), baking.UNREADABLE)):
-            plan = self.read(lambda conn, held=held: baking.plan_photo(conn, c, keys, held, (16, 12, 1)))
-            self.assertEqual(kind, plan.kind)
+        for held in (field_values.Unreadable("locked"), field_values.Unreadable("Its XMP-mwg-rs:RegionInfo could not be read")):
+            plan = self.read(lambda conn, held=held: baking.plan_photo(conn, c, keys, lambda: held, lambda: (16, 12, 1)))
+            self.assertEqual(baking.UNREADABLE, plan.kind)
+            self.assertIn(str(held), plan.reason)
+
+        def torn():
+            raise field_values.Unreadable("locked")
+
+        def cannot_open():
+            raise OSError("cannot identify image file")
+        for held, shape in ((torn, lambda: (16, 12, 1)), (lambda: {}, cannot_open)):
+            plan = self.read(lambda conn, held=held, shape=shape: baking.plan_photo(conn, c, keys, held, shape))
+            self.assertEqual(baking.UNREADABLE, plan.kind, "a read that raises, or a picture that will not open")
+
+    def test_a_photo_the_library_refuses_is_not_opened(self):
+        stale = self.photo("stale.jpg", faces=1)
+        self.outside(stale, "-XMP:Description=Harbour at dusk")
+        mixed = self.photo("mixed.jpg", faces=1)
+        self.write(lambda conn: store_faces.insert(conn, mixed, [1, 1, 3, 3], face_service.vector_bytes([0.5] * 8),
+                                                   model="facenet-vggface2"))
+        gone = self.make("gone.jpg", row=False)
+        for path, kind in ((self.photo("never.jpg"), baking.NEVER_EXAMINED),
+                           (self.photo("novector.jpg", faces=1, vector=False), baking.NO_VECTOR),
+                           (stale, baking.CHANGED), (mixed, baking.FACES_WITHOUT_VECTORS), (gone, baking.GONE)):
+            self.assertEqual(kind, self.plan_without_opening(path).kind)
+        away = self.photo("away.jpg", faces=1)
+        os.remove(away)
+        self.assertEqual(baking.UNREADABLE, self.plan_without_opening(away).kind, "a file that cannot be reached")
 
     def test_a_face_with_another_models_vector_refuses_the_whole_photo(self):
         a = self.photo("a.jpg", faces=2)
@@ -184,9 +223,31 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         # Stored [0, 0, 1.5, 1.25] of 16 x 12 under Orientation 6 is shown at [12 - 1.25, 0, 12, 1.5] of 12 x 16.
         self.assertEqual(self.expected(a, [[10.75, 0, 12, 1.5]], applied=(12, 16)), self.plan(a).values)
 
-    def test_a_photo_of_37_faces_is_extended_xmp_and_36_is_not(self):
-        thirty_six, thirty_seven = self.photo("a.jpg", faces=36), self.photo("b.jpg", faces=37)
-        self.assertEqual((False, True), (self.plan(thirty_six).extended, self.plan(thirty_seven).extended))
+    def has_extended_xmp(self, path):
+        with field_values.session(baked_files.EXIFTOOL) as et:
+            return bool(et.get_tags([path], tags=["XMP:HasExtendedXMP"])[0].get("XMP:HasExtendedXMP"))
+
+    def test_the_estimate_says_extended_xmp_as_the_written_file_has_it(self):
+        # Measured (baking.PHOTO_BYTES): 34 faces fit one packet of a file holding a keyword, 35 overflow to Extended XMP.
+        for faces, extended in ((34, False), (35, True), (36, True), (37, True)):
+            with self.subTest(faces=faces):
+                path = self.photo("f%d.jpg" % faces, faces=faces)
+                plan = self.plan(path)
+                self.assertEqual(extended, plan.extended, "the estimate")
+                result = self.bake([path], plan.values)
+                self.assertEqual((1, []), (result.changed, result.errors))
+                self.assertEqual(extended, self.has_extended_xmp(path), "the file written")
+
+    def test_a_file_already_holding_keywords_is_extended_where_the_estimate_says_at_35_faces_and_more(self):
+        # 60 keywords (2,600 bytes of XMP) make 34 faces Extended too, which the estimate cannot know (no keyword is read).
+        tags = tuple("Places/Harbour%d/Quay%d" % (k, k) for k in range(60))
+        for faces in (35, 36, 37):
+            with self.subTest(faces=faces):
+                path = self.photo("k%d.jpg" % faces, faces=faces, tags=tags)
+                plan = self.plan(path)
+                self.assertTrue(plan.extended, "the estimate")
+                self.bake([path], plan.values)
+                self.assertTrue(self.has_extended_xmp(path), "the file written")
 
 
 if __name__ == "__main__":
