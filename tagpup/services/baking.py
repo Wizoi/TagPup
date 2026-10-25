@@ -99,7 +99,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     applied = orientation.upright_size(stored_w, stored_h, turn)
     upright = [(face_id, orientation.to_upright(images.parse_box(box), stored_w, stored_h, turn), vector)
                for face_id, box, _ref, vector, _excluded in rows]
-    upright.sort(key=lambda face: (-_area(face[1], applied), face[0]))
+    upright.sort(key=lambda face: (-_area(face[1]), face[0]))
     found = [(box, np.frombuffer(vector, np.float32)) for _id, box, vector in upright]
     made = bake.values(np.frombuffer(stored.vector, np.float32), found, applied,
                        digest if digest is not None else bytes(32), keys.photo, keys.face)
@@ -111,11 +111,12 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     return ToBake(made if digest is not None else None)
 
 
-def _area(box, applied):
-    """The share of the upright picture `applied` (W, H) the upright `box` covers: a bake lists its faces largest first, ties
-    by face id, its regions and its FaceVectors in that one order (owner, 2026-10-25)."""
-    _x, _y, width, height = orientation.area_of(box, *applied)
-    return width * height
+def _area(box):
+    """The pixels the upright `box` covers: a bake lists its faces largest first, ties by face id, its regions and its
+    FaceVectors in that one order (owner, 2026-10-25). Whole pixels, not a share of the picture: two faces of one area and
+    two shapes hold the same count, where their fractions can differ in the last bit and be ordered by rounding."""
+    x1, y1, x2, y2 = box
+    return (x2 - x1) * (y2 - y1)
 
 
 def follower(row, state):

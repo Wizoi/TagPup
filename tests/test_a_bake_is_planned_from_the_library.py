@@ -162,6 +162,19 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
                          "and its vector")
         self.assertIsInstance(self.plan(a), baking.Current, "written in that order, it plans current")
 
+    def test_faces_of_one_pixel_area_and_two_shapes_keep_id_order(self):
+        # Owner, 2026-10-25: ties by id. In a 16 x 12 picture 1 x 5 and 5 x 1 cover the same pixels, but as fractions
+        # (1/16)*(5/12) and (5/16)*(1/12) differ in the last bit: ordered by rounding, the later face came first.
+        a = self.photo("a.jpg")
+        wide, tall = [0, 0, 5, 1], [8, 0, 9, 5]
+        self.detect(a, 2, boxes=[wide, tall])
+        plan = self.plan(a)
+        photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
+        self.assertEqual(bake.values(baked_files.unit(bake.PHOTO_DIM, 1),
+                                     [(wide, baked_files.unit(bake.FACE_DIM, 10)), (tall, baked_files.unit(bake.FACE_DIM, 11))],
+                                     (16, 12), images.fingerprint(images.opened(a, upright=True)), photo_key, FACES),
+                         plan.values, "the lower id first")
+
     def test_a_stale_bake_plans_again(self):
         a = self.photo("a.jpg", faces=2)
         self.bake([a], self.plan(a).values)
