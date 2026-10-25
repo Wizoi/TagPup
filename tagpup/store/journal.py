@@ -1105,7 +1105,7 @@ def refusal(conn, change_id):
     _operation, status, version = row
     files = _writes_files(conn, change_id)
     if status in ("derived_pending", "planned"):
-        return ["change %d is not finished; it is, the next time the library is opened" % change_id]
+        return ["change %d is not finished; it is, the next time its file can be read" % change_id]
     if status != "applied":
         return ["change %d is %s" % (change_id, status)]
     if files:
