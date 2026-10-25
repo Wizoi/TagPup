@@ -21,12 +21,17 @@ use while it runs. What the owner lives through:
   is one change of the journal, and its undo puts the old model back.
 - A run waits for its turn on the graphics card before it reads what is left: one that waited behind another run finds
   what that run made.
+- Beside a running server (#1843): the server, which keeps its turn on the card between Suggest runs, gives it up to
+  the waiting run; after the switch, the server's next Suggest is on the new model and its vectors. Two runtimes in one
+  test, each with its own turn on one card folder, stand in for the two processes (the turn is a byte lock a handle
+  holds, so two cards in one process wait for each other as two processes do, tests/test_one_gpu_at_a_time.py).
 
 Fictional names; a library in a home of the test's own; rows as the indexer stores them; real small JPEGs; a stand-in
 photo model (1152-long vectors), no weights.
 """
 import os
 import sys
+import threading
 import unittest
 import zlib
 from unittest import mock
@@ -40,14 +45,16 @@ from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import tagpup_cli  # noqa: E402
-from tagpup.core import paths  # noqa: E402
+from tagpup.core import gpu_turns, paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images  # noqa: E402
+from tagpup.ml import gpu  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photo_reembed  # noqa: E402
 from tagpup.services import search  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
+from tagpup.services import suggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -496,6 +503,62 @@ class ARunWaitsForTheCard(_Library):
         self.assertEqual(["turn", "load", "turn given back"], self.clips[-1].events)
         self.assertEqual((3, 7, 7), (counts["held"], counts["to_embed"], counts["kept"]))
         self.assertEqual(sorted(paths.key(path) for path in self.photos[3:]), sorted(self.clips[-1].forwards))
+
+
+class BesideARunningServer(_Library):
+
+    def test_the_server_gives_its_kept_turn_to_the_run_and_its_next_suggest_is_on_the_switched_model(self):
+        where = os.path.join(self.home.root, "card")
+        server_card, cli_card = gpu.Card(where, poll=0.05, yield_poll=0.05), gpu.Card(where, poll=0.05)
+        self.addCleanup(cli_card.close)
+        self.addCleanup(server_card.close)
+
+        def on_the_card(settings):
+            clip = self.build_clip(settings)
+            clip.device = "cuda"
+            return clip
+
+        server = Runtime(build_clip=on_the_card, build_faces=lambda settings: mock.Mock(), card=server_card,
+                         keep_models=True)
+        cli = Runtime(build_clip=on_the_card, build_faces=lambda settings: mock.Mock(), card=cli_card)
+        for runtime in (server, cli):
+            self.addCleanup(runtime.forget, self.library)
+        given = []
+
+        def model_for_run(photo_index, clip, faces, words, **kwargs):
+            given.append((photo_index, clip))
+            return mock.Mock()
+
+        def suggest():
+            """A Suggest of the server's, to the first photo's forward: (key, vectors, model) it was given."""
+            with mock.patch.object(suggester, "model_for_run", model_for_run):
+                run = server.begin(self.library, what="Suggest Heronry (harbour)")
+            try:
+                photo_index, clip = given[-1]
+                clip.embed_input(self.photos[0])   # its first use takes the card
+                return photo_index.model, photo_index.indexed, clip.settings["model_name"]
+            finally:
+                run.end()
+
+        self.assertEqual((OLD_KEY, 10, OLD[0]), suggest())
+        self.assertTrue(server_card.holds(), "the server keeps its turn between runs")
+
+        counts, lines = {}, []
+        thread = threading.Thread(target=lambda: counts.update(photo_reembed.run(self.library, cli, NEW,
+                                                                                  report=lines.append)))
+        thread.start()
+        thread.join(60)
+        self.assertFalse(thread.is_alive(), "the run never had the card: the server kept it")
+        self.assertEqual((10, 10), (counts["to_embed"], counts["kept"]))
+        self.assertTrue(any(gpu_turns.is_waiting(line) for line in lines), lines)
+        self.assertFalse(server_card.holds(), "the server did not give up its turn")
+
+        with mock.patch.object(tagpup_cli, "get_runtime", return_value=cli):
+            switched = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "set-photo-model",
+                                                           "%s:%s" % NEW, "--apply"])
+        self.assertEqual(0, switched.exit_code, switched.output)
+        self.assertEqual((NEW_KEY, 10, NEW[0]), suggest(), "the server's next Suggest was not on the new model")
+        self.assertTrue(server_card.holds(), "the server took the card back for its Suggest")
 
 
 if __name__ == "__main__":
