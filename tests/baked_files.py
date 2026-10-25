@@ -3,10 +3,15 @@ records ExifTool answers of them: what the bake's tests and the index's read of 
 
     held = baked_files.record(faces=2)          # a record as ExifTool answers a baked photo
     baked_files.write(path, held)               # that record written into the photo at `path`
+    baked_files.held(path)                      # the bake the photo holds, parsed
+    baked_files.plan(library_path, path, detector)  # the photo's plan, as a bake run makes it
 """
 import numpy as np
 
-from tagpup.files import bake, field_values, images
+from tagpup.core import paths
+from tagpup.files import bake, exiftool_session, field_values, images
+from tagpup.services import baking
+from tagpup.store import db
 
 import own_home
 
@@ -60,3 +65,33 @@ def write(path, held):
     with field_values.session(EXIFTOOL) as et:
         field_values.write(et, path, values)
     return path
+
+
+def held(path):
+    """The bake the photo at `path` holds, as the index reads it: bake.parse of its record (a Bake, or bake.Rejected)."""
+    records = {}
+    with exiftool_session.ExifToolSession(executable=EXIFTOOL, common_args=list(bake.READ_ARGS)) as et:
+        field_values.read(et, [path], [], also=bake.FIELDS, records=records)
+    return bake.parse(records[paths.key(path)])
+
+
+def plan(library_path, path, detector, fingerprint=True):
+    """The plan of the photo at `path` in the library at `library_path`, as a bake run makes it (baking.plan_photo): the
+    file read as write_fields reads it, its shape, and its upright decode's fingerprint (fingerprint False: a dry run's
+    photo outside its sample)."""
+    def fields_held():
+        with field_values.session(EXIFTOOL) as et:
+            return field_values.read(et, [path], list(bake.WRITTEN.values())).get(paths.key(path))
+
+    def shape():
+        width, height, _oriented, turn = images.shown_shape(path)
+        return width, height, turn
+
+    def digest():
+        return images.fingerprint(images.opened(path, upright=True))
+    conn = db.connect(db.readonly_uri(library_path), uri=True)
+    try:
+        return baking.plan_photo(conn, path, baking.keys(conn, detector), fields_held, shape,
+                                 digest if fingerprint else None)
+    finally:
+        conn.close()

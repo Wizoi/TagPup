@@ -37,7 +37,7 @@ from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of,
 
 import baked_files  # noqa: E402
 import photo_rows  # noqa: E402
-from tagpup.core import fields, orientation, paths  # noqa: E402
+from tagpup.core import fields, orientation  # noqa: E402
 from tagpup.files import bake, field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
@@ -248,10 +248,7 @@ class BakeCase(KeptCase):
         return self.last_change()
 
     def bake_of(self, path):
-        records = {}
-        with ExifToolSession(executable=EXIFTOOL, common_args=list(bake.READ_ARGS)) as et:
-            field_values.read(et, [path], [], also=bake.FIELDS, records=records)
-        return bake.parse(records[paths.key(path)])
+        return baked_files.held(path)
 
     def regions_of(self, path):
         with ExifToolSession(executable=EXIFTOOL) as et:
