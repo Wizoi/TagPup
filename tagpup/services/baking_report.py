@@ -20,8 +20,9 @@ folder's read would wait the deadline again, and every photo after would read as
 The dry run opens the library read-only (no write lock, no migration, no journal) and only reads the files. An apply
 first finishes the changes of photo files a stopped run left (file_changes.settle, the one owner), saying which; takes
 one snapshot of the library before its first write (snapshots.before_a_long_write: a daily, unless today's stands);
-writes in the one ExifTool session it reads in; and stops at a folder whose write is refused or that a share stopped.
-A Ctrl+C keeps what was written, applied and undoable, and is counted.
+writes in the one ExifTool session it reads in; and stops at a folder whose write is refused or that a share stopped: in
+its read (nothing of the folder is written), between its plan and its write, or in its write. A Ctrl+C keeps what was
+written, applied and undoable, and is counted.
 """
 import collections
 import dataclasses
@@ -126,9 +127,11 @@ def dry_run(library, exiftool_path, detector, folders=None, stop=None, heard=Non
 @dataclasses.dataclass
 class Baked(Tally):
     """What an apply did with the photos of one folder (or of the run, folder None): the Tally of their plan, `current`
-    taking in a photo found holding the bake when its write read it; `change`, the folder's change in History (None:
-    nothing written; a run's total leaves it None); `written`, the files the journal holds done; `conflicts` and `failed`,
-    photo ids: changed outside since they were read, and not written for another reason (the write's error)."""
+    taking in a photo found holding the bake when its write read it, and `not_answered` a photo to bake not written
+    because the share stopped answering before its write (taken out of `photos` and `to_bake`: nothing is known of its file);
+    `change`, the folder's change in History (None: nothing written; a run's total leaves it None); `written`, the files
+    the journal holds done; `conflicts`, photo ids changed outside since they were read; `failed`, [(photo id, the write's
+    sentence)] of those not written for another reason."""
     change: object = None
     written: int = 0
     conflicts: list = dataclasses.field(default_factory=list)
@@ -144,8 +147,9 @@ class Baked(Tally):
 @dataclasses.dataclass
 class Applied:
     """An apply: its folders' Baked, in path order, and the whole run's; `snapshot`, the Result of the one snapshot it
-    took before its first write (None: it wrote nothing); `stopped`, asked to stop before a folder; `stalled`, the folder
-    whose read or write ExifTool did not answer for in its deadline, which ended the run; `refused`, the sentence of the
+    took before its first write (None: it wrote nothing; it stays when the share stops before the first write); `stopped`,
+    asked to stop before a folder; `stalled`, the folder whose read or write ExifTool did not answer for in its deadline
+    (or whose share was found away at its write), which ended the run; `refused`, the sentence of the
     write that refused or stopped, ending the run; `interrupted`, a Ctrl+C's: {"change", "written", "left"} of the folder
     under way (each None when it stopped before that folder's write)."""
     folders: list
@@ -175,16 +179,15 @@ def apply(library, exiftool_path, detector, folders=None, stop=None, heard=None,
                 for planned in folder.photos:
                     under_way.count(planned)
                 to_bake = [planned for planned in folder.photos if isinstance(planned.plan, baking.ToBake)]
-                if to_bake:
+                if folder.stalled:
+                    run.stalled = folder.folder        # its read was not answered part-way: written whole or not at all
+                elif to_bake:
                     if run.snapshot is None:
                         run.snapshot = _snapshot(library, told)
-                    result = _write(library, exiftool_path, et, folder, to_bake, under_way)
-                    if result.refused:
-                        run.refused = result.refused
-                        if (result.details.get("stopped") or {}).get("share"):
-                            run.stalled = folder.folder
-                if folder.stalled:
-                    run.stalled = folder.folder
+                    result, share_stopped = _write(library, exiftool_path, et, folder, to_bake, under_way)
+                    run.refused = result.refused
+                    if share_stopped:
+                        run.stalled = folder.folder
                 done, under_way = under_way, None
                 _counted(run, done)
                 if heard is not None:
@@ -192,7 +195,12 @@ def apply(library, exiftool_path, detector, folders=None, stop=None, heard=None,
                 if run.refused or run.stalled:
                     break
         except KeyboardInterrupt as stopped:
-            run.interrupted = {name: getattr(stopped, name, None) for name in ("change", "written", "left")}
+            # A Ctrl+C in the write carries its change; one after it, while the counts are read, finds it in the folder's.
+            change = getattr(stopped, "change", None) or (under_way.change if under_way is not None else None)
+            written = getattr(stopped, "written", None)
+            if written is None and change:
+                written = sum(1 for row in file_journal.files_of(library.path, change) if row.state == "done")
+            run.interrupted = {"change": change, "written": written, "left": getattr(stopped, "left", None)}
             if under_way is not None:
                 under_way.change = run.interrupted["change"]
                 under_way.written = run.interrupted["written"] or 0
@@ -228,8 +236,7 @@ def _settle(library, exiftool_path, told):
     still = {change.id for change in file_journal.unfinished(library.path)}
     for change in left_behind:
         if change.id in still:
-            told("Change %d is left unfinished: some of its files could not be read now; it is finished the next time "
-                 "they can be." % change.id)
+            told("Change %d is left unfinished; the log says why, and the next run tries again." % change.id)
         else:
             told("Change %d is finished." % change.id)
 
@@ -246,9 +253,11 @@ def _snapshot(library, told):
 
 
 def _write(library, exiftool_path, et, folder, to_bake, baked):
-    """Write the photos of `folder` to bake as one change (file_changes.write_fields, in `et`), and count in `baked` what
-    the journal holds of it after. Each file is read again before its write: one changed outside since the plan is a
-    conflict, and one found holding the bake already is current."""
+    """Write the photos of `folder` to bake as one change (file_changes.write_fields, in `et`, a StaysDead), and count in
+    `baked` what the journal holds of it after: (the write's Result, whether the share stopped answering). Each file is
+    read again before its write: one changed outside since the plan is a conflict, and one found holding the bake
+    already is current. The share stopped when the write says so, when its read or write timed out (`et` dead), or when a
+    photo's file was found away (file_changes.AWAY_WHY): every photo to bake it did not write is then not answered."""
     values = {paths.key(planned.path): planned.plan.values for planned in to_bake}
     ids = {paths.key(planned.path): planned.photo_id for planned in to_bake}
     result = file_changes.write_fields(
@@ -258,16 +267,36 @@ def _write(library, exiftool_path, et, folder, to_bake, baked):
     rows = file_journal.files_of(library.path, baked.change) if baked.change else []
     in_change = {paths.key(row.path) for row in rows}
     baked.written = sum(1 for row in rows if row.state == "done")
+    done = {paths.key(row.path) for row in rows if row.state == "done"}
     conflicted = {paths.key(row.path) for row in rows if row.state == "conflict"}
     baked.conflicts = sorted(ids[key] for key in conflicted if key in ids)
-    baked.failed = sorted(ids[paths.key(path)] for path, _why in result.errors
-                          if paths.key(path) in ids and paths.key(path) not in conflicted)
-    for path in result.details.get("written", {}):
-        if paths.key(path) not in in_change:   # held the bake when its write read it: current, not baked
-            baked.to_bake -= 1
-            baked.formats[os.path.splitext(path)[1].lower()] -= 1
+    current = {paths.key(path) for path in result.details.get("written", {})} - in_change
+    for planned in to_bake:
+        if paths.key(planned.path) in current:   # held the bake when its write read it: current, not baked
+            _not_to_bake(baked, planned.path)
             baked.current += 1
-    return result
+    share_stopped = bool((result.details.get("stopped") or {}).get("share")) or et.dead or any(
+        why == file_changes.AWAY_WHY for _path, why in result.errors)
+    unanswered = set()
+    if share_stopped:
+        unanswered = {key for key in ids if key not in done | conflicted | current}
+        for planned in to_bake:
+            if paths.key(planned.path) in unanswered:
+                _not_to_bake(baked, planned.path)
+                baked.photos -= 1
+                baked.not_answered += 1
+    baked.failed = sorted((ids[paths.key(path)], why) for path, why in result.errors
+                          if paths.key(path) in ids and paths.key(path) not in conflicted | unanswered)
+    return result, share_stopped
+
+
+def _not_to_bake(baked, path):
+    """Take the photo at `path` out of `baked`'s photos to bake and their formats (no format left at none)."""
+    baked.to_bake -= 1
+    ext = os.path.splitext(path)[1].lower()
+    baked.formats[ext] -= 1
+    if not baked.formats[ext]:
+        del baked.formats[ext]
 
 
 #: One photo a Walk planned: its plan (baking.ToBake, Current or Cannot), and the digest of its upright decode (None: not

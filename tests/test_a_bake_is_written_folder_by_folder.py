@@ -3,9 +3,11 @@ docs/PHASE6_DESIGN.md, section 9): each folder's photos to bake are one change i
 writer, after one snapshot of the library; a second run writes nothing.
 
 How it fails, each lived through: the process killed in the middle of a folder, and run again, which says it is finishing
-the change the stopped run left and goes on with the photos not yet baked; a Ctrl+C, whose change keeps what was written
-and is counted; a share that stops answering in a folder's read or in its write, which ends the run at that folder and
-leaves the folders after it unread; a folder copied from one already baked, whose copies are current and not written
+the change the stopped run left and goes on with the photos not yet baked, or says it is left; a Ctrl+C, whose change keeps
+what was written and is counted, also once the write is over; a share that stops answering in a folder's read (part-way
+too: nothing of that folder is written), between its plan and its write, or in its write, which ends the run at that
+folder, counts its photos not written as not answered and leaves the folders after it unread; a second run at once that
+bakes a photo first, found current; a folder copied from one already baked, whose copies are current and not written
 again; a PNG; and a photo turned in the app between its plan and its write, whose bake is written all the same and is
 told apart from its picture by its fingerprint (#1925).
 
@@ -24,7 +26,7 @@ from test_file_journal import Crash, crash_at  # noqa: E402
 import baked_files  # noqa: E402
 import photo_rows  # noqa: E402
 from tagpup.core import paths  # noqa: E402
-from tagpup.files import field_values, images  # noqa: E402
+from tagpup.files import exiftool_session, field_values, images  # noqa: E402
 from tagpup.services import baking, baking_report, file_changes  # noqa: E402
 from tagpup.services import photos as photo_service  # noqa: E402
 from tagpup.store import db, file_journal, photo_fingerprints, snapshots  # noqa: E402
@@ -139,6 +141,40 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
         self.assertEqual([], file_journal.unfinished(self.library.path), "applied, undoable, nothing left to settle")
         self.assertEqual(1, len(self.changes()), "the folder after it is not reached")
 
+    def test_a_ctrl_c_once_the_folders_write_is_over_counts_what_the_journal_holds(self):
+        self.three_to_bake("Trip")
+        self.three_to_bake("Uphill")
+        real_write, real_files_of, armed = file_changes.write_fields, file_journal.files_of, []
+
+        def write(*args, **kwargs):
+            result = real_write(*args, **kwargs)
+            armed.append(True)
+            return result
+
+        def files_of(*args, **kwargs):
+            if armed:
+                armed.clear()
+                raise KeyboardInterrupt      # while the run reads the journal for the folder's counts
+            return real_files_of(*args, **kwargs)
+        with mock.patch.object(file_changes, "write_fields", side_effect=write), \
+                mock.patch.object(file_journal, "files_of", side_effect=files_of):
+            run, _said = self.apply()
+        change = self.last_change()
+        self.assertEqual((change, 3), (run.interrupted["change"], run.interrupted["written"]))
+        self.assertEqual([(change, 3)], [(folder.change, folder.written) for folder in run.folders])
+        self.assertEqual(1, len(self.changes()), "the folder after it is not reached")
+
+    def test_a_run_that_cannot_finish_a_stopped_runs_change_says_it_is_left(self):
+        self.three_to_bake("Trip")
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", nth=2)):
+            with self.assertRaises(Crash):
+                self.apply()
+        change, said = self.last_change(), []
+        with mock.patch.object(file_changes, "settle"):     # its finishing raised, and was logged
+            baking_report._settle(self.library, baked_files.EXIFTOOL, said.append)
+        self.assertEqual(["Finishing change %d (%s), left unfinished by a run that stopped." % (change, baking.OPERATION),
+                          "Change %d is left unfinished; the log says why, and the next run tries again." % change], said)
+
     def test_a_share_that_stops_answering_in_a_folders_read_ends_the_run_there(self):
         self.three_to_bake("Trip")
         self.three_to_bake("Uphill")
@@ -157,6 +193,68 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
         self.assertEqual([(3, 0), (0, 3)], [(folder.written, folder.not_answered) for folder in run.folders])
         self.assertEqual(1, len(self.changes()))
 
+    def test_a_share_that_stops_answering_part_way_through_a_folders_read_writes_nothing_of_it(self):
+        self.three_to_bake("Trip")
+        self.three_to_bake("Uphill")
+        real = field_values.read
+
+        def read(et, photo_paths, *args, **kwargs):
+            if os.path.basename(os.path.dirname(photo_paths[0])) != "Uphill":
+                return real(et, photo_paths, *args, **kwargs)
+            found = real(et, photo_paths[:1], *args, **kwargs)     # its first batch answered, then the share went
+            found.update({paths.key(one): field_values.NotAnswered("ExifTool did not answer in 300 s")
+                          for one in photo_paths[1:]})
+            return found
+        with mock.patch.object(baking_report.field_values, "read", side_effect=read):
+            run, _said = self.apply()
+        self.assertEqual(os.path.join(self.folder, "Uphill"), run.stalled)
+        trip, uphill = run.folders
+        self.assertEqual((1, 1, 0, None, 2), (uphill.photos, uphill.to_bake, uphill.written, uphill.change,
+                                              uphill.not_answered))
+        self.assertEqual(1, len(self.changes()), "nothing of the folder whose read stalled is written")
+
+    def share_stops_before_the_write(self, stopping):
+        """Trip and Uphill to bake, the share stopping (`stopping`, a context) once Trip is planned: the write's own read of
+        Trip is not answered."""
+        self.three_to_bake("Trip")
+        self.three_to_bake("Uphill")
+        with stopping:
+            run, _said = self.apply()
+        self.assertEqual(os.path.join(self.folder, "Trip"), run.stalled, "the folder the share stopped in, not the next")
+        self.assertEqual([("Trip", 0, 3)], [(os.path.basename(folder.folder), folder.written, folder.not_answered)
+                                            for folder in run.folders], "Uphill is not reached")
+        self.assertEqual(([], 0, None), (run.total.failed, run.total.to_bake, run.refused),
+                         "not answered for, not failed: nothing is known of the files")
+        self.assertEqual([], self.changes(), "nothing written, nothing recorded")
+
+    def test_a_share_that_stops_answering_between_a_folders_plan_and_its_write_ends_the_run_there(self):
+        real, trips = exiftool_session.ExifToolSession.get_tags, []
+
+        def get_tags(session, files, *args, **kwargs):
+            if os.path.basename(os.path.dirname(files[0])) == "Trip":
+                trips.append(files)
+                if len(trips) == 2:      # the write's own read: the session times out and stays dead
+                    raise exiftool_session.ExifToolTimeout("ExifTool did not answer in 300 s")
+            return real(session, files, *args, **kwargs)
+        self.share_stops_before_the_write(mock.patch.object(exiftool_session.ExifToolSession, "get_tags", get_tags))
+        self.assertEqual(2, len(trips))
+
+    def test_a_share_found_away_at_a_folders_write_ends_the_run_there(self):
+        self.share_stops_before_the_write(mock.patch.object(
+            file_changes, "file_states", side_effect=lambda photo_paths: [(path, file_changes.AWAY) for path in photo_paths]))
+
+    def test_a_photo_another_run_bakes_first_is_current(self):
+        self.photo("harbour.jpg", faces=1)
+        real = file_changes.write_fields
+
+        def another_run_first(*args, **kwargs):
+            real(*args, **kwargs)        # a second CLI window's bake of the folder, just before this one's
+            return real(*args, **kwargs)
+        with mock.patch.object(file_changes, "write_fields", side_effect=another_run_first):
+            run, _said = self.apply()
+        self.assertEqual((0, 0, 1), (run.total.to_bake, run.total.written, run.total.current))
+        self.assertEqual({}, dict(run.total.formats), "no format line of nothing to bake")
+
     def test_a_share_that_stops_answering_in_a_folders_write_ends_the_run_there(self):
         self.three_to_bake("Trip")
         uphill = self.three_to_bake("Uphill")
@@ -171,7 +269,9 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
             run, _said = self.apply()
         self.assertEqual(os.path.join(self.folder, "Uphill"), run.stalled)
         self.assertIn("ExifTool stopped answering after 1 of 3 photos", run.refused)
-        self.assertEqual([3, 1], [folder.written for folder in run.folders], "Valley is not reached")
+        self.assertEqual([(3, 0), (1, 2)], [(folder.written, folder.not_answered) for folder in run.folders],
+                         "Valley is not reached; the two of Uphill not written were not answered for")
+        self.assertEqual([], run.total.failed)
         self.assertEqual(2, len(self.changes()))
         self.assertEqual([], file_journal.unfinished(self.library.path), "the photo not answered for was not under way")
 
