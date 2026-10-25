@@ -15,9 +15,8 @@ looked and found none is `[]`: the photo is recorded detected, with no face, as 
 import collections
 import dataclasses
 
-from tagpup.core import orientation
+from tagpup.core import fields, orientation
 from tagpup.files import bake, field_values, images
-from tagpup.files.metadata import ORIENTATION
 
 #: Each photo's verdict: its bake was read (a side of it, at least, was used: the other is worked out when its model is
 #: not the library's), stale (its fingerprint is not the picture's), unreadable (bake.Rejected, other than none held),
@@ -71,7 +70,7 @@ def detections(found, record, stored_size):
     """The faces of the bake `found` as a detection gives them: each region turned from the upright picture it was made
     against into the picture as stored (`stored_size`, the decode's), by the file's Orientation in `record` -- a TIFF's
     counting as 1, its boxes being upright already (orientation.for_boxes) -- with its vector and no score."""
-    value = record.get(ORIENTATION)
+    value = record.get(fields.ORIENTATION)
     turn = orientation.for_boxes(value if value in range(1, 9) else 1,
                                  record.get(field_values.MIME_TYPE) == "image/tiff")
     width, height = stored_size

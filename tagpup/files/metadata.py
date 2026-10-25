@@ -68,13 +68,12 @@ NO_STAT = "their file could not be looked at (its modified time and size could n
 #: Where ExifTool puts an error about a file in what it answers.
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
-#: The Orientation a bake's regions are turned by (tagpup.services.bake_reading), as ExifTool answers it under -n.
-ORIENTATION = "EXIF:Orientation"
-#: What a read for the index asks beside METADATA_FIELDS (batch_read's `bakes`): a bake's fields and the Orientation,
+#: What a read for the index asks beside METADATA_FIELDS (batch_read's `bakes`): a bake's fields and the Orientation its
+#: regions are turned by (fields.ORIENTATION, as ExifTool answers it under -n; tagpup.services.bake_reading),
 #: kept out of the record's raw_metadata, and the options they are read under -- `-struct`, without which the regions are
 #: answered as flattened lists (tagpup.files.bake); no field of METADATA_FIELDS is a structure, and each is answered
 #: alike under it (tests/test_an_index_reads_a_bake.py).
-BAKE_FIELDS = tuple(bake.FIELDS) + (ORIENTATION,)
+BAKE_FIELDS = tuple(bake.FIELDS) + (fields.ORIENTATION,)
 BAKE_PARAMS = ("-struct",)
 
 
