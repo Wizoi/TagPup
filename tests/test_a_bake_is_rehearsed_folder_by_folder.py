@@ -3,9 +3,9 @@ tagpup.services.baking_report; docs/PHASE6_DESIGN.md, section 9).
 
 A library of two folders holds a mix: photos to bake, one already baked, one never examined
 by the face model, one with a face of another model, one changed since its vector was made, one whose file is not a
-picture. The dry run counts each, by folder and in all, says never examined as that and never as none found, and leaves
-the library, its journal, its snapshots and every file as they were, byte for byte; a second run says the same. --apply
-is refused with a sentence. Ctrl+C after the first folder ends the run with that folder's totals, and nothing written.
+picture. The dry run counts each, by folder and in all, says never examined as that and never as none found, decodes for
+its sample only the photos it can plan, and leaves the library, its journal, its snapshots and every file as they were,
+byte for byte; a second run says the same. --apply is refused with a sentence. Ctrl+C after the first folder ends the run with that folder's totals, and nothing written.
 
 Real ExifTool, on JPEGs made here, in a home of the test's own; rows as the indexer stores them (photo_rows.add_read,
 embeddings.put with the file's stamp, faces through services.faces.record_batch with the detector that ran); the face model
@@ -85,7 +85,7 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
             plan = baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), lambda: held, lambda: (width, height, turn),
-                                     images.fingerprint(images.opened(path, upright=True)))
+                                     lambda: images.fingerprint(images.opened(path, upright=True)))
         finally:
             conn.close()
         self.assertEqual((1, []), (lambda r: (r.changed, r.errors))(self.bake([path], plan.values)))
@@ -143,7 +143,8 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
                      "1 whose file changed since its photo vector was made", "1 whose file could not be read"):
             self.assertIn("Cannot be baked: %s" % said, total)
         self.assertNotIn("none found", out.lower())
-        self.assertIn("Sample: 6 photo(s) decoded for their fingerprint", total, "the unreadable one is not decoded")
+        self.assertIn("Sample: 3 photo(s) decoded for their fingerprint", total,
+                      "of the seven sampled, only the three it can plan and read: never the refused or the unreadable")
         self.assertIn("1 had a fingerprint row, 1 of them matched it", total, "the photo baked through the writer")
         self.assertIn("Nothing changed", out)
         self.assertEqual(before, self.home_as_it_is(), "no row, no journal entry, no snapshot, no file touched")

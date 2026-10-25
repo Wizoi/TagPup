@@ -5,8 +5,10 @@ migration, no journal), and the files are only read, through field_values.sessio
 
 A folder's files are read (their bake fields, through one ExifTool read of the folder) only when the first photo of it
 the library can plan asks for them: a folder of photos never examined, or with no vector, opens no file. A sample of the
-photos (SAMPLE, every Nth by photo id, the same photos each run) is decoded whole, to take its fingerprint: the plan of a sampled photo compares the Fingerprint its file holds as well, and its fingerprint is compared
-with the row photo_fingerprints holds of it, if any. The others are planned without decoding, as a share is slow to read.
+photos (SAMPLE, every Nth by photo id, the same photos each run) is decoded whole, to take its fingerprint, when its plan
+reaches its file (the library can plan it and its file reads): the plan of a sampled photo compares the Fingerprint its
+file holds as well, and its fingerprint is compared with the row photo_fingerprints holds of it, if any. The others are
+planned without decoding, as a share is slow to read.
 """
 import collections
 import dataclasses
@@ -20,10 +22,6 @@ from tagpup.store import roots as store_roots
 
 #: How many photos of a run are decoded for their fingerprint.
 SAMPLE = 200
-
-#: What decoding a sampled photo raises for a file it cannot read: missing, locked, or not a picture Pillow decodes
-#: (Pillow raises SyntaxError for some broken headers). It is then not sampled; its plan says why it cannot be baked.
-_UNREADABLE = (OSError, ValueError, SyntaxError)
 
 
 @dataclasses.dataclass
@@ -131,28 +129,28 @@ def _shape(photo_path):
 
 def _plan(conn, tally, keys, photo_id, path, read, in_sample):
     """Plan the photo at `path` and count it in `tally`. A photo whose file ExifTool did not answer for is counted apart,
-    not as unreadable: nothing is known of its file, not even that it cannot be read."""
-    digest, given = None, []
-    if in_sample:
-        try:
-            digest = images.fingerprint(images.opened(path, upright=True))
-        except _UNREADABLE:
-            pass
+    not as unreadable: nothing is known of its file, not even that it cannot be read. A sampled photo is decoded only when
+    its plan asks (plan_photo, after the library's checks and the file's read), and counted sampled only then."""
+    given, decoded = [], []
 
     def held():
         given.append(read.of(path))
         return given[-1]
-    plan = baking.plan_photo(conn, path, keys, held, lambda: _shape(path), digest)
+
+    def fingerprint():
+        decoded.append(images.fingerprint(images.opened(path, upright=True)))
+        return decoded[-1]
+    plan = baking.plan_photo(conn, path, keys, held, lambda: _shape(path), fingerprint if in_sample else None)
     if isinstance(plan, baking.Cannot) and given and isinstance(given[-1], field_values.NotAnswered):
         tally.not_answered += 1
         return
     tally.photos += 1
-    if digest is not None:
+    if decoded:
         tally.sampled += 1
         row = photo_fingerprints.get(conn, photo_id)
         if row is not None:
             tally.had_row += 1
-            tally.matched += (row.key, bytes(row.hash)) == (images.FINGERPRINT_KEY, digest)
+            tally.matched += (row.key, bytes(row.hash)) == (images.FINGERPRINT_KEY, decoded[0])
     if isinstance(plan, baking.ToBake):
         tally.to_bake += 1
         tally.formats[os.path.splitext(path)[1].lower()] += 1
