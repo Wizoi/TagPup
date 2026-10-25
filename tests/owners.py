@@ -241,7 +241,7 @@ _FILES = {
             "test_tag_writes_keep_the_index_true "
             "test_thumbnails "
             "test_what_counts_as_a_photo "
-            "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
+            "test_when_a_photo_was_taken_is_kept test_xmp_census tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
     },
