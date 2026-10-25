@@ -54,7 +54,7 @@ between machines; the owner copies a folder by hand and the library finds it thr
 ## 5. Scenario tests that own the flow
 
 Backfill interrupted at 30,000 and resumed; one folder baked on the desktop, copied, indexed on a no-card machine
-(compatible read, stale queued); share asleep mid-backfill; bake, then an app keyword write, then an Explorer edit
+(compatible read; a stale bake is worked out and counted by the machine that indexes it, no queue: #1918); share asleep mid-backfill; bake, then an app keyword write, then an Explorer edit
 (restamp keeps it, fingerprint rejects it); an update installed while a bake runs.
 
 ## 6. Decided by the owner, 2026-10-24 (to be copied into DECISIONS.md)
