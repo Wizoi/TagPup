@@ -1,7 +1,7 @@
 """A bake's dry run (`bake-photos` without --apply; docs/PHASE6_DESIGN.md, section 9): every photo of a library, or of
 the folders given, planned by tagpup.services.baking as a bake would plan it, and counted -- to bake, already current,
 cannot be baked and why -- folder by folder. It writes nothing: the library is opened read-only (no write lock, no
-migration, no journal), and the files are only read, through ExifTool (field_values.session) and Pillow.
+migration, no journal), and the files are only read, through field_values.session and Pillow.
 
 A sample of the photos (SAMPLE, every Nth by photo id, the same photos each run) is decoded whole, to take its
 fingerprint: the plan of a sampled photo compares the Fingerprint its file holds as well, and its fingerprint is compared
@@ -14,7 +14,7 @@ import os
 from tagpup.core import paths
 from tagpup.files import bake, field_values, images
 from tagpup.services import baking
-from tagpup.store import db, photo_fingerprints
+from tagpup.store import db, inspection, photo_fingerprints
 from tagpup.store import roots as store_roots
 
 #: How many photos of a run are decoded for their fingerprint.
@@ -62,13 +62,8 @@ class DryRun:
 def photos_of(conn, folders=None):
     """[(id, native path)] of the library's photos, or of those under any of `folders` (any depth)."""
     if not folders:
-        rows = conn.execute("SELECT id, path FROM photos").fetchall()
-    else:
-        rows = []
-        for folder in folders:
-            where, params = store_roots.sql_under(conn, "path", folder)
-            rows += conn.execute("SELECT id, path FROM photos WHERE %s" % where, params).fetchall()
-    return store_roots.natives(conn, rows, 1)
+        return list(inspection.ids_and_paths(conn))
+    return [row for folder in folders for row in inspection.under(conn, folder)]
 
 
 def sample_of(ids, size=SAMPLE):
