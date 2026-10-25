@@ -419,10 +419,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         locked_out = []
 
         # A photo's bake gives what it holds only under the library's own keys (tagpup.services.bake_reading): the photo
-        # model's, and the face model's when the model handed in is the library's setting.
+        # model's, and the face model's, the one the runtime hands for the library's setting (Runtime.faces).
         photo_key = embeddings.model_key
-        face_key = (face_processor.key if face_processor is not None
-                    and face_processor.key == settings.faces["model"] else None)
+        face_key = face_processor.key if face_processor else None
         tally = bake_reading.Tally()
 
         def begin(meta):

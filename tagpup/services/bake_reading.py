@@ -3,9 +3,9 @@ vector and its faces, read from the file instead of worked out on the graphics c
 
 A bake is read only under the library's current key and its picture's fingerprint. Each side is decided alone: the photo
 side when the bake's photo model is the library's photo-model key (tagpup.store.embeddings.model_key), the face side when
-its face model is the face model the index was handed (Runtime.faces, the library's `faces.model`) and the library's own
-setting; both only when the bake's fingerprint is the fingerprint of the upright decode the index makes anyway
-(tagpup.files.images.fingerprint): the card is skipped, the decode is not. A picture edited after it was baked, a bake not
+its face model is the face model the index was handed (Runtime.faces, the library's `faces.model`); both only when the
+bake's fingerprint is the fingerprint of the upright decode the index makes anyway (tagpup.files.images.fingerprint): the
+card is skipped, the decode is not. A picture edited after it was baked, a bake not
 whole (bake.Rejected), one made under another model: that side is worked out as if the file held none, never an error.
 
 The faces read are one more producer of the detections tagpup.services.faces.record_batch records -- a box in the picture
@@ -53,7 +53,7 @@ def taken(found, meta, fingerprint, picture, *, photo_key, face_key):
     """What the index takes of the bake `found` (parsed) of the photo of `meta`, whose upright decode has `fingerprint`
     (images.fingerprint) and whose `picture` the face model made ready (None without one; NotDetected when the file
     could not be decoded for it: the file deleted between the two decodes). `photo_key` is the library's photo-model key;
-    `face_key` the face model's key when it is the library's own (None: no face is read)."""
+    `face_key` the key of the face model the index was handed (None, --skip-faces: no face is read)."""
     if not isinstance(found, bake.Bake):
         return Taken(verdict=NOT_BAKED if found.reason == bake.NOT_BAKED else UNREADABLE)
     if (found.fingerprint_key, found.fingerprint) != (images.FINGERPRINT_KEY, fingerprint):
