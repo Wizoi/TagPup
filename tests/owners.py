@@ -222,6 +222,7 @@ _FILES = {
             "bulk-edit bulk-writes-queue just-look-edits path-helpers photo-write-queue rename-failed retried-save "
             "rotate-refreshes-thumbnails smart-rename-count "
             "test_a_cut_keyword_is_not_planned_again test_a_face_box_turned_upright_and_back "
+            "test_a_photo_is_known_by_its_picture "
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
             "test_dates test_derived_file_changes "
