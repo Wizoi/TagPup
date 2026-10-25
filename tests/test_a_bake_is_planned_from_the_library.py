@@ -90,7 +90,7 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
 
     def plan(self, path, fingerprint=True):
         """The plan of the photo at `path`, as a bake run makes it: the file read as write_fields reads it, its shape and
-        its upright decode's fingerprint (None: a dry run's photo outside its sample)."""
+        its upright decode's fingerprint as a function (None: a dry run's photo outside its sample)."""
         def held():
             with field_values.session(baked_files.EXIFTOOL) as et:
                 return field_values.read(et, [path], list(bake.WRITTEN.values())).get(paths.key(path))
@@ -98,14 +98,17 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         def shape():
             width, height, _oriented, turn = images.shown_shape(path)
             return width, height, turn
-        digest = images.fingerprint(images.opened(path, upright=True)) if fingerprint else None
+        def digest():
+            return images.fingerprint(images.opened(path, upright=True))
+        digest = digest if fingerprint else None
         return self.read(lambda conn: baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), held, shape, digest))
 
     def plan_without_opening(self, path):
-        """The plan of the photo at `path` by callables that fail the test when called: the library refuses it first."""
+        """The plan of the photo at `path` by callables that fail the test when called (the file's fields, its shape, its
+        fingerprint's decode): the library refuses it first."""
         def opened(*_args):
             self.fail("the file was opened for a photo the library refuses")
-        return self.read(lambda conn: baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), opened, opened))
+        return self.read(lambda conn: baking.plan_photo(conn, path, baking.keys(conn, DETECTOR), opened, opened, opened))
 
     def expected(self, path, boxes, applied=(16, 12)):
         photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
@@ -160,6 +163,11 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         self.assertEqual(baking.NO_VECTOR, self.plan(b).kind)
         gone = self.make("gone.jpg", row=False)
         self.assertEqual(baking.GONE, self.plan(gone).kind)
+        away = self.photo("away.jpg", faces=1)
+        os.remove(away)
+        plan = self.plan_without_opening(away)
+        self.assertEqual(baking.UNREADABLE, plan.kind, "a file that cannot be reached is not one that changed")
+        self.assertNotIn("index it again", plan.reason)
 
         c = self.photo("c.jpg", faces=1)
         keys = self.read(lambda conn: baking.keys(conn, DETECTOR))
@@ -188,6 +196,9 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
                            (self.photo("novector.jpg", faces=1, vector=False), baking.NO_VECTOR),
                            (stale, baking.CHANGED), (mixed, baking.FACES_WITHOUT_VECTORS), (gone, baking.GONE)):
             self.assertEqual(kind, self.plan_without_opening(path).kind)
+        away = self.photo("away.jpg", faces=1)
+        os.remove(away)
+        self.assertEqual(baking.UNREADABLE, self.plan_without_opening(away).kind, "a file that cannot be reached")
 
     def test_a_face_with_another_models_vector_refuses_the_whole_photo(self):
         a = self.photo("a.jpg", faces=2)
