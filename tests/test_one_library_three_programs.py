@@ -103,7 +103,8 @@ class OneLibrary(unittest.TestCase):
         self.assertEqual(launcher.SERVE, way[0], said)
         self.assertIsNotNone(old.wait(timeout=60), "the old server still runs")
         self.assertTrue(any("finish a cli write -- index, sync --apply, face-pass, embed-photos, retire-faces, "
-                                "retire-vectors -- or an mcp write before updating" in line.lower() for line in said),
+                                "retire-vectors, bake-photos --apply -- or an mcp write before updating" in line.lower()
+                                for line in said),
                         said)
         self.assertIsNone(writer.poll(), "the update ended the CLI's write")
         open(go, "w").close()

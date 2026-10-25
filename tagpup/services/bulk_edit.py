@@ -177,11 +177,14 @@ class Outcome:
     errors: list = field(default_factory=list)
     #: Why the whole write was refused (a share holding a recorded-damaged photo did not answer, the roots changed), or None.
     refused: str = None
+    #: The write's own sentence when it stopped before its end -- asked to (Cancel, an update) or ExifTool stopped answering
+    #: (file_changes: details "stopped" or "cancelled") -- else None; the page says it in place of an error a photo.
+    stopped: str = None
 
     def reply(self):
         """The numbers and the first MOST_ERRORS errors, for the page."""
         return {"changed": self.changed, "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,
-                "error_count": len(self.errors),
+                "error_count": len(self.errors), "stopped": self.stopped,
                 "errors": [{"id": photo_id, "name": str(name)[:MOST_TEXT], "why": str(why)[:MOST_TEXT]}
                            for photo_id, name, why in self.errors[:MOST_ERRORS]]}
 
@@ -291,6 +294,8 @@ def _count(out, result, present, by_key):
     out.skipped_missing += gone
     if result.refused:
         out.refused = result.refused
+        if result.details.get("stopped") or result.details.get("cancelled"):
+            out.stopped = result.refused
         written = {paths.key(path) for path in (result.details.get("written") or {})}
         left_out = {paths.key(what) for what, _why in result.skipped}
         for photo_id, path in present:

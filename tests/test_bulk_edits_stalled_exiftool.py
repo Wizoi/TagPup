@@ -13,8 +13,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
 
-from tagpup.files import exiftool_session, field_values, metadata  # noqa: E402
-from tagpup.services import batches, file_changes, relink_photos  # noqa: E402
+from tagpup.files import exiftool_session, field_values, metadata, shares  # noqa: E402
+from tagpup.core import paths  # noqa: E402
+from tagpup.services import batches, file_changes, journal, relink_photos, tagging  # noqa: E402
+
+#: What a session says of a command a share gone away never answered.
+STALLED = "ExifTool did not answer within 300s (a read); its process was killed."
 
 
 class StalledSession:
@@ -132,15 +136,6 @@ class AStalledExifTool(T.Bulk):
         self.assertTrue(file_changes._one_at_a_time.acquire(blocking=False), "the lock is released")
         file_changes._one_at_a_time.release()
 
-    def test_a_write_that_times_out_leaves_the_rest_unwritten_each_an_error_and_no_other_deadline_is_waited_for(self):
-        self.stall(write_at=3)
-        done = self.tags_edit(add=["Trips/Coast"])
-        self.assertEqual((2, self.PHOTOS - 2), (done["changed"], done["error_count"]))
-        self.assertEqual(3, self.files.writes, "after the stall no write was begun: the session stays dead")
-        order = self.order()
-        self.assertEqual(2, len([photo_id for photo_id in order if "Trips/Coast" in self.tags(photo_id)]))
-        self.assertEqual("applied", self.changes("bulk tags%")[0][2], "what was written is one change, finished")
-
     def test_a_batch_cancelled_while_it_reads_its_files_stops_reading_and_writes_nothing(self):
         """#1200: the read a batch plans from (about 53 ms a photo, 4.5 minutes for 5,000) could not be stopped: Cancel or
         a hand-over took effect only when it ended. It stops at the next batch of reads."""
@@ -153,12 +148,153 @@ class AStalledExifTool(T.Bulk):
         self.assertEqual(1, self.files.read_calls, "one batch of reads of the six, not all of them")
         self.assertIn("Stopped as asked before anything was written", done["errors"][0]["why"])
 
-    def test_the_edit_after_a_stalled_one_writes_the_rest(self):
-        self.stall(write_at=3)
-        self.tags_edit(add=["Trips/Coast"])
-        self.files.on_write = None
+
+
+class AShareThatStopsAnsweringMidWrite(T.Bulk):
+    """A keyword edit of a 60-photo folder on a share that stops answering part-way (#1921): a STOP, as a Ctrl+C is. The files
+    written before it are done and one change, applied and undoable; the file under way and the rest are taken out, never a
+    conflict (they hold what they held: ExifTool writes beside a file and renames); the edit says the share stopped
+    answering; the next run writes the rest. Break: _read_now not raising _Stalled (the trunk before #1921: the file under
+    way and every later one "conflict ... could not be read", undo refusing them)."""
+
+    def stall_at(self, k, writing=False):
+        """The share stops answering at the k-th file the write carries (from 1): as it reads the file just before writing
+        it, or, `writing`, in the middle of its write."""
+        stalled = exiftool_session.ExifToolTimeout(STALLED)
+        if writing:
+            def write(_path, n):
+                if n == k:
+                    raise stalled
+            self.files.on_write = write
+            return
+        carried = []
+
+        def read(path, n):
+            if n == 2:   # the write's own read of the file; the first was the plan's
+                carried.append(path)
+                if len(carried) == k:
+                    raise stalled
+        self.files.on_read = read
+
+    def change_files(self):
+        return self.vl.rows("SELECT state, COUNT(*) FROM change_files GROUP BY state ORDER BY state")
+
+    def coast(self):
+        return sum(1 for photo_id in self.ids if "Trips/Coast" in self.tags(photo_id))
+
+    def test_a_stall_in_the_second_chunk_keeps_what_was_written_as_one_change_and_the_next_run_writes_the_rest(self):
+        k = batches.CHUNK + 6
+        self.stall_at(k)
         done = self.tags_edit(add=["Trips/Coast"])
-        self.assertEqual((self.PHOTOS - 2, 2), (done["changed"], done["unchanged"]))
+        self.assertEqual((k - 1, self.PHOTOS - k + 1), (done["changed"], done["error_count"]))
+        self.assertIn("ExifTool stopped answering after %d of %d photos" % (k - 1, self.PHOTOS), done["errors"][0]["why"])
+        self.assertEqual([("done", k - 1)], self.change_files(), "a conflict, or a file not reached left in the change")
+        ((change_id, _op, status),) = self.changes("bulk tags%")
+        self.assertEqual("applied", status)
+        self.assertEqual((k - 1, k - 1), (self.files.writes, self.coast()))
+        self.files.on_read = None
+        again = self.tags_edit(add=["Trips/Coast"])
+        self.assertEqual((self.PHOTOS - k + 1, k - 1, 0), (again["changed"], again["unchanged"], again["error_count"]))
+        self.assertEqual(self.PHOTOS, self.coast())
+        # The stopped change is undone as any other: the files it wrote, and only those, lose the keyword.
+        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        self.assertEqual((None, k - 1), (undone.refused, undone.changed))
+        self.assertEqual(self.PHOTOS - k + 1, self.coast())
+
+    def test_a_stall_in_a_files_write_leaves_that_one_file_for_settle_and_no_conflict(self):
+        k = batches.CHUNK + 6
+        self.stall_at(k, writing=True)
+        done = self.tags_edit(add=["Trips/Coast"])
+        self.assertEqual(k - 1, done["changed"])
+        self.assertIn("1 more is settled the next time it can be read", done["errors"][0]["why"])
+        self.assertEqual([("done", k - 1), ("writing", 1)], self.change_files())
+        self.assertEqual(k, self.files.writes, "after the stall no write was begun: the session stays dead")
+        self.files.on_write = None
+        again = self.tags_edit(add=["Trips/Coast"])   # settles the one under way first, by what it holds
+        self.assertEqual(["applied", "applied"], [status for _id, _op, status in self.changes("bulk tags%")])
+        self.assertEqual((0, self.PHOTOS), (again["error_count"], self.coast()))
+        self.assertEqual([("done", self.PHOTOS)], self.change_files())
+
+    def test_the_file_left_under_way_waits_for_its_share_while_other_photos_are_saved(self):
+        """The owner saves another photo's tags while the share is still away: the save settles the stopped change first,
+        and the file it left under way is left so, not read (a deadline inside an unrelated save) and not a conflict; once
+        the share answers, the next write settles it by what it holds and the change ends applied and undoable. Break:
+        _finish reading it in a plain session (#1921's false conflict, one change late)."""
+        k = batches.CHUNK + 6
+        under_way = []
+
+        def write(path, n):
+            if n == k:
+                under_way.append(paths.key(path))
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write = write
+        done = self.tags_edit(add=["Trips/Coast"])
+        self.assertIn("1 more is settled the next time it can be read", done["errors"][0]["why"])
+        ((change_id, _op, _status),) = self.changes("bulk tags%")
+        # Two photos the stop did not reach: a save of them is unrelated to the stopped change, and leaves it undoable.
+        reached = {photo_id for (photo_id,) in self.vl.rows("SELECT photo_id FROM change_files WHERE change_id = ?", change_id)}
+        others = [self.path(photo_id) for photo_id in self.ids if photo_id not in reached][:2]
+
+        def read(path, _n):
+            if paths.key(path) in under_way:
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        real = shares.stamp_of
+        self.files.on_write, self.files.on_read = None, read
+        reads = self.files.reads.get(under_way[0], 0)
+        with mock.patch.object(shares, "stamp_of", lambda path: shares.UNANSWERED if paths.key(path) in under_way else real(path)):
+            saved = tagging.save_photo(self.library, others[0], "", ["Trips/Lakes"], None, "exiftool", "")
+        self.assertTrue(saved.ok, saved.errors)
+        self.assertEqual(reads, self.files.reads.get(under_way[0], 0), "the file on the share away was read")
+        self.assertEqual([("done", k - 1), ("writing", 1)],
+                         self.vl.rows("SELECT state, COUNT(*) FROM change_files WHERE change_id = ? GROUP BY state ORDER BY state",
+                                      change_id))
+        self.assertNotEqual("applied", self.changes("bulk tags%")[0][2])
+        # The share answers again: the next write settles the file under way by what it holds (what it held: written on).
+        self.files.on_read = None
+        again = tagging.save_photo(self.library, others[1], "", ["Trips/Lakes"], None, "exiftool", "")
+        self.assertTrue(again.ok, again.errors)
+        self.assertEqual([(change_id, "applied")], [(each[0], each[2]) for each in self.changes("bulk tags%")])
+        self.assertEqual([("done", k)],
+                         self.vl.rows("SELECT state, COUNT(*) FROM change_files WHERE change_id = ? GROUP BY state ORDER BY state",
+                                      change_id))
+        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        self.assertEqual((None, k), (undone.refused, undone.changed))
+
+    def test_a_save_whose_write_the_share_stops_says_so(self):
+        """A save reports a write's errors, not its refusal: the photo under way is its error. Its session is its own, not
+        kept dead, so the share stays away for the read after the write too."""
+        away = []
+
+        def write(_path, _n):
+            away.append(True)
+            raise exiftool_session.ExifToolTimeout(STALLED)
+
+        def read(_path, _n):
+            if away:
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write, self.files.on_read = write, read
+        path = self.path(self.ids[0])
+        saved = tagging.save_photo(self.library, path, "", ["Trips/Coast"], None, "exiftool", "")
+        self.assertFalse(saved.ok)
+        self.assertIn("ExifTool stopped answering as it was written", str(saved.errors[0][1]))
+        self.assertEqual([("writing", 1)], self.change_files())
+
+    def test_the_photo_a_stall_came_before_the_write_of_is_said_not_begun(self):
+        self.stall_at(2)
+        two = [self.path(photo_id) for photo_id in self.ids[:2]]
+        result = tagging.change_tags(self.library, two, ["Trips/Coast"], [], "exiftool", stop_at_first_error=False)
+        self.assertEqual(1, result.changed)
+        self.assertEqual(["ExifTool stopped answering before it was written"],
+                         [str(why).split(": ", 1)[1].split(",")[0] for _path, why in result.errors])
+
+    def test_a_stall_at_the_first_file_writes_nothing_and_leaves_no_change_to_undo(self):
+        self.stall_at(1)
+        done = self.tags_edit(add=["Trips/Coast"])
+        self.assertEqual((0, self.PHOTOS, 0), (done["changed"], done["error_count"], self.files.writes))
+        self.assertIn("ExifTool stopped answering before anything was written", done["errors"][0]["why"])
+        self.assertEqual([], self.change_files())
+        self.assertEqual(["failed"], [status for _id, _op, status in self.changes("bulk tags%")])
+        self.assertEqual(0, self.coast())
 
 
 if __name__ == "__main__":

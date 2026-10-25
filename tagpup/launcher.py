@@ -329,9 +329,11 @@ def answering(port):
 
 
 #: Said where a drain starts (owner, 2026-10-15): a drain sees only this server's own work, never a CLI write (an index, a
-#: `sync --apply`, a `face-pass`, a `retire-faces --apply`, a `retire-vectors --apply`) or an MCP write in another process, and the new version
-#: migrates the library as it starts.
-BEFORE_UPDATING = ("Finish a CLI write -- index, sync --apply, face-pass, embed-photos, retire-faces, retire-vectors -- "
+#: `sync --apply`, a `face-pass`, a `retire-faces --apply`, a `retire-vectors --apply`, a `bake-photos --apply`) or an MCP
+#: write in another process, and the new version migrates the library as it starts. An update installed while a CLI write runs
+#: neither waits for it nor resumes it: the CLI keeps running the old version's folder.
+BEFORE_UPDATING = ("Finish a CLI write -- index, sync --apply, face-pass, embed-photos, retire-faces, retire-vectors, "
+                   "bake-photos --apply -- "
                    "or an MCP write before updating: the running server cannot see them, and the new version "
                    "migrates the library as it starts.")
 

@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
 from test_batches import ANOTHER, in_thread, wait_until  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
+from tagpup.files import exiftool_session  # noqa: E402
 from tagpup.services import batches  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 
@@ -102,11 +104,25 @@ class RepliesForTheStrip(T.Bulk):
         # One photo over the cap.
         over = self.post({"op": "tags", "selection": {"ids": list(range(1, batches.MAX_BATCH + 2))}, "params": {"add": ["Trips/Coast"]}})
         found["over_the_cap"] = {"status": over.status_code, "body": over.get_json()}
+        # ExifTool stops answering at the eleventh file's read before its write: a stop, said by its own sentence.
+        carried, before = [], dict(self.files.reads)
+
+        def stalls(path, n):
+            # The write's own read of a file; the first was the plan's.
+            if n == before.get(paths.key(path), 0) + 2 and len(carried) < 11:
+                carried.append(path)
+                if len(carried) == 11:
+                    raise exiftool_session.ExifToolTimeout("ExifTool did not answer within 300s (a read); its process was killed.")
+        self.files.on_read = stalls
+        found["share_stopped_reply"] = self.tags_edit(add=["Old/Stuff"])
+        self.files.on_read = None
+        found["share_stopped_reply"]["errors"] = sorted(found["share_stopped_reply"]["errors"], key=lambda each: each["id"])[:2]
 
         self.assertEqual(["running", "queued"], [row["state"] for row in found["running_and_queued"]])
         self.assertEqual(400, found["cancelled_before_it_began"]["status"])
         self.assertEqual(404, found["cancel_of_a_batch_that_is_gone"]["status"])
         self.assertIn("Stopped as asked after 25 of 60 photos", found["stopped_reply"]["errors"][0]["why"])
+        self.assertIn("ExifTool stopped answering after 10 of", found["share_stopped_reply"]["errors"][0]["why"])
         self.assertEqual([False], [row["here"] for row in found["another_program"]])
         self.assertEqual(409, found["queue_full"]["status"])
         self.assertEqual(400, found["over_the_cap"]["status"])

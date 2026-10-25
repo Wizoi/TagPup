@@ -52,6 +52,9 @@ by it.
 It holds a claim (one batch at a time in a process, the rest queued), and every CHUNK files it lets a waiting writer take the lock
 and asks whether it is to stop: a stopped batch withdraws the files it did not reach, applies what it wrote (undoable) and says
 "stopped after N of M". More than batches.MAX_BATCH photos are refused, but for the tag tree's rewrites (`uncapped`).
+
+**A share that stops answering** in a write (ExifTool does not answer for a file) stops it the same way, at that file, for any
+write: never a conflict, since the file under way holds what it held or what it was to hold (_Stalled, _share_stopped).
 """
 import contextlib
 import functools
@@ -267,6 +270,12 @@ PRESENT, GONE, AWAY = "present", "gone", "away"
 AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
 
 
+class _Stalled(Exception):
+    """ExifTool did not answer for a file of a forward write (field_values.NotAnswered: a share gone away, a disk that
+    stopped). A stop, as a Ctrl+C is, never a conflict: ExifTool writes beside a file and renames, so the file under way
+    holds what it held or what it was to hold, and the files after it were never touched (#1921)."""
+
+
 def file_states(photo_paths):
     """[(path, PRESENT | GONE | AWAY)] of `photo_paths`, in the order given: the one answer to "is this photo's file there
     to be written", by one bounded stat of each (shares.stamp_of: a share is asked within a second, and one found away is
@@ -437,6 +446,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         _reached("plan committed")
         if on_planned is not None:
             on_planned(change_id)
+        stalled = None
         for n, row in enumerate(rows):
             if n and n % batches.CHUNK == 0 and not between_chunks(batch):
                 file_journal.withdraw(library.path, [r.id for r in rows[n:]])
@@ -445,8 +455,13 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             path, detail = planned[n][0], planned[n][3]
             # Read just now, in this session, by the caller: that is the check.
             now = planned[n][1] if fresh is not None else None
-            outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
-                                  wrote=wrote, now=now, whole=read_whole)
+            try:
+                outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
+                                      wrote=wrote, now=now, whole=read_whole, stall_stops=True)
+            except _Stalled:
+                stalled = row
+                result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
+                break
             if outcome == "done":
                 if not fields.reads_same(planned[n][1], planned[n][2]):
                     result.changed += 1       # a file held what it was to hold: its rows alone were written
@@ -465,12 +480,15 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.changed -= 1
             written.pop(row.path, None)
             result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
-        file_journal.finish(library.path, change_id, also=face_batch.tidy)
         stopped = result.details.get("stopped")
-        if stopped:
-            result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written, recorded as change %d in History, "
-                          "which can be undone; the rest were not written."
-                          % (stopped["after"], stopped["of"], result.changed, change_id))
+        if stopped and stopped.get("share"):
+            _share_stopped(library, change_id, result, stopped, stalled)
+        else:
+            file_journal.finish(library.path, change_id, also=face_batch.tidy)
+            if stopped:
+                result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written, recorded as change %d in "
+                              "History, which can be undone; the rest were not written."
+                              % (stopped["after"], stopped["of"], result.changed, change_id))
     except BaseException as stopped:
         # The files recorded done so far are read back all the same: settling reads
         # back only the files it writes (docs/findings.md, #286).
@@ -489,6 +507,31 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
+
+
+def _share_stopped(library, change_id, result, stopped, stalled):
+    """A forward write ExifTool stopped answering for part-way at the file of `stalled` (_Stalled), ended as a Ctrl+C ends
+    one (_settle_stopped): the files not reached are taken out, the change is applied with what was written, and the write
+    is refused saying so. The file whose write was under way, if it was, cannot be read now: it stays `writing`, the change
+    unfinished, for the next settle to decide by what it holds (as a crash leaves it); it is not read again, which would
+    wait another deadline in a session not kept dead (a caller's, as a save's). What stopped answering is ExifTool: a share
+    gone away, a drive that stopped, or ExifTool itself exiting (exiftool_session); the sentences say no more than that."""
+    _settle_stopped(library, change_id)
+    left = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "writing")
+    if left:
+        file_journal.release(library.path, change_id)
+    # The photo it stopped on is the write's error too: a caller that reports errors and not a refusal (a save) says it.
+    result.fail(stalled.path, "%s: ExifTool stopped answering %s it was written, and nothing after it was; check that the "
+                              "share or drive is there" % (stalled.named(), "as" if left else "before"))
+    if not result.changed and not left:
+        result.refuse("ExifTool stopped answering before anything was written; check that the share or drive is there, "
+                      "then run it again.")
+        return
+    settled = ("; %d more is settled the next time it can be read, and then the change can be undone" % left
+               if left else ", which can be undone")
+    result.refuse("ExifTool stopped answering after %d of %d photos: %d file(s) were written, recorded as change %d in "
+                  "History%s; the rest were not written. Check that the share or drive is there, then run it again."
+                  % (stopped["after"], stopped["of"], result.changed, change_id, settled))
 
 
 def _stopped_before_writing(result):
@@ -639,7 +682,7 @@ def _conflict(library, row, why):
     return "conflict", "%s: %s" % (row.named(), why)
 
 
-def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, now=None, whole=None):
+def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, now=None, whole=None, stall_stops=False):
     """Bring a file holding `origin` to `target`, and mark it `finished`: forward (before
     to after, done) and in an undo (after to before, undone). A file holding `target`
     already is recorded as it is; one holding neither is a conflict. A write that fails
@@ -647,8 +690,9 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     a conflict. A file written goes in `wrote`, for _read_back. `now` is what the file
     holds when the caller has just read it in this session; otherwise it is read here.
     `whole`, a dict, asks for the file written to be read back whole and recorded so
-    (_read_whole). Returns (outcome, why): `finished`, "conflict" or "failed"."""
-    settled = _held_or_conflict(et, library, row, origin, target, finished, now)
+    (_read_whole). Returns (outcome, why): `finished`, "conflict" or "failed". `stall_stops`, a forward write's: a file
+    ExifTool does not answer for raises _Stalled (_read_now)."""
+    settled = _held_or_conflict(et, library, row, origin, target, finished, now, stall_stops=stall_stops)
     if settled is not None:
         return settled
     stamp = row.stamp = embeddings.stamp_of(row.path)
@@ -657,7 +701,7 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     try:
         field_values.write(et, row.path, target)
     except Exception as e:
-        return _after_failure(et, library, row, origin, target, finished, on_failure, e)
+        return _after_failure(et, library, row, origin, target, finished, on_failure, e, stall_stops)
     _reached("file written")
     # The stat before the read back: a change another program makes after it leaves the row older than its file, which
     # the next scan reads again; taken after, it stamped what was read before the change as the newer file.
@@ -670,7 +714,7 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     return finished, None
 
 
-def _held_or_conflict(et, library, row, origin, target, finished, now=None, unread_stays=False):
+def _held_or_conflict(et, library, row, origin, target, finished, now=None, unread_stays=False, stall_stops=False):
     """The one rule of a file settled by what it holds, before anything is written to it: holding `target`, it is recorded
     `finished` as it holds it; holding neither, or unreadable, a conflict. Returns (outcome, why) so; or None when it holds
     `origin`: still to be written (_carry writes it, a stop takes it out). `now`, as _carry's. `unread_stays` (a stop, whose
@@ -680,7 +724,7 @@ def _held_or_conflict(et, library, row, origin, target, finished, now=None, unre
         # The stat before the read: a file found holding `target` is recorded stamped as it was before what was read of it.
         seen = _stat(row.path)
         try:
-            now = field_values.read_one(et, row.path, list(target))
+            now = _read_now(et, row, target, stall_stops)
         except field_values.Unreadable as e:
             if unread_stays:
                 return "writing", str(e)
@@ -694,6 +738,18 @@ def _held_or_conflict(et, library, row, origin, target, finished, now=None, unre
         return _conflict(library, row, "changed since it was read: it holds neither what the change found"
                                        " nor what it was to leave, and is not overwritten")
     return None
+
+
+def _read_now(et, row, target, stall_stops):
+    """What the file of `row` holds of `target`'s fields, read now; raises field_values.Unreadable. The one rule of a share
+    that stops answering in a write: a file ExifTool did not answer for (NotAnswered) stops a forward write
+    (`stall_stops`, raising _Stalled); an undo and a settle keep theirs."""
+    try:
+        return field_values.read_one(et, row.path, list(target))
+    except field_values.NotAnswered as e:
+        if stall_stops:
+            raise _Stalled(str(e)) from None
+        raise
 
 
 def _read_whole(et, row, read):
@@ -731,11 +787,11 @@ def _record_held(library, row, now, target, finished, stamp, stat):
     _record(library, row, held, finished, stamp, wrote=wrote, after=after, stat=stat if wrote else None)
 
 
-def _after_failure(et, library, row, origin, target, finished, on_failure, error):
+def _after_failure(et, library, row, origin, target, finished, on_failure, error, stall_stops=False):
     """A write that raised: settled by what the file holds after it."""
     seen = _stat(row.path)
     try:
-        now = field_values.read_one(et, row.path, list(target))
+        now = _read_now(et, row, target, stall_stops)
     except field_values.Unreadable:
         now = None
     if now is not None and fields.reads_same(now, target):
@@ -931,9 +987,9 @@ def settle(library, exiftool_path):
     """Finish every change of photo files that a process no longer running -- or an error
     in this one -- left half done: each file it left planned or writing is settled by
     what it holds, forward or, for an undo under way, back. Returns how many changes
-    were finished. A change that cannot be finished now is logged, released and left as
-    it is for the next time: it does NOT raise, so a caller that must know asks the
-    journal afterwards (tagpup.store.file_journal.unfinished)."""
+    were finished. A change that cannot be finished now -- one of its files on a share that does not answer, or one
+    ExifTool does not answer for, as _finish says -- is logged, released and left as it is for the next time: it does NOT
+    raise, so a caller that must know asks the journal afterwards (tagpup.store.file_journal.unfinished)."""
     finished = 0
     for change in file_journal.unfinished(library.path):
         if change.owner and file_journal.owner_alive(change.owner):
@@ -941,7 +997,10 @@ def settle(library, exiftool_path):
         if not file_journal.claim(library.path, change.id, change.owner):
             continue
         try:
-            _finish(library, change, exiftool_path)
+            if not _finish(library, change, exiftool_path):
+                logger.info("%s: change %d is left half done until its files can be read", library.path, change.id)
+                file_journal.release(library.path, change.id)
+                continue
         except Exception:
             logger.exception("%s: change %d, left half done, could not be finished now", library.path, change.id)
             file_journal.release(library.path, change.id)
@@ -952,6 +1011,9 @@ def settle(library, exiftool_path):
 
 
 def _finish(library, change, exiftool_path):
+    """Settle the files `change` left; True when it is finished. A file on a share that does not answer (file_states), or
+    that ExifTool does not answer for (_Stalled), is left as it is, and the change unfinished, for a settle once it can be
+    read: it is never a conflict for not answering, and the write whose settle met it waits no deadline for it (#1921)."""
     undoing = change.undoing
     pending = [row for row in file_journal.files_of(library.path, change.id)
                if row.state in (("writing", "done") if undoing else ("planned", "writing"))]
@@ -959,16 +1021,29 @@ def _finish(library, change, exiftool_path):
     if renames:
         _settle_renames(library, renames, forward=not undoing, redo=True)
     changed = [row for row in pending if not row.is_rename]
+    left = False
     if changed:
-        with field_values.session(exiftool_path) as et:
-            wrote = {}
+        away = {paths.key(path) for path, state in file_states([row.path for row in changed]) if state == AWAY}
+        with field_values.session(exiftool_path) as session:
+            et, wrote = exiftool_session.StaysDead(session), {}
             for row in changed:
-                if undoing:
-                    _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict")
-                else:
-                    _carry(et, library, row, row.before, row.after, "done", on_failure="conflict", wrote=wrote)
+                if paths.key(row.path) in away:
+                    left = True
+                    continue
+                try:
+                    if undoing:
+                        _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict", stall_stops=True)
+                    else:
+                        _carry(et, library, row, row.before, row.after, "done", on_failure="conflict", wrote=wrote,
+                               stall_stops=True)
+                except _Stalled:
+                    left = True
+                    break
             _read_back(et, library, wrote)
+    if left:
+        return False
     file_journal.finish(library.path, change.id, also=face_batch.tidy)
+    return True
 
 
 _settled = set()
