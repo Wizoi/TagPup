@@ -126,7 +126,8 @@ VECTORS_RETIRED = ("the library's vectors under %s were retired: restore the sna
                    "list, snapshots restore)")
 
 
-def _never():
+def never():
+    """The `stop` of a run nobody stops."""
     return False
 
 
@@ -305,7 +306,7 @@ def plan_vectors(library):
         conn.close()
 
 
-def apply_vectors(library, planned, stop=_never, heard=None):
+def apply_vectors(library, planned, stop=never, heard=None):
     """Delete the vectors `planned` (plan_vectors) counted, VECTOR_CHUNK a transaction, until none is left or `stop` says
     so between two chunks; `heard(chunk, chunks)` is told of each chunk committed (VectorChunk, and how many the plan
     makes). Nothing is written for a refused plan. Returns what was committed (VectorsRetired)."""
@@ -314,7 +315,7 @@ def apply_vectors(library, planned, stop=_never, heard=None):
                         lambda conn, after: _write_vectors(conn, planned, operation, after), stop, heard)
 
 
-def walk_vectors(library, found, write, stop=_never, heard=None):
+def walk_vectors(library, found, write, stop=never, heard=None):
     """The walk of a retiring of a model's vectors, `found` (VectorsRetired) of its plan, VECTOR_CHUNK a transaction:
     `write(conn, after)`, on the write connection, writes the chunk above rowid `after` and answers what it committed
     (VectorChunk), or, nothing of it written, None when the library's model moved since the plan (MODEL_MOVED) or why
@@ -419,7 +420,7 @@ def refusal(planned, clear_manual_names=False):
     return None
 
 
-def apply(library, planned, stop=_never, heard=None, clear_manual_names=False):
+def apply(library, planned, stop=never, heard=None, clear_manual_names=False):
     """Retire what `planned` (plan) listed, CHUNK photos a transaction, until done or `stop` says so between two chunks;
     `heard(chunk, chunks)` is told of each chunk committed (Chunk, and how many the plan makes). Nothing is written for a
     plan `refusal` refuses: names given by hand go only with `clear_manual_names`. Returns what was committed
