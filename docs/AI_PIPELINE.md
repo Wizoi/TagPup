@@ -5,8 +5,16 @@ was spread over (the research report, the owner's decisions of 2026-10-07 and th
 stay as the record, this is what is followed. Owner for the domain: Views, search and AI (models, GPU turn, Suggest,
 vectors), with People for faces and Data for the schema ([OWNERS.md](OWNERS.md)).
 
-**Current status (2026-10-24): phases 0 to 4 are done and installed; phase 5 (the photo model) is next; phase 6 waits
-for it.** Phase 3 (SCRFD 10g and AdaFace IR-101, one pass, migration 33) is on all three libraries; photo_index starts
+**Current status (2026-10-24): phases 0 to 5 are done and installed; only retiring the old photo vectors is left of
+phase 5; phase 6 (baking into the files) is next and is its own project.** Phase 5: the photo model is ViT-SO400M-14-SigLIP2
+(webli, 1152 dimensions, native size) on all three libraries, made by `embed-photos` (photo_index 59,518 of 59,519
+photos in 34 minutes, kr-track 1,498 of 1,499, renton_parkrun 1,309 of 1,309; the one photo left in each is a file that is
+gone) and switched by `set-photo-model` as one journaled, gated change each (changes 3249, 343, 1222), installed as
+20261024-175614-68d3fbcd; the doctor passes on all three; a read-only check under the production classes found the
+vectors unit length, no NaN, stamps agreeing with the old key's for 99.995% of photo_index. The old ViT-H-14 vectors
+still sit beside the new ones (about 244 MB on photo_index): they are what lets the switch be undone, and retiring them
+(the retire-vectors pattern, a snapshot first) is the owner's call. #1830 is closed: after the switch a plain `index` has
+only the gone file to skip. Phase 3 (SCRFD 10g and AdaFace IR-101, one pass, migration 33) is on all three libraries; photo_index starts
 afresh on the new face model (retire-faces, change 3247) and its FaceNet vectors are retired (change 3248, then
 `compact`: 182,779 AdaFace vectors, 0 FaceNet). Phase 4a (one gallery, time-nearest matching) is merged. Phase 4b (cut 1,
 2026-10-23) ends an index with a read-only run-scoped matching of the faces it added, writes nothing to a photo file,
