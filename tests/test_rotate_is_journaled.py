@@ -36,7 +36,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, journal as journal_service, photos as photo_actions  # noqa: E402
-from tagpup.store import db, embeddings, schema  # noqa: E402
+from tagpup.store import db, embeddings, photo_fingerprints, schema  # noqa: E402
 
 MODEL = embeddings.model_key("ViT-T", "tiny", True, 1.4, 512)
 WIDTH, HEIGHT = 60, 40
@@ -171,16 +171,21 @@ class TheTurn(RotationCase):
         self.assertEqual(self.orientation(path), 3)
 
     def test_the_row_follows_the_file_and_the_vectors_go(self):
+        # The vectors and the fingerprint go: each is of the upright decode the turn changes. Another photo's stay.
         path = self.make("a.jpg", orientation=6)
+        self.make("b.jpg")
+        turned, kept = [photo_id for (photo_id,) in self.rows("SELECT id FROM photos ORDER BY id")]
         stat = os.stat(path)
         self.execute_with(lambda conn: embeddings.put(conn, path, MODEL, stat.st_mtime, stat.st_size, b"\x00\x00\x80\x3f" * 4))
+        for photo_id in (turned, kept):
+            self.execute_with(lambda conn: photo_fingerprints.put(conn, photo_id, "upright-sha256-1", b"\x5a" * 32))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM embeddings"), [(1,)])
         result = self.rotate(path, "left")
         stat = os.stat(path)
-        self.assertEqual(self.rows("SELECT mtime, size FROM photos"), [(stat.st_mtime, stat.st_size)])
+        self.assertEqual(self.rows("SELECT mtime, size FROM photos WHERE id = ?", (turned,)), [(stat.st_mtime, stat.st_size)])
         self.assertEqual((result.details["mtime"], result.details["size"]), (stat.st_mtime, stat.st_size))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM embeddings"), [(0,)])
-
+        self.assertEqual(self.rows("SELECT photo_id FROM photo_fingerprints"), [(kept,)])
 
 class WhereTheLibraryDoesNotHoldTheFolder(RotationCase):
     def test_a_just_look_photo_is_turned_in_its_file_only(self):
