@@ -29,6 +29,9 @@ from tagpup.store import roots as store_roots
 #: (tagpup.services.faces.detector_of, handed in: the ml layer is not read here).
 Keys = collections.namedtuple("Keys", "photo face detector")
 
+#: The operation a bake's change of a folder is recorded under in History (tagpup.services.baking_report.apply).
+OPERATION = "bake photos"
+
 #: The kinds of Cannot.
 GONE = "gone"
 UNREADABLE = "unreadable"

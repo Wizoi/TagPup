@@ -41,7 +41,9 @@ FACES = validation.SCRFD_ADAFACE
 DETECTOR = face_service.detector_of(NewFaces(), None)
 
 
-class ABakeIsRehearsedFolderByFolder(BakeCase):
+class ALibraryToBake(BakeCase):
+    """A library whose photos are indexed as the indexer stores them, for a bake's dry run and its apply
+    (tests/test_a_bake_is_written_folder_by_folder.py); no tests of its own."""
 
     def setUp(self):
         super().setUp()
@@ -127,6 +129,9 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
         self.addCleanup(runtime.forget, self.library)
         with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime):
             return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "bake-photos"] + list(args))
+
+
+class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
 
     def test_a_dry_run_counts_each_kind_by_folder_writes_nothing_and_says_the_same_again(self):
         self.a_mix()

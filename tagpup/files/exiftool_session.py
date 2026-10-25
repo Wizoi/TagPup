@@ -351,6 +351,11 @@ class StaysDead:
         self._session = session
         self._dead = None
 
+    @property
+    def dead(self):
+        """Has a command of it timed out? Every command after answers that ExifToolTimeout at once."""
+        return self._dead is not None
+
     def __getattr__(self, name):
         wanted = getattr(self._session, name)
         if not callable(wanted):
