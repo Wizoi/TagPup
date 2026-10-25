@@ -78,9 +78,11 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
             self.detect(path, faces, detector, model)
         return path
 
-    def detect(self, path, count, detector=DETECTOR, model=FACES):
-        """`detector` found `count` faces in the photo (box(n)), their vectors under `model`, in place of any it had."""
-        found = [{"box": box(n), "embedding": baked_files.unit(bake.FACE_DIM, 10 + n).tolist(), "prob": 0.9}
+    def detect(self, path, count, detector=DETECTOR, model=FACES, boxes=None):
+        """`detector` found `count` faces in the photo (`boxes`, in that order, or box(n)), their vectors under `model`,
+        in place of any it had."""
+        boxes = boxes or [box(n) for n in range(count)]
+        found = [{"box": boxes[n], "embedding": baked_files.unit(bake.FACE_DIM, 10 + n).tolist(), "prob": 0.9}
                  for n in range(count)]
         conn = db.connect(self.library.path)
         try:
@@ -126,7 +128,7 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
                          "a dry run's photo outside its sample plans no values")
         plan = self.plan(a)
         self.assertIsInstance(plan, baking.ToBake)
-        self.assertEqual(self.expected(a, [box(0), box(1)]), plan.values, "faces in id order, boxes as stored")
+        self.assertEqual(self.expected(a, [box(0), box(1)]), plan.values, "faces of one size in id order, boxes as stored")
         self.assertFalse(plan.extended)
         self.assertIsNone(self.fingerprint_row(a))
 
@@ -141,6 +143,26 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         self.assertEqual((1, []), (undone.changed, undone.errors))
         self.assertEqual((images.FINGERPRINT_KEY, digest), tuple(self.fingerprint_row(a)), "an undo leaves the row")
         self.assertIsInstance(self.plan(a), baking.ToBake, "the bake undone, it plans again")
+
+    def test_the_largest_face_is_baked_first_and_the_bake_then_reads_current(self):
+        # Owner, 2026-10-25: largest first, ties by id. The small face was found first: it holds the lower id.
+        a = self.photo("a.jpg")
+        small, large = [1, 1, 2, 2], [4, 3, 12, 11]
+        self.detect(a, 2, boxes=[small, large])
+        in_id_order = sorted(self.read(lambda conn: store_faces.in_photo_with_names(conn, a, FACES)))
+        self.assertEqual([small, large], [images.parse_box(row[1]) for row in in_id_order], "the small face, the lower id")
+        plan = self.plan(a)
+        photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
+        self.assertEqual(bake.values(baked_files.unit(bake.PHOTO_DIM, 1),
+                                     [(large, baked_files.unit(bake.FACE_DIM, 11)), (small, baked_files.unit(bake.FACE_DIM, 10))],
+                                     (16, 12), images.fingerprint(images.opened(a, upright=True)), photo_key, FACES),
+                         plan.values, "the large face's region and vector first")
+        self.assertEqual((1, []), (lambda result: (result.changed, result.errors))(self.bake([a], plan.values)))
+        written = self.bake_of(a)
+        self.assertEqual([0.5, 0.0625], [face.area[2] for face in written.faces], "the file lists the large face first")
+        self.assertEqual(bake.encode_vector(baked_files.unit(bake.FACE_DIM, 11)), bake.encode_vector(written.faces[0].vector),
+                         "and its vector")
+        self.assertIsInstance(self.plan(a), baking.Current, "written in that order, it plans current")
 
     def test_a_stale_bake_plans_again(self):
         a = self.photo("a.jpg", faces=2)
