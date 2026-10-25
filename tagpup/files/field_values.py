@@ -12,15 +12,25 @@ change", so a cleared field is an explicit '-FIELD=' (tagpup.core.fields), in th
 command that sets the rest. It was a second command, and a crash between the two left a
 file holding neither what it held nor what it was to hold (docs/findings.md, #271). The
 photo's identity goes in that command too (#282).
+
+A struct field (tagpup.core.fields.STRUCT_FIELDS: a bake's regions) is one text, read with -struct and made the canonical
+text of what ExifTool answers (tagpup.files.bake.region_text), written whole as that text and cleared whole. TagPup's own
+bake fields are written only by a session that knows its namespace: session(), which every journaled write opens.
 """
 import logging
 
 from exiftool.exceptions import ExifToolNotRunning
 
 from tagpup.core import fields, paths
-from tagpup.files import exiftool_session, identity
+from tagpup.files import bake, exiftool_session, identity
 
 logger = logging.getLogger(__name__)
+
+#: What ExifTool warns of a field it was given and did not write, in a command it reports as a success: a struct's field
+#: it does not know ("is not a field of"), one in a namespace it cannot write ("is not a writable XMP tag"), TagPup's own
+#: in a process started without its configuration ("is not defined"). Only these: 119 of 120 photos read carry a minor
+#: validation warning of their own, which costs a write nothing.
+NOT_WRITTEN = ("is not defined", "is not a field of", "is not a writable XMP tag")
 
 #: What ExifTool says a file is. A photo's starts with "image/".
 MIME_TYPE = "File:MIMEType"
@@ -37,13 +47,30 @@ class NotAnswered(Unreadable):
     known of the file, not even that it cannot be read, so a reader leaves it unread."""
 
 
+def session(exiftool_path):
+    """The ExifTool session of a journaled write (tagpup.services.file_changes): one that knows TagPup's namespace
+    (bake.config_path), since a write or an undo of a bake names its fields. Looked up at call time, so a test standing in
+    for ExifToolSession reaches it."""
+    return exiftool_session.ExifToolSession(executable=exiftool_path, config_file=bake.config_path())
+
+
+def _value(row, field):
+    value = row.get(fields.read_key(field))
+    if fields.is_struct(field) and value is not None:
+        try:
+            return [bake.region_text(value)]
+        except ValueError as error:
+            raise Unreadable("Its %s could not be read: %s" % (field, error)) from None
+    return fields.field_values(value)
+
+
 def _held(row, wanted):
     kind = row.get(MIME_TYPE)
     if kind is not None and not str(kind).startswith("image/"):
         # A file of text read as TXT answers no fields, and would read as a photo holding
         # nothing (docs/findings.md, #46).
         raise Unreadable("Not a photo ExifTool can read (%s)" % kind)
-    return {field: fields.field_values(row.get(fields.read_key(field))) for field in wanted}
+    return {field: _value(row, field) for field in wanted}
 
 
 def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
@@ -58,6 +85,8 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
     `stop`, a threading.Event: once it is set no more batches are read, and the photos not reached are left out of the
     answer (a batch asked to stop while it plans, tagpup.services.file_changes). `params`, options of each read command
     (the XMP census's -validate, which alone makes ExifTool say a JPEG holds two XMP blocks: tagpup.services.inspect).
+    A struct field in `wanted` is read with -struct, which answers a list of one as a list: `also` beside one is refused,
+    since its records would not be in the indexer's shape.
 
     The file is not scanned to its end first: a JPEG whose picture stops short takes a write of its fields, and its
     picture data is left as it was (DECISIONS 2026-10-15); a file ExifTool cannot write fails that write."""
@@ -65,7 +94,14 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
     asked = list(dict.fromkeys(wanted + list(also) + [MIME_TYPE]))
     if records is None:
         records = {}
-    options = {"params": list(params)} if params else {}
+    params = list(params)
+    if any(fields.is_struct(field) for field in wanted):
+        if also:
+            raise ValueError("a struct field is read with -struct, and the fields asked beside it would not be read in the "
+                             "indexer's shape")
+        if "-struct" not in params:
+            params.append("-struct")
+    options = {"params": params} if params else {}
     found = {}
     photo_paths = list(photo_paths)
 
@@ -130,11 +166,23 @@ def write(et, photo_path, values):
     made again telling it an objection to the photo's XMP is minor, and checked to have
     cost the keywords nothing (tagpup.files.identity.tolerating_minor_errors). Raises
     when ExifTool fails. Nothing beside the photo is deleted, a temporary file ExifTool left included: one ExifTool
-    fails after deleting the original is the photo's only copy (#1410)."""
+    fails after deleting the original is the photo's only copy (#1410).
+
+    A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
+    (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,
+    under any other, so another is refused here, by a ValueError, before anything is written. A write of a struct field
+    or of TagPup's own that ExifTool warns left a field unwritten (NOT_WRITTEN) raises RuntimeError after it: the caller
+    settles the file by what it holds. A text holding a line break is sent as ExifToolSession sends it (exiftool_session.CSTR)."""
+    own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
+    if own and getattr(et, "config_file", None) != bake.config_path():
+        raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
+                         "does not" % own[0])
     params, clear = {}, []
     for field, value in values.items():
         texts = fields.field_values(value)
         named = fields.WRITTEN_AS.get(field, field)
+        if fields.is_struct(field) and len(texts) > 1:
+            raise ValueError("%s is one structure, one text, not %d" % (field, len(texts)))
         if not texts:
             clear.append("-%s=" % field)
         elif fields.read_key(field) in fields.LIST_FIELDS or len(texts) > 1:
@@ -157,6 +205,12 @@ def write(et, photo_path, values):
         identity.tolerating_minor_errors(et, photo_path, command, written=[fields.read_key(f) for f in values])
     else:
         command([], {})
+    if own or any(fields.is_struct(field) for field in values):
+        # A write that reported what it attempted: the file holds less than it was given (#1881).
+        dropped = [line.strip() for line in exiftool_session.unnamed(et.last_stderr, [photo_path]).splitlines()
+                   if any(said in line for said in NOT_WRITTEN)]
+        if dropped:
+            raise RuntimeError("ExifTool did not write all it was given: %s" % "; ".join(dropped))
 
 
 def ensure_document_id(et, path, metadata=None):

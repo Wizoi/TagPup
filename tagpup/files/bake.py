@@ -17,16 +17,26 @@ Reading it. ExifTool answers the namespace by name with no configuration of ours
 `-struct` (READ_ARGS) and the bake's FIELDS: without it RegionInfo is answered as flattened lists, and a list of one face
 as a bare value. Not through tagpup.files.metadata, whose structured reading makes a list of one its item. `parse` takes
 that record and gives a Bake, or Rejected with the reason, and never raises: a bake that is not whole and consistent is
-not used, and the photo is worked out as if it held none. Nothing here writes a bake, and none of these fields is a
-METADATA_FIELD (tagpup.core.fields): the index's copy of a file's fields is not where a bake goes.
+not used, and the photo is worked out as if it held none. None of these fields is a METADATA_FIELD (tagpup.core.fields):
+the index's copy of a file's fields is not where a bake goes.
+
+Writing it. Nothing here writes a file: `values` says what a baked file is to hold, as the journal keeps a field's value
+(a list of texts, the regions ONE text: region_text), and tagpup.services.file_changes.write_fields writes it through
+tagpup.files.field_values, journaled and undoable, in a session opened with config_path(): ExifTool writes the namespace
+only under its configuration (NAMESPACE_CONFIG).
 """
 import base64
 import binascii
 import dataclasses
+import hashlib
 import math
+import os
+import tempfile
+import threading
 
 import numpy as np
 
+from tagpup.core import fields, orientation
 from tagpup.files import exiftool_session, images
 
 #: TagPup's XMP namespace: its group as ExifTool names it, and its URI.
@@ -46,6 +56,26 @@ REGIONS = "XMP:RegionInfo"
 REQUIRED = (PHOTO_MODEL, FACE_MODEL, FINGERPRINT, PHOTO_VECTOR, FACES_FOUND)
 OWN = REQUIRED + (FACE_VECTORS,)
 FIELDS = OWN + (REGIONS,)
+
+#: The field ExifTool writes each of FIELDS as: TagPup's in its own namespace, the regions MWG's.
+WRITTEN = dict({key: "%s:%s" % (NAMESPACE, key.split(":", 1)[1]) for key in OWN}, **{REGIONS: fields.REGION_INFO})
+
+#: TagPup's namespace for ExifTool to write it (config_path); reading needs none.
+NAMESPACE_CONFIG = r"""%Image::ExifTool::UserDefined = (
+    'Image::ExifTool::XMP::Main' => {
+        tagpup => { SubDirectory => { TagTable => 'Image::ExifTool::UserDefined::tagpup' } },
+    },
+);
+%Image::ExifTool::UserDefined::tagpup = (
+    GROUPS => { 0 => 'XMP', 1 => 'XMP-tagpup', 2 => 'Image' },
+    NAMESPACE => { 'tagpup' => '""" + URI + r"""' },
+    WRITABLE => 'string',
+    PhotoModel => { }, FaceModel => { }, Fingerprint => { }, PhotoVector => { },
+    FacesFound => { Writable => 'integer' },
+    FaceVectors => { List => 'Seq' },
+);
+1;
+"""
 
 #: How a bake is read: a session's common arguments, with `-struct`.
 READ_ARGS = tuple(exiftool_session.DEFAULT_COMMON_ARGS) + ("-struct",)
@@ -135,6 +165,95 @@ def _number(value, what):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError("%s is not a finite number" % what)
     return float(value)
+
+
+def _holds_config(path):
+    try:
+        with open(path, encoding="utf-8", newline="") as handle:
+            return handle.read() == NAMESPACE_CONFIG
+    except OSError:
+        return False
+
+
+def config_path():
+    """The path of a file holding NAMESPACE_CONFIG, for the `config_file=` of a session that writes a bake: in the user's
+    temp folder, named for its text, so every process and thread shares one file of one text and a changed text is a new
+    file. Written whole under a name of its own and moved into place, so a process stopped part way leaves no half of it."""
+    digest = hashlib.sha256(NAMESPACE_CONFIG.encode("utf-8")).hexdigest()[:16]
+    path = os.path.join(tempfile.gettempdir(), "tagpup-bake-%s.config" % digest)
+    if _holds_config(path):
+        return path
+    part = "%s.%d.%d.part" % (path, os.getpid(), threading.get_ident())
+    with open(part, "w", encoding="utf-8", newline="") as handle:
+        handle.write(NAMESPACE_CONFIG)
+    try:
+        os.replace(part, path)
+    except OSError:
+        # The server and a CLI run writing it at once: Windows refuses the replace of a file the other's ExifTool has
+        # open. The other's holds the same text, or this is an error.
+        os.remove(part)
+        if not _holds_config(path):
+            raise
+    return path
+
+
+#: The characters of ExifTool's serialised structure, written in a value after a "|" (exiftool.org/struct.html).
+_SPECIAL = frozenset("|,[]{}")
+
+
+def _escaped(text):
+    # Its special characters after a "|", and so each blank of a run at either edge: ExifTool trims those unless escaped,
+    # and another program's name "  Lead Space  " was put back as "Lead Space" (#1880).
+    start, end = len(text) - len(text.lstrip()), len(text.rstrip())
+    return "".join("|" + char if char in _SPECIAL or not start <= n < end else char for n, char in enumerate(text))
+
+
+def _number_text(value):
+    # One text of one number: 4000 and 4000.0 are "4000"; a fraction is repr's, the shortest that reads back as the same
+    # float (17 significant digits at most), and ExifTool keeps the text it is given, so it reads back as written.
+    number = _number(value, "a value of the regions")
+    return str(int(number)) if number.is_integer() and abs(number) < 2 ** 53 else repr(number)
+
+
+def _serialised(value):
+    if isinstance(value, dict):
+        return "{%s}" % ",".join("%s=%s" % (key, _serialised(value[key])) for key in sorted(value))
+    if isinstance(value, list):
+        return "[%s]" % ",".join(_serialised(item) for item in value)
+    if isinstance(value, str):
+        return _escaped(value)
+    return _number_text(value)
+
+
+def region_text(info):
+    """The one text of an MWG RegionInfo structure `info` -- as ExifTool answers it read with -struct, or as values()
+    makes it -- in ExifTool's serialised form, which a write takes as it is (`-XMP-mwg-rs:RegionInfo=<text>`). Canonical,
+    so the text of the structure a write left reads back as the text written: names sorted, a number by one formatting
+    (_number_text: no rounding, the writer keeps a float exactly), a text as it is with its special characters, and the blanks at its edges, escaped.
+    Another program's regions are kept so too, whatever they name. Raises ValueError for a value that is none of a
+    structure, a list, a text or a finite number."""
+    if not isinstance(info, dict):
+        raise ValueError("the regions are not a structure")
+    return _serialised(info)
+
+
+def values(photo_vector, faces, applied, fingerprint, photo_model, face_model):
+    """What a photo file holding this bake is to hold, {field ExifTool writes (WRITTEN): [texts]}, as
+    tagpup.services.file_changes.write_fields takes a plan's after. `faces`, [(box, vector)] in the order the file is to
+    list them, each box [x1, y1, x2, y2] in pixels of the upright picture, whose (W, H) is `applied`; `fingerprint`, its
+    digest (images.fingerprint). No faces is "looked, none found": FacesFound "0", and no regions -- another program's
+    are cleared, as they are replaced by a bake's (PHASE6_DESIGN, section 8). A face's prob is never baked."""
+    width, height = applied
+    held = {PHOTO_MODEL: [photo_model], FACE_MODEL: [face_model],
+            FINGERPRINT: ["%s:%s" % (images.FINGERPRINT_KEY, bytes(fingerprint).hex())],
+            PHOTO_VECTOR: [encode_vector(photo_vector)], FACES_FOUND: [str(len(faces))],
+            FACE_VECTORS: [encode_vector(vector) for _box, vector in faces], REGIONS: []}
+    if faces:
+        listed = [{"Type": "Face", "Area": dict(zip("XYWH", orientation.area_of(box, width, height)), Unit="normalized")}
+                  for box, _vector in faces]
+        held[REGIONS] = [region_text({"AppliedToDimensions": {"W": width, "H": height, "Unit": "pixel"},
+                                      "RegionList": listed})]
+    return {WRITTEN[key]: texts for key, texts in held.items()}
 
 
 def _fingerprint(text):

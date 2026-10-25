@@ -244,8 +244,21 @@ def record_date_taken(raw_meta, date_taken):
 # ---- A field's value, as the file journal holds and compares it ------------------------
 
 #: The fields whose value is a list: a keyword field holds several, and ExifTool answers
-#: one of them alone as a bare value.
-LIST_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject")
+#: one of them alone as a bare value; a bake's FaceVectors, one per face (tagpup.files.bake).
+LIST_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject", "XMP:FaceVectors")
+
+#: MWG's regions, a structure: the one struct field a change writes (a bake's, tagpup.files.bake).
+REGION_INFO = "XMP-mwg-rs:RegionInfo"
+
+#: The fields whose value is a structure. The journal keeps one as ONE text, ExifTool's serialised form of it
+#: (tagpup.files.bake.region_text): read with -struct and made that text as it is read (tagpup.files.field_values), written
+#: whole, cleared whole by an empty value. Never the dict ExifTool answers: field_values refuses one.
+STRUCT_FIELDS = (REGION_INFO,)
+
+
+def is_struct(field):
+    """Is `field` one of STRUCT_FIELDS, by the key ExifTool answers it under?"""
+    return read_key(field) in {read_key(each) for each in STRUCT_FIELDS}
 
 
 def read_key(field):
@@ -258,13 +271,18 @@ def read_key(field):
 
 def field_values(value):
     """A field's value as the journal keeps it: a list of texts, in the file's order,
-    blanks and empties left out. A field the file does not hold is []."""
+    blanks and empties left out. A field the file does not hold is []. A structure (a dict)
+    raises TypeError: it was dropped, and a write of one planned as "clear the field"; a
+    struct field's value is its one text (STRUCT_FIELDS)."""
     if value is None:
         return []
     items = value if isinstance(value, (list, tuple)) else [value]
     found = []
     for item in items:
-        if item is None or isinstance(item, (bytes, dict)):
+        if isinstance(item, dict):
+            raise TypeError("a structure is not a field's value: a struct field's value is its one text "
+                            "(tagpup.files.bake.region_text)")
+        if item is None or isinstance(item, bytes):
             continue
         text = str(item)
         if text.strip():

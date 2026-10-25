@@ -143,13 +143,12 @@ class ABakeAsExifToolReadsItBack(unittest.TestCase):
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="bake_")
-        self.config = baked_files.config_in(self.home.root)
 
     def baked(self, name, boxes):
         path = os.path.join(self.home.root, name)
         Image.new("RGB", (48, 32), (120, 90, 60)).save(path, quality=90)
         faces = [(orientation.area_of(box, 48, 32), unit(bake.FACE_DIM, 10 + n)) for n, box in enumerate(boxes)]
-        return baked_files.write(path, self.config, baked_files.baked(unit(bake.PHOTO_DIM, 1), faces, (48, 32)))
+        return baked_files.write(path, baked_files.baked(unit(bake.PHOTO_DIM, 1), faces, (48, 32)))
 
     def read(self, path):
         records = {}
