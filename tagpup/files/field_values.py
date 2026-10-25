@@ -46,7 +46,7 @@ def _held(row, wanted):
     return {field: fields.field_values(row.get(fields.read_key(field))) for field in wanted}
 
 
-def read(et, photo_paths, wanted, also=(), records=None, stop=None):
+def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
     """{paths.key(path): {field: its values}} of each photo in `photo_paths`, for the
     fields in `wanted`; an Unreadable in place of the fields of a photo that could not be
     read (NotAnswered, of a photo ExifTool did not answer for). Read in batches; a batch ExifTool refuses is read again a
@@ -56,7 +56,8 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None):
     in `records`, when given: {paths.key(path): ExifTool's record} of each photo read.
 
     `stop`, a threading.Event: once it is set no more batches are read, and the photos not reached are left out of the
-    answer (a batch asked to stop while it plans, tagpup.services.file_changes).
+    answer (a batch asked to stop while it plans, tagpup.services.file_changes). `params`, options of each read command
+    (the XMP census's -validate, which alone makes ExifTool say a JPEG holds two XMP blocks: tagpup.services.inspect).
 
     The file is not scanned to its end first: a JPEG whose picture stops short takes a write of its fields, and its
     picture data is left as it was (DECISIONS 2026-10-15); a file ExifTool cannot write fails that write."""
@@ -64,6 +65,7 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None):
     asked = list(dict.fromkeys(wanted + list(also) + [MIME_TYPE]))
     if records is None:
         records = {}
+    options = {"params": list(params)} if params else {}
     found = {}
     photo_paths = list(photo_paths)
 
@@ -83,7 +85,7 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None):
             break
         batch = photo_paths[start:start + READ_BATCH]
         try:
-            rows = et.get_tags(batch, tags=asked)
+            rows = et.get_tags(batch, tags=asked, **options)
         except (exiftool_session.ExifToolTimeout, ExifToolNotRunning) as error:
             return stalled(error, photo_paths[start:])
         except Exception:
@@ -103,7 +105,7 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None):
             missed = batch
         for one in missed:
             try:
-                rows = et.get_tags([one], tags=asked)
+                rows = et.get_tags([one], tags=asked, **options)
                 found[paths.key(one)] = _held(rows[0] if rows else {}, wanted)
                 records[paths.key(one)] = rows[0] if rows else {}
             except (exiftool_session.ExifToolTimeout, ExifToolNotRunning) as error:

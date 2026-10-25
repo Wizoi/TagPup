@@ -18,11 +18,12 @@ Refused for a question it will not answer (docs/ARCHITECTURE.md, Decisions, 2026
 """
 import json
 import os
+import re
 from contextlib import closing
 
-from tagpup.core import paths, vocabulary
+from tagpup.core import fields, paths, vocabulary
 from tagpup.core.result import NotFound, Refused
-from tagpup.files import images, shares
+from tagpup.files import exiftool_session, field_values, images, shares
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
@@ -337,6 +338,126 @@ def files_that_fail_to_open(library):
             else:
                 unreached += 1
     return {"count": len(failed), "unreached": unreached, "files": failed}
+
+
+# ---- What the photo files hold of XMP ------------------------------------------------------
+
+#: Photos the census reads of a library larger than this, spread over its folders (docs/PHASE6_DESIGN.md, 3.5).
+CENSUS_SAMPLE = 3000
+
+#: The census's questions, as ExifTool is asked them. A region struct is asked by its flattened fields: ExifTool answers a
+#: struct's own name (XMP-MP:RegionInfoMP) only under -struct, and nothing without it (measured, ExifTool 13.59).
+MWG_REGIONS = ("XMP-mwg-rs:RegionType", "XMP-mwg-rs:RegionAreaX")
+MP_REGIONS = ("XMP-MP:RegionRectangle", "XMP-MP:RegionPersonDisplayName")
+EXTENDED_XMP = "XMP-xmpNote:HasExtendedXMP"
+ORIENTATION = "EXIF:Orientation"
+FILE_TYPE = "File:FileType"
+WARNING = "ExifTool:Warning"
+#: The standard XMP block, answered without -b as "(Binary data N bytes, use -b option to extract)": its size, not its bytes.
+XMP_BLOCK = "XMP:XMP"
+CENSUS_TAGS = MWG_REGIONS + MP_REGIONS + (EXTENDED_XMP, ORIENTATION, FILE_TYPE, WARNING, XMP_BLOCK)
+
+#: Only under -validate does ExifTool say a JPEG holds a second XMP block ("Duplicate XMP at JPEG-APP1-XMP"). It
+#: keeps ONE warning a file, and 119 of 120 real photos already carry an earlier minor one that would hide it, so every
+#: other warning is suppressed.
+CENSUS_PARAMS = ("-validate", "-api", "NoWarning=^(?!Duplicate XMP)")
+DUPLICATE_XMP = "Duplicate XMP"
+
+#: The XMP sizes counted, each below its bound in bytes; a block at 64 KB or over is "over" (a JPEG segment holds 64 KB).
+XMP_SIZES = (("<16K", 16 * 1024), ("<48K", 48 * 1024), ("<64K", 64 * 1024))
+_BINARY = re.compile(r"\(Binary data (\d+) bytes")
+
+
+def _spread(held, sample):
+    """`sample` of `held` (in path order, so a folder's photos are together), evenly spaced: each folder gives its share
+    by its size. All of them when there are no more than `sample`."""
+    if len(held) <= sample:
+        return list(held)
+    step = len(held) / sample
+    return [held[int((i + 0.5) * step)] for i in range(sample)]
+
+
+def _xmp_bytes(value):
+    """The size of the standard XMP block from ExifTool's answer, or None when the file holds none."""
+    if value is None:
+        return None
+    found = _BINARY.match(str(value))
+    if not found:
+        # Never the value itself in the message: an XMP block holds people's names.
+        raise ValueError("ExifTool answered the XMP block not as its size")
+    return int(found.group(1))
+
+
+def _size_bin(size):
+    if size is None:
+        return "none"
+    return next((name for name, bound in XMP_SIZES if size < bound), "over")
+
+
+def _tally():
+    return {"n": 0, "read": 0, "unreadable": 0, "not_answered": 0, "mwg_regions": 0, "mp_regions": 0,
+            "extended_xmp": 0, "duplicate_xmp": 0,
+            "xmp_size": dict.fromkeys([name for name, _bound in XMP_SIZES] + ["over", "none"], 0), "orientation": {}}
+
+
+def _counted(tally, record):
+    def held(*tags):
+        return any(record.get(fields.read_key(tag)) not in (None, "", []) for tag in tags)
+
+    tally["read"] += 1
+    tally["mwg_regions"] += held(*MWG_REGIONS)
+    tally["mp_regions"] += held(*MP_REGIONS)
+    tally["extended_xmp"] += held(EXTENDED_XMP)
+    warnings = [str(said) for said in fields.field_values(record.get(WARNING))]
+    tally["duplicate_xmp"] += any(DUPLICATE_XMP in said for said in warnings)
+    tally["xmp_size"][_size_bin(_xmp_bytes(record.get(XMP_BLOCK)))] += 1
+    turned = record.get(ORIENTATION)
+    key = "none" if turned in (None, "") else str(turned)
+    tally["orientation"][key] = tally["orientation"].get(key, 0) + 1
+
+
+def xmp_census(library, sample=CENSUS_SAMPLE, exiftool_path=None):
+    """What the photo files of `library` hold of XMP, read-only, counts only (no path, no name, no value): of `sample`
+    photos spread over its folders (all of them in a smaller library), by extension -- how many, read, unreadable, not
+    answered; with MWG regions, with Microsoft Photo regions, with Extended XMP, with two XMP blocks, with another
+    warning; the standard XMP block's size; the Orientation each says. The rows cannot answer: the indexer keeps no
+    region field (tagpup.core.fields.METADATA_FIELDS), so this reads the files, through one ExifTool, one command a
+    batch (field_values.read).
+
+    A file ExifTool cannot read is `unreadable`, counted under its extension. A command ExifTool does not answer in its
+    deadline (a share asleep) ends the read: the files not read are `not_answered`, `stopped` says so, and the counts
+    are of the files read only. A library whose root this machine does not place answers `roots_problem`, its
+    sentence, and reads no file. Nothing is written."""
+    if sample < 1:
+        raise Refused("A census reads one photo or more.")
+    sentence = _unplaced(library)
+    if sentence:
+        return {"roots_problem": sentence}
+    with _reading(library) as conn:
+        held = inspection.photo_files(conn)
+    chosen = [path for _photo_id, path in _spread(held, sample)]
+    answer = {"photos": len(held), "sampled": len(chosen), "read": 0, "unreadable": 0, "not_answered": 0,
+              "stopped": False, "by_extension": {}}
+    if not chosen:
+        return answer
+    records = {}
+    with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+        found = field_values.read(et, chosen, [], also=CENSUS_TAGS, records=records, params=CENSUS_PARAMS)
+    by_extension = answer["by_extension"]
+    for path in chosen:
+        tally = by_extension.setdefault(os.path.splitext(path)[1].lower(), _tally())
+        tally["n"] += 1
+        what = found.get(paths.key(path))
+        if isinstance(what, field_values.NotAnswered):
+            tally["not_answered"] += 1
+        elif isinstance(what, Exception):
+            tally["unreadable"] += 1
+        else:
+            _counted(tally, records[paths.key(path)])
+    for name in ("read", "unreadable", "not_answered"):
+        answer[name] = sum(tally[name] for tally in by_extension.values())
+    answer["stopped"] = answer["not_answered"] > 0
+    return answer
 
 
 # ---- Rows whose file is gone ------------------------------------------------------------
