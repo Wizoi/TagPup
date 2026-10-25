@@ -1397,9 +1397,8 @@ def _bake_lines(tally):
     lines = ["  %d photo(s): %d to bake, %d already current (skipped: --apply goes on from where it stopped), %d cannot "
              "be baked." % (tally.photos, tally.to_bake, tally.current, sum(tally.cannot.values()))]
     if tally.to_bake:
-        lines.append("  To bake: about %.1f MB of XMP, %d photo(s) needing Extended XMP (more than a JPEG's XMP block "
-                     "holds); by format: %s." % (tally.bytes / 1e6, tally.extended, ", ".join(
-                         "%s %d" % (extension or "(none)", count) for extension, count in sorted(tally.formats.items()))))
+        lines.append("  To bake, by format: %s." % ", ".join(
+            "%s %d" % (extension or "(none)", count) for extension, count in sorted(tally.formats.items())))
     lines += ["  Cannot be baked: %d %s." % (tally.cannot[kind], why) for kind, why in CANNOT_BAKE.items()
               if tally.cannot[kind]]
     if tally.not_answered:

@@ -122,8 +122,10 @@ side exists, so its column must be the read side's, not a guess for cut 3.
   fingerprint, regions): the file is the digest; no column.
 - **Dry run writes nothing** (not a rolled-back write): no fingerprint row, no snapshot, no migration. CLI `bake-photos`
   (`@_holds_the_roots`, `--apply` refusing with one sentence this cut). It reports per library and folder: photos to bake,
-  already current (skipped, so `--apply` resumes), cannot be baked and why, bytes (3,072 + 1,730 per face), photos over
-  the 64 KB block (Extended XMP: 293 / 48 / 3 over 35 faces), 17 TIFF and 2 PNG.
+  already current (skipped, so `--apply` resumes), cannot be baked and why, and by format (17 TIFF and 2 PNG). No byte
+  estimate and no Extended XMP count (owner, 2026-10-25: ExifTool's detail): a bake measured 6,355 bytes of main packet
+  plus about 1,712 a face, 35 faces spill FaceVectors whole into Extended XMP while the regions stay in the main packet
+  (DECISIONS 2026-10-25); retired, not reported.
 - **Branches:** 2a struct field kind, config into bake.py, the writer helper (~400); 2b the builder, the follower, the dry
   run CLI (~500); 2c scenario tests lifted into F3/F11 (~300).
 - **Counts (2026-10-25):** photos with faces 49,111 / 1,485 / 1,285; with a `faces_detected` row 0 / 178 / 146 (all the old

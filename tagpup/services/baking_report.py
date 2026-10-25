@@ -32,8 +32,6 @@ class Tally:
     folder: object = None
     photos: int = 0
     to_bake: int = 0
-    extended: int = 0
-    bytes: int = 0
     current: int = 0
     cannot: collections.Counter = dataclasses.field(default_factory=collections.Counter)
     #: {extension: photos to bake}, lower case (".jpg").
@@ -46,7 +44,7 @@ class Tally:
     matched: int = 0
 
     def add(self, other):
-        for name in ("photos", "to_bake", "extended", "bytes", "current", "not_answered", "sampled", "had_row", "matched"):
+        for name in ("photos", "to_bake", "current", "not_answered", "sampled", "had_row", "matched"):
             setattr(self, name, getattr(self, name) + getattr(other, name))
         self.cannot.update(other.cannot)
         self.formats.update(other.formats)
@@ -157,8 +155,6 @@ def _plan(conn, tally, keys, photo_id, path, read, in_sample):
             tally.matched += (row.key, bytes(row.hash)) == (images.FINGERPRINT_KEY, digest)
     if isinstance(plan, baking.ToBake):
         tally.to_bake += 1
-        tally.extended += plan.extended
-        tally.bytes += plan.bytes
         tally.formats[os.path.splitext(path)[1].lower()] += 1
     elif isinstance(plan, baking.Current):
         tally.current += 1

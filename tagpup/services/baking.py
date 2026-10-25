@@ -4,7 +4,7 @@ section 9), and the fingerprint row a bake's write leaves behind it.
 `plan_photo` reads the library -- the photo's vector, its faces with their vectors, whether its detector looked -- and only
 then the file: the fields it holds (read as write_fields reads them: field_values.read of bake.WRITTEN's fields) and its
 shape, and the fingerprint of its upright decode (the costliest read), each handed in as a function the library's
-checks must pass before it is called. It says one of: ToBake (the values a write is to leave, and about how many bytes of XMP they are), Current (the file holds
+checks must pass before it is called. It says one of: ToBake (the values a write is to leave), Current (the file holds
 them already), Cannot (why the library cannot say what the file is to hold, in a plain sentence). Nothing here writes a
 file or a row of the library but `follower`: the write is tagpup.services.file_changes.write_fields's, which imports this
 module for the follower, so this one never imports it.
@@ -29,20 +29,6 @@ from tagpup.store import roots as store_roots
 #: (tagpup.services.faces.detector_of, handed in: the ml layer is not read here).
 Keys = collections.namedtuple("Keys", "photo face detector")
 
-#: How many bytes one XMP packet of a JPEG holds, as ExifTool counts it: past it ExifTool moves the large properties (the
-#: vectors) to Extended XMP.
-XMP_PACKET_LIMIT = 65502
-
-#: About how many bytes of main XMP packet a bake makes, MEASURED from real writes (2026-10-25: ExifTool 13.x,
-#: BakeCase.bake of 0 to 38 faces onto a JPEG holding one keyword, the packet read from its APP1 segment, tests/
-#: test_a_bake_is_planned_from_the_library.py): 6,355 bytes with no face (the packet wrapper, the photo vector, the model,
-#: fingerprint and FacesFound markup, the keyword) and about 1,712 for each face (its vector's 1,368 characters of base64 and
-#: its region's markup, which varies by 100 with the digits of its box: 1,660 to 1,775 between faces); 34 faces were
-#: 64,560 bytes in one packet, 35 overflowed to Extended XMP (a 20,136-byte main packet and a 49,061-byte extension).
-#: A file already holding more XMP (60 keywords: 2,600 bytes more) overflows sooner (34 faces); that is not known here.
-PHOTO_BYTES = 6355
-FACE_BYTES = 1712
-
 #: The kinds of Cannot.
 GONE = "gone"
 UNREADABLE = "unreadable"
@@ -55,14 +41,9 @@ FACES_WITHOUT_VECTORS = "faces without vectors"
 @dataclasses.dataclass(frozen=True)
 class ToBake:
     """The file is to be written: `values` ({field: [texts]}, bake.values'), None when planned with no fingerprint (a dry
-    run's photo outside its sample); `bytes` about how much XMP they are."""
+    run's photo outside its sample). How much XMP they make is not estimated: past one packet ExifTool moves FaceVectors
+    whole to Extended XMP and keeps the regions in the main one, its detail (owner, 2026-10-25)."""
     values: object
-    bytes: int
-
-    @property
-    def extended(self):
-        """Is it more than a JPEG's XMP packet holds, written as Extended XMP?"""
-        return self.bytes > XMP_PACKET_LIMIT
 
 
 @dataclasses.dataclass(frozen=True)
@@ -127,7 +108,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
         del compared[bake.WRITTEN[bake.FINGERPRINT]]
     if fields.reads_same(file_holds, compared):
         return Current()
-    return ToBake(made if digest is not None else None, PHOTO_BYTES + FACE_BYTES * len(found))
+    return ToBake(made if digest is not None else None)
 
 
 def _area(box, applied):

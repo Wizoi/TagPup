@@ -1,7 +1,7 @@
 """The owner asks what a bake would do before any is written (`bake-photos`, a dry run; scenario F3,
 tagpup.services.baking_report; docs/PHASE6_DESIGN.md, section 9).
 
-A library of two folders holds a mix: photos to bake (one past a JPEG's XMP block), one already baked, one never examined
+A library of two folders holds a mix: photos to bake, one already baked, one never examined
 by the face model, one with a face of another model, one changed since its vector was made, one whose file is not a
 picture. The dry run counts each, by folder and in all, says never examined as that and never as none found, and leaves
 the library, its journal, its snapshots and every file as they were, byte for byte; a second run says the same. --apply
@@ -104,7 +104,7 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
         with open(broken, "wb") as handle:
             handle.write(b"x" * stat.st_size)
         os.utime(broken, ns=(stat.st_atime_ns, stat.st_mtime_ns))
-        self.photo(os.path.join("Second", "many.jpg"), faces=37)
+        self.photo(os.path.join("Second", "many.jpg"), faces=3)
 
     def home_as_it_is(self):
         """{file under the home: (size, mtime, sha256)}: the library, its journal and snapshots, and every photo. The
@@ -137,8 +137,8 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
         total = out[out.index("All 2 folder(s):"):]
         self.assertIn("7 photo(s): 2 to bake, 1 already current (skipped: --apply goes on from where it stopped), 4 cannot "
                       "be baked.", total)
-        self.assertIn("1 photo(s) needing Extended XMP", total)
-        self.assertIn("by format: .jpg 2.", total)
+        self.assertIn("To bake, by format: .jpg 2.", total)
+        self.assertNotIn("XMP", out, "Extended XMP is ExifTool's detail, not the owner's (2026-10-25)")
         for said in ("1 never examined by the face model", "1 with a face holding no vector under the face model",
                      "1 whose file changed since its photo vector was made", "1 whose file could not be read"):
             self.assertIn("Cannot be baked: %s" % said, total)
