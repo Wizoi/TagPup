@@ -44,13 +44,14 @@ of the new model's (its last vector would go: the old detector's faces are retir
 vectors by rowid, VECTOR_CHUNK a transaction (BEGIN IMMEDIATE), the library's model read again in each (MODEL_MOVED), and
 the faces holding FaceNet's vector alone counted again in each (ALONE_SINCE: an undo of a retiring of the old detector's
 faces between two chunks, beside the run, brings them back; their vectors are not walked into), and records ONE change of the journal with no rows, VECTORS_OPERATION, its summary the vectors and bytes deleted (what was
-committed), continued across runs: the newest kept change of its name (_continued), also after a change recorded since
+committed), continued across runs: the newest kept change of its name (continued), also after a change recorded since
 (a setting): it holds no rows for one to conflict with, and the snapshot its first run took holds every vector. The way
 back is the snapshot taken
 before (the CLI forces one): its undo puts nothing back and is refused, VECTORS_RETIRED, and so is the undo of a retiring
 of faces whose deleted vectors were under a key the library now holds none of -- undone, its faces would come back
 holding a vector no reader reads and the library holds no other of (vectors_check, retiring_check). A switch back to such a model is
-refused by the switch (settings.switch_to).
+refused by the switch (settings.switch_to). The walk (walk_vectors) is the photo vectors' retiring's too
+(tagpup.services.retire_photo_vectors).
 """
 import logging
 from dataclasses import dataclass, field
@@ -74,7 +75,7 @@ MODEL = validation.SCRFD_ADAFACE
 CHUNK = 500
 
 #: Why a run ends at a chunk: the library was switched to another model after the plan (settings, beside the run).
-MODEL_MOVED = "the library's face model changed since the plan"
+MODEL_MOVED = "the library's model changed since the plan"
 
 #: What the owner is told to do after MODEL_MOVED: a run again on the other model is refused (NOT_ON_THE_MODEL).
 SWITCH_BACK = "Switch the library back to %s first (its settings), then run it again to continue."
@@ -299,7 +300,7 @@ def plan_vectors(library):
         if alone:
             return VectorPlan(model, OLD, refused=ALONE % (alone, OLD, model))
         vectors, size = store_faces.vector_total(conn, OLD)
-        return VectorPlan(model, OLD, vectors, size, continues=_continued(conn, VECTORS_OPERATION % OLD))
+        return VectorPlan(model, OLD, vectors, size, continues=continued(conn, VECTORS_OPERATION % OLD))
     finally:
         conn.close()
 
@@ -308,19 +309,30 @@ def apply_vectors(library, planned, stop=_never, heard=None):
     """Delete the vectors `planned` (plan_vectors) counted, VECTOR_CHUNK a transaction, until none is left or `stop` says
     so between two chunks; `heard(chunk, chunks)` is told of each chunk committed (VectorChunk, and how many the plan
     makes). Nothing is written for a refused plan. Returns what was committed (VectorsRetired)."""
-    found = VectorsRetired(planned)
+    operation = VECTORS_OPERATION % planned.key
+    return walk_vectors(library, VectorsRetired(planned),
+                        lambda conn, after: _write_vectors(conn, planned, operation, after), stop, heard)
+
+
+def walk_vectors(library, found, write, stop=_never, heard=None):
+    """The walk of a retiring of a model's vectors, `found` (VectorsRetired) of its plan, VECTOR_CHUNK a transaction:
+    `write(conn, after)`, on the write connection, writes the chunk above rowid `after` and answers what it committed
+    (VectorChunk), or, nothing of it written, None when the library's model moved since the plan (MODEL_MOVED) or why
+    the chunk was refused (a sentence). It ends at a chunk short of VECTOR_CHUNK, when `stop` says so between two
+    chunks, or when a write fails (rolled back whole; a run again continues). `heard(chunk, chunks)` is told of each
+    chunk committed. The face model's vectors (apply_vectors) and a photo model's
+    (tagpup.services.retire_photo_vectors). Nothing is written for a refused plan. Returns `found`."""
+    planned = found.plan
     if planned.refused:
         return found
-    operation = VECTORS_OPERATION % planned.key
     after = 0
     while True:
         if stop():
             found.stopped = True
             break
         try:
-            done = db.write_with_connection(
-                library.path, lambda conn, after=after: _write_vectors(conn, planned, operation, after),
-                label="retire vectors")
+            done = db.write_with_connection(library.path, lambda conn, after=after: write(conn, after),
+                                            label="retire vectors")
         except Exception as problem:
             # Rolled back whole: the chunk's vectors are as they were, and a run again continues from them.
             logger.exception("Retiring vectors: a chunk's write failed; nothing of it was written")
@@ -357,7 +369,7 @@ def _write_vectors(conn, planned, operation, after):
     done = VectorChunk(last=rows[-1][0] if rows else after)
     if not rows:
         return done
-    change_id = _continued(conn, operation)
+    change_id = continued(conn, operation)
     if change_id is None:
         change_id = journal.record(conn, operation, [], {"deleted": 0, "bytes": 0})
     done.deleted = store_faces.delete_vectors(conn, [rowid for rowid, _size in rows])
@@ -367,7 +379,7 @@ def _write_vectors(conn, planned, operation, after):
     return done
 
 
-def _continued(conn, operation):
+def continued(conn, operation):
     """The vectors-retiring change a run continues: the newest kept change called `operation` (journal.kept_named), not
     only while it is the journal's newest -- it holds no rows, so a change recorded since conflicts with nothing -- or
     None. Asked only while vectors under its key are left (plan_vectors, _write_vectors): a run that finished left none."""

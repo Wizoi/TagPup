@@ -1451,19 +1451,36 @@ def retire_vectors(ctx, apply_):
         say("Nothing to retire: no vector under %s is left." % planned.key)
         return
     if not apply_:
-        say("Nothing changed. --apply writes it, after a snapshot of the library (taken even when one is from today: the "
-            "oldest daily may go): one change of the journal, which is not undone; the snapshot is the way back %s. "
-            "Then `compact` gives the space back to the disk." % SNAPSHOT_STANDS)
+        say(VECTORS_DRY_RUN)
         return
+    retired = _retire_vectors_applied(library, [planned], retire_faces_service.apply_vectors, say)
+    if retired[-1].error or retired[-1].stopped or retired[-1].refused:
+        raise SystemExit(1)
+
+
+#: What a dry run of retire-vectors (and retire-photo-vectors) says --apply does.
+VECTORS_DRY_RUN = ("Nothing changed. --apply writes it, after a snapshot of the library (taken even when one is from "
+                   "today: the oldest daily may go): one change of the journal, which is not undone; the snapshot is the "
+                   "way back %s. Then `compact` gives the space back to the disk." % SNAPSHOT_STANDS)
+
+
+def _retire_vectors_applied(library, plans, apply_one, say):
+    """--apply of retire-vectors and retire-photo-vectors: `plans` (VectorPlan, a model's vectors each) applied in turn
+    by `apply_one(library, planned, stop=, heard=)` (VectorsRetired), each said. Refused while an app runs (APP_RUNNING). A
+    snapshot first, forced, as it is the way back, unless the run continues a change a stopped run left (its first run
+    took one). Ctrl+C, or an app started during the run, stops it after the chunk under way, and the plans after it are
+    not begun. Returns [VectorsRetired], the last the one that ended the run."""
     servers = launcher.running()
     if servers:
         say(APP_RUNNING % len(servers))
         raise SystemExit(1)
+    found, started = [], []
     with _stop_after_this_photo("chunk of vectors") as asked:
-        if planned.continues is not None:
+        continuing = [planned.continues for planned in plans if planned.continues is not None]
+        if continuing:
             # The snapshot the first run took holds every vector; one taken now holds fewer and pushes a daily out.
-            say("Continuing change %d: the snapshot taken before its first run is the way back %s; none taken."
-                % (planned.continues, SNAPSHOT_STANDS))
+            say("Continuing change %s: the snapshot taken before its first run is the way back %s; none taken."
+                % (", ".join(map(str, continuing)), SNAPSHOT_STANDS))
         else:
             try:
                 taken = library_snapshots.take(library, force=True)
@@ -1477,23 +1494,26 @@ def retire_vectors(ctx, apply_):
         def heard(chunk, chunks):
             heard.number += 1
             say("Chunk %d of %d: %d vectors deleted." % (heard.number, chunks, chunk.deleted))
-        heard.number = 0
-        started = []
 
         def stop():
             if asked.is_set():
                 return True
             started[:] = launcher.running()   # an app started during the run: asked before each chunk
             return bool(started)
-        retired = retire_faces_service.apply_vectors(library, planned, stop=stop, heard=heard)
-    say(retired.said())
-    if retired.stopped and started:
+        for planned in plans:
+            heard.number = 0
+            retired = apply_one(library, planned, stop=stop, heard=heard)
+            found.append(retired)
+            say(retired.said())
+            if retired.error or retired.stopped or retired.refused:
+                break
+    if found[-1].stopped and started:
         say(APP_STARTED % len(started))
-    if retired.change_id is not None:
-        say("Written: change %d, which is not undone: the snapshot taken first is the way back %s. `compact`, with the "
-            "apps closed, gives the space back to the disk." % (retired.change_id, SNAPSHOT_STANDS))
-    if retired.error or retired.stopped or retired.refused:
-        raise SystemExit(1)
+    changes = [retired.change_id for retired in found if retired.change_id is not None]
+    if changes:
+        say("Written: change %s, which is not undone: the snapshot taken first is the way back %s. `compact`, with the "
+            "apps closed, gives the space back to the disk." % (", ".join(map(str, changes)), SNAPSHOT_STANDS))
+    return found
 
 
 @cli.group()
