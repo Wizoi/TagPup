@@ -56,11 +56,13 @@ def put(conn, photo_path, model, mtime, size, vector):
                  " VALUES (?, ?, ?, ?, ?)", (photo_id, model, mtime, size, vector))
 
 
-def get_by_id(conn, photo_id, model):
-    """The Stored vector of the photo with this id under `model`, or None."""
-    row = conn.execute("SELECT mtime, size, vector FROM embeddings WHERE photo_id = ? AND model = ?",
-                       (photo_id, model)).fetchone()
-    return Stored(*row) if row else None
+def put_by_id(conn, photo_id, model, mtime, size, vector):
+    """Keep `vector` as the photo `photo_id`'s under `model`, as put does, while the photo has a row: True when it was
+    written, False when the row is gone (removed by a sync or a delete meanwhile), and no row is made for it -- a pass
+    over the rows it read (tagpup.services.photo_reembed) never brings back one taken away. The caller commits."""
+    return conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
+                        " SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM photos WHERE id = ?)",
+                        (photo_id, model, mtime, size, vector, photo_id)).rowcount > 0
 
 
 def stamps_by_path(conn, photo_paths):

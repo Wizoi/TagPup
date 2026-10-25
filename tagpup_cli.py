@@ -71,7 +71,7 @@ from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import thumbnails
-from tagpup.services import embedding_repair
+from tagpup.services import photo_reembed
 from tagpup.services import face_pass as face_pass_service
 from tagpup.services import retire_faces as retire_faces_service
 from tagpup import launcher
@@ -1081,62 +1081,113 @@ def thumbs_warm(ctx, folder, limit, apply_):
         console.print("Stopped at --limit; run it again to go on.", markup=False)
 
 
-@cli.command("repair-vectors")
-@click.option("--apply", "apply_", is_flag=True,
-              help="Make the vectors again and replace those that differ. Without it, only counts the turned photos.")
+@cli.command("embed-photos")
+@click.option("--model", "model", required=True, metavar="NAME:WEIGHTS",
+              help="The photo model whose vectors to make, as open_clip names it: ViT-SO400M-14-SigLIP2:webli.")
+@click.option("--apply", "apply_", is_flag=True, help="Make the vectors. Without it, only counts what it would make.")
 @click.pass_context
-def repair_vectors(ctx, apply_):
-    """Make the vectors of turned photos (an EXIF Orientation of 2 to 8) describe the photo as it is shown. A dry run
-    unless --apply: it reads each photo's header (never the picture) and counts the turned ones that hold a vector for
-    their file as it is. With --apply each is embedded again on a turn of the graphics card, and its vector replaced
-    when the new one differs; run again it finds each already matching. A photo whose file changed meanwhile is
-    embedded as it now is. Face vectors and boxes are not touched."""
+@_holds_the_roots
+def embed_photos(ctx, model, apply_):
+    """Make another photo model's vectors for the library's photos, beside its own model's, so the library can be
+    switched to it in the gear (which refuses while too few photos hold one). A dry run unless --apply: counts the
+    photos that hold none yet, and the time it would take. With --apply they are embedded on a turn of the graphics
+    card, waited for behind any other run. The library's model and settings stay as they are, and nothing reads the
+    new vectors until the switch. Faces are not touched. Ctrl+C stops it after the photo under way; what was made is
+    kept, and the next run makes the rest."""
     library = _existing_library(ctx)
-    if apply_:
-        applied = library_actions.bring_up_to_date(library.path)
-        if applied:
-            console.print("Brought the library up to date: %s." % ", ".join(applied), markup=False, soft_wrap=True)
-    def progress(counts):
-        console.print("  looked at %d photo(s): %d turned" % (counts["photos"], counts["turned"]) + (
-            ", %d made again, %d already matched" % (counts["replaced"], counts["already_upright"])
-            if "replaced" in counts else ""), markup=False)
-
-    def say_waiting(line):
-        console.print(line, markup=False, soft_wrap=True)
-
+    runtime = get_runtime()
     try:
-        with library_roots.pinned(library):
-            counts = embedding_repair.repair(library, get_runtime(), apply=apply_, progress=progress,
-                                             report=say_waiting)
-    except library_roots.RootsChanged:
-        console.print(library_roots.STOPPED, markup=False, soft_wrap=True)
-        raise SystemExit(library_roots.EXIT_ROOTS_CHANGED) from None
-    except (library_roots.Unplaced, ValueError) as why:
+        wanted = photo_reembed.model_of(model)
+        planned = photo_reembed.plan(library, runtime, wanted)
+    except ValueError as why:
         console.print("Not run: %s" % why, markup=False, soft_wrap=True)
         raise SystemExit(1) from None
-    except KeyboardInterrupt:
-        console.print("Stopped. What was replaced is kept: run it again to go on.", markup=False)
-        raise SystemExit(130) from None
-    console.print("%d photo(s) looked at: %d turned, of which %d hold a vector for their file as it is, %d hold none and "
-                  "%d hold one for an earlier file (the next look at those makes one upright); %d have no file, %d could "
-                  "not be read, %d have a header that does not read." % (
-                      counts["photos"], counts["turned"], counts["to_recompute"], counts["no_vector"],
-                      counts["stale_stamp"], counts["missing"], counts["failed"], counts["no_header"]),
-                  markup=False, soft_wrap=True)
-    if counts["away"]:
-        console.print("Not walked: %s did not answer (taken as away) and its %d photo(s) were left; run it again when it "
-                      "is back." % (", ".join(counts["away"]), counts["skipped_away"]), markup=False, soft_wrap=True)
+    console.print("%s: %d photo(s), %d hold a vector under %s already, %d hold none (%d of them have no file)." % (
+        library.name, planned["photos"], planned["held"], planned["key"], planned["to_embed"], planned["gone"]),
+        markup=False, soft_wrap=True)
     if not apply_:
-        console.print("--apply would make %d vector(s) again. Nothing was written." % counts["to_recompute"],
-                      markup=False, soft_wrap=True)
+        console.print("--apply would embed %d, about %d minute(s). Nothing was written." % (
+            planned["to_embed"] - planned["gone"], round(planned["seconds"] / 60)), markup=False, soft_wrap=True)
         return
-    console.print("Replaced %d (read back as written), %d already matched, %d not kept (the file changed meanwhile or the "
-                  "write failed; run it again), %d damaged, %d could not be made%s." % (
-                      counts["replaced"], counts["already_upright"], counts["not_kept"], counts["damaged"],
-                      counts["unreadable"], (": " + ", ".join("%s x%d" % item for item in counts["reasons"].items()))
-                      if counts["reasons"] else ""), markup=False, soft_wrap=True)
-    console.print("A running TagPup keeps the vectors it loaded until a photo is edited or the app is restarted: "
-                  "restart it to search by the new ones.", markup=False, soft_wrap=True)
+    applied = library_actions.bring_up_to_date(library.path)
+    if applied:
+        console.print("Brought the library up to date: %s." % ", ".join(applied), markup=False, soft_wrap=True)
+
+    def progress(counts):
+        console.print("  embedded %d of %d, %d kept, %.0f s" % (
+            counts["embedded"], counts["to_embed"], counts["kept"], counts["seconds"]), markup=False)
+
+    with _stop_after_this_photo() as asked:
+        try:
+            counts = photo_reembed.run(library, runtime, wanted, progress=progress, should_stop=asked.is_set,
+                                       report=lambda line: console.print(line or "Took the graphics card.",
+                                                                         markup=False, soft_wrap=True))
+        except gpu_turns.Cancelled:
+            console.print("Stopped while it waited for the graphics card: nothing was written.", markup=False)
+            raise SystemExit(1) from None
+        except photo_reembed.Unreachable as stopped:
+            console.print(str(stopped), markup=False, soft_wrap=True)
+            _embedded_lines(stopped.counts)
+            console.print("What was kept is kept: run it again to go on once the photos can be read.", markup=False,
+                          soft_wrap=True)
+            raise SystemExit(1) from None
+    _embedded_lines(counts)
+    now = photo_reembed.plan(library, runtime, wanted)
+    console.print("%d of the library's %d photos now hold a vector under %s." % (now["held"], now["photos"], now["key"]),
+                  markup=False, soft_wrap=True)
+    if counts["stopped"]:
+        console.print("Stopped: what was kept is kept; run it again to continue.", markup=False)
+        raise SystemExit(130)
+
+
+@cli.command("set-photo-model")
+@click.argument("model", metavar="NAME:WEIGHTS")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Switch: one change of the library's journal. Without it, only says whether the switch would pass.")
+@click.pass_context
+@_holds_the_roots
+def set_photo_model(ctx, model, apply_):
+    """Switch the library to the photo model NAME:WEIGHTS (ViT-SO400M-14-SigLIP2:webli) at its own image size, as the
+    gear does: one change of the journal, refused while more than 5% of the photos hold no vector under the new model
+    (embed-photos makes them). A dry run unless --apply: says the counts and whether it would pass. Search and Suggest
+    read the new model's vectors from their next run; `undo <change> --apply` switches back, held to the same gate."""
+    library = _existing_library(ctx)
+    try:
+        wanted = photo_reembed.model_of(model)
+    except ValueError as why:
+        console.print("Not run: %s" % why, markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
+    result = photo_reembed.switch(library, wanted, apply=apply_)
+    held = result.details.get("photo_vectors")
+    if held:
+        console.print(held["said"], markup=False, soft_wrap=True)
+    words = result.details["tag_words"]
+    console.print("Suggest holds %d word(s) (%d row(s)) made under %s:%s, of the %d it holds under the library's model: "
+                  "it makes the other %d at its first run after the switch." % (
+                      words["words"], words["rows"], wanted[0], wanted[1], words["own"],
+                      max(words["own"] - words["words"], 0)), markup=False, soft_wrap=True)
+    if result.refused:
+        console.print(result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    if not result.details.get("changed"):
+        console.print("The library's photo model is %s:%s already: nothing to change." % wanted, markup=False)
+        return
+    if not apply_:
+        console.print("--apply would switch it. Nothing was written.", markup=False)
+        return
+    change = result.details["change"]
+    console.print("Switched %s to %s:%s: change %d. Undo with `undo %d --apply` (the undo is held to the same gate)." % (
+        library.name, wanted[0], wanted[1], change, change), markup=False, soft_wrap=True)
+
+
+def _embedded_lines(counts):
+    """What `embed-photos` says of a run: what it kept, and why the rest was not."""
+    console.print("Embedded %d of %d: %d kept, %d not kept (the photo was removed meanwhile, or the write failed); %d "
+                  "file(s) gone, %d could not be read%s (the next run tries them again)." % (
+                      counts["embedded"], counts["to_embed"], counts["kept"], counts["not_kept"], counts["gone"],
+                      sum(counts["unread"].values()),
+                      (": " + ", ".join("%s x%d" % item for item in sorted(counts["unread"].items())))
+                      if counts["unread"] else ""), markup=False, soft_wrap=True)
 
 
 @contextlib.contextmanager

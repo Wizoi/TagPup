@@ -16,7 +16,7 @@ missed after an unwatched sync (DECISIONS 2026-10-23). The paragraph below is th
 record of phases 0 to 3's slices.
 
 Status (2026-10-17): **phase 0 done** (measured, section 7); the plan below is reordered by what it showed (owner
-accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again) and
+accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again; deleted 2026-10-24 by phase 5) and
 2a (`cluster-faces` 2,113 s to 202 s, names unchanged). **Built, off:** 1a (the detector downscale, the setting
 `faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
 ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Measured:** phase 3's speed check (2026-10-18,
@@ -31,7 +31,7 @@ and reviewed but NOT merged: two blockers to fix first (a photo removed while th
 a ghost row; the change's name must not carry the folder) and two owner decisions taken (named old faces are
 paired first; new faces stay unnamed). **Slice B** (the `face-pass` command) is built. **Slice C** (the gate's scoring,
 `scripts/measure_face_gate.py`, read-only) is built on `feature/gate-scoring`, as built below; the owner picks the naming
-precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); **Step 2a (2026-10-24) is built:** the loader (`tagpup/ml/photo_models.py`, SigLIP 2 through `runtime.clip`), the tokenizer (`tokenizers` alone) and the readiness gate on a photo-model switch; **step 2b is next:** the re-embed command, the live switch, retiring the old vectors. Suggest's recalibration is not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
+precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); **Step 2a (2026-10-24) is built:** the loader (`tagpup/ml/photo_models.py`, SigLIP 2 through `runtime.clip`), the tokenizer (`tokenizers` alone) and the readiness gate on a photo-model switch; **Step 2b (2026-10-24) is built:** `embed-photos` (the new model's vectors made beside the old, `tagpup/services/photo_reembed.py`) and `set-photo-model` (the switch as one gated journaled change); `repair-vectors` deleted. The live run and switch are the main session's, then retiring the old vectors. Suggest's recalibration is not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
@@ -226,9 +226,9 @@ same scripts.
   the Orientation (0 of 59,519 rows of photo_index, counted 2026-10-16) nor the vector's age, so `repair-vectors`
   reads each file's header and tells a vector stale by making it again (#1529). It cannot come back by the same road
   once phase 6 puts how a photo is read into the key a vector is kept under; until then, a change in how CLIP is shown
-  a photo is reviewed as a change of model key. `repair-vectors` is deleted at phase 5's re-embed (delete:
-  embedding_repair.py, the CLI command, its tests and V9 entry, the SPEC heading, the DATABASE.md sentence, the 1f
-  note).
+  a photo is reviewed as a change of model key. `repair-vectors` was deleted at phase 5's re-embed (2026-10-24,
+  DECISIONS): `embed-photos` makes every vector of the new model from the upright photo, and after the switch the old
+  key is not read.
 
 **How it fails:** an index killed between the decode thread and the write (nothing half written: the existing
 transaction is unchanged); a decode thread raising on a damaged file (that photo is reported, the run goes on); two
@@ -661,6 +661,17 @@ The text tower alone stays resident in the server between runs; the image tower 
 CLI run (long indexes go through the CLI), resumable by what `embeddings` holds under the new key, dry-run first, on a
 copy first.
 
+**As built (steps 2a and 2b, 2026-10-24).** Built: the model is a library setting (`model.name`, `model.pretrained`,
+read through `tagpup/ml/photo_models.py`, whose row carries the word cut); the re-embed is `embed-photos --model
+NAME:WEIGHTS` (`tagpup/services/photo_reembed.py`: dry run first, resumable, on a turn of the card, every vector made
+from the upright photo); the switch is `set-photo-model NAME:WEIGHTS` or the gear, one journaled change refused while
+more than 5% of the photos hold no vector under the new key (`settings.photo_switch_on`, its undo held to the same
+gate). The tag-prompt cache is not recomputed by a run: Suggest makes each word under the library's model at its first
+run on it and keeps it (photo_index holds 540 words, 1,080 rows, under ViT-H; counted 2026-10-24), which
+`set-photo-model` counts. Kept as decided: the offer floor 0.60 and neighbour cut 0.35 (DECISIONS 2026-10-24). Not
+built: a SigLIP sigmoid score; a text tower resident apart from the image tower; retiring the old vectors (after the
+live switch). The run's recipe: docs/DEVELOPMENT.md, "Switching a library's photo model".
+
 **How it fails:** a re-embed killed at 40,000 photos (Suggest keeps using the old key until the library switches; a
 partial new key is never read); the card shared with Suggest (one turn at a time); disk (a second vector set: about
 240 MB at float32 for 1024 dimensions for photo_index, counted before the run).
@@ -916,7 +927,7 @@ Suggest on the held-out photos (`table`):
 | A name lost in a migration or a swap | 3 | Old vectors kept; boxes carried by IoU; unmatched named faces listed, never dropped; backup; copy first |
 | The new detector is no faster than MTCNN | 3 | The speed check comes before the design is fixed; the plan is re-read if it fails |
 | A threshold carried to a model it does not fit | 2, 3, 4, 5 | Thresholds read off the hold-out curve per model, on unnamed faces too |
-| A stale vector kept past a change in how photos are read | 1f, 5, 6 | `repair-vectors` now; the fingerprint in the model key at phase 6 |
+| A stale vector kept past a change in how photos are read | 1f, 5, 6 | `repair-vectors` (1f, deleted at 5: the re-embed makes every vector upright); the fingerprint in the model key at phase 6 |
 | Peak card memory 9,982 of 10,240 MiB on the phase 0 sample, MTCNN at full resolution on the largest photos, with the desktop apps holding up to 6 GB (#1533): by design until phase 3 | 1, 3 | The 1a cap exists and stays OFF (owner, DECISIONS 2026-10-16); 1b's prefetch bounds the bytes it holds; phase 3 replaces MTCNN. Until then the owner closes the desktop apps for a large index |
 | Two heavy jobs on one card | all | The GPU turn; no two test runs at once |
 | The migration is judged by feel | 3 | Phase 0 timings and counts before and after |

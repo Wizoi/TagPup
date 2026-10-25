@@ -71,8 +71,11 @@ class PhotoEmbeddings:
         as it was opened to be embedded, else as it is now. Taken after, a photo rotated
         while it was embedded kept the vector from before the turn as current (#86).
 
-        True when the vector was written; False when it was not -- a looking run, a file gone, no library, or a failed
-        write (logged) -- so a pass can count what it kept rather than what it tried (#1823)."""
+        By path, a photo with no row is given one (store.embeddings.put: Suggest's photo of a folder just added); a
+        pass over the rows it read keeps by id (keep_batch).
+
+        True when the vector was written; False when it was not -- a looking run, a file gone, no library, a row gone,
+        or a failed write (logged) -- so a pass can count what it kept rather than what it tried (#1823)."""
         if not self.remember:
             return False
         try:
@@ -81,9 +84,11 @@ class PhotoEmbeddings:
             if stamp is None or not self._library():
                 return False
 
+            vector = np.array(embedding, dtype=np.float32).tobytes()
+
             def store(conn):
-                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1],
-                                     np.array(embedding, dtype=np.float32).tobytes())
+                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector)
+                return True
 
             # On a connection of its own. Every worker in the suggestion pool writes its
             # embedding here, and they were all going through the index's shared
@@ -91,14 +96,29 @@ class PhotoEmbeddings:
             # telling the loser the database was locked.
             writer = getattr(self.photo_index, "write_on_own_connection", None)
             if writer is not None:
-                writer(store, label="embedding cache for %s" % os.path.basename(file_path))
-            else:
-                store(self.photo_index.conn)
-                self.photo_index.conn.commit()
-            return True
+                return bool(writer(store, label="embedding cache for %s" % os.path.basename(file_path)))
+            kept = store(self.photo_index.conn)
+            self.photo_index.conn.commit()
+            return kept
         except Exception as e:
             logger.warning(f"Failed to write cache for {file_path}: {e}")
             return False
+
+    def keep_batch(self, found):
+        """Keep each of `found` [(photo id, vector, (mtime, size) of the file as it was opened)] at that row, by id, in
+        ONE transaction (one connection, one take of the write lock, one commit; #1839): a pass over the rows it read
+        (tagpup.services.photo_reembed). A row gone meanwhile is not kept, and none is made for it (put_by_id). How many
+        were kept; none in a looking run or without a library. A write that fails raises: what earlier batches kept is
+        kept, and the photos of this one are made again by the next run."""
+        if not found or not self.remember or not self._library():
+            return 0
+        rows = [(photo_id, np.asarray(vector, dtype=np.float32).tobytes(), stamp) for photo_id, vector, stamp in found]
+
+        def store(conn):
+            return sum(store_embeddings.put_by_id(conn, photo_id, self.model_key, stamp[0], stamp[1], vector)
+                       for photo_id, vector, stamp in rows)
+
+        return self.photo_index.write_on_own_connection(store, label="the vectors of %d photos" % len(rows))
 
     def of(self, file_path, force_recompute=False):
         """A photo's vector: the one kept, unless `force_recompute`; else made and kept (made(prepared))."""
