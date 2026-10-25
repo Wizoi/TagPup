@@ -214,6 +214,26 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.assertEqual((0, self.PHOTOS), (again["error_count"], self.coast()))
         self.assertEqual([("done", self.PHOTOS)], self.change_files())
 
+    def test_a_save_whose_write_the_share_stops_says_so(self):
+        """A save reports a write's errors, not its refusal: the photo under way is its error. Its session is its own, not
+        kept dead, so the share stays away for the read after the write too."""
+        from tagpup.services import tagging
+        away = []
+
+        def write(_path, _n):
+            away.append(True)
+            raise exiftool_session.ExifToolTimeout(STALLED)
+
+        def read(_path, _n):
+            if away:
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write, self.files.on_read = write, read
+        path = self.path(self.ids[0])
+        saved = tagging.save_photo(self.library, path, "", ["Trips/Coast"], None, "exiftool", "")
+        self.assertFalse(saved.ok)
+        self.assertIn("share stopped answering", str(saved.errors[0][1]))
+        self.assertEqual([("writing", 1)], self.change_files())
+
     def test_a_stall_at_the_first_file_writes_nothing_and_leaves_no_change_to_undo(self):
         self.stall_at(1)
         done = self.tags_edit(add=["Trips/Coast"])

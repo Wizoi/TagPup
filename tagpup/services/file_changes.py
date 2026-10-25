@@ -458,6 +458,9 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                 outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
                                       wrote=wrote, now=now, whole=read_whole, stall_stops=True)
             except _Stalled:
+                # The photo under way is the write's error too: a caller that reports errors and not a refusal (a save)
+                # still says it.
+                result.fail(path, "%s: the share stopped answering as it was written; nothing after it was" % row.named())
                 result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
                 break
             if outcome == "done":
