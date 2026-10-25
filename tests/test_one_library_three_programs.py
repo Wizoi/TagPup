@@ -4,7 +4,8 @@ A drain sees only its own process's work, so these are the owner's days a test o
 index or `sync --apply` is writing; a look from Claude (MCP) at a library the server has not migrated yet; the CLI's sync and the
 server's sync (the watcher's, the recurring job's, the page's) over one drift. Real processes through tagpup.core.processes, in a
 home of their own with ports of their own; the writer in the first test is a process holding the store's own writer open, as a
-CLI index does, since a real index cannot be held part-way without the card.
+CLI index does, since a real index cannot be held part-way without the card. A real `bake-photos --apply` (BAKER), held
+after its first file is written: an update while it writes, and a second CLI window's bake of the same library at once.
 
 Lifted: test_sync_entry_points' TheCli.test_a_dry_run_says_what_it_found_and_changes_nothing (the dry run of the real CLI is the
 first step of the sync test here). Broken in a scratch copy and this file fails: runtime.sync applying on a dry run (the
@@ -278,6 +279,33 @@ class ABakeBesideTheOtherPrograms(Waits, ALibraryToBake):
 
     def plan_of(self, path):
         return baked_files.plan(self.library.path, path, DETECTOR)
+
+    def test_an_update_while_a_bake_is_under_way_neither_waits_for_it_nor_breaks_it(self):
+        trip = self.three_to_bake()
+        env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1", TAGPUP_WEB_NO_WARMUP="1", TAGPUP_WEB_RELOADED="1")
+        ports = [free_port(), free_port()]
+        old = processes.start([sys.executable, os.path.join(WORKSPACE_DIR, "tagpup_web.py"), "--tagpup-port", str(ports[0]),
+                               "--tuner-port", str(ports[1])], env=env, cwd=self.home.root, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: old.poll() is None and processes.kill_tree(old.pid))
+        self.wait_until(lambda: self.serving(ports[0]), "the server never answered")
+        bake, mid, go, out = self.baker("bake", hold=True)
+        self.wait_until(lambda: os.path.exists(mid), "the bake never wrote its first file")
+
+        said = []
+        with mock.patch.object(launcher, "QUIET", 0):
+            way = launcher.make_way(ports[0], NEW, say=said.append, open_page=lambda: None, answering=tagpup_web.answering)
+
+        self.assertEqual(launcher.SERVE, way[0], said)
+        self.assertIsNotNone(old.wait(timeout=60), "the old server still runs")
+        self.assertIsNone(bake.poll(), "the update ended the bake")
+        open(go, "w").close()
+        self.assertEqual(0, bake.wait(timeout=120), self.said(out))
+        (change,) = [change for (change,) in self.rows("SELECT id FROM changes WHERE operation = ?", (baking.OPERATION,))]
+        self.assertEqual([("done",)] * 3, self.rows("SELECT state FROM change_files WHERE change_id = ?", (change,)),
+                         "the change applied whole")
+        self.assertIn("Written: 3 file(s), change %d." % change, self.said(out))
+        self.whole(trip, ["bake"])
 
     def test_two_bakes_at_once_bake_each_photo_once_and_the_second_leaves_the_firsts_change(self):
         trip = self.three_to_bake()
