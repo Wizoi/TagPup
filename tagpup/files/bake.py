@@ -256,7 +256,9 @@ def values(photo_vector, faces, applied, fingerprint, photo_model, face_model):
     return {WRITTEN[key]: texts for key, texts in held.items()}
 
 
-def _fingerprint(text):
+def fingerprint_of(text):
+    """(key, 32-byte digest) of a Fingerprint value (`<key>:<sha256 hex>`, values' spelling). Raises ValueError for
+    a key other than images.FINGERPRINT_KEY or a digest that is not a sha256."""
     key, _, digest = text.partition(":")
     if key != images.FINGERPRINT_KEY:
         raise ValueError("a fingerprint under the key %r, not %r" % (key, images.FINGERPRINT_KEY))
@@ -305,7 +307,7 @@ def parse(record):
         return Rejected("the bake is missing " + ", ".join(missing))
     try:
         photo_model, face_model = _text(record, PHOTO_MODEL), _text(record, FACE_MODEL)
-        key, digest = _fingerprint(_text(record, FINGERPRINT))
+        key, digest = fingerprint_of(_text(record, FINGERPRINT))
         photo_vector = decode_vector(_text(record, PHOTO_VECTOR), PHOTO_DIM)
         found = record[FACES_FOUND]
         if isinstance(found, bool) or not isinstance(found, int) or found < 0:
