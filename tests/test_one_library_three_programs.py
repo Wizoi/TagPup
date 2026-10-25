@@ -30,6 +30,8 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from free_port import free_port  # noqa: E402
 import migration_names  # noqa: E402
+import baked_files  # noqa: E402
+from test_a_bake_is_rehearsed_folder_by_folder import DETECTOR, ALibraryToBake  # noqa: E402
 
 import tagpup_web  # noqa: E402
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
@@ -38,8 +40,9 @@ from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import baking  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
-from tagpup.store import db, schema  # noqa: E402
+from tagpup.store import db, file_journal, schema  # noqa: E402
 
 THEN = 1_700_000_000
 NEW = "20261004-110000-bbbbbbb"
@@ -61,8 +64,54 @@ def write(conn):
 db.write_with_connection(%(path)r, write)
 """
 
+#: A CLI's `bake-photos --apply`, the face model a stand-in; with `hold`, held once its first file is written (before the
+#: journal records it) until the test's go-ahead. Each file it writes is logged with its name: which program wrote what.
+BAKER = """
+import os, sys, time
+sys.path[:0] = [%(root)r, %(tests)r]
+from unittest import mock
+from stand_in_models import NewFaces
+import tagpup_cli
+from tagpup.files import field_values
+from tagpup.runtime import Runtime
+from tagpup.services import file_changes
+hold, mid, go, log, name = %(hold)r, %(mid)r, %(go)r, %(log)r, %(name)r
+real_write = field_values.write
+def write(et, path, *args, **kwargs):
+    done = real_write(et, path, *args, **kwargs)
+    with open(log, "a", encoding="utf-8") as handle:
+        print(name, path, file=handle)
+    return done
+def reached(step):
+    if hold and step == "file written" and not os.path.exists(mid):
+        open(mid, "w").close()
+        while not os.path.exists(go):
+            time.sleep(0.05)
+runtime = Runtime(build_clip=lambda settings: None, build_faces=lambda settings: NewFaces())
+with mock.patch.object(file_changes, "_reached", reached), mock.patch.object(field_values, "write", write):
+    with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime):
+        tagpup_cli.cli(["--db", %(path)r, "bake-photos", "--apply"], standalone_mode=False)
+"""
 
-class OneLibrary(unittest.TestCase):
+
+class Waits:
+    @staticmethod
+    def serving(port):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d/api/server" % port, timeout=5) as reply:
+                return "version" in json.loads(reply.read().decode("utf-8"))
+        except OSError:
+            return False
+
+    def wait_until(self, check, why, seconds=90):
+        import time
+        deadline = time.time() + seconds
+        while not check():
+            self.assertLess(time.time(), deadline, why)
+            time.sleep(0.2)
+
+
+class OneLibrary(Waits, unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="three_programs_")
         self.addCleanup(own_home.end_processes, self.home.root)   # the reaper: every process this test started, and theirs
@@ -112,21 +161,6 @@ class OneLibrary(unittest.TestCase):
         self.assertEqual([("ok",)], self.rows("PRAGMA integrity_check"))
         self.assertEqual([(paths.stored("C:/Cli Index/one.jpg"),), (paths.stored("C:/Cli Index/two.jpg"),)],
                          self.rows("SELECT path FROM photos ORDER BY path"), "the write is whole: both rows, once")
-
-    @staticmethod
-    def serving(port):
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:%d/api/server" % port, timeout=5) as reply:
-                return "version" in json.loads(reply.read().decode("utf-8"))
-        except OSError:
-            return False
-
-    def wait_until(self, check, why, seconds=90):
-        import time
-        deadline = time.time() + seconds
-        while not check():
-            self.assertLess(time.time(), deadline, why)
-            time.sleep(0.2)
 
     def test_an_mcp_look_at_a_library_one_migration_behind_does_not_migrate_it(self):
         behind = self.home.library("regatta.db")
@@ -195,6 +229,78 @@ class OneLibrary(unittest.TestCase):
         self.assertEqual([("sync",)], self.rows("SELECT operation FROM changes WHERE operation = 'sync'"), "one change, not two")
         self.assertEqual([(moved,)], [(path,) for (path,) in self.rows("SELECT path FROM photos")], "the row follows its file, once")
         self.assertIn("In step", self.cli("sync"))
+
+
+class ABakeBesideTheOtherPrograms(Waits, ALibraryToBake):
+    """`bake-photos --apply` in a CLI window, real processes: an update of the app while it writes, and a second CLI
+    window's bake of the same library at once (#1937)."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(own_home.end_processes, self.home.root)
+        self.log = os.path.join(self.home.root, "written.log")
+
+    def baker(self, name, hold=False):
+        """A bake process (BAKER) named `name`: (it, its mid-file, its go-file, the file it says its lines in)."""
+        mid, go, out = (os.path.join(self.home.root, name + end) for end in (".mid", ".go", ".out"))
+        script = BAKER % {"root": WORKSPACE_DIR, "tests": os.path.dirname(os.path.abspath(__file__)), "hold": hold,
+                          "mid": mid, "go": go, "log": self.log, "name": name, "path": self.library.path}
+        env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1", PYTHONIOENCODING="utf-8")
+        with open(out, "w", encoding="utf-8") as said:
+            started = processes.start([sys.executable, "-c", script], env=env, cwd=self.home.root,
+                                      stdin=subprocess.DEVNULL, stdout=said, stderr=subprocess.STDOUT)
+        self.addCleanup(lambda: started.poll() is None and processes.kill_tree(started.pid))
+        return started, mid, go, out
+
+    @staticmethod
+    def said(out):
+        with open(out, encoding="utf-8") as handle:
+            return handle.read()
+
+    def written(self):
+        """[(program, path)] of each file write, in order."""
+        with open(self.log, encoding="utf-8") as handle:
+            return [tuple(line.rstrip().split(" ", 1)) for line in handle if line.strip()]
+
+    def whole(self, photo_paths, writers):
+        """Every photo baked, its bake written once (by one of `writers`), and the journal done with: one done row a file."""
+        self.assertEqual([], file_journal.unfinished(self.library.path))
+        written = self.written()
+        self.assertEqual(sorted(paths.key(path) for path in photo_paths), sorted(paths.key(path) for _who, path in written),
+                         "each file's bake written once")
+        self.assertLessEqual({who for who, _path in written}, set(writers))
+        done = self.rows("SELECT path, COUNT(*) FROM change_files WHERE state = 'done' GROUP BY path")
+        self.assertEqual(sorted(paths.key(path) for path in photo_paths), sorted(paths.key(path) for path, _n in done))
+        self.assertEqual([1] * len(photo_paths), [n for _path, n in done], "one done row a file, in one change")
+        for path in photo_paths:
+            self.assertIsInstance(self.plan_of(path), baking.Current)
+        self.assertEqual([("ok",)], self.rows("PRAGMA integrity_check"))
+
+    def plan_of(self, path):
+        return baked_files.plan(self.library.path, path, DETECTOR)
+
+    def test_two_bakes_at_once_bake_each_photo_once_and_the_second_leaves_the_firsts_change(self):
+        trip = self.three_to_bake()
+        first, mid, go, first_out = self.baker("first", hold=True)
+        self.wait_until(lambda: os.path.exists(mid), "the first bake never wrote its first file")
+        (change,) = [each.id for each in file_journal.unfinished(self.library.path)]
+
+        second, _mid, _go, second_out = self.baker("second")
+        self.assertEqual(0, second.wait(timeout=120), self.said(second_out))
+        self.assertIn("Change %d (%s) is being written by another program still running: it is left to it."
+                      % (change, baking.OPERATION), self.said(second_out))
+        self.assertEqual([change], [each.id for each in file_journal.unfinished(self.library.path)],
+                         "the first's change is left to it")
+        open(go, "w").close()
+        self.assertEqual(0, first.wait(timeout=120), self.said(first_out))
+        self.whole(trip, ["first", "second"])
+        self.assertIn("Written: 1 file(s), change %d." % change, self.said(first_out),
+                      "the first says the one file it wrote, not the two the second wrote since its plan")
+        self.assertIn("Written: 2 file(s), change", self.said(second_out))
+
+    def three_to_bake(self):
+        os.makedirs(os.path.join(self.folder, "Trip"), exist_ok=True)
+        return [self.photo(os.path.join("Trip", name), faces=1) for name in ("x.jpg", "y.jpg", "z.jpg")]
 
 
 if __name__ == "__main__":
