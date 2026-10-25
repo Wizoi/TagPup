@@ -55,6 +55,21 @@ class AddFindings(unittest.TestCase):
             add_findings.add(TABLE, [], [(9, "fixed")])
 
 
+class SimilarRows(unittest.TestCase):
+    OLD = ("| 1847 | 2026-10-24 | low: `retire-photo-vectors` before `set-photo-model` would plan the fresh vectors of "
+           "`embed-photos` for deletion. | decided |")
+
+    def test_a_second_row_about_one_case_is_noticed_unless_it_cites_the_first(self):
+        again = "| ? | 2026-10-24 | low: `retire-photo-vectors` run before `set-photo-model` deletes `embed-photos` vectors. | open |"
+        existing = add_findings.existing_rows(self.OLD)
+        self.assertEqual([("?", 1847)], add_findings.similar_rows([again], existing))
+        self.assertEqual([], add_findings.similar_rows([again.replace("run before", "run (see #1847) before")], existing))
+
+    def test_a_row_about_another_case_is_not_noticed(self):
+        other = "| ? | 2026-10-24 | low: `dedupe_faces` keeps the older `faces_in_photo` row. | open |"
+        self.assertEqual([], add_findings.similar_rows([other], add_findings.existing_rows(self.OLD)))
+
+
 class OpenRows(unittest.TestCase):
     def test_a_row_waiting_on_something_is_open_whatever_its_status_word(self):
         text = MIXED + "| 253 | 2026-09-25 | wrong: A fault. | planned: DECISIONS 2026-09-25 |\n"

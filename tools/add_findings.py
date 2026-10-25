@@ -192,6 +192,45 @@ def take(findings, branch, floor=0):
     return insert_rows(findings, lines), mapping
 
 
+SIMILAR_SHARED = 3     # identifier-like words two rows share before one is said to look like the other
+SIMILAR_WINDOW = 150   # only rows this close in number are compared
+
+
+def identifiers(row):
+    """The identifier-like words of a row (`retire-photo-vectors`, `embed_photos`, `mod.NAME`), lower case with `-` read
+    as `_`, dates left out, a dotted name also by its parts. Two rows about one case share several (#1847, #1850)."""
+    found = set()
+    for word in re.findall(r"[A-Za-z0-9_.\-/]+", row):
+        word = word.strip(".-/").lower().replace("-", "_")
+        if len(word) < 8 or re.match(r"\d{4}_\d\d_\d\d$", word) or not re.search(r"[_./]", word):
+            continue
+        found.add(word)
+        found.update(part for part in re.split(r"[./]", word) if len(part) >= 8 and "_" in part)
+    return found
+
+
+def similar_rows(new_rows, existing):
+    """[(new row's number or name, the existing number it looks like)] for each new row that shares SIMILAR_SHARED
+    identifiers with a row of `existing` ({number: row text}) within SIMILAR_WINDOW numbers and does not cite it as
+    `#n`. A notice, not a refusal: related rows are common (29 of 100 rows shared four with an older one, 2026-10-24),
+    so a refusal would be wrong too often; the main session cites the row, or writes the new one into it."""
+    newest = max(existing, default=0)
+    seen = []
+    for row in new_rows:
+        name = row.split("|")[1].strip()
+        words = identifiers(without_first_cell(row))
+        for number, text in sorted(existing.items()):
+            if newest - number <= SIMILAR_WINDOW and "#%d" % number not in row \
+                    and len(words & identifiers(without_first_cell(text))) >= SIMILAR_SHARED:
+                seen.append((name, number))
+    return seen
+
+
+def existing_rows(*texts):
+    return {int(m.group(1)): line for text in texts for line in text.splitlines()
+            if (m := re.match(r"\| (\d+) \|", line))}
+
+
 def _read(path):
     with open(path, encoding="utf-8", newline="") as handle:
         return handle.read()
@@ -203,6 +242,13 @@ def _write(path, text, newline="\n"):
         os.makedirs(folder, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(text.replace("\n", newline))
+
+
+def _say_similar(rows, findings, archive_dir):
+    existing = existing_rows(findings.replace("\r\n", "\n"), *load_archives(archive_dir).values())
+    for name, number in similar_rows(rows, existing):
+        print("notice: row %s looks like #%d (shares %d or more identifiers); cite it as #%d or fold the row into it"
+              % (name, number, SIMILAR_SHARED, number))
 
 
 def main(argv=None):
@@ -237,6 +283,7 @@ def main(argv=None):
         given = []
         if rows:
             text, given = add_branch(text, rows)
+            _say_similar(rows, _read(args.findings), args.archive_dir)
         for key, status in args.status:
             updated = set_status(text, key, status)
             if updated is None:
@@ -266,8 +313,12 @@ def main(argv=None):
             continue
         parser.error("no finding #%s" % key)
     if rows:
+        _say_similar(rows, text, args.archive_dir)
         text, given = add(text, rows, floor=floor)
     if args.take:
+        taken = _read(args.take).replace("\r\n", "\n")
+        _say_similar([line for line in taken.splitlines() if re.match(r"\| (?:B-\d+|\?) \|", line)], text,
+                     args.archive_dir)
         text, mapping = take(text, _read(args.take).replace("\r\n", "\n"), floor=floor)
     if args.archive:
         text, moves, moved = archive(text, archives)
