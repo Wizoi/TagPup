@@ -19,10 +19,10 @@ from unittest import mock
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
+from tagpup.core.orientation import ROTATED_ORIENTATION
 from tagpup.files.exiftool_session import ExifToolSession
 from tagpup.services import file_only, rotation
 from tagpup.services import photos as photo_actions
-from tagpup.services.rotation import ROTATED_ORIENTATION
 from tagpup.store import db
 from tests import photo_rows
 from tests.face_rows import add_face
