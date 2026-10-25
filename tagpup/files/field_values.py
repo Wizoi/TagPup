@@ -26,6 +26,9 @@ from tagpup.files import bake, exiftool_session, identity
 
 logger = logging.getLogger(__name__)
 
+#: The line breaks ExifTool reads as the end of an argument (pyexiftool sends one a line).
+LINE_BREAKS = (chr(13), chr(10))
+
 #: What ExifTool says a file is. A photo's starts with "image/".
 MIME_TYPE = "File:MIMEType"
 
@@ -164,7 +167,8 @@ def write(et, photo_path, values):
 
     A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
     (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,
-    under any other, so another is refused here, by a ValueError, before anything is written."""
+    under any other, so another is refused here, by a ValueError, before anything is written; so is a struct text holding
+    a line break (LINE_BREAKS), which ExifTool would write the first line of."""
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -175,6 +179,9 @@ def write(et, photo_path, values):
         named = fields.WRITTEN_AS.get(field, field)
         if fields.is_struct(field) and len(texts) > 1:
             raise ValueError("%s is one structure, one text, not %d" % (field, len(texts)))
+        if fields.is_struct(field) and any(br in text for text in texts for br in LINE_BREAKS):
+            # ExifTool would write the text's first line and fail on the rest, which it takes for a file's name (#1882).
+            raise ValueError("Its %s holds a line break, which ExifTool cannot be given; nothing was written" % field)
         if not texts:
             clear.append("-%s=" % field)
         elif fields.read_key(field) in fields.LIST_FIELDS or len(texts) > 1:

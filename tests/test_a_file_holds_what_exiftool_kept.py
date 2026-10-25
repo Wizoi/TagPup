@@ -202,6 +202,18 @@ FOREIGN_MWG = ("-XMP-mwg-rs:RegionInfo={AppliedToDimensions={W=16,H=12,Unit=pixe
                "Name=Ash|, Corrin |{x|}||y,Area={X=0.5,Y=0.5,W=0.25,H=0.25,Unit=normalized}}]}")
 FOREIGN_MP = "-XMP-MP:RegionInfoMP={Regions=[{PersonDisplayName=Ash Corrin,Rectangle=0.1|, 0.2|, 0.3|, 0.4}]}"
 
+#: An XMP block holding only MWG regions: `%s`, the RDF of one region (seeded whole: ExifTool writes neither a line break in
+#: a value nor a field of a namespace it does not know).
+REGIONS_XMP = """<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'?>
+<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>
+<rdf:Description rdf:about='' xmlns:mwg-rs='http://www.metadataworkinggroup.com/schemas/regions/'
+ xmlns:stArea='http://ns.adobe.com/xmp/sType/Area#' xmlns:nw='http://example.org/nowhere/'>
+<mwg-rs:Regions rdf:parseType='Resource'><mwg-rs:RegionList><rdf:Bag><rdf:li rdf:parseType='Resource'>
+<mwg-rs:Type>Face</mwg-rs:Type>%s
+<mwg-rs:Area stArea:x='0.5' stArea:y='0.5' stArea:w='0.25' stArea:h='0.25' stArea:unit='normalized'/>
+</rdf:li></rdf:Bag></mwg-rs:RegionList></mwg-rs:Regions></rdf:Description></rdf:RDF></x:xmpmeta>
+<?xpacket end='w'?>"""
+
 
 class ABakeIsWritten(KeptCase):
     """A bake written through the one writer, journaled, undone, settled after a crash (PHASE6_DESIGN, section 9)."""
@@ -237,6 +249,15 @@ class ABakeIsWritten(KeptCase):
     def outside(self, path, *args):
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.execute(*args, "-overwrite_original", path)
+
+    def seed_regions(self, path, region):
+        # Another program's regions, its XMP block written whole (REGIONS_XMP).
+        seed = os.path.join(os.path.dirname(path), "seed.xmp")
+        with open(seed, "w", encoding="utf-8", newline="") as handle:
+            handle.write(REGIONS_XMP % region)
+        self.outside(path, "-XMP<=" + seed)
+        os.remove(seed)
+        return self.regions_of(path)
 
     def assert_baked(self, path, values, faces):
         held = self.bake_of(path)
@@ -347,6 +368,33 @@ class ABakeIsWritten(KeptCase):
                     field_values.write(et, a, {fields.REGION_INFO: [text]})
                     self.assertEqual({fields.REGION_INFO: [text]}, field_values.read_one(et, a, [fields.REGION_INFO]))
                 self.assertEqual(name, self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Name"])
+
+    def test_a_region_text_holding_a_line_break_is_refused_before_anything_is_written(self):
+        # ExifTool takes one value a line: a write of one holding a line break wrote its first line, and failed (#1882).
+        a = self.make_read("a.jpg")
+        written = os.stat(a).st_mtime_ns
+        text = bake.region_text({"RegionList": [{"Type": "Face", "Name": "Ash" + chr(10) + "Corrin"}]})
+        result = file_changes.write_fields(self.library, "bake", EXIFTOOL, [a], [fields.REGION_INFO],
+                                           lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
+        self.assertEqual(0, result.changed)
+        self.assertIn("line break", str(result.errors))
+        self.assertEqual((written, {}), (os.stat(a).st_mtime_ns, self.regions_of(a)))
+        self.assertEqual(("failed", []), (self.status(result.details["change"]), self.states(result.details["change"])))
+
+    def test_another_programs_region_holding_a_line_break_is_not_half_put_back(self):
+        a = self.make_read("a.jpg")
+        before = self.seed_regions(a, "<mwg-rs:Name>Ash" + chr(10) + "Corrin</mwg-rs:Name>")
+        self.assertEqual("Ash" + chr(10) + "Corrin", before["XMP:RegionInfo"]["RegionList"][0]["Name"])
+        values = self.values(2)
+        change = self.bake([a], values).details["change"]
+        self.assert_baked(a, values, 2)
+        written = os.stat(a).st_mtime_ns
+        undone = self.undo(change)
+        self.assertEqual(0, undone.changed)
+        self.assertIn("line break", str(undone.errors))
+        self.assertEqual(["conflict"], self.states(change))
+        self.assertEqual(written, os.stat(a).st_mtime_ns, "the undo wrote half of the regions")
+        self.assert_baked(a, values, 2)
 
 
 if __name__ == "__main__":
