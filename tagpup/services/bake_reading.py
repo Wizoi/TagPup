@@ -65,7 +65,10 @@ def taken(found, meta, fingerprint, picture, *, photo_key, face_key):
         return Taken(verdict=STALE)
     vector = found.photo_vector.tolist() if found.photo_model == photo_key else None
     detected = None
-    if face_key is not None and found.face_model == face_key and picture is not None:
+    # A picture the face model could not decode (it catches every exception: a truncated JPEG, #415) is a NotDetected: no
+    # face side from the bake, so the photo's detection is worked out, or fails, exactly as it does without a bake.
+    if (face_key is not None and found.face_model == face_key and picture is not None
+            and not getattr(picture, "failed", False)):
         detected = detections(found, picture.stored)
     return Taken(vector, detected, READ if vector is not None or detected is not None else OTHER_MODELS)
 

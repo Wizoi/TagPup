@@ -48,6 +48,7 @@ from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
+from tagpup.ml.faces import NotDetected  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
@@ -70,6 +71,12 @@ class _Hold:
 class _Faces(NewFaces):
     """The new face model, which raises when the test refuses it (and notes the photo either way)."""
     refused = False
+    undecodable = ()
+
+    def picture(self, path, *, max_side):
+        if os.path.basename(path) in self.undecodable:
+            return NotDetected()
+        return super().picture(path, max_side=max_side)
 
     def detect_and_embed(self, picture):
         if self.refused:
@@ -312,6 +319,22 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(["Baked into the files: 1 photo(s) read from their file, 0 worked out on the graphics card; 0 bake(s) "
                           "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 1 "
                           "photo(s) needed no graphics card."], said)
+
+    def test_a_photo_whose_face_decode_fails_is_still_indexed_with_its_vector_from_the_bake(self):
+        # #415: the face model catches every exception of its own decode (a truncated JPEG), and answers NotDetected.
+        folder = self.folder("Harbour Truncated")
+        cut = self.picture(folder, "cut.jpg", "navy")
+        whole = self.picture(folder, "whole.jpg", "teal")
+        held = self.bake(cut, [baked_files.area(0)], seed=1)
+        self.bake(whole, [baked_files.area(1)], seed=2)
+        self.detector.undecodable = ("cut.jpg",)
+        result = self.index(folder)
+        self.assertNotIn("Error indexing", result.output)
+        self.assertEqual(2, self.query("SELECT COUNT(*) FROM photos")[0][0], result.output)
+        self.assertTrue(np.allclose(bake.parse(held).photo_vector, self.vector(cut), atol=1e-6))
+        self.assertEqual([], self.faces(cut))
+        self.assertEqual([], self.detected(cut), "a detection that failed is not recorded as one that found none")
+        self.assertEqual(1, len(self.faces(whole)))
 
     def test_the_line_reaches_the_servers_index_job_whole(self):
         folder = self.folder("Harbour Job")
