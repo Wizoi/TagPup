@@ -29,8 +29,9 @@ import os
 
 from tagpup.core import paths
 from tagpup.files import bake, exiftool_session, field_values, images
-from tagpup.services import baking
-from tagpup.store import db, inspection, photo_fingerprints
+from tagpup.services import baking, file_changes
+from tagpup.services import snapshots as snapshot_service
+from tagpup.store import db, file_journal, inspection, photo_fingerprints
 from tagpup.store import roots as store_roots
 
 #: How many photos of a run are decoded for their fingerprint.
@@ -120,6 +121,153 @@ def dry_run(library, exiftool_path, detector, folders=None, stop=None, heard=Non
             if folder.stalled:
                 stalled = tally.folder
     return DryRun(found, total, walk.stopped, stalled)
+
+
+@dataclasses.dataclass
+class Baked(Tally):
+    """What an apply did with the photos of one folder (or of the run, folder None): the Tally of their plan, `current`
+    taking in a photo found holding the bake when its write read it; `change`, the folder's change in History (None:
+    nothing written; a run's total leaves it None); `written`, the files the journal holds done; `conflicts` and `failed`,
+    photo ids: changed outside since they were read, and not written for another reason (the write's error)."""
+    change: object = None
+    written: int = 0
+    conflicts: list = dataclasses.field(default_factory=list)
+    failed: list = dataclasses.field(default_factory=list)
+
+    def add(self, other):
+        super().add(other)
+        self.written += other.written
+        self.conflicts += other.conflicts
+        self.failed += other.failed
+
+
+@dataclasses.dataclass
+class Applied:
+    """An apply: its folders' Baked, in path order, and the whole run's; `snapshot`, the Result of the one snapshot it
+    took before its first write (None: it wrote nothing); `stopped`, asked to stop before a folder; `stalled`, the folder
+    whose read or write ExifTool did not answer for in its deadline, which ended the run; `refused`, the sentence of the
+    write that refused or stopped, ending the run; `interrupted`, a Ctrl+C's: {"change", "written", "left"} of the folder
+    under way (each None when it stopped before that folder's write)."""
+    folders: list
+    total: Baked
+    snapshot: object = None
+    stopped: bool = False
+    stalled: object = None
+    refused: object = None
+    interrupted: object = None
+
+
+def apply(library, exiftool_path, detector, folders=None, stop=None, heard=None, told=None):
+    """Bake `library`'s photos (under `folders`, when given), one journaled change of each folder: an Applied. `stop`, a
+    threading.Event asked before each folder; `heard(baked, number, folders)`, told each folder's Baked once its write is
+    done; `told(sentence)`, what the run does besides: the changes it finishes first, the snapshot. A Ctrl+C is caught and
+    counted (Applied.interrupted); a crash raises, its change settled by the next run, which says so."""
+    told = told or (lambda said: None)
+    _settle(library, exiftool_path, told)
+    run = Applied([], Baked())
+    under_way = None
+    with field_values.session(exiftool_path) as session:
+        et = exiftool_session.StaysDead(session)   # the reads and the writes: timed out once, it is not asked again
+        walk = Walk(library, et, detector, folders, stop, values=True, whole_folders=True)
+        try:
+            for number, folder in enumerate(walk, 1):
+                under_way = Baked(folder=folder.folder, not_answered=folder.not_answered)
+                for planned in folder.photos:
+                    under_way.count(planned)
+                to_bake = [planned for planned in folder.photos if isinstance(planned.plan, baking.ToBake)]
+                if to_bake:
+                    if run.snapshot is None:
+                        run.snapshot = _snapshot(library, told)
+                    result = _write(library, exiftool_path, et, folder, to_bake, under_way)
+                    if result.refused:
+                        run.refused = result.refused
+                        if (result.details.get("stopped") or {}).get("share"):
+                            run.stalled = folder.folder
+                if folder.stalled:
+                    run.stalled = folder.folder
+                done, under_way = under_way, None
+                _counted(run, done)
+                if heard is not None:
+                    heard(done, number, len(walk))
+                if run.refused or run.stalled:
+                    break
+        except KeyboardInterrupt as stopped:
+            run.interrupted = {name: getattr(stopped, name, None) for name in ("change", "written", "left")}
+            if under_way is not None:
+                under_way.change = run.interrupted["change"]
+                under_way.written = run.interrupted["written"] or 0
+                _counted(run, under_way)
+        run.stopped = walk.stopped
+    return run
+
+
+def _counted(run, baked):
+    if baked.photos or baked.not_answered:
+        run.folders.append(baked)
+        run.total.add(baked)
+
+
+def _settle(library, exiftool_path, told):
+    """Finish the changes of photo files a run that stopped left unfinished (#1924), before planning: the one owner,
+    file_changes.settle, settles them by what each file holds, and the run says which it finished and which it left. A
+    change another program still running carries out is its own (file_journal.owner_alive), and is left to it."""
+    found = file_journal.unfinished(library.path)
+    if not found:
+        return
+    left_behind = []
+    for change in found:
+        if change.owner and file_journal.owner_alive(change.owner):
+            told("Change %d (%s) is being written by another program still running: it is left to it."
+                 % (change.id, change.operation))
+            continue
+        told("Finishing change %d (%s), left unfinished by a run that stopped." % (change.id, change.operation))
+        left_behind.append(change)
+    if not left_behind:
+        return
+    file_changes.settle(library, exiftool_path)
+    still = {change.id for change in file_journal.unfinished(library.path)}
+    for change in left_behind:
+        if change.id in still:
+            told("Change %d is left unfinished: some of its files could not be read now; it is finished the next time "
+                 "they can be." % change.id)
+        else:
+            told("Change %d is finished." % change.id)
+
+
+def _snapshot(library, told):
+    """The one snapshot of the run, before its first write: a daily, unless today's stands. A snapshot that fails raises:
+    nothing is written without it."""
+    taken = snapshot_service.before_a_long_write(library)
+    if taken.details.get("today"):
+        told("Today's snapshot of the library (%s) stands; none was taken." % taken.details["today"])
+    else:
+        told("Took a snapshot of the library (%s) before the first write." % ", ".join(taken.details.get("taken", [])))
+    return taken
+
+
+def _write(library, exiftool_path, et, folder, to_bake, baked):
+    """Write the photos of `folder` to bake as one change (file_changes.write_fields, in `et`), and count in `baked` what
+    the journal holds of it after. Each file is read again before its write: one changed outside since the plan is a
+    conflict, and one found holding the bake already is current."""
+    values = {paths.key(planned.path): planned.plan.values for planned in to_bake}
+    ids = {paths.key(planned.path): planned.photo_id for planned in to_bake}
+    result = file_changes.write_fields(
+        library, baking.OPERATION, exiftool_path, [planned.path for planned in to_bake], list(bake.WRITTEN.values()),
+        lambda path, held: file_changes.Plan(after=values[paths.key(path)]), summary={"folder": folder.stored}, et=et)
+    baked.change = result.details.get("change")
+    rows = file_journal.files_of(library.path, baked.change) if baked.change else []
+    in_change = {paths.key(row.path) for row in rows}
+    baked.written = sum(1 for row in rows if row.state == "done")
+    conflicted = {paths.key(row.path) for row in rows if row.state == "conflict"}
+    baked.conflicts = sorted(ids[key] for key in conflicted if key in ids)
+    baked.failed = sorted(ids[paths.key(path)] for path, _why in result.errors
+                          if paths.key(path) in ids and paths.key(path) not in conflicted)
+    for path in result.details.get("written", {}):
+        if paths.key(path) not in in_change:   # held the bake when its write read it: current, not baked
+            baked.to_bake -= 1
+            baked.formats[os.path.splitext(path)[1].lower()] -= 1
+            baked.current += 1
+    return result
 
 
 #: One photo a Walk planned: its plan (baking.ToBake, Current or Cannot), and the digest of its upright decode (None: not

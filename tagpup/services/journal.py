@@ -30,6 +30,7 @@ import re
 
 from tagpup.core.result import NotFound, Result
 from tagpup.services import (
+    baking,
     bulk_edit,
     face_batch,
     face_pass,
@@ -71,6 +72,8 @@ UNDO_CHECKS = {
     journal.PERSON_MERGED: None,
     tagging.ADD_TO_ALL: None,
     tags_from_faces.OPERATION: None,
+    # A folder's bake: the journal puts back what each file held; the fingerprint rows stay (baking.follower, #1894).
+    baking.OPERATION: None,
     sync.OPERATION: None,
     "save photo": None,
     "apply all suggestions": None,
