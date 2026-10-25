@@ -209,7 +209,9 @@ programs only. A moved module takes every importer with it and leaves nothing at
   (`tagpup_cli.py`: index, sync, history, undo, jobs, roots, face-pass, ...) and the **MCP
   server** (`python -m tagpup.mcp`, for Claude: reads give counts and ids, names and paths only with
   `reveal=true`) are the other entry points. All build one `Runtime` and call services.
-- **One composition root** (`tagpup.runtime.Runtime`): models built once from the library's own settings,
+- **One composition root** (`tagpup.runtime.Runtime`): models built once from the library's own settings (the
+  two others: the face pass's new face model, `look_at_faces`, and `embed-photos`'s new photo model, `photo_reembed.run`,
+  each writing under a key the library does not read until its switch),
   warmed on a thread, released after an idle period; each library's job runners; `begin`/`gpu_turn` take the
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
