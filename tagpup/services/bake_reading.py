@@ -15,8 +15,8 @@ looked and found none is `[]`: the photo is recorded detected, with no face, as 
 import collections
 import dataclasses
 
-from tagpup.core import fields, orientation
-from tagpup.files import bake, field_values, images
+from tagpup.core import orientation
+from tagpup.files import bake, images
 
 #: Each photo's verdict: its bake was read (a side of it, at least, was used: the other is worked out when its model is
 #: not the library's), stale (its fingerprint is not the picture's), unreadable (bake.Rejected, other than none held),
@@ -62,18 +62,17 @@ def taken(found, meta, fingerprint, picture, *, photo_key, face_key):
     detected = None
     if face_key is not None and found.face_model == face_key and picture is not None \
             and not getattr(picture, "failed", False):
-        detected = detections(found, meta.get("baked") or {}, picture.stored.size)
+        detected = detections(found, picture.stored)
     return Taken(vector, detected, READ if vector is not None or detected is not None else OTHER_MODELS)
 
 
-def detections(found, record, stored_size):
+def detections(found, stored):
     """The faces of the bake `found` as a detection gives them: each region turned from the upright picture it was made
-    against into the picture as stored (`stored_size`, the decode's), by the file's Orientation in `record` -- a TIFF's
-    counting as 1, its boxes being upright already (orientation.for_boxes) -- with its vector and no score."""
-    value = record.get(fields.ORIENTATION)
-    turn = orientation.for_boxes(value if value in range(1, 9) else 1,
-                                 record.get(field_values.MIME_TYPE) == "image/tiff")
-    width, height = stored_size
+    against into `stored`, the picture as stored the face model's decode made (images.opened), by the turn that decode
+    read (images.BOXES_TURN_INFO, orientation.boxes_turn: an XMP tiff:Orientation counts, a TIFF's is 1) -- with its
+    vector and no score."""
+    turn = stored.info[images.BOXES_TURN_INFO]
+    width, height = stored.size
     return [{"box": orientation.to_stored(face.area, *found.applied, turn, width, height),
              "embedding": face.vector.tolist(), "prob": None} for face in found.faces]
 

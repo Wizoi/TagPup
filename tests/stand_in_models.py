@@ -42,7 +42,7 @@ class Faces:
 
 class NewFaces:
     """The new face model (tagpup.ml.scrfd_adaface.ScrfdAdaFace) as the face pass is handed it: its `key`, a `picture` of
-    the photo as stored (decoded here by Pillow, NotDetected when it does not decode, as the model's own), the model's own
+    the photo as stored (decoded by images.opened, as the model's own, NotDetected when it does not decode), the model's own
     `new_faces` and `detector`, and
     `detect_and_embed`, which answers what the test says each photo holds -- `found`, {file name: [(box, prob, seed)]},
     highest score first, each a detection with a vector made from `seed` (`vector`); a file name given None is a model
@@ -80,11 +80,10 @@ class NewFaces:
         return 3 * width * height
 
     def picture(self, path, *, max_side):
-        from PIL import Image
+        from tagpup.files import images
         from tagpup.ml.faces import NotDetected
         try:
-            with Image.open(path) as img:
-                return self.Picture(img.convert("RGB"), path)
+            return self.Picture(images.opened(path, upright=False), path)
         except Exception:
             return NotDetected()
 

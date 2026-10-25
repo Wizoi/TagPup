@@ -83,16 +83,17 @@ class ATiff(unittest.TestCase):
     def test_counts_as_orientation_1_its_box_already_upright(self):
         home = own_home.for_test(self, prefix="orientation_tiff_")
         path = photo(os.path.join(home.root, "turned.tif"), 6, fmt="TIFF")
-        width, height, oriented, declared = images.shown_shape(path)
+        width, height, oriented, value = images.shown_shape(path)
         self.assertTrue(oriented)
-        value = orientation.for_boxes(declared, oriented)
         self.assertEqual(1, value)
+        self.assertEqual(1, images.opened(path, upright=False).info[images.BOXES_TURN_INFO])
         box = block_in(images.opened(path, upright=False))   # where a detector found it: the pixels Pillow shows
         self.assertEqual(block_in(images.opened(path, upright=True)), orientation.to_upright(box, width, height, value))
         self.assertEqual((width, height), (HEIGHT, WIDTH), "Pillow turned it as it loaded it")
 
     def test_a_jpeg_keeps_its_own(self):
-        self.assertEqual(6, orientation.for_boxes(6, False))
+        self.assertEqual(6, orientation.boxes_turn(6, False))
+        self.assertEqual(1, orientation.boxes_turn(0, False), "a value that is no Orientation turns nothing")
 
 
 if __name__ == "__main__":

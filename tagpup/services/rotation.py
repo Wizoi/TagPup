@@ -67,7 +67,7 @@ def follower(row, state):
         turn = ("right" if done == "left" else "left", height, width)
     elif direction:
         try:
-            width, height, oriented, _orientation = images.shown_shape(row.path)
+            width, height, oriented, _turn = images.shown_shape(row.path)
         except Exception as problem:
             # A file Pillow cannot open has no boxes worth turning; the Orientation is recorded all the same.
             logger.warning("%s: could not tell whether its face boxes turn: %s", row.named(), problem)

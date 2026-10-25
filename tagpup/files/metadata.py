@@ -68,12 +68,11 @@ NO_STAT = "their file could not be looked at (its modified time and size could n
 #: Where ExifTool puts an error about a file in what it answers.
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
-#: What a read for the index asks beside METADATA_FIELDS (batch_read's `bakes`): a bake's fields and the Orientation its
-#: regions are turned by (fields.ORIENTATION, as ExifTool answers it under -n; tagpup.services.bake_reading),
-#: kept out of the record's raw_metadata, and the options they are read under -- `-struct`, without which the regions are
+#: What a read for the index asks beside METADATA_FIELDS (batch_read's `bakes`): a bake's fields, kept out of the record's
+#: raw_metadata (the turn of its regions is the decode's: tagpup.services.bake_reading), and the options they are read under -- `-struct`, without which the regions are
 #: answered as flattened lists (tagpup.files.bake); no field of METADATA_FIELDS is a structure, and each is answered
 #: alike under it (tests/test_an_index_reads_a_bake.py).
-BAKE_FIELDS = tuple(bake.FIELDS) + (fields.ORIENTATION,)
+BAKE_FIELDS = tuple(bake.FIELDS)
 BAKE_PARAMS = ("-struct",)
 
 
@@ -98,7 +97,7 @@ class MetadataExtractor:
         usual face roots name anybody.
 
         `bakes` (the indexer's read) asks BAKE_FIELDS as well, in the same command, and puts what the file answers of
-        them, with its MIME type, in the record's "baked" ({} for a file holding none), never in its raw_metadata.
+        them in the record's "baked" ({} for a file holding none), never in its raw_metadata.
         """
         if not file_paths:
             return []
@@ -133,8 +132,7 @@ class MetadataExtractor:
             else:
                 # What the reader asked to tell a photo from another kind of file is not the photo's metadata, nor
                 # is a bake.
-                baked = {key: record[key] for key in BAKE_FIELDS + (field_values.MIME_TYPE,) if key in record} \
-                    if bakes else {}
+                baked = {key: record[key] for key in BAKE_FIELDS if key in record} if bakes else {}
                 record = {key: value for key, value in record.items()
                           if key != field_values.MIME_TYPE and not (bakes and key in BAKE_FIELDS)}
                 results.append(self._structure(path, record, people, stamp))

@@ -8,8 +8,9 @@ What the owner lives through, adding a folder whose photos were baked:
   faces_detected row a detection finding none writes; the photo's raw_metadata holds nothing of the bake;
 * a bake whose picture changed after it was baked, one not whole, one made under another photo model: that side is worked
   out (the other read when it is the library's), and the line at the end counts each;
-* a turned photo (Orientation 6, 12 such in photo_index): its faces' boxes, read from the bake, are the boxes a detection
-  stores;
+* a turned photo (Orientation 6, 12 such in photo_index), and one turned by an XMP tiff:Orientation alone, which ExifTool
+  answers as no EXIF Orientation and Pillow turns all the same: its faces' boxes, read from the bake, are the boxes a
+  detection stores;
 * a face named or excluded on a photo indexed again keeps its decision when the bake is read;
 * an index killed part-way leaves every row whole and the next run completes the folder;
 * the index's read (`-struct`) answers every field of METADATA_FIELDS as the plain read does.
@@ -119,7 +120,8 @@ class AnIndexReadsABake(unittest.TestCase):
         os.makedirs(folder, exist_ok=True)
         return folder
 
-    def picture(self, folder, name, colour, size=SIZE, turned=None):
+    def picture(self, folder, name, colour, size=SIZE, turned=None, xmp_turned=None):
+        """A photo; `turned` its EXIF Orientation, `xmp_turned` an XMP tiff:Orientation and no EXIF one."""
         path = os.path.join(folder, name)
         img = Image.new("RGB", size, colour)
         if turned:
@@ -128,6 +130,11 @@ class AnIndexReadsABake(unittest.TestCase):
             img.save(path, "JPEG", exif=exif)
         else:
             img.save(path, "TIFF" if name.endswith(".tif") else "JPEG")
+        if xmp_turned:
+            with ExifToolSession(executable=EXIFTOOL) as et:
+                et.execute("-XMP-tiff:Orientation#=%d" % xmp_turned, "-overwrite_original", path)
+                self.assertEqual({"XMP:Orientation": xmp_turned}, {key: value for key, value in et.get_tags(
+                    [path], tags=["Orientation"], params=["-n"])[0].items() if key != "SourceFile"})
         return path
 
     def bake(self, path, areas, seed=1, of=None, **changed):
@@ -266,16 +273,20 @@ class AnIndexReadsABake(unittest.TestCase):
         folder = self.folder("Harbour Turned")
         detected = self.picture(folder, "turned detected.jpg", "navy", turned=6)
         baked = self.picture(folder, "turned baked.jpg", "navy", turned=6)
+        xmp_detected = self.picture(folder, "xmp turned detected.jpg", "navy", xmp_turned=6)
+        xmp_baked = self.picture(folder, "xmp turned baked.jpg", "navy", xmp_turned=6)
         box = [100, 50, 200, 180]
-        self.detector.found = {"turned detected.jpg": [(box, 0.99, 1)]}
+        self.detector.found = {"turned detected.jpg": [(box, 0.99, 1)], "xmp turned detected.jpg": [(box, 0.99, 2)]}
         # The bake's region, as the writer will make it: the stored box shown upright, a fraction of the upright picture.
         upright = orientation.to_upright(box, *SIZE, 6)
         shown = orientation.upright_size(*SIZE, 6)
+        self.assertEqual(shown, images.opened(xmp_baked, upright=True).size, "Pillow turns the XMP-only photo")
         self.bake(baked, [orientation.area_of(upright, *shown)])
+        self.bake(xmp_baked, [orientation.area_of(upright, *shown)], seed=2)
         self.index(folder)
-        self.assertEqual([box], [found for found, *_ in self.faces(detected)])
-        self.assertEqual([box], [found for found, *_ in self.faces(baked)])
-        self.assertEqual(["turned detected.jpg"], self.detector.asked)
+        for path in (detected, baked, xmp_detected, xmp_baked):
+            self.assertEqual([box], [found for found, *_ in self.faces(path)], os.path.basename(path))
+        self.assertEqual(["turned detected.jpg", "xmp turned detected.jpg"], sorted(self.detector.asked))
 
     def test_a_face_named_or_excluded_keeps_its_decision_when_the_photo_is_read_again_from_its_bake(self):
         folder = self.folder("Harbour Kept")
