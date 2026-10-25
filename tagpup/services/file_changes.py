@@ -987,9 +987,9 @@ def settle(library, exiftool_path):
     """Finish every change of photo files that a process no longer running -- or an error
     in this one -- left half done: each file it left planned or writing is settled by
     what it holds, forward or, for an undo under way, back. Returns how many changes
-    were finished. A change that cannot be finished now -- one of its files on a share that does not answer, or
-    unanswered by ExifTool (_finish) -- is logged, released and left as it is for the next time: it does NOT raise, so a
-    caller that must know asks the journal afterwards (tagpup.store.file_journal.unfinished)."""
+    were finished. A change that cannot be finished now -- one of its files on a share that does not answer, or one
+    ExifTool does not answer for, as _finish says -- is logged, released and left as it is for the next time: it does NOT
+    raise, so a caller that must know asks the journal afterwards (tagpup.store.file_journal.unfinished)."""
     finished = 0
     for change in file_journal.unfinished(library.path):
         if change.owner and file_journal.owner_alive(change.owner):
