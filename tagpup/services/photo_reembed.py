@@ -10,8 +10,9 @@ it stopped, and a second run finds nothing left. Each vector is kept at the row 
 (PhotoEmbeddings.keep with photo_id): a photo removed meanwhile is skipped, never given a row back.
 
 A file that does not decode, or cannot be read, is counted by why, logged, and tried again by the next run (no list of
-skipped photos: DECISIONS 2026-10-17); a file gone is counted. More of them than UNREAD_LIMIT stops the pass: a share
-that stopped answering. Faces are never looked at, and nothing is journaled: the table is derived (DECISIONS
+skipped photos: DECISIONS 2026-10-17); a file not found is counted as gone. Gone and unread together past UNREAD_LIMIT
+stop the pass (Unreachable, STOPPED): Windows answers an unmounted drive and a share that stopped answering as files
+not found, and a library's files really gone are a handful (#1838). Faces are never looked at, and nothing is journaled: the table is derived (DECISIONS
 2026-10-16). The pass itself (embed_pass) is the AI pipeline harness's too (scripts/measure_pipeline_holdouts.py).
 """
 import collections
@@ -31,9 +32,12 @@ from tagpup.store import taxonomy as store_taxonomy
 
 logger = logging.getLogger("tagpup_cli.embedder")
 
-#: The share of a pass's photos that may fail to be read (gone files apart) before it stops: past it, a share stopped
-#: answering, and the rest would only be counted as failed.
+#: The share of a pass's photos (at least 20) whose files may be not found or not read before it stops: past it, a
+#: drive or share is not connected, and the rest would only be counted as gone.
 UNREAD_LIMIT = 0.01
+
+#: What a pass stopped by UNREAD_LIMIT says: the photos not found or not read so far, of the pass's.
+STOPPED = "%d of %d photo files were not found or could not be read: is the drive or share connected?"
 
 #: Vectors kept a transaction: what a stop or a failure part-way keeps at most, besides the photo under way.
 BATCH = 256
@@ -48,8 +52,8 @@ ACKNOWLEDGED = ("clip",)
 
 
 class Unreachable(Exception):
-    """More of a pass's photos could not be read than UNREAD_LIMIT allows. `counts` are the pass's until it stopped:
-    what was kept is kept."""
+    """More of a pass's photo files were not found or could not be read than UNREAD_LIMIT allows (STOPPED). `counts`
+    are the pass's until it stopped: what was kept is kept."""
 
     def __init__(self, message, counts):
         super().__init__(message)
@@ -172,8 +176,8 @@ def embed_pass(clip, todo, keep, progress=None, should_stop=None, workers=6, bat
     (ClipModel.input_of, never loading the model) on `workers` threads ahead of the forward on this one, as the indexer
     reads ahead, and handed to `keep([(what, (mtime, size), vector)])` -> how many it kept, `batch` at a time, the last
     ones too when the pass is stopped (`should_stop`, asked before each photo) or fails: what was kept is not embedded
-    again by the next run. A file gone, and a photo that cannot be read, are counted (the second by why) and logged;
-    more than `unread_limit` of the second raise Unreachable. {"to_embed", "embedded", "kept", "not_kept", "gone",
+    again by the next run. A file not found ("gone"), and a photo that cannot be read (by why, logged), are counted
+    apart; more of the two together than `unread_limit` of the pass (at least 20) raise Unreachable. {"to_embed", "embedded", "kept", "not_kept", "gone",
     "unread" {why: count}, "stopped", "seconds"}, handed to `progress` after each batch too."""
     counts = {"to_embed": len(todo), "embedded": 0, "kept": 0, "not_kept": 0, "gone": 0, "unread": {},
               "stopped": False, "seconds": 0.0}
@@ -184,6 +188,11 @@ def embed_pass(clip, todo, keep, progress=None, should_stop=None, workers=6, bat
     def read(item):
         stat = os.stat(item[0])
         return item, (stat.st_mtime, stat.st_size), clip.input_of(item[0], load=False)
+
+    def missed(problem=None):
+        not_read = counts["gone"] + sum(counts["unread"].values())
+        if not_read > limit:
+            raise Unreachable(STOPPED % (not_read, len(todo)), counts) from problem
 
     def hand_over():
         kept = keep(waiting) if waiting else 0
@@ -211,16 +220,15 @@ def embed_pass(clip, todo, keep, progress=None, should_stop=None, workers=6, bat
                 fill()
                 try:
                     item, stamp, picture = future.result()
-                except FileNotFoundError:
+                except FileNotFoundError as problem:   # a file gone, or a drive or share not connected
                     counts["gone"] += 1
+                    missed(problem)
                     continue
                 except Exception as problem:   # images.Unreadable, a locked file, a share that does not answer
                     why = type(problem).__name__
                     logger.warning("A photo was not embedded (%s); the next run tries it again.", why)
                     counts["unread"][why] = counts["unread"].get(why, 0) + 1
-                    if sum(counts["unread"].values()) > limit:
-                        raise Unreachable("%d of %d photos could not be read (%s): the pass stops." % (
-                            sum(counts["unread"].values()), len(todo), counts["unread"]), counts) from problem
+                    missed(problem)
                     continue
                 waiting.append((item[1], stamp, clip.embed_input(picture)))
                 counts["embedded"] += 1

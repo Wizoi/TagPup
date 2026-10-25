@@ -9,6 +9,9 @@ use while it runs. What the owner lives through:
   library's model, key and settings are as they were, and a reader of the library's key finds no new vector.
 - A photo removed while the run is under way is skipped and never given a row back.
 - A file that does not decode is counted, and tried again by the next run.
+- The drive is not connected (every file not found): the run stops past 1% (and 20) with one sentence asking whether
+  the drive or share is connected, exits 1, and what an earlier run kept stays kept; one file really gone of a hundred
+  is counted and the run goes on (#1838).
 - At 40% the switch is refused, from the command line (set-photo-model) as in the gear, with the counts; after a full
   run its dry run passes and writes nothing, and says how many words Suggest makes again under the new model; applied it
   is one change of the journal, and its undo puts the old model back.
@@ -269,6 +272,37 @@ class AFileThatDoesNotDecode(_Library):
         third = self.embed()
         self.assertEqual((1, 1, {}), (third["to_embed"], third["kept"], third["unread"]))
         self.assertEqual(10, len(self.new_vectors()))
+
+
+class TheDriveIsNotConnected(_Library):
+
+    def test_a_run_on_a_drive_not_connected_stops_with_a_sentence_and_keeps_what_was_kept(self):
+        self.add_photos(30)   # 40 photos: the stop comes at the 21st not found
+        with mock.patch.object(photo_reembed, "BATCH", 4):
+            self.embed(should_stop=lambda: len(self.clips[-1].forwards) >= 4)
+        self.assertEqual(4, len(self.new_vectors()))
+        os.rename(self.folder, self.folder + " (drive away)")   # the drive unmounted: every path is not found
+        before = rows_of(self.library.path)
+        ran = self.cli("--apply")
+        self.assertEqual(1, ran.exit_code, ran.output)
+        said = " ".join(ran.output.split())
+        self.assertIn("21 of 36 photo files were not found or could not be read: is the drive or share connected?",
+                      said)
+        self.assertIn("Embedded 0 of 36: 0 kept, 0 not kept", said)
+        self.assertIn("21 file(s) gone, 0 could not be read", said)
+        self.assertNotIn("now hold a vector", said)
+        self.assertEqual(before, rows_of(self.library.path), "the stopped run wrote")
+        self.assertEqual(4, len(self.new_vectors()), "what the earlier run kept was not kept")
+
+    def test_one_file_gone_of_a_hundred_is_counted_and_the_run_goes_on(self):
+        self.add_photos(90)
+        os.remove(self.photos[50])   # deleted outside TagPup; its row stays until a sync
+        ran = self.cli("--apply")
+        self.assertEqual(0, ran.exit_code, ran.output)
+        said = " ".join(ran.output.split())
+        self.assertIn("Embedded 99 of 100: 99 kept, 0 not kept", said)
+        self.assertIn("1 file(s) gone, 0 could not be read", said)
+        self.assertIn("99 of the library's 100 photos now hold a vector under %s." % NEW_KEY, said)
 
 
 class TheSwitchWaitsForTheRun(_Library):
