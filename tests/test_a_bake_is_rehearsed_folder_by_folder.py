@@ -183,6 +183,22 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
         self.assertIn("Stopped: ExifTool did not answer in its deadline for the photos of folder 2: is its share", total)
         self.assertEqual(before, self.home_as_it_is())
 
+    def test_stopped_during_a_folders_read_it_blames_no_share(self):
+        self.photo("a.jpg", faces=1)
+        self.photo("b.jpg", faces=1)
+        before = self.home_as_it_is()
+        asked = threading.Event()
+
+        def read(et, photo_paths, *args, **kwargs):
+            asked.set()   # Ctrl+C between the batches: field_values.read leaves out the photos it did not reach
+            return {}
+        with mock.patch.object(baking_report.field_values, "read", side_effect=read):
+            run = baking_report.dry_run(self.library, baked_files.EXIFTOOL, DETECTOR, stop=asked)
+        self.assertTrue(run.stopped)
+        self.assertIsNone(run.stalled)
+        self.assertEqual((0, 0), (run.total.photos, run.total.not_answered), "a stop the owner asked for counts nothing")
+        self.assertEqual(before, self.home_as_it_is())
+
     def test_apply_is_refused_with_a_sentence(self):
         self.photo("a.jpg", faces=1)
         before = self.home_as_it_is()

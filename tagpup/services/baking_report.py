@@ -117,6 +117,11 @@ def dry_run(library, exiftool_path, detector, folders=None, stop=None, heard=Non
         conn.close()
 
 
+class _Stopped(Exception):
+    """The run was asked to stop while a folder's files were read: a photo the read did not reach was not asked of the share,
+    and is counted nowhere."""
+
+
 class _FolderRead:
     """The bake fields of a folder's files, read in one ExifTool read the first time a photo of it asks."""
 
@@ -125,10 +130,15 @@ class _FolderRead:
 
     def of(self, photo_path):
         """What field_values.read gave for `photo_path`: its fields, or the Exception its read gave (NotAnswered for a
-        photo the read did not reach)."""
+        photo the read did not reach, _Stopped for one a stop left unread)."""
         if self.found is None:
             self.found = field_values.read(self.et, self.photo_paths, list(bake.WRITTEN.values()), stop=self.stop)
-        return self.found.get(paths.key(photo_path)) or field_values.NotAnswered("Its file was not read.")
+        held = self.found.get(paths.key(photo_path))
+        if held:
+            return held
+        if self.stop is not None and self.stop.is_set():
+            return _Stopped("Its file was not read: the run was stopped.")
+        return field_values.NotAnswered("Its file was not read.")
 
     @property
     def stalled(self):
@@ -155,6 +165,8 @@ def _plan(conn, tally, keys, photo_id, path, read, in_sample):
         decoded.append(images.fingerprint(images.opened(path, upright=True)))
         return decoded[-1]
     plan = baking.plan_photo(conn, path, keys, held, lambda: _shape(path), fingerprint if in_sample else None)
+    if given and isinstance(given[-1], _Stopped):
+        return
     if isinstance(plan, baking.Cannot) and given and isinstance(given[-1], field_values.NotAnswered):
         tally.not_answered += 1
         return
