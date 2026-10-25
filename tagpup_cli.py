@@ -1417,7 +1417,7 @@ def bake_photos(ctx, directories, apply_, reveal):
     """What baking each photo's vectors, faces and fingerprint into its file would do (docs/PHASE6_DESIGN.md, section
     9), for the library's photos, or those under each DIRECTORY at any depth: per folder, the photos to bake, those
     already current, and those that cannot be baked, and why. A dry run: it writes nothing, to the library or to a file,
-    and loads no model. Ctrl+C stops it after the photo under way, with the totals so far."""
+    and loads no model's weights. Ctrl+C, or a share that stops answering, stops it with the totals so far."""
     say = functools.partial(console.print, markup=False, soft_wrap=True)
     if apply_:
         say(BAKE_NOT_YET)
@@ -1428,7 +1428,8 @@ def bake_photos(ctx, directories, apply_, reveal):
         say(nested)
         raise SystemExit(1)
     settings = runtimes.peek_settings(library)
-    # The detector's name, from the model built and not loaded: its weights load on first use, and none is made here.
+    # The detector's name, asked of the face model's object: building it imports torch and asks whether a card is there;
+    # its weights load on first use, never here. Its class, not a constant here, says the name (the runtime's build_faces).
     detector = face_records.detector_of(get_runtime().faces(library, settings), settings.detect_max_side)
     say("Planning a bake of %s (a dry run: nothing is written)." % library.name)
 
@@ -1445,11 +1446,17 @@ def bake_photos(ctx, directories, apply_, reveal):
         say("The library holds no photo%s." % (" under the folder(s) given" if directories else ""))
         return
     total = run.total
-    say("All %d folder(s)%s:" % (len(run.folders), " (stopped: the photos planned so far)" if run.stopped else ""))
+    say("All %d folder(s)%s:" % (len(run.folders), " (stopped: the photos planned so far)"
+                                   if run.stopped or run.stalled else ""))
     for line in _bake_lines(total):
         say(line)
     say("  Sample: %d photo(s) decoded for their fingerprint (every Nth by id, the same each run); %d had a fingerprint "
         "row, %d of them matched it." % (total.sampled, total.had_row, total.matched))
+    if run.stalled is not None:
+        say("Stopped: ExifTool did not answer in its deadline for the photos of folder %d%s: is its share or drive there? "
+            "No later folder was read. Nothing was written; run it again when it answers."
+            % (len(run.folders), " (%s)" % run.stalled if reveal else ""))
+        raise SystemExit(1)
     if run.stopped:
         say("Stopped: nothing was written; run it again to plan the rest.")
         raise SystemExit(1)

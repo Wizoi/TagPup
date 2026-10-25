@@ -5,11 +5,13 @@ A library of two folders holds a mix: photos to bake, one already baked, one nev
 by the face model, one with a face of another model, one changed since its vector was made, one whose file is not a
 picture. The dry run counts each, by folder and in all, says never examined as that and never as none found, decodes for
 its sample only the photos it can plan, and leaves the library, its journal, its snapshots and every file as they were,
-byte for byte; a second run says the same. --apply is refused with a sentence. Ctrl+C after the first folder ends the run with that folder's totals, and nothing written.
+byte for byte; a second run says the same. --apply is refused with a sentence. Ctrl+C after the first folder ends the run
+with that folder's totals, and nothing written. A share that stops answering ExifTool ends the run at that folder, which
+is counted and named by its number, and no later folder is read.
 
 Real ExifTool, on JPEGs made here, in a home of the test's own; rows as the indexer stores them (photo_rows.add_read,
 embeddings.put with the file's stamp, faces through services.faces.record_batch with the detector that ran); the face model
-a stand-in, as no model is loaded.
+a stand-in, as no model's weights are loaded.
 """
 import hashlib
 import os
@@ -151,6 +153,34 @@ class ABakeIsRehearsedFolderByFolder(BakeCase):
 
         again = self.cli()
         self.assertEqual(out, again.output, "a second run says the same")
+        self.assertEqual(before, self.home_as_it_is())
+
+    def test_a_share_that_stops_answering_ends_the_run_at_that_folder(self):
+        self.a_mix()
+        os.makedirs(os.path.join(self.folder, "Third"))
+        self.photo(os.path.join("Third", "z.jpg"), faces=1)
+        before = self.home_as_it_is()
+        real, asked = field_values.read, []
+
+        def read(et, photo_paths, *args, **kwargs):
+            # The share holding Second stops answering: ExifTool's deadline passes, and every photo of the read is
+            # NotAnswered, as field_values.read answers a timeout.
+            asked.append(os.path.basename(os.path.dirname(photo_paths[0])))
+            if asked[-1] == "Second":
+                return {paths.key(one): field_values.NotAnswered("ExifTool did not answer in 300 s") for one in photo_paths}
+            return real(et, photo_paths, *args, **kwargs)
+        with mock.patch.object(baking_report.field_values, "read", side_effect=read):
+            stalled = self.cli()
+        out = stalled.output
+        self.assertEqual(1, stalled.exit_code, out)
+        self.assertEqual("Second", asked[-1])
+        self.assertNotIn("Third", asked, "the folder after it is not read")
+        self.assertIn("Folder 2 of 3:\n  0 photo(s): 0 to bake", out, "a folder of photos not answered is counted")
+        self.assertNotIn("Folder 3 of 3", out)
+        total = out[out.index("All 2 folder(s) (stopped: the photos planned so far):"):]
+        self.assertIn("6 photo(s): 1 to bake, 1 already current", total)
+        self.assertIn("Not read: 1 photo(s) ExifTool did not answer for", total)
+        self.assertIn("Stopped: ExifTool did not answer in its deadline for the photos of folder 2: is its share", total)
         self.assertEqual(before, self.home_as_it_is())
 
     def test_apply_is_refused_with_a_sentence(self):

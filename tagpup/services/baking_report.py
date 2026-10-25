@@ -9,13 +9,16 @@ photos (SAMPLE, every Nth by photo id, the same photos each run) is decoded whol
 reaches its file (the library can plan it and its file reads): the plan of a sampled photo compares the Fingerprint its
 file holds as well, and its fingerprint is compared with the row photo_fingerprints holds of it, if any. The others are
 planned without decoding, as a share is slow to read.
+
+A read ExifTool does not answer in its deadline (a share or drive gone away) stops the run at that folder: a later
+folder's read would wait the deadline again, and every photo after would read as not answered.
 """
 import collections
 import dataclasses
 import os
 
 from tagpup.core import paths
-from tagpup.files import bake, field_values, images
+from tagpup.files import bake, exiftool_session, field_values, images
 from tagpup.services import baking
 from tagpup.store import db, inspection, photo_fingerprints
 from tagpup.store import roots as store_roots
@@ -50,10 +53,12 @@ class Tally:
 
 @dataclasses.dataclass
 class DryRun:
-    """The folders' Tallies, in path order, the whole run's, and whether it was stopped before its last photo."""
+    """The folders' Tallies, in path order, the whole run's, whether it was stopped before its last photo, and the folder
+    whose read ExifTool did not answer in its deadline, which ended the run there (None: every read answered)."""
     folders: list
     total: Tally
     stopped: bool
+    stalled: object = None
 
 
 def photos_of(conn, folders=None):
@@ -83,8 +88,9 @@ def dry_run(library, exiftool_path, detector, folders=None, stop=None, heard=Non
         for photo_id, path in rows:
             by_folder[paths.key(os.path.dirname(path))].append((photo_id, path))
         groups = sorted(by_folder.values(), key=lambda group: store_roots.path_order(os.path.dirname(group[0][1])))
-        found, total, stopped = [], Tally(), False
-        with field_values.session(exiftool_path) as et:
+        found, total, stopped, stalled = [], Tally(), False, None
+        with field_values.session(exiftool_path) as session:
+            et = exiftool_session.StaysDead(session)   # timed out once, it is not asked again
             for number, group in enumerate(groups, 1):
                 if stop is not None and stop.is_set():
                     stopped = True
@@ -96,14 +102,17 @@ def dry_run(library, exiftool_path, detector, folders=None, stop=None, heard=Non
                         stopped = True
                         break
                     _plan(conn, tally, keys, photo_id, path, read, photo_id in sampled)
-                if tally.photos:
+                if tally.photos or tally.not_answered:
                     found.append(tally)
                     total.add(tally)
                     if heard is not None:
                         heard(tally, number, len(groups))
+                if read.stalled:
+                    stalled = tally.folder
+                    break
                 if stopped:
                     break
-        return DryRun(found, total, stopped)
+        return DryRun(found, total, stopped, stalled)
     finally:
         conn.close()
 
@@ -120,6 +129,11 @@ class _FolderRead:
         if self.found is None:
             self.found = field_values.read(self.et, self.photo_paths, list(bake.WRITTEN.values()), stop=self.stop)
         return self.found.get(paths.key(photo_path)) or field_values.NotAnswered("Its file was not read.")
+
+    @property
+    def stalled(self):
+        """Did ExifTool not answer the read in its deadline (field_values.read's NotAnswered)?"""
+        return any(isinstance(held, field_values.NotAnswered) for held in (self.found or {}).values())
 
 
 def _shape(photo_path):
