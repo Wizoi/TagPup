@@ -1378,8 +1378,10 @@ def _stopped_before_writing():
     raise SystemExit(1)
 
 
-#: Why `bake-photos --apply` is refused: this cut plans and counts only.
-BAKE_NOT_YET = "Not run: writing the bake is cut 3; this is a dry run. Run it without --apply."
+#: What `bake-photos --apply` says last of the way back (#1926).
+BAKE_WAY_BACK = ("`undo <change> --apply` takes a folder's bake back. A later write to a baked photo (a save, Add to all, a "
+                 "rotation) blocks its folder's undo until that write is undone first; restoring a snapshot does not "
+                 "un-bake the files.")
 
 #: How `bake-photos` says each kind of photo that cannot be baked (tagpup.services.baking's kinds).
 CANNOT_BAKE = {
@@ -1409,28 +1411,36 @@ def _bake_lines(tally):
 
 @cli.command("bake-photos")
 @click.argument("directories", nargs=-1, type=click.Path(exists=True, file_okay=False))
-@click.option("--apply", "apply_", is_flag=True, help="Refused for now: writing the bake is cut 3.")
-@click.option("--reveal", is_flag=True, help="Name each folder's path. Paths can name people.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write: after one snapshot of the library (unless today's stands), one change of the journal per "
+                   "folder, which `undo` takes back. Without it, only says what it would do.")
+@click.option("--reveal", is_flag=True, help="Name each folder's path, and why each photo failed. Paths can name people.")
 @click.pass_context
 @_holds_the_roots
 def bake_photos(ctx, directories, apply_, reveal):
-    """What baking each photo's vectors, faces and fingerprint into its file would do (docs/PHASE6_DESIGN.md, section
-    9), for the library's photos, or those under each DIRECTORY at any depth: per folder, the photos to bake, those
-    already current, and those that cannot be baked, and why. A dry run: it writes nothing, to the library or to a file,
-    and loads no model's weights. Ctrl+C, or a share that stops answering, stops it with the totals so far."""
+    """Bake each photo's vectors, faces and fingerprint into its file (docs/PHASE6_DESIGN.md, section 9), for the
+    library's photos, or those under each DIRECTORY at any depth: per folder, the photos to bake, those already current,
+    and those that cannot be baked, and why. A dry run unless --apply: it writes nothing, to the library or to a file,
+    and loads no model's weights. --apply writes each folder's photos as one change of the journal. Ctrl+C stops it
+    after the folder under way (a second stops at once, keeping what was written); a share that stops answering stops
+    it at that folder."""
     say = functools.partial(console.print, markup=False, soft_wrap=True)
-    if apply_:
-        say(BAKE_NOT_YET)
-        raise SystemExit(1)
     library = _existing_library(ctx)
     nested = _nested(directories)
     if nested:
         say(nested)
         raise SystemExit(1)
+    if apply_:
+        applied = library_actions.bring_up_to_date(library.path)
+        if applied:
+            say("Brought the library up to date: %s." % ", ".join(applied))
     settings = runtimes.peek_settings(library)
     # The detector's name, asked of the face model's object: building it imports torch and asks whether a card is there;
     # its weights load on first use, never here. Its class, not a constant here, says the name (the runtime's build_faces).
     detector = face_records.detector_of(get_runtime().faces(library, settings), settings.detect_max_side)
+    if apply_:
+        _bake(library, runtimes.exiftool(library, settings), detector, directories, reveal, say)
+        return
     say("Planning a bake of %s (a dry run: nothing is written)." % library.name)
 
     def heard(tally, number, folders):
@@ -1460,7 +1470,81 @@ def bake_photos(ctx, directories, apply_, reveal):
     if run.stopped:
         say("Stopped: nothing was written; run it again to plan the rest.")
         raise SystemExit(1)
-    say("Nothing changed: this is a dry run. Writing the bake is cut 3.")
+    say("Nothing changed: this is a dry run. --apply writes it, after one snapshot of the library unless today's stands: "
+        "one change of the journal per folder, which `undo` takes back.")
+
+
+def _baked_lines(baked, reveal):
+    """What `bake-photos --apply` says it wrote of a Baked (a folder's, or the run's), past _bake_lines' counts: the ids
+    of the photos it did not write, and why each failed only with --reveal (ExifTool's sentence can name the file)."""
+    lines = ["  Written: %d file(s)%s." % (baked.written, ", change %d" % baked.change if baked.change else "")]
+    if baked.conflicts:
+        lines.append("  Conflicts: %d photo(s) changed outside since they were read, not written (photo ids %s)."
+                     % (len(baked.conflicts), ", ".join(map(str, baked.conflicts))))
+    if baked.failed:
+        lines.append("  Failed: %d photo(s) not written (photo ids %s)%s." % (
+            len(baked.failed), ", ".join(str(photo_id) for photo_id, _why in baked.failed),
+            "" if reveal else "; --reveal says why"))
+        if reveal:
+            lines += ["    photo %d: %s" % failed for failed in baked.failed]
+    return lines
+
+
+def _bake(library, exiftool_path, detector, directories, reveal, say):
+    """`bake-photos --apply`: baking_report.apply, saying each folder as it is written and the run's totals last; exit
+    status 1 on a stop, a stall, a refusal, a conflict or a failure."""
+    say("Baking %s: one change of the journal per folder." % library.name)
+    said = []
+
+    def folder_lines(baked, named):
+        say("%s%s:" % (named, " " + baked.folder if reveal else ""))
+        for line in _bake_lines(baked) + _baked_lines(baked, reveal):
+            say(line)
+
+    def heard(baked, number, folders):
+        said.append(number)
+        folder_lines(baked, "Folder %d of %d" % (number, folders))
+    with _stop_after_this_photo("folder") as asked:
+        run = baking_report.apply(library, exiftool_path, detector, folders=list(directories) or None, stop=asked,
+                                  heard=heard, told=say)
+    if run.interrupted is not None and len(run.folders) > len(said):
+        folder_lines(run.folders[-1], "The folder under way (stopped at once)")
+    if not run.folders:
+        if run.stopped or run.interrupted is not None:
+            _stopped_before_writing()
+        say("The library holds no photo%s." % (" under the folder(s) given" if directories else ""))
+        return
+    total = run.total
+    changes = [baked.change for baked in run.folders if baked.change]
+    say("All %d folder(s)%s:" % (len(run.folders), " (stopped: the photos planned so far)"
+                                   if run.stopped or run.stalled or run.refused or run.interrupted else ""))
+    for line in _bake_lines(total) + _baked_lines(total, False)[1:]:
+        say(line)
+    say("  Written: %d file(s) in %d change(s)%s." % (total.written, len(changes),
+                                                      " (%s)" % ", ".join(map(str, changes)) if changes else ""))
+    if run.snapshot is not None:
+        details = run.snapshot.details
+        say("  Snapshot before the first write: %s." % (
+            "today's stood (%s)" % details["today"] if details.get("today") else
+            "taken (%s)" % ", ".join(details.get("taken", []))))
+    if run.interrupted is not None:
+        say("Stopped at once: change %s keeps the %d file(s) written, applied and undoable; the rest of that folder was "
+            "not written. Run it again to go on." % (run.interrupted["change"], run.interrupted["written"] or 0)
+            if run.interrupted["change"] else "Stopped at once, before that folder was written. Run it again to go on.")
+    elif run.stalled is not None:
+        say("Stopped: ExifTool did not answer in its deadline for the photos of folder %d%s: is its share or drive there? "
+            "No later folder was read. What was written stays written and undoable; run it again when it answers."
+            % (len(run.folders), " (%s)" % run.stalled if reveal else ""))
+        if run.refused:
+            say(run.refused)
+    elif run.refused:
+        say("Stopped: %s" % run.refused)
+    elif run.stopped:
+        say("Stopped as asked: what was written stays written and undoable; run it again to go on.")
+    if changes:
+        say(BAKE_WAY_BACK)
+    if run.stopped or run.stalled or run.refused or run.interrupted is not None or total.conflicts or total.failed:
+        raise SystemExit(1)
 
 
 #: What `retire-faces` says of the people the photos' keywords name: they stay, and name the faces again.

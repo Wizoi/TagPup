@@ -5,8 +5,7 @@ A library of two folders holds a mix: photos to bake, one already baked, one nev
 by the face model, one with a face of another model, one changed since its vector was made, one whose file is not a
 picture. The dry run counts each, by folder and in all, says never examined as that and never as none found, decodes for
 its sample only the photos it can plan, and leaves the library, its journal, its snapshots and every file as they were,
-byte for byte; a second run says the same. --apply is refused with a sentence. Ctrl+C after the first folder ends the run
-with that folder's totals, and nothing written. A share that stops answering ExifTool ends the run at that folder, which
+byte for byte; a second run says the same. Ctrl+C after the first folder ends the run with that folder's totals, and nothing written. A share that stops answering ExifTool ends the run at that folder, which
 is counted and named by its number, and no later folder is read.
 
 Real ExifTool, on JPEGs made here, in a home of the test's own; rows as the indexer stores them (photo_rows.add_read,
@@ -202,15 +201,6 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
         self.assertTrue(run.stopped)
         self.assertIsNone(run.stalled)
         self.assertEqual((0, 0), (run.total.photos, run.total.not_answered), "a stop the owner asked for counts nothing")
-        self.assertEqual(before, self.home_as_it_is())
-
-    def test_apply_is_refused_with_a_sentence(self):
-        self.photo("a.jpg", faces=1)
-        before = self.home_as_it_is()
-        refused = self.cli("--apply")
-        self.assertEqual(1, refused.exit_code)
-        self.assertIn("writing the bake is cut 3; this is a dry run", refused.output)
-        self.assertNotIn("Folder", refused.output)
         self.assertEqual(before, self.home_as_it_is())
 
     def test_stopped_after_the_first_folder_it_gives_that_folders_totals_and_writes_nothing(self):
