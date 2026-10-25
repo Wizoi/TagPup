@@ -17,6 +17,7 @@ from tagpup.core import processes
 from tagpup.core import runs
 from tagpup.core import validation
 from tagpup.core.result import Result
+from tagpup.services import bake_reading
 from tagpup.services import roots as roots_service
 
 #: Where faces are named from the photos' tags: the button of both apps, whose label this is (tests/test_indexing_names_a_real_control.py holds the messages and the pages together). The messages named
@@ -126,7 +127,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     The CLI runs in a process of its own, from `code_folder` -- the code this program
     runs, which the caller has from tagpup.config -- so the GPU work stays out of the
     server. It reads the library's settings itself (tagpup.runtime). What the CLI says of the faces it made (NEW_FACES)
-    ends the message.
+    ends the message, and after it what it read from the photos' bakes (bake_reading.SAID), each read whole.
 
     `report(message, percent)` hears progress as it comes, the percent of each of the CLI's bars.
 
@@ -165,7 +166,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     if hasattr(report, "stop_file"):
         report.stop_file = stop_file
 
-    said = []
+    said, baked = [], []
 
     def run(args):
         proc = processes.start(
@@ -179,6 +180,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                 if whole.startswith(NEW_FACES):
                     # Whole: the bar's summary cuts a line at 90 characters.
                     said.append(whole[len(NEW_FACES):])
+                elif whole.startswith(bake_reading.SAID):
+                    baked.append(whole)
                 clean = summarize_indexer_line(line)
                 if clean:
                     match = re.search(r"(\d+)%", clean)
@@ -213,5 +216,6 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
 
     result.changed = 1
     result.details.update(percent=100, message=(
-        "Folder indexed. " + said[-1] if said else "Folder indexed: no photo was added or read again."))
+        " ".join(["Folder indexed. " + said[-1]] + baked[-1:]) if said
+        else "Folder indexed: no photo was added or read again."))
     return result

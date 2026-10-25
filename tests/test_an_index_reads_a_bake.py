@@ -7,7 +7,9 @@ What the owner lives through, adding a folder whose photos were baked:
   a JPEG, a TIFF and a photo of 60 faces whose bake spans Extended XMP alike; a bake that found none gives no face and the
   faces_detected row a detection finding none writes; the photo's raw_metadata holds nothing of the bake;
 * a bake whose picture changed after it was baked, one not whole, one made under another photo model, one under another
-  face model: that side is worked out (the other read when it is the library's), and the line at the end counts each;
+  face model: that side is worked out (the other read when it is the library's), and the line at the end counts each,
+  a run whose every bake is another model's included, a detection that failed not counted as the card's work;
+* that line reaches the server's index job whole, after the new faces, and so Activity's run;
 * a turned photo (Orientation 6, 12 such in photo_index), and one turned by an XMP tiff:Orientation alone, which ExifTool
   answers as no EXIF Orientation and Pillow turns all the same: its faces' boxes, read from the bake, are the boxes a
   detection stores;
@@ -24,6 +26,7 @@ import os
 import sys
 import unittest
 from unittest import mock
+from unittest.mock import MagicMock
 
 import numpy as np
 from click.testing import CliRunner
@@ -40,11 +43,12 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
-from tagpup.services import file_changes, file_only  # noqa: E402
+from tagpup.services import bake_reading, file_changes, file_only, indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -195,6 +199,12 @@ class AnIndexReadsABake(unittest.TestCase):
         for box, vector, _name, _excluded in faces:
             self.assertTrue(np.allclose(by_box[tuple(box)], vector, atol=1e-3), (path, box))
 
+    def said(self, output):
+        """The lines of an index's output that say what it read of the bakes, each whole."""
+        if not isinstance(output, str):
+            output = output.output
+        return [line for line in output.splitlines() if line.startswith(bake_reading.SAID)]
+
     # ---- the scenarios ---------------------------------------------------------------------------------------------------
 
     def test_a_baked_folder_is_indexed_from_its_files_and_no_model_is_asked(self):
@@ -219,7 +229,8 @@ class AnIndexReadsABake(unittest.TestCase):
             self.assertHoldsTheBake(path, held[path], size)
         self.assertEqual(60, len(self.faces(crowd)))
         self.assertIn("Baked into the files: 4 photo(s) read from their file, 0 worked out on the graphics card; 0 bake(s) "
-                      "stale (the picture changed after it was baked), 0 unreadable; 4 photo(s) needed no graphics card.",
+                      "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 4 photo(s) "
+                      "needed no graphics card.",
                       " ".join(result.output.split()))
         # Nothing of the bake is the photo's metadata; its fingerprint is recorded with its row.
         for path in held:
@@ -272,8 +283,59 @@ class AnIndexReadsABake(unittest.TestCase):
         # CLIP is asked of the four whose vector the bake did not give, the old faces' photo not among them.
         self.assertEqual(4, self.on_card.count("embed"))
         self.assertIn("Baked into the files: 3 photo(s) read from their file, 5 worked out on the graphics card; 1 bake(s) "
-                      "stale (the picture changed after it was baked), 1 unreadable; 1 photo(s) needed no graphics card.",
+                      "stale (the picture changed after it was baked), 1 unreadable, 0 made under other models; 1 photo(s) "
+                      "needed no graphics card.",
                       " ".join(result.output.split()))
+
+    def test_bakes_all_of_other_models_are_said_and_a_failed_detection_is_not_the_cards_work(self):
+        folder = self.folder("Harbour Other Models")
+        both = self.picture(folder, "both other.jpg", "navy")
+        self.bake(both, [baked_files.area(0)], **{bake.PHOTO_MODEL: "ViT-B-32|openai|cropped|1.0|native",
+                                                  bake.FACE_MODEL: validation.MTCNN_FACENET})
+        said = self.said(self.index(folder))
+        self.assertEqual(["Baked into the files: 0 photo(s) read from their file, 1 worked out on the graphics card; 0 bake(s) "
+                          "stale (the picture changed after it was baked), 0 unreadable, 1 made under other models; 0 "
+                          "photo(s) needed no graphics card."], said)
+
+        # Its vector read, its faces asked of a model that fails: nothing was worked out on the card.
+        folder = self.folder("Harbour Failed Detection")
+        failed = self.picture(folder, "failed.jpg", "teal")
+        self.bake(failed, [baked_files.area(0)], **{bake.FACE_MODEL: validation.MTCNN_FACENET})
+        self.detector.found = {"failed.jpg": None}
+        del self.detector.asked[:], self.on_card[:]
+        said = self.said(self.index(folder))
+        self.assertEqual(["failed.jpg"], self.detector.asked)
+        self.assertEqual([], self.on_card)
+        self.assertEqual(["Baked into the files: 1 photo(s) read from their file, 0 worked out on the graphics card; 0 bake(s) "
+                          "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 1 "
+                          "photo(s) needed no graphics card."], said)
+
+    def test_the_line_reaches_the_servers_index_job_whole(self):
+        folder = self.folder("Harbour Job")
+        path = self.picture(folder, "job.jpg", "navy")
+        self.bake(path, [baked_files.area(0)])
+        printed = self.index(folder).output
+        (line,) = self.said(printed)
+        self.assertGreater(len(line), 90, "the bar cuts a line at 90 characters")
+
+        # The server's index job runs the CLI as a process of its own: what it printed, line by line as a pipe gives it
+        # (a bar's frames joined by carriage returns), is what it hears.
+        def cli(command, **kwargs):
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stdout.readline.side_effect = iter([line + "\n" for line in printed.split("\n")] + [""])
+            return proc
+        library = Library(self.db_path)
+        queue = indexing_jobs.queue_for(library)
+        self.addCleanup(indexing_jobs.forget, library)
+        with mock.patch.object(indexing_jobs.IndexQueue, "_ensure_runner"), mock.patch("subprocess.Popen", cli):
+            queue.start([folder], lambda each, report: indexing.index_folder(library, each, self.home.root, report))
+            queue.run_pending()
+        status = queue.status(folder)
+        self.assertEqual("completed", status["status"], status)
+        self.assertTrue(status["message"].startswith("Folder indexed. "), status["message"])
+        self.assertTrue(status["message"].endswith(" " + line), status["message"])
+        self.assertEqual(status["message"], queue.history()[0]["message"])
 
     def test_a_turned_photos_faces_read_from_its_bake_are_the_boxes_a_detection_stores(self):
         folder = self.folder("Harbour Turned")

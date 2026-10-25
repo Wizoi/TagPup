@@ -23,6 +23,10 @@ from tagpup.files import bake, images
 #: or the file holds none; or whole and the picture's, but made under models neither of which is the library's.
 READ, STALE, UNREADABLE, NOT_BAKED, OTHER_MODELS = "read", "stale", "unreadable", "not baked", "other models"
 
+#: What the line an index ends with when a photo held a bake begins with (Tally.said): the one spelling of it, which
+#: tagpup.services.indexing reads whole, before the progress bar cuts it, and ends the folder's message with.
+SAID = "Baked into the files: "
+
 
 @dataclasses.dataclass
 class Taken:
@@ -92,10 +96,12 @@ class Tally:
         self.counts["no card"] += not on_card
 
     def said(self):
-        """The line, or None when no photo of the run held a bake."""
+        """The line, SAID first, or None when no photo of the run held a bake (every verdict NOT_BAKED)."""
         counts = self.counts
-        if not (counts[READ] or counts[STALE] or counts[UNREADABLE]):
+        if not (counts[READ] or counts[STALE] or counts[UNREADABLE] or counts[OTHER_MODELS]):
             return None
-        return ("Baked into the files: %d photo(s) read from their file, %d worked out on the graphics card; %d bake(s) "
-                "stale (the picture changed after it was baked), %d unreadable; %d photo(s) needed no graphics card."
-                % (counts["from file"], counts["on card"], counts[STALE], counts[UNREADABLE], counts["no card"]))
+        return SAID + (
+            "%d photo(s) read from their file, %d worked out on the graphics card; %d bake(s) stale (the picture changed "
+            "after it was baked), %d unreadable, %d made under other models; %d photo(s) needed no graphics card."
+            % (counts["from file"], counts["on card"], counts[STALE], counts[UNREADABLE], counts[OTHER_MODELS],
+               counts["no card"]))

@@ -527,7 +527,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     detected = took.detected
                     if detected is None:
                         detected = face_processor.detect_and_embed(picture)
-                        on_card = on_card or face_records.ran(picture)
+                        on_card = on_card or face_records.ran(detected)
                     faces = face_processor.new_faces(detected, picture)
                     batch_faces[path] = faces
                 tally.add(took.verdict, from_file=took.vector is not None or took.detected is not None, on_card=on_card)
