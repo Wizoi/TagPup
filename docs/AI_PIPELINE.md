@@ -12,8 +12,9 @@ photos in 34 minutes, kr-track 1,498 of 1,499, renton_parkrun 1,309 of 1,309; th
 gone) and switched by `set-photo-model` as one journaled, gated change each (changes 3249, 343, 1222), installed as
 20261024-175614-68d3fbcd; the doctor passes on all three; a read-only check under the production classes found the
 vectors unit length, no NaN, stamps agreeing with the old key's for 99.995% of photo_index. The old ViT-H-14 vectors
-still sit beside the new ones (about 244 MB on photo_index): they are what lets the switch be undone, and retiring them
-(the retire-vectors pattern, a snapshot first) is the owner's call. #1830 is closed: after the switch a plain `index` has
+still sit beside the new ones (about 244 MB on photo_index): they are what lets the switch be undone. Retiring them
+and Suggest's ViT-H words is built (`retire-photo-vectors`, the retire-vectors pattern, a snapshot first; owner,
+2026-10-24); its live run on the three libraries is the main session's. #1830 is closed: after the switch a plain `index` has
 only the gone file to skip. Phase 3 (SCRFD 10g and AdaFace IR-101, one pass, migration 33) is on all three libraries; photo_index starts
 afresh on the new face model (retire-faces, change 3247) and its FaceNet vectors are retired (change 3248, then
 `compact`: 182,779 AdaFace vectors, 0 FaceNet). Phase 4a (one gallery, time-nearest matching) is merged. Phase 4b (cut 1,

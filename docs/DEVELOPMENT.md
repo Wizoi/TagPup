@@ -48,8 +48,12 @@ through `TagPup CLI.cmd`, with `--db` naming the library, one library at a time:
    how many words Suggest will make again. Then with `--apply`: note the change id it prints; `undo <id> --apply`
    switches back.
 4. `.venv/Scripts/python.exe tools/doctor.py --db <library>`: the library's checks after the switch.
+5. Once the owner is content with the new model (the switch can be undone until now): `retire-photo-vectors`, the dry
+   run naming the own key, the photos holding it, and the old key's vectors and words that go. Then with `--apply`, the
+   apps closed: a snapshot first (the way back; the change's undo and the switch back are refused after it). Then
+   `compact`, with the apps closed, gives the space back.
 
-The old model's vectors stay beside the new until they are retired (a later step); nothing reads them after the switch.
+The old model's vectors stay beside the new until step 5; nothing reads them after the switch.
 
 **Logs are in `data/logs/`**: `tagpup.log` and `tagtuner.log`, one per
 program, rotating at 5 MB and keeping five old files. They hold everything the console
