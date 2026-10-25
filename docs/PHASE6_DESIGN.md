@@ -129,3 +129,15 @@ side exists, so its column must be the read side's, not a guess for cut 3.
 - **Counts (2026-10-25):** photos with faces 49,111 / 1,485 / 1,285; with a `faces_detected` row 0 / 178 / 146 (all the old
   detector); with neither 10,408 / 12 / 18; faces with no vector under the current key 0 / 1,211 (532 photos) / 329 (244);
   journal text added by a full backfill about 499 MB / 24 MB / 10 MB, never pruned, copied by every snapshot.
+
+### Decided 2026-10-25 (owner, cut 2)
+
+1. **Journal:** the whole bake text is kept, undoable, about 499 MB in photo_index (and in every snapshot), never pruned; a
+   retention rule is its own later cut if the size bites.
+2. **Photos never examined under the face model** (10,408 / 12 / 18) are skipped and counted by the dry run; nothing claims
+   "none found" for them.
+3. **Old-detector faces in kr-track and renton_parkrun** (776 photos): `retire-faces` is run on both first, as the first
+   step of cut 3 (a live write: snapshot, dry run, then apply), so all three bake in one pass.
+4. **Dry run:** reads every file's XMP, decodes a sample of 200 photos per library to measure and to confirm the
+   fingerprints, and reports "about N to bake"; the full decode is `--apply`'s.
+5. **Migration 34** runs at the next app or CLI start; the dry run never migrates.
