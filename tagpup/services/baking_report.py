@@ -197,7 +197,8 @@ def apply(library, exiftool_path, detector, folders=None, stop=None, heard=None,
                 counted = True
                 if heard is not None:
                     heard(under_way, number, len(walk))
-                under_way = None
+                # Nothing under way while the next folder is read: a Ctrl+C there finds the folders before it counted.
+                under_way, counted = None, False
                 if run.refused or run.stalled:
                     break
         except KeyboardInterrupt as stopped:

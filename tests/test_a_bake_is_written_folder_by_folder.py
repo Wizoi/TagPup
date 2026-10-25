@@ -181,6 +181,40 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
         self.assertEqual(3, run.total.written, "counted once")
         self.assertEqual(1, len(self.changes()), "the folder after it is not reached")
 
+    def ctrl_c_in_the_second_folders_read(self):
+        """A context: the second Ctrl+C while the Walk reads and plans the folder after a folder written."""
+        real, asked = baking_report.Walk._folder, []
+
+        def folder(walk, group):
+            asked.append(group)
+            if len(asked) == 2:
+                raise KeyboardInterrupt
+            return real(walk, group)
+        return mock.patch.object(baking_report.Walk, "_folder", folder)
+
+    def test_a_ctrl_c_while_the_next_folder_is_read_keeps_the_folder_before_and_counts_it(self):
+        self.three_to_bake("Trip")
+        self.three_to_bake("Uphill")
+        with self.ctrl_c_in_the_second_folders_read():
+            run, _said = self.apply()
+        change = self.last_change()
+        self.assertEqual({"change": None, "written": None, "left": None}, run.interrupted,
+                         "stopped before that folder's write: nothing of it under way")
+        self.assertEqual([(change, 3)], [(folder.change, folder.written) for folder in run.folders])
+        self.assertEqual(3, run.total.written, "the folder before, counted once")
+
+    def test_from_the_cli_a_ctrl_c_while_the_next_folder_is_read_says_the_totals_and_the_way_back(self):
+        self.three_to_bake("Trip")
+        self.three_to_bake("Uphill")
+        with self.ctrl_c_in_the_second_folders_read():
+            stopped = self.cli("--apply")
+        out = stopped.output
+        self.assertEqual(1, stopped.exit_code, out)
+        self.assertIsNone(stopped.exception if not isinstance(stopped.exception, SystemExit) else None, out)
+        self.assertIn("Written: 3 file(s) in 1 change(s) (%d)." % self.last_change(), out)
+        self.assertIn("Stopped at once, before that folder was written. Run it again to go on.", out)
+        self.assertEqual(tagpup_cli.BAKE_WAY_BACK, out.splitlines()[-1])
+
     def test_a_run_that_cannot_finish_a_stopped_runs_change_says_it_is_left(self):
         self.three_to_bake("Trip")
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", nth=2)):
