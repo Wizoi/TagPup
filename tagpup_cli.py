@@ -74,6 +74,7 @@ from tagpup.services import thumbnails
 from tagpup.services import photo_reembed
 from tagpup.services import face_pass as face_pass_service
 from tagpup.services import retire_faces as retire_faces_service
+from tagpup.services import retire_photo_vectors
 from tagpup import launcher
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
@@ -1456,6 +1457,46 @@ def retire_vectors(ctx, apply_):
     retired = _retire_vectors_applied(library, [planned], retire_faces_service.apply_vectors, say)
     if retired[-1].error or retired[-1].stopped or retired[-1].refused:
         raise SystemExit(1)
+
+
+@cli.command("retire-photo-vectors")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write: after a snapshot of the library, taken even when one is from today (it is the way back), one "
+                   "change of the journal a model, which is not undone. Without it, only says what it would do.")
+@click.pass_context
+def retire_photo_vectors_command(ctx, apply_):
+    """Once the library is on its new photo model (after embed-photos and set-photo-model): delete the photo vectors of
+    every other model, which no reader keyed by the library's model reads, and the words Suggest cached under those
+    models (docs/AI_PIPELINE.md; owner, 2026-10-24). No photo, keyword, face or tag is touched. Refused while more of
+    the library's photos than a switch allows hold no vector under its own model. A dry run unless --apply; counts
+    only. --apply takes a snapshot first, always: it is the way back (the change's undo is refused, and so are a switch
+    back to a retired model and the undo of the switch away from it). Ctrl+C stops it after the chunk under way, and
+    so does an app started during the run; run it again to go on, as the same change. --apply is refused while an app
+    runs; an MCP server keeps no record of itself and is not seen: close it first. After it, `compact` gives the space
+    back to the disk."""
+    library = _existing_library(ctx)
+    say = functools.partial(console.print, markup=False, soft_wrap=True)
+    say("Retiring the vectors of the photo models %s is not on%s." % (library.name, "" if apply_ else " (a dry run)"))
+    own, (photos, holds), plans = retire_photo_vectors.plan(library)
+    say("The library's photo model: %s. %s" % (own, library_settings.PHOTOS_HELD % (holds, photos, own, photos - holds)))
+    if not plans:
+        say("Nothing to retire: no vector under another key is left.")
+        return
+    if plans[0].refused:
+        say(plans[0].refused)
+        raise SystemExit(1)
+    for planned in plans:
+        say(planned.said())
+    if not apply_:
+        say(VECTORS_DRY_RUN)
+        return
+    retired = _retire_vectors_applied(library, plans, retire_photo_vectors.apply, say)
+    if retired[-1].error or retired[-1].stopped or retired[-1].refused:
+        raise SystemExit(1)
+    for done in retired:
+        say("The switch back to %s is no longer possible (the undo of the settings change is refused: no photo holds a "
+            "vector under it); the snapshot is the way back; `compact`, with the apps closed, gives the space back."
+            % done.plan.key)
 
 
 #: What a dry run of retire-vectors (and retire-photo-vectors) says --apply does.
