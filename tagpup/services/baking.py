@@ -20,7 +20,7 @@ import numpy as np
 from tagpup.core import fields, orientation
 from tagpup.files import bake, field_values, images
 from tagpup.services import settings
-from tagpup.store import embeddings, faces_detected
+from tagpup.store import embeddings, faces_detected, photo_fingerprints
 from tagpup.store import faces as store_faces
 from tagpup.store import roots as store_roots
 
@@ -107,3 +107,18 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     if fields.reads_same(held, compared):
         return Current()
     return ToBake(made if fingerprint is not None else None, PHOTO_BYTES + FACE_BYTES * len(found))
+
+
+def follower(row, state):
+    """What a file's journaled write of a bake brings in the transaction that marks it `state`
+    (tagpup.services.file_changes._followers): on 'done', the photo's fingerprint row, put from the Fingerprint the file
+    holds after. None for any other file, for a row whose photo sync took away (photo_id None), and on an undo: the row is
+    a fact of the picture, which a bake does not change, so an undo leaves it (#1894)."""
+    texts = row.after.get(bake.WRITTEN[bake.FINGERPRINT])
+    if state != "done" or not texts or row.photo_id is None:
+        return None
+    key, digest = bake.fingerprint_of(texts[0])
+
+    def follow(conn):
+        photo_fingerprints.put(conn, row.photo_id, key, digest)
+    return follow

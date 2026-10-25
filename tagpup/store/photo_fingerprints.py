@@ -10,7 +10,9 @@ metadata write leaves is the picture it found. A rotation changes the picture th
 No foreign key and no trigger, as `faces_detected`: a row whose photo is gone is read as none, a photo's id never being
 handed out again, so deleting a photo takes nothing the journal must account for.
 
-Nothing writes a row yet but the tests (phase 6, cut 1b: the bake and the read side write it in a later cut).
+Two write a row: the index, as it saves a photo it decoded (tagpup.services.search), and a bake's write, in the transaction
+that marks it done (tagpup.services.baking.follower), from the Fingerprint the file holds after. An undo of a bake leaves
+the row: the picture is the one it was.
 """
 import collections
 
