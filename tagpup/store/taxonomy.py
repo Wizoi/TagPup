@@ -431,6 +431,13 @@ def forget_tag_embeddings(conn, tag):
     return conn.execute("DELETE FROM tag_embeddings WHERE tag = ?", (tag,)).rowcount
 
 
+def forget_model_tag_embeddings(conn, model_name, pretrained):
+    """Drop every word's CLIP embeddings cached under this model (tagpup.services.retire_photo_vectors). The caller
+    commits. Returns the rows dropped."""
+    return conn.execute("DELETE FROM tag_embeddings WHERE model_name = ? AND pretrained = ?",
+                        (model_name, pretrained)).rowcount
+
+
 def delete_branch(conn, path, force=False):
     """Take the node `path` and every node under it out of the tree. A person that faces name is not deleted without `force`
     (PersonInUse, with the count and which); with it their faces are unnamed in this transaction. The caller commits.

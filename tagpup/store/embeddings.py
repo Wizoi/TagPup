@@ -125,3 +125,31 @@ def lacking(conn, photo_id, held):
 def count(conn, model):
     """How many photos have a vector under `model`."""
     return conn.execute("SELECT COUNT(*) FROM embeddings WHERE model = ?", (model,)).fetchone()[0]
+
+
+def key_totals(conn):
+    """{key: (vectors, bytes)} of every key the library holds vectors under: one scan of the table, the vectors' lengths
+    read and not the vectors (2.6 s cold on photo_index, 2026-10-24). What a dry run of retiring a photo model's vectors
+    reads (tagpup.services.retire_photo_vectors)."""
+    return {model: (count, int(size)) for model, count, size in conn.execute(
+        "SELECT model, COUNT(*), TOTAL(LENGTH(vector)) FROM embeddings GROUP BY model")}
+
+
+def model_of(key):
+    """(name, pretrained) of the photo model a key (model_key) names: the first two of its five parts."""
+    name, pretrained = key.split("|")[:2]
+    return name, pretrained
+
+
+def next_under(conn, key, after, limit):
+    """[(rowid, bytes)] of the next `limit` vectors under `key` above rowid `after`, by rowid: a search of the integer
+    primary key, the vectors' lengths and not the vectors."""
+    return conn.execute("SELECT rowid, LENGTH(vector) FROM embeddings WHERE model = ? AND rowid > ? ORDER BY rowid"
+                        " LIMIT ?", (key, after, limit)).fetchall()
+
+
+def delete_between(conn, key, after, last):
+    """Delete the vectors under `key` whose rowid is above `after` and at most `last` (next_under's, read in the same
+    transaction). Returns the rows deleted. The caller commits."""
+    return conn.execute("DELETE FROM embeddings WHERE model = ? AND rowid > ? AND rowid <= ?",
+                        (key, after, last)).rowcount
