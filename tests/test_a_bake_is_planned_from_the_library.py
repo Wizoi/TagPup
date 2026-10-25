@@ -160,6 +160,11 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         self.assertEqual(baking.NO_VECTOR, self.plan(b).kind)
         gone = self.make("gone.jpg", row=False)
         self.assertEqual(baking.GONE, self.plan(gone).kind)
+        away = self.photo("away.jpg", faces=1)
+        os.remove(away)
+        plan = self.plan_without_opening(away)
+        self.assertEqual(baking.UNREADABLE, plan.kind, "a file that cannot be reached is not one that changed")
+        self.assertNotIn("index it again", plan.reason)
 
         c = self.photo("c.jpg", faces=1)
         keys = self.read(lambda conn: baking.keys(conn, DETECTOR))

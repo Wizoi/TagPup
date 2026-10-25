@@ -18,7 +18,7 @@ import dataclasses
 import numpy as np
 
 from tagpup.core import fields, orientation
-from tagpup.files import bake, images
+from tagpup.files import bake, images, shares
 from tagpup.services import settings
 from tagpup.store import embeddings, faces_detected, photo_fingerprints
 from tagpup.store import faces as store_faces
@@ -85,7 +85,8 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     """ToBake, Current or Cannot for the photo at `photo_path`. `held()`, the fields its file holds (field_values.read of
     bake.WRITTEN's values), or the Exception that read gave (returned or raised); `shape()`, (stored width, stored height,
     turn) as images.shown_shape gives them, or raising (the picture cannot be opened). Neither is called for a photo the
-    library refuses (GONE, NO_VECTOR, CHANGED, NEVER_EXAMINED, FACES_WITHOUT_VECTORS): its file is not opened for nothing.
+    library refuses (GONE, NO_VECTOR, CHANGED, NEVER_EXAMINED, FACES_WITHOUT_VECTORS) or cannot reach (UNREADABLE: a file
+    deleted outside the app, a drive or share away; shares.stamp_of is the one bounded look): its file is not opened for nothing.
     `fingerprint`, the digest of its upright decode (images.fingerprint), or None: then nothing is planned to be written
     (ToBake.values None) and the Fingerprint the file holds is not compared."""
     if not store_roots.photo_ids_at(conn, [photo_path]):
@@ -93,7 +94,10 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     stored = embeddings.get(conn, photo_path, keys.photo)
     if stored is None:
         return Cannot(NO_VECTOR, "It has no photo vector under the library's photo model.")
-    if (stored.mtime, stored.size) != embeddings.stamp_of(photo_path):
+    stamp = shares.stamp_of(photo_path)   # bounded: a share that is away is asked once, within a second
+    if stamp is None or stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
+        return Cannot(UNREADABLE, "Its file could not be reached.")
+    if (stored.mtime, stored.size) != stamp:
         return Cannot(CHANGED, "Its file changed since its photo vector was made: index it again first.")
     rows = sorted(store_faces.in_photo_with_names(conn, photo_path, keys.face), key=lambda row: row[0])   # by face id
     if not rows and not faces_detected.detected(conn, photo_path, keys.detector):
