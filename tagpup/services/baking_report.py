@@ -1,17 +1,27 @@
-"""A bake's dry run (`bake-photos` without --apply; docs/PHASE6_DESIGN.md, section 9): every photo of a library, or of
-the folders given, planned by tagpup.services.baking as a bake would plan it, and counted -- to bake, already current,
-cannot be baked and why -- folder by folder. It writes nothing: the library is opened read-only (no write lock, no
-migration, no journal), and the files are only read, through field_values.session and Pillow.
+"""A bake of a library's photos, folder by folder (`bake-photos`; docs/PHASE6_DESIGN.md, section 9): its dry run, which
+plans every photo of a library, or of the folders given, as a bake plans it and counts them -- to bake, already current,
+cannot be baked and why -- writing nothing; and `apply`, which writes each folder's photos to bake as one journaled
+change (tagpup.services.file_changes.write_fields). Both plan through one Walk: tagpup.services.baking's plan of each
+photo, a folder at a time, each folder on a read-only connection of its own, so that a folder's plan sees what the write
+of the folder before it left.
 
 A folder's files are read (their bake fields, through one ExifTool read of the folder) only when the first photo of it
-the library can plan asks for them: a folder of photos never examined, or with no vector, opens no file. A sample of the
-photos (SAMPLE, every Nth by photo id, the same photos each run) is decoded whole, to take its fingerprint, when its plan
-reaches its file (the library can plan it and its file reads): the plan of a sampled photo compares the Fingerprint its
-file holds as well, and its fingerprint is compared with the row photo_fingerprints holds of it, if any. The others are
-planned without decoding, as a share is slow to read.
+the library can plan asks for them: a folder of photos never examined, or with no vector, opens no file. A dry run
+decodes a sample of the photos (SAMPLE, every Nth by photo id, the same photos each run) whole, to take its fingerprint,
+when its plan reaches its file: the plan of a sampled photo compares the Fingerprint its file holds as well, and its
+fingerprint is compared with the row photo_fingerprints holds of it, if any; the others are planned without decoding,
+as a share is slow to read. An apply plans each photo without decoding first and decodes only a photo to bake: a photo
+already current is not decoded again, so a run stopped part-way goes on from where it stopped at the cost of one read
+of each folder it did.
 
 A read ExifTool does not answer in its deadline (a share or drive gone away) stops the run at that folder: a later
 folder's read would wait the deadline again, and every photo after would read as not answered.
+
+The dry run opens the library read-only (no write lock, no migration, no journal) and only reads the files. An apply
+first finishes the changes of photo files a stopped run left (file_changes.settle, the one owner), saying which; takes
+one snapshot of the library before its first write (snapshots.before_a_long_write: a daily, unless today's stands);
+writes in the one ExifTool session it reads in; and stops at a folder whose write is refused or that a share stopped.
+A Ctrl+C keeps what was written, applied and undoable, and is counted.
 """
 import collections
 import dataclasses
@@ -50,6 +60,22 @@ class Tally:
         self.cannot.update(other.cannot)
         self.formats.update(other.formats)
 
+    def count(self, planned):
+        """Count one photo a Walk planned (Planned)."""
+        self.photos += 1
+        if planned.sampled:
+            self.sampled += 1
+            if planned.row is not None:
+                self.had_row += 1
+                self.matched += (planned.row.key, bytes(planned.row.hash)) == (images.FINGERPRINT_KEY, planned.digest)
+        if isinstance(planned.plan, baking.ToBake):
+            self.to_bake += 1
+            self.formats[os.path.splitext(planned.path)[1].lower()] += 1
+        elif isinstance(planned.plan, baking.Current):
+            self.current += 1
+        else:
+            self.cannot[planned.plan.kind] += 1
+
 
 @dataclasses.dataclass
 class DryRun:
@@ -79,42 +105,128 @@ def dry_run(library, exiftool_path, detector, folders=None, stop=None, heard=Non
     detector records its detections under (tagpup.services.faces.detector_of); `stop`, a threading.Event the run asks
     before each folder's read and each photo; `heard(tally, number, folders)`, told each folder's Tally as it is
     done, with its number and how many folders the run has."""
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        keys = baking.keys(conn, detector)
-        rows = photos_of(conn, folders)
-        sampled = sample_of([photo_id for photo_id, _path in rows], sample)
+    found, total, stalled = [], Tally(), None
+    with field_values.session(exiftool_path) as session:
+        walk = Walk(library, exiftool_session.StaysDead(session), detector, folders, stop, sample=sample)
+        for number, folder in enumerate(walk, 1):
+            tally = Tally(folder=folder.folder, not_answered=folder.not_answered)
+            for planned in folder.photos:
+                tally.count(planned)
+            if tally.photos or tally.not_answered:
+                found.append(tally)
+                total.add(tally)
+                if heard is not None:
+                    heard(tally, number, len(walk))
+            if folder.stalled:
+                stalled = tally.folder
+    return DryRun(found, total, walk.stopped, stalled)
+
+
+#: One photo a Walk planned: its plan (baking.ToBake, Current or Cannot), and the digest of its upright decode (None: not
+#: decoded); `sampled`, decoded for a dry run's sample, and then `row` the Fingerprint photo_fingerprints held of it.
+Planned = collections.namedtuple("Planned", "photo_id path plan digest row sampled")
+
+
+@dataclasses.dataclass
+class FolderPlan:
+    """The photos of one folder (`folder`, native; `stored`, as the library holds it) a Walk planned, in path order
+    (Planned), and how many ExifTool did not answer for (not planned); `stalled`, its read was not answered in ExifTool's
+    deadline, and the walk ends with it."""
+    folder: str
+    stored: str
+    photos: list
+    not_answered: int = 0
+    stalled: bool = False
+
+
+class Walk:
+    """The one plan of a bake, folder by folder: iterated, a FolderPlan of each folder of `library`'s photos (under
+    `folders`, when given), in path order, its files read in `et` (one session for the run, kept dead once it times out).
+
+    `stop` is asked before each folder, and also before each photo and during a folder's read unless `whole_folders`
+    (an apply's: a folder is planned and written whole or not at all); `stopped` is set when it ended the walk. With
+    `values` (an apply's), every photo to bake is planned with its decode, so its ToBake holds the values to write; else a
+    dry run's `sample` of the photos is decoded. Each folder is planned on a read-only connection of its own, opened after
+    the folder before it was handed on: its plan sees what that folder's write left."""
+
+    def __init__(self, library, et, detector, folders=None, stop=None, sample=SAMPLE, values=False, whole_folders=False):
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            self.keys = baking.keys(conn, detector)
+            rows = photos_of(conn, folders)
+        finally:
+            conn.close()
+        self.library, self.et, self.stop, self.values, self.whole_folders = library, et, stop, values, whole_folders
+        self.sampled = set() if values else sample_of([photo_id for photo_id, _path in rows], sample)
         by_folder = collections.defaultdict(list)
         for photo_id, path in rows:
             by_folder[paths.key(os.path.dirname(path))].append((photo_id, path))
-        groups = sorted(by_folder.values(), key=lambda group: store_roots.path_order(os.path.dirname(group[0][1])))
-        found, total, stopped, stalled = [], Tally(), False, None
-        with field_values.session(exiftool_path) as session:
-            et = exiftool_session.StaysDead(session)   # timed out once, it is not asked again
-            for number, group in enumerate(groups, 1):
-                if stop is not None and stop.is_set():
-                    stopped = True
+        self.groups = sorted(by_folder.values(), key=lambda group: store_roots.path_order(os.path.dirname(group[0][1])))
+        self.stopped = False
+
+    def __len__(self):
+        return len(self.groups)
+
+    def _asked(self):
+        return self.stop is not None and self.stop.is_set()
+
+    def __iter__(self):
+        for group in self.groups:
+            if self._asked():
+                self.stopped = True
+                return
+            folder = self._folder(group)
+            yield folder
+            if folder.stalled or self.stopped:
+                return
+
+    def _folder(self, group):
+        name = os.path.dirname(group[0][1])
+        read = _FolderRead(self.et, [path for _id, path in group], None if self.whole_folders else self.stop)
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            folder = FolderPlan(name, store_roots.to_row(conn, name), [])
+            for photo_id, path in group:
+                if not self.whole_folders and self._asked():
+                    self.stopped = True
                     break
-                tally = Tally(folder=os.path.dirname(group[0][1]))
-                read = _FolderRead(et, [path for _id, path in group], stop)
-                for photo_id, path in group:
-                    if stop is not None and stop.is_set():
-                        stopped = True
-                        break
-                    _plan(conn, tally, keys, photo_id, path, read, photo_id in sampled)
-                if tally.photos or tally.not_answered:
-                    found.append(tally)
-                    total.add(tally)
-                    if heard is not None:
-                        heard(tally, number, len(groups))
-                if read.stalled:
-                    stalled = tally.folder
-                    break
-                if stopped:
-                    break
-        return DryRun(found, total, stopped, stalled)
-    finally:
-        conn.close()
+                self._photo(conn, folder, read, photo_id, path)
+        finally:
+            conn.close()
+        folder.stalled = read.stalled
+        return folder
+
+    def _photo(self, conn, folder, read, photo_id, path):
+        """Plan the photo at `path` into `folder`. A photo whose file ExifTool did not answer for is counted apart, not
+        as unreadable: nothing is known of its file, not even that it cannot be read. A photo is decoded only when its
+        plan asks (plan_photo, after the library's checks and the file's read)."""
+        given, decoded, shaped = [], [], []
+
+        def held():
+            given.append(read.of(path))
+            return given[-1]
+
+        def shape():
+            if not shaped:
+                width, height, _oriented, turn = images.shown_shape(path)
+                shaped.append((width, height, turn))
+            return shaped[0]
+
+        def fingerprint():
+            decoded.append(images.fingerprint(images.opened(path, upright=True)))
+            return decoded[-1]
+        sampled = photo_id in self.sampled
+        plan = baking.plan_photo(conn, path, self.keys, held, shape, fingerprint if sampled else None)
+        if self.values and isinstance(plan, baking.ToBake):
+            plan = baking.plan_photo(conn, path, self.keys, held, shape, fingerprint)
+        if given and isinstance(given[-1], _Stopped):
+            return
+        if isinstance(plan, baking.Cannot) and given and isinstance(given[-1], field_values.NotAnswered):
+            folder.not_answered += 1
+            return
+        digest = decoded[-1] if decoded else None
+        row = photo_fingerprints.get(conn, photo_id) if sampled and decoded else None
+        folder.photos.append(Planned(photo_id, path, plan, digest, row, sampled and bool(decoded)))
 
 
 class _Stopped(Exception):
@@ -144,43 +256,3 @@ class _FolderRead:
     def stalled(self):
         """Did ExifTool not answer the read in its deadline (field_values.read's NotAnswered)?"""
         return any(isinstance(held, field_values.NotAnswered) for held in (self.found or {}).values())
-
-
-def _shape(photo_path):
-    width, height, _oriented, turn = images.shown_shape(photo_path)
-    return width, height, turn
-
-
-def _plan(conn, tally, keys, photo_id, path, read, in_sample):
-    """Plan the photo at `path` and count it in `tally`. A photo whose file ExifTool did not answer for is counted apart,
-    not as unreadable: nothing is known of its file, not even that it cannot be read. A sampled photo is decoded only when
-    its plan asks (plan_photo, after the library's checks and the file's read), and counted sampled only then."""
-    given, decoded = [], []
-
-    def held():
-        given.append(read.of(path))
-        return given[-1]
-
-    def fingerprint():
-        decoded.append(images.fingerprint(images.opened(path, upright=True)))
-        return decoded[-1]
-    plan = baking.plan_photo(conn, path, keys, held, lambda: _shape(path), fingerprint if in_sample else None)
-    if given and isinstance(given[-1], _Stopped):
-        return
-    if isinstance(plan, baking.Cannot) and given and isinstance(given[-1], field_values.NotAnswered):
-        tally.not_answered += 1
-        return
-    tally.photos += 1
-    if decoded:
-        tally.sampled += 1
-        row = photo_fingerprints.get(conn, photo_id)
-        if row is not None:
-            tally.had_row += 1
-            tally.matched += (row.key, bytes(row.hash)) == (images.FINGERPRINT_KEY, decoded[0])
-    if isinstance(plan, baking.ToBake):
-        tally.to_bake += 1
-        tally.formats[os.path.splitext(path)[1].lower()] += 1
-    elif isinstance(plan, baking.Current):
-        tally.current += 1
-    else:
-        tally.cannot[plan.kind] += 1
