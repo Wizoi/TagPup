@@ -88,3 +88,13 @@ side exists, so its column must be the read side's, not a guess for cut 3.
 - **Migration 34** = table `photo_fingerprints (photo_id PRIMARY KEY, key TEXT, hash BLOB)`, additive, unjournaled, no
   FK; `services/rotation.py` clears the row beside `embeddings.forget`. No doctor check (as `faces_detected`).
 - Branches: 1a census (~300), 1b orientation + fingerprint + parse + migration 34 (~400), 1c read side (~500).
+
+## 8. Open before cut 3 writes any file (from the cut-1 reviews, findings #1859, #1866)
+
+- **Many faces.** A face costs about 1,600 characters of XMP, so 310 photos in photo_index (35 or more faces; the largest
+  holds 412) overflow a JPEG's 64 KB block into Extended XMP, which other programs often do not read. The owner decides:
+  cap the faces baked, accept Extended XMP, or skip those photos (the vectors are the point; the regions are for other
+  programs).
+- **The writer replaces the regions.** A photo with no faces bakes without `RegionInfo` (a present struct with FacesFound 0
+  is refused by the reader), and another program's mwg-rs regions in a file are replaced by the bake. The census says how
+  many files hold regions of their own before this is decided.
