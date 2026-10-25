@@ -10,6 +10,9 @@ use while it runs. What the owner lives through:
 - A photo removed while the run is under way is skipped and never given a row back; the batch it was in is one write
   (one connection, one take of the write lock, one commit), the others of it kept (#1839).
 - A file that does not decode is counted, and tried again by the next run.
+- A photo the owner edits while it is embedded keeps a vector stamped with the file as it was opened, so the next look
+  at it (Suggest, the index) finds the vector stale and makes it again (#1840).
+- Two libraries holding one folder: each is embedded by its own run, and neither run writes the other library (#1840).
 - The drive is not connected (every file not found): the run stops past 1% (and 20) with one sentence asking whether
   the drive or share is connected, exits 1, and what an earlier run kept stays kept; one file really gone of a hundred
   is counted and the run goes on (#1838).
@@ -91,7 +94,7 @@ class _Clip:
         self.device = "cpu"
         self.dim = DIMS[self.settings["model_name"]]
         self.events, self.forwards = [], []
-        self.on_forward = None
+        self.on_forward = self.on_read = None
 
     def load(self):
         self.events.append("load")
@@ -101,6 +104,8 @@ class _Clip:
 
     def input_of(self, path, seen=None, load=True):
         assert not load, "a read ahead never loads the model"
+        if self.on_read:
+            self.on_read(path)
         images.opened(path, upright=True).close()
         return path
 
@@ -284,6 +289,74 @@ class ABatchIsOneWrite(_Library):
         self.assertEqual(1, len(writes), "a batch was not one write: %d" % len(writes))
         self.assertEqual({paths.key(path) for path in self.photos if path != removed}, self.new_vectors())
         self.assertNotIn(paths.key(removed), self.rows(), "the photo removed was given a row back")
+
+
+class APhotoEditedWhileItIsEmbedded(_Library):
+
+    def test_a_photo_edited_while_it_is_embedded_keeps_a_vector_of_before_and_the_next_look_makes_it_again(self):
+        edited = self.photos[3]
+        opened = store_embeddings.stamp_of(edited)
+        wanted = photo_reembed.wanted(self.runtime.settings(self.library), NEW)
+
+        def the_owner_edits_it(path):
+            # Between the stamp the pass took and the decode: another program saves the photo larger.
+            if paths.key(path) == paths.key(edited):
+                Image.new("RGB", (64, 48), (200, 10, 10)).save(edited, "JPEG")
+                os.utime(edited, (opened[0] + 60, opened[0] + 60))
+
+        self.runtime.clip(None, wanted).on_read = the_owner_edits_it
+        counts = self.embed()
+        self.assertEqual((10, 10), (counts["embedded"], counts["kept"]))
+        held = read(self.library.path, "SELECT e.mtime, e.size FROM embeddings e JOIN photos p ON p.id = e.photo_id"
+                    " WHERE p.id = ? AND e.model = ?", (store_photos_id(self.library.path, edited), NEW_KEY))
+        self.assertEqual([opened], held, "the vector was not stamped with the file as it was opened")
+        index = search.PhotoIndex(self.library.path, NEW_KEY)
+        index.open()
+        try:
+            looked = search.PhotoEmbeddings(self.runtime.clip(None, wanted), index)
+            self.assertIsNone(looked.cached(edited), "the photo edited meanwhile was taken as embedded")
+            self.assertIsNotNone(looked.cached(self.photos[4]))
+        finally:
+            index.close()
+
+
+class TwoLibrariesHoldingOneFolder(_Library):
+
+    def test_each_library_is_embedded_by_its_own_run_and_neither_writes_the_other(self):
+        other = Library(self.home.library("lagoon.db"))
+        self.assertEqual(1, library_actions.create(other.path).changed)
+        library_actions.record_added(other, [self.folder])
+        self.addCleanup(self.runtime.forget, other)
+        conn = db.connect(other.path)
+        try:
+            for n, path in enumerate(self.photos):
+                photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
+                mtime, size = store_embeddings.stamp_of(path)
+                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(1024, n).tobytes())
+            conn.commit()
+        finally:
+            conn.close()
+
+        others_before = rows_of(other.path)
+        first = self.embed()
+        self.assertEqual((10, 10), (first["to_embed"], first["kept"]))
+        self.assertEqual(others_before, rows_of(other.path), "the run of harbour wrote lagoon")
+
+        mine_before = rows_of(self.library.path)
+        second = photo_reembed.run(other, self.runtime, NEW)
+        self.assertEqual((0, 10, 10), (second["held"], second["to_embed"], second["kept"]))
+        self.assertEqual(mine_before, rows_of(self.library.path), "the run of lagoon wrote harbour")
+        self.assertEqual(10, read(other.path, "SELECT COUNT(*) FROM embeddings WHERE model = ?", (NEW_KEY,))[0][0])
+
+
+def store_photos_id(db_path, path):
+    """The id of the photo's row, as the pass reads the rows (store.photos.stamps)."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return next(photo_id for photo_id, held_path, _m, _s, _held in store_photos.stamps(conn, with_vectors=NEW_KEY)
+                    if paths.key(held_path) == paths.key(path))
+    finally:
+        conn.close()
 
 
 class AFileThatDoesNotDecode(_Library):
