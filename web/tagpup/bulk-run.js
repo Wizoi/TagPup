@@ -121,9 +121,10 @@ export async function runBulk({ op, selection, params, desc, picked }) {
     // Photos came into the view since it was read: the server took more than were picked.
     const wider = body.total > picked && selection && selection.source
         ? ` TagPup took ${body.total.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(body.total - picked).toLocaleString()} more came into this view since it was read.` : '';
-    // A batch stopped as asked answers with the server's own sentence on each photo it left: N of M, and the change in History.
-    const stopped = (body.errors || []).find(each => String(each.why).startsWith('Stopped as asked'));
-    const ended = stopped ? stopped.why : endedSentence(doneWords(desc, body.changed || 0), body) + wider;
+    // A batch that stopped before its end (as asked, or ExifTool stopped answering) answers with its own sentence: N of M, and
+    // the change in History, in place of the same error on each photo it left.
+    const stopped = body.stopped;
+    const ended = stopped || endedSentence(doneWords(desc, body.changed || 0), body) + wider;
     const errors = body.error_count || 0;
     showEnded({ text: ended, problem: errors > 0, errors: stopped ? [] : body.errors, errorCount: stopped ? 0 : errors });
     setStatus(errors > 0 ? 'error' : 'ready', ended, { transient: false });

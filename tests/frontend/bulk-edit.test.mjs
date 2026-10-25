@@ -318,9 +318,20 @@ describe("only one bulk edit at a time", () => {
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
     ctx.bulk.edit = served.stopped_reply;
     await addTag(ctx);
-    assert.equal(sentence(ctx), served.stopped_reply.errors[0].why);
+    assert.equal(sentence(ctx), served.stopped_reply.stopped);
     assert.equal(strip(ctx).querySelector("details"), null);
     assert.match(status(ctx), /^Stopped as asked after 25 of 60 photos/);
+  });
+
+  test("a batch ExifTool stopped answering in: the reply's own sentence is the strip's, as a stop's, not an error a photo", async (t) => {
+    const ctx = await view(t, 400);
+    click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
+    ctx.bulk.edit = served.share_stopped_reply;
+    await addTag(ctx);
+    assert.equal(sentence(ctx), served.share_stopped_reply.stopped);
+    assert.ok(served.share_stopped_reply.stopped.startsWith(served.share_stopped_reply.errors[0].why), "the whole sentence, not cut");
+    assert.equal(strip(ctx).querySelector("details"), null);
+    assert.match(status(ctx), /^ExifTool stopped answering after 10 of/);
   });
 
   test("the folder view's own bulk controls are never disabled by it", async (t) => {
