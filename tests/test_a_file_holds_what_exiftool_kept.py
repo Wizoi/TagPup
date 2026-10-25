@@ -337,6 +337,17 @@ class ABakeIsWritten(KeptCase):
         area = self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Area"]
         self.assertEqual((0.20833333333333334, 1 / 3, 1e-05), tuple(bake._number(area[k], k) for k in "XYW"))
 
+    def test_a_text_with_blanks_at_its_edges_reads_back_as_written(self):
+        # ExifTool trims the blanks at a value's edges unless each is escaped (#1880): another program's name, put back.
+        a = self.make_read("a.jpg")
+        for name in ("  Lead Space  ", "\tTabbed\t", "   "):
+            with self.subTest(name=name):
+                text = bake.region_text({"RegionList": [{"Type": "Face", "Name": name}]})
+                with field_values.session(EXIFTOOL) as et:
+                    field_values.write(et, a, {fields.REGION_INFO: [text]})
+                    self.assertEqual({fields.REGION_INFO: [text]}, field_values.read_one(et, a, [fields.REGION_INFO]))
+                self.assertEqual(name, self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Name"])
+
 
 if __name__ == "__main__":
     unittest.main()

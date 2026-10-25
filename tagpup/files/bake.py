@@ -201,6 +201,13 @@ def config_path():
 _SPECIAL = frozenset("|,[]{}")
 
 
+def _escaped(text):
+    # Its special characters after a "|", and so each blank of a run at either edge: ExifTool trims those unless escaped,
+    # and another program's name "  Lead Space  " was put back as "Lead Space" (#1880).
+    start, end = len(text) - len(text.lstrip()), len(text.rstrip())
+    return "".join("|" + char if char in _SPECIAL or not start <= n < end else char for n, char in enumerate(text))
+
+
 def _number_text(value):
     # One text of one number: 4000 and 4000.0 are "4000"; a fraction is repr's, the shortest that reads back as the same
     # float (17 significant digits at most), and ExifTool keeps the text it is given, so it reads back as written.
@@ -214,7 +221,7 @@ def _serialised(value):
     if isinstance(value, list):
         return "[%s]" % ",".join(_serialised(item) for item in value)
     if isinstance(value, str):
-        return "".join("|" + char if char in _SPECIAL else char for char in value)
+        return _escaped(value)
     return _number_text(value)
 
 
@@ -222,7 +229,7 @@ def region_text(info):
     """The one text of an MWG RegionInfo structure `info` -- as ExifTool answers it read with -struct, or as values()
     makes it -- in ExifTool's serialised form, which a write takes as it is (`-XMP-mwg-rs:RegionInfo=<text>`). Canonical,
     so the text of the structure a write left reads back as the text written: names sorted, a number by one formatting
-    (_number_text: no rounding, the writer keeps a float exactly), a text as it is with its special characters escaped.
+    (_number_text: no rounding, the writer keeps a float exactly), a text as it is with its special characters, and the blanks at its edges, escaped.
     Another program's regions are kept so too, whatever they name. Raises ValueError for a value that is none of a
     structure, a list, a text or a finite number."""
     if not isinstance(info, dict):
