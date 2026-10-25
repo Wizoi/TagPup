@@ -3,7 +3,8 @@ section 9), and the fingerprint row a bake's write leaves behind it.
 
 `plan_photo` reads the library -- the photo's vector, its faces with their vectors, whether its detector looked -- and only
 then the file: the fields it holds (read as write_fields reads them: field_values.read of bake.WRITTEN's fields) and its
-shape, each handed in as a function the library's checks must pass before it is called. It says one of: ToBake (the values a write is to leave, and about how many bytes of XMP they are), Current (the file holds
+shape, and the fingerprint of its upright decode (the costliest read), each handed in as a function the library's
+checks must pass before it is called. It says one of: ToBake (the values a write is to leave, and about how many bytes of XMP they are), Current (the file holds
 them already), Cannot (why the library cannot say what the file is to hold, in a plain sentence). Nothing here writes a
 file or a row of the library but `follower`: the write is tagpup.services.file_changes.write_fields's, which imports this
 module for the follower, so this one never imports it.
@@ -84,11 +85,12 @@ def keys(conn, detector):
 def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     """ToBake, Current or Cannot for the photo at `photo_path`. `held()`, the fields its file holds (field_values.read of
     bake.WRITTEN's values), or the Exception that read gave (returned or raised); `shape()`, (stored width, stored height,
-    turn) as images.shown_shape gives them, or raising (the picture cannot be opened). Neither is called for a photo the
+    turn) as images.shown_shape gives them, or raising (the picture cannot be opened). None of the three is called for a photo the
     library refuses (GONE, NO_VECTOR, CHANGED, NEVER_EXAMINED, FACES_WITHOUT_VECTORS) or cannot reach (UNREADABLE: a file
     deleted outside the app, a drive or share away; shares.stamp_of is the one bounded look): its file is not opened for nothing.
-    `fingerprint`, the digest of its upright decode (images.fingerprint), or None: then nothing is planned to be written
-    (ToBake.values None) and the Fingerprint the file holds is not compared."""
+    `fingerprint()`, the digest of its upright decode (images.fingerprint), called last, only for a photo that reaches the
+    file; or None for the function: then nothing is planned to be written (ToBake.values None) and the Fingerprint the
+    file holds is not compared. It may raise as `shape` does: the photo is UNREADABLE."""
     if not store_roots.photo_ids_at(conn, [photo_path]):
         return Cannot(GONE, "It is no longer in the library.")
     stored = embeddings.get(conn, photo_path, keys.photo)
@@ -108,6 +110,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     try:
         stored_w, stored_h, turn = shape()
         file_holds = held()
+        digest = fingerprint() if fingerprint is not None and not isinstance(file_holds, Exception) else None
     except Exception as error:
         file_holds = error
     if isinstance(file_holds, Exception):
@@ -115,13 +118,13 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     found = [(orientation.to_upright(images.parse_box(box), stored_w, stored_h, turn), np.frombuffer(vector, np.float32))
              for _id, box, _ref, vector, _excluded in rows]
     made = bake.values(np.frombuffer(stored.vector, np.float32), found, orientation.upright_size(stored_w, stored_h, turn),
-                       fingerprint if fingerprint is not None else bytes(32), keys.photo, keys.face)
+                       digest if digest is not None else bytes(32), keys.photo, keys.face)
     compared = dict(made)
-    if fingerprint is None:
+    if digest is None:
         del compared[bake.WRITTEN[bake.FINGERPRINT]]
     if fields.reads_same(file_holds, compared):
         return Current()
-    return ToBake(made if fingerprint is not None else None, PHOTO_BYTES + FACE_BYTES * len(found))
+    return ToBake(made if digest is not None else None, PHOTO_BYTES + FACE_BYTES * len(found))
 
 
 def follower(row, state):
