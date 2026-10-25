@@ -6,8 +6,8 @@ What the owner lives through, adding a folder whose photos were baked:
 * a folder baked under the library's keys is indexed and no model is asked: each photo's vector and faces are the bake's,
   a JPEG, a TIFF and a photo of 60 faces whose bake spans Extended XMP alike; a bake that found none gives no face and the
   faces_detected row a detection finding none writes; the photo's raw_metadata holds nothing of the bake;
-* a bake whose picture changed after it was baked, one not whole, one made under another photo model: that side is worked
-  out (the other read when it is the library's), and the line at the end counts each;
+* a bake whose picture changed after it was baked, one not whole, one made under another photo model, one under another
+  face model: that side is worked out (the other read when it is the library's), and the line at the end counts each;
 * a turned photo (Orientation 6, 12 such in photo_index), and one turned by an XMP tiff:Orientation alone, which ExifTool
   answers as no EXIF Orientation and Pillow turns all the same: its faces' boxes, read from the bake, are the boxes a
   detection stores;
@@ -251,10 +251,15 @@ class AnIndexReadsABake(unittest.TestCase):
         self.bake(stale, [baked_files.area(0)], seed=2, of=before)
         self.bake(corrupt, [baked_files.area(0)], seed=3, **{bake.PHOTO_VECTOR: "not a vector"})
         other = self.bake(foreign, [baked_files.area(1)], seed=4, **{bake.PHOTO_MODEL: "ViT-B-32|openai|cropped|1.0|native"})
+        # Baked under the library's old face model: its vector read, its faces detected.
+        old_faces = self.picture(folder, "old faces.jpg", "maroon")
+        own = self.bake(old_faces, [baked_files.area(2)], seed=5, **{bake.FACE_MODEL: validation.MTCNN_FACENET})
         box = [300, 200, 400, 330]
         self.detector.found = {name: [(box, 0.99, n)] for n, name in enumerate(
-            ("stale.jpg", "corrupt.jpg", "foreign.jpg", "unbaked.jpg"))}
+            ("stale.jpg", "corrupt.jpg", "foreign.jpg", "unbaked.jpg", "old faces.jpg"))}
         result = self.index(folder)
+        self.assertTrue(np.allclose(bake.parse(own).photo_vector, self.vector(old_faces), atol=1e-6))
+        self.assertEqual([box], [found for found, *_ in self.faces(old_faces)])
         self.assertHoldsTheBake(read, held, SIZE)
         for path in (stale, corrupt, unbaked):
             self.assertTrue(np.allclose(self.computed, self.vector(path)), path)
@@ -263,9 +268,10 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertTrue(np.allclose(self.computed, self.vector(foreign)))
         self.assertEqual([box_of(baked_files.area(1), *SIZE)], [found for found, *_ in self.faces(foreign)])
         self.assertTrue(np.allclose(bake.parse(other).faces[0].vector, self.faces(foreign)[0][1], atol=1e-3))
-        self.assertEqual(["corrupt.jpg", "stale.jpg", "unbaked.jpg"], sorted(self.detector.asked))
+        self.assertEqual(["corrupt.jpg", "old faces.jpg", "stale.jpg", "unbaked.jpg"], sorted(self.detector.asked))
+        # CLIP is asked of the four whose vector the bake did not give, the old faces' photo not among them.
         self.assertEqual(4, self.on_card.count("embed"))
-        self.assertIn("Baked into the files: 2 photo(s) read from their file, 4 worked out on the graphics card; 1 bake(s) "
+        self.assertIn("Baked into the files: 3 photo(s) read from their file, 5 worked out on the graphics card; 1 bake(s) "
                       "stale (the picture changed after it was baked), 1 unreadable; 1 photo(s) needed no graphics card.",
                       " ".join(result.output.split()))
 
