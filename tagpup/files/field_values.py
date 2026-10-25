@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 #: The line breaks ExifTool reads as the end of an argument (pyexiftool sends one a line).
 LINE_BREAKS = (chr(13), chr(10))
 
+#: What ExifTool warns of a field it was given and did not write, in a command it reports as a success: a struct's field
+#: it does not know ("is not a field of"), one in a namespace it cannot write ("is not a writable XMP tag"), TagPup's own
+#: in a process started without its configuration ("is not defined"). Only these: 119 of 120 photos read carry a minor
+#: validation warning of their own, which costs a write nothing.
+NOT_WRITTEN = ("is not defined", "is not a field of", "is not a writable XMP tag")
+
 #: What ExifTool says a file is. A photo's starts with "image/".
 MIME_TYPE = "File:MIMEType"
 
@@ -168,7 +174,8 @@ def write(et, photo_path, values):
     A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
     (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,
     under any other, so another is refused here, by a ValueError, before anything is written; so is a struct text holding
-    a line break (LINE_BREAKS), which ExifTool would write the first line of."""
+    a line break (LINE_BREAKS), which ExifTool would write the first line of. A write of either that ExifTool warns left
+    a field unwritten (NOT_WRITTEN) raises RuntimeError after it: the caller settles the file by what it holds."""
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -204,6 +211,12 @@ def write(et, photo_path, values):
         identity.tolerating_minor_errors(et, photo_path, command, written=[fields.read_key(f) for f in values])
     else:
         command([], {})
+    if own or any(fields.is_struct(field) for field in values):
+        # A write that reported what it attempted: the file holds less than it was given (#1881).
+        dropped = [line.strip() for line in exiftool_session.unnamed(et.last_stderr, [photo_path]).splitlines()
+                   if any(said in line for said in NOT_WRITTEN)]
+        if dropped:
+            raise RuntimeError("ExifTool did not write all it was given: %s" % "; ".join(dropped))
 
 
 def ensure_document_id(et, path, metadata=None):

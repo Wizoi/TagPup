@@ -27,6 +27,7 @@ does not know TagPup's namespace (ABakeIsWritten).
 """
 import json
 import os
+import shutil
 import sys
 import unittest
 from unittest import mock
@@ -395,6 +396,41 @@ class ABakeIsWritten(KeptCase):
         self.assertEqual(["conflict"], self.states(change))
         self.assertEqual(written, os.stat(a).st_mtime_ns, "the undo wrote half of the regions")
         self.assert_baked(a, values, 2)
+
+    def test_a_region_field_exiftool_does_not_know_fails_the_write_not_recorded_as_written(self):
+        # ExifTool writes the rest of the structure, warns, and succeeds: a write recorded it as made (#1881).
+        a = self.make_read("a.jpg")
+        text = bake.region_text({"RegionList": [{"Type": "Face", "Bogus": "1"}]})
+        result = file_changes.write_fields(self.library, "bake", EXIFTOOL, [a], [fields.REGION_INFO],
+                                           lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
+        self.assertEqual(0, result.changed)
+        self.assertIn("is not a field of", str(result.errors))
+        self.assertEqual(["conflict"], self.states(result.details["change"]))
+
+    def test_an_undo_putting_back_regions_in_a_namespace_exiftool_cannot_write_is_a_conflict_not_undone(self):
+        a = self.make_read("a.jpg")
+        before = self.seed_regions(a, "<mwg-rs:Extensions rdf:parseType='Resource'><nw:Thing>1</nw:Thing></mwg-rs:Extensions>")
+        self.assertEqual({"XMP-nw:Thing": 1}, before["XMP:RegionInfo"]["RegionList"][0]["Extensions"])
+        change = self.bake([a], self.values(2)).details["change"]
+        undone = self.undo(change)
+        self.assertEqual(0, undone.changed)
+        self.assertIn("is not a writable XMP tag", str(undone.errors))
+        self.assertEqual(["conflict"], self.states(change))
+
+    def test_a_session_whose_configuration_was_gone_when_it_started_again_fails_the_write(self):
+        # The temp folder's copy removed (a cleaner) while a session was open, whose process then started again -- as
+        # pyexiftool starts it after a command that timed out: ExifTool runs without it, and warns of each of TagPup's
+        # fields that it is not defined, writing the rest (#1881).
+        a = self.make_read("a.jpg")
+        config = os.path.join(os.path.dirname(a), "bake.config")
+        shutil.copy(bake.config_path(), config)
+        with mock.patch.object(bake, "config_path", return_value=config):
+            with field_values.session(EXIFTOOL) as et:
+                os.remove(config)
+                et.terminate()
+                field_values.read_one(et, a, [fields.REGION_INFO])
+                with self.assertRaisesRegex(RuntimeError, "is not defined"):
+                    field_values.write(et, a, self.values(1))
 
 
 if __name__ == "__main__":
