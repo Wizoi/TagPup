@@ -107,7 +107,6 @@ class AnIndexReadsABake(unittest.TestCase):
         library_settings.stamp(Library(self.db_path), {"faces.model": FACES}, operation=library_settings.FROM_REPLACED)
         self.assertEqual(1, library_actions.create(self.db_path).ok)
         self.photo_key = store_embeddings.model_key(**library_settings.read(Library(self.db_path)).embedder)
-        self.config = baked_files.config_in(self.home.root)
         self.refused, self.on_card = False, []
         self.computed = baked_files.unit(bake.PHOTO_DIM, 99).tolist()
 
@@ -159,7 +158,7 @@ class AnIndexReadsABake(unittest.TestCase):
         held = baked_files.baked(baked_files.unit(bake.PHOTO_DIM, seed), faces, upright.size, photo_model=self.photo_key,
                                  face_model=FACES, fingerprint=images.fingerprint(upright))
         held.update(changed)
-        baked_files.write(path, self.config, held)
+        baked_files.write(path, held)
         return held
 
     def index(self, folder):
