@@ -435,7 +435,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
     raw_metadata (as values), embedding (bytes) and document_id; the embedding is kept
     under `model`, stamped with the row's mtime and size, and the photo's people are
-    rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits.
+    rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits. Returns the row's id.
 
     A photo indexed before is updated in place, under the spelling its row already has.
     faces.photo_id references photos.id ON DELETE CASCADE, so anything that deletes
@@ -479,6 +479,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
             # Dropped without a word, it left a library without the vector (#85).
             raise ValueError("An embedding is kept under the model that made it; none was named.")
         embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"])
+    return photo_id
 
 
 def remove_under(conn, folder):

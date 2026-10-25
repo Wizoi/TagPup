@@ -18,10 +18,12 @@ import numpy as np
 
 from tagpup.core import paths
 from tagpup.core.fields import read_document_id
+from tagpup.files import images
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
 from tagpup.store import derived as store_derived
 from tagpup.store import embeddings as store_embeddings
+from tagpup.store import photo_fingerprints
 from tagpup.store import photos as store_photos
 from tagpup.store import taxonomy as store_taxonomy
 
@@ -146,6 +148,17 @@ class PhotoEmbeddings:
         the model (ClipModel.picture_input). Raises images.Unreadable for a picture that does not decode."""
         stamp = store_embeddings.stamp_of(file_path)
         return Prepared(stamp, self.clip.input_of(file_path, seen=seen, load=load))
+
+    def opened(self, file_path):
+        """(the file's stamp, taken before it is opened, and its picture decoded upright): the decode `prepared` makes,
+        for the indexer to take the picture's fingerprint from before it decides whether CLIP is shown it
+        (prepared_from) or its bake gives the vector (tagpup.services.bake_reading). Raises images.Unreadable."""
+        stamp = store_embeddings.stamp_of(file_path)
+        return stamp, images.opened(file_path, upright=True)
+
+    def prepared_from(self, stamp, picture, load=False):
+        """What `prepared` makes, of a picture `opened` decoded."""
+        return Prepared(stamp, self.clip.picture_input(picture, load=load))
 
     def made(self, file_path, prepared):
         """The vector of a photo `prepared` (Prepared), made on the model's device and kept, stamped with the file as
@@ -302,7 +315,8 @@ class PhotoIndex:
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
     def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512):
-        """Batch insert/update photos inside the SQLite database (transaction-safe)."""
+        """Batch insert/update photos inside the SQLite database (transaction-safe). A meta holding a "fingerprint", (key,
+        hash) of the picture the index decoded (tagpup.files.images.fingerprint), has it recorded with its row."""
         if not embeddings or self.conn is None:
             return
         # A row is stamped with the read it records: MetadataExtractor gives every record its mtime and size.
@@ -317,7 +331,7 @@ class PhotoIndex:
                 known = store_taxonomy.read_people_vocabulary(self.conn)
             batch.prepared = True
             for meta, emb in zip(metas, embeddings):
-                store_photos.record_indexed(self.conn, meta["path"], {
+                photo_id = store_photos.record_indexed(self.conn, meta["path"], {
                     "mtime": meta["mtime"],
                     "size": meta["size"],
                     "tags": meta.get("tags", []),
@@ -330,6 +344,8 @@ class PhotoIndex:
                     "document_id": (meta.get("document_id")
                                     or read_document_id(meta.get("raw_metadata", {}))),
                 }, model=self.model, known=known, batch=batch)
+                if meta.get("fingerprint"):
+                    photo_fingerprints.put(self.conn, photo_id, *meta["fingerprint"])
             self.conn.commit()
         except Exception as e:
             index_log.error(f"Error saving batch to SQLite: {e}")
