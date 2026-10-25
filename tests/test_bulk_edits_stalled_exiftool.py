@@ -13,8 +13,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
 
-from tagpup.files import exiftool_session, field_values, metadata  # noqa: E402
-from tagpup.services import batches, file_changes, journal, relink_photos  # noqa: E402
+from tagpup.files import exiftool_session, field_values, metadata, shares  # noqa: E402
+from tagpup.core import paths  # noqa: E402
+from tagpup.services import batches, file_changes, journal, relink_photos, tagging  # noqa: E402
 
 #: What a session says of a command a share gone away never answered.
 STALLED = "ExifTool did not answer within 300s (a read); its process was killed."
@@ -205,7 +206,7 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.stall_at(k, writing=True)
         done = self.tags_edit(add=["Trips/Coast"])
         self.assertEqual(k - 1, done["changed"])
-        self.assertIn("1 more is settled the next time the library is opened", done["errors"][0]["why"])
+        self.assertIn("1 more is settled the next time it can be read", done["errors"][0]["why"])
         self.assertEqual([("done", k - 1), ("writing", 1)], self.change_files())
         self.assertEqual(k, self.files.writes, "after the stall no write was begun: the session stays dead")
         self.files.on_write = None
@@ -214,10 +215,54 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.assertEqual((0, self.PHOTOS), (again["error_count"], self.coast()))
         self.assertEqual([("done", self.PHOTOS)], self.change_files())
 
+    def test_the_file_left_under_way_waits_for_its_share_while_other_photos_are_saved(self):
+        """The owner saves another photo's tags while the share is still away: the save settles the stopped change first,
+        and the file it left under way is left so, not read (a deadline inside an unrelated save) and not a conflict; once
+        the share answers, the next write settles it by what it holds and the change ends applied and undoable. Break:
+        _finish reading it in a plain session (#1921's false conflict, one change late)."""
+        k = batches.CHUNK + 6
+        under_way = []
+
+        def write(path, n):
+            if n == k:
+                under_way.append(paths.key(path))
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write = write
+        done = self.tags_edit(add=["Trips/Coast"])
+        self.assertIn("1 more is settled the next time it can be read", done["errors"][0]["why"])
+        ((change_id, _op, _status),) = self.changes("bulk tags%")
+        # Two photos the stop did not reach: a save of them is unrelated to the stopped change, and leaves it undoable.
+        reached = {photo_id for (photo_id,) in self.vl.rows("SELECT photo_id FROM change_files WHERE change_id = ?", change_id)}
+        others = [self.path(photo_id) for photo_id in self.ids if photo_id not in reached][:2]
+
+        def read(path, _n):
+            if paths.key(path) in under_way:
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        real = shares.stamp_of
+        self.files.on_write, self.files.on_read = None, read
+        reads = self.files.reads.get(under_way[0], 0)
+        with mock.patch.object(shares, "stamp_of", lambda path: shares.UNANSWERED if paths.key(path) in under_way else real(path)):
+            saved = tagging.save_photo(self.library, others[0], "", ["Trips/Lakes"], None, "exiftool", "")
+        self.assertTrue(saved.ok, saved.errors)
+        self.assertEqual(reads, self.files.reads.get(under_way[0], 0), "the file on the share away was read")
+        self.assertEqual([("done", k - 1), ("writing", 1)],
+                         self.vl.rows("SELECT state, COUNT(*) FROM change_files WHERE change_id = ? GROUP BY state ORDER BY state",
+                                      change_id))
+        self.assertNotEqual("applied", self.changes("bulk tags%")[0][2])
+        # The share answers again: the next write settles the file under way by what it holds (what it held: written on).
+        self.files.on_read = None
+        again = tagging.save_photo(self.library, others[1], "", ["Trips/Lakes"], None, "exiftool", "")
+        self.assertTrue(again.ok, again.errors)
+        self.assertEqual([(change_id, "applied")], [(each[0], each[2]) for each in self.changes("bulk tags%")])
+        self.assertEqual([("done", k)],
+                         self.vl.rows("SELECT state, COUNT(*) FROM change_files WHERE change_id = ? GROUP BY state ORDER BY state",
+                                      change_id))
+        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        self.assertEqual((None, k), (undone.refused, undone.changed))
+
     def test_a_save_whose_write_the_share_stops_says_so(self):
         """A save reports a write's errors, not its refusal: the photo under way is its error. Its session is its own, not
         kept dead, so the share stays away for the read after the write too."""
-        from tagpup.services import tagging
         away = []
 
         def write(_path, _n):

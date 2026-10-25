@@ -523,7 +523,7 @@ def _share_stopped(library, change_id, result, stopped):
     if not result.changed and not left:
         result.refuse("The share stopped answering before anything was written; run it again once it answers.")
         return
-    settled = ("; %d more is settled the next time the library is opened, and then the change can be undone" % left
+    settled = ("; %d more is settled the next time it can be read, and then the change can be undone" % left
                if left else ", which can be undone")
     result.refuse("The share stopped answering after %d of %d photos: %d file(s) were written, recorded as change %d in "
                   "History%s; the rest were not written. Run it again once the share answers."
@@ -983,9 +983,9 @@ def settle(library, exiftool_path):
     """Finish every change of photo files that a process no longer running -- or an error
     in this one -- left half done: each file it left planned or writing is settled by
     what it holds, forward or, for an undo under way, back. Returns how many changes
-    were finished. A change that cannot be finished now is logged, released and left as
-    it is for the next time: it does NOT raise, so a caller that must know asks the
-    journal afterwards (tagpup.store.file_journal.unfinished)."""
+    were finished. A change that cannot be finished now -- one of its files on a share that does not answer, or
+    unanswered by ExifTool (_finish) -- is logged, released and left as it is for the next time: it does NOT raise, so a
+    caller that must know asks the journal afterwards (tagpup.store.file_journal.unfinished)."""
     finished = 0
     for change in file_journal.unfinished(library.path):
         if change.owner and file_journal.owner_alive(change.owner):
@@ -993,7 +993,10 @@ def settle(library, exiftool_path):
         if not file_journal.claim(library.path, change.id, change.owner):
             continue
         try:
-            _finish(library, change, exiftool_path)
+            if not _finish(library, change, exiftool_path):
+                logger.info("%s: change %d is left half done until its files can be read", library.path, change.id)
+                file_journal.release(library.path, change.id)
+                continue
         except Exception:
             logger.exception("%s: change %d, left half done, could not be finished now", library.path, change.id)
             file_journal.release(library.path, change.id)
@@ -1004,6 +1007,9 @@ def settle(library, exiftool_path):
 
 
 def _finish(library, change, exiftool_path):
+    """Settle the files `change` left; True when it is finished. A file on a share that does not answer (file_states), or
+    that ExifTool does not answer for (_Stalled), is left as it is, and the change unfinished, for a settle once it can be
+    read: it is never a conflict for not answering, and the write whose settle met it waits no deadline for it (#1921)."""
     undoing = change.undoing
     pending = [row for row in file_journal.files_of(library.path, change.id)
                if row.state in (("writing", "done") if undoing else ("planned", "writing"))]
@@ -1011,16 +1017,29 @@ def _finish(library, change, exiftool_path):
     if renames:
         _settle_renames(library, renames, forward=not undoing, redo=True)
     changed = [row for row in pending if not row.is_rename]
+    left = False
     if changed:
-        with field_values.session(exiftool_path) as et:
-            wrote = {}
+        away = {paths.key(path) for path, state in file_states([row.path for row in changed]) if state == AWAY}
+        with field_values.session(exiftool_path) as session:
+            et, wrote = exiftool_session.StaysDead(session), {}
             for row in changed:
-                if undoing:
-                    _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict")
-                else:
-                    _carry(et, library, row, row.before, row.after, "done", on_failure="conflict", wrote=wrote)
+                if paths.key(row.path) in away:
+                    left = True
+                    continue
+                try:
+                    if undoing:
+                        _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict", stall_stops=True)
+                    else:
+                        _carry(et, library, row, row.before, row.after, "done", on_failure="conflict", wrote=wrote,
+                               stall_stops=True)
+                except _Stalled:
+                    left = True
+                    break
             _read_back(et, library, wrote)
+    if left:
+        return False
     file_journal.finish(library.path, change.id, also=face_batch.tidy)
+    return True
 
 
 _settled = set()
