@@ -10,8 +10,8 @@ FaceModel, Fingerprint (`<key>:<sha256 hex>`), PhotoVector, FacesFound, and Face
 the order of the regions. The regions are MWG's (`XMP-mwg-rs:RegionInfo`), so that other programs show them: upright, the
 picture as a person sees it, AppliedToDimensions in pixels and each Area a centre and a size as fractions of it
 (tagpup.core.orientation.area_of / to_stored turn them at the file's edge). A vector is float16, little-endian, in base64:
-1,152 values are 3,072 characters, 512 are 1,368, one XMP value each, every one far under the 64 KB a JPEG's XMP block
-holds -- never one blob of every face.
+1,152 values are 3,072 characters, 512 are 1,368, one XMP value each, never one blob of every face. All the values together are
+another matter: about 35 faces fill a JPEG's 64 KB XMP block, and ExifTool then writes Extended XMP (cut 3 decides).
 
 Reading it. ExifTool answers the namespace by name with no configuration of ours. The record is ExifTool's own, read with
 `-struct` (READ_ARGS) and the bake's FIELDS: without it RegionInfo is answered as flattened lists, and a list of one face
@@ -168,8 +168,10 @@ def _regions(info):
         if not isinstance(area, dict) or region.get("Type") != "Face" or area.get("Unit") != "normalized":
             raise ValueError("a region that is not a face with a normalized Area")
         x, y, w, h = (_number(area.get(name), "an Area's " + name) for name in ("X", "Y", "W", "H"))
-        if w <= 0 or h <= 0:
-            raise ValueError("a face region of no size")
+        if w <= 0 or h <= 0 or w > 1 or h > 1:
+            raise ValueError("a face region of no size, or larger than the picture")
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            raise ValueError("a face region whose centre is outside the picture")
         areas.append((x, y, w, h))
     return applied, areas
 

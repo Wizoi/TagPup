@@ -156,6 +156,12 @@ class ABakeIsUsedOnlyWhole(unittest.TestCase):
     def test_a_value_too_long(self):
         self.assertRejected(record(**{bake.PHOTO_MODEL: "m" * (bake.MAX_VALUE + 1)}), "longer")
 
+    def test_a_region_outside_the_picture(self):
+        for changed in ({"X": 5.0}, {"Y": -0.2}, {"W": 1.5}, {"H": 0}):
+            held = record(faces=1)
+            held[bake.REGIONS]["RegionList"][0]["Area"].update(changed)
+            self.assertRejected(held, "region")
+
     def test_a_region_that_is_not_a_face(self):
         held = record(faces=1)
         held[bake.REGIONS]["RegionList"][0]["Type"] = "Pet"

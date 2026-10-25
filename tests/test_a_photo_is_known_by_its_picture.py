@@ -104,6 +104,14 @@ class APhotoIsKnownByItsPicture(unittest.TestCase):
         self.assertNotEqual(os.path.getsize(plain), os.path.getsize(profiled))
         self.assertEqual(self.of(plain), self.of(profiled))
 
+    def test_the_decoder_is_the_pinned_one(self):
+        """A new Pillow can decode other pixels: it is a new FINGERPRINT_KEY, so the pin and the installed copy agree."""
+        import PIL
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "requirements.txt"),
+                  encoding="utf-8") as handle:
+            pinned = [line.split("==")[1].strip() for line in handle if line.startswith("Pillow==")]
+        self.assertEqual([PIL.__version__], pinned)
+
     def test_its_key_and_shape(self):
         self.assertEqual("upright-sha256-1", images.FINGERPRINT_KEY)
         self.assertEqual(32, len(images.fingerprint(picture())))
