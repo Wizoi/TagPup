@@ -357,7 +357,7 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
         raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
     if et is None:
         # Dead for good after a command timed out: a share that went away costs its deadline once, not once a file.
-        with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
+        with field_values.session(exiftool_path) as session:
             return _write_fields(exiftool_session.StaysDead(session), library, operation, exiftool_path, photo_paths, read, plan_one, summary,
                                  unreadable, stop_at_first_error, held, whole, on_planned, alongside)
     return _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
@@ -959,7 +959,7 @@ def _finish(library, change, exiftool_path):
         _settle_renames(library, renames, forward=not undoing, redo=True)
     changed = [row for row in pending if not row.is_rename]
     if changed:
-        with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+        with field_values.session(exiftool_path) as et:
             wrote = {}
             for row in changed:
                 if undoing:
@@ -1111,7 +1111,7 @@ def undo(library, change_id, exiftool_path, check, apply=False):
                 result.changed += len(renames)
         changed = [row for row in ready if not row.is_rename]
         if changed:
-            with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+            with field_values.session(exiftool_path) as et:
                 for row in changed:
                     outcome, why = _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict")
                     result.details["faces_left"] = result.details.get("faces_left", 0) + row.faces_left
