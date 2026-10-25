@@ -173,14 +173,19 @@ def apply(library, exiftool_path, detector, folders=None, stop=None, heard=None,
     with field_values.session(exiftool_path) as session:
         et = exiftool_session.StaysDead(session)   # the reads and the writes: timed out once, it is not asked again
         walk = Walk(library, et, detector, folders, stop, values=True, whole_folders=True)
+        counted = False
         try:
             for number, folder in enumerate(walk, 1):
-                under_way = Baked(folder=folder.folder, not_answered=folder.not_answered)
+                under_way, counted = Baked(folder=folder.folder, not_answered=folder.not_answered), False
                 for planned in folder.photos:
                     under_way.count(planned)
                 to_bake = [planned for planned in folder.photos if isinstance(planned.plan, baking.ToBake)]
                 if folder.stalled:
-                    run.stalled = folder.folder        # its read was not answered part-way: written whole or not at all
+                    # Its read was not answered part-way: written whole or not at all, so its photos to bake are not
+                    # answered for, as a write's that stalls (#1943).
+                    run.stalled = folder.folder
+                    for planned in to_bake:
+                        _not_answered(under_way, planned.path)
                 elif to_bake:
                     if run.snapshot is None:
                         run.snapshot = _snapshot(library, told)
@@ -188,20 +193,24 @@ def apply(library, exiftool_path, detector, folders=None, stop=None, heard=None,
                     run.refused = result.refused
                     if share_stopped:
                         run.stalled = folder.folder
-                done, under_way = under_way, None
-                _counted(run, done)
+                _counted(run, under_way)
+                counted = True
                 if heard is not None:
-                    heard(done, number, len(walk))
+                    heard(under_way, number, len(walk))
+                under_way = None
                 if run.refused or run.stalled:
                     break
         except KeyboardInterrupt as stopped:
-            # A Ctrl+C in the write carries its change; one after it, while the counts are read, finds it in the folder's.
+            # A Ctrl+C in the write carries its change; one after it, while the counts are read, finds it in the folder's;
+            # one while the folder is said (counted) gives the folder's counts (#1944).
             change = getattr(stopped, "change", None) or (under_way.change if under_way is not None else None)
             written = getattr(stopped, "written", None)
-            if written is None and change:
+            if counted:
+                written = under_way.written
+            elif written is None and change:
                 written = sum(1 for row in file_journal.files_of(library.path, change) if row.state == "done")
             run.interrupted = {"change": change, "written": written, "left": getattr(stopped, "left", None)}
-            if under_way is not None:
+            if under_way is not None and not counted:
                 under_way.change = run.interrupted["change"]
                 under_way.written = run.interrupted["written"] or 0
                 _counted(run, under_way)
@@ -256,8 +265,9 @@ def _write(library, exiftool_path, et, folder, to_bake, baked):
     """Write the photos of `folder` to bake as one change (file_changes.write_fields, in `et`, a StaysDead), and count in
     `baked` what the journal holds of it after: (the write's Result, whether the share stopped answering). Each file is
     read again before its write: one changed outside since the plan is a conflict, and one found holding the bake
-    already is current. The share stopped when the write says so, when its read or write timed out (`et` dead), or when a
-    photo's file was found away (file_changes.AWAY_WHY): every photo to bake it did not write is then not answered."""
+    already is current. The photos ExifTool did not answer for (the write's `not_answered`: a file found away, a read or a
+    write that timed out, and every photo after it) are not answered, and the share stopped then, or when `et` is dead; a
+    photo it answered with its own error stays in `failed` with its sentence (#1942)."""
     values = {paths.key(planned.path): planned.plan.values for planned in to_bake}
     ids = {paths.key(planned.path): planned.photo_id for planned in to_bake}
     result = file_changes.write_fields(
@@ -275,19 +285,21 @@ def _write(library, exiftool_path, et, folder, to_bake, baked):
         if paths.key(planned.path) in current:   # held the bake when its write read it: current, not baked
             _not_to_bake(baked, planned.path)
             baked.current += 1
-    share_stopped = bool((result.details.get("stopped") or {}).get("share")) or et.dead or any(
-        why == file_changes.AWAY_WHY for _path, why in result.errors)
-    unanswered = set()
-    if share_stopped:
-        unanswered = {key for key in ids if key not in done | conflicted | current}
-        for planned in to_bake:
-            if paths.key(planned.path) in unanswered:
-                _not_to_bake(baked, planned.path)
-                baked.photos -= 1
-                baked.not_answered += 1
+    unanswered = {paths.key(path) for path in result.details.get("not_answered", [])} - done - conflicted - current
+    share_stopped = bool((result.details.get("stopped") or {}).get("share")) or et.dead or bool(unanswered)
+    for planned in to_bake:
+        if paths.key(planned.path) in unanswered:
+            _not_answered(baked, planned.path)
     baked.failed = sorted((ids[paths.key(path)], why) for path, why in result.errors
                           if paths.key(path) in ids and paths.key(path) not in conflicted | unanswered)
     return result, share_stopped
+
+
+def _not_answered(baked, path):
+    """Count the photo to bake at `path` as not answered for: nothing is known of its file."""
+    _not_to_bake(baked, path)
+    baked.photos -= 1
+    baked.not_answered += 1
 
 
 def _not_to_bake(baked, path):

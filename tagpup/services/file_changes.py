@@ -378,6 +378,9 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     result = Result(attempted=len(photo_paths))
     _running.result = result
     written = result.details["written"] = {}
+    # The photos ExifTool did not answer for (a share away, a read or a write that timed out, and the photos after it):
+    # nothing is known of their files, as against a photo it answered with its own error (#1942).
+    not_answered = result.details["not_answered"] = []
     result.details.update(change=None, conflicts=[])
     settle(library, exiftool_path)
     problem = alongside.verify(library) if alongside is not None else None
@@ -395,12 +398,14 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                                  stop=batch.stop if batch else None)
         held.update({key: field_values.Unreadable(AWAY_WHY) for key in away})
     else:
-        held = fresh
+        held, away = fresh, set()
     if batch is not None and batch.stop.is_set():
         return _stopped_before_writing(result)
     planned, followed = [], []
     for path in stored:
         now = held.get(paths.key(path))
+        if isinstance(now, field_values.NotAnswered) or paths.key(path) in away:
+            not_answered.append(path)
         if now is None or isinstance(now, Exception):
             why = now or "ExifTool answered nothing for it"
             if unreadable == "skip":
@@ -461,6 +466,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             except _Stalled:
                 stalled = row
                 result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
+                not_answered.extend(each[0] for each in planned[n:])
                 break
             if outcome == "done":
                 if not fields.reads_same(planned[n][1], planned[n][2]):

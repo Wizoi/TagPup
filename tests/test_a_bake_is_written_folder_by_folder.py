@@ -164,6 +164,19 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
         self.assertEqual([(change, 3)], [(folder.change, folder.written) for folder in run.folders])
         self.assertEqual(1, len(self.changes()), "the folder after it is not reached")
 
+    def test_a_ctrl_c_while_a_folder_is_said_keeps_its_change_and_counts_it_once(self):
+        self.three_to_bake("Trip")
+        self.three_to_bake("Uphill")
+
+        def heard(baked, number, folders):
+            raise KeyboardInterrupt      # the second Ctrl+C, while the CLI says the folder's lines (#1944)
+        run, _said = self.apply(heard=heard)
+        change = self.last_change()
+        self.assertEqual((change, 3), (run.interrupted["change"], run.interrupted["written"]))
+        self.assertEqual([(change, 3)], [(folder.change, folder.written) for folder in run.folders])
+        self.assertEqual(3, run.total.written, "counted once")
+        self.assertEqual(1, len(self.changes()), "the folder after it is not reached")
+
     def test_a_run_that_cannot_finish_a_stopped_runs_change_says_it_is_left(self):
         self.three_to_bake("Trip")
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", nth=2)):
@@ -209,8 +222,10 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
             run, _said = self.apply()
         self.assertEqual(os.path.join(self.folder, "Uphill"), run.stalled)
         trip, uphill = run.folders
-        self.assertEqual((1, 1, 0, None, 2), (uphill.photos, uphill.to_bake, uphill.written, uphill.change,
-                                              uphill.not_answered))
+        self.assertEqual((0, 0, 0, None, 3), (uphill.photos, uphill.to_bake, uphill.written, uphill.change,
+                                              uphill.not_answered),
+                         "the photo answered and not written is not answered for, as a write stall's (#1943)")
+        self.assertEqual({}, dict(uphill.formats))
         self.assertEqual(1, len(self.changes()), "nothing of the folder whose read stalled is written")
 
     def share_stops_before_the_write(self, stopping):
@@ -274,6 +289,30 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
         self.assertEqual([], run.total.failed)
         self.assertEqual(2, len(self.changes()))
         self.assertEqual([], file_journal.unfinished(self.library.path), "the photo not answered for was not under way")
+
+    def test_a_photo_that_failed_before_the_share_stopped_keeps_its_sentence(self):
+        trip = self.three_to_bake("Trip")
+        real_write, real_read = field_values.write, field_values.read_one
+
+        def write(et, path, *args, **kwargs):
+            if paths.key(path) == paths.key(trip[0]):
+                raise field_values.Unreadable("Error: the file is read-only")    # ExifTool's own answer
+            return real_write(et, path, *args, **kwargs)
+
+        def read_one(et, path, *args, **kwargs):
+            if paths.key(path) == paths.key(trip[1]):
+                raise field_values.NotAnswered("ExifTool did not answer in 300 s")
+            return real_read(et, path, *args, **kwargs)
+        with mock.patch.object(file_changes.field_values, "write", side_effect=write), \
+                mock.patch.object(file_changes.field_values, "read_one", side_effect=read_one):
+            run, _said = self.apply()
+        self.assertEqual(os.path.join(self.folder, "Trip"), run.stalled)
+        (folder,) = run.folders
+        ids = {paths.key(path): photo_id for photo_id, path in self.rows("SELECT id, path FROM photos")}
+        self.assertEqual([ids[paths.key(trip[0])]], [photo_id for photo_id, _why in folder.failed],
+                         "answered with its own error: failed, its sentence kept (#1942)")
+        self.assertIn("read-only", folder.failed[0][1])
+        self.assertEqual((0, 2, 1, 1), (folder.written, folder.not_answered, folder.to_bake, folder.photos))
 
     def test_a_folder_copied_from_a_baked_one_is_current_and_not_written_again(self):
         self.three_to_bake("Trip")
