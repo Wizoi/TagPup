@@ -102,3 +102,30 @@ side exists, so its column must be the read side's, not a guess for cut 3.
   Microsoft Photo regions (`MP:RegionInfoMP`) are left in the file and not read (owner: not used). Census, 2026-10-24
   (photo_index 3,000 of 59,519; the other two whole): MWG regions 4 / 0 / 0, MP regions 442 + 1 TIFF / 0 / 0, Extended XMP
   118 / 12 / 0, two XMP blocks 0, 1 unreadable in all; Orientation 6: 12 photos.
+
+## 9. Cut 2 plan (write side, dry run only), from the Files, People and Data owners, 2026-10-25
+
+- **Journal value model unchanged.** One field = one list of texts. The mwg-rs `RegionInfo` struct is one canonical text
+  (`core/fields.py` `STRUCT_FIELDS`; `bake.region_text` and its inverse beside `bake._regions`; read with `-struct`,
+  written as `-XMP-mwg-rs:RegionInfo=<text>`, empty clears it); `FaceVectors` joins `LIST_FIELDS`. `reads_same` needs no
+  change. The writer's ExifToolSession opens with `config_file=` (the namespace config moves from `tests/baked_files.py`
+  into `files/bake.py`; the test helper writes through `field_values.write`, so there is one writer). A dict reaching
+  `write_fields` is silently planned as "clear" (`fields.field_values` drops it): the text must be a `str` first, guarded.
+- **Builder** `tagpup/services/baking.py` reads store + files and writes only through `write_fields`: photo vector under
+  `embeddings.model_key`, every face row holding a vector under the face key (excluded and "nobody" included; ordered by
+  `faces.id`), boxes through `to_upright` + `area_of`, fingerprint of the upright decode; a pure `bake.values(...)`.
+  The fingerprint row is put by a follower in `_followers` (`file_changes.py:527-531`) in the done transaction.
+- **No restamp to build, no migration 35.** `follow_fields` keeps the photo row describing the file and restamps the photo
+  vector; `faces_detected`'s stamp is kept and never compared; `face_embeddings` has none. Section 2's missing-restamp
+  line is retired.
+- **A stale bake** is found by parsing the file's own bake and comparing it with what would be written now (keys,
+  fingerprint, regions): the file is the digest; no column.
+- **Dry run writes nothing** (not a rolled-back write): no fingerprint row, no snapshot, no migration. CLI `bake-photos`
+  (`@_holds_the_roots`, `--apply` refusing with one sentence this cut). It reports per library and folder: photos to bake,
+  already current (skipped, so `--apply` resumes), cannot be baked and why, bytes (3,072 + 1,730 per face), photos over
+  the 64 KB block (Extended XMP: 293 / 48 / 3 over 35 faces), 17 TIFF and 2 PNG.
+- **Branches:** 2a struct field kind, config into bake.py, the writer helper (~400); 2b the builder, the follower, the dry
+  run CLI (~500); 2c scenario tests lifted into F3/F11 (~300).
+- **Counts (2026-10-25):** photos with faces 49,111 / 1,485 / 1,285; with a `faces_detected` row 0 / 178 / 146 (all the old
+  detector); with neither 10,408 / 12 / 18; faces with no vector under the current key 0 / 1,211 (532 photos) / 329 (244);
+  journal text added by a full backfill about 499 MB / 24 MB / 10 MB, never pruned, copied by every snapshot.
