@@ -67,7 +67,7 @@ from tagpup.core.result import Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names, shares
-from tagpup.services import batches, face_batch, rotation
+from tagpup.services import baking, batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, embeddings, file_journal, photos, schema
 
@@ -526,9 +526,10 @@ def _follow(library, followed):
 
 def _followers(row, state):
     """What a file's change brings besides the field, to be done in the transaction that marks the file `state`: a rotation's face
-    boxes and vectors, a bulk assignment's faces. The ONE place that lists them, for a file marked done or undone and for one taken
+    boxes and vectors, a bulk assignment's faces, a bake's fingerprint row. The ONE place that lists them, for a file marked done or undone and for one taken
     out of its change after it was done (_read_back)."""
-    return [each for each in (rotation.follower(row, state), face_batch.follower(row, state)) if each is not None]
+    return [each for each in (rotation.follower(row, state), face_batch.follower(row, state), baking.follower(row, state))
+            if each is not None]
 
 
 def _stat(path):
