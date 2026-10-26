@@ -9,8 +9,8 @@ record_detected; one that failed is not; and Suggest reads it before it detects.
 
 The photo's row and vector are made as the indexer makes them (tests/photo_rows.py,
 store.embeddings.put); the detection as the indexer records it (record_batch). The face
-model is a stand-in that says which settings it detects with and counts what is asked of
-it: `ready` is what takes a Suggest run's turn on the graphics card (tagpup.runtime). Suggest is reached as a run reaches
+model is a stand-in of the new library's (SCRFD and AdaFace: its detections recorded under its key) that counts what is
+asked of it: `ready` is what takes a Suggest run's turn on the graphics card (tagpup.runtime). Suggest is reached as a run reaches
 it (model_for_run), CLIP stood in for (tests/stand_in_models.py).
 
 A photo whose face rows are deleted is detected again (#779): the record says detection ran on a photo, and deleting
@@ -45,14 +45,15 @@ from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import faces, faces_detected, journal  # noqa: E402
 
 
+#: The record a detection of the new library's face model is kept under (its key: ScrfdAdaFace.detector).
+DETECTOR = faces_detected.detector({"model": FACE_MODEL})
+
+
 class FaceModel(stand_in_models.Faces):
-    """A face model on the card: its settings, and what it was asked."""
+    """The library's face model on the card, and what it was asked."""
     device = "cuda"
 
-    def __init__(self, min_face_size=20):
-        self.min_face_size = min_face_size
-        self.confidence_threshold = 0.9
-        self.mtcnn_thresholds = [0.6, 0.7, 0.7]
+    def __init__(self):
         self.readied = self.detected = 0
 
     def ready(self):
@@ -61,6 +62,14 @@ class FaceModel(stand_in_models.Faces):
     def detect_and_embed_faces(self, path, *, max_side):
         self.detected += 1
         return []
+
+
+class TheOldDetector(FaceModel):
+    """MTCNN, as the faces_detected rows it left are spelled: its settings (kr-track and renton_parkrun still hold 175
+    and 139 such rows, unread, counted read-only 2026-10-25)."""
+
+    def detector(self, max_side):
+        return {"confidence_threshold": 0.85, "min_face_size": 20, "mtcnn_thresholds": [0.6, 0.7, 0.7]}
 
 
 class Case(unittest.TestCase):
@@ -118,9 +127,9 @@ class AFacelessPhotoTheIndexRead(Case):
         self.suggest(model)
         self.assertEqual((0, 0), (model.readied, model.detected), "Suggest took the card for a photo already detected")
 
-    def test_other_face_settings_detect_again(self):
-        self.index_detects(FaceModel(min_face_size=40), [])
-        model = FaceModel(min_face_size=20)
+    def test_a_photo_recorded_by_the_old_detector_is_detected_again(self):
+        self.index_detects(TheOldDetector(), [])
+        model = FaceModel()
         self.suggest(model)
         self.assertEqual((1, 1), (model.readied, model.detected))
 
@@ -142,7 +151,7 @@ class SuggestRecordsWhatItDetects(Case):
 
 
 class ThePhotoThatLosesItsFaces(unittest.TestCase):
-    DETECTOR = faces_detected.detector({"min_face_size": 20})
+    DETECTOR = DETECTOR
 
     def setUp(self):
         home = own_home.for_test(self, prefix="faces_detected_")
@@ -208,7 +217,7 @@ class APhotoTheDetectorFoundNoFaceIn(unittest.TestCase):
     """The detector found no face in a photo; a later change gave it faces (the new face model's pass, one journaled
     change) and the owner undid it. The record that the detector found none is still true: it is kept, so Suggest does
     not detect the photo again. The undo deleted it, the way it forgets a record whose faces were deleted."""
-    DETECTOR = faces_detected.detector({"min_face_size": 20})
+    DETECTOR = DETECTOR
 
     def test_undoing_the_change_that_gave_it_faces_keeps_the_record_that_none_were_found(self):
         home = own_home.for_test(self, prefix="faces_detected_none_")
