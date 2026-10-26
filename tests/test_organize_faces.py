@@ -23,7 +23,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 import fake_exiftool  # noqa: E402
@@ -85,7 +85,7 @@ class Case(unittest.TestCase):
         """A face `degrees` round the circle; `embedding` None gives it no vector under the library's model (a face the other
         model found), bytes give it those."""
         def add(conn):
-            face_id = faces.insert(conn, photo_path, list(box), at(degrees), model=FACENET)
+            face_id = faces.insert(conn, photo_path, list(box), at(degrees), model=FACE_MODEL)
             if embedding is None:
                 conn.execute("DELETE FROM face_embeddings WHERE face_id = ?", (face_id,))
             elif embedding is not True:

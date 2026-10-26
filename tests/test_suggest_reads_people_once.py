@@ -37,7 +37,7 @@ from tagpup.store import faces as store_faces  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
-from face_rows import FACENET, add_face, person_of  # noqa: E402
+from face_rows import FACE_MODEL, add_face, person_of  # noqa: E402
 
 
 def unit(vector):
@@ -136,7 +136,7 @@ class NamedFacesFromTheLibrary(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_named_faces_only_excluded_left_out(self):
-        known = identify.named_faces(Library(self.db), FACENET)[1]
+        known = identify.named_faces(Library(self.db), FACE_MODEL)[1]
         self.assertEqual(["Imogen Vale", "Rowan Thackeray"], sorted({person.name for person in known[1]}))
         # Rowan's closest face to each of their two named ones is itself; the excluded
         # face is not among them. Keyed by person (the id of their node).
@@ -210,7 +210,7 @@ class FourWorkersShareEveryonesFaces(unittest.TestCase):
     def test_four_workers_asking_together_make_everyones_faces_once(self):
         people = [Ref(1, "Rowan Thackeray"), Ref(2, "Imogen Vale"), Ref(3, "Tamsin Orlow")]
         known = clustering.FaceRows([11, 12, 13], people, np.stack([unit([1, 0, 0]), unit([0, 1, 0]), unit([0, 1, 0])]),
-                                    FACENET, [2020] * 3, [21, 22, 23])
+                                    FACE_MODEL, [2020] * 3, [21, 22, 23])
         real, made = clustering.FacesByPerson.__init__, []
 
         def slow_grouping(self, *args, **kwargs):

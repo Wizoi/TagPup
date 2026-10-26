@@ -31,7 +31,7 @@ from tests.test_face_exclusion import ExclusionTestBase  # noqa: E402
 from tests.test_face_clustering_rules import identity_vector, near  # noqa: E402
 from tests.test_service_faces import FacesCase, vector  # noqa: E402
 
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 
 from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.services import faces  # noqa: E402
@@ -146,7 +146,7 @@ class ReexamineInTheService(FacesCase):
 
     def matrix(self):
         node = self.lib.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", ("People/" + ROWAN,))[0][0]
-        return [self.known], [Ref(node, ROWAN)], np.stack([self.rowan]), FACENET
+        return [self.known], [Ref(node, ROWAN)], np.stack([self.rowan]), FACE_MODEL
 
     def test_a_person_renamed_after_the_named_faces_were_read_is_written_by_the_new_name(self):
         """A guess names the person by their node, not by the name it read: a rename between the compare and the write
@@ -292,7 +292,7 @@ class AFaceUnmatchedByHandStaysNobody(FacesCase):
         faces.unname_faces(self.lib.library, [self.unmatched])   # Unmatch Face: the real path
 
     def named(self):
-        return [1], [ROWAN], np.stack([self.rowan]), FACENET
+        return [1], [ROWAN], np.stack([self.rowan]), FACE_MODEL
 
     def test_re_examining_the_folder_neither_counts_nor_names_it(self):
         plan = faces.automatch_folder(self.lib.library, self.folder, self.named, rehearse=True)

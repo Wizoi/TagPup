@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 import roots_library as rl  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -79,7 +79,7 @@ def make_library(home, photos, faces_count):
         conn.executemany("INSERT INTO faces (photo_id, box, name, name_source) VALUES (?, ?, ?, ?)",
                          [(1 + n % photos, "[1, 2, 11, 12]", "Rowan Thackeray" if n % 9 == 0 else None,
                            "manual" if n % 9 == 0 else None) for n in range(per_photo * photos)])
-        conn.execute("INSERT INTO face_embeddings (face_id, model, vector) SELECT id, ?, zeroblob(64) FROM faces", (FACENET,))
+        conn.execute("INSERT INTO face_embeddings (face_id, model, vector) SELECT id, ?, zeroblob(64) FROM faces", (FACE_MODEL,))
         if REAL_SIZE:
             # Each of the first 120,000 faces with its 6 KB cached crop, as photo_index holds them.
             conn.executemany("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)",
