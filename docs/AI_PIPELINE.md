@@ -390,16 +390,21 @@ Scenario V11, `tests/test_switching_a_librarys_face_model.py`.
 `tests/stand_in_models.NewFaces`). The store's part is `tagpup.store.faces`: `vectors_under(conn, key, photo_ids)` (the reader
 with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, which records every row it adds as stored
 (`journal.record_inserted`). `KEPT_FACE_MODELS` is not extended here; no CLI yet (slice B).
-- The pass writes no `faces_detected` row: a photo is done when one of its faces holds a vector under the model's key, so
-  MTCNN's found-none rows stand, and a photo the new model finds no face in writes nothing and is looked at again each run
-  (at most 10,492 photos of photo_index, about 50 minutes a run, writing nothing: accepted).
+- As built, the pass wrote no `faces_detected` row: a photo was done when one of its faces held a vector under the model's
+  key, and a photo the new model found no face in wrote nothing and was looked at again each run. **Since 2026-10-25 (phase
+  6, cut 3c)** a photo holding no face in which the model finds none, or only detections under the floor, is recorded as
+  looked at (`faces_detected.record`, under `faces.detector_of(model)`, with the detections it returned), in the photo's own
+  transaction and not journaled, as the index's and Suggest's records are not; and it is done (`faces_detected.faceless_under`):
+  after a whole pass photo_index still held 10,407 photos with no face and no record, each refused by a bake as never
+  examined (`baking.plan_photo`). The record replaces the photo's MTCNN found-none row (one row a photo), which a library on
+  the new model no longer reads. A photo with old faces none of which the model takes, and none made beside, is not
+  recorded: its old faces are listed, and it is looked at again.
 - No new face under `face_pass.NEW_FACE_FLOOR` = 40 px on its shorter side (owner, 2026-10-18, DECISIONS): the detector's own
   floor is 15 px and one real folder gave 31 smudges under 40 px among 40 new faces. Only the making of an unmatched
   detection as a new face is gated; an old face a detection of any size matches still gets the vector. The detections left
-  unmade are counted in `Folder.too_small` (the CLI's per-folder line). The done rule is unchanged: a photo whose
-  detections are all under the floor and take no old face holds no vector, so it is looked at again each run like one with no
-  face found (a count of detections, nothing written; a marker would be schema work, which DECISIONS 2026-10-15 holds). The
-  floor is tuned in slice C against held-out named faces.
+  unmade are counted in `Folder.too_small` (the CLI's per-folder line). A photo whose detections are all under the floor and
+  take no old face holds no face, and since 2026-10-25 is recorded as looked at like one with no face found (above; the
+  existing `faces_detected` table, no schema work). The floor is tuned in slice C against held-out named faces.
 - What the journal holds: each vector about 2 KB of `change_rows`, a new face's crop about 6 KB more; about 0.4 to 0.5 GB for
   photo_index's vectors (accepted).
 - A folder's change is called "face pass (<key>)": History and the MCP `history` show the operation without reveal, so it
