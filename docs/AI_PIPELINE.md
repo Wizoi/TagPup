@@ -393,7 +393,7 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
 - As built, the pass wrote no `faces_detected` row: a photo was done when one of its faces held a vector under the model's
   key, and a photo the new model found no face in wrote nothing and was looked at again each run. **Since 2026-10-25 (phase
   6, cut 3c)** a photo holding no face in which the model finds none, or only detections under the floor, is recorded as
-  looked at (`faces_detected.record`, under `faces.detector_of(model)`, with the detections it returned), in the photo's own
+  looked at (`faces_detected.record`, under `faces.detector_of(model)`, with the count after the floor, 0 here, as the index and Suggest record it), in the photo's own
   transaction and not journaled, as the index's and Suggest's records are not; and it is done (`faces_detected.faceless_under`):
   after a whole pass photo_index still held 10,407 photos with no face and no record, each refused by a bake as never
   examined (`baking.plan_photo`). The record replaces the photo's MTCNN found-none row (one row a photo), which a library on

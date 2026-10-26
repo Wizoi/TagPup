@@ -243,14 +243,15 @@ class FacePass(unittest.TestCase):
             conn.close()
         self.assertIn((mtcnn_only, DETECTOR, 0), self.looked_at())
 
-    def test_a_photo_whose_only_detections_are_under_the_floor_is_recorded_with_them_and_a_second_run_looks_at_nothing(self):
+    def test_a_photo_whose_only_detections_are_under_the_floor_is_recorded_and_a_second_run_looks_at_nothing(self):
         """No face is made of a detection under the floor, so the photo holds none, as one with no face found: it is
-        recorded as looked at, with the detections the model returned, and counted as both."""
+        recorded as looked at, with the count after the floor (0, as the index and Suggest record it), and counted as
+        both."""
         photo, _path = self.photo("tiny.jpg")
         found = self.run_pass(NewFaces({"tiny.jpg": [((5, 5, 35, 70), 0.9, 2)]}))
         self.assertEqual((1, 0, 1, 1, 0, []), (found.looked, found.new, found.none_found, found.too_small, found.done,
                                               found.changes))
-        self.assertEqual([(photo, DETECTOR, 1)], self.looked_at())
+        self.assertEqual([(photo, DETECTOR, 0)], self.looked_at())
         self.assertEqual([], self.query("SELECT 1 FROM faces"))
         model = NewFaces({"tiny.jpg": [((5, 5, 35, 70), 0.9, 2)]})
         again = self.run_pass(model)

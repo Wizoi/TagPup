@@ -17,7 +17,7 @@ The model is handed in (tagpup.ml.scrfd_adaface.ScrfdAdaFace, or a test's stand-
 A photo that holds no face, and that the model finds no face in or only detections under the floor (`none_found`), is
 recorded as looked at: its `faces_detected` row, under the name the model's detections are recorded under
 (tagpup.services.faces.detector_of, as the index and Suggest record theirs and Suggest and a bake read it), with the
-number of detections the model returned. Not journaled, as the index's and Suggest's are not: it is a fact of the photo,
+number of faces it holds after the floor (0 here: a count with no face row is what `forget_faceless` deletes). Not journaled, as the index's and Suggest's are not: it is a fact of the photo,
 which no undo of a change makes untrue; and no change of the journal is opened for it, nor a snapshot taken. Written in
 the photo's own transaction, as its faces are, and read again there the same way. It replaces the row of another detector
 (one row a photo): the library's MTCNN record of no face, which a library on the new model no longer reads.
@@ -207,7 +207,7 @@ def _photo(db_path, model, detector, operation, name, found, change_id, photo_id
         if apply:
             stamp = store_embeddings.stamp_of(path)   # the file, read outside the write: a share is not asked under it
             if not db.write_with_connection(
-                    db_path, lambda write: _looked(write, model.key, detector, photo_id, path, stamp, len(detected)),
+                    db_path, lambda write: _looked(write, model.key, detector, photo_id, path, stamp, len(new)),
                     label="face pass"):
                 found.failed.append((photo_id, CHANGED))
                 return change_id
