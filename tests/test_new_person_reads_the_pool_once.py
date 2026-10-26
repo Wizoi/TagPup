@@ -27,17 +27,19 @@ from tagpup.store import db  # noqa: E402
 
 ROUTE = "/library/api/face-matches-unmatched"
 
-#: How like the seed a face must be to be gathered for a new person, under the library's face model (AdaFace's 0.520:
-#: clustering.Cuts.gathers_for_a_new_person).
-GATHERED_FROM = clustering.cuts_of(face_rows.FACE_MODEL).name_without_asking
+#: The likeness New Person gathers a face at, on the face model a new library is on (SCRFD and AdaFace).
+GATHERS_AT = clustering.cuts_of(face_rows.FACE_MODEL).name_without_asking
 
 
-def like(likeness, towards=1):
-    """A unit vector `likeness`-like the seed's, [1, 0, ...], turned towards axis `towards` (a negative one the other way).
-    The faces gathered and the named face are turned apart: a face as like someone named as like the seed is not gathered
-    (the margin, tagpup.core.clustering.margins)."""
+def like(likeness, *towards):
+    """A unit vector `likeness`-like the seed's, [1, 0, ...], the rest of it spread evenly over the axes `towards` (a
+    negative one the other way; axis 1 unless given). The faces gathered and the named faces are turned apart: a face as
+    like someone named as like the seed is not gathered (the margin, tagpup.core.clustering.margins)."""
+    towards = towards or (1,)
     vector = np.zeros(512, dtype=np.float32)
-    vector[0], vector[abs(towards)] = likeness, np.sign(towards) * np.sqrt(1 - likeness * likeness)
+    vector[0] = likeness
+    for axis in towards:
+        vector[abs(axis)] = np.sign(axis) * np.sqrt((1 - likeness * likeness) / len(towards))
     return vector
 
 
@@ -58,10 +60,11 @@ class NewPerson(unittest.TestCase):
             for n, (label, likeness, columns, *towards) in enumerate([
                     ("seed", 1.0, {}),
                     ("close", 0.9, {}),
-                    ("just over", GATHERED_FROM + 0.0003, {}, -1),
-                    ("just under", GATHERED_FROM - 0.0003, {}),
-                    ("far", 0.3, {}),
-                    ("named", 0.6, {"name": "Imogen Vale", "name_source": "manual"}, 2),
+                    # turned away from "close" and "named", so the likeness alone tells the two apart
+                    ("just over", GATHERS_AT + 0.0003, {}, -1, -2),
+                    ("just under", GATHERS_AT - 0.0003, {}, -1, -2),
+                    ("far", GATHERS_AT - 0.2, {}),
+                    ("named", 0.85, {"name": "Imogen Vale", "name_source": "manual"}, 2),
                     ("excluded", 0.95, {"excluded": 1, "excluded_reason": "stranger"})]):
                 photo = os.path.join(self.home.root, "Photos", "IMG_%04d.jpg" % n)
                 photo_rows.add_read(conn, photo, {"XMP:Subject": []})

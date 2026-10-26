@@ -263,19 +263,21 @@ class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
         LibrarySettings.faces again (ml may not import services), and by the cap, LibrarySettings.detect_max_side: a
         setting added to one and not the other would let a changed setting reuse an old detection. Held equal here, with
         a cap set and with none. The face model (faces.model) is not in MTCNN's name, so the name every row was written
-        under stands; the new model's detections are named by its key alone, the cap not used. MTCNN's settings are a
-        library's on FaceNet (a new library is on the new model, whose settings are its key alone)."""
+        under stands; the new model's detections (a new library's, the default) are named by its key alone, the cap not
+        used."""
+        from tagpup.core import validation
         from tagpup.ml import faces as face_models
         from tagpup.ml.scrfd_adaface import ScrfdAdaFace
         from tagpup.services import settings as library_settings
         for cap in ("", "2048"):
             with self.subTest(cap=cap):
-                made = library_settings.LibrarySettings(dict(library_settings.DEFAULTS, **{
-                    "faces.detect_max_side": cap, "faces.model": face_rows.FACENET}))
-                mtcnn = {key: value for key, value in made.faces.items() if key != "model"}
+                made = library_settings.LibrarySettings(dict(library_settings.DEFAULTS, **{"faces.detect_max_side": cap}))
+                on_mtcnn = library_settings.LibrarySettings(dict(
+                    library_settings.DEFAULTS, **{"faces.detect_max_side": cap, "faces.model": validation.MTCNN_FACENET}))
+                mtcnn = {key: value for key, value in on_mtcnn.faces.items() if key != "model"}
                 self.assertEqual(tuple(mtcnn), face_models.DETECTOR_SETTINGS)
-                name = json.loads(faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), made.detect_max_side))
-                expected = dict(mtcnn, **({face_models.DETECTOR_CAP: made.detect_max_side} if cap else {}))
+                name = json.loads(faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), on_mtcnn.detect_max_side))
+                expected = dict(mtcnn, **({face_models.DETECTOR_CAP: on_mtcnn.detect_max_side} if cap else {}))
                 self.assertEqual(expected, name)
                 self.assertEqual({"model": "scrfd-adaface"},
                                  json.loads(faces.detector_of(ScrfdAdaFace(device="cpu"), made.detect_max_side)))

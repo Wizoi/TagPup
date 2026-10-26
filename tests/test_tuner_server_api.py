@@ -26,6 +26,7 @@ import face_rows  # noqa: E402
 import fake_exiftool  # noqa: E402
 import tuner_client  # noqa: E402
 
+from tagpup.core import clustering  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
@@ -355,9 +356,8 @@ class TestFaceMatchesUnmatched(TunerAPITestBase):
         seed_id = self.add_face(seed_photo, base, name=None)
         near_id = self.add_face(near_photo, blend(base, unit_vector(51), 0.05), name=None)
         self.add_face(far_photo, unit_vector(52), name=None)
-        # Like the seed (about 0.55, above AdaFace's offer), but not so like it that the near face could as well be
-        # Jane's: the near face is about 0.44 more like the seed than like her, past the margin (clustering.margins).
-        self.add_face(named_photo, blend(base, unit_vector(53), 0.6), name="Jane")
+        # Like the seed, but not so like it that the near face could as well be Jane's (the margin, clustering.margins).
+        self.add_face(named_photo, blend(base, unit_vector(53), 0.5), name="Jane")
 
         payload = self.get(f"/api/face-matches-unmatched?id={seed_id}")
         results = payload["matches"]
@@ -375,9 +375,9 @@ class TestFaceMatchesUnmatched(TunerAPITestBase):
         conn.close()
         self.assertFalse(ids & named, "an already-matched face was offered")
 
-        # Everything returned must clear the documented 0.8 similarity floor.
+        # Everything returned must clear the likeness the library's face model names unasked at (its cuts).
         for r in results:
-            self.assertGreaterEqual(r["similarity"], 0.8)
+            self.assertGreaterEqual(r["similarity"], clustering.cuts_of(FACE_MODEL).name_without_asking)
 
     def test_rejects_unknown_face(self):
         status, _ = self.get_with_status("/api/face-matches-unmatched?id=999999")
