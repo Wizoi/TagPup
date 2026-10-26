@@ -224,7 +224,8 @@ class WhatIsNotNamed(Case):
 
 
 class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
-    """#833: the detector often finds the other person in frame, not the tagged one."""
+    """#833: the detector often finds the other person in frame, not the tagged one. The faces are the new face model's,
+    read by its cuts (tagpup.core.clustering.ADAFACE_CUTS): a name offered from 0.31, given unasked from 0.52."""
 
     def decided(self, degrees=0, name=WREN):
         """A face of `name` a person decided, on another photo."""
@@ -247,11 +248,11 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
     def test_the_gate_is_the_offer_value_not_the_naming_value(self):
         self.decided(0)
         middling, unlike = self.photo("frame_003.jpg"), self.photo("frame_004.jpg")
-        in_between, below = self.face(middling, at(40)), self.face(unlike, at(50))     # cosine 0.77 and 0.64
+        in_between, below = self.face(middling, at(66)), self.face(unlike, at(80))     # cosine 0.41 and 0.17
         self.tag(unlike, "People/" + WREN)
-        self.assertIsNone(self.name(below), "0.64 is under the value a name is offered at")
+        self.assertIsNone(self.name(below), "0.17 is under the value a name is offered at")
         self.tag(middling, "People/" + WREN)
-        self.assertEqual(WREN, self.name(in_between), "0.77 is offered, though automatch would not name it")
+        self.assertEqual(WREN, self.name(in_between), "0.41 is offered, though automatch would not name it")
 
     def test_a_person_with_no_decided_face_is_named_by_the_tag_alone(self):
         # The owner's example: a new person on one photo. Nothing to compare.
@@ -297,11 +298,11 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         # Two faces, two people: the comparison names one; the other would then be "one face, one person".
         self.decided(0)
         photo = self.photo("frame_010.jpg", ["People/" + WREN, "People/" + ODA])
-        known, stranger = self.face(photo, at(0)), self.face(photo, at(120))
+        known, stranger = self.face(photo, at(0)), self.face(photo, at(160))
         self.decided(60, ODA)
         from_tags(self.library, apply=True)
         self.assertEqual(WREN, self.name(known))
-        # Oda's decided face is at 60 degrees; the stranger at 120 is 0.5 from it: not named.
+        # Oda's decided face is at 60 degrees; the stranger at 160 is -0.17 from it, under the offer: not named.
         self.assertIsNone(self.name(stranger))
         self.assertEqual(0, from_tags(self.library).details["counts"]["faces"])
 
@@ -336,7 +337,7 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
 
     def test_the_dry_run_counts_the_bands(self):
         self.decided(0)
-        for name, degrees in (("a", 10), ("b", 40), ("c", 120)):        # 0.98, 0.77, -0.5
+        for name, degrees in (("a", 10), ("b", 66), ("c", 120)):        # 0.98, 0.41, -0.5
             photo = self.photo("band_%s.jpg" % name, ["People/" + WREN])
             self.face(photo, at(degrees))
         fresh = self.photo("band_d.jpg", ["People/" + ODA])
