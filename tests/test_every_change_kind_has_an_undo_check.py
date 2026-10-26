@@ -31,7 +31,9 @@ PARAMETER = "operation"
 #: table, and a batch's label in the line of batches (the change it holds is named to its writer).
 NOT_NAMES = {("tagpup.store.db", "write"), ("tagpup.store.db", "write_with_connection"),
              ("tagpup.services.journal", "undo_rule"), ("tagpup.services.batches", "claim"),
-             ("tagpup.services.file_changes", "batch_exclusively")}
+             ("tagpup.services.file_changes", "batch_exclusively"),
+             # A read of the changes made as `operation`: the face pass's undo asks it of a retired kind (pass_check).
+             ("tagpup.store.journal", "kept_named")}
 #: What is scanned besides tagpup/: the programs, the tools and the entry points (index --reset stamps its settings in
 #: tagpup_cli).
 PROGRAMS = ("scripts", "tools", "tagpup_cli.py", "tagpup_web.py")

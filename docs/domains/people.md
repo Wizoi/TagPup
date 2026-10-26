@@ -91,7 +91,9 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   photo file and no node of the tree touched -- the people a photo's keywords name are what `cluster-faces` and Name
   faces from tags name the kept faces from again. The command is deleted (owner, 2026-10-25: the old model goes away
   completely); its change stays in the journals, its undo refused (`services.journal.RETIRED`), and a face pass's
-  change has no check of its own.
+  change recorded before it is refused too while it stands (`services.journal.pass_check`, 2026-10-26: those faces stand
+  in for the old faces it deleted; photo_index 2,499 kept passes, kr-track 20, renton_parkrun 8, counted read-only
+  2026-10-26); both checks stay until the baseline migration removes them.
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
   keeps "exactly one person reaches 0.80" (FaceNet's naming likeness; each model's own since 2026-10-20) beside it, since the margin alone would name a face two people reach 0.04 apart, a

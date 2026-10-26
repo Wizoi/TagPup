@@ -19,7 +19,7 @@ none -- the next read stamped it again; nor is a migration. A change whose undo 
 may not be switched to now is refused by the switch's own check (tagpup.services.settings.undo_check); a retiring of a
 model's vectors never (tagpup.services.retire_photo_vectors.vectors_check); nor a retiring of the old detector's
 faces, a kind the live journals hold from a command since deleted (RETIRED): undone, it would bring the old model's
-faces back.
+faces back; nor a face pass recorded before such a retiring (pass_check).
 
 A change of photo files (tagpup.services.file_changes) is undone file by file, and its
 rows follow: a file that no longer holds what the change left is refused, named, and the
@@ -47,6 +47,27 @@ from tagpup.store import db, journal
 
 logger = logging.getLogger(__name__)
 
+#: The retiring of the old detector's faces, by its operation's name with the model key: a kind no code makes any more
+#: (RETIRED), which a face pass's undo still asks of (pass_check).
+RETIRED_FACES = "retire faces (%s)"
+
+#: Why an undo of a face pass's change is refused while a retiring after it stands (pass_check).
+PASS_STANDS_IN = "change %d (retire faces) deleted the old faces this pass's new faces stand in for, and is not undone"
+
+
+def pass_check(conn, change_id, operation, _summary):
+    """Why a face pass's change ("face pass (<key>)") is not undone now, or None: a retiring of the old detector's faces
+    under the same key recorded after it stands (applied, not undone): PASS_STANDS_IN, naming the newest such. Undone, the
+    pass would take the new model's faces and vectors from photos whose old faces are gone, and the retiring is never
+    undone (RETIRED). The journal alone allows it -- each wrote other rows than the other did. Live: photo_index's passes
+    before change 3247, kr-track's before 347, renton_parkrun's before 1225 (2026-10-26). Removed with RETIRED by the
+    baseline migration, which drops the journals holding both. The caller's read-only connection."""
+    head, tail = face_pass.OPERATION.split("%s")
+    key = operation[len(head):len(operation) - len(tail)]
+    later = [kept_id for kept_id, _kept in journal.kept_named(conn, RETIRED_FACES % key) if kept_id > change_id]
+    return PASS_STANDS_IN % later[-1] if later else None
+
+
 #: Every kind of change the code makes, by its operation's name -- a format ("face pass (%s)") for a kind named with a
 #: key, matched whole -- and what its way back says of itself:
 #: - a sentence: never undone, said before the journal's account (a stamp of the settings; a migration's record, which
@@ -63,7 +84,7 @@ UNDO_CHECKS = {
     **{stamp: library_settings.NOT_UNDONE for stamp in library_settings.STAMPS - library_settings.RETIRED_STAMPS},
     library_settings.CHANGE: library_settings.undo_check,
     "migration %d: %s": "change %(change)d (%(operation)s): a migration is not undone",
-    face_pass.OPERATION: None,
+    face_pass.OPERATION: pass_check,
     retire_photo_vectors.VECTORS_OPERATION: retire_photo_vectors.vectors_check,
     face_people.UNNAMED: None,
     face_people.ADDED: None,
@@ -97,7 +118,7 @@ UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.val
 RETIRED = {
     # The retiring of the old detector's faces: 1 applied in each library (photo_index 3247, kr-track 347,
     # renton_parkrun 1225, counted 2026-10-25). Never undone: the faces it deleted are the old model's.
-    "retire faces (%s)": ("change %(change)d (%(operation)s): the old detector's faces it deleted are not put back: "
+    RETIRED_FACES: ("change %(change)d (%(operation)s): the old detector's faces it deleted are not put back: "
                           "restore the snapshot taken before (TagPup CLI: snapshots list, snapshots restore)"),
     # A stamp of the settings read from config.ini: photo_index 1, kr-track 1.
     **{stamp: library_settings.NOT_UNDONE for stamp in library_settings.RETIRED_STAMPS},

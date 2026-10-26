@@ -13,6 +13,9 @@
   (journal: skippable edits; tests/test_refresh_rows_guards.py).
 - One keyword spelling, in tagpup.core.vocabulary: tests/test_vocabulary.py.
 - journal.history of one change lists its keys without reading its values.
+- A face pass recorded before a retiring of the old detector's faces is not undone while the retiring stands: its faces
+  stand in for the old faces the retiring deleted, and the retiring is never undone (#1979; each live library holds one,
+  photo_index 3247 after 2,499 kept passes, counted 2026-10-26).
 """
 import json
 import os
@@ -29,8 +32,9 @@ from journal_library import MODEL, JournalLibrary, jpeg, vector  # noqa: E402
 
 from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import face_pass  # noqa: E402
 from tagpup.services import journal as library_journal  # noqa: E402
-from tagpup.store import journal  # noqa: E402
+from tagpup.store import db, journal  # noqa: E402
 
 SECRETS = ("Rowan Thackeray", "Imogen Vale", "Maren Oakhollow", "regatta_00")
 
@@ -210,6 +214,47 @@ class InsertsRehearsed(Checked):
         self.assertEqual(2024, photo[1])
         self.assertEqual(["Rowan Thackeray"], self.people_of(photo[0]))
         journal.undo(self.db_path, applied.change_id)
+
+
+class AFacePassBeforeARetiring(Checked):
+    """#1979: a library holding a face pass and then a retiring of the old detector's faces, as each live library does."""
+
+    def face_pass(self):
+        """A face pass's change: a new face in a photo, as the pass journals one."""
+        return journal.apply(self.db_path, face_pass.OPERATION % FACE_MODEL, [journal.insert("faces", {
+            "photo_id": self.ids["prize"], "box": "[10, 20, 110, 140]", "name_source": None, "excluded": 0})]).change_id
+
+    def retiring(self):
+        """The retiring's change as the live journals hold it (change 3247 on photo_index): recorded under the name of a
+        command since deleted, which no code makes any more."""
+        conn = db.connect(self.db_path)
+        try:
+            change_id = journal.record(conn, "retire faces (%s)" % FACE_MODEL, [], {"newest_face": self.ids["named"]})
+            conn.commit()
+            return change_id
+        finally:
+            conn.close()
+
+    def test_the_pass_before_the_retiring_is_not_undone_and_nothing_is_written(self):
+        passed = self.face_pass()
+        retired = self.retiring()
+        sentence = library_journal.PASS_STANDS_IN % retired
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                before, changes = self.dump(), self.changes()
+                result = library_journal.undo(self.library, passed, apply=apply)
+                self.assertEqual(sentence, result.refused)
+                self.assertEqual((before, changes), (self.dump(), self.changes()), "a refused undo wrote")
+        self.assertEqual(sentence, self.refused(lambda: library_journal.undo_rows(self.library, passed)))
+        listed = library_journal.refusals(self.library, [{"id": passed}, {"id": retired}])
+        self.assertEqual(sentence, listed[passed], "History offers the pass's undo")
+        self.assertIn("are not put back", listed[retired])
+
+    def test_a_pass_after_the_retiring_is_undone(self):
+        self.retiring()
+        passed = self.face_pass()
+        self.assertIsNone(library_journal.refusals(self.library, [{"id": passed}])[passed])
+        self.assertFalse(library_journal.undo(self.library, passed, apply=True).refused)
 
 
 class SkippableEdits(JournalLibrary):
