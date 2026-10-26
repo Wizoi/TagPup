@@ -12,7 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL, FACENET  # noqa: E402
 import migration_names  # noqa: E402
 from journal_library import JournalLibrary, jpeg, vector  # noqa: E402
 
@@ -249,7 +249,7 @@ class AFacePassFolderUndone(JournalLibrary):
     written, then recorded as stored by journal.record_inserted). A row of another change under such a face (a vector a
     later run added under another model) refuses the undo, and says so; its own crop and vector stand in no way. The
     folder undone, and written again, is scenario P8 (tests/test_the_face_pass.py)."""
-    NEW_MODEL = "scrfd-adaface"
+    NEW_MODEL = FACE_MODEL
 
     def the_pass_gives_a_face(self):
         """(change id, face id) of the pass's change that gave the photo "prize" a face, its crop and its vector."""
@@ -377,7 +377,7 @@ class Rehearsals(JournalLibrary):
         with mock.patch.object(journal, "_inverse", side_effect=zeroes_the_vector):
             rehearsal = journal.rehearse(self.db_path, "t", self.edits())
         self.assertFalse(rehearsal.exact)
-        self.assertIn("face_embeddings %d/%s: vector" % (self.ids["copy"], FACENET), rehearsal.differences)
+        self.assertIn("face_embeddings %d/%s: vector" % (self.ids["copy"], FACE_MODEL), rehearsal.differences)
         self.assertEqual([], self.changes())
 
     def test_a_wrong_derived_rebuild_is_caught(self):
@@ -438,7 +438,7 @@ class HistoryAndPruning(JournalLibrary):
         first, _second = self.two_changes()
         entry = journal.history(self.db_path, change_id=first)[0]
         self.assertEqual({"faces": [[self.ids["copy"]]], "face_crops": [[self.ids["copy"]]],
-                          "face_embeddings": [[self.ids["copy"], FACENET]]}, entry["keys"])
+                          "face_embeddings": [[self.ids["copy"], FACE_MODEL]]}, entry["keys"])
         self.assertNotIn("values", entry)
         values = journal.history(self.db_path, change_id=first, values=True)[0]["values"]
         vector = next(v for v in values if v["table"] == "face_embeddings")

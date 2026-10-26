@@ -1,7 +1,8 @@
-"""The owner makes SigLIP 2 SO400M's vectors for a library (TagPup CLI: embed-photos --model ViT-SO400M-14-SigLIP2:webli,
+"""The owner makes a new photo model's vectors for a library (TagPup CLI: embed-photos --model NAME:WEIGHTS,
 tagpup.services.photo_reembed) before switching it in the gear (tests/test_switching_a_librarys_photo_model.py, whose
-gate this run is made to pass). About 40 minutes for photo_index, so it is stopped and run again, and the library is in
-use while it runs. What the owner lives through:
+gate this run is made to pass), as SigLIP 2 SO400M's were made in phase 5. About 40 minutes for photo_index, so it is
+stopped and run again, and the library is in use while it runs. A new library is on SO400M; the model made is one the
+test declares in the table of photo models (stand_in_models.OTHER_PHOTO_MODEL). What the owner lives through:
 
 - The dry run counts the photos, those holding the new vector, those to embed and those with no file, and the time;
   nothing is written.
@@ -27,7 +28,7 @@ use while it runs. What the owner lives through:
   holds, so two cards in one process wait for each other as two processes do, tests/test_one_gpu_at_a_time.py).
 
 Fictional names; a library in a home of the test's own; rows as the indexer stores them; real small JPEGs; a stand-in
-photo model (1152-long vectors), no weights.
+photo model (768-long vectors), no weights.
 """
 import os
 import sys
@@ -39,6 +40,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import stand_in_models  # noqa: E402
 
 import numpy as np  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
@@ -60,11 +62,14 @@ from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
-OLD = ("ViT-H-14", "laion2b_s32b_b79k")
-NEW = ("ViT-SO400M-14-SigLIP2", "webli")
-OLD_KEY = store_embeddings.model_key(*OLD, True, 1.4, 512)
+#: The model a new library is on (SigLIP 2 SO400M), and the one whose vectors are made, declared by the test.
+OLD = ("ViT-SO400M-14-SigLIP2", "webli")
+NEW = stand_in_models.OTHER_PHOTO_MODEL
+OLD_KEY = store_embeddings.model_key(*OLD, True, 1.4, None)
 NEW_KEY = store_embeddings.model_key(*NEW, True, 1.4, None)
-DIMS = {OLD[0]: 1024, NEW[0]: 1152}
+#: How long each model's vectors are (a 1152-d SO400M, the other 768).
+OLD_DIM, NEW_DIM = 1152, 768
+DIMS = {OLD[0]: OLD_DIM, NEW[0]: NEW_DIM}
 
 
 def vector(dim, seed):
@@ -125,10 +130,11 @@ class _Clip:
 
 class _Library(unittest.TestCase):
     """A library as the picker's Create makes it, a folder added in the gear and its photos read by the index, each
-    holding ViT-H's vector."""
+    holding SO400M's vector."""
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="embed_photos_")
+        stand_in_models.declare_other_photo_model(self)
         self.library = Library(self.home.library("harbour.db"))
         self.assertEqual(1, library_actions.create(self.library.path).changed)
         self.folder = paths.stored(os.path.join(self.home.root, "Heronry"))
@@ -154,7 +160,7 @@ class _Library(unittest.TestCase):
                 Image.new("RGB", (48, 32), (5 * n % 255, 90, 140)).save(path, "JPEG")
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(1024, n).tobytes())
+                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, n).tobytes())
                 self.photos.append(path)
             conn.commit()
         finally:
@@ -165,7 +171,7 @@ class _Library(unittest.TestCase):
         try:
             for path in photos:
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put(conn, path, NEW_KEY, mtime, size, vector(1152, 7).tobytes())
+                store_embeddings.put(conn, path, NEW_KEY, mtime, size, vector(NEW_DIM, 7).tobytes())
             conn.commit()
         finally:
             conn.close()
@@ -231,7 +237,7 @@ class AStoppedRunResumes(_Library):
             index = search.PhotoIndex(self.library.path, OLD_KEY)
             index.load()
             try:
-                self.assertEqual((OLD_KEY, 1024, 10, 10), (index.model, index.dim, index.indexed, index.count))
+                self.assertEqual((OLD_KEY, OLD_DIM, 10, 10), (index.model, index.dim, index.indexed, index.count))
             finally:
                 index.close()
             seen.append(counts["kept"])
@@ -339,7 +345,7 @@ class TwoLibrariesHoldingOneFolder(_Library):
             for n, path in enumerate(self.photos):
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(1024, n).tobytes())
+                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, n).tobytes())
             conn.commit()
         finally:
             conn.close()
@@ -431,8 +437,8 @@ class TheSwitchWaitsForTheRun(_Library):
         try:
             for word in ("Heron", "Harbour"):
                 for prompt in ("a photo of %s" % word, "a %s, 1998" % word):
-                    store_taxonomy.keep_tag_embedding(conn, word, prompt, *OLD, vector(1024, 3).tobytes())
-            store_taxonomy.keep_tag_embedding(conn, "Heron", "a photo of Heron", *NEW, vector(1152, 3).tobytes())
+                    store_taxonomy.keep_tag_embedding(conn, word, prompt, *OLD, vector(OLD_DIM, 3).tobytes())
+            store_taxonomy.keep_tag_embedding(conn, "Heron", "a photo of Heron", *NEW, vector(NEW_DIM, 3).tobytes())
             conn.commit()
         finally:
             conn.close()

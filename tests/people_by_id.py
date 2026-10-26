@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -55,9 +55,9 @@ class TwoSams:
                     taxonomy.add_path(conn, tag)
             photo_rows.add_read(conn, self.photo, {"XMP:Subject": [SAM_T, "Places/Coast"]})
             photo_rows.add_read(conn, self.other, {"XMP:Subject": []})
-            return [faces.insert(conn, self.photo, [0, 0, 10, 10], b"\x00" * 8, model=FACENET),
-                    faces.insert(conn, self.photo, [20, 0, 30, 10], b"\x01" * 8, model=FACENET),
-                    faces.insert(conn, self.other, [0, 0, 10, 10], b"\x02" * 8, model=FACENET)]
+            return [faces.insert(conn, self.photo, [0, 0, 10, 10], b"\x00" * 8, model=FACE_MODEL),
+                    faces.insert(conn, self.photo, [20, 0, 30, 10], b"\x01" * 8, model=FACE_MODEL),
+                    faces.insert(conn, self.other, [0, 0, 10, 10], b"\x02" * 8, model=FACE_MODEL)]
 
         self.faces = write(self.path, seed)
 

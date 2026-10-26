@@ -11,6 +11,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
+import stand_in_models  # noqa: E402
 
 from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -19,6 +20,14 @@ from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
+
+#: A photo model other than the one a new library is stamped on (SigLIP 2), which the test declares, so a library can be
+#: put on it in the gear.
+OTHER_PHOTO_MODEL = stand_in_models.OTHER_PHOTO_MODEL
+ON_THE_OTHER = stand_in_models.ON_THE_OTHER_PHOTO_MODEL
+#: The face models' settings of every library: the new model, alone (tagpup.services.settings.model_alone).
+FACES = {"model": validation.SCRFD_ADAFACE}
+
 
 def settings_rows(library):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -31,6 +40,7 @@ def settings_rows(library):
 class ALibrary(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self)
+        stand_in_models.declare_other_photo_model(self)
 
     def new_library(self, name="harbour.db"):
         """A library as the picker's Create makes it."""
@@ -59,8 +69,7 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
         self.harbour = self.new_library("harbour.db")
         self.meadow = self.new_library("meadow.db")
         self.orchard = self.new_library("orchard.db")
-        settings.change(self.meadow, {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": "",
-                                      "faces.min_face_size": "40"}, acknowledged=["clip", "faces"])
+        self.assertEqual(2, settings.change(self.meadow, ON_THE_OTHER, acknowledged=["clip"]).changed)
 
     def build(self, kind, settings_given):
         model = FakeModel(settings_given)
@@ -76,16 +85,16 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
     def test_a_library_on_another_gets_its_own(self):
         harbour, meadow = self.runtime.clip(self.harbour), self.runtime.clip(self.meadow)
         self.assertIsNot(harbour, meadow)
-        self.assertEqual(harbour.settings["model_name"], "ViT-H-14")
-        self.assertEqual(meadow.settings["model_name"], "ViT-SO400M-14-SigLIP2")
-        self.assertEqual(self.runtime.faces(self.meadow).settings["min_face_size"], 40)
-        self.assertEqual(self.runtime.faces(self.harbour).settings["min_face_size"], 20)
+        self.assertEqual(harbour.settings["model_name"], "ViT-SO400M-14-SigLIP2")
+        self.assertEqual(meadow.settings["model_name"], OTHER_PHOTO_MODEL[0])
+        # Every library is on the one face model: the two share it.
+        self.assertIs(self.runtime.faces(self.meadow), self.runtime.faces(self.harbour))
+        self.assertEqual(FACES, self.runtime.faces(self.meadow).settings)
         self.assertNotEqual(self.runtime.model_key(self.harbour), self.runtime.model_key(self.meadow))
 
     def test_a_look_with_the_new_face_model_and_a_library_switched_to_it_share_one_model(self):
-        # orchard, with no faces, switched to the new model; harbour, on FaceNet, looked at with it by a face pass.
+        # orchard on the new model, as made; harbour looked at with it by a face pass.
         new = validation.SCRFD_ADAFACE
-        self.assertEqual(1, settings.change(self.orchard, {"faces.model": new}, acknowledged=["face-model"]).changed)
         switched = self.runtime.faces(self.orchard)
         look = self.runtime.look_at_faces(self.harbour)
         look.end()
@@ -94,15 +103,15 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
 
     def test_a_changed_setting_is_seen_by_the_next_ask(self):
         self.runtime.clip(self.harbour)
-        settings.change(self.harbour, {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": ""}, acknowledged=["clip"])
-        self.assertEqual(self.runtime.clip(self.harbour).settings["model_name"], "ViT-SO400M-14-SigLIP2")
+        settings.change(self.harbour, ON_THE_OTHER, acknowledged=["clip"])
+        self.assertEqual(self.runtime.clip(self.harbour).settings["model_name"], OTHER_PHOTO_MODEL[0])
         self.assertEqual(2, len(self.built["clip"]))
 
     def test_each_librarys_photo_index_is_under_its_model(self):
         self.assertEqual(self.runtime.photo_index(self.meadow).model, self.runtime.model_key(self.meadow))
         before = self.runtime.photo_index(self.harbour)
         self.assertEqual(before.model, self.runtime.model_key(self.harbour))
-        settings.change(self.harbour, {"model.force_image_size": "224"}, acknowledged=["clip"])
+        self.assertEqual(1, settings.change(self.harbour, {"model.max_aspect_ratio": "1.0"}, acknowledged=["clip"]).changed)
         after = self.runtime.photo_index(self.harbour)
         self.assertEqual(after.model, self.runtime.model_key(self.harbour))
         self.assertNotEqual(before.model, after.model)
@@ -116,8 +125,8 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
             self.runtime.begin(self.meadow).end()
         photo_index, clip, faces, words = model_for_run.call_args.args
         self.assertEqual(words, ["Kayak", "Lighthouse"])
-        self.assertEqual(clip.settings["model_name"], "ViT-SO400M-14-SigLIP2")
-        self.assertEqual(faces.settings["min_face_size"], 40)
+        self.assertEqual(clip.settings["model_name"], OTHER_PHOTO_MODEL[0])
+        self.assertEqual(FACES, faces.settings)
         self.runtime.forget(self.meadow)
 
     def warmable(self):
@@ -132,14 +141,14 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
         self.warmable()
         unstamped = self.library_in_use("quarry.db")
         self.runtime.warm_up([self.meadow, self.harbour, self.orchard, unstamped])
-        self.assertEqual(["ViT-H-14"], [m.settings["model_name"] for m in self.built["clip"]])
-        self.assertEqual([20], [m.settings["min_face_size"] for m in self.built["faces"]])
+        self.assertEqual(["ViT-SO400M-14-SigLIP2"], [m.settings["model_name"] for m in self.built["clip"]])
+        self.assertEqual([FACES], [m.settings for m in self.built["faces"]])
         self.assertEqual({}, settings_rows(unstamped))
 
     def test_warming_up_the_startup_library_loads_its_set_alone(self):
         self.warmable()
         self.runtime.warm_up([self.meadow])
-        self.assertEqual(["ViT-SO400M-14-SigLIP2"], [m.settings["model_name"] for m in self.built["clip"]])
+        self.assertEqual([OTHER_PHOTO_MODEL[0]], [m.settings["model_name"] for m in self.built["clip"]])
         self.assertEqual(1, len(self.built["faces"]))
 
 
@@ -195,7 +204,7 @@ class TheRuntimeLetsGoOfWhatNoLibraryUses(ALibrary):
         return model
 
     def change_model(self, library):
-        result = settings.change(library, {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": ""}, acknowledged=["clip"])
+        result = settings.change(library, ON_THE_OTHER, acknowledged=["clip"])
         self.assertFalse(result.refused, result.refused)
         self.assertTrue(result.changed)
 
@@ -207,7 +216,7 @@ class TheRuntimeLetsGoOfWhatNoLibraryUses(ALibrary):
         self.assertEqual(0, old_faces.unloaded, "the face models it still uses were unloaded")
         new_clip = self.runtime.clip(self.harbour)
         self.assertIsNot(new_clip, old_clip)
-        self.assertEqual(new_clip.settings["model_name"], "ViT-SO400M-14-SigLIP2")
+        self.assertEqual(new_clip.settings["model_name"], OTHER_PHOTO_MODEL[0])
         self.assertEqual(0, new_clip.unloaded)
 
     def test_a_change_made_elsewhere_is_let_go_at_the_librarys_next_ask(self):

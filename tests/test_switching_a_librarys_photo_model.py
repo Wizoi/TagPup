@@ -1,22 +1,23 @@
-"""A library switches to SigLIP 2 SO400M (model.name ViT-SO400M-14-SigLIP2, weights webli; docs/AI_PIPELINE.md, phase 5)
-once the new model's vectors are made for its photos, and each library then searches by its own model's vectors alone.
+"""A library switches photo model once the new model's vectors are made for its photos, and each library then searches by
+its own model's vectors alone (docs/AI_PIPELINE.md, phase 5, when the libraries went from ViT-H-14 to SigLIP 2 SO400M).
 
-Every photo vector the three libraries held was ViT-H-14's; the new model's are written beside them, each kept under its
-settings' key (tagpup.store.embeddings.model_key), and every reader reads the library's key alone. A switch before the
-new vectors are made would leave Suggest and search with nothing to compare, so tagpup.services.settings.change refuses
-it, saying the counts (photo_switch_on), as it refuses the face model's switch (tests/test_switching_a_librarys_face_
-model.py). What the owner lives through:
+A new library is on SigLIP 2 SO400M (model.name ViT-SO400M-14-SigLIP2, weights webli); the model switched to is one the
+test declares in the table of photo models (stand_in_models.OTHER_PHOTO_MODEL), since no second real one is in use. A new
+model's vectors are written beside the old, each kept under its settings' key (tagpup.store.embeddings.model_key), and
+every reader reads the library's key alone. A switch before the new vectors are made would leave Suggest and search with
+nothing to compare, so tagpup.services.settings.change refuses it, saying the counts (photo_switch_on), as it refuses the
+face model's switch (tests/test_switching_a_librarys_face_model.py). What the owner lives through:
 
 - (s) The switch in the gear: a library 40% of whose photos hold the new model's vector is refused, with the counts and
-  what to do, nothing written, nor in a dry run; at 97% and at 100% it switches. SO400M with Image size still 512 (the
-  default) is refused: the model is shown photos at its own size only. A model name typed that the table does not hold
-  (a sibling of SO400M) is refused, saying the pairs it holds, even with every photo holding a vector under it; the page
-  is told the counts of a switch it allows (photo_vectors).
+  what to do, nothing written, nor in a dry run; at 97% and at 100% it switches. SO400M given an Image size (512, the
+  old models' default) is refused: the model is shown photos at its own size only. A model name typed that the table
+  does not hold (a sibling of SO400M) is refused, saying the pairs it holds, even with every photo holding a vector
+  under it; the page is told the counts of a switch it allows (photo_vectors).
 - (u) The switch undone from History: refused while the photos added since hold the new model's vector alone, too many
   to go back (the same share), in the listing, the rehearsal and the undo alike, nothing written; allowed when they are
   few enough.
-- (r) Two libraries on two models in one server: each searches its own vectors (1024 long under ViT-H, 1152 under
-  SO400M), never the other's; a switch while a Suggest holds its index leaves the run on the model it began with, and
+- (r) Two libraries on two models in one server: each searches its own vectors (1152 long under SO400M, 768 under the
+  other), never the other's; a switch while a Suggest holds its index leaves the run on the model it began with, and
   the next ask is on the new one.
 - (t) SigLIP 2's tokenizer is read from its tokenizer.json; one not in the cache, with no network, is one sentence;
   ViT-H-14's is still open_clip's own.
@@ -33,6 +34,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import stand_in_models  # noqa: E402
 
 import web_client  # noqa: E402
 
@@ -48,14 +50,15 @@ from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 
-OLD = ("ViT-H-14", "laion2b_s32b_b79k")
-NEW = ("ViT-SO400M-14-SigLIP2", "webli")
-OLD_KEY = store_embeddings.model_key(*OLD, True, 1.4, 512)
+#: The model a new library is on (SigLIP 2 SO400M), and the one the owner switches it to, declared by the test.
+OLD = ("ViT-SO400M-14-SigLIP2", "webli")
+NEW = stand_in_models.OTHER_PHOTO_MODEL
+OLD_KEY = store_embeddings.model_key(*OLD, True, 1.4, None)
 NEW_KEY = store_embeddings.model_key(*NEW, True, 1.4, None)
-#: How long each model's vectors are (a 1024-d ViT-H, a 1152-d SO400M).
-DIMS = {OLD[0]: 1024, NEW[0]: 1152}
-#: The gear's switch to SO400M: Image size emptied with it.
-TO_NEW = {"model.name": NEW[0], "model.pretrained": NEW[1], "model.force_image_size": ""}
+#: How long each model's vectors are (a 1152-d SO400M, the other 768).
+DIMS = {OLD[0]: 1152, NEW[0]: 768}
+#: The gear's switch to the other model, at its own size.
+TO_NEW = stand_in_models.ON_THE_OTHER_PHOTO_MODEL
 
 
 def rows_of(db_path):
@@ -94,10 +97,11 @@ def refused_for_few(holds, photos, key):
 
 class _Libraries(unittest.TestCase):
     """Libraries as the picker's Create makes them, each a folder added in the gear and photos read by the index, every
-    one holding ViT-H's vector; the new model's given to as many as a test says."""
+    one holding SO400M's vector; the new model's given to as many as a test says."""
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="new_photo_model_")
+        stand_in_models.declare_other_photo_model(self)
         self.seed = 0
 
     def library(self, file_name, folder_name, count):
@@ -112,8 +116,8 @@ class _Libraries(unittest.TestCase):
         return library
 
     def add_photos(self, library, count, old=True, new=False):
-        """`count` photos more in the library's folder, read by the index; each given ViT-H's vector with `old`, and
-        SO400M's with `new`, as PhotoEmbeddings.keep stores them (stamped with the file)."""
+        """`count` photos more in the library's folder, read by the index; each given SO400M's vector with `old`, and
+        the new model's with `new`, as PhotoEmbeddings.keep stores them (stamped with the file)."""
         added = []
         conn = db.connect(library.path)
         try:
@@ -147,7 +151,7 @@ class _Libraries(unittest.TestCase):
 
 
 class TheSwitchWaitsForTheVectors(_Libraries):
-    """(s) The owner switches a library to SO400M in the gear (settings.change, as the dialog's route calls it)."""
+    """(s) The owner switches a library to the other model in the gear (settings.change, as the dialog's route calls it)."""
 
     def test_a_library_forty_percent_of_whose_photos_hold_the_new_vector_is_refused_and_nothing_written(self):
         harbour = self.library("harbour.db", "Heronry", 30)
@@ -178,12 +182,11 @@ class TheSwitchWaitsForTheVectors(_Libraries):
             self.assertEqual(NEW_KEY, store_embeddings.model_key(
                 **library_settings.LibrarySettings(library_settings.DEFAULTS | settings_now).embedder))
 
-    def test_so400m_with_image_size_still_512_is_refused(self):
+    def test_so400m_given_an_image_size_of_512_is_refused(self):
         harbour = self.library("harbour.db", "Heronry", 3)
-        self.give(harbour, harbour.photos, NEW)
         before = rows_of(harbour.path)
         for apply in (False, True):
-            result = switch(harbour, {"model.name": NEW[0], "model.pretrained": NEW[1]}, apply=apply)
+            result = switch(harbour, {"model.force_image_size": "512"}, apply=apply)
             self.assertEqual("Nothing was written: ViT-SO400M-14-SigLIP2 (weights webli) is shown photos at its own size "
                              "only: leave Image size empty.", result.refused)
             self.assertEqual(before, rows_of(harbour.path))
@@ -206,8 +209,8 @@ class TheSwitchWaitsForTheVectors(_Libraries):
             result = switch(harbour, {"model.name": sibling[0], "model.pretrained": sibling[1],
                                       "model.force_image_size": ""}, apply=apply)
             self.assertEqual("Nothing was written: ViT-SO400M-14-SigLIP2-378 (weights webli) is not a photo model TagPup "
-                             "holds the word cut of. It holds: ViT-H-14 (laion2b_s32b_b79k), ViT-SO400M-14-SigLIP2 "
-                             "(webli).", result.refused)
+                             "holds the word cut of. It holds: ViT-SO400M-14-SigLIP2 (webli), ViT-H-14 "
+                             "(laion2b_s32b_b79k), ViT-Other-14 (other-weights).", result.refused)
             self.assertEqual(before, rows_of(harbour.path))
 
     def test_the_page_is_told_the_counts_of_a_switch_it_is_allowed(self):
@@ -220,8 +223,8 @@ class TheSwitchWaitsForTheVectors(_Libraries):
 
 
 class TheUndoOfASwitchIsASwitch(_Libraries):
-    """(u) The owner switched harbour to SO400M with every photo holding both vectors, indexed photos since (under the
-    new model alone), and clicks Undo on the switch in History."""
+    """(u) The owner switched harbour to the other model with every photo holding both vectors, indexed photos since
+    (under the new model alone), and clicks Undo on the switch in History."""
 
     def setUp(self):
         super().setUp()
@@ -235,7 +238,7 @@ class TheUndoOfASwitchIsASwitch(_Libraries):
         return journal_service.history(self.harbour, change_id=self.change)["changes"][0]["why_not"]
 
     def test_refused_while_too_many_photos_since_hold_the_new_vector_alone(self):
-        self.add_photos(self.harbour, 2, old=False, new=True)   # 2 of 32 hold no ViT-H vector: over 5%
+        self.add_photos(self.harbour, 2, old=False, new=True)   # 2 of 32 hold no SO400M vector: over 5%
         before = rows_of(self.harbour.path)
         said = refused_for_few(30, 32, OLD_KEY)
         self.assertEqual(said, self.why_not())
@@ -255,8 +258,8 @@ class TheUndoOfASwitchIsASwitch(_Libraries):
         undone = journal_service.undo(self.harbour, self.change, apply=True)
         self.assertFalse(undone.refused, undone.refused)
         settings_now = held(self.harbour)
-        self.assertEqual((OLD[0], OLD[1], "512"), (settings_now["model.name"], settings_now["model.pretrained"],
-                                                    settings_now["model.force_image_size"]))
+        self.assertEqual((OLD[0], OLD[1], ""), (settings_now["model.name"], settings_now["model.pretrained"],
+                                                 settings_now["model.force_image_size"]))
 
 
 class _Clip:
@@ -283,7 +286,7 @@ class _Run:
 
 
 class EachLibrarySearchesItsOwnVectors(_Libraries):
-    """(r) harbour on ViT-H-14 and cove switched to SO400M, in one server."""
+    """(r) harbour on SO400M and cove switched to the other model, in one server."""
 
     def setUp(self):
         super().setUp()
@@ -296,7 +299,7 @@ class EachLibrarySearchesItsOwnVectors(_Libraries):
             self.addCleanup(self.runtime.forget, library)
 
     def test_each_library_is_searched_by_its_own_models_vectors(self):
-        for library, key, dim in ((self.harbour, OLD_KEY, 1024), (self.cove, NEW_KEY, 1152)):
+        for library, key, dim in ((self.harbour, OLD_KEY, 1152), (self.cove, NEW_KEY, 768)):
             index = self.runtime.photo_index(library)
             self.assertEqual((key, dim, len(library.photos), len(library.photos)),
                              (index.model, index.dim, index.indexed, index.count))
@@ -314,12 +317,12 @@ class EachLibrarySearchesItsOwnVectors(_Libraries):
         try:
             self.assertFalse(switch(self.harbour).refused)
             self.runtime.settings_changed(self.harbour)
-            self.assertEqual((OLD_KEY, 1024), (run.photo_index.model, run.photo_index.dim))
+            self.assertEqual((OLD_KEY, 1152), (run.photo_index.model, run.photo_index.dim))
             self.assertEqual(OLD[0], run.clip.settings["model_name"])
         finally:
             run.end()
         now = self.runtime.photo_index(self.harbour)
-        self.assertEqual((NEW_KEY, 1152, 4), (now.model, now.dim, now.indexed))
+        self.assertEqual((NEW_KEY, 768, 4), (now.model, now.dim, now.indexed))
         self.assertEqual(NEW[0], self.runtime.clip(self.harbour).settings["model_name"])
 
 
@@ -348,7 +351,7 @@ class SigLIP2sTokenizer(unittest.TestCase):
         from tagpup.ml import clip
         made = self.tiny_tokenizer()
         with mock.patch("huggingface_hub.hf_hub_download", side_effect=lambda repo, name: made[name]) as download:
-            tokenizer = clip.tokenizer_of(NEW[0])
+            tokenizer = clip.tokenizer_of(OLD[0])
         self.assertEqual({"timm/ViT-SO400M-14-SigLIP2"}, {call.args[0] for call in download.call_args_list})
         ids = tokenizer(["a photo of a heron"])
         self.assertEqual((1, 64), tuple(ids.shape))
@@ -359,7 +362,7 @@ class SigLIP2sTokenizer(unittest.TestCase):
         with mock.patch("huggingface_hub.hf_hub_download", side_effect=OSError("offline")), \
                 self.assertLogs("tagpup_cli.embedder", "ERROR"):
             with self.assertRaises(RuntimeError) as raised:
-                clip.tokenizer_of(NEW[0])
+                clip.tokenizer_of(OLD[0])
         self.assertEqual("The tokenizer of ViT-SO400M-14-SigLIP2 is not in the Hugging Face cache and could not be "
                          "downloaded from timm/ViT-SO400M-14-SigLIP2 (OSError): connect to the internet once, or copy "
                          "the cache from a machine that has it.", str(raised.exception))
@@ -368,7 +371,7 @@ class SigLIP2sTokenizer(unittest.TestCase):
         import open_clip
         from tagpup.ml import clip
         with mock.patch("huggingface_hub.hf_hub_download") as download:
-            tokenizer = clip.tokenizer_of(OLD[0])
+            tokenizer = clip.tokenizer_of("ViT-H-14")
         download.assert_not_called()
         self.assertIsInstance(tokenizer, open_clip.tokenizer.SimpleTokenizer)
 

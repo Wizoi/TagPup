@@ -20,19 +20,26 @@ import fake_exiftool  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
+from tagpup.core import clustering  # noqa: E402
 from tagpup.jobs import identify as identify_jobs  # noqa: E402
 from tagpup.services import identify  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 ROUTE = "/library/api/face-matches-unmatched"
 
+#: The likeness New Person gathers a face at, on the face model a new library is on (SCRFD and AdaFace).
+GATHERS_AT = clustering.cuts_of(face_rows.FACE_MODEL).name_without_asking
 
-def like(likeness, towards=1):
-    """A unit vector `likeness`-like the seed's, [1, 0, ...], turned towards axis `towards` (a negative one the other way).
-    The faces gathered and the named face are turned apart: a face as like someone named as like the seed is not gathered
-    (the margin, tagpup.core.clustering.margins)."""
+
+def like(likeness, *towards):
+    """A unit vector `likeness`-like the seed's, [1, 0, ...], the rest of it spread evenly over the axes `towards` (a
+    negative one the other way; axis 1 unless given). The faces gathered and the named faces are turned apart: a face as
+    like someone named as like the seed is not gathered (the margin, tagpup.core.clustering.margins)."""
+    towards = towards or (1,)
     vector = np.zeros(512, dtype=np.float32)
-    vector[0], vector[abs(towards)] = likeness, np.sign(towards) * np.sqrt(1 - likeness * likeness)
+    vector[0] = likeness
+    for axis in towards:
+        vector[abs(axis)] = np.sign(axis) * np.sqrt((1 - likeness * likeness) / len(towards))
     return vector
 
 
@@ -53,9 +60,10 @@ class NewPerson(unittest.TestCase):
             for n, (label, likeness, columns, *towards) in enumerate([
                     ("seed", 1.0, {}),
                     ("close", 0.9, {}),
-                    ("just over", 0.8003, {}, -1),
-                    ("just under", 0.7997, {}),
-                    ("far", 0.5, {}),
+                    # turned away from "close" and "named", so the likeness alone tells the two apart
+                    ("just over", GATHERS_AT + 0.0003, {}, -1, -2),
+                    ("just under", GATHERS_AT - 0.0003, {}, -1, -2),
+                    ("far", GATHERS_AT - 0.2, {}),
                     ("named", 0.85, {"name": "Imogen Vale", "name_source": "manual"}, 2),
                     ("excluded", 0.95, {"excluded": 1, "excluded_reason": "stranger"})]):
                 photo = os.path.join(self.home.root, "Photos", "IMG_%04d.jpg" % n)
@@ -144,10 +152,10 @@ class BuildingThePool(unittest.TestCase):
         with mock.patch.object(identify.UnnamedFaces, "SLICE", 3):
             for count in (len(rows), len(rows) - 2, 5, None):   # as counted, fewer, more
                 with self.subTest(count=count):
-                    self.check(identify.UnnamedFaces.of(iter(rows) if count else rows, count, key=face_rows.FACENET), rows)
+                    self.check(identify.UnnamedFaces.of(iter(rows) if count else rows, count, key=face_rows.FACE_MODEL), rows)
 
     def test_no_embeddings_is_an_empty_pool(self):
-        pool = identify.UnnamedFaces.of(iter([]), 1, key=face_rows.FACENET)   # one counted, none with a vector (faces.unnamed_embeddings)
+        pool = identify.UnnamedFaces.of(iter([]), 1, key=face_rows.FACE_MODEL)   # one counted, none with a vector (faces.unnamed_embeddings)
         self.assertEqual(0, len(pool.ids))
         self.assertEqual([], pool.near(np.ones(8, dtype=np.float32), lambda likeness, slack: likeness > -9))
 

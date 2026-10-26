@@ -20,7 +20,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
 import own_home  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.store import checks, db, faces, journal, people, person_ids, schema, taxonomy  # noqa: E402
@@ -91,9 +91,9 @@ class Library(unittest.TestCase):
             seed_tree(conn)
             photo_rows.add_read(conn, self.photo, {"XMP:Subject": ["People/" + WREN, "Trips/Coast"]})
             photo_rows.add_read(conn, self.other, {"XMP:Subject": []})
-            return [faces.insert(conn, self.photo, [0, 0, 10, 10], b"\x00" * 8, model=FACENET),
-                    faces.insert(conn, self.photo, [20, 0, 30, 10], b"\x01" * 8, model=FACENET),
-                    faces.insert(conn, self.other, [0, 0, 10, 10], b"\x02" * 8, model=FACENET)]
+            return [faces.insert(conn, self.photo, [0, 0, 10, 10], b"\x00" * 8, model=FACE_MODEL),
+                    faces.insert(conn, self.photo, [20, 0, 30, 10], b"\x01" * 8, model=FACE_MODEL),
+                    faces.insert(conn, self.other, [0, 0, 10, 10], b"\x02" * 8, model=FACE_MODEL)]
 
         self.faces = write(self.path, seed)
 
@@ -134,7 +134,7 @@ class WritesKeepTheId(Library):
         self.assertEqual([0, 0], in_step(self.path))
 
     def test_a_face_detected_with_a_name_has_its_node(self):
-        made = write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x03" * 8, name=WREN, model=FACENET))
+        made = write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x03" * 8, name=WREN, model=FACE_MODEL))
         self.assertEqual(node_id(self.path, "People/" + WREN), self.face_id(made))
 
     def test_a_name_filed_twice_is_refused_and_one_filed_nowhere_is_made_first(self):
@@ -268,7 +268,7 @@ class TwoLibraries(unittest.TestCase):
                     taxonomy.add_path(conn, tag)
                 seed_tree(conn)
                 photo_rows.add_read(conn, photo, {"XMP:Subject": []})
-                face = faces.insert(conn, photo, [0, 0, 1, 1], b"\x00", model=FACENET)
+                face = faces.insert(conn, photo, [0, 0, 1, 1], b"\x00", model=FACE_MODEL)
                 faces.name(conn, [face], WREN)
                 return face
 

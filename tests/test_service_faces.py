@@ -15,7 +15,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
-from face_rows import FACENET, add_face, people_of  # noqa: E402
+from face_rows import FACE_MODEL, add_face, people_of  # noqa: E402
 
 from tagpup.core.result import Conflict, NotFound  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
@@ -159,7 +159,7 @@ class Automatching(FacesCase):
 
     def named(self):
         self.asked.append(True)
-        return [1, 2], [self.ref("Wren Halloway"), self.ref("Ada Pembrook")], np.stack([self.wren, self.ada]), FACENET
+        return [1, 2], [self.ref("Wren Halloway"), self.ref("Ada Pembrook")], np.stack([self.wren, self.ada]), FACE_MODEL
 
     def test_a_face_like_a_named_one_is_given_its_name(self):
         photo = self.photo("a.jpg")
@@ -230,7 +230,7 @@ class TheWriteLockIsNotHeldThroughAScan(FacesCase):
 
         with mock.patch.object(store_faces, "people_in_photo", side_effect=people_in_photo):
             faces.automatch_folder(self.lib.library, self.folder,
-                                   lambda: ([1], [self.ref("Kit Morrow")], np.stack([vector(1)]), FACENET))
+                                   lambda: ([1], [self.ref("Kit Morrow")], np.stack([vector(1)]), FACE_MODEL))
         self.assertEqual(asked, [photo])
         self.assertEqual(self.face_row(self.lib.rows("SELECT id FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
                                                      (photo,))[0][0])[0], "Kit Morrow")
@@ -263,17 +263,21 @@ class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
         LibrarySettings.faces again (ml may not import services), and by the cap, LibrarySettings.detect_max_side: a
         setting added to one and not the other would let a changed setting reuse an old detection. Held equal here, with
         a cap set and with none. The face model (faces.model) is not in MTCNN's name, so the name every row was written
-        under stands; the new model's detections are named by its key alone, the cap not used."""
+        under stands; the new model's detections (a new library's, the default) are named by its key alone, the cap not
+        used."""
+        from tagpup.core import validation
         from tagpup.ml import faces as face_models
         from tagpup.ml.scrfd_adaface import ScrfdAdaFace
         from tagpup.services import settings as library_settings
         for cap in ("", "2048"):
             with self.subTest(cap=cap):
                 made = library_settings.LibrarySettings(dict(library_settings.DEFAULTS, **{"faces.detect_max_side": cap}))
-                mtcnn = {key: value for key, value in made.faces.items() if key != "model"}
+                on_mtcnn = library_settings.LibrarySettings(dict(
+                    library_settings.DEFAULTS, **{"faces.detect_max_side": cap, "faces.model": validation.MTCNN_FACENET}))
+                mtcnn = {key: value for key, value in on_mtcnn.faces.items() if key != "model"}
                 self.assertEqual(tuple(mtcnn), face_models.DETECTOR_SETTINGS)
-                name = json.loads(faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), made.detect_max_side))
-                expected = dict(mtcnn, **({face_models.DETECTOR_CAP: made.detect_max_side} if cap else {}))
+                name = json.loads(faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), on_mtcnn.detect_max_side))
+                expected = dict(mtcnn, **({face_models.DETECTOR_CAP: on_mtcnn.detect_max_side} if cap else {}))
                 self.assertEqual(expected, name)
                 self.assertEqual({"model": "scrfd-adaface"},
                                  json.loads(faces.detector_of(ScrfdAdaFace(device="cpu"), made.detect_max_side)))

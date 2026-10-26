@@ -25,7 +25,7 @@ from tagpup.core import clustering  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.ml import clip as clip_model  # noqa: E402
-from tagpup.ml import faces as face_model  # noqa: E402
+from tagpup.ml import scrfd_adaface as face_model  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import search  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
@@ -37,7 +37,7 @@ from tagpup.store import faces as store_faces  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
-from face_rows import FACENET, add_face, person_of  # noqa: E402
+from face_rows import FACE_MODEL, add_face, person_of  # noqa: E402
 
 
 def unit(vector):
@@ -136,7 +136,7 @@ class NamedFacesFromTheLibrary(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_named_faces_only_excluded_left_out(self):
-        known = identify.named_faces(Library(self.db), FACENET)[1]
+        known = identify.named_faces(Library(self.db), FACE_MODEL)[1]
         self.assertEqual(["Imogen Vale", "Rowan Thackeray"], sorted({person.name for person in known[1]}))
         # Rowan's closest face to each of their two named ones is itself; the excluded
         # face is not among them. Keyed by person (the id of their node).
@@ -159,15 +159,16 @@ class FaceModelsLoadOnce(unittest.TestCase):
         from tagpup.services import settings as library_settings
         library = self.library()
         with mock.patch.object(clip_model, "ClipModel") as clip, \
-                mock.patch.object(face_model, "FaceModel") as faces:
+                mock.patch.object(face_model, "ScrfdAdaFace") as faces:
             runtime = Runtime()
             runtime.warm_up([library])
             runtime.warm_up([library])
         found = library_settings.of(library)
         clip.assert_called_once_with(**found.embedder)
-        # The face models' settings but their `model`, which picks MTCNN and FaceNet (tagpup.runtime._build_faces).
-        mtcnn = {key: value for key, value in found.faces.items() if key != "model"}
-        faces.assert_called_once_with(**mtcnn)
+        # The library's face model, the new library's (SCRFD and AdaFace), which takes no settings
+        # (tagpup.runtime._build_faces).
+        self.assertEqual(face_model.ScrfdAdaFace.key, found.faces["model"])
+        faces.assert_called_once_with()
         self.assertEqual(2, clip.return_value.load.call_count)
         self.assertEqual(2, faces.return_value.load.call_count)
 
@@ -185,16 +186,16 @@ class FaceModelsLoadOnce(unittest.TestCase):
         self.assertEqual([], opened)
 
     def test_four_workers_arriving_together_load_the_models_once(self):
-        processor = face_model.FaceModel(min_face_size=20, confidence_threshold=0.85,
-                                         mtcnn_thresholds=[0.6, 0.7, 0.7], device="cpu")
+        processor = face_model.ScrfdAdaFace(device="cpu", folder="no weights here")
         loads = []
 
         def slow_load():
             loads.append(threading.get_ident())
             time.sleep(0.05)
-            processor.mtcnn = object()
+            processor.detectors = {}
 
-        with mock.patch.object(processor, "_load_models", side_effect=slow_load, create=True):
+        with mock.patch.object(face_model, "missing_weights", return_value=None), \
+                mock.patch.object(processor, "_load_models", side_effect=slow_load):
             workers = [threading.Thread(target=processor._init_models) for _ in range(4)]
             for worker in workers:
                 worker.start()
@@ -210,7 +211,7 @@ class FourWorkersShareEveryonesFaces(unittest.TestCase):
     def test_four_workers_asking_together_make_everyones_faces_once(self):
         people = [Ref(1, "Rowan Thackeray"), Ref(2, "Imogen Vale"), Ref(3, "Tamsin Orlow")]
         known = clustering.FaceRows([11, 12, 13], people, np.stack([unit([1, 0, 0]), unit([0, 1, 0]), unit([0, 1, 0])]),
-                                    FACENET, [2020] * 3, [21, 22, 23])
+                                    FACE_MODEL, [2020] * 3, [21, 22, 23])
         real, made = clustering.FacesByPerson.__init__, []
 
         def slow_grouping(self, *args, **kwargs):

@@ -30,11 +30,9 @@ each with what the plan read of the row (`expect`). Then:
 
 A change whose rows its writer writes itself is recorded instead (`record`), applied, in
 the writer's transaction. One may be added to in later transactions of its own
-(`record_inserted`, `record_removing`, while `kept`): the face pass opens a folder's change at its first
+(`record_inserted`, while `kept`): the face pass opens a folder's change at its first
 photo and adds each photo's rows, and counts, in that photo's transaction, so a change
-stopped part-way holds exactly what was committed and is undone as that; retiring the old
-detector's faces (tagpup.services.retire_faces) adds each chunk's deleted rows, read whole
-before they go, and its cleared decisions the same way.
+stopped part-way holds exactly what was committed and is undone as that.
 
 Either way a write is refused, before anything is written, when it would leave a row
 naming a row that is not there -- a face put back on a photo deleted since, a node under
@@ -910,20 +908,6 @@ def record_inserted(conn, change_id, rows, counts=None):
     add_counts(conn, change_id, counts)
 
 
-def record_removing(conn, change_id, table, keys, updates):
-    """Add to change `change_id`, in the caller's transaction and BEFORE the caller writes, the rows of `table` keyed `keys`
-    it is about to delete, with every row a delete of them takes (CASCADES: a face's crop and vectors), each read whole as
-    it stands and in the order an apply records them, children first (_resolve, which also refuses a delete that would
-    leave a row naming one gone), so that an undo puts each back byte for byte; and the `updates` it is about to make,
-    [(table, key, old, new)], `old` and `new` the columns that change. What the caller's write changed is added to the
-    change's summary after it (add_counts), so a change written a piece at a time (retiring the old detector's faces:
-    tagpup.services.retire_faces) says what was committed, never what was planned."""
-    _recordable([table] + [each for each, _key, _old, _new in updates])
-    changes, _skipped = _resolve(conn, [delete(table, key, {}) for key in keys])
-    changes += [RowChange("update", each, tuple(key), dict(old), dict(new)) for each, key, old, new in updates]
-    _record(conn, change_id, changes)
-
-
 def _recordable(tables):
     """Refuse a table a change does not record (KEYS)."""
     unknown = sorted(set(tables) - set(KEYS))
@@ -942,7 +926,7 @@ def _inserted(conn, rows):
 
 def add_counts(conn, change_id, counts):
     """Add `counts` to the summary of change `change_id`, in the caller's transaction: the one way a change added to a
-    piece at a time keeps its counts at what was committed (record_inserted; retiring, after its write)."""
+    piece at a time keeps its counts at what was committed (record_inserted; a retiring of vectors, after its write)."""
     if not counts:
         return
     (text,) = conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()
@@ -956,13 +940,6 @@ def kept(conn, change_id):
     """Is change `change_id` applied and neither undone nor being undone: may a writer still add rows to it?"""
     row = conn.execute("SELECT status, undone FROM changes WHERE id = ?", (change_id,)).fetchone()
     return row is not None and row[0] == "applied" and row[1] is None
-
-
-def newest_kept(conn, operation):
-    """The id of the journal's newest change when it is called `operation` and is kept (applied, not undone): the change a
-    writer added to a piece at a time continues, across runs, only while nothing was recorded after it; else None."""
-    row = conn.execute("SELECT id, operation FROM changes ORDER BY id DESC LIMIT 1").fetchone()
-    return row[0] if row is not None and row[1] == operation and kept(conn, row[0]) else None
 
 
 def recorded_values(conn, change_ids, table, action, column):
@@ -983,20 +960,6 @@ def recorded_values(conn, change_ids, table, action, column):
                 chunk + [table, action, column]):
             found.setdefault(change_id, set()).add(value)
     return found
-
-
-def first_recorded_value(conn, change_id, table, action, column):
-    """The value of `column` in the first row of `table` change `change_id` recorded as `action` (as recorded_values),
-    or None when it recorded none: for a change whose rows of `table` all hold one value, the read that stops at its
-    first row where recorded_values reads every row of the change (a retiring's deleted vectors' key: 0.15 s for change
-    3247's 596,845 rows on photo_index, against under a millisecond, 2026-10-23). By the index of a change's rows."""
-    if action not in ("insert", "delete"):
-        raise ValueError("an insert's or a delete's values, not an %s's" % action)
-    row = conn.execute(
-        "SELECT %s FROM change_rows INDEXED BY idx_change_rows_change WHERE change_id = ? AND table_name = ?"
-        " AND action = ? AND column_name = ? LIMIT 1" % ("new" if action == "insert" else "old"),
-        (change_id, table, action, column)).fetchone()
-    return None if row is None else row[0]
 
 
 def kept_named(conn, operation):

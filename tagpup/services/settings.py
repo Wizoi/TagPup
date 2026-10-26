@@ -120,8 +120,7 @@ def switch_on(conn, model, counted=True):
     """(refusal or None, what the faces hold under `model`): whether the library may be switched to the face model `model`
     (UNPASSED_SHARE_ALLOWED), and one sentence saying how many of its faces hold a vector under it and how many named
     faces hold none, said either way. FaceNet, which made every face the libraries hold before the new model's pass, is refused only
-    when none of the library's faces holds a vector under it (NONE_HELD: its vectors retired, tagpup.services.retire_faces
-    .apply_vectors), and its pass's count is not read for it (not_passed 0: a face in a photo the new model's pass has not
+    when none of the library's faces holds a vector under it (NONE_HELD: its vectors retired), and its pass's count is not read for it (not_passed 0: a face in a photo the new model's pass has not
     reached is no part of a switch back); its sentence says only how many faces hold no FaceNet vector (those the new model
     made while the library was on it), and is left out when none do. A library with no faces is not refused. Read-only, by
     tagpup.store.faces.vector_counts and, for a switch to another model, pass_counts. Whether a face holds a FaceNet vector
@@ -225,8 +224,9 @@ def undo_check(conn, change_id, _operation, _summary):
     (faces.model) the library may not be switched to now -- the way forward's own check (switch_on), asked of the model
     the way back puts back: an undo of a switch back to FaceNet, once faces were added that hold FaceNet's vector alone;
     an undo putting FaceNet back once no face holds its vector (its vectors retired). A change that inserted the
-    faces.model row (a library stamped before it was a setting: photo_index's switch, change 3244) puts the default back,
-    undone: the row goes. The refusal is the switch's own sentence and counts. Asked by tagpup.services.journal.why_not
+    faces.model row (a library stamped before it was a setting: photo_index's switch, change 3244, kr-track's 342,
+    renton_parkrun's 1221) puts FaceNet back, undone (validation.BEFORE_FACE_MODELS, not a new library's default): the row
+    goes. The refusal is the switch's own sentence and counts. Asked by tagpup.services.journal.why_not
     (UNDO_CHECKS) on a read-only connection, before an undo writes; reads the journal's old value and inserted key by
     the change's rows' index, and a switch back to FaceNet a face holds a vector under one row of the key's index
     (switch_on(counted=False); refused, the faces are counted for the sentence)."""
@@ -235,7 +235,7 @@ def undo_check(conn, change_id, _operation, _summary):
                              "value").get(change_id, {})
     model = old.get((FACE_MODEL,))
     if FACE_MODEL in journal.recorded_values(conn, [change_id], store_settings.TABLE, "insert", "key").get(change_id, ()):
-        model = DEFAULTS[FACE_MODEL]
+        model = validation.BEFORE_FACE_MODELS
     if model is not None:
         refusal = switch_on(conn, _trim(model), counted=False)[0]
         if refusal:
@@ -388,7 +388,13 @@ def _as_text(value):
 
 
 def _filled(held):
-    return {key: held.get(key, default) for key, default in DEFAULTS.items()}
+    """Every setting: those `held` holds, a default for the rest -- but the face model of a library that holds settings
+    and no faces.model row, stamped before it was a setting, which is FaceNet (validation.BEFORE_FACE_MODELS). For a
+    library holding none, what its stamp will give."""
+    filled = {key: held.get(key, default) for key, default in DEFAULTS.items()}
+    if held and FACE_MODEL not in held:
+        filled[FACE_MODEL] = validation.BEFORE_FACE_MODELS
+    return filled
 
 
 def _stamping(found):

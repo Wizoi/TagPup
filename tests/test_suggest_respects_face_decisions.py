@@ -23,7 +23,7 @@ from tagpup.store import taxonomy  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
 import photo_rows  # noqa: E402
-from face_rows import FACENET, add_face, person_of  # noqa: E402
+from face_rows import FACE_MODEL, FACENET, add_face, person_of  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]
 
@@ -56,11 +56,11 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def add_face(self, path, name, name_source, excluded, vector=True, box="[0, 0, 100, 100]"):
-        """A face with its vector under the library's model (FaceNet's), or, not `vector`, under the new model's alone, as the
-        face pass leaves a face it made (tagpup.services.face_pass)."""
+        """A face with its vector under the library's model, or, not `vector`, under another model's alone (FaceNet's): a
+        face the library's readers hold no vector of."""
         conn = self.index.conn
         photo_rows.add_unread(conn, path)
-        add_face(conn, path, box, np.asarray(ROWAN, dtype=np.float32).tobytes(), model=FACENET if vector else "scrfd-adaface",
+        add_face(conn, path, box, np.asarray(ROWAN, dtype=np.float32).tobytes(), model=FACE_MODEL if vector else FACENET,
                  prob=0.99, name=name, tag_id=person_of(conn, name) if name else None, name_source=name_source,
                  excluded=excluded)
         conn.commit()

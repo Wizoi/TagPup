@@ -1,7 +1,7 @@
 # Views, search and AI: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-views-ai.md` (its Scope, its contract, its guards, the scenario list
-V1 to V10). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its
+V1 to V9, V11 to V14; V10, MTCNN's detector cap, retired with the old models). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its
 evidence and date, and what is so by design. A condition not met is the domain's queue.
 
 ## What the domain is (counted 2026-10-15, read-only)
@@ -30,10 +30,10 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
 | Reads only; ids and cards separate reads; caps `MAX_IDS`, `MAX_CARDS`, `MAX_MEMBERS` | V1, `tests/test_library_view.py`, `tests/test_library_view_plans.py` |
 | A search ANDs its terms and never ranks; nothing typed is FTS5 syntax | `tests/test_library_search.py` (V2), `tests/test_camera_words.py` |
 | One process on the card at a time, taken through `Runtime.begin` / `gpu_turn`; a waiter told who holds it; one set of models in a process (#761), the startup warm-up included (#1423) | `tests/test_one_gpu_at_a_time.py`, `tests/test_one_gpu_jobs.py` (V4), `tests/test_gpu_single_owner.py` |
-| Models built once per settings by the runtime, released when idle; the page names what holds them; the detector cap is each detection's argument, not a model setting | `tests/test_models_released_when_idle.py` (V6), `tests/test_the_runtime_keeps_models_by_settings.py`, `tests/test_faces_found_at_the_librarys_cap.py` (V10) |
+| Models built once per settings by the runtime, released when idle; the page names what holds them; the detector cap is each detection's argument, not a model setting | `tests/test_models_released_when_idle.py` (V6), `tests/test_the_runtime_keeps_models_by_settings.py` |
 | The photo model is a table entry, not a scatter of constants: `tagpup/ml/photo_models.py` holds each model's zero-shot word cut (0.23 ViT-H, 0.11 SO400M; Suggest reads it by `word_cut`) and whether a library may force an image size; SigLIP 2 reads its tokenizer with `tokenizers` alone (identical to open_clip's on 5,086 prompts); a library cannot switch photo model until its new vectors cover all but `UNPASSED_SHARE_ALLOWED` (5%) of its photos, an undo held to the same rule (`settings.photo_switch_on`) | the photo-model tests (`tests/test_suggest_reads_people_once.py`, `tests/test_embeddings_follow_their_photo.py`, the settings tests) |
 | A new photo model's vectors are made beside the old (`embed-photos`, `tagpup/services/photo_reembed.py`, the second photo-model builder: `Runtime.clip(None, settings)`, a model that is no library's; Integration contract rows 17 and 64): the library reads only its own model's key, so a pass part-way is never read; the switch is the settings' one journaled change through the gate (`set-photo-model`, or the gear), undone by `undo`, held to the same gate | V13 (`tests/test_making_a_new_photo_models_vectors.py`), V12 (`tests/test_switching_a_librarys_photo_model.py`) |
-| After the switch, the vectors under every key but the library's own, and Suggest's words under those models (not the own model's), are retired by `retire-photo-vectors` (`tagpup/services/retire_photo_vectors.py`): refused while more than the switch's share of the photos hold no vector under the own key; the library's key read again in each chunk; one rowless change a key (`retire_faces.VECTORS_OPERATION`), its undo refused (`retire_faces.vectors_check`), and the switch back refused by the switch's own gate | V14 (`tests/test_retiring_the_old_photo_models_vectors.py`) |
+| After the switch, the vectors under every key but the library's own, and Suggest's words under those models (not the own model's), are retired by `retire-photo-vectors` (`tagpup/services/retire_photo_vectors.py`): refused while more than the switch's share of the photos hold no vector under the own key; the library's key read again in each chunk; one rowless change a key (`VECTORS_OPERATION`), its undo refused (`vectors_check`), and the switch back refused by the switch's own gate | V14 (`tests/test_retiring_the_old_photo_models_vectors.py`) |
 | Vectors and suggestions follow their photo; a looking run keeps nothing | `tests/test_suggest_then_apply_all.py` (V3, V9), `tests/test_analyse_only_suggest.py` (V3: a looking run forced to remember fails 16 of 24) |
 | A view kind moves in every layer: store `KINDS`, `_source_of`, `library-source.js`, `navigator-model.js`, `search-model.js` | `tests/test_view_rules_follow_the_server.py`, `tests/test_chip_keys_follow_the_server.py`, `tests/frontend/search-page.test.mjs` (every member kind has a section, a chip-key pair and labels of its own) |
 
@@ -59,7 +59,7 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
    suggester that turned a failed read or write into "nothing" are gone: a run's read that fails fails the run with its
    sentence, a photo's fails the photo (V3). The warm-up's refusal beside a run of another set has a user action: the
    server starts and the owner clicks Suggest in a library on another set before the warm-up runs.
-6. **Scenario tests, each file owned and mapped.** Met: V1 to V10 each have a file in tests/owners.py. Unit tests that
+6. **Scenario tests, each file owned and mapped.** Met: V1 to V9 and V11 to V14 each have a file in tests/owners.py. Unit tests that
    restated a scenario were lifted and deleted, each with a mutation that fails the scenario: `test_library_view`'s
    EqualDates and dated-then-undated order (V1), `test_selection`'s source-is-the-ids-route and excluded tests (V7),
    `test_embeddings_follow_their_photo`'s rename and folder removal (V9). The unit files that stay hold a rule no

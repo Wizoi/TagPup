@@ -138,8 +138,8 @@ side exists, so its column must be the read side's, not a guess for cut 3.
    retention rule is its own later cut if the size bites.
 2. **Photos never examined under the face model** (10,408 / 12 / 18) are skipped and counted by the dry run; nothing claims
    "none found" for them.
-3. **Old-detector faces in kr-track and renton_parkrun** (776 photos): `retire-faces` is run on both first, as the first
-   step of cut 3 (a live write: snapshot, dry run, then apply), so all three bake in one pass.
+3. **Old-detector faces in kr-track and renton_parkrun** (776 photos): retired on both before the bake (changes 347 and
+   1225, counted 2026-10-25), so all three bake in one pass; the command is deleted (DECISIONS 2026-10-25).
 4. **Dry run:** reads every file's XMP, decodes a sample of 200 photos per library to measure and to confirm the
    fingerprints, and reports "about N to bake"; the full decode is `--apply`'s.
 5. **Migration 34** runs at the next app or CLI start; the dry run never migrates.

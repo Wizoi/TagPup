@@ -22,7 +22,7 @@ import { OPEN_DIALOG } from "../../web/common/dialog.js";
 afterEach(() => closeAllApps());
 
 const LIBRARY = "kr-track";
-const GROUP_TITLES = { clip: "The CLIP model", "face-model": "The face model", faces: "Face detection",
+const GROUP_TITLES = { clip: "The photo model", "face-model": "The face model", faces: "Face detection",
                        exiftool: "ExifTool", library: "Library folders", suggest: "Suggest", renaming: "Smart Rename" };
 
 /** What /api/settings answers for a library holding the defaults, from the declarations. */
@@ -85,9 +85,9 @@ describe("the settings dialog", () => {
     assert.equal(document.getElementById("settings-title").textContent, `Library settings: ${LIBRARY}`);
     assert.deepEqual([...dialog.querySelectorAll("[data-setting]")].map((i) => i.dataset.setting), DECLARED);
     assert.deepEqual([...dialog.querySelectorAll(".settings-group h4")].map((h) => h.textContent),
-                     ["The CLIP model", "The face model", "Face detection", "ExifTool", "Library folders", "Suggest",
+                     ["The photo model", "The face model", "Face detection", "ExifTool", "Library folders", "Suggest",
                       "Smart Rename"]);
-    assert.equal(field("model.name").value, "ViT-H-14");
+    assert.equal(field("model.name").value, "ViT-SO400M-14-SigLIP2");
     assert.equal(field("model.preserve_full_frame").type, "checkbox");
     assert.equal(field("model.preserve_full_frame").checked, true);
     assert.equal(field("paths.exiftool").placeholder, "Found: C:/Programs/ExifTool/exiftool.exe");
@@ -147,23 +147,22 @@ describe("the settings dialog", () => {
 
   test("a switch of the photo model says what the photos hold under it before the reload", async (t) => {
     const said = "30 of the library's 30 photos hold a vector under the new key; 0 hold none.";
-    const { window, field, save, changeButton, boxes } = await tunerWithSettings(t, { saved: {
-      success: true, changed: 1, settings: ["faces.model"], locked: true, change: 9, face_vectors: null,
+    const { window, save, changeButton, boxes, type, posted } = await tunerWithSettings(t, { saved: {
+      success: true, changed: 1, settings: ["model.name"], locked: true, change: 9, face_vectors: null,
       photo_vectors: { key: "new", holds: 30, without: 0, said } } });
     const shown = [];
     window.alert = (text) => shown.push(text);
-    click(window, changeButton("face-model"));
-    const select = field("faces.model");
-    select.value = "scrfd-adaface";
-    select.dispatchEvent(new window.Event("change", { bubbles: true }));
-    boxes("face-model").forEach((box) => click(window, box));
+    click(window, changeButton("clip"));
+    type("model.name", "ViT-B-32");
+    boxes("clip").forEach((box) => click(window, box));
     click(window, save());
     await flush(window, 6);
+    assert.deepEqual(posted().map((c) => c.body), [{ values: { "model.name": "ViT-B-32" }, acknowledged: ["clip"] }]);
     assert.deepEqual(shown, [said]);
   });
 
   test("the face model is one of the choices the rules publish, locked behind its own consequences", async (t) => {
-    const said = "2 of the library's 2 faces hold a vector under scrfd-adaface.";
+    const said = "2 of the library's 2 faces hold a vector under mtcnn-facenet.";
     const { window, field, save, changeButton, boxes, posted } = await tunerWithSettings(t, { saved: {
       success: true, changed: 1, settings: ["faces.model"], locked: true, change: 9,
       face_vectors: { faces: 2, without: 0, named_without: 0, not_passed: 0, said } } });
@@ -179,14 +178,14 @@ describe("the settings dialog", () => {
     click(window, changeButton("face-model"));
     assert.ok(!select.disabled, "Change... left the face model locked");
     assert.equal(boxes("face-model").length, declared.consequences.length);
-    select.value = "scrfd-adaface";
+    select.value = "mtcnn-facenet";
     select.dispatchEvent(new window.Event("change", { bubbles: true }));
     assert.ok(save().disabled, "Save is enabled before the consequences are ticked");
     boxes("face-model").forEach((box) => click(window, box));
     assert.ok(!save().disabled);
     click(window, save());
     await flush(window, 6);
-    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.model": "scrfd-adaface" },
+    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.model": "mtcnn-facenet" },
                                                      acknowledged: ["face-model"] }]);
     assert.deepEqual(shown, [said], "the switch's counts were not shown before the reload");
   });

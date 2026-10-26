@@ -47,7 +47,7 @@ from tagpup.core.fields import read_document_id  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.ml import clip, faces as face_models  # noqa: E402
+from tagpup.ml import clip, faces as face_models, scrfd_adaface  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -68,10 +68,15 @@ def colour_of(picture):
 PICTURE_INPUT = clip.ClipModel.picture_input
 
 
+#: The side of the face the stand-in detector finds: the least a new face is made of (scrfd_adaface.NEW_FACE_FLOOR).
+FACE_SIDE = scrfd_adaface.NEW_FACE_FLOOR
+
+
 class StandIns:
-    """CLIP and the face models stood in for, on the real ClipModel and FaceModel: CLIP's input is the picture's size
-    and colour, its vector those numbers; the detector finds one face at the top left of the picture as stored, its
-    vector the picture's colour. Each picture each was handed is noted, and the threads that handed them."""
+    """CLIP and the face models stood in for, on the real ClipModel and the new library's face model (ScrfdAdaFace, its
+    own `picture` of the photo as stored): CLIP's input is the picture's size and colour, its vector those numbers; the
+    detector finds one face at the top left of the picture as stored, its vector the picture's colour. Each picture each
+    was handed is noted, and the threads that handed them."""
 
     def __init__(self, testcase):
         self.shown, self.detected, self.card_threads = [], [], set()
@@ -92,18 +97,19 @@ class StandIns:
             stand_ins.card_threads.add(threading.current_thread().name)
             if isinstance(picture, face_models.NotDetected):
                 return picture
-            height, width = picture.pixels.shape[:2]
+            width, height = picture.stored.size
             with stand_ins.lock:
-                stand_ins.detected.append((picture.path, picture.stored.size, (width, height)))
+                stand_ins.detected.append((picture.path, picture.stored.size))
             colour = colour_of(picture.stored)
-            return [{"box": [0, 0, min(width, 16), min(height, 16)], "embedding": [c / 255.0 for c in colour] + [0.0] * 509,
-                     "name": None, "crop_image": images.crop_jpeg(picture.stored.crop((0, 0, 16, 16))), "prob": 0.99}]
+            return [{"box": [0, 0, min(width, FACE_SIDE), min(height, FACE_SIDE)], "prob": 0.99, "landmarks": [],
+                     "embedding": [c / 255.0 for c in colour] + [0.0] * 509, "norm": 20.0}]
         for patcher in (mock.patch("torch.cuda.is_available", return_value=False),
                         mock.patch.object(clip.ClipModel, "_init_model"),
                         mock.patch.object(clip.ClipModel, "picture_input", picture_input),
                         mock.patch.object(clip.ClipModel, "embed_input", embed_input),
-                        mock.patch.object(face_models.FaceModel, "_init_models"),
-                        mock.patch.object(face_models.FaceModel, "detect_and_embed", detect_and_embed)):
+                        mock.patch.object(scrfd_adaface.ScrfdAdaFace, "_init_models"),
+                        mock.patch.object(scrfd_adaface.ScrfdAdaFace, "missing", return_value=None),
+                        mock.patch.object(scrfd_adaface.ScrfdAdaFace, "detect_and_embed", detect_and_embed)):
             patcher.start()
             testcase.addCleanup(patcher.stop)
 
@@ -237,7 +243,7 @@ class AnIndexReadingAhead(unittest.TestCase):
         for name, (_given, vector, found, _detected) in rows.items():
             self.assertEqual(vector[2:5], found[0][1], "%s took a neighbour's picture" % name)
         # In its turn: the card's work went photo by photo in the folder's order.
-        order = [os.path.basename(path) for path, _stored, _seen in self.models.detected]
+        order = [os.path.basename(path) for path, _stored in self.models.detected]
         self.assertEqual(sorted(order), order)
 
     def test_an_index_stopped_half_way_leaves_nothing_half_written_and_the_next_one_finishes(self):
@@ -351,7 +357,8 @@ class AnIndexReadingAhead(unittest.TestCase):
         library = self.library("boathouse.db")
         folder = self.folder("Boathouse", count=6)
         made, blocked, released, done = {}, threading.Barrier(3), threading.Event(), threading.Event()
-        picture, opened, detect = face_models.FaceModel.picture, images.opened, face_models.FaceModel.detect_and_embed
+        picture, opened = scrfd_adaface.ScrfdAdaFace.picture, images.opened
+        detect = scrfd_adaface.ScrfdAdaFace.detect_and_embed
         alive = {}
 
         def picture_noted(model, path, **kwargs):
@@ -385,9 +392,9 @@ class AnIndexReadingAhead(unittest.TestCase):
             released.set()
         looker = threading.Thread(target=look)
         looker.start()
-        with mock.patch.object(face_models.FaceModel, "picture", picture_noted), \
+        with mock.patch.object(scrfd_adaface.ScrfdAdaFace, "picture", picture_noted), \
                 mock.patch.object(images, "opened", opened_held), \
-                mock.patch.object(face_models.FaceModel, "detect_and_embed", detect_noted):
+                mock.patch.object(scrfd_adaface.ScrfdAdaFace, "detect_and_embed", detect_noted):
             self.index(library, folder)
         looker.join(20)
         self.assertEqual([], alive["left"], "a photo the card was done with was still held while the next were read")
@@ -424,9 +431,9 @@ class AnIndexReadingAhead(unittest.TestCase):
         turned = photo(os.path.join(folder, "turned.jpg"), (40, 90, 160), size=(80, 60), orientation=6)
         self.index(library, folder)
         self.assertEqual([(60, 80)], [size for size, _colour in self.models.shown])
-        self.assertEqual([(turned, (80, 60), (80, 60))], self.models.detected)
+        self.assertEqual([(turned, (80, 60))], self.models.detected)
         _given, _vector, found, _detected = recorded(library)["turned.jpg"]
-        self.assertEqual("[0, 0, 16, 16]", found[0][0])
+        self.assertEqual("[0, 0, %d, %d]" % (FACE_SIDE, FACE_SIDE), found[0][0])
 
 
 class ThePhotosReadAhead(unittest.TestCase):
@@ -435,9 +442,9 @@ class ThePhotosReadAhead(unittest.TestCase):
 
     TEN = (3648, 2736)
     PANORAMA = (17000, 11350)
-    #: The live libraries' models: CLIP keeping the full frame up to 1.4, the default face settings, no cap.
-    CLIP = clip.ClipModel("ViT-H-14", "laion2b_s32b_b79k", True, 1.4, 512, device="cpu")
-    FACES = face_models.FaceModel(20, 0.85, [0.6, 0.7, 0.7], device="cpu")
+    #: The live libraries' models: SigLIP 2 keeping the full frame up to 1.4, at its own size, and SCRFD and AdaFace.
+    CLIP = clip.ClipModel("ViT-SO400M-14-SigLIP2", "webli", True, 1.4, None, device="cpu")
+    FACES = scrfd_adaface.ScrfdAdaFace(device="cpu")
 
     def reserved(self, size):
         return tagpup_cli.read_ahead_bytes(*size, self.CLIP, self.FACES)

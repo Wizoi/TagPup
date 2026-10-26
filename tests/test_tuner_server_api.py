@@ -20,12 +20,13 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 import face_rows  # noqa: E402
 import fake_exiftool  # noqa: E402
 import tuner_client  # noqa: E402
 
+from tagpup.core import clustering  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
@@ -356,7 +357,7 @@ class TestFaceMatchesUnmatched(TunerAPITestBase):
         near_id = self.add_face(near_photo, blend(base, unit_vector(51), 0.05), name=None)
         self.add_face(far_photo, unit_vector(52), name=None)
         # Like the seed, but not so like it that the near face could as well be Jane's (the margin, clustering.margins).
-        self.add_face(named_photo, blend(base, unit_vector(53), 0.3), name="Jane")
+        self.add_face(named_photo, blend(base, unit_vector(53), 0.5), name="Jane")
 
         payload = self.get(f"/api/face-matches-unmatched?id={seed_id}")
         results = payload["matches"]
@@ -374,9 +375,9 @@ class TestFaceMatchesUnmatched(TunerAPITestBase):
         conn.close()
         self.assertFalse(ids & named, "an already-matched face was offered")
 
-        # Everything returned must clear the documented 0.8 similarity floor.
+        # Everything returned must clear the likeness the library's face model names unasked at (its cuts).
         for r in results:
-            self.assertGreaterEqual(r["similarity"], 0.8)
+            self.assertGreaterEqual(r["similarity"], clustering.cuts_of(FACE_MODEL).name_without_asking)
 
     def test_rejects_unknown_face(self):
         status, _ = self.get_with_status("/api/face-matches-unmatched?id=999999")
@@ -1298,7 +1299,7 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         conn = db.connect(self.TEST_DB)
         try:
             store_faces.insert(conn, photo.swapcase(), [10, 10, 50, 50], unit_vector(911).tobytes(),
-                               name=face_rows.person_of(conn, "Tamsin Okafor"), model=FACENET)
+                               name=face_rows.person_of(conn, "Tamsin Okafor"), model=FACE_MODEL)
             conn.commit()
         finally:
             conn.close()

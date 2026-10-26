@@ -30,8 +30,7 @@ What the owner lives through, in one library:
   with the switch's sentence and counts, and the rehearsal and the undo refuse it so, writing nothing.
 - A library stamped before the face model was a setting holds no faces.model row (each of the three live libraries,
   counted 2026-10-20) and reads the default, FaceNet: its first switch inserts the row, History lists it undoable, and
-  the undo deletes it, the default read again, while a face holds FaceNet's vector. Switched again and FaceNet's vectors
-  retired (retire-vectors), that undo is refused with the switch's sentence, the snapshot named, nothing written (#1781).
+  the undo deletes it, the default read again, while a face holds FaceNet's vector (#1781).
 - A switch back the owner undid already, asked to be undone again, is refused as undone (the journal's own account comes
   first), not with the switch's sentence, though putting the new model back would be refused too.
 - A Suggest run or an index begun before a switch keeps the model it began with to its end (Runtime.begin's lease, the
@@ -47,7 +46,7 @@ What the owner lives through, in one library:
 
 Fictional names; a library in a home of the test's own; the new model as tagpup.runtime builds it, its weights not
 loaded and its two networks stood in for (`_detected`, `embed`): the picture, the floor, the crop and the detector name
-are the model's own. CLIP stood in for as tests/test_faces_found_at_the_librarys_cap.py does.
+are the model's own. CLIP stood in for, its weights not loaded.
 """
 import json
 import math
@@ -66,7 +65,7 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import stand_in_models  # noqa: E402
 import web_client  # noqa: E402
-from face_rows import FACENET, add_face, add_vector_of_face  # noqa: E402
+from face_rows import FACENET, add_face, add_vector_of_face, on_facenet  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.core import clustering, paths, validation  # noqa: E402
@@ -77,7 +76,6 @@ from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import faces_from_tags  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import retire_faces  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -140,13 +138,16 @@ class TheNewModelStoodIn:
 @unittest.skipIf(own_home.installed_exiftool() is None, "ExifTool not installed")
 class ALibrarySwitchedToTheNewModel(unittest.TestCase):
     """lakeside, open in TagTuner: one folder; Wren Calloway named by hand on one photo, and a photo whose keyword names
-    her holding one face nobody named; every face holding FaceNet's vector and the new model's (its pass done)."""
+    her holding one face nobody named; every face holding FaceNet's vector and the new model's (its pass done). Stamped
+    on FaceNet, as the live libraries were before the new model (a new library is stamped on it)."""
 
     def setUp(self):
         self.runtime = Runtime(build_clip=lambda settings: stand_in_models.Clip(CLIP_DIM))
-        app, self.home = web_client.app_for(self, "tuner", startup="lakeside.db", runtime=self.runtime)
+        app, self.home = web_client.app_for(self, "tuner", startup=None, runtime=self.runtime)
         self.client = app.test_client()
         self.library = Library(self.home.library("lakeside.db"))
+        on_facenet(self.library.path)
+        library_actions.create(self.library.path)
         self.addCleanup(self.runtime.forget, self.library)
         self.folder = paths.stored(os.path.join(self.home.root, "Lakeside"))
         os.makedirs(self.folder)
@@ -412,21 +413,6 @@ class ALibrarySwitchedToTheNewModel(unittest.TestCase):
         self.assertEqual(1, self.undo(switched["change"])["changed"])
         self.assertEqual([], self.read(held))
         self.assertEqual(FACENET, library_settings.read(self.library)["faces.model"])
-
-        # Switched again (the row inserted again), and FaceNet's vectors retired: putting the default back is refused.
-        again = self.switch(NEW)
-        self.assertEqual([("insert",)], self.read("SELECT DISTINCT action FROM change_rows WHERE change_id = ?", again["change"]))
-        self.assertEqual(2, retire_faces.apply_vectors(self.library, retire_faces.plan_vectors(self.library)).deleted)
-        said = library_settings.NONE_HELD % (2, FACENET)
-        listed = self.client.get("/lakeside/api/history").get_json()["changes"]
-        [entry] = [entry for entry in listed if entry["id"] == again["change"]]
-        self.assertFalse(entry["undoable"], entry)
-        url = "/lakeside/api/history/%d/undo" % again["change"]
-        for body in ({}, {"apply": True}):
-            reply = self.client.post(url, json=body)
-            self.assertEqual(400, reply.status_code, reply.data)
-            self.assertEqual(said, reply.get_json()["refused"])
-        self.assertEqual([(NEW,)], self.read(held))
 
     def test_a_switch_back_undone_already_is_refused_as_undone(self):
         self.switch(NEW)

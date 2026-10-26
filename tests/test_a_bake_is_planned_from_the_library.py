@@ -13,11 +13,13 @@ embeddings.put with the file's stamp, faces through services.faces.record_batch 
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_a_file_holds_what_exiftool_kept import BakeCase  # noqa: E402
 
 import baked_files  # noqa: E402
+from face_rows import FACENET, person_of  # noqa: E402
 from stand_in_models import NewFaces  # noqa: E402
 from tagpup.core import validation  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
@@ -32,6 +34,8 @@ FACES = validation.SCRFD_ADAFACE
 #: The library's detector, and one that ran before it (MTCNN's settings).
 DETECTOR = face_service.detector_of(NewFaces(), None)
 OLD_DETECTOR = faces_detected.detector({"min_face_size": 20, "max_side": 1600})
+#: The floor of a baked face, as the library has it (the other tests lower it: their pictures are 16 x 12).
+THE_FLOOR = images.NEW_FACE_FLOOR
 
 
 def box(n):
@@ -44,6 +48,11 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
     def setUp(self):
         super().setUp()
         library_settings.stamp(self.library, {"faces.model": FACES}, operation=library_settings.FROM_REPLACED)
+        # The test pictures are 16 x 12: their faces are a pixel or two across. The floor of a baked face (#1973) is lowered
+        # to one pixel for them; the test of the floor itself puts it back.
+        patcher = mock.patch.object(images, "NEW_FACE_FLOOR", 1)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def write(self, work):
         conn = db.connect(self.library.path)
@@ -61,10 +70,14 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         finally:
             conn.close()
 
-    def photo(self, name, faces=None, detector=DETECTOR, model=FACES, vector=True, turn=None, tags=("Beach",)):
+    def photo(self, name, faces=None, detector=DETECTOR, model=FACES, vector=True, turn=None, tags=("Beach",), size=None):
         """A photo read by the index (holding `tags`, declaring Orientation `turn`): its photo vector stamped as the file
-        is now, and `faces` (a count) found by `detector` under `model`; None, no detection at all."""
+        is now, and `faces` (a count) found by `detector` under `model`; None, no detection at all. `size`, (width, height),
+        replaces the 16 x 12 picture."""
         path = self.make_read(name, tags=tags)
+        if size:
+            from PIL import Image
+            Image.new("RGB", size, (90, 110, 130)).save(path, "JPEG")
         if turn:
             self.outside(path, "-EXIF:Orientation#=%d" % turn)
         photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
@@ -246,6 +259,47 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         # Stored [0, 0, 1.5, 1.25] of 16 x 12 under Orientation 6 is shown at [12 - 1.25, 0, 12, 1.5] of 12 x 16.
         self.assertEqual(self.expected(a, [[10.75, 0, 12, 1.5]], applied=(12, 16)), self.plan(a).values)
 
+    def test_a_face_under_the_floor_is_not_baked_named_or_not_and_never_refuses_the_photo(self):
+        # Owner, 2026-10-25 (#1973): a face under 40 px on its shorter side is a smudge no one can recognise; it is no
+        # region and no FaceVector of a file, whatever it is called.
+        with mock.patch.object(images, "NEW_FACE_FLOOR", THE_FLOOR):
+            size, large, small = (160, 120), [10, 10, 90, 90], [100, 10, 119, 29]
+
+            def faces(path, *boxes_and_names, other_model_small=False):
+                def put(conn):
+                    for n, (found, name) in enumerate(boxes_and_names):
+                        store_faces.insert(conn, path, found, baked_files.unit(bake.FACE_DIM, 10 + n).tobytes(), model=FACES,
+                                           name=person_of(conn, name) if name else None)
+                    if other_model_small:   # a small face holding no vector under the library's face model
+                        store_faces.insert(conn, path, small, face_service.vector_bytes([0.5] * 8), model=FACENET)
+                self.write(put)
+
+            a = self.photo("a.jpg", size=size)
+            faces(a, (large, "Tamsin Okoro"), (small, "Odile Farrant"), other_model_small=True)
+            plan = self.plan(a)
+            self.assertIsInstance(plan, baking.ToBake, "a small face without a vector does not refuse the photo")
+            self.assertEqual(self.expected(a, [large], applied=size), plan.values, "the large face alone, small ones named or not")
+            self.assertEqual(["1"], plan.values[bake.WRITTEN[bake.FACES_FOUND]])
+            self.assertEqual((1, []), (lambda result: (result.changed, result.errors))(self.bake([a], plan.values)))
+            self.assertEqual(1, len(self.bake_of(a).faces))
+            self.assertIsInstance(self.plan(a), baking.Current)
+
+            b = self.photo("b.jpg", size=size)
+            faces(b, (small, "Odile Farrant"), (small, None))
+            plan = self.plan(b)
+            self.assertEqual(self.expected(b, [], applied=size), plan.values, "only small faces: a photo with no face, examined")
+            self.assertEqual(["0"], plan.values[bake.WRITTEN[bake.FACES_FOUND]])
+
+            # A file baked with its small face, before the floor, no longer reads current: it plans to be baked again.
+            c = self.photo("c.jpg", size=size)
+            faces(c, (large, "Tamsin Okoro"), (small, "Odile Farrant"))
+            with mock.patch.object(images, "NEW_FACE_FLOOR", 1):
+                old = self.plan(c)
+            self.assertEqual((1, []), (lambda result: (result.changed, result.errors))(self.bake([c], old.values)))
+            self.assertEqual(2, len(self.bake_of(c).faces))
+            again = self.plan(c)
+            self.assertIsInstance(again, baking.ToBake)
+            self.assertEqual(self.expected(c, [large], applied=size), again.values)
 
 
 if __name__ == "__main__":

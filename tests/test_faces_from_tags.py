@@ -9,7 +9,8 @@ one person's decided faces are alike enough.
 
 Rows are made as the code that makes them makes them: the photos by the indexer's record
 (tests/photo_rows.py), the tree by tagpup.store.taxonomy, faces by tagpup.store.faces and by
-tagpup.services.faces.record_detected -- what detection records.
+tagpup.services.faces.record_detected -- what detection records. A face's likeness is read under the cuts of the
+library's face model (AdaFace's: a name offered from 0.310, given unasked from 0.520 and a margin of 0.205).
 """
 import math
 import os
@@ -20,7 +21,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
 
@@ -93,7 +94,7 @@ class Case(unittest.TestCase):
         def add(conn):
             left = 200 * len(faces.in_photo(conn, photo_path, faces.model_key(conn)))
             shape = box or [left, 0, left + 100, 100]
-            face_id = faces.insert(conn, photo_path, shape, embedding or at(0), model=FACENET)
+            face_id = faces.insert(conn, photo_path, shape, embedding or at(0), model=FACE_MODEL)
             sets = ", ".join("%s = ?" % column for column in columns)
             if sets:
                 conn.execute("UPDATE faces SET %s WHERE id = ?" % sets, list(columns.values()) + [face_id])
@@ -131,7 +132,7 @@ class OneFaceOnePerson(Case):
     def test_the_index_of_a_photo_already_tagged_names_it_when_its_faces_come(self):
         photo = self.photo("regatta_002.jpg", ["People/" + WREN])
         detected = [{"box": [10, 10, 110, 110], "embedding": [0.5] * 8, "prob": 0.99, "crop_image": None}]
-        self.assertEqual(1, face_records.record_detected(self.path, photo, detected, model=FACENET))
+        self.assertEqual(1, face_records.record_detected(self.path, photo, detected, model=FACE_MODEL))
         self.assertEqual([(WREN,)], look(self.path, "SELECT name FROM faces"))
 
     def test_a_batch_of_detections_names_the_photos_that_have_one_face_and_one_person(self):
@@ -140,7 +141,7 @@ class OneFaceOnePerson(Case):
         face = {"box": [10, 10, 110, 110], "embedding": [0.5] * 8, "prob": 0.99, "crop_image": None}
         conn = db.connect(self.path)
         try:
-            face_records.record_batch(conn, {one: [face], two: [face, dict(face, box=[200, 10, 300, 110])]}, model=FACENET)
+            face_records.record_batch(conn, {one: [face], two: [face, dict(face, box=[200, 10, 300, 110])]}, model=FACE_MODEL)
         finally:
             conn.close()
         self.assertEqual({(one, WREN)}, {(path, name) for path, name in look(
@@ -247,11 +248,11 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
     def test_the_gate_is_the_offer_value_not_the_naming_value(self):
         self.decided(0)
         middling, unlike = self.photo("frame_003.jpg"), self.photo("frame_004.jpg")
-        in_between, below = self.face(middling, at(40)), self.face(unlike, at(50))     # cosine 0.77 and 0.64
+        in_between, below = self.face(middling, at(65)), self.face(unlike, at(75))     # cosine 0.42 and 0.26
         self.tag(unlike, "People/" + WREN)
-        self.assertIsNone(self.name(below), "0.64 is under the value a name is offered at")
+        self.assertIsNone(self.name(below), "0.26 is under the value a name is offered at")
         self.tag(middling, "People/" + WREN)
-        self.assertEqual(WREN, self.name(in_between), "0.77 is offered, though automatch would not name it")
+        self.assertEqual(WREN, self.name(in_between), "0.42 is offered, though automatch would not name it")
 
     def test_a_person_with_no_decided_face_is_named_by_the_tag_alone(self):
         # The owner's example: a new person on one photo. Nothing to compare.
@@ -297,11 +298,11 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         # Two faces, two people: the comparison names one; the other would then be "one face, one person".
         self.decided(0)
         photo = self.photo("frame_010.jpg", ["People/" + WREN, "People/" + ODA])
-        known, stranger = self.face(photo, at(0)), self.face(photo, at(120))
+        known, stranger = self.face(photo, at(0)), self.face(photo, at(140))
         self.decided(60, ODA)
         from_tags(self.library, apply=True)
         self.assertEqual(WREN, self.name(known))
-        # Oda's decided face is at 60 degrees; the stranger at 120 is 0.5 from it: not named.
+        # Oda's decided face is at 60 degrees; the stranger at 140 is 0.17 like it, under offering: not named.
         self.assertIsNone(self.name(stranger))
         self.assertEqual(0, from_tags(self.library).details["counts"]["faces"])
 
@@ -336,7 +337,7 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
 
     def test_the_dry_run_counts_the_bands(self):
         self.decided(0)
-        for name, degrees in (("a", 10), ("b", 40), ("c", 120)):        # 0.98, 0.77, -0.5
+        for name, degrees in (("a", 10), ("b", 65), ("c", 120)):        # 0.98, 0.42, -0.5
             photo = self.photo("band_%s.jpg" % name, ["People/" + WREN])
             self.face(photo, at(degrees))
         fresh = self.photo("band_d.jpg", ["People/" + ODA])
@@ -466,14 +467,14 @@ class APassReadsAPersonsDecidedFacesOnce(Case):
         self.assertEqual(1, len(reads), "the person's decided faces were read again for a photo of the pass")
 
     def test_the_second_photo_of_an_index_batch_is_compared_with_the_face_the_first_just_named(self):
-        """An index pass over two photos of one person, each with one face: the first photo's face (30 degrees from the
-        person's decided face) is named by the tag and is keyword-confirmed now; the second's (60 degrees: a cosine of
-        0.5 to the decided face, 0.87 to the first's) is named only because the batch remembers the first one. The
+        """An index pass over two photos of one person, each with one face: the first photo's face (50 degrees from the
+        person's decided face) is named by the tag and is keyword-confirmed now; the second's (100 degrees: a cosine of
+        -0.17 to the decided face, 0.64 to the first's) is named only because the batch remembers the first one. The
         batch's decided faces are the one gallery's rows (clustering.FaceRows): remembering one raised AttributeError."""
         known = self.photo("known_3.jpg")
         self.face(known, at(0), name=WREN, name_source="manual")
         first, second = self.photo("ferry_001.jpg"), self.photo("ferry_002.jpg")
-        first_face, second_face = self.face(first, at(30)), self.face(second, at(60))
+        first_face, second_face = self.face(first, at(50)), self.face(second, at(100))
         reads = []
         real = face_tags._decided_of
 

@@ -73,7 +73,7 @@ sys.path[:0] = [%(root)r, %(tests)r]
 from unittest import mock
 from stand_in_models import NewFaces
 import tagpup_cli
-from tagpup.files import field_values
+from tagpup.files import field_values, images
 from tagpup.runtime import Runtime
 from tagpup.services import file_changes
 hold, mid, go, log, name = %(hold)r, %(mid)r, %(go)r, %(log)r, %(name)r
@@ -89,7 +89,9 @@ def reached(step):
         while not os.path.exists(go):
             time.sleep(0.05)
 runtime = Runtime(build_clip=lambda settings: None, build_faces=lambda settings: NewFaces())
-with mock.patch.object(file_changes, "_reached", reached), mock.patch.object(field_values, "write", write):
+# The test pictures are 16 x 12: the floor of a baked face (#1973) is one pixel here, as in the process that plans.
+with mock.patch.object(file_changes, "_reached", reached), mock.patch.object(field_values, "write", write), \
+        mock.patch.object(images, "NEW_FACE_FLOOR", 1):
     with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime):
         tagpup_cli.cli(["--db", %(path)r, "bake-photos", "--apply"], standalone_mode=False)
 """
@@ -152,8 +154,8 @@ class OneLibrary(Waits, unittest.TestCase):
 
         self.assertEqual(launcher.SERVE, way[0], said)
         self.assertIsNotNone(old.wait(timeout=60), "the old server still runs")
-        self.assertTrue(any("finish a cli write -- index, sync --apply, face-pass, embed-photos, retire-faces, "
-                                "retire-vectors, bake-photos --apply -- or an mcp write before updating" in line.lower()
+        self.assertTrue(any("finish a cli write -- index, sync --apply, face-pass, embed-photos, "
+                                "retire-photo-vectors, bake-photos --apply -- or an mcp write before updating" in line.lower()
                                 for line in said),
                         said)
         self.assertIsNone(writer.poll(), "the update ended the CLI's write")

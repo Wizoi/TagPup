@@ -9,25 +9,48 @@ the suggester the way a run does:
 (the test gives its vector) and embeds every word to nothing, so no word is offered.
 """
 import os
+from unittest import mock
 
 from tagpup.core import validation
-from tagpup.ml import faces as face_models
-from tagpup.ml import scrfd_adaface
+from tagpup.ml import photo_models, scrfd_adaface
 from tagpup.services import settings as library_settings
 from tagpup.services import suggester
 
 
+#: A photo model other than a new library's (SigLIP 2): a second pair the table of photo models holds for a test that
+#: declares it (`declare_other_photo_model`), so a library can be put on it, or a model made, retired or switched to.
+OTHER_PHOTO_MODEL = ("ViT-Other-14", "other-weights")
+#: The settings that put a library on it.
+ON_THE_OTHER_PHOTO_MODEL = {"model.name": OTHER_PHOTO_MODEL[0], "model.pretrained": OTHER_PHOTO_MODEL[1]}
+
+
+def declare_other_photo_model(test):
+    """The table of photo models (tagpup.ml.photo_models.MODELS) holds OTHER_PHOTO_MODEL for `test`, one that may be
+    shown photos at a size of the library's choosing; the table is as it was after the test."""
+    patched = mock.patch.dict(photo_models.MODELS, {OTHER_PHOTO_MODEL: {"word_cut": 0.2, "sizes": True}})
+    patched.start()
+    test.addCleanup(patched.stop)
+
+
 class Faces:
-    """A face model's settings, which tagpup.ml.faces.FaceModel always holds and a detection is recorded under
-    (tagpup.services.faces.detector_of): a test's face model is one of these, and says what it detects. What FaceModel
-    answers of them (`detector`, `new_faces`) is FaceModel's own."""
-    min_face_size, confidence_threshold, mtcnn_thresholds = 40, 0.9, [0.6, 0.7, 0.7]
-    key = validation.MTCNN_FACENET   # the key its vectors are filed under, as tagpup.ml.faces.FaceModel's
-    detector = face_models.FaceModel.detector
-    new_faces = face_models.FaceModel.new_faces
+    """The face model a new library is on (the setting's default, tagpup.ml.scrfd_adaface.ScrfdAdaFace) as an index or a
+    Suggest run is handed it: its `key`, which its vectors are filed under, and its `detector`, the record a detection is
+    kept under (tagpup.services.faces.detector_of), the model's own. A test's face model is one of these and says what it
+    detects (`detect_and_embed_faces`); every face it finds is made a face (`new_faces`), as found."""
+    key = validation.SETTINGS["faces.model"]["default"]
+    detector = scrfd_adaface.ScrfdAdaFace.detector
+
+    @staticmethod
+    def new_faces(detected, picture):
+        """Every face the test's detection found, as found: what it detects is the test's point."""
+        return detected
+
+    def missing(self):
+        """Every weight file is there."""
+        return None
 
     def picture(self, path, *, max_side):
-        """The processor's half, as the CLI's index asks it (tagpup.ml.faces.FaceModel.picture): what the test's
+        """The processor's half, as the CLI's index asks it (the model's `picture`): what the test's
         detect_and_embed_faces is handed then."""
         return path, max_side
 
