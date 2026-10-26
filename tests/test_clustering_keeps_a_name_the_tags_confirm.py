@@ -1,4 +1,4 @@
-"""Clustering keeps a name its photo's own keywords confirm, even below 0.80 (docs/findings.md, #855; the owner, 2026-10-08).
+"""Clustering keeps a name its photo's own keywords confirm, even below naming unasked (docs/findings.md, #855; the owner, 2026-10-08).
 
 Clustering (tagpup.services.identities.resolve, which the CLI's index runs after an index that recorded a photo; the Group button it
 was first written for is gone) kept a name it gave only while the face reached 0.80 of the person
@@ -6,11 +6,15 @@ was first written for is gone) kept a name it gave only while the face reached 0
 those it took away: 2,639 fewer named faces than before it ran, on a copy of photo_index. A name the photo's keywords
 bear out is the tag's own evidence; it stays whatever the likeness, as is every name given by hand.
 
-Nothing is stood in for: the face is a real vector at 0.75 (between OFFER_A_NAME and 0.80) or 0.40 of the person's one named
-face, joined to her cluster by a chain of faces in untagged photos (DBSCAN groups by single links), so her cluster names it;
-the likeness a round would ask is the one gallery's (FaceRows.likeness_of), and the rule keeps the name without it. Between
-0.70 and 0.80 the final matching pass would give the name back too (TheFinalMatchingPass, below); below 0.70 the kept rule
-alone holds it (the 0.40 test fails with the rule taken out, checked 2026-10-22).
+The numbers of 2026-10-08 were FaceNet's (0.70 to offer a name, 0.80 to name unasked); a library is now on AdaFace, whose
+cuts (CUTS: clustering.cuts_of the library's face model) are 0.310 and 0.520, and the likenesses here are read under them.
+
+Nothing is stood in for: the face is a real vector at BETWEEN (between offering a name and naming unasked) or UNDER (below
+offering) of the person's one named face, joined to her cluster by a chain of faces in untagged photos (DBSCAN groups by
+single links, at the model's radius), so her cluster names it; the likeness a round would ask is the one gallery's
+(FaceRows.likeness_of), and the rule keeps the name without it. Between the two the final matching pass would give the name
+back too (TheFinalMatchingPass, below); below offering the kept rule alone holds it (the UNDER test fails with the rule
+taken out, checked 2026-10-22 on FaceNet's numbers).
 """
 import math
 import os
@@ -20,10 +24,13 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
+from test_face_clustering_rules import CUTS, FaceClusteringTestBase, identity_vector, like, near  # noqa: E402
 
-from tagpup.core import clustering, validation  # noqa: E402
 from tagpup.store import db  # noqa: E402
+
+#: A likeness a name is offered at but not given unasked, and one below offering, under the library's model's cuts.
+BETWEEN = 0.42
+UNDER = 0.15
 
 
 class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
@@ -36,23 +43,23 @@ class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
         self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
         self.add_face(self.add_photo("bob.jpg", people=["Bob Roe"]), bob)
         far = like(jane, cosine, 5)
-        steps = between(jane, far, clustering.cuts_of(validation.MTCNN_FACENET).group_distance)
+        steps = between(jane, far, CUTS.group_distance)
         for number, step in enumerate(steps):
             self.add_face(self.add_photo("step_%d.jpg" % number), step)
         crowd = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
         jane_face = self.add_face(crowd, far, box=(0, 0, 400, 400))
         return jane_face, self.add_face(crowd, near(bob, 8), box=(0, 0, 400, 400))
 
-    def test_a_name_the_photos_keywords_confirm_is_kept_between_070_and_080(self):
-        facenet = clustering.cuts_of(validation.MTCNN_FACENET)
-        self.assertGreaterEqual(0.75, facenet.offer_a_name)
-        self.assertFalse(facenet.names_unasked(0.75, math.inf))
-        jane_face, bob_face = self.two_people_in_one_photo(0.75)
+    def test_a_name_the_photos_keywords_confirm_is_kept_between_offering_and_naming_unasked(self):
+        self.assertTrue(CUTS.is_offered(BETWEEN, math.inf))
+        self.assertFalse(CUTS.names_unasked(BETWEEN, math.inf))
+        jane_face, bob_face = self.two_people_in_one_photo(BETWEEN)
         self.resolve()
         self.assertEqual(("Jane Doe", "Bob Roe"), (self.name_of(jane_face), self.name_of(bob_face)))
 
-    def test_it_is_kept_below_070_too(self):
-        jane_face, bob_face = self.two_people_in_one_photo(0.40)
+    def test_it_is_kept_below_offering_too(self):
+        self.assertFalse(CUTS.is_offered(UNDER, math.inf))
+        jane_face, bob_face = self.two_people_in_one_photo(UNDER)
         self.resolve()
         self.assertEqual(("Jane Doe", "Bob Roe"), (self.name_of(jane_face), self.name_of(bob_face)))
 
@@ -71,19 +78,10 @@ class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
         self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
         self.add_face(self.add_photo("bob.jpg", people=["Bob Roe"]), bob)
         crowd = self.add_photo("crowd.jpg", people=["Jane Doe", "Bob Roe"])
-        by_hand = self.add_face(crowd, like(jane, 0.75, 5), manual_name="Jane Doe")
+        by_hand = self.add_face(crowd, like(jane, BETWEEN, 5), manual_name="Jane Doe")
         self.add_face(crowd, near(bob, 8))
         self.resolve()
         self.assertEqual("Jane Doe", self.name_of(by_hand))
-
-
-def like(reference, cosine, seed):
-    """A unit vector whose cosine with `reference` is `cosine`."""
-    other = identity_vector(seed)
-    other = other - np.dot(other, reference) * reference
-    other /= np.linalg.norm(other)
-    out = cosine * reference + float(np.sqrt(1 - cosine ** 2)) * other
-    return (out / np.linalg.norm(out)).astype(np.float32)
 
 
 def between(start, end, reach):
@@ -101,9 +99,10 @@ def between(start, end, reach):
 
 class TheFinalMatchingPass(FaceClusteringTestBase):
     """docs/findings.md, #902: a face whose cluster has no anchor is not named by the loop and reaches the final matching pass
-    unnamed. That pass named it only from 0.80 (names_unasked) even when its photo's keywords name the person; confirmed on a
-    copy of kr-track, which lost names at 0.7331 and 0.7784. Nothing is stood in for: the vectors are real, the likeness is the
-    store's own, and the rule is the real final pass."""
+    unnamed. That pass named it only from naming unasked (names_unasked) even when its photo's keywords name the person;
+    confirmed on a copy of kr-track, which lost names at FaceNet's 0.7331 and 0.7784 (here AdaFace's 0.38 and 0.48, as far
+    between its two cuts). Nothing is stood in for: the vectors are real, the likeness is the store's own, and the rule is the
+    real final pass."""
 
     def a_face_like_jane(self, cosine):
         jane = identity_vector(1)
@@ -120,19 +119,22 @@ class TheFinalMatchingPass(FaceClusteringTestBase):
             self.add_face(self.add_photo("other_%d.jpg" % number), near(stranger, 20 + number, 0.03))
         return face
 
-    def test_a_face_at_0_73_of_a_person_its_photos_keywords_name_is_named(self):
-        face = self.a_face_like_jane(0.7331)
+    def test_a_face_offered_a_person_its_photos_keywords_name_is_named(self):
+        self.assertFalse(CUTS.names_unasked(0.38, math.inf))
+        face = self.a_face_like_jane(0.38)
         self.resolve()
         self.assertEqual("Jane Doe", self.name_of(face))
         self.assertIn("final_matching_tagged_photo", self.traces()[face]["resolution_method"])
 
-    def test_and_at_0_78(self):
-        face = self.a_face_like_jane(0.7784)
+    def test_and_nearer_naming_unasked(self):
+        self.assertFalse(CUTS.names_unasked(0.48, math.inf))
+        face = self.a_face_like_jane(0.48)
         self.resolve()
         self.assertEqual("Jane Doe", self.name_of(face))
 
-    def test_below_0_70_it_is_not_offered_and_stays_unnamed(self):
-        face = self.a_face_like_jane(0.60)
+    def test_below_offering_it_is_not_offered_and_stays_unnamed(self):
+        self.assertFalse(CUTS.is_offered(0.25, math.inf))
+        face = self.a_face_like_jane(0.25)
         self.resolve()
         self.assertIsNone(self.name_of(face))
 
@@ -140,13 +142,13 @@ class TheFinalMatchingPass(FaceClusteringTestBase):
         jane = identity_vector(1)
         self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
         photo = self.add_photo("other.jpg", people=["Bob Roe"])
-        face = self.add_face(photo, like(jane, 0.75, 5), box=(0, 0, 400, 400))
+        face = self.add_face(photo, like(jane, BETWEEN, 5), box=(0, 0, 400, 400))
         self.add_face(photo, identity_vector(9), box=(0, 0, 400, 400))
         self.resolve()
         self.assertNotEqual("Jane Doe", self.name_of(face))
 
     def test_a_name_given_by_hand_is_not_changed_by_it(self):
-        face = self.a_face_like_jane(0.7331)
+        face = self.a_face_like_jane(0.38)
         conn = db.connect(self.db_path)
         conn.execute("UPDATE faces SET name = 'Ada Marchetti', name_source = 'manual' WHERE id = ?", (face,))
         conn.commit()

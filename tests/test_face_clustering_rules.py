@@ -5,8 +5,8 @@ which faces are dismissed as background noise, and how remaining faces are match
 leftover name tags.
 
 Embeddings are synthetic unit vectors arranged so DBSCAN's grouping is unambiguous:
-faces of one identity sit within the 0.48 euclidean epsilon of each other, and
-different identities sit far outside it. That keeps every assertion about the
+faces of one identity sit well within the euclidean epsilon of the library's face model
+(CUTS.group_distance) of each other, and different identities sit far outside it. That keeps every assertion about the
 *decision rules* rather than about clustering luck.
 
 No model is loaded: resolution reads the faces' stored vectors.
@@ -24,6 +24,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+from tagpup.core import clustering
 from tagpup.services import identities
 from tagpup.services.identities import resolution_trace_path
 from tagpup.services.search import PhotoIndex
@@ -34,7 +35,9 @@ import photo_rows  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 FACE_DIM = 512
-DBSCAN_EPS = 0.48
+#: The cuts the vectors of a library made in a test's home are read by: its face model's (face_rows.FACE_MODEL).
+CUTS = clustering.cuts_of(face_rows.FACE_MODEL)
+DBSCAN_EPS = CUTS.group_distance
 
 
 def identity_vector(seed):
@@ -51,6 +54,15 @@ def near(vec, jitter_seed, distance=0.05):
     noise -= np.dot(noise, vec) * vec           # keep the perturbation orthogonal
     noise /= np.linalg.norm(noise)
     out = vec + distance * noise
+    return (out / np.linalg.norm(out)).astype(np.float32)
+
+
+def like(reference, cosine, seed):
+    """A unit vector whose cosine with `reference` is `cosine`."""
+    other = identity_vector(seed)
+    other = other - np.dot(other, reference) * reference
+    other /= np.linalg.norm(other)
+    out = cosine * reference + float(np.sqrt(1 - cosine ** 2)) * other
     return (out / np.linalg.norm(out)).astype(np.float32)
 
 
@@ -223,9 +235,10 @@ class TestAFaceUnlikeThePersonIsNotNamedForThem(FaceClusteringTestBase):
         jane = identity_vector(1)
         anchor = self.add_face(self.add_photo("anchor.jpg", people=["Jane Doe"]), jane)
         crowd = self.add_photo("crowd.jpg", people=["Jane Doe"])
-        # Both about 0.5 like Jane: more than a stranger's, less than the 0.70 that would offer her name.
-        strangers = [self.add_face(crowd, near(jane, 2, distance=1.7), box=(0, 0, 100, 100)),
-                     self.add_face(crowd, near(jane, 3, distance=1.7), box=(200, 0, 300, 100))]
+        # Both a little like Jane: more than a stranger's, less than the likeness that would offer her name.
+        unlike = CUTS.offer_a_name - 0.10
+        strangers = [self.add_face(crowd, like(jane, unlike, 2), box=(0, 0, 100, 100)),
+                     self.add_face(crowd, like(jane, unlike, 3), box=(200, 0, 300, 100))]
 
         self.resolve()
         self.assertEqual("Jane Doe", self.name_of(anchor))
