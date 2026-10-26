@@ -22,9 +22,10 @@ file_changes.settle).
 
 A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}, and
 the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
-vectors (migration 12); a rename keeps the file's old and new path, and its size and
-modified time, which a rename does not change, to know the file by wherever it is found. Reading and writing the files
-is tagpup.services.file_changes'; this is the rows.
+vectors (migration 12); a rename keeps the file's old and new path, and its size, modified time and file id, which a
+rename does not change, to know the file by wherever it is found -- carried over each later write of the journal's own
+that the file under its new name takes (follow_renamed). Reading and writing the files is
+tagpup.services.file_changes'; this is the rows.
 """
 import json
 import os
@@ -68,6 +69,9 @@ class FileRow:
     faces_left: int = 0
     #: Not stored: a forward write found the file holding what it was to hold before writing it (tagpup.services.file_changes).
     found_holding: bool = False
+    #: Not stored: the file's fingerprint just before this process wrote it (tagpup.services.file_changes._fingerprint),
+    #: by which a rename that left it under this name knows it (follow_renamed).
+    known_as: Optional[dict] = None
 
     @property
     def is_rename(self):
@@ -218,6 +222,19 @@ def writing(db_path, file_id, stamp):
                      (json.dumps(list(stamp)) if stamp else None, file_id))
 
     db.write_with_connection(db_path, work, label="file %d writing" % file_id)
+
+
+def follow_renamed(conn, path, was, now):
+    """The file under `path` was just written by the journal, and was `was` (its fingerprint: size, modified time, file
+    id) before: a rename done that left it there, knowing it by `was`, knows it by `now`, what the write left, from here
+    on. A field write -- ExifTool's, beside the file and renamed over it -- changes all three for good, and the rename's
+    undo, after the write's own undo, did not find its file (#1952). A rename that knows another file there -- one put in
+    its place since -- is left as it is, and its undo refuses this one. In the caller's transaction, the one that records
+    the write."""
+    where, params = store_roots.sql_equals(conn, "new_path", path)
+    now = json.dumps(now, sort_keys=True)
+    conn.execute("UPDATE change_files SET fields_before = ?, fields_after = ? WHERE " + where
+                 + " AND state = 'done' AND fields_before = ?", (now, now) + tuple(params) + (json.dumps(was, sort_keys=True),))
 
 
 def mark(db_path, file_ids, state, note=None):
