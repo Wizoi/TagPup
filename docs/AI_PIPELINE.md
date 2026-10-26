@@ -447,7 +447,7 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
 **Merge 3, slice C, as built (2026-10-20): the gate's scoring, read-only.** What it is: `tagpup/core/holdout.py` (the
 hold-out and the curve, moved out of the phase 0 script), `tagpup.store.faces.under_each` (the named and unnamed faces
 holding a vector under each model given) and `pass_counts`, `tagpup/services/face_gate.py` (the scoring), `scripts/measure_face_gate.py`
-(the program), scenario P9 (`tests/test_the_gate_reads_both_models.py`). It opens each library read-only, loads no model and
+(the program), scenario P9 (`tests/test_the_gate_reads_by_year_gap.py` since 2026-10-26: the by-year reading of the library's own model; the two-model tests went with the old model). It opens each library read-only, loads no model and
 takes no turn of the card.
 - Run: `.venv/Scripts/python.exe scripts/measure_face_gate.py --source data/kr-track.db --source data/renton_parkrun.db
   [--precision 0.95 ...] [--out <folder outside the repo>]`; about 1 s.
