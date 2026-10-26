@@ -92,7 +92,8 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     rows = [row for row in rows if images.is_big_enough(images.parse_box(row[1]))]   # a small face is not baked (#1973)
     missing = sum(vector is None for _id, _box, _ref, vector, _excluded in rows)
     if missing:
-        return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model: index them again first." % missing)
+        return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model: run face-pass on its folder first "
+                      "(a re-index gives a face it holds already no vector)." % missing)
     try:
         stored_w, stored_h, turn = shape()
         file_holds = held()

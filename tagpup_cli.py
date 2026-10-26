@@ -1394,7 +1394,7 @@ BAKE_WAY_BACK = ("`undo <change> --apply` takes a folder's bake back. A later wr
 #: How `bake-photos` says each kind of photo that cannot be baked (tagpup.services.baking's kinds).
 CANNOT_BAKE = {
     baking.NEVER_EXAMINED: "never examined by the face model",
-    baking.FACES_WITHOUT_VECTORS: "with a face holding no vector under the face model (index them again first)",
+    baking.FACES_WITHOUT_VECTORS: "with a face holding no vector under the face model (run face-pass on them first)",
     baking.NO_VECTOR: "with no photo vector under the photo model",
     baking.CHANGED: "whose file changed since its photo vector was made (index them again first)",
     baking.UNREADABLE: "whose file could not be read",
