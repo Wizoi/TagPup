@@ -612,6 +612,9 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None, who
         for each in follow:
             getattr(each, "start", lambda _conn: None)(conn)
         photos.follow_fields(conn, row.path, values, stat, stamp, whole=whole)
+        if stat is not None and row.known_as:
+            # The file this process wrote: a rename that left it under this name knows it by what the write left.
+            file_journal.follow_renamed(conn, row.path, row.known_as, _fingerprint_of(stat))
         for each in follow:
             each(conn)
         if after is not None:
@@ -715,6 +718,7 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     if settled is not None:
         return settled
     stamp = row.stamp = embeddings.stamp_of(row.path)
+    row.known_as = _fingerprint(row.path)
     file_journal.writing(library.path, row.id, stamp)
     _reached("file writing")
     try:
@@ -846,17 +850,22 @@ def _fingerprint(path):
     renaming on one volume keeps too and a copy never shares. A copy keeps the size and
     modified time -- Explorer's, robocopy's, shutil.copy2's -- and was taken for the
     file (docs/findings.md, #269). None when there is no file; the file id is 0 where
-    the volume gives none, and rename() refuses such a volume (owner, 2026-10-15)."""
+    the volume gives none, and rename() refuses such a volume (owner, 2026-10-15). A write
+    of the file's fields changes all three; the journal's own carries the rename's over it
+    (_record, file_journal.follow_renamed)."""
     try:
-        stat = os.stat(path)
+        return _fingerprint_of(os.stat(path))
     except OSError:
         return None
+
+
+def _fingerprint_of(stat):
     return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "ino": stat.st_ino}
 
 
 def _holds(path, row):
     """Is the file at `path` the one `row` renames: its size, modified time and file id
-    are what the plan recorded."""
+    are what the plan recorded, or the journal's last write of it left."""
     if path is None or not row.before:
         return False
     return _fingerprint(path) == row.before

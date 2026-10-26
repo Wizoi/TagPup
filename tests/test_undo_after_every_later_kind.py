@@ -252,9 +252,8 @@ EXPECTED_REFUSED = {
 #: journaled file write of a photo whose row a sync re-read is not in why_not).
 LISTING_OFFERS_IT = {("sync", "bake")}
 #: (earlier, later) whose refusal undoing the later change first does not lift, History then offering the Undo the undo
-#: refuses (pending findings): the later write's undo stamps the sync's row again; a rename's undo knows its file by its
-#: size and modified time, which a later write of its fields changed for good.
-NOT_LIFTED_IN_ORDER = {("sync", "bake"), ("smart rename", "bake")}
+#: refuses (a pending finding): the later write's undo stamps the sync's row again.
+NOT_LIFTED_IN_ORDER = {("sync", "bake")}
 
 
 def entered(*kinds):
@@ -462,8 +461,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertEqual(NOT_HELD, {pair for pair, refused in outcomes.items() if refused is None},
                          "the pairs a writer made nothing in are the pairs a library cannot hold, and no others")
         self.assertGreater(len(made), 100, "the pairs a library can hold were not made")
-        self.assertEqual(5, ordered, "the pairs undone in order: a pass and the retiring after it, both ways, the switch, "
-                                     "a bake and the rename after it")
+        self.assertEqual(6, ordered, "the pairs undone in order: a pass and the retiring after it, both ways, the switch, "
+                                     "a bake and the rename after it, a rename and the bake after it")
         # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.
 
 

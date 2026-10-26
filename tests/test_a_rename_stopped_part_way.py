@@ -4,7 +4,9 @@ The owner renames a folder's photos; the process is killed between the plan and 
 of a file, or a copy of a photo lands where one is to go. What is left is settled by what each file is: the next start
 finishes the rename, a copy is not mistaken for the photo (a file is known by its file id as well as its size and modified
 time: #269), a rename of the case alone settles (#283), and every row -- with its faces named by hand and its vector --
-is where its file is, including in a renumbered run, a swap, and a name moved aside. A rename on a volume that gives no
+is where its file is, including in a renumbered run, a swap, and a name moved aside. A photo saved after its rename is
+still the photo once the Save is undone, and its rename is undone too; a file another program put in its place is not,
+saved or not (#1952). A rename on a volume that gives no
 file id is refused with a sentence before anything is written (owner decision 2026-10-15: no weaker recognition by size
 and modified time; 791 of 791 rename plans in the three live libraries carry an id, counted that day). Real JPEGs made
 here, the rows seeded as the indexer stores them; a crash is a BaseException at a step of the rename.
@@ -26,11 +28,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import FACES_WITH_PATHS, VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
-from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at  # noqa: E402
+from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, field_of, write_outside  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import names as file_names  # noqa: E402
-from tagpup.services import file_changes, photos as photo_actions  # noqa: E402
+from tagpup.services import file_changes, tagging, photos as photo_actions  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
+from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 FORMAT = "{grouping} - {index} - {caption}"
@@ -242,6 +246,74 @@ class SmartRenameStaysPut(RenameCase):
         self.assertFalse(result.ok)
         self.assertEqual(before, self.names(), "photos were left under temporary names or new ones")
         self.assertEqual(self.a, self.path_of_row())
+
+
+class ALaterWriteOfTheRenamedPhoto(RenameCase):
+    """Smart Rename, then Save of the renamed photo: a field write, which ExifTool makes beside the file and renames over
+    it, so the file id, size and modified time the rename knows it by are new. The journal has the Save undone first (a
+    newer change of the same file); the rename then is offered in History, rehearsed exact and undone: the photo goes
+    back to its old name holding what it held before the Save, its row, faces and vector with it. A file another program
+    put under the new name is not the photo: saved, and the Save undone, the rename's undo still refuses it, and it
+    stays where it is (#1952)."""
+
+    def setUp(self):
+        super().setUp()
+        # A folder the library holds: Save there is a change of the journal, not a write of the file alone.
+        library_actions.record_added(self.library, [self.folder])
+
+    def rename(self):
+        renamed = photo_actions.smart_rename(self.library, [self.a], "Regatta", FORMAT, EXIFTOOL)
+        self.assertTrue(renamed.ok, renamed.message())
+        self.assertEqual([NEW_NAME], self.names())
+        return renamed.details["change"]
+
+    def save(self):
+        """Save on the photo panel: a tag added, the caption as it was (so the name it gives is the one it has)."""
+        saved = tagging.save_photo(self.library, self.new, "Start", ["Beach", "Harbour"], None, EXIFTOOL, FORMAT)
+        self.assertEqual([NEW_NAME], self.names())
+        self.assertTrue(saved.changed, saved.message())
+        return saved.details["change"]
+
+    def offered(self, change):
+        """What History shows instead of the Undo button, or None."""
+        return journal_service.refusals(self.library, [{"id": change}])[change]
+
+    def test_undone_after_the_save_is_undone_the_photo_goes_back_to_its_old_name_as_it_was(self):
+        held = field_of(self.a, "XMP:Subject")
+        rename = self.rename()
+        known = os.stat(self.new).st_ino
+        saved = self.save()
+        self.assertNotEqual(known, os.stat(self.new).st_ino, "the Save did not write the file anew")
+        self.assertIn("undo it first", str(self.undo(rename).refused))
+        self.assertFalse(self.undo(saved).refused)
+        self.assertIsNone(self.offered(rename))
+        rehearsed = self.undo(rename, apply=False)
+        self.assertFalse(rehearsed.refused)
+        self.assertTrue(rehearsed.details["rehearsal"]["exact"], rehearsed.details["rehearsal"])
+        undone = self.undo(rename)
+        self.assertEqual((None, 1), (undone.refused or None, undone.changed), undone.message())
+        self.assertEqual((["IMG_0001.jpg"], self.a), (self.names(), self.path_of_row()))
+        self.assertEqual(held, field_of(self.a, "XMP:Subject"))
+        self.assertEqual((["", "Rowan Thackeray"], VECTOR), (self.faces_at(self.a), self.vector_at(self.a)))
+        self.assertEqual("undone", self.status(rename))
+
+    def test_a_file_put_in_its_place_is_not_renamed_back_saved_or_not(self):
+        from PIL import Image
+
+        rename = self.rename()
+        os.remove(self.new)
+        Image.new("RGB", (40, 30), (200, 30, 10)).save(self.new, "JPEG")
+        write_outside(self.new, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"], "XMP:Description": "Start"})
+        stranger = os.stat(self.new).st_ino
+        refused = self.undo(rename, apply=False)
+        self.assertIn("not found under the name the change gave it", refused.message())
+        saved = self.save()
+        self.assertFalse(self.undo(saved).refused)
+        stranger = os.stat(self.new).st_ino
+        undone = self.undo(rename)
+        self.assertEqual(0, undone.changed)
+        self.assertIn("not found under the name the change gave it", undone.message())
+        self.assertEqual(([NEW_NAME], self.new, stranger), (self.names(), self.path_of_row(), os.stat(self.new).st_ino))
 
 
 if __name__ == "__main__":
