@@ -22,7 +22,7 @@ import { OPEN_DIALOG } from "../../web/common/dialog.js";
 afterEach(() => closeAllApps());
 
 const LIBRARY = "kr-track";
-const GROUP_TITLES = { clip: "The CLIP model", "face-model": "The face model", faces: "Face detection",
+const GROUP_TITLES = { clip: "The photo model", "face-model": "The face model", faces: "Face detection",
                        exiftool: "ExifTool", library: "Library folders", suggest: "Suggest", renaming: "Smart Rename" };
 
 /** What /api/settings answers for a library holding the defaults, from the declarations. */
@@ -85,7 +85,7 @@ describe("the settings dialog", () => {
     assert.equal(document.getElementById("settings-title").textContent, `Library settings: ${LIBRARY}`);
     assert.deepEqual([...dialog.querySelectorAll("[data-setting]")].map((i) => i.dataset.setting), DECLARED);
     assert.deepEqual([...dialog.querySelectorAll(".settings-group h4")].map((h) => h.textContent),
-                     ["The CLIP model", "The face model", "Face detection", "ExifTool", "Library folders", "Suggest",
+                     ["The photo model", "The face model", "Face detection", "ExifTool", "Library folders", "Suggest",
                       "Smart Rename"]);
     assert.equal(field("model.name").value, "ViT-H-14");
     assert.equal(field("model.preserve_full_frame").type, "checkbox");

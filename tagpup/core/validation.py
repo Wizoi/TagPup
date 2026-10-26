@@ -91,7 +91,7 @@ EXCLUSION_REASONS = (DEFAULT_EXCLUSION_REASON, "stranger", "bad crop", "duplicat
 #: (face_embeddings, by model), and the rule refuses any other value.
 MTCNN_FACENET = "mtcnn-facenet"
 SCRFD_ADAFACE = "scrfd-adaface"
-FACE_MODELS = (MTCNN_FACENET, SCRFD_ADAFACE)
+FACE_MODELS = (SCRFD_ADAFACE, MTCNN_FACENET)
 
 #: The face model of a library that holds settings and no faces.model row: one stamped before the face model was a
 #: setting (migration 33), every one of which was on FaceNet. Not a new library's (it is stamped with the setting's
@@ -249,7 +249,7 @@ KINDS = {
 SETTING_GROUPS = {
     "clip": {
         "app": "tuner",
-        "title": "The CLIP model",
+        "title": "The photo model",
         "consequences": [
             "Each photo's vector is kept under the settings that made it, and Suggest and search compare by the "
             "vectors of the settings the library has: a change is refused, with the counts, while too many of the "
@@ -318,11 +318,11 @@ SETTINGS = {
         "The photo model Suggest and search compare photos and words with (an open_clip model name; SigLIP 2 SO400M, "
         "every library's since phase 5). "
         "Every photo's vector is made with it when its folder is indexed.",
-        [_required("The CLIP model"), _no_controls("The CLIP model")]),
+        [_required("The photo model"), _no_controls("The photo model")]),
     "model.pretrained": _setting(
         "clip", "Weights", "text", "webli",
         "The trained weights the model is loaded with (an open_clip pretrained tag for the model above).",
-        [_required("The CLIP weights"), _no_controls("The CLIP weights")]),
+        [_required("The photo model's weights"), _no_controls("The photo model's weights")]),
     "model.preserve_full_frame": _setting(
         "clip", "Keep the full frame", "boolean", "true",
         "Show the model the whole photo, padded to the widest aspect ratio below, rather than "

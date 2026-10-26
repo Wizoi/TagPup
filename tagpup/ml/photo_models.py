@@ -12,8 +12,8 @@ the neighbour cut (0.35) and the panel's floor (0.60) hold under both, and are n
 #: an image size}. SigLIP 2 SO400M is measured at its native 224 only (the spike ran it so; open_clip builds its
 #: position embedding for that size).
 MODELS = {
-    ("ViT-H-14", "laion2b_s32b_b79k"): {"word_cut": 0.23, "sizes": True},
     ("ViT-SO400M-14-SigLIP2", "webli"): {"word_cut": 0.11, "sizes": False},
+    ("ViT-H-14", "laion2b_s32b_b79k"): {"word_cut": 0.23, "sizes": True},
 }
 
 def holds(name, pretrained):

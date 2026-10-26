@@ -1,5 +1,5 @@
 {
- "version": "8f823901b407",
+ "version": "df8adf306f8c",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -226,12 +226,12 @@
    "rules": [
     {
      "rule": "required",
-     "message": "The CLIP model cannot be empty."
+     "message": "The photo model cannot be empty."
     },
     {
      "rule": "forbid_pattern",
      "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
-     "message": "The CLIP model cannot contain a tab, a line break or another control character."
+     "message": "The photo model cannot contain a tab, a line break or another control character."
     }
    ]
   },
@@ -249,12 +249,12 @@
    "rules": [
     {
      "rule": "required",
-     "message": "The CLIP weights cannot be empty."
+     "message": "The photo model's weights cannot be empty."
     },
     {
      "rule": "forbid_pattern",
      "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\ufeff]",
-     "message": "The CLIP weights cannot contain a tab, a line break or another control character."
+     "message": "The photo model's weights cannot contain a tab, a line break or another control character."
     }
    ]
   },
@@ -342,10 +342,10 @@
     {
      "rule": "one_of",
      "choices": [
-      "mtcnn-facenet",
-      "scrfd-adaface"
+      "scrfd-adaface",
+      "mtcnn-facenet"
      ],
-     "message": "The face model is one of mtcnn-facenet, scrfd-adaface."
+     "message": "The face model is one of scrfd-adaface, mtcnn-facenet."
     }
    ]
   },
