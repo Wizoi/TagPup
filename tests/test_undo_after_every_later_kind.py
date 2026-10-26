@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import migration_names  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
-from face_rows import FACENET, person_of  # noqa: E402
+from face_rows import FACENET, on_facenet, person_of  # noqa: E402
 
 import numpy as np  # noqa: E402
 
@@ -218,9 +218,12 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         """harbour: six photos (real JPEGs, their keywords written
         by ExifTool), faces as the pass left them -- matched faces holding FaceNet's vector and the new model's, faces
         the old detector alone found holding FaceNet's, one alone in the sixth photo -- named automatically, by hand,
-        nobody, excluded or undecided; the pass one change; switched to the new model after it."""
+        nobody, excluded or undecided; the pass one change; switched to the new model after it. Stamped on FaceNet, as
+        the live libraries were before the new model (a new library is stamped on it, and the switch would change
+        nothing)."""
         from PIL import Image
 
+        on_facenet(library.path)
         library_actions.create(library.path)
         os.makedirs(cls.folder)
         library_actions.record_added(library, [cls.folder])
@@ -394,7 +397,10 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertTrue(set(EXPECTED_REFUSED) <= made, "a pair the promise names was not made")
         self.assertEqual(set(), {pair for pair, refused in outcomes.items() if refused is None},
                          "a later kind's writer made nothing after an earlier kind")
-        self.assertGreater(len(made), 100, "the pairs a library can hold were not made")
+        # Every later kind after every earlier one, the diagonal not generated: 12 earlier by 9 later, less 9 (the retirings'
+        # kinds and Suggest's step left with retire-faces and retire-vectors, 2026-10-25).
+        self.assertEqual(len(earlier) * len(later) - len(later), len(made), "the pairs a library can hold were not made")
+        self.assertEqual(99, len(made))
         self.assertEqual(3, ordered, "the pairs undone in order: the switch, a bake and the rename after it, a rename and "
                                      "the bake after it")
         # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.
