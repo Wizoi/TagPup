@@ -10,7 +10,7 @@ library is photographs of real people, many of them minors.
 
 Whether a change may be undone now has one owner: why_not, which asks UNDO_CHECKS -- every kind of change the code
 makes, by its operation's name, with what its way back says of itself -- and the journal's own account (status, schema
-version, a newer change of the same rows or files: tagpup.store.journal.refusal). The History dialog lists by it, and the
+version, a newer change of the same rows or files, or of the files of its photos: tagpup.store.journal.refusal). The History dialog lists by it, and the
 rehearsal and the undo refuse by it before anything is written: nothing in tagpup/ but this module calls the store's undo
 (tests/test_every_change_kind_has_an_undo_check.py). A switch or a retiring landing between the rehearsal and the
 undo's write is not asked again (owner, 2026-10-23: accepted). A stamp of a library's settings
@@ -132,7 +132,7 @@ def undo_rule(operation):
 def why_not(conn, change_id):
     """Why change `change_id` cannot be undone now, or None when it may be tried: THE one account (#1805), in order -- a
     kind never undone (UNDO_CHECKS' sentence), the journal's (tagpup.store.journal.refusal: no such change, its status, its
-    schema version, a newer change of the same rows or files), then the kind's own check (UNDO_CHECKS). The caller's
+    schema version, a newer change of the same rows or files, or of its photos' files), then the kind's own check (UNDO_CHECKS). The caller's
     connection. Reads only."""
     described = journal.described(conn, change_id)
     if described is None:

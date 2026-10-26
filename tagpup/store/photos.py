@@ -108,6 +108,13 @@ def forget_photo(db_path, photo_path):
     return removed
 
 
+#: The columns of a photo's row a journaled change of its file writes, in the transaction that marks the file done: a
+#: write of its fields (follow_fields) and a rename (move_rows_in, the derived `taken` and `year` aside). A change of rows
+#: that recorded one of them is not what it left once a later change wrote the file (tagpup.store.journal.refusal).
+FOLLOWED = ("raw_metadata", "tags", "captions", "document_id", "mtime", "size")
+MOVED = ("path",)
+
+
 def move_rows_in(conn, renames):
     """Move index rows from each old path to its new one, in the caller's transaction: the file
     journal marks a rename done in the transaction that moves its row. Its faces and vectors point
@@ -256,6 +263,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
     if stat is not None and (whole is not None or _describes_before(row_mtime, row_size, before)):
         columns += ["mtime", "size"]
         values += [stat.st_mtime, stat.st_size]
+    assert set(columns) <= set(FOLLOWED), columns   # the journal's refusal reads FOLLOWED as what this writes
     conn.execute("UPDATE photos SET %s WHERE id = ?" % ", ".join("%s = ?" % c for c in columns),
                  values + [photo_id])
     if stat is not None:

@@ -720,6 +720,39 @@ def _newer_overlapping(conn, change_id):
         " ORDER BY c.id", (change_id, change_id)).fetchall()
 
 
+#: Why a change of rows is not undone once a later change wrote the file of one of its photos (_files_since): the file's
+#: change put in the row what the file holds (store_photos.FOLLOWED), and undoing it stamps the row again.
+FILE_WRITTEN_SINCE = ("change %(other)d (%(operation)s) wrote the files of %(photos)d of its photos after it: their rows say"
+                      " what the files hold now, not what change %(change)d left, and undoing change %(other)d does not"
+                      " put them back")
+#: ... or renamed it: the row has the file's new name (store_photos.MOVED), until the rename is undone.
+FILE_RENAMED_SINCE = ("change %(other)d (%(operation)s), applied after it, renamed the files of %(photos)d of its photos:"
+                      " undo it first")
+
+
+def _listed(columns):
+    return ", ".join("'%s'" % column for column in columns)
+
+
+def _files_since(conn, change_id):
+    """(id, operation, renamed, photos) of each change after `change_id` that wrote, or renamed, the file of a photo whose
+    row `change_id` recorded in a column that write puts in the row (store_photos.FOLLOWED, MOVED): a change of photo
+    files records its row in change_files' transaction, not in change_rows, so _newer_overlapping does not see it. A write
+    of fields counts done or undone (its undo stamps the row again), a rename until it is undone; a file still `writing`
+    may be written. Driven by the later change_files rows (idx_change_files_change), each looked up in change_rows by its
+    photo's key (idx_change_rows_row; the key spelt as schema.row_key spells it)."""
+    return conn.execute(
+        "SELECT f.change_id, c.operation, f.new_path IS NOT NULL, COUNT(DISTINCT f.photo_id) FROM change_files f"
+        " JOIN changes c ON c.id = f.change_id"
+        " WHERE f.change_id > ? AND f.photo_id IS NOT NULL"
+        " AND f.state IN ('writing', 'done', 'undone') AND (f.new_path IS NULL OR f.state != 'undone')"
+        " AND EXISTS (SELECT 1 FROM change_rows r WHERE r.table_name = 'photos'"
+        " AND r.row_key = '[' || f.photo_id || ']' AND r.change_id = ?"
+        " AND CASE WHEN f.new_path IS NULL THEN r.column_name IN (%s) ELSE r.column_name IN (%s) END)"
+        " GROUP BY f.change_id, c.operation, f.new_path IS NOT NULL ORDER BY f.change_id"
+        % (_listed(store_photos.FOLLOWED), _listed(store_photos.MOVED)), (change_id, change_id)).fetchall()
+
+
 # ---- Derived data ------------------------------------------------------------------------
 
 def _touched(conn, changes):
@@ -1096,7 +1129,8 @@ def refusal(conn, change_id):
 
     No such change; not finished; not applied. A change of files: a newer change
     not undone wrote one of its files (file_journal.newer_overlapping). A change of rows:
-    made at another schema version, or a newer change not undone wrote one of its rows.
+    made at another schema version, or a newer change not undone wrote one of its rows, or a
+    later change of photo files wrote or renamed the file of one of its photos (_files_since).
     The caller's connection."""
     row = conn.execute("SELECT operation, status, schema_version FROM changes WHERE id = ?",
                        (change_id,)).fetchone()
@@ -1117,8 +1151,11 @@ def refusal(conn, change_id):
         if blocking is not None:
             return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
                     " what they did (%s)" % (change_id, version, current, blocking)]
-    return ["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
-            for other, name in _newer_overlapping(conn, change_id)]
+    return (["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
+             for other, name in _newer_overlapping(conn, change_id)]
+            + [(FILE_RENAMED_SINCE if renamed else FILE_WRITTEN_SINCE)
+               % {"other": other, "operation": name, "photos": photos, "change": change_id}
+               for other, name, renamed, photos in _files_since(conn, change_id)])
 
 
 def described(conn, change_id):

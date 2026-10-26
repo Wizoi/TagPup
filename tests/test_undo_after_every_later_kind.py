@@ -245,14 +245,11 @@ EXPECTED_REFUSED = {
     # A bake and a rename of one photo file, either way round: the later one first (file_journal.newer_overlapping, #1926).
     ("smart rename", "bake"): "applied after it, wrote the same photo files: undo it first",
     ("bake", "smart rename"): "applied after it, wrote the same photo files: undo it first",
-    # The sync's row of the photo the bake then wrote: its file's stamp is not what the sync left (journal._not_as_left).
-    ("sync", "bake"): "is not what change",
+    # The sync's row of the photo the bake then wrote: the row says what the file holds now (journal.refusal, #1951).
+    ("sync", "bake"): sentence(journal.FILE_WRITTEN_SINCE),
 }
-#: (earlier, later) whose History listing offers Undo where the rehearsal and the undo refuse (a pending finding: a later
-#: journaled file write of a photo whose row a sync re-read is not in why_not).
-LISTING_OFFERS_IT = {("sync", "bake")}
-#: (earlier, later) whose refusal undoing the later change first does not lift, History then offering the Undo the undo
-#: refuses (a pending finding): the later write's undo stamps the sync's row again.
+#: (earlier, later) whose refusal undoing the later change first does not lift: the later write's undo stamps the sync's
+#: row again (History refusing it too, with the same sentence; #1951, decided).
 NOT_LIFTED_IN_ORDER = {("sync", "bake")}
 
 
@@ -428,11 +425,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                             continue
                         listed, rehearsed, undone = self.undo_from_history(library, change_a)
                         outcomes[(a, b)] = bool(undone.refused)
-                        offered = (a, b) in LISTING_OFFERS_IT
-                        if offered:
-                            self.assertIsNone(listed, "History now refuses it too: take the pair out of LISTING_OFFERS_IT")
                         self.assertEqual((listed is None, listed is None),
-                                         (not rehearsed.refused or offered, not undone.refused or offered),
+                                         (not rehearsed.refused, not undone.refused),
                                          "History, the rehearsal and the undo disagree: %r, %r, %r" % (
                                              listed, rehearsed.refused, undone.refused))
                         said = NEVER_UNDONE.get(a) or EXPECTED_REFUSED.get((a, b))
@@ -448,8 +442,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                             listed, rehearsed, undone = self.undo_from_history(library, change_a)
                             if (a, b) in NOT_LIFTED_IN_ORDER:
                                 self.assertTrue(undone.refused)
-                                self.assertIsNone(listed, "History now refuses it too: take the pair out of "
-                                                          "NOT_LIFTED_IN_ORDER")
+                                self.assertEqual((listed, listed), (rehearsed.refused, undone.refused))
                                 continue
                             self.assertEqual((None, False), (listed, bool(undone.refused)), undone.refused)
                             ordered += 1
@@ -464,6 +457,55 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertEqual(6, ordered, "the pairs undone in order: a pass and the retiring after it, both ways, the switch, "
                                      "a bake and the rename after it, a rename and the bake after it")
         # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.
+
+    def test_a_sync_is_not_offered_once_a_save_wrote_its_photo(self):
+        """Another program writes a caption into a photo and a sync re-reads its row; then the owner saves the photo
+        (Save writes its file, and the row says what the file holds). History offers no Undo for the sync, saying
+        why, and the rehearsal and the undo refuse with the same sentence, writing nothing; undoing the Save first
+        stamps the row again, so the sync still is not offered (#1951)."""
+        self.put_files_back("base")
+        library = self.copy(self.base, "sync_then_save")
+        synced = a_sync(self, library)
+        saved = tagging.save_photo(library, self.photo[4], "Ferry at the quay", ["Harbour/Ferry"], None, EXIFTOOL, "")
+        self.assertTrue(saved.changed, saved.refused)
+        said = journal.FILE_WRITTEN_SINCE % {
+            "other": saved.details["change"], "operation": "save photo", "photos": 1, "change": synced}
+        for undone_first in (False, True):
+            with self.subTest(save_undone_first=undone_first):
+                if undone_first:
+                    self.assertFalse(journal_service.undo(library, saved.details["change"], apply=True,
+                                                          exiftool_path=EXIFTOOL).refused)
+                entry = journal_service.history(library, change_id=synced)["changes"][0]
+                self.assertEqual(said, entry["why_not"], "History offers the sync's Undo")
+                listed, rehearsed, undone = self.undo_from_history(library, synced)
+                self.assertEqual((said, said), (rehearsed.refused, undone.refused))
+
+    def test_a_sync_is_offered_again_once_the_rename_after_it_is_undone(self):
+        """Smart Rename names a photo (its first name kept in the file); the owner moves it into a folder inside, in
+        Explorer, and a sync follows it, recording the row's new path; Smart Rename names it again, a rename alone (the
+        first name is kept already). History offers no Undo for the sync while that rename stands, saying so, as the
+        rehearsal and the undo do; once the rename is undone the sync is offered, and undone."""
+        self.put_files_back("base")
+        library = self.copy(self.base, "sync_then_rename")
+        before = set(os.listdir(self.folder))
+        self.assertTrue(photo_actions.smart_rename(library, [self.photo[4]], "Quay", "{grouping} - {index}",
+                                                   EXIFTOOL).changed)
+        (named,) = set(os.listdir(self.folder)) - before
+        os.makedirs(os.path.join(self.folder, "Pier"))
+        moved = os.path.join(self.folder, "Pier", named)
+        os.rename(os.path.join(self.folder, named), moved)
+        synced = sync.sync(library, apply=True, exiftool_path=EXIFTOOL).details.get("change")
+        self.assertIsNotNone(synced, "the sync followed no move")
+        renamed = photo_actions.smart_rename(library, [moved], "Pier", "{grouping} - {index}", EXIFTOOL)
+        self.assertTrue(renamed.changed, renamed.refused)
+        (rename,) = self.changes_after(library, synced)   # the rename alone: the first name is in the file
+        said = journal.FILE_RENAMED_SINCE % {"other": rename, "operation": "smart rename", "photos": 1, "change": synced}
+        listed, rehearsed, undone = self.undo_from_history(library, synced)
+        self.assertEqual((said, said, said), (listed, rehearsed.refused, undone.refused))
+        self.assertFalse(journal_service.undo(library, rename, apply=True, exiftool_path=EXIFTOOL).refused)
+        listed, rehearsed, undone = self.undo_from_history(library, synced)
+        self.assertEqual((None, None), (listed, undone.refused))
+        self.assertEqual("undone", journal.history(library.path, change_id=synced)[0]["status"])
 
 
 if __name__ == "__main__":
