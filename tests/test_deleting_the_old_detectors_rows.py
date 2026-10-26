@@ -9,6 +9,7 @@ delete-old-detector-rows, tagpup.services.old_detector_rows; owner, 2026-10-26).
   photos makes its undo refused, naming the row, nothing written.
 - A detection recorded between the plan and the write refuses the whole change, nothing written; a run again deletes.
 - A library holding none says so and writes nothing, no snapshot; a library still on the old model is refused.
+- A dry run whose rehearsal raised says what failed and exits non-zero, nothing written, no snapshot.
 
 A library made by Create, in a home of the test's own; photo rows as the indexer stores them (photo_rows), detections as
 it records them (store.faces_detected.record, under the names services.faces.detector_of gives). Fictional names.
@@ -30,6 +31,7 @@ from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import maintenance  # noqa: E402
 from tagpup.services import old_detector_rows  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, faces_detected, schema  # noqa: E402
@@ -161,6 +163,16 @@ class DeletingTheOldDetectorsRows(unittest.TestCase):
         self.assertEqual(before_changes, self.changes())
         self.assertEqual(sorted([(MTCNN, 1), (NEW, 2)]), self.records(), "part of the change was written")
         self.assertEqual(5, old_detector_rows.delete(self.library, apply=True).changed, "a run again did not delete")
+
+    def test_a_dry_run_whose_rehearsal_raised_says_what_failed(self):
+        before = rows_of(self.library.path)
+        with mock.patch.object(maintenance.journal, "rehearse", side_effect=OSError("the disk went away")):
+            dry = self.cli()
+        self.assertEqual(1, dry.exit_code, dry.output)
+        self.assertIn("FAILED: the rehearsal: OSError: the disk went away", " ".join(dry.output.split()))
+        self.assertNotIn("--apply deletes them", dry.output)
+        self.assertEqual(before, rows_of(self.library.path), "a dry run wrote")
+        self.assertEqual([], os.listdir(self.library.backups) if os.path.isdir(self.library.backups) else [])
 
     def test_a_library_still_on_the_old_model_is_refused(self):
         old = Library(self.home.library("estuary.db"))

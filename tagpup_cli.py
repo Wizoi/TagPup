@@ -1694,6 +1694,10 @@ def delete_old_detector_rows(ctx, apply_):
         say("Nothing to delete: the library holds none of them. Nothing was written.")
         return
     say(maintenance.rehearsed(planned))
+    for line in maintenance.failed(planned):
+        say(line)
+    if planned.errors:
+        raise SystemExit(1)
     if not apply_:
         say("Nothing changed. --apply deletes them, after a snapshot of the library unless one is from today: one "
             "change of the journal (%s), undone from History." % old_detector_rows.OPERATION)
