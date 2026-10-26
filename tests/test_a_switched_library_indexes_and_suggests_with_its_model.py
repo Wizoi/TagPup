@@ -47,7 +47,7 @@ What the owner lives through, in one library:
 
 Fictional names; a library in a home of the test's own; the new model as tagpup.runtime builds it, its weights not
 loaded and its two networks stood in for (`_detected`, `embed`): the picture, the floor, the crop and the detector name
-are the model's own. CLIP stood in for as tests/test_faces_found_at_the_librarys_cap.py does.
+are the model's own. CLIP stood in for, its weights not loaded.
 """
 import json
 import math
