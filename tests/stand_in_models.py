@@ -9,11 +9,27 @@ the suggester the way a run does:
 (the test gives its vector) and embeds every word to nothing, so no word is offered.
 """
 import os
+from unittest import mock
 
 from tagpup.core import validation
-from tagpup.ml import scrfd_adaface
+from tagpup.ml import photo_models, scrfd_adaface
 from tagpup.services import settings as library_settings
 from tagpup.services import suggester
+
+
+#: A photo model other than a new library's (SigLIP 2): a second pair the table of photo models holds for a test that
+#: declares it (`declare_other_photo_model`), so a library can be put on it, or a model made, retired or switched to.
+OTHER_PHOTO_MODEL = ("ViT-Other-14", "other-weights")
+#: The settings that put a library on it.
+ON_THE_OTHER_PHOTO_MODEL = {"model.name": OTHER_PHOTO_MODEL[0], "model.pretrained": OTHER_PHOTO_MODEL[1]}
+
+
+def declare_other_photo_model(test):
+    """The table of photo models (tagpup.ml.photo_models.MODELS) holds OTHER_PHOTO_MODEL for `test`, one that may be
+    shown photos at a size of the library's choosing; the table is as it was after the test."""
+    patched = mock.patch.dict(photo_models.MODELS, {OTHER_PHOTO_MODEL: {"word_cut": 0.2, "sizes": True}})
+    patched.start()
+    test.addCleanup(patched.stop)
 
 
 class Faces:

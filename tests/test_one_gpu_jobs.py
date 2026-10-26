@@ -40,7 +40,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
-from tagpup.ml import gpu, photo_models  # noqa: E402
+from tagpup.ml import gpu  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import indexing as indexing_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -385,10 +385,8 @@ class _CpuModel:
         self.unloads += 1
 
 
-#: A photo model other than a new library's (SigLIP 2): a second pair the table of photo models holds for the test
-#: (tagpup.ml.photo_models.MODELS), so cove can be put on it in the gear.
-OTHER_PHOTO_MODEL = ("ViT-Other-14", "other-weights")
-OTHER = OTHER_PHOTO_MODEL[0]
+#: A photo model other than a new library's (SigLIP 2), which the test declares, so cove can be put on it in the gear.
+OTHER = stand_in_models.OTHER_PHOTO_MODEL[0]
 
 
 class TwoLibrariesNamingTwoModels(_Library):
@@ -396,15 +394,13 @@ class TwoLibrariesNamingTwoModels(_Library):
 
     def setUp(self):
         super().setUp()
-        patched = mock.patch.dict(photo_models.MODELS, {OTHER_PHOTO_MODEL: {"word_cut": 0.2, "sizes": True}})
-        patched.start()
-        self.addCleanup(patched.stop)
+        stand_in_models.declare_other_photo_model(self)
         self.cove = Library(self.home.library("cove.db"))
         library_actions.create(self.cove.path)
         self.jetty = paths.stored(os.path.join(self.home.root, "Jetty"))
         os.makedirs(self.jetty)
         library_actions.record_added(self.cove, [self.jetty])
-        changed = library_settings.change(self.cove, {"model.name": OTHER, "model.pretrained": OTHER_PHOTO_MODEL[1]},
+        changed = library_settings.change(self.cove, stand_in_models.ON_THE_OTHER_PHOTO_MODEL,
                                           acknowledged=["clip"])
         self.assertTrue(changed.changed, changed.refused)
         self.built = []

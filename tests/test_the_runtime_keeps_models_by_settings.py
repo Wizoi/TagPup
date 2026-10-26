@@ -11,20 +11,20 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
+import stand_in_models  # noqa: E402
 
 from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
-from tagpup.ml import photo_models  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
 
-#: A photo model other than the one a new library is stamped on (SigLIP 2): a second pair the table of photo models
-#: holds for the test (tagpup.ml.photo_models.MODELS), so a library can be put on it in the gear.
-OTHER_PHOTO_MODEL = ("ViT-Other-14", "other-weights")
-ON_THE_OTHER = {"model.name": OTHER_PHOTO_MODEL[0], "model.pretrained": OTHER_PHOTO_MODEL[1]}
+#: A photo model other than the one a new library is stamped on (SigLIP 2), which the test declares, so a library can be
+#: put on it in the gear.
+OTHER_PHOTO_MODEL = stand_in_models.OTHER_PHOTO_MODEL
+ON_THE_OTHER = stand_in_models.ON_THE_OTHER_PHOTO_MODEL
 #: The face models' settings of every library: the new model, alone (tagpup.services.settings.model_alone).
 FACES = {"model": validation.SCRFD_ADAFACE}
 
@@ -40,9 +40,7 @@ def settings_rows(library):
 class ALibrary(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self)
-        patched = mock.patch.dict(photo_models.MODELS, {OTHER_PHOTO_MODEL: {"word_cut": 0.2, "sizes": True}})
-        patched.start()
-        self.addCleanup(patched.stop)
+        stand_in_models.declare_other_photo_model(self)
 
     def new_library(self, name="harbour.db"):
         """A library as the picker's Create makes it."""
