@@ -46,7 +46,7 @@ from PIL import Image  # noqa: E402
 from rich.console import Console  # noqa: E402
 
 import tagpup_cli  # noqa: E402
-from tagpup.core import fields, gpu_turns, paths, validation  # noqa: E402
+from tagpup.core import fields, gpu_turns, paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
@@ -197,9 +197,8 @@ class _Hold:
 
 
 class _Detector(NewFaces):
-    """A face detector filing its vectors under the key a new library's faces are read under (FaceNet's, the validation
-    default), each vector the unit vector of its seed's axis: two seeds alike or nothing alike."""
-    key = validation.MTCNN_FACENET
+    """The new face model (SCRFD and AdaFace's, a new library's: NewFaces.key), each vector the unit vector of its seed's
+    axis: two seeds alike or nothing alike."""
 
     @staticmethod
     def vector(seed, size=8):
