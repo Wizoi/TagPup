@@ -11,23 +11,30 @@ the suggester the way a run does:
 import os
 
 from tagpup.core import validation
-from tagpup.ml import faces as face_models
 from tagpup.ml import scrfd_adaface
 from tagpup.services import settings as library_settings
 from tagpup.services import suggester
 
 
 class Faces:
-    """A face model's settings, which tagpup.ml.faces.FaceModel always holds and a detection is recorded under
-    (tagpup.services.faces.detector_of): a test's face model is one of these, and says what it detects. What FaceModel
-    answers of them (`detector`, `new_faces`) is FaceModel's own."""
-    min_face_size, confidence_threshold, mtcnn_thresholds = 40, 0.9, [0.6, 0.7, 0.7]
-    key = validation.MTCNN_FACENET   # the key its vectors are filed under, as tagpup.ml.faces.FaceModel's
-    detector = face_models.FaceModel.detector
-    new_faces = face_models.FaceModel.new_faces
+    """The face model a new library is on (the setting's default, tagpup.ml.scrfd_adaface.ScrfdAdaFace) as an index or a
+    Suggest run is handed it: its `key`, which its vectors are filed under, and its `detector`, the record a detection is
+    kept under (tagpup.services.faces.detector_of), the model's own. A test's face model is one of these and says what it
+    detects (`detect_and_embed_faces`); every face it finds is made a face (`new_faces`), as found."""
+    key = validation.SETTINGS["faces.model"]["default"]
+    detector = scrfd_adaface.ScrfdAdaFace.detector
+
+    @staticmethod
+    def new_faces(detected, picture):
+        """Every face the test's detection found, as found: what it detects is the test's point."""
+        return detected
+
+    def missing(self):
+        """Every weight file is there."""
+        return None
 
     def picture(self, path, *, max_side):
-        """The processor's half, as the CLI's index asks it (tagpup.ml.faces.FaceModel.picture): what the test's
+        """The processor's half, as the CLI's index asks it (the model's `picture`): what the test's
         detect_and_embed_faces is handed then."""
         return path, max_side
 
