@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-10-26 | low: a face holding no vector under its library's face model has no live instance left and no writer that makes it: 0 of the three libraries' 197,002 faces (kr-track 10,884, photo_index 182,803, renton_parkrun 3,315, every one with a scrfd-adaface vector, none with FaceNet's, counted read-only 2026-10-26), and `store.faces.insert` always files a vector under the detecting model; only a switch of face model made one. Its branches stay in production -- `identify.NO_VECTOR` (the 400 of face-matches and New Person), identities' `without_vector` stage and cluster-faces' "took no part" sentence -- and lost their only scenario test when V11 (c) was deleted with the FaceNet-stamped libraries it stood on. To go with the removal of switching from the old model, or be cited by a real instance. | open |
+| B-2 | 2026-10-26 | low: a library made on the new face model can still be set to FaceNet when it holds no faces (`settings.switch_on` returns no refusal for a library with no faces), against the owner's decision of 2026-10-25 (the new models only, no legacy compat); one holding faces is refused with `NONE_HELD`, whose sentence sends the owner to "the snapshot taken before they were retired", a snapshot a library made on the new model never had. V11 now asserts only that a library with faces is refused and nothing written, not the sentence. For the branch removing the switch from the old model. | open |
+| B-3 | 2026-10-26 | low: docs cite V11 for what it no longer tests: docs/domains/data.md's People row names `test_switching_a_librarys_face_model` (V11 (c)) as the test of `store.faces.model_key`'s read (deleted: it stood on a FaceNet-stamped library), and docs/AI_PIPELINE.md (lines 362 and 532) calls V11 the switch. Now V11 is a library made on the new face model refused the old one, and the face pass's look held as a run; outside this branch's files. | open |
