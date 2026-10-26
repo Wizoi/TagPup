@@ -266,13 +266,20 @@ class EveryChangeKindHasAnUndoCheck(unittest.TestCase):
 
     def test_the_writers_are_found(self):
         # The scan finds the writers it exists for: were it to find none, it would pass with nothing checked.
-        for name in ("change settings", "face pass (%s)", "retire faces (%s)", "retire vectors (%s)", "migration %d: %s",
+        for name in ("change settings", "face pass (%s)", "retire vectors (%s)", "migration %d: %s",
                      "stamp settings with the defaults", "stamp settings from the library it replaced", "sync"):
             self.assertIn(name, self.made)
 
     def test_only_the_journal_service_calls_an_undo_and_so_asks_why_not_first(self):
         self.assertEqual([], self.source.undo_callers(),
                          "undo through tagpup.services.journal (undo, rehearse, undo_rows), which asks why_not first")
+
+    def test_a_retiring_of_the_old_detectors_faces_a_live_journal_holds_is_never_undone(self):
+        # Each live library holds one (photo_index 3247, counted 2026-10-25): undone, it would put the old model's faces
+        # back (#1783). Said before the journal's account, as a stamp's.
+        rule = journal_service.undo_rule("retire faces (scrfd-adaface)")
+        self.assertIsInstance(rule, str)
+        self.assertIn("are not put back", rule)
 
 
 if __name__ == "__main__":

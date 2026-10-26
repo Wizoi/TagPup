@@ -5,19 +5,19 @@ was spread over (the research report, the owner's decisions of 2026-10-07 and th
 stay as the record, this is what is followed. Owner for the domain: Views, search and AI (models, GPU turn, Suggest,
 vectors), with People for faces and Data for the schema ([OWNERS.md](OWNERS.md)).
 
-**Current status (2026-10-24): phases 0 to 5 are done and installed; only retiring the old photo vectors is left of
-phase 5; phase 6 (baking into the files) is next and is its own project.** Phase 5: the photo model is ViT-SO400M-14-SigLIP2
+**Current status (2026-10-24): phases 0 to 5 are done and installed, the old photo vectors retired;
+phase 6 (baking into the files) is next and is its own project.** Phase 5: the photo model is ViT-SO400M-14-SigLIP2
 (webli, 1152 dimensions, native size) on all three libraries, made by `embed-photos` (photo_index 59,518 of 59,519
 photos in 34 minutes, kr-track 1,498 of 1,499, renton_parkrun 1,309 of 1,309; the one photo left in each is a file that is
 gone) and switched by `set-photo-model` as one journaled, gated change each (changes 3249, 343, 1222), installed as
 20261024-175614-68d3fbcd; the doctor passes on all three; a read-only check under the production classes found the
 vectors unit length, no NaN, stamps agreeing with the old key's for 99.995% of photo_index. The old ViT-H-14 vectors
-still sit beside the new ones (about 244 MB on photo_index): they are what lets the switch be undone. Retiring them
-and Suggest's ViT-H words is built (`retire-photo-vectors`, the retire-vectors pattern, a snapshot first; owner,
-2026-10-24); its live run on the three libraries is the main session's. #1830 is closed: after the switch a plain `index` has
-only the gone file to skip. Phase 3 (SCRFD 10g and AdaFace IR-101, one pass, migration 33) is on all three libraries; photo_index starts
-afresh on the new face model (retire-faces, change 3247) and its FaceNet vectors are retired (change 3248, then
-`compact`: 182,779 AdaFace vectors, 0 FaceNet). Phase 4a (one gallery, time-nearest matching) is merged. Phase 4b (cut 1,
+sat beside the new ones (about 244 MB on photo_index) until they and Suggest's ViT-H words were retired
+(`retire-photo-vectors`, a snapshot first; owner, 2026-10-24; changes 3250, 344, 1223, counted 2026-10-25). #1830 is closed: after the switch a plain `index` has
+only the gone file to skip. Phase 3 (SCRFD 10g and AdaFace IR-101, one pass, migration 33) is on all three libraries; each library's
+old-detector faces and FaceNet vectors were retired once (photo_index changes 3247 and 3248, then `compact`: 182,779
+AdaFace vectors, 0 FaceNet; kr-track 347 and 348; renton_parkrun 1225 and 1226), by two commands deleted on
+2026-10-25 (the old model goes away completely; DECISIONS 2026-10-25). Phase 4a (one gallery, time-nearest matching) is merged. Phase 4b (cut 1,
 2026-10-23) ends an index with a read-only run-scoped matching of the faces it added, writes nothing to a photo file,
 and is installed (20261024-103335-fda9384b); the precision of its decided faces, held out by folder on photo_index, is
 27,120 decided, 47 wrong = 0.9983. Left open from phase 4: the TagTuner notice of arrivals, deferred until a proposal is
@@ -566,67 +566,20 @@ takes no turn of the card.
   committed while cluster-faces runs leaves it deciding FaceNet's vectors by FaceNet's cuts. The undo of a switch back
   to FaceNet is refused by the switch's own check (79c4fd75).
 
-**As built (2026-10-22): retiring the old detector's faces (`retire-faces`; DECISIONS 2026-10-22).**
-- The owner's decision: photo_index starts afresh on the new model, and none of the old data stays, the names given by
-  hand among it (a training library). Retiring replaced the from-scratch run first weighed: detection is deterministic,
-  so a fresh run finds the faces the pass already holds, and would not make again the 18,657 of photo_index's matched
-  faces under 40 px (538 of them named; counted read-only 2026-10-22), since `NEW_FACE_FLOOR` applies only to a face
-  the pass makes new. Retiring keeps every face the pass matched or made and takes away only what the old model left.
-- `tagpup.services.retire_faces`: every face with no vector under the library's model is deleted (crop and vectors with
-  it, `store.faces.delete`), and every kept face's decision cleared (`store.faces.UNDECIDED`, `put_decisions`), 500
-  photos a transaction, recorded before the write (`journal.record_removing(conn, change_id, "faces", keys, updates)`:
-  the faces by key, resolved as an apply resolves a delete -- every row `journal.CASCADES` says it takes, a face's crop
-  and vectors, read whole, children first -- and the cleared decisions as updates holding the old values), what the
-  writers changed added to the summary after (`journal.add_counts`), one change continued across runs while it is the
-  newest (`journal.newest_kept`); refused off the new model or past the switch's unpassed share, and, for names given
-  by hand, without `--clear-manual-names`. The dry run says how many photos end with no face at all (every face of
-  theirs deleted: the pass found none in them, or has not reached them; the rows do not tell which; photo_index 2,673
-  photos holding 5,754 faces, kr-track 7 holding 16, renton_parkrun 7 holding 7, counted read-only 2026-10-22). The CLI
-  asks before each chunk whether an app was started and stops there, saying so; an MCP server keeps no record and is
-  not seen. Keywords and the tree stay: the people a photo's keywords name are what Name faces from tags names the kept
-  faces from again. Undo is refused both ways round (`retire_faces.pass_check`, `retiring_check`): the pass's change while a retiring
-  after it stands, and the retiring while a photo whose faces it deleted holds a face made since by any writer (a pass,
-  or Suggest detecting a photo it left faceless again): a face whose id is above the change's `newest_face`, read from
-  the faces as they are (`store.faces.photos_with_faces_after`, by `idx_faces_photo_id`). Scenario P8, `tests/test_retiring_the_old_detectors_faces.py`.
-- photo_index (a sandbox copy of the live library, 2026-10-22): of 218,265 faces, 35,486 deleted (1,907 named
-  automatically, 19 decided by hand or excluded); of the faces kept, decisions cleared on 175 faces named by hand,
-  59,428 named automatically, 3 decided to be nobody and 13 exclusions; 44,268 photos walked in 89 chunks. Applied
-  through the CLI in 86 s with the snapshot first (peak working set 80 MB); the change holds 156,386 rows (about 130 MB
-  of the journal, the crops' bytes most of it). `undo` of it through the CLI: rehearsed in 32 s, applied in 50 s (one
-  transaction, peak working set 1 GB), every face, crop, vector and decision back (218,265 faces, 61,510 named). Applied
-  again in 21 s, with `--clear-manual-names` (refused without it, nothing written: 175 names given by hand); a dry run
-  after it says "Nothing to retire". The gate counts the names given by hand of the faces deleted too: none in
-  photo_index, 3 in kr-track (counted read-only).
-- Named again on the same copy, from the keywords: Name faces from tags (the plan in 4.4 s, the write in 1.9 s) names
-  3 faces of 182,779: with no decided face left, a one-face-one-person photo (14,300 of them) is named by its tag alone
-  only for a person with no other photo waiting (#839), and 14,297 are "not decidable yet". `cluster-faces` then names
-  55,990 (210 s, peak working set 2.6 GB; not journaled), 55,991 named in all against 59,603 of the kept faces before:
-  14,089 of them anchors (the one face of a photo whose keywords name one person, its cluster agreeing), 24,804 by an
-  anchor's cluster, 13,066 by the rounds that follow the photos' people, 3,044 by a cluster's vote, 988 by the last
-  pass's likeness; 51 left unnamed in photos naming people no face is known for. So on a library starting afresh the
-  keywords name the faces through `cluster-faces` (or the index, which runs it), not through Name faces from tags.
-
-**As built (2026-10-23): retiring the old model's vectors (`retire-vectors`; DECISIONS 2026-10-23).**
-- Once every face of a library on the new model holds its vector, FaceNet's vectors are read by nothing (every reader is
-  keyed by `faces.model`). photo_index holds 152,298 of them (311,906,304 bytes) beside 182,779 under `scrfd-adaface`,
-  none alone; kr-track holds 1,211 faces and renton_parkrun 329 whose only vector is FaceNet's (counted read-only
-  2026-10-23), so each needs `retire-faces` first.
-- `tagpup.services.retire_faces.plan_vectors` reads only: refused off the new model (NOT_ON_THE_MODEL) and while any face
-  holds FaceNet's vector alone (ALONE, `store.faces.alone_under`). `apply_vectors` walks the vectors by rowid
-  (`store.faces.vector_rowids_under`, SEARCH USING INTEGER PRIMARY KEY), VECTOR_CHUNK 5,000 a transaction, the model
-  read again in each (MODEL_MOVED) and the faces holding FaceNet's vector alone counted again (ALONE_SINCE, 0.044 s on
-  photo_index: an undo of a retiring between two chunks brings such faces back; that chunk is refused, nothing written,
-  #1789), and records ONE change with no rows, "retire vectors (mtcnn-facenet)", its summary
-  the vectors and bytes committed (`journal.add_counts`), continued as the newest kept change of its name
-  (`journal.kept_named`), also after a change recorded since: it holds no rows for one to conflict with (#1788).
-  Each deleted vector moves the faces generation (its trigger). The CLI forces a snapshot first and none when a stopped
-  run is continued.
-- The way back is the snapshot, never an undo (INVARIANTS row 40's exception, DECISIONS 2026-10-23): the change's own
-  undo is refused (VECTORS_RETIRED), and so are the undo of a retiring whose recorded `face_embeddings` deletes were under
-  a key the library holds none of now (change 3247's shape, #1783), the undo of the switch (an insert of `faces.model`
-  read as the default put back, #1781, `settings.undo_check`) and a switch back to FaceNet (`settings.switch_to`,
-  NONE_HELD, #1782). A library keeping some FaceNet vectors may still switch back. Scenario D4,
-  `tests/test_retiring_the_old_models_vectors.py`.
+**Retiring the old model's faces and vectors (2026-10-22 and 2026-10-23; DECISIONS 2026-10-22, 2026-10-23 and
+2026-10-25).** Two commands ran once on each library: `retire-faces` (every face holding no vector under the
+library's model deleted with its crop and vectors, every decision of the faces kept cleared, no keyword or node
+touched; one journaled change) and `retire-vectors` (every FaceNet vector deleted; one change holding no rows, the
+snapshot taken first its way back): photo_index changes 3247 and 3248, kr-track 347 and 348, renton_parkrun 1225
+and 1226 (counted read-only 2026-10-25). Nothing is left for them to retire, and they are deleted with their
+service and store helpers (owner, 2026-10-25: a migration is a new baseline, the old model goes away completely).
+The journals keep both changes, their undo refused: `retire faces (%s)` in `journal.RETIRED` (to go with the
+baseline migration), `retire vectors (%s)` by `retire_photo_vectors.vectors_check`, the photo vectors' retiring
+sharing the name. What the first run showed, kept as the record: retiring was chosen over a fresh run because
+detection is deterministic and a fresh run would not make again photo_index's 18,657 matched faces under 40 px
+(`NEW_FACE_FLOOR` applies only to a face the pass makes new); on a copy of photo_index it deleted 35,486 of 218,265
+faces in 86 s; and on a library starting afresh the keywords name the faces through `cluster-faces` (55,991 named
+on the copy), not through Name faces from tags (3). The as-built text is in this file's history before 2026-10-25.
 
 ### Phase 4: Matching, with the new model
 
@@ -683,8 +636,8 @@ more than 5% of the photos hold no vector under the new key (`settings.photo_swi
 gate). The tag-prompt cache is not recomputed by a run: Suggest makes each word under the library's model at its first
 run on it and keeps it (photo_index holds 540 words, 1,080 rows, under ViT-H; counted 2026-10-24), which
 `set-photo-model` counts. Kept as decided: the offer floor 0.60 and neighbour cut 0.35 (DECISIONS 2026-10-24). Not
-built: a SigLIP sigmoid score; a text tower resident apart from the image tower; retiring the old vectors (after the
-live switch). The run's recipe: docs/DEVELOPMENT.md, "Switching a library's photo model".
+built: a SigLIP sigmoid score; a text tower resident apart from the image tower. The old vectors are retired by
+`retire-photo-vectors` (above). The run's recipe: docs/DEVELOPMENT.md, "Switching a library's photo model".
 
 **How it fails:** a re-embed killed at 40,000 photos (Suggest keeps using the old key until the library switches; a
 partial new key is never read); the card shared with Suggest (one turn at a time); disk (a second vector set: about

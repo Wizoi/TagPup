@@ -75,7 +75,6 @@ from tagpup.services import indexing as indexing_service
 from tagpup.services import thumbnails
 from tagpup.services import photo_reembed
 from tagpup.services import face_pass as face_pass_service
-from tagpup.services import retire_faces as retire_faces_service
 from tagpup.services import retire_photo_vectors
 from tagpup import launcher
 from tagpup.services import journal as library_journal
@@ -1395,7 +1394,7 @@ BAKE_WAY_BACK = ("`undo <change> --apply` takes a folder's bake back. A later wr
 #: How `bake-photos` says each kind of photo that cannot be baked (tagpup.services.baking's kinds).
 CANNOT_BAKE = {
     baking.NEVER_EXAMINED: "never examined by the face model",
-    baking.FACES_WITHOUT_VECTORS: "with a face holding no vector under the face model (retire-faces first)",
+    baking.FACES_WITHOUT_VECTORS: "with a face holding no vector under the face model (index them again first)",
     baking.NO_VECTOR: "with no photo vector under the photo model",
     baking.CHANGED: "whose file changed since its photo vector was made (index them again first)",
     baking.UNREADABLE: "whose file could not be read",
@@ -1556,129 +1555,20 @@ def _bake(library, exiftool_path, detector, directories, reveal, say):
         raise SystemExit(1)
 
 
-#: What `retire-faces` says of the people the photos' keywords name: they stay, and name the faces again.
-KEYWORDS_STAY = ("The keywords in the photo files stay as they are, and so do the people they name in each photo: Name "
-                 "faces from tags (TagTuner's Folder Matches, or TagPup's Organize folder view) names the faces kept from "
-                 "them again, and cluster-faces names more by likeness.")
-
-#: Why `retire-faces --apply` and `retire-vectors --apply` are refused while an app runs: a server's record names no
-#: library, so any refuses it.
+#: Why `retire-photo-vectors --apply` is refused while an app runs: a server's record names no library, so any
+#: refuses it.
 APP_RUNNING = ("Not run: TagPup is running (%d app server(s)). Stop the app first (close it from its tray or its "
-               "window): a running app keeps faces and vectors it read in memory, and its writes beside this run would "
-               "name or decide faces this run deletes or clears. Its record names no library, so any running app refuses it.")
+               "window): a running app keeps the vectors it read in memory, and its Suggest and search beside this run "
+               "would read vectors this run deletes. Its record names no library, so any running app refuses it.")
 
-#: Why `retire-faces --apply` (or `retire-vectors --apply`) stopped between two chunks: an app started during the run (launcher.running, asked a chunk).
+#: Why `retire-photo-vectors --apply` stopped between two chunks: an app started during the run (launcher.running, asked
+#: a chunk).
 APP_STARTED = ("Stopped: TagPup was started during the run (%d app server(s)); the chunks written stand. Stop the app, then "
                "run it again to go on, as the same change.")
 
-
-@cli.command("retire-faces")
-@click.option("--apply", "apply_", is_flag=True,
-              help="Write: after a snapshot of the library (unless one is from today), one change of the journal, which "
-                   "`undo` takes back. Without it, only says what it would do.")
-@click.option("--clear-manual-names", is_flag=True,
-              help="With --apply: the names given by hand go too (cleared from the faces kept, deleted with the others).")
-@click.option("--reveal", is_flag=True, help="The ids of the photos it walks.")
-@click.pass_context
-def retire_faces(ctx, apply_, clear_manual_names, reveal):
-    """Once the library is on the new face model, after its pass (face-pass) and the switch: delete every face the new
-    model gave no vector -- the old detector's alone -- with its crop and vectors, and clear every decision of the faces
-    kept (names, by hand or automatic, "nobody", exclusions), as one change of the journal (docs/AI_PIPELINE.md, phase
-    3). No keyword in a photo file and no tag of the tree is touched. A dry run unless --apply; counts only. Ctrl+C stops
-    it after the chunk of photos under way, and so does an app started during the run; run it again to go on, as the same
-    change. --apply is refused while an app runs; an MCP server keeps no record of itself and is not seen: close it
-    first."""
-    library = _existing_library(ctx)
-    say = functools.partial(console.print, markup=False, soft_wrap=True)
-    say("Retiring the old face detector's faces of %s%s." % (library.name, "" if apply_ else " (a dry run)"))
-    planned = retire_faces_service.plan(library)
-    say(planned.said())
-    if planned.refused:
-        raise SystemExit(1)
-    if not planned.photo_ids:
-        say("Nothing to retire: no face holds no vector under %s, and no face kept holds a decision." % planned.model)
-        return
-    if reveal:
-        say("Photos (ids): %s" % ", ".join(map(str, planned.photo_ids)))
-    say(KEYWORDS_STAY)
-    if not apply_:
-        say("Nothing changed. --apply writes it, after a snapshot of the library unless one is from today: one change "
-            "of the journal, which `undo` takes back%s." % (
-                "; the %d names given by hand go only with --clear-manual-names" % planned.names_by_hand
-                if planned.names_by_hand else ""))
-        return
-    refused = retire_faces_service.refusal(planned, clear_manual_names)
-    if refused:
-        say(refused)
-        raise SystemExit(1)
-    servers = launcher.running()
-    if servers:
-        say(APP_RUNNING % len(servers))
-        raise SystemExit(1)
-    with _stop_after_this_photo("chunk of photos") as asked:
-        taken = library_snapshots.before_a_long_write(library)
-        say("Took a snapshot of the library first (%s)." % ", ".join(taken.details["taken"]) if taken.changed
-            else "A snapshot of the library from today stands; none taken.")
-
-        def heard(chunk, chunks):
-            heard.number += 1
-            say("Chunk %d of %d: %d photos, %d faces deleted, %d decisions cleared, %d photos left alone." % (
-                heard.number, chunks, chunk.photos, chunk.deleted, chunk.cleared, chunk.left_alone))
-        heard.number = 0
-        started = []
-
-        def stop():
-            if asked.is_set():
-                return True
-            started[:] = launcher.running()   # an app started during the run: asked before each chunk
-            return bool(started)
-        retired = retire_faces_service.apply(library, planned, stop=stop, heard=heard,
-                                             clear_manual_names=clear_manual_names)
-    say(retired.said())
-    if retired.stopped and started:
-        say(APP_STARTED % len(started))
-    if retired.changes:
-        say("Written: change %s; `undo <change> --apply` takes it back, while no later change wrote its faces."
-            % ", ".join(map(str, retired.changes)))
-    if retired.failed or retired.stopped:
-        raise SystemExit(1)
-
-
-#: How long the snapshot `retire-vectors --apply` takes first stands: it is a daily (snapshots.KEEP, three dailies).
+#: How long the snapshot `retire-photo-vectors --apply` takes first stands: it is a daily (snapshots.KEEP, three dailies).
 SNAPSHOT_STANDS = ("while it stands: it is a daily, three are kept, and the app's own daily snapshots push it out in about "
                    "three days (TagPup CLI: snapshots list)")
-
-
-@cli.command("retire-vectors")
-@click.option("--apply", "apply_", is_flag=True,
-              help="Write: after a snapshot of the library, taken even when one is from today (it is the way back), one "
-                   "change of the journal, which is not undone. Without it, only says what it would do.")
-@click.pass_context
-def retire_vectors(ctx, apply_):
-    """Once the library is on the new face model and every face holds its vector (after face-pass, the switch and
-    retire-faces): delete the vectors of the old model, FaceNet, which no reader keyed by the library's model reads
-    (docs/AI_PIPELINE.md, phase 3; DECISIONS 2026-10-23). No face, crop, decision, keyword or tag is touched. A dry run
-    unless --apply; counts only. --apply takes a snapshot first, always: it is the way back (the change's undo is
-    refused, and so are a switch back to FaceNet and the undo of the retiring of the old detector's faces). Ctrl+C stops
-    it after the chunk under way, and so does an app started during the run; run it again to go on, as the same change.
-    --apply is refused while an app runs; an MCP server keeps no record of itself and is not seen: close it first. After
-    it, `compact` gives the space back to the disk."""
-    library = _existing_library(ctx)
-    say = functools.partial(console.print, markup=False, soft_wrap=True)
-    say("Retiring the old face model's vectors of %s%s." % (library.name, "" if apply_ else " (a dry run)"))
-    planned = retire_faces_service.plan_vectors(library)
-    say(planned.said())
-    if planned.refused:
-        raise SystemExit(1)
-    if not planned.vectors:
-        say("Nothing to retire: no vector under %s is left." % planned.key)
-        return
-    if not apply_:
-        say(VECTORS_DRY_RUN)
-        return
-    retired = _retire_vectors_applied(library, [planned], retire_faces_service.apply_vectors, say)
-    if retired[-1].error or retired[-1].stopped or retired[-1].refused:
-        raise SystemExit(1)
 
 
 @cli.command("retire-photo-vectors")
@@ -1712,8 +1602,8 @@ def retire_photo_vectors_command(ctx, apply_):
     if not apply_:
         say(VECTORS_DRY_RUN)
         return
-    retired = _retire_vectors_applied(library, plans, retire_photo_vectors.apply, say)
-    if retired[-1].error or retired[-1].stopped or retired[-1].refused:
+    retired = _retire_vectors_applied(library, plans, say)
+    if retired[-1].error or retired[-1].stopped:
         raise SystemExit(1)
     for done in retired:
         say("The switch back to %s is no longer possible (the undo of the settings change is refused: no photo holds a "
@@ -1721,18 +1611,18 @@ def retire_photo_vectors_command(ctx, apply_):
             % done.plan.key)
 
 
-#: What a dry run of retire-vectors (and retire-photo-vectors) says --apply does.
+#: What a dry run of retire-photo-vectors says --apply does.
 VECTORS_DRY_RUN = ("Nothing changed. --apply writes it, after a snapshot of the library (taken even when one is from "
                    "today: the oldest daily may go): one change of the journal, which is not undone; the snapshot is the "
                    "way back %s. Then `compact` gives the space back to the disk." % SNAPSHOT_STANDS)
 
 
-def _retire_vectors_applied(library, plans, apply_one, say):
-    """--apply of retire-vectors and retire-photo-vectors: `plans` (VectorPlan, a model's vectors each) applied in turn
-    by `apply_one(library, planned, stop=, heard=)` (VectorsRetired), each said. Refused while an app runs (APP_RUNNING). A
+def _retire_vectors_applied(library, plans, say):
+    """--apply of retire-photo-vectors: `plans` (PhotoVectorPlan, a key's vectors each) applied in turn by
+    retire_photo_vectors.apply (PhotoVectorsRetired), each said. Refused while an app runs (APP_RUNNING). A
     snapshot first, forced, as it is the way back, unless the run continues a change a stopped run left (its first run
     took one). Ctrl+C, or an app started during the run, stops it after the chunk under way, and the plans after it are
-    not begun. Returns [VectorsRetired], the last the one that ended the run."""
+    not begun. Returns [PhotoVectorsRetired], the last the one that ended the run."""
     servers = launcher.running()
     if servers:
         say(APP_RUNNING % len(servers))
@@ -1765,10 +1655,10 @@ def _retire_vectors_applied(library, plans, apply_one, say):
             return bool(started)
         for planned in plans:
             heard.number = 0
-            retired = apply_one(library, planned, stop=stop, heard=heard)
+            retired = retire_photo_vectors.apply(library, planned, stop=stop, heard=heard)
             found.append(retired)
             say(retired.said())
-            if retired.error or retired.stopped or retired.refused:
+            if retired.error or retired.stopped:
                 break
     if found[-1].stopped and started:
         say(APP_STARTED % len(started))
