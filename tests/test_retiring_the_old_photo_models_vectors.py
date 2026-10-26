@@ -15,8 +15,10 @@ to it (set-photo-model): photo_index holds about 244 MB of them that nothing rea
 - A library whose own model does not hold its photos' vectors (rotated since, each rotation taking the vectors away) is
   refused, nothing written: the vectors that would go are the most complete it holds.
 
-Fictional names; a library in a home of the test's own; rows as the indexer stores them; real small JPEGs; vectors as
-the photo models' writers keep them (store.embeddings.put_by_id).
+The library is made on SigLIP 2 SO400M, a new library's model, and switched to one the test declares in the table of
+photo models (stand_in_models.OTHER_PHOTO_MODEL): SO400M is the old model here. Fictional names; a library in a home of
+the test's own; rows as the indexer stores them; real small JPEGs; vectors as the photo models' writers keep them
+(store.embeddings.put_by_id).
 """
 import os
 import sys
@@ -26,6 +28,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import stand_in_models  # noqa: E402
 
 import numpy as np  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
@@ -46,10 +49,13 @@ from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
-OLD = ("ViT-H-14", "laion2b_s32b_b79k")
-NEW = ("ViT-SO400M-14-SigLIP2", "webli")
-OLD_KEY = store_embeddings.model_key(*OLD, True, 1.4, 512)
+#: The model a new library is on (SigLIP 2 SO400M), and the one it is switched to, declared by the test.
+OLD = ("ViT-SO400M-14-SigLIP2", "webli")
+NEW = stand_in_models.OTHER_PHOTO_MODEL
+OLD_KEY = store_embeddings.model_key(*OLD, True, 1.4, None)
 NEW_KEY = store_embeddings.model_key(*NEW, True, 1.4, None)
+#: How long each model's vectors are (a 1152-d SO400M, the other 768).
+OLD_DIM, NEW_DIM = 1152, 768
 THIRD_KEY = store_embeddings.model_key("ViT-B-32", "openai", False, 1.0, 224)
 
 
@@ -83,13 +89,15 @@ def said(result):
 
 
 class _Library(unittest.TestCase):
-    """A library of ten photos read by the index, each holding ViT-H's vector and SigLIP 2's, three a third model's;
-    Suggest's words cached under ViT-H (two words, two prompts each) and SigLIP 2 (one); switched to SigLIP 2."""
+    """A library of ten photos read by the index, each holding SO400M's vector and the other model's, three a third
+    model's; Suggest's words cached under SO400M (two words, two prompts each) and the other (one); switched to the
+    other."""
 
     switch = True
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="retire_photo_vectors_")
+        stand_in_models.declare_other_photo_model(self)
         self.library = Library(self.home.library("harbour.db"))
         self.assertEqual(1, library_actions.create(self.library.path).changed)
         self.folder = paths.stored(os.path.join(self.home.root, "Heronry"))
@@ -103,15 +111,15 @@ class _Library(unittest.TestCase):
                 Image.new("RGB", (48, 32), (5 * n % 255, 90, 140)).save(path, "JPEG")
                 photo_id = photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put_by_id(conn, photo_id, OLD_KEY, mtime, size, vector(1024, n))
-                store_embeddings.put_by_id(conn, photo_id, NEW_KEY, mtime, size, vector(1152, n))
+                store_embeddings.put_by_id(conn, photo_id, OLD_KEY, mtime, size, vector(OLD_DIM, n))
+                store_embeddings.put_by_id(conn, photo_id, NEW_KEY, mtime, size, vector(NEW_DIM, n))
                 if n < 3:
                     store_embeddings.put_by_id(conn, photo_id, THIRD_KEY, mtime, size, vector(512, n))
                 self.photos.append(path)
             for word in ("Heron", "Harbour"):
                 for prompt in ("a photo of %s" % word, "a %s, 1998" % word):
-                    store_taxonomy.keep_tag_embedding(conn, word, prompt, *OLD, vector(1024, 3))
-            store_taxonomy.keep_tag_embedding(conn, "Heron", "a photo of Heron", *NEW, vector(1152, 3))
+                    store_taxonomy.keep_tag_embedding(conn, word, prompt, *OLD, vector(OLD_DIM, 3))
+            store_taxonomy.keep_tag_embedding(conn, "Heron", "a photo of Heron", *NEW, vector(NEW_DIM, 3))
             conn.commit()
         finally:
             conn.close()
