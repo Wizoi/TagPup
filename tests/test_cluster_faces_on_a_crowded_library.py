@@ -27,7 +27,8 @@ PEOPLE = ["Tamsin Okafor", "Bram Lindqvist", "Ines Whitcombe", "Oskar Penhaligon
 
 
 def like(reference, cosine, seed):
-    """A unit vector whose cosine with `reference` is `cosine`: 0.83 names unasked (0.80) but does not group (0.885)."""
+    """A unit vector whose cosine with `reference` is `cosine`: 0.65 names unasked (0.52) but does not group (0.80), the
+    new face model's (tagpup.core.clustering.ADAFACE_CUTS)."""
     other = identity_vector(seed)
     other = other - np.dot(other, reference) * reference
     other /= np.linalg.norm(other)
@@ -56,7 +57,7 @@ class ClusterFacesOnACrowdedLibrary(FaceClusteringTestBase):
         known = first
         for k in range(1, length + 1):
             photo = self.add_photo("chain_%d.jpg" % k, people=[PEOPLE[k - 1], PEOPLE[k]])
-            self.add_face(photo, like(known, 0.83, 200 + k), box=(0, 0, 300, 300))
+            self.add_face(photo, like(known, 0.65, 200 + k), box=(0, 0, 300, 300))
             known = identity_vector(100 + k)
             faces.append(self.add_face(photo, known, box=(400, 0, 700, 300),
                                        manual_name=PEOPLE[k] if by_hand and k == 2 else None))
@@ -67,7 +68,7 @@ class ClusterFacesOnACrowdedLibrary(FaceClusteringTestBase):
         for n, vector in enumerate(anchors):
             self.add_face(self.add_photo("alone_%d.jpg" % n, people=[PEOPLE[n]]), vector)
         group = self.add_photo("group.jpg", people=list(PEOPLE))
-        faces = [self.add_face(group, like(vector, 0.83, 50 + n), box=(n * 100, 0, n * 100 + 90, 90))
+        faces = [self.add_face(group, like(vector, 0.65, 50 + n), box=(n * 100, 0, n * 100 + 90, 90))
                  for n, vector in enumerate(anchors)]
         self.run_cluster_faces()
         self.assertEqual(PEOPLE, [self.name_of(face) for face in faces])
