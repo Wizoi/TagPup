@@ -85,19 +85,13 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   from tags names the new faces after the gate. A photo's named faces pair first, so a named face keeps its person
   beside an unnamed duplicate of it.
 
-- **Retiring the old detector's faces (2026-10-22; DECISIONS 2026-10-22)**: `services.retire_faces` deletes the faces
-  holding no vector under the library's model and clears every decision of the faces kept, and touches no keyword in a
-  photo file and no node of the tree: the people a photo's keywords name stay in its people, and Name faces from tags
-  names the kept faces from them again. Names given by hand are cleared only when asked for by name
-  (`--clear-manual-names`; `retire_faces.refusal`): the gate counts the names given by hand of the faces deleted as well as of the faces
-  kept (kr-track: 3 of the faces it would delete, counted read-only 2026-10-22). The face pass's own change is not
-  undone while a retiring after it stands (`retire_faces.pass_check`, asked by `services.journal.why_not`): its new
-  faces stand in for the ones the retiring deleted, and undone first it would leave photos with no face under the model.
-  The other way round, the retiring is not undone while a photo whose faces it deleted holds a face made since, by any
-  writer (`RETIRING_UNDER`): the next face pass, or Suggest, which detects again a photo the retiring left faceless
-  (`faces_detected.forget_faceless`) and records no change. A face made since is one whose id is above the newest the
-  library held when the retiring's change was opened (its summary's `newest_face`; `store.faces.newest_id`,
-  `photos_with_faces_after`), read from the faces as they are, not from the journal.
+- **Retiring the old detector's faces (2026-10-22; DECISIONS 2026-10-22 and 2026-10-25)**: run once on each
+  library (photo_index change 3247, kr-track 347, renton_parkrun 1225, counted read-only 2026-10-25): the faces
+  holding no vector under the library's model deleted and every decision of the faces kept cleared, no keyword in a
+  photo file and no node of the tree touched -- the people a photo's keywords name are what `cluster-faces` and Name
+  faces from tags name the kept faces from again. The command is deleted (owner, 2026-10-25: the old model goes away
+  completely); its change stays in the journals, its undo refused (`services.journal.RETIRED`), and a face pass's
+  change has no check of its own.
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
   keeps "exactly one person reaches 0.80" (FaceNet's naming likeness; each model's own since 2026-10-20) beside it, since the margin alone would name a face two people reach 0.04 apart, a
