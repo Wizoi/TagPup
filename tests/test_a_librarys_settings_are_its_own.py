@@ -224,7 +224,7 @@ class WhatEachLibraryHolds(unittest.TestCase):
         ({"faces.mtcnn_thresholds": "0.6, 0.7"}, "Face detection takes three thresholds, one for each stage."),
         ({"model.preserve_full_frame": "maybe"}, "Keep the full frame is true or false."),
         ({"model.max_aspect_ratio": "9"}, "The widest aspect ratio must be between 1 and 4."),
-        ({"model.name": " "}, "The CLIP model cannot be empty."),
+        ({"model.name": " "}, "The photo model cannot be empty."),
         ({"renaming.format": "{grouping} - {caption}"},
          "The rename format must hold {index}, or every photo is given the same name."),
         ({"candidates.tags": "Kayak, Sea|Boats"},
