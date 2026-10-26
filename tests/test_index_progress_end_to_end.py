@@ -6,7 +6,9 @@ test of the reader fed it a line a person had typed; a change to what the CLI pr
 version, a console line) would leave a bar stuck at 0% with all of them green. Here the CLI is
 run for three small generated photos in a home of its own, its models stood in for by a
 sitecustomize the child imports (the weights refuse under test; the protocol -- arguments,
-environment, exit code, stdout -- is the real one).
+environment, exit code, stdout -- is the real one). The library is a new one, so on the new face model (SCRFD and
+AdaFace, validation.SCRFD_ADAFACE): the stand-in is that model's. FaceNet's stood in here until the new models became
+every library's baseline, and the refused load then failed each photo, logged, and the run said nothing was added.
 
 The index recorded photos, so the CLI matches the faces it made after it (the stand-in finds none), saying so on the
 line the server ends its message with (indexing.NEW_FACES; owner, DECISIONS 2026-10-23). Then the same folder is added
@@ -37,12 +39,13 @@ SITECUSTOMIZE = '''
 import sys
 sys.path.insert(0, %(root)r)
 from unittest import mock
-from tagpup.ml import clip, faces
+from tagpup.ml import clip, scrfd_adaface
 mock.patch.object(clip.ClipModel, "_init_model").start()
 mock.patch.object(clip.ClipModel, "picture_input").start()
 mock.patch.object(clip.ClipModel, "embed_input", return_value=[0.1] * 8).start()
-mock.patch.object(faces.FaceModel, "_init_models").start()
-mock.patch.object(faces.FaceModel, "detect_and_embed", return_value=[]).start()
+mock.patch.object(scrfd_adaface.ScrfdAdaFace, "_init_models").start()
+mock.patch.object(scrfd_adaface.ScrfdAdaFace, "missing", return_value=None).start()
+mock.patch.object(scrfd_adaface.ScrfdAdaFace, "detect_and_embed", return_value=[]).start()
 '''
 
 
