@@ -263,13 +263,15 @@ class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
         LibrarySettings.faces again (ml may not import services), and by the cap, LibrarySettings.detect_max_side: a
         setting added to one and not the other would let a changed setting reuse an old detection. Held equal here, with
         a cap set and with none. The face model (faces.model) is not in MTCNN's name, so the name every row was written
-        under stands; the new model's detections are named by its key alone, the cap not used."""
+        under stands; the new model's detections are named by its key alone, the cap not used. MTCNN's settings are a
+        library's on FaceNet (a new library is on the new model, whose settings are its key alone)."""
         from tagpup.ml import faces as face_models
         from tagpup.ml.scrfd_adaface import ScrfdAdaFace
         from tagpup.services import settings as library_settings
         for cap in ("", "2048"):
             with self.subTest(cap=cap):
-                made = library_settings.LibrarySettings(dict(library_settings.DEFAULTS, **{"faces.detect_max_side": cap}))
+                made = library_settings.LibrarySettings(dict(library_settings.DEFAULTS, **{
+                    "faces.detect_max_side": cap, "faces.model": face_rows.FACENET}))
                 mtcnn = {key: value for key, value in made.faces.items() if key != "model"}
                 self.assertEqual(tuple(mtcnn), face_models.DETECTOR_SETTINGS)
                 name = json.loads(faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), made.detect_max_side))

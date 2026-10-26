@@ -20,11 +20,16 @@ import fake_exiftool  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
+from tagpup.core import clustering  # noqa: E402
 from tagpup.jobs import identify as identify_jobs  # noqa: E402
 from tagpup.services import identify  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 ROUTE = "/library/api/face-matches-unmatched"
+
+#: How like the seed a face must be to be gathered for a new person, under the library's face model (AdaFace's 0.520:
+#: clustering.Cuts.gathers_for_a_new_person).
+GATHERED_FROM = clustering.cuts_of(face_rows.FACE_MODEL).name_without_asking
 
 
 def like(likeness, towards=1):
@@ -53,10 +58,10 @@ class NewPerson(unittest.TestCase):
             for n, (label, likeness, columns, *towards) in enumerate([
                     ("seed", 1.0, {}),
                     ("close", 0.9, {}),
-                    ("just over", 0.8003, {}, -1),
-                    ("just under", 0.7997, {}),
-                    ("far", 0.5, {}),
-                    ("named", 0.85, {"name": "Imogen Vale", "name_source": "manual"}, 2),
+                    ("just over", GATHERED_FROM + 0.0003, {}, -1),
+                    ("just under", GATHERED_FROM - 0.0003, {}),
+                    ("far", 0.3, {}),
+                    ("named", 0.6, {"name": "Imogen Vale", "name_source": "manual"}, 2),
                     ("excluded", 0.95, {"excluded": 1, "excluded_reason": "stranger"})]):
                 photo = os.path.join(self.home.root, "Photos", "IMG_%04d.jpg" % n)
                 photo_rows.add_read(conn, photo, {"XMP:Subject": []})

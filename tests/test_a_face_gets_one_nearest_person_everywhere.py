@@ -2,13 +2,17 @@
 tags (#1737), on a person who changed over the years.
 
 Wren was photographed as a child (1990 to 1994) and as an adult (2018 to 2022); Oda as an adult (2018 to 2022). A face
-taken in 2020 is very like Wren's child face (0.996), like Oda's (0.940) and not like adult Wren (0.087): compared with
+taken in 2020 is very like Wren's child face (0.996), like Oda's (0.707) and not like adult Wren (0.087): compared with
 each person's faces of the years around its own, it is Oda, wherever it is asked -- Suggest's people, Identify's grid
 for Oda, the strip on the open photo, the list of the boxes and the plan of Name faces from tags. Before cut 2 of phase
 4a the strip and the boxes compared it with every year and said Wren while Suggest said Oda.
 
 A photo dated only by its folder name has no Date Taken, so no year to choose by: every matcher reads dates.era_year of
 Date Taken (B-2 of the branch, decided), and Suggest and Identify both compare its face with every year (Wren).
+
+The likenesses are read under the cuts of the library's face model (AdaFace's: a name offered from 0.310 and 0.090 ahead
+of the next person, given unasked from 0.520 and 0.205 ahead): Oda is far enough from Wren's child face (0.289 behind it)
+that, compared with every year, the face is Wren's by the margin each place asks.
 
 Rows are made as the code that makes them makes them: the photos by the indexer's record (tests/photo_rows.py), the
 tree by tagpup.store.taxonomy, the faces by tagpup.store.faces; the pages through Flask's test client.
@@ -79,7 +83,7 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
             self.face(self.photo("school/wren_%d.jpg" % year, year), 0, WREN)
         for year in range(2018, 2023):   # Wren and Oda as adults, each on photos of their own
             self.face(self.photo("club/wren_%d.jpg" % year, year), 90, WREN)
-            self.face(self.photo("club/oda_%d.jpg" % year, year), 25, ODA)
+            self.face(self.photo("club/oda_%d.jpg" % year, year), 50, ODA)
 
     def photo(self, name, year=None, keywords=()):
         """An indexed photo, a picture on disk, taken in `year` (its Date Taken) or undated."""
@@ -183,10 +187,10 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
 
     def test_with_nobody_sought_the_faces_past_the_cap_are_chosen_by_the_likeness_the_grid_shows(self):
         # Two unnamed faces of 2020 on photos naming nobody, room for one. The one at 10 degrees from Wren's child face is
-        # 0.98 like it (a raw maximum over every year) but 0.82 like Oda of 2020, the best of its years; the other is 0.94
+        # 0.98 like it (a raw maximum over every year) but 0.50 like Oda of 2020, the best of its years; the other is 0.97
         # like Wren of 2020. The card shows, and the page orders the bucket by, the likeness of the years: the second wins.
         child_like = self.face(self.photo("harbour/jetty.jpg", 2020), -10)
-        alike = self.face(self.photo("harbour/pier.jpg", 2020), 70)
+        alike = self.face(self.photo("harbour/pier.jpg", 2020), 75)
         with mock.patch.object(identify, "UNCLUSTERED_LIMIT", 1):
             tuner = web.create_app("tuner", startup=self.library)
             tuner.testing = True

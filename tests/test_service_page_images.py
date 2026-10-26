@@ -13,9 +13,9 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
 
-from face_rows import add_face  # noqa: E402
+from face_rows import FACE_MODEL, add_face  # noqa: E402
 
-from tagpup.core import clustering, validation  # noqa: E402
+from tagpup.core import clustering  # noqa: E402
 from tagpup.core.result import NotFound, Refused  # noqa: E402
 from tagpup.services import faces as face_service, identify, photos  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -167,7 +167,7 @@ class APhotosFacePanel(unittest.TestCase):
         self.face(known, unit(1), name="Jane Doe")
         self.face(known, unit(0, 0, 1), name="Mo Park", excluded=1, excluded_reason="stranger")
         alike = self.face(target, unit(1, 0.01))
-        strangers = self.face(target, unit(0.6, 0.8))         # 0.6 alike Jane's: as alike as strangers are (#75)
+        strangers = self.face(target, unit(0.2, 0.98))        # 0.2 alike Jane's: as alike as strangers are (#75)
         self.face(target, unit(0, 0, 0, 1), name="Sam Hart")
         aside = self.face(other, unit(0, 0, 1))                # alike only Mo Park's excluded face
         left_out = self.face(other, unit(0, 0, 1), excluded=1, excluded_reason="stranger")
@@ -177,7 +177,7 @@ class APhotosFacePanel(unittest.TestCase):
         self.assertEqual("Sam Hart", shown["faces"][0]["name"], "an unidentified face sorted first")
         self.assertEqual(("Jane Doe", None), (by_id[alike]["suggestion"], by_id[strangers]["suggestion"]))
         self.assertGreater(by_id[alike]["similarity"], 0.9)
-        self.assertLess(0.6, clustering.cuts_of(validation.MTCNN_FACENET).offer_a_name)
+        self.assertLess(0.2, clustering.cuts_of(FACE_MODEL).offer_a_name)
         self.assertEqual((3, 2), (shown["total"], shown["unmatched"]))
         elsewhere = self.panel(other)
         by_id = {each["id"]: each for each in elsewhere["faces"]}
