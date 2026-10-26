@@ -1368,7 +1368,13 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
         # A dry run, or a stop before any photo was written: no change, and no photo recorded as looked at.
         if not apply_ or not any(folder.changes or folder.none_found for folder in found):
             _stopped_before_writing()
-        console.print("Stopped: what was written stays written and undoable; run it again to go on.", markup=False)
+        if any(folder.changes for folder in found):
+            written = "what was written stays written and undoable"
+            if any(folder.none_found for folder in found):
+                written += " (recording photos as looked at is not taken back by an undo)"
+        else:
+            written = "what was written stays written; recording photos as looked at is not taken back by an undo"
+        console.print("Stopped: %s; run it again to go on." % written, markup=False, soft_wrap=True)
         raise SystemExit(1)
     if not apply_:
         console.print("Nothing changed. --apply writes it, after a snapshot of the library unless one is from today: one "

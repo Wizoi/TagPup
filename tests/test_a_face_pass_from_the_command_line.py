@@ -235,6 +235,16 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         self.assertNotIn("stays written", stopped.output)
         self.assertEqual(before, self.dump())
 
+    def test_ctrl_c_after_an_apply_that_only_recorded_photos_does_not_say_an_undo_takes_them_back(self):
+        for name in ("first.jpg", "second.jpg", "third.jpg"):
+            self.photo(self.regatta, name)
+        stopped = self.cli(CtrlCAt({}, "second.jpg"), "face-pass", self.regatta, "--apply")
+        self.assertEqual(1, stopped.exit_code, stopped.output)
+        self.assertIn("Stopped: what was written stays written; recording photos as looked at is not taken back by an "
+                      "undo; run it again to go on.", stopped.output)
+        self.assertNotIn("undoable", stopped.output)
+        self.assertEqual([], self.changes())
+
     def test_ctrl_c_before_the_first_photo_says_it_stopped_and_writes_nothing(self):
         found = self.three_photos(self.regatta)
         before = self.dump()
