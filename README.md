@@ -49,7 +49,7 @@ The **TagPup GUI** is a lightweight, responsive local web interface designed to 
 The **AI CLI Engine** is the underlying machine learning backend that indexes visual features, matches face coordinates, and computes predictions.
 
 ### Key Scenarios & Capabilities
-*   **Incremental Indexing**: Generates visual embeddings using **CLIP**, the photo model named in the library's settings (`ViT-H-14`, 1024-dimensional, by default; SigLIP 2 SO400M, 1152-dimensional, once a library is switched to it), and face crops using **MTCNN + Facenet**. Incremental indexes scan quickly by skipping files with matching sizes and timestamps.
+*   **Incremental Indexing**: Generates visual embeddings using the photo model named in the library's settings (**SigLIP 2** SO400M, 1152-dimensional, every library's), and finds and recognises faces with **SCRFD + AdaFace**. Incremental indexes scan quickly by skipping files with matching sizes and timestamps.
 *   **Semantic natural language search**: Cosine similarity queries against the FAISS vector database index, allowing you to find files by writing natural text prompts (in the TagPup page's search).
 *   **Automated Tag Suggestion**: Infers keywords using visual similarity, decay-weighted capture timestamps, path hints, and event-level consensus.
 *   **Face Profile Self-Tuning**: Clusters face vectors using **DBSCAN** and labels identity centroids automatically by analyzing photo metadata. Recognizes known faces in untagged images to boost tagging predictions.
@@ -71,7 +71,7 @@ The **AI CLI Engine** is the underlying machine learning backend that indexes vi
 ### 🔧 Installation & Setup
 
 1. **Clone or download** this repository.
-2. **Run the setup script** to initialize the virtual environment (`.venv`), install PyTorch (with GPU/CUDA acceleration if supported), CLIP, FAISS, and MTCNN.
+2. **Run the setup script** to initialize the virtual environment (`.venv`), install PyTorch (with GPU/CUDA acceleration if supported), SigLIP 2 (open_clip), FAISS, and the face models (SCRFD, AdaFace).
 
    **Using PowerShell:**
    ```powershell
@@ -113,7 +113,7 @@ For guides, tutorials, specifications, and schemas:
 
 ## ⚙️ Settings
 
-Each library holds its own settings: the CLIP model its vectors are made with, the face-detection thresholds, Suggest's candidate words, the rename format and the ExifTool program. Change them in TagTuner's gear, **Library settings**; the ones whose change has consequences (the model, face detection, ExifTool) are locked behind a **Change...** that lists each consequence to acknowledge. Every change is recorded in the library's history and can be undone (`tagpup_cli.py --db <library> history`, `undo`).
+Each library holds its own settings: the photo model its vectors are made with, the face-detection thresholds, Suggest's candidate words, the rename format and the ExifTool program. Change them in TagTuner's gear, **Library settings**; the ones whose change has consequences (the model, face detection, ExifTool) are locked behind a **Change...** that lists each consequence to acknowledge. Every change is recorded in the library's history and can be undone (`tagpup_cli.py --db <library> history`, `undo`).
 
 A new library starts with the defaults. The libraries are in `data/` in the TagPup home: the folder the code is in, unless the `TAGPUP_HOME` environment variable names another. ExifTool is found where its installer puts it, else on PATH.
 
