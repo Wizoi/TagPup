@@ -209,8 +209,8 @@ class TheSwitchWaitsForTheVectors(_Libraries):
             result = switch(harbour, {"model.name": sibling[0], "model.pretrained": sibling[1],
                                       "model.force_image_size": ""}, apply=apply)
             self.assertEqual("Nothing was written: ViT-SO400M-14-SigLIP2-378 (weights webli) is not a photo model TagPup "
-                             "holds the word cut of. It holds: ViT-H-14 (laion2b_s32b_b79k), ViT-SO400M-14-SigLIP2 "
-                             "(webli), ViT-Other-14 (other-weights).", result.refused)
+                             "holds the word cut of. It holds: ViT-SO400M-14-SigLIP2 (webli), ViT-H-14 "
+                             "(laion2b_s32b_b79k), ViT-Other-14 (other-weights).", result.refused)
             self.assertEqual(before, rows_of(harbour.path))
 
     def test_the_page_is_told_the_counts_of_a_switch_it_is_allowed(self):
