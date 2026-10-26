@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import web_client  # noqa: E402
 
+from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -61,9 +62,9 @@ class ARuntime(unittest.TestCase):
         self.library = Library(path)
 
     def test_builds_no_model_until_one_is_asked_for(self):
-        from tagpup.ml import clip, faces
+        from tagpup.ml import clip, scrfd_adaface
         with mock.patch.object(clip, "ClipModel") as clip_model, \
-                mock.patch.object(faces, "FaceModel") as face_model:
+                mock.patch.object(scrfd_adaface, "ScrfdAdaFace") as face_model:
             runtime = Runtime()
             clip_model.assert_not_called()
             face_model.assert_not_called()
@@ -71,9 +72,10 @@ class ARuntime(unittest.TestCase):
             self.assertIs(runtime.faces(self.library), runtime.faces(self.library))
         found = library_settings.of(self.library)
         clip_model.assert_called_once_with(**found.embedder)
-        # The face models' settings but their `model`, which picks MTCNN and FaceNet (tagpup.runtime._build_faces).
-        mtcnn = {key: value for key, value in found.faces.items() if key != "model"}
-        face_model.assert_called_once_with(**mtcnn)
+        # The library's face model, the new library's: SCRFD and AdaFace, which take no settings
+        # (tagpup.runtime._build_faces).
+        self.assertEqual({"model": validation.SCRFD_ADAFACE}, found.faces)
+        face_model.assert_called_once_with()
 
     def test_the_candidate_words_are_read_at_each_run(self):
         """The candidate words were read when each Suggest run began; an edit reached the
@@ -97,10 +99,10 @@ class ARuntime(unittest.TestCase):
                          Runtime().model_key(self.library))
 
     def test_reads_the_librarys_settings(self):
-        library_settings.change(self.library, {"faces.min_face_size": "33", "candidates.tags": "Kayak, Lighthouse"},
-                                acknowledged=["faces"])
+        library_settings.change(self.library, {"model.max_aspect_ratio": "1.2", "candidates.tags": "Kayak, Lighthouse"},
+                                acknowledged=["clip"])
         runtime = Runtime()
-        self.assertEqual(33, runtime.settings(self.library).faces["min_face_size"])
+        self.assertEqual(1.2, runtime.settings(self.library).embedder["max_aspect_ratio"])
         self.assertEqual(["Kayak", "Lighthouse"], runtime.candidate_words(self.library))
 
 
