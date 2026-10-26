@@ -515,7 +515,7 @@ def resolve(photo_index, on_step=None):
             # it was named at, against the person's closest face (tagpup.core.clustering)
             # -- unless the photo's own keywords name the person: the tag bears the name
             # out, whatever the likeness (docs/findings.md, #855). That took away the
-            # names faces-from-tags had written at 0.70 to 0.80.
+            # names faces-from-tags had written between its offer and naming cuts.
             for f in photo_faces:
                 name = face_resolved.get(f["id"])
                 if name and name in resolved_by_name and name not in photo_tags:
