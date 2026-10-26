@@ -346,7 +346,7 @@ still named or on the review list; the counts printed: matched, unmatched, new, 
 Owners: Data (migration), People (identity), Views-AI (detector, recogniser, card), Files for nothing written to a
 file. Size: three merges (migration and readers; detector and recogniser behind the setting; the pass and calibration).
 
-**Merge 2b, as built (2026-10-18).** The setting `faces.model` (`mtcnn-facenet`, the default, or `scrfd-adaface`;
+**Merge 2b, as built (2026-10-18).** The setting `faces.model` (`scrfd-adaface`, the default of every new library since cut A1, or `mtcnn-facenet`, the default when this was built;
 locked, in its own group "face-model", "The face model", whose consequences say what switching does -- the face
 detection group's are MTCNN's; the dialog offers it as a list of the rule's choices; a library holding no value reads as
 the default). A library set to a model whose vectors it
