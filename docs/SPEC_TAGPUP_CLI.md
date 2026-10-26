@@ -13,7 +13,7 @@ AI-powered local tag inference for photo libraries. Runs entirely on your local 
 The tool is built as a modular Python application with script wrappers. It relies on the following key components:
 
 ```
-[Untagged Image] ---> [ClipEmbedder (ViT-H-14)] ---> 1024-dim Vector
+[Untagged Image] ---> [ClipEmbedder (SigLIP 2)] ---> 1152-dim Vector
                                                               |
                                                               v
 [Tagged Library] ---> [MetadataExtractor]       ---> [PhotoIndex (SQLite + FAISS)]
@@ -28,9 +28,9 @@ The tool is built as a modular Python application with script wrappers. It relie
 - **`tagpup_cli.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
 - **`tagpup/files/metadata.py` (Metadata Extraction)**: Interfaces with `exiftool` to read standard metadata fields in batches of 500. Handles bare and namespaced tag keys. What the fields mean -- tags, people, captions -- is `tagpup/core/vocabulary.py`; the library's people are read by `tagpup/store/taxonomy.py` and handed to each batch.
 - **`tagpup/runtime.py` (The models)**: Builds the CLIP model and the face models once for each set of settings, from the settings of the library the command is given (`--db`; `tagpup.services.settings`), and hands them to what needs them. Nothing else builds a model.
-- **`tagpup/ml/clip.py` (Visual Embeddings)**: CLIP (`ViT-H-14` by default, customizable resolution up to $512 \times 512$) using PyTorch (supporting GPU/CUDA acceleration if available with FP16 half-precision, or falling back to CPU). Generates normalized embeddings. `tagpup/services/search.py` (`PhotoEmbeddings`) keeps each photo's in the library, so an unchanged file is not embedded again.
+- **`tagpup/ml/clip.py` (Visual Embeddings)**: The photo model (SigLIP 2 SO400M, `ViT-SO400M-14-SigLIP2` / `webli`, at its native 224 pixels, every library's) using PyTorch (supporting GPU/CUDA acceleration if available with FP16 half-precision, or falling back to CPU). Generates normalized embeddings. `tagpup/services/search.py` (`PhotoEmbeddings`) keeps each photo's in the library, so an unchanged file is not embedded again.
 - **`tagpup/services/search.py` (SQLite & FAISS Vector Index)**: `PhotoIndex` loads a library's photo records and their vectors from the store (`tagpup/store/`) and builds an in-memory `faiss.IndexFlatIP` flat index (`tagpup/ml/vector_index.py`) for rapid cosine similarity queries.
-- **`tagpup/ml/faces.py` (Face Recognition)**: Detects face bounding boxes using **MTCNN** and generates 512-dimensional face vectors using **InceptionResnetV1** (supporting GPU/CUDA and FP16 acceleration).
+- **`tagpup/ml/faces.py` (Face Recognition)**: Detects face bounding boxes and generates face vectors with the library's face model: **SCRFD + AdaFace** (`scrfd-adaface`, every new library's), or **MTCNN + InceptionResnetV1** (`mtcnn-facenet`, 512-dimensional vectors) for a library not yet switched (supporting GPU/CUDA and FP16 acceleration).
 - **`tagpup/services/identities.py` (Identity Clustering)**: Performs density-based clustering (**DBSCAN**) of a library's faces to resolve and assign names to visual identities based on co-occurrence tagging patterns, by the rules in `tagpup/core/clustering.py`.
 - **`tagpup/store/taxonomy.py` (Hierarchical Tag Taxonomy)**: Builds and updates a tree of all known hierarchical paths (e.g. `Family/Immediate/John Doe`). Resolves leaf tags to their ancestors.
 - **`tagpup/services/suggester.py` (Tag Suggestion Engine)**: Scores tags using cosine similarity of nearest visual neighbors and boosts matched tags if specific face embeddings are recognized in the target image. It is given its models.
@@ -44,7 +44,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 | **Operating System** | Windows 10 or 11 |
 | **Python** | Python 3.10+ added to system PATH |
 | **ExifTool** | Installed on path or resolved dynamically in `tagpup_cli.py` (defaults to `%USERPROFILE%\AppData\Local\Programs\ExifTool\exiftool.exe`) |
-| **Disk Space** | ~3.8 GB one-time download for the default `ViT-H-14` CLIP model weights. Face models require ~112 MB. Cache consumes ~4 KB per photo indexed. |
+| **Disk Space** | One-time download of the SigLIP 2 SO400M photo model's weights (about 4 GB in the Hugging Face cache). Face models require ~112 MB. Cache consumes ~4 KB per photo indexed. |
 | **Hardware Acceleration** | NVIDIA GPU with CUDA support (e.g. CUDA 12.1 runtime) enables FP16 hardware acceleration, offering 2x-3x speedup. Falls back to CPU if CUDA is unavailable. |
 
 ---

@@ -1,7 +1,7 @@
 /**
  * The library's settings, from the gear (docs/ARCHITECTURE.md, phase 7.6).
  *
- * The settings a library depends on -- the CLIP model its vectors were made with, face
+ * The settings a library depends on -- the photo model its vectors were made with, face
  * detection, Suggest's candidate words, the rename format and the ExifTool program --
  * lived in config.ini, which nothing in the pages showed. Each library holds its own
  * now, and this dialog shows and changes them. It is made entirely from what the server

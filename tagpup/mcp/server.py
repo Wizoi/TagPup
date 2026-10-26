@@ -189,7 +189,7 @@ def build():
 
     @tool("What a library holds, as tools/doctor.py prints it: photos, faces, named, named by hand, "
           "excluded, untagged; the schema's version, the tag tree's nodes, the people the photos "
-          "list, and photos without a CLIP vector for the library's CLIP model. Counts only.")
+          "list, and photos without a vector for the library's photo model. Counts only.")
     def summary(library: str) -> dict[str, Any]:
         def read():
             found = find_library(library, photos=False)
@@ -234,7 +234,7 @@ def build():
 
     @tool("Every consistency check tools/doctor.py runs, in its order, with how many rows break "
           "each and how many checks are broken; and how many photos have no CLIP vector for the "
-          "library's CLIP model, and `people_at_the_top` -- the people directly under the tag tree's root, "
+          "library's photo model, and `people_at_the_top` -- the people directly under the tag tree's root, "
           "not yet filed in a branch (reported, not broken). Rows whose file is gone are missing_files'."
           + REVEAL)
     def checks(library: str, reveal: bool = False) -> dict[str, Any]:
