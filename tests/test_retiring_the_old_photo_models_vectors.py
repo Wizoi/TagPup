@@ -6,10 +6,10 @@ to it (set-photo-model): photo_index holds about 244 MB of them that nothing rea
   words that would go; nothing is written.
 - Applied, the vectors under every other key go, and the words Suggest cached under the old model; the own key's
   vectors and the own model's words stay byte for byte. Each key is one change of the journal, its undo refused
-  (retire_faces.VECTORS_RETIRED), and the undo of the switch away from the old model is refused in History with the
+  (retire_photo_vectors.VECTORS_RETIRED), and the undo of the switch away from the old model is refused in History with the
   switch's own sentence: no photo holds a vector under it any more.
 - Stopped after a chunk (Ctrl+C), or by an app started during the run, the chunks written stand; a run again continues
-  as the same change, the words gone once.
+  as the same change, the words gone once, also after the owner changed a setting in between (#1788).
 - A switch back beside the run (an undo of the switch from History) ends it at the next chunk, nothing of it written.
 - A photo removed meanwhile (a sync) takes its vectors with it, and the run counts only what it deleted.
 - A library whose own model does not hold its photos' vectors (rotated since, each rotation taking the vectors away) is
@@ -38,7 +38,6 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photo_reembed  # noqa: E402
-from tagpup.services import retire_faces  # noqa: E402
 from tagpup.services import retire_photo_vectors  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -140,11 +139,11 @@ class _Library(unittest.TestCase):
 
     def retiring_changes(self):
         return {key: [change for (change,) in read(self.library.path, "SELECT id FROM changes WHERE operation = ?"
-                                                                      " ORDER BY id", (retire_faces.VECTORS_OPERATION % key,))]
+                                                                      " ORDER BY id", (retire_photo_vectors.VECTORS_OPERATION % key,))]
                 for key in (OLD_KEY, THIRD_KEY)}
 
     def cli(self, *args):
-        with mock.patch.object(retire_faces, "VECTOR_CHUNK", 4):
+        with mock.patch.object(retire_photo_vectors, "VECTOR_CHUNK", 4):
             return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "retire-photo-vectors"] + list(args))
 
 
@@ -170,7 +169,7 @@ class RetiredWhole(_Library):
         own_vectors, own_words = self.vectors(NEW_KEY), self.words(NEW)
         _held, plans = self.plans()
         self.assertEqual([THIRD_KEY, OLD_KEY], [planned.key for planned in plans])
-        with mock.patch.object(retire_faces, "VECTOR_CHUNK", 4):
+        with mock.patch.object(retire_photo_vectors, "VECTOR_CHUNK", 4):
             retired = [retire_photo_vectors.apply(self.library, planned) for planned in plans]
         self.assertEqual([3, 10], [done.deleted for done in retired])
         self.assertEqual([0, 4], [done.word_rows for done in retired])
@@ -188,7 +187,7 @@ class RetiredWhole(_Library):
 
         listed = {entry["id"]: entry["why_not"]
                   for entry in journal_service.history(self.library, limit=10)["changes"]}
-        self.assertEqual(retire_faces.VECTORS_RETIRED % OLD_KEY, listed[retired[1].change_id])
+        self.assertEqual(retire_photo_vectors.VECTORS_RETIRED % OLD_KEY, listed[retired[1].change_id])
         self.assertEqual(library_settings.TOO_FEW_PHOTO_VECTORS % (library_settings.PHOTOS_HELD % (0, 10, OLD_KEY, 10), 5),
                          listed[self.switch_change])
         before = rows_of(self.library.path)
@@ -204,7 +203,7 @@ class StoppedAndRunAgain(_Library):
         _held, plans = self.plans()
         old = plans[1]
         heard = []
-        with mock.patch.object(retire_faces, "VECTOR_CHUNK", 4):
+        with mock.patch.object(retire_photo_vectors, "VECTOR_CHUNK", 4):
             first = retire_photo_vectors.apply(self.library, old, stop=lambda: bool(heard),
                                                heard=lambda chunk, chunks: heard.append((chunk.deleted, chunks)))
         self.assertEqual([(4, 3)], heard)
@@ -212,9 +211,11 @@ class StoppedAndRunAgain(_Library):
         self.assertEqual((4, 4), (first.deleted, first.word_rows))
         self.assertEqual(6, len(self.vectors(OLD_KEY)))
         self.assertEqual([], self.words(OLD))
+        # The owner changes a setting in between: the run again continues the same change all the same (#1788).
+        self.assertTrue(library_settings.change(self.library, {"candidates.tags": "Heron"}).changed)
         _held, plans = self.plans()
         self.assertEqual(first.change_id, plans[1].continues)
-        with mock.patch.object(retire_faces, "VECTOR_CHUNK", 4):
+        with mock.patch.object(retire_photo_vectors, "VECTOR_CHUNK", 4):
             second = retire_photo_vectors.apply(self.library, plans[1])
         self.assertEqual((6, 0, False), (second.deleted, second.word_rows, second.stopped))
         self.assertEqual(first.change_id, second.change_id)
@@ -261,10 +262,10 @@ class BesideTheRun(_Library):
             undone = journal_service.undo(self.library, self.switch_change, apply=True)
             self.assertFalse(undone.refused, undone.refused)
 
-        with mock.patch.object(retire_faces, "VECTOR_CHUNK", 2):
+        with mock.patch.object(retire_photo_vectors, "VECTOR_CHUNK", 2):
             retired = retire_photo_vectors.apply(self.library, plans[0], heard=undone_from_history)
-        self.assertEqual((retire_faces.MODEL_MOVED, 2), (retired.error, retired.deleted))
-        self.assertIn(retire_faces.SWITCH_BACK % NEW_KEY, retired.said())
+        self.assertEqual((retire_photo_vectors.MODEL_MOVED, 2), (retired.error, retired.deleted))
+        self.assertIn(retire_photo_vectors.SWITCH_BACK % NEW_KEY, retired.said())
         self.assertEqual(1, len(self.vectors(THIRD_KEY)), "the next chunk was written")
 
     def test_a_photo_removed_meanwhile_takes_its_vectors_and_the_run_counts_what_it_deleted(self):
@@ -276,7 +277,7 @@ class BesideTheRun(_Library):
                 a_sync_removes_it.done = True
                 self.assertEqual(1, store_photos.forget_photo(self.library.path, removed)["photos"])
 
-        with mock.patch.object(retire_faces, "VECTOR_CHUNK", 4):
+        with mock.patch.object(retire_photo_vectors, "VECTOR_CHUNK", 4):
             retired = retire_photo_vectors.apply(self.library, plans[1], heard=a_sync_removes_it)
         self.assertEqual((9, None), (retired.deleted, retired.error))
         self.assertIn("9 vectors under %s deleted" % OLD_KEY, retired.said())

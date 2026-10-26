@@ -120,8 +120,7 @@ def switch_on(conn, model, counted=True):
     """(refusal or None, what the faces hold under `model`): whether the library may be switched to the face model `model`
     (UNPASSED_SHARE_ALLOWED), and one sentence saying how many of its faces hold a vector under it and how many named
     faces hold none, said either way. FaceNet, which made every face the libraries hold before the new model's pass, is refused only
-    when none of the library's faces holds a vector under it (NONE_HELD: its vectors retired, tagpup.services.retire_faces
-    .apply_vectors), and its pass's count is not read for it (not_passed 0: a face in a photo the new model's pass has not
+    when none of the library's faces holds a vector under it (NONE_HELD: its vectors retired), and its pass's count is not read for it (not_passed 0: a face in a photo the new model's pass has not
     reached is no part of a switch back); its sentence says only how many faces hold no FaceNet vector (those the new model
     made while the library was on it), and is left out when none do. A library with no faces is not refused. Read-only, by
     tagpup.store.faces.vector_counts and, for a switch to another model, pass_counts. Whether a face holds a FaceNet vector

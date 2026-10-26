@@ -90,7 +90,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
         return Cannot(NEVER_EXAMINED, "Its faces were never looked for by the library's face detector.")
     missing = sum(vector is None for _id, _box, _ref, vector, _excluded in rows)
     if missing:
-        return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model: retire-faces first." % missing)
+        return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model: index them again first." % missing)
     try:
         stored_w, stored_h, turn = shape()
         file_holds = held()

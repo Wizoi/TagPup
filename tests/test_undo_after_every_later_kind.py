@@ -4,23 +4,18 @@ library really holds in sequence, each made by its real writer, the History dial
 (tagpup.services.journal.why_not is their one account): the listing offers the Undo button exactly when the rehearsal and
 the undo do not refuse; a refusal writes nothing -- no row, no generation, no change's status, no file; an undo allowed
 is a round trip the rehearsal found exact; and whether it is allowed is what the owner was promised (EXPECTED_REFUSED),
-saying so in the sentence of the check that owns it: a stamp, a migration and a vectors' retiring are never undone; a
-face pass not while the retiring after it stands; a retiring not while a face was made since in a photo it emptied, nor
-once its vectors' model was retired; a switch of face model not where the switch back would be refused. A refusal that a
-later change of its own stands in the way of is lifted by undoing that one first: undone in that order, both are.
+saying so in the sentence of the check that owns it: a stamp and a migration are never undone; a switch of face model
+not where the switch back would be refused. A refusal that a later change of its own stands in the way of is lifted by
+undoing that one first: undone in that order, both are.
 
 The kinds: a stamp of the settings, a change of the settings, a switch of face model and a switch back, a face pass, a
-retiring of the old detector's faces and of the old model's vectors, a migration's record (a synthetic additive step,
-tests/migration_names.py), a sync and a refresh of a row re-read from its file, Save on a photo, Smart Rename and a bake
-of a folder's photos (real ExifTool, changes of photo files), and Suggest's detection (no change of its own, a later step only). Left to the
+migration's record (a synthetic additive step, tests/migration_names.py), a sync and a refresh of a row re-read from its
+file, Save on a photo, Smart Rename and a bake of a folder's photos (real ExifTool, changes of photo files). Left to the
 guard (tests/test_every_change_kind_has_an_undo_check.py): dedupe_faces and merge_duplicate_person_tags (no live library
 holds a duplicate face or a bare person tag, counted 2026-10-24), the bulk edits, tag renames and face namings (each a
 change of photo files or of faces whose way back is the journal's alone, None in UNDO_CHECKS, as Save's is).
 
-Lifted (each scenario a pair here, their tests deleted): test_retiring_the_old_detectors_faces' pass under a standing
-retiring, retiring after a pass, and retiring after Suggest's detection, each undone in order; test_retiring_the_old_
-models_vectors' undo of the retirings and the switch once the vectors are retired; test_history_routes' listing agreeing
-with the rehearsal; test_journal's migration never undone; test_journal_through_the_services' refused undo writing
+Lifted (each scenario a pair here, their tests deleted): test_history_routes' listing agreeing with the rehearsal; test_journal's migration never undone; test_journal_through_the_services' refused undo writing
 nothing; test_a_switched_library_indexes_and_suggests_with_its_model's refusals of the switch.
 
 One library is built (harbour: six photos read by the index, faces as the old detector and the new model's pass left
@@ -48,8 +43,7 @@ from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import baking_report, face_pass, refresh_rows, retire_faces, sync, tagging  # noqa: E402
-from tagpup.services import faces as face_records  # noqa: E402
+from tagpup.services import baking_report, face_pass, refresh_rows, sync, tagging  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -94,24 +88,6 @@ def a_later_pass(case, library):
     finally:
         conn.close()
     return change_id
-
-
-def a_retiring(case, library):
-    planned = retire_faces.plan(library)
-    if planned.refused or not planned.photo_ids:
-        return None
-    retired = retire_faces.apply(library, planned, clear_manual_names=True)
-    return retired.changes[0] if retired.changes else None
-
-
-def a_vectors_retiring(case, library):
-    """retire-vectors, after retire-faces as the owner runs them when faces hold the old model's vector alone."""
-    planned = retire_faces.plan_vectors(library)
-    if planned.refused and a_retiring(case, library) is not None:
-        planned = retire_faces.plan_vectors(library)
-    if planned.refused or not planned.vectors:
-        return None
-    return retire_faces.apply_vectors(library, planned).change_id
 
 
 def a_migration(case, library):
@@ -178,20 +154,11 @@ def a_bake(case, library):
     return changes[0] if changes else None
 
 
-def suggest_detects(case, library):
-    """Suggest's detection in the sixth photo, which it looks at again only when it holds no face: no change."""
-    embedding = np.random.default_rng(9).standard_normal(512).astype(np.float32).tolist()
-    return True if face_records.record_detected(
-        library.path, case.photo[6], [{"box": [7, 7, 27, 27], "prob": 0.99, "embedding": embedding}], model=NEW) else None
-
-
 #: The kinds made by a writer here, earlier or later: name -> make.
 WRITERS = {
     "settings": a_settings_change,
     "switch back": a_switch_back,
     "later pass": a_later_pass,
-    "retire faces": a_retiring,
-    "retire vectors": a_vectors_retiring,
     "migration": a_migration,
     "sync": a_sync,
     "refresh": a_refresh,
@@ -201,23 +168,8 @@ WRITERS = {
 }
 #: The changes the library holds when it is built: earlier kinds only (name -> the case's attribute holding the id).
 BUILT = {"stamp": "stamp_change", "pass": "pass_change", "switch": "switch_change"}
-#: Later steps that make no change of their own.
-STEPS = {"suggest detects": suggest_detects}
 #: Kinds made again for each later kind: a rename's undo knows the renamed file by what a copy does not keep.
 MADE_EACH_TIME = {"smart rename"}
-
-
-#: (earlier, later) pairs a library cannot hold, so the later kind's writer makes nothing (the diagonal is not generated).
-NOT_HELD = (
-    # Suggest detects only in a photo that holds no face: the retirings empty photos, every other earlier kind leaves
-    # the sixth photo's face in place.
-    {(a, "suggest detects") for a in list(BUILT) + list(WRITERS)
-     if a not in ("retire faces", "retire vectors", "suggest detects")}
-    # After a switch back the library is on the old model: retiring its faces or its vectors has nothing to retire.
-    | {("switch back", "retire faces"), ("switch back", "retire vectors")}
-    # The vectors' retiring leaves no faces of the old detector to retire, and a switch back needs the new model.
-    | {("retire vectors", "switch back"), ("retire vectors", "retire faces")}
-)
 
 
 def sentence(template):
@@ -225,23 +177,12 @@ def sentence(template):
     return max(re.split(r"%\(?\w*\)?[sd]", template), key=len).strip()
 
 
-VECTORS_RETIRED = retire_faces.VECTORS_RETIRED % FACENET
-#: Earlier kinds never undone, whatever came after -- a stamp, a migration's record, a vectors' retiring -- and what the
-#: refusal says.
-NEVER_UNDONE = {"stamp": library_settings.NOT_UNDONE, "migration": "a migration is not undone",
-                "retire vectors": VECTORS_RETIRED}
+#: Earlier kinds never undone, whatever came after -- a stamp, a migration's record -- and what the refusal says.
+NEVER_UNDONE = {"stamp": library_settings.NOT_UNDONE, "migration": "a migration is not undone"}
 #: (earlier, later) whose undo is refused, and what the refusal says: every other pair a library can hold is undone.
 EXPECTED_REFUSED = {
-    # A face pass, while the retiring after it stands (retire_faces.pass_check).
-    **{(a, b): sentence(retire_faces.PASS_STANDS_IN)
-       for a in ("pass", "later pass") for b in ("retire faces", "retire vectors")},
-    # The switch, once a switch back changed its row (the journal), or no face holds FaceNet's vector (NONE_HELD).
+    # The switch, once a switch back changed its row (the journal).
     ("switch", "switch back"): "changed the same rows: undo it first",
-    ("switch", "retire vectors"): sentence(library_settings.NONE_HELD),
-    # The retiring, once a face was made since in a photo it emptied (RETIRING_UNDER), or its vectors were retired.
-    ("retire faces", "later pass"): sentence(retire_faces.RETIRING_UNDER),
-    ("retire faces", "suggest detects"): sentence(retire_faces.RETIRING_UNDER),
-    ("retire faces", "retire vectors"): VECTORS_RETIRED,
     # A bake and a rename of one photo file, either way round: the later one first (file_journal.newer_overlapping, #1926).
     ("smart rename", "bake"): "applied after it, wrote the same photo files: undo it first",
     ("bake", "smart rename"): "applied after it, wrote the same photo files: undo it first",
@@ -274,7 +215,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
 
     @classmethod
     def build(cls, library):
-        """harbour, as test_retiring_the_old_detectors_faces' library: six photos (real JPEGs, their keywords written
+        """harbour: six photos (real JPEGs, their keywords written
         by ExifTool), faces as the pass left them -- matched faces holding FaceNet's vector and the new model's, faces
         the old detector alone found holding FaceNet's, one alone in the sixth photo -- named automatically, by hand,
         nobody, excluded or undecided; the pass one change; switched to the new model after it."""
@@ -393,7 +334,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
     def test_an_earlier_change_is_undone_after_every_later_kind_as_history_offers_it(self):
         outcomes, n, ordered = {}, 0, 0
         earlier = list(BUILT) + list(WRITERS)
-        later = list(WRITERS) + list(STEPS)
+        later = list(WRITERS)
         for a in earlier:
             with entered(a):
                 n += 1
@@ -419,7 +360,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                             library = self.copy(after_a, "a%d_%s" % (n, b.replace(" ", "_")))
                         if a != "migration":
                             context.enter_context(entered(b))
-                        made = (WRITERS.get(b) or STEPS[b])(self, library)
+                        made = WRITERS[b](self, library)
                         if made is None:
                             outcomes[(a, b)] = None
                             continue
@@ -451,11 +392,11 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                             self.assertEqual("undone", journal.history(library.path, change_id=change_a)[0]["status"])
         made = {pair for pair, refused in outcomes.items() if refused is not None}
         self.assertTrue(set(EXPECTED_REFUSED) <= made, "a pair the promise names was not made")
-        self.assertEqual(NOT_HELD, {pair for pair, refused in outcomes.items() if refused is None},
-                         "the pairs a writer made nothing in are the pairs a library cannot hold, and no others")
+        self.assertEqual(set(), {pair for pair, refused in outcomes.items() if refused is None},
+                         "a later kind's writer made nothing after an earlier kind")
         self.assertGreater(len(made), 100, "the pairs a library can hold were not made")
-        self.assertEqual(6, ordered, "the pairs undone in order: a pass and the retiring after it, both ways, the switch, "
-                                     "a bake and the rename after it, a rename and the bake after it")
+        self.assertEqual(3, ordered, "the pairs undone in order: the switch, a bake and the rename after it, a rename and "
+                                     "the bake after it")
         # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.
 
     def test_a_sync_is_not_offered_once_a_save_wrote_its_photo(self):
