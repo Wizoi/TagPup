@@ -440,6 +440,18 @@ def parse_box(box):
     return json.loads(box) if box else []
 
 
+#: The shorter side, in pixels of the picture as stored, under which a face is not made new by the detector's passes and
+#: not baked into a file (owner, 2026-10-18 and 2026-10-25): smudges no one can recognise.
+NEW_FACE_FLOOR = 40
+
+
+def is_big_enough(box):
+    """Whether a face in `box` ([x1, y1, x2, y2] in pixels of the picture as stored) is at least NEW_FACE_FLOOR on its
+    shorter side: the one test of a face made new (tagpup.ml.scrfd_adaface.new_faces) and of a face baked
+    (tagpup.services.baking.plan_photo)."""
+    return min(box[2] - box[0], box[3] - box[1]) >= NEW_FACE_FLOOR
+
+
 def face_crop(photo_path, box):
     """The face in `box` cut from its photo, as a JPEG no larger than CROP_SIZE on a
     side (face_crop_of)."""

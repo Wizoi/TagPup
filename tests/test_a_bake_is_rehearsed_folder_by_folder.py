@@ -49,6 +49,11 @@ class ALibraryToBake(BakeCase):
         super().setUp()
         library_settings.stamp(self.library, {"faces.model": FACES, "paths.exiftool": baked_files.EXIFTOOL},
                                operation=library_settings.FROM_REPLACED)
+        # The test pictures are 16 x 12: their faces are a pixel or two across. The floor of a baked face (#1973) is lowered
+        # to one pixel for them; the test of the floor itself puts it back.
+        patcher = mock.patch.object(images, "NEW_FACE_FLOOR", 1)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         os.makedirs(os.path.join(self.folder, "Second"))
 
     def write(self, work):

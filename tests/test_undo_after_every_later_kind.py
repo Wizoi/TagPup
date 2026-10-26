@@ -299,7 +299,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
             matched_in = {n: [] for n in cls.photo}
 
             def face(n, matched, automatic=None, by_hand=None, nobody=False, excluded=None):
-                face_id = store_faces.insert(conn, cls.photo[n], [n, n, 20 + n, 20 + n], vector(rng), model=FACENET,
+                face_id = store_faces.insert(conn, cls.photo[n], [n, n, 40 + n, 40 + n], vector(rng), model=FACENET,
                                              name=automatic, crop=bytes([n]) * 64, prob=0.98)
                 if matched:
                     matched_in[n].append((face_id, vector(rng)))

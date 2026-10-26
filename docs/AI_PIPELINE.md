@@ -708,7 +708,7 @@ final model's and never rewritten for a model change.
 the local desktop (the card is there), copied to the server, and added to the library there without the card, the
 library reading the vectors and regions instead of computing them. This sets the shape of the project:
 - **Two sides, one format, every machine both** (owner, 2026-10-16: the server can also write). Any machine that has
-  the card analyses a photo and bakes the final model's vectors and every detected face's region into its XMP (the
+  the card analyses a photo and bakes the final model's vectors and the region of every face of 40 px or more on its shorter side into its XMP (a smaller face is not baked, named or not, owner 2026-10-25; the
   *write side*). An index on any machine first looks at the file: if its baked model key is compatible (equal to the
   library's current model key) it takes the vectors and regions and the card is never asked (the *read side*, the
   streamlined path); if the bake is missing, stale or from another model, the machine computes the photo itself and
