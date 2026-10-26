@@ -5,8 +5,8 @@ which faces are dismissed as background noise, and how remaining faces are match
 leftover name tags.
 
 Embeddings are synthetic unit vectors arranged so DBSCAN's grouping is unambiguous:
-faces of one identity sit within the 0.48 euclidean epsilon of each other, and
-different identities sit far outside it. That keeps every assertion about the
+faces of one identity sit within the library's face model's grouping radius of each other (DBSCAN_EPS, the new face
+model's, SCRFD and AdaFace's), and different identities sit far outside it. That keeps every assertion about the
 *decision rules* rather than about clustering luck.
 
 No model is loaded: resolution reads the faces' stored vectors.
@@ -24,6 +24,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+from tagpup.core import clustering
 from tagpup.services import identities
 from tagpup.services.identities import resolution_trace_path
 from tagpup.services.search import PhotoIndex
@@ -34,7 +35,8 @@ import photo_rows  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 FACE_DIM = 512
-DBSCAN_EPS = 0.48
+#: The grouping radius of the face model a new library is on, as a distance: what DBSCAN is given.
+DBSCAN_EPS = clustering.cuts_of(face_rows.FACE_MODEL).group_distance
 
 
 def identity_vector(seed):
@@ -223,9 +225,9 @@ class TestAFaceUnlikeThePersonIsNotNamedForThem(FaceClusteringTestBase):
         jane = identity_vector(1)
         anchor = self.add_face(self.add_photo("anchor.jpg", people=["Jane Doe"]), jane)
         crowd = self.add_photo("crowd.jpg", people=["Jane Doe"])
-        # Both about 0.5 like Jane: more than a stranger's, less than the 0.70 that would offer her name.
-        strangers = [self.add_face(crowd, near(jane, 2, distance=1.7), box=(0, 0, 100, 100)),
-                     self.add_face(crowd, near(jane, 3, distance=1.7), box=(200, 0, 300, 100))]
+        # Both about 0.24 like Jane: more than a stranger's, less than the 0.31 that would offer her name.
+        strangers = [self.add_face(crowd, near(jane, 2, distance=4.0), box=(0, 0, 100, 100)),
+                     self.add_face(crowd, near(jane, 3, distance=4.0), box=(200, 0, 300, 100))]
 
         self.resolve()
         self.assertEqual("Jane Doe", self.name_of(anchor))
@@ -311,7 +313,7 @@ class TestBackgroundFaceFiltering(FaceClusteringTestBase):
     def test_a_tiny_face_can_still_be_matched_with_high_confidence(self):
         """The counterpart: the final pass ignores the size filter.
 
-        A small face that is visually confident (>= 0.80), confirmed by the photo's
+        A small face that is visually confident (named unasked), confirmed by the photo's
         own tags, and whose name is not already taken by another face is still named
         -- the desired outcome for someone genuinely small in frame.
         """
