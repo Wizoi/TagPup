@@ -16,8 +16,9 @@ makes it a reference for later guesses (tagpup.services.identify.decided_faces, 
   their node throughout (two people called alike are two): a face carries a keyword person when its id is theirs.
 * The tag alone is trusted only as far as the face looks like the person (#833). The detector often finds
   the other person in frame, not the tagged one: on photo_index a third of the faces the tag alone would
-  name were below 0.70 of the person's decided faces. So when the person HAS decided faces, the face must
-  be one a name is offered at (clustering.Cuts.is_offered: FaceNet's 0.70) against them; otherwise it is left for Identify Faces. A person with NO
+  name were below FaceNet's offer (0.70, measured then) of the person's decided faces. So when the person HAS decided
+  faces, the face must be one a name is offered at against them (clustering.Cuts.is_offered, the library's offer cut,
+  clustering.cuts_of its face model); otherwise it is left for Identify Faces. A person with NO
   decided face -- a new person on one photo -- is named by the tag alone, but ONLY when exactly one photo of
   theirs has a face to be named (#839): there is nothing to compare, and the face is then the person's first
   decided face. With several such photos none is named by the tag (clustering or Identify Faces names them):
@@ -76,8 +77,8 @@ class Plan:
     named by comparison; `left`, those with nothing named (for Identify Faces). Of the photos
     with one face and one person (`tag_alone`): `no_decided_face`, the person has none, so the
     tag alone names it; `like_them`, `like_them_somewhat` and `not_like_them`, the face's best
-    cosine to their decided faces at or above 0.80, from 0.70 to 0.80, and below 0.70 (those are
-    left); `not_decidable_yet`, the person has no decided face and several photos with a face to be named,
+    cosine to their decided faces at or above the library's naming cut, from its offer cut to its naming cut, and below
+    its offer cut (those are left; clustering.cuts_of the library's face model); `not_decidable_yet`, the person has no decided face and several photos with a face to be named,
     all left; `unreadable_face`, a face with no embedding to compare, left; `background_sized`,
     faces under clustering.BACKGROUND_AREA that were not counted as faces to be named."""
 
