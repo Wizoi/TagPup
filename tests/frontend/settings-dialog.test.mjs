@@ -87,7 +87,7 @@ describe("the settings dialog", () => {
     assert.deepEqual([...dialog.querySelectorAll(".settings-group h4")].map((h) => h.textContent),
                      ["The photo model", "The face model", "Face detection", "ExifTool", "Library folders", "Suggest",
                       "Smart Rename"]);
-    assert.equal(field("model.name").value, "ViT-H-14");
+    assert.equal(field("model.name").value, "ViT-SO400M-14-SigLIP2");
     assert.equal(field("model.preserve_full_frame").type, "checkbox");
     assert.equal(field("model.preserve_full_frame").checked, true);
     assert.equal(field("paths.exiftool").placeholder, "Found: C:/Programs/ExifTool/exiftool.exe");
@@ -154,7 +154,7 @@ describe("the settings dialog", () => {
     window.alert = (text) => shown.push(text);
     click(window, changeButton("face-model"));
     const select = field("faces.model");
-    select.value = "scrfd-adaface";
+    select.value = "mtcnn-facenet";
     select.dispatchEvent(new window.Event("change", { bubbles: true }));
     boxes("face-model").forEach((box) => click(window, box));
     click(window, save());
@@ -163,7 +163,7 @@ describe("the settings dialog", () => {
   });
 
   test("the face model is one of the choices the rules publish, locked behind its own consequences", async (t) => {
-    const said = "2 of the library's 2 faces hold a vector under scrfd-adaface.";
+    const said = "2 of the library's 2 faces hold a vector under mtcnn-facenet.";
     const { window, field, save, changeButton, boxes, posted } = await tunerWithSettings(t, { saved: {
       success: true, changed: 1, settings: ["faces.model"], locked: true, change: 9,
       face_vectors: { faces: 2, without: 0, named_without: 0, not_passed: 0, said } } });
@@ -179,14 +179,14 @@ describe("the settings dialog", () => {
     click(window, changeButton("face-model"));
     assert.ok(!select.disabled, "Change... left the face model locked");
     assert.equal(boxes("face-model").length, declared.consequences.length);
-    select.value = "scrfd-adaface";
+    select.value = "mtcnn-facenet";
     select.dispatchEvent(new window.Event("change", { bubbles: true }));
     assert.ok(save().disabled, "Save is enabled before the consequences are ticked");
     boxes("face-model").forEach((box) => click(window, box));
     assert.ok(!save().disabled);
     click(window, save());
     await flush(window, 6);
-    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.model": "scrfd-adaface" },
+    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.model": "mtcnn-facenet" },
                                                      acknowledged: ["face-model"] }]);
     assert.deepEqual(shown, [said], "the switch's counts were not shown before the reload");
   });
