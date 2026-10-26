@@ -10,7 +10,8 @@ file or a row of the library but `follower`: the write is tagpup.services.file_c
 module for the follower, so this one never imports it.
 
 A photo is baked whole or not at all (owner, decision 3): one face holding no vector under the library's face model refuses
-the photo. A photo whose detector never ran is "never examined", never "none found": FacesFound 0 is an answer only the
+the photo. A face under images.NEW_FACE_FLOOR on its shorter side, named or not, is not baked and does not refuse the photo (owner,
+2026-10-25, #1973); a photo whose only faces are small is baked as a photo with no face. A photo whose detector never ran is "never examined", never "none found": FacesFound 0 is an answer only the
 detector gives.
 """
 import collections
@@ -88,6 +89,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     rows = store_faces.in_photo_with_names(conn, photo_path, keys.face)
     if not rows and not faces_detected.detected(conn, photo_path, keys.detector):
         return Cannot(NEVER_EXAMINED, "Its faces were never looked for by the library's face detector.")
+    rows = [row for row in rows if images.is_big_enough(images.parse_box(row[1]))]   # a small face is not baked (#1973)
     missing = sum(vector is None for _id, _box, _ref, vector, _excluded in rows)
     if missing:
         return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model: index them again first." % missing)

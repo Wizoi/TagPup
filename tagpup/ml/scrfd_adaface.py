@@ -59,7 +59,7 @@ CONVERTER = "scripts/make_scrfd_torchscript.py"
 #: floor is SMALLEST_FACE, and in one real folder 31 of its 40 new faces were under 40 px, smudges no one can recognise (the
 #: old detector's smallest was 23, its median 64). An old face a detection of any size matches still gets the vector (the
 #: pass). Read in slice C against held-out named faces (tagpup.services.face_gate.FLOORS).
-NEW_FACE_FLOOR = 40
+NEW_FACE_FLOOR = images.NEW_FACE_FLOOR
 
 
 def weights_folder():
@@ -141,7 +141,7 @@ def new_faces(detected, picture):
     if isinstance(detected, NotDetected):
         return detected
     made = [dict(face) for face in detected
-            if min(face["box"][2] - face["box"][0], face["box"][3] - face["box"][1]) >= NEW_FACE_FLOOR]
+            if images.is_big_enough(face["box"])]
     for face in made:
         face["crop_image"] = images.face_crop_of(picture.stored, face["box"])
     return made
