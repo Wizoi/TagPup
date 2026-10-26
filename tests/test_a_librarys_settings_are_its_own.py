@@ -20,6 +20,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
 import web_client  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
@@ -56,8 +57,13 @@ class Model:
         self.unloaded += 1
 
 
+#: The photo model the owner puts the library on: one other than a new library's (SigLIP 2), declared by the test.
+OTHER = stand_in_models.OTHER_PHOTO_MODEL
+
+
 class TheGearDialog(unittest.TestCase):
     def setUp(self):
+        stand_in_models.declare_other_photo_model(self)
         self.runtime = Runtime(build_clip=Model, build_faces=Model)
         self.app, self.home = web_client.app_for(self, "tuner", runtime=self.runtime)
         self.client = self.app.test_client()
@@ -91,7 +97,8 @@ class TheGearDialog(unittest.TestCase):
         old_clip = self.runtime.clip(self.quarry)
 
         # A change of the model is locked: refused naming the group and what it means, until it is acknowledged.
-        values = {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": "", "candidates.tags": "Kayak, Lighthouse", "model.preserve_full_frame": False}
+        values = {"model.name": OTHER[0], "model.pretrained": OTHER[1], "model.force_image_size": "512",
+                  "candidates.tags": "Kayak, Lighthouse", "model.preserve_full_frame": False}
         refused = self.post(values)
         self.assertEqual(400, refused.status_code)
         for text in (validation.SETTING_GROUPS["clip"]["title"], validation.SETTING_GROUPS["clip"]["consequences"][0]):
@@ -103,14 +110,14 @@ class TheGearDialog(unittest.TestCase):
         answer = done.get_json()
         self.assertEqual((True, 5, True), (answer["success"], answer["changed"], answer["locked"]))
         held = rows(self.quarry)
-        self.assertEqual(("ViT-SO400M-14-SigLIP2", "false"), (held["model.name"], held["model.preserve_full_frame"]), "as the validator reads them")
+        self.assertEqual((OTHER[0], "false"), (held["model.name"], held["model.preserve_full_frame"]), "as the validator reads them")
         newest = history(self.quarry)[0]
         self.assertEqual((answer["change"], settings.CHANGE), (newest["id"], newest["operation"]))
         self.assertEqual(settings.STAMPED, rows(self.other), "the other library is its own")
         self.assertEqual(1, old_clip.unloaded, "the runtime lets go of the model no library uses")
         self.assertEqual(0, self.post(values, acknowledged=["clip"]).get_json()["changed"], "the same values write nothing")
         self.assertEqual(2, len(history(self.quarry)))
-        self.assertEqual((["Kayak", "Lighthouse"], "ViT-SO400M-14-SigLIP2"), self.words_of_the_next_run())
+        self.assertEqual((["Kayak", "Lighthouse"], OTHER[0]), self.words_of_the_next_run())
 
         # Undone in History: rehearsed, then applied; the next run reads the old words again.
         undo = "/quarry/api/history/%d/undo" % answer["change"]

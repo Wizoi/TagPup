@@ -1,7 +1,7 @@
 """The jobs that use the graphics card take turns on it, and say so (docs/findings.md, #750).
 
 Adding a folder started its index and Suggest on the same 165 photos at once, each loading
-its own ViT-H-14; both sat at 0 of 165 for over half an hour. Now:
+its own photo model (ViT-H-14 then); both sat at 0 of 165 for over half an hour. Now:
 
 - Suggest of a folder this process is indexing, or has queued to index, waits for that
   index (tagpup.jobs.indexing.IndexQueue.indexing): the index writes the vectors and faces
@@ -385,17 +385,23 @@ class _CpuModel:
         self.unloads += 1
 
 
+#: A photo model other than a new library's (SigLIP 2), which the test declares, so cove can be put on it in the gear.
+OTHER = stand_in_models.OTHER_PHOTO_MODEL[0]
+
+
 class TwoLibrariesNamingTwoModels(_Library):
     """harbour names the default CLIP model, cove another; Suggest in both at once in one server (#761)."""
 
     def setUp(self):
         super().setUp()
+        stand_in_models.declare_other_photo_model(self)
         self.cove = Library(self.home.library("cove.db"))
         library_actions.create(self.cove.path)
         self.jetty = paths.stored(os.path.join(self.home.root, "Jetty"))
         os.makedirs(self.jetty)
         library_actions.record_added(self.cove, [self.jetty])
-        changed = library_settings.change(self.cove, {"model.name": "ViT-SO400M-14-SigLIP2", "model.pretrained": "webli", "model.force_image_size": ""}, acknowledged=["clip"])
+        changed = library_settings.change(self.cove, stand_in_models.ON_THE_OTHER_PHOTO_MODEL,
+                                          acknowledged=["clip"])
         self.assertTrue(changed.changed, changed.refused)
         self.built = []
         #: The CLIP models that cannot be made (a download refused, say), by name.
@@ -438,12 +444,12 @@ class TwoLibrariesNamingTwoModels(_Library):
         clips = [model for model in self.built if "model_name" in model.settings]
         self.assertEqual(1, len(clips))
         harbour_clip = clips[0].settings["model_name"]
-        self.assertNotEqual("ViT-SO400M-14-SigLIP2", harbour_clip)
+        self.assertNotEqual(OTHER, harbour_clip)
 
         refused = self.suggest_in_cove()
         self.assertEqual("error", refused["status"], refused)
         self.assertIn("Suggest Regatta (harbour) is using the CLIP model %s" % harbour_clip, refused["message"])
-        self.assertIn("cove names ViT-SO400M-14-SigLIP2", refused["message"])
+        self.assertIn("cove names %s" % OTHER, refused["message"])
         self.assertIn("Nothing was suggested", refused["message"])
         self.assertEqual(1, len([model for model in self.built if "model_name" in model.settings]),
                          "cove's model was built beside harbour's")
@@ -463,7 +469,7 @@ class TwoLibrariesNamingTwoModels(_Library):
         harbours = self.runtime.settings(self.library).embedder
         changed = library_settings.change(self.cove, {"model.name": harbours["model_name"],
                                                       "model.pretrained": harbours["pretrained"],
-                                                      "model.force_image_size": "336"}, acknowledged=["clip"])
+                                                      "model.max_aspect_ratio": "1.0"}, acknowledged=["clip"])
         self.assertEqual(3, changed.changed, changed.refused)
         with mock.patch.object(suggester_service, "model_for_run", lambda *args, **kwargs: _FakeModel()):
             harbours = self.runtime.begin(self.library, what="Suggest Regatta (harbour)")
@@ -471,9 +477,9 @@ class TwoLibrariesNamingTwoModels(_Library):
         with self.assertLogs("tagpup.jobs.suggestions", "INFO") as logged:
             refused = self.suggest_in_cove()
         self.assertEqual("error", refused["status"], refused)
-        size = self.runtime.settings(self.library).embedder["force_image_size"]
-        self.assertNotEqual(336, size)
-        self.assertIn("with force_image_size %s; cove names it with force_image_size 336" % size, refused["message"])
+        ratio = self.runtime.settings(self.library).embedder["max_aspect_ratio"]
+        self.assertNotEqual(1.0, ratio)
+        self.assertIn("with max_aspect_ratio %s; cove names it with max_aspect_ratio 1.0" % ratio, refused["message"])
         self.assertFalse([line for line in logged.output if not line.startswith("INFO")], "the refusal was logged as a failure")
         self.assertFalse([record for record in logged.records if record.exc_info], "the refusal was logged with a traceback")
 
@@ -485,10 +491,10 @@ class TwoLibrariesNamingTwoModels(_Library):
         self.assertEqual(0, harbours.unloads, "a model was let go between two runs on it")
         self.assertEqual(2, len(self.built), "harbour's second run built its models again")
 
-        # Then in cove, which names ViT-SO400M-14-SigLIP2: harbour's CLIP model is let go before cove's is used.
+        # Then in cove, which names the other photo model: harbour's CLIP model is let go before cove's is used.
         self.assertEqual("completed", self.suggest_in_cove()["status"])
         harbour_clip = harbours.settings["model_name"]
-        self.assertEqual([[harbour_clip], [harbour_clip], ["ViT-SO400M-14-SigLIP2"]], self.loaded_when_used,
+        self.assertEqual([[harbour_clip], [harbour_clip], [OTHER]], self.loaded_when_used,
                          "two CLIP models were loaded at once")
         self.assertEqual(1, harbours.unloads)
         faces = [model for model in self.built if "model_name" not in model.settings]
@@ -496,7 +502,7 @@ class TwoLibrariesNamingTwoModels(_Library):
         self.assertEqual(0, faces[0].unloads, "the face models the two share were let go")
 
     def test_a_suggest_on_other_models_waits_for_the_startup_warm_up(self):
-        """The server starts and warms harbour's models; the owner clicks Suggest in cove, naming ViT-SO400M-14-SigLIP2, while they load.
+        """The server starts and warms harbour's models; the owner clicks Suggest in cove, naming another photo model, while they load.
         The warm-up held no run's place, so cove's run began, dropped harbour's models and loaded its own while the warm-up
         went on with harbour's: two sets at once (#1423). Now the warm-up is a run of its own while it loads."""
         started, release = threading.Event(), threading.Event()
@@ -516,7 +522,7 @@ class TwoLibrariesNamingTwoModels(_Library):
             release.set()
             warming.join(DEADLINE)
         self.assertEqual("completed", self.suggest_in_cove()["status"])
-        self.assertEqual([["ViT-SO400M-14-SigLIP2"]], self.loaded_when_used, "two CLIP models were loaded at once")
+        self.assertEqual([[OTHER]], self.loaded_when_used, "two CLIP models were loaded at once")
 
     def test_a_suggest_whose_models_cannot_be_made_loses_none_of_those_kept(self):
         """cove's CLIP model cannot be made. The run is refused, and harbour's models, kept between its runs, are still
@@ -524,10 +530,10 @@ class TwoLibrariesNamingTwoModels(_Library):
         made them again beside them."""
         self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
         [harbours] = self.clips()
-        self.unmakeable = ("ViT-SO400M-14-SigLIP2",)
+        self.unmakeable = (OTHER,)
         refused = self.suggest_in_cove()
         self.assertEqual("error", refused["status"], refused)
-        self.assertIn("ViT-SO400M-14-SigLIP2 cannot be made", refused["message"])
+        self.assertIn("%s cannot be made" % OTHER, refused["message"])
         self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
         self.assertEqual([harbours], self.clips(), "harbour's CLIP model was made a second time")
         self.assertEqual(0, harbours.unloads)

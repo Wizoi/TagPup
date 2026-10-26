@@ -15,7 +15,9 @@ What the owner lives through:
 * the weights missing: nothing is done, and it says what to fetch.
 
 Photos are real files (Pillow), rows as the index makes them (tests/photo_rows.py), faces as it stores them
-(tests/face_rows.py), the library made by the picker's Create, in a home of the test's own (tests/own_home.py)."""
+(tests/face_rows.py), the library made by the picker's Create, in a home of the test's own (tests/own_home.py). A face
+the photos hold before the pass is the old detector's, its vector FaceNet's: one under the new model's key is a photo
+the pass has done."""
 import os
 import signal
 import sys
@@ -30,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
-from face_rows import add_face, person_of  # noqa: E402
+from face_rows import FACENET, add_face, person_of  # noqa: E402
 from stand_in_models import NewFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
@@ -103,7 +105,7 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         conn = db.connect(self.db_path)
         try:
             columns = {"name": name, "name_source": "manual"} if name else {}
-            face_id = add_face(conn, path, box, bytes(32), prob=0.99, **columns)
+            face_id = add_face(conn, path, box, bytes(32), model=FACENET, prob=0.99, **columns)
             conn.commit()
         finally:
             conn.close()

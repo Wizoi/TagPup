@@ -126,7 +126,7 @@ class FaceDecisionCase(unittest.TestCase):
             return runner.invoke(cli, ["--test"] + args)
 
 
-@patch("tagpup.ml.faces.FaceModel", lambda **settings: FakeFaceProcessor())
+@patch("tagpup.ml.scrfd_adaface.ScrfdAdaFace", lambda: FakeFaceProcessor())
 @patch("tagpup.ml.clip.ClipModel._init_model")
 @patch("tagpup.ml.clip.ClipModel.picture_input")
 @patch("tagpup.ml.clip.ClipModel.embed_input")
