@@ -18,13 +18,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
-from face_rows import FACENET, add_face, person_of  # noqa: E402
-from stand_in_models import Faces, NewFaces  # noqa: E402
+from face_rows import FACENET, add_face, on_facenet, person_of  # noqa: E402
+from stand_in_models import NewFaces  # noqa: E402
 
 from tagpup.services import face_pass  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, faces_detected, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -33,7 +34,7 @@ from tagpup.store import roots as store_roots  # noqa: E402
 NEW = NewFaces.key
 #: The name the new model's detections are recorded under, as the index, Suggest and a bake spell it; and MTCNN's.
 DETECTOR = face_service.detector_of(NewFaces(), None)
-MTCNN = face_service.detector_of(Faces(), None)
+MTCNN = faces_detected.detector({"min_face_size": 20, "confidence_threshold": 0.9, "mtcnn_thresholds": [0.6, 0.7, 0.7]})
 #: The journal's own record, and the counters every write moves: not what the pass is to leave as it found.
 BOOKKEEPING = ("changes", "change_rows", "generations", "sqlite_sequence")
 
@@ -54,8 +55,10 @@ class FacePass(unittest.TestCase):
         self.db_path = self.library("harbour.db")
 
     def library(self, name):
+        """A library on FaceNet, as the live libraries were when the pass ran over them."""
         path = self.home.library(name)
         schema.ensure(path)
+        on_facenet(path)
         return path
 
     def photo(self, name, db_path=None, turned=False, broken=False):
@@ -81,7 +84,8 @@ class FacePass(unittest.TestCase):
     def face(self, path, box, seed, db_path=None, **columns):
         conn = db.connect(db_path or self.db_path)
         try:
-            face_id = add_face(conn, path, box, facenet(seed), prob=0.99, **columns)
+            # The old detector's face, holding FaceNet's vector, as each face did before the pass.
+            face_id = add_face(conn, path, box, facenet(seed), model=FACENET, prob=0.99, **columns)
             conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop(seed)))
             conn.commit()
         finally:
@@ -110,8 +114,10 @@ class FacePass(unittest.TestCase):
                                                  (face_id,), db_path)]
 
     def changes(self, db_path=None):
+        """The changes that stand, the library's stamp of its settings left out (it is the library's first, not the pass's)."""
         return [operation for (operation,) in self.query(
-            "SELECT operation FROM changes WHERE status = 'applied' AND undone IS NULL ORDER BY id", db_path=db_path)]
+            "SELECT operation FROM changes WHERE status = 'applied' AND undone IS NULL ORDER BY id", db_path=db_path)
+            if operation not in library_settings.STAMPS]
 
     # ---- What each face keeps, and what is made ---------------------------------------------------------------
 
@@ -382,7 +388,7 @@ class FacePass(unittest.TestCase):
         first = self.dump()
         operation = face_pass.OPERATION % NEW
         self.assertEqual([operation], self.changes())
-        ((summary,),) = self.query("SELECT summary FROM changes")
+        ((summary,),) = self.query("SELECT summary FROM changes WHERE operation = ?", (operation,))
         self.assertEqual({"matched": 2, "new": 2}, {key: value for key, value in json.loads(summary).items()
                                                      if key != "folder"}, "the change says what was committed")
         self.assertEqual({"face_embeddings": {"insert": 4}, "faces": {"insert": 2}, "face_crops": {"insert": 2}},
@@ -471,7 +477,8 @@ class FacePass(unittest.TestCase):
         class UndoneMeanwhile(NewFaces):
             def detect_and_embed(self, picture):
                 if os.path.basename(picture.path) == "lap3.jpg":
-                    (change_id,) = [i for (i,) in test.query("SELECT id FROM changes")]
+                    (change_id,) = [i for (i,) in test.query("SELECT id FROM changes WHERE operation = ?",
+                                                             (face_pass.OPERATION % NEW,))]
                     journal.undo(test.db_path, change_id)
                 return super().detect_and_embed(picture)
         written = self.run_pass(UndoneMeanwhile(found))
@@ -498,7 +505,8 @@ class FacePass(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(folders, [json.loads(summary)["folder"] for (summary,) in
-                                   self.query("SELECT summary FROM changes ORDER BY id")])
+                                   self.query("SELECT summary FROM changes WHERE operation = ? ORDER BY id",
+                                              (face_pass.OPERATION % NEW,))])
         read = []
         kept_named = journal.kept_named
         with unittest.mock.patch.object(journal, "kept_named", lambda *args: read.append(args) or kept_named(*args)):
