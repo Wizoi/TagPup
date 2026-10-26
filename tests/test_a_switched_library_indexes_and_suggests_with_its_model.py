@@ -65,7 +65,7 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import stand_in_models  # noqa: E402
 import web_client  # noqa: E402
-from face_rows import FACENET, add_face, add_vector_of_face  # noqa: E402
+from face_rows import FACENET, add_face, add_vector_of_face, on_facenet  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.core import clustering, paths, validation  # noqa: E402
@@ -138,13 +138,16 @@ class TheNewModelStoodIn:
 @unittest.skipIf(own_home.installed_exiftool() is None, "ExifTool not installed")
 class ALibrarySwitchedToTheNewModel(unittest.TestCase):
     """lakeside, open in TagTuner: one folder; Wren Calloway named by hand on one photo, and a photo whose keyword names
-    her holding one face nobody named; every face holding FaceNet's vector and the new model's (its pass done)."""
+    her holding one face nobody named; every face holding FaceNet's vector and the new model's (its pass done). Stamped
+    on FaceNet, as the live libraries were before the new model (a new library is stamped on it)."""
 
     def setUp(self):
         self.runtime = Runtime(build_clip=lambda settings: stand_in_models.Clip(CLIP_DIM))
-        app, self.home = web_client.app_for(self, "tuner", startup="lakeside.db", runtime=self.runtime)
+        app, self.home = web_client.app_for(self, "tuner", startup=None, runtime=self.runtime)
         self.client = app.test_client()
         self.library = Library(self.home.library("lakeside.db"))
+        on_facenet(self.library.path)
+        library_actions.create(self.library.path)
         self.addCleanup(self.runtime.forget, self.library)
         self.folder = paths.stored(os.path.join(self.home.root, "Lakeside"))
         os.makedirs(self.folder)
