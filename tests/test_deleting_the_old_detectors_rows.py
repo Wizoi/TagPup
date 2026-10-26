@@ -29,6 +29,8 @@ from click.testing import CliRunner  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.ml.scrfd_adaface import ScrfdAdaFace  # noqa: E402
+from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import maintenance  # noqa: E402
@@ -103,6 +105,8 @@ class DeletingTheOldDetectorsRows(unittest.TestCase):
         return read(self.library.path, "SELECT id, operation, status FROM changes ORDER BY id")
 
     def test_the_owner_deletes_them_undoes_it_and_deletes_them_again(self):
+        # The rule tells MTCNN's names by the absence of a `model` key: the new model's name, as the index records it.
+        self.assertEqual(NEW, face_service.detector_of(object.__new__(ScrfdAdaFace), None))
         before, changes, settings = rows_of(self.library.path), self.changes(), library_settings.read(self.library)
         # A new library is stamped with the group's four (the live ones hold three: no faces.detect_max_side).
         self.assertLessEqual(set(old_detector_rows.OLD_SETTINGS), self.held())
