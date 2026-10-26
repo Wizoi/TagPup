@@ -337,20 +337,20 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         self.assertEqual([], self.unpaired)
 
     def two_look_alike_siblings_and_their_photo_together(self, by_hand):
-        """Ivo and Ines Marsh look alike: a solo photo of each, tagged with them alone, and a photo tagged with both whose first
-        face is closer to Ines -- by more than the margin of naming unasked (about 0.05; AFaceBetweenTwoCousins for one
-        closer by less) -- and whose second is like neither. The two solo faces and the first face of the pair group into
-        one cluster. `by_hand`: the owner also names each solo face in TagTuner."""
-        ivo = identity_vector(41)
-        ines = near(ivo, 2, distance=0.35)
+        """Ivo and Ines Marsh look alike (0.87): a solo photo of each, tagged with them alone, and a photo tagged with both
+        whose first face is closer to Ines (0.94 against 0.64) -- by more than the margin of naming unasked (the new face
+        model's 0.205; AFaceBetweenTwoCousins for one closer by less) -- and whose second is like neither. The two solo
+        faces and the first face of the pair group into one cluster (each within the model's 0.80 of the next).
+        `by_hand`: the owner also names each solo face in TagTuner."""
+        ivo, ines = at(0), at(30)
         solos = [self.add_face(self.photo_tagged("ivo.jpg", ["Ivo Marsh"]), ivo),
                  self.add_face(self.photo_tagged("ines.jpg", ["Ines Marsh"]), ines)]
         if by_hand:
             db.write_with_connection(self.db_path, lambda conn: (store_faces.name(conn, [solos[0]], "Ivo Marsh"),
                                                                   store_faces.name(conn, [solos[1]], "Ines Marsh")))
         shared = self.photo_tagged("both.jpg", ["Ivo Marsh", "Ines Marsh"])
-        look_alike = self.add_face(shared, near(ines, 3, distance=0.1), box=(0, 0, 200, 200))
-        other = self.add_face(shared, identity_vector(42), box=(300, 0, 500, 200))
+        look_alike = self.add_face(shared, at(50), box=(0, 0, 200, 200))
+        other = self.add_face(shared, at(200), box=(300, 0, 500, 200))
         self.run_while(lambda conn: None)
         return solos, look_alike, other
 
@@ -545,13 +545,22 @@ def at(degrees):
     return vector
 
 
+#: How like Mara the face between the cousins is: named unasked by the new face model (0.52), and short of grouping with her
+#: face (0.80; tagpup.core.clustering.ADAFACE_CUTS); a hair less like Tobin is short of naming unasked.
+LIKENESS = 0.56
+#: Ahead of the other cousin by less than a name is offered at (0.09).
+A_HAIR = 0.05
+#: Ahead of the other cousin by more than a name is given unasked at (0.205).
+WELL_AHEAD = 0.25
+
+
 class AFaceBetweenTwoCousins(FaceClusteringTestBase):
     """The margin rule (docs/AI_PIPELINE.md, phase 2b; owner, 2026-10-17). Mara and Tobin Quill are cousins, each with a solo
     photo of their own; a photo of the two of them together holds one face that is `likeness` like Mara and `margin` less like
-    Tobin. A name resting on likeness alone needs both the likeness and the margin over the next person (0.04 to name with no
-    one looking, 0.02 to offer); a name the face already carries, or one given by hand, is never taken away by it. Each
-    screen that names or offers a face is asked of the same face. Mutation: the margin dropped from the gates (the old code)
-    names the face at 0.805 and a margin of 0.01 in every place below."""
+    Tobin. A name resting on likeness alone needs both the likeness and the margin over the next person (the new face model's
+    0.205 to name with no one looking, 0.09 to offer); a name the face already carries, or one given by hand, is never taken
+    away by it. Each screen that names or offers a face is asked of the same face. Mutation: the margin dropped from the gates
+    (the old code) names the face at LIKENESS and a margin of A_HAIR in every place below."""
 
     photo_tagged = ClusteringMeetsNaming.photo_tagged
     run_while = ClusteringMeetsNaming.run_while
@@ -588,7 +597,7 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         return strip[face], bands["Mara Quill"]
 
     def test_a_face_a_hair_more_like_one_cousin_is_not_named_by_cluster_faces(self):
-        face = self.cousins(0.805, 0.01)
+        face = self.cousins(LIKENESS, A_HAIR)
 
         self.run_while(lambda conn: None)
 
@@ -596,7 +605,7 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         self.assertIn("final_matching_tagged_photo_failed", self.traces()[face]["resolution_method"])
 
     def test_the_same_face_well_ahead_of_the_other_cousin_is_named_as_before(self):
-        face = self.cousins(0.85, 0.06)
+        face = self.cousins(LIKENESS, WELL_AHEAD)
 
         self.run_while(lambda conn: None)
 
@@ -617,29 +626,29 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         return face_service_automatch(self.library(), os.path.dirname(self.together), self.decided()).details["faces"]
 
     def test_it_is_not_offered(self):
-        face = self.cousins(0.805, 0.01, by_hand=True)
+        face = self.cousins(LIKENESS, A_HAIR, by_hand=True)
         self.assertEqual((None, None), self.offered(face), "the strip or the boxes offered one cousin of two")
 
     def test_re_examine_does_not_name_it(self):
-        self.cousins(0.805, 0.01, by_hand=True)
+        self.cousins(LIKENESS, A_HAIR, by_hand=True)
         self.assertEqual(0, self.re_examined(), "Re-examine would name the face for one cousin")
 
     def test_its_photos_tags_do_not_name_it(self):
-        self.cousins(0.805, 0.01, by_hand=True)
+        self.cousins(LIKENESS, A_HAIR, by_hand=True)
         self.assertEqual([], self.named_by_its_tags(), "the photo's tags named the face for one cousin")
 
     def test_its_photos_tags_name_it_once_the_other_cousins_face_there_is_named(self):
-        """The owner names one of the photo's other faces Tobin; a third, a stranger's, stays unnamed. The face 0.81 like
-        Mara and 0.79 like Tobin is then ahead of everyone the photo's other faces do not hold, as cluster-faces' pairing
+        """The owner names one of the photo's other faces Tobin; a third, a stranger's, stays unnamed. The face 0.56 like
+        Mara and 0.51 like Tobin is then ahead of everyone the photo's other faces do not hold, as cluster-faces' pairing
         asks it (owner, 2026-10-17): a save of the photo's tags names it Mara."""
-        face = self.cousins(0.81, 0.02, by_hand=True)
+        face = self.cousins(LIKENESS, A_HAIR, by_hand=True)
         tobin = self.add_face(self.together, at(170), box=(300, 0, 500, 200))
         self.add_face(self.together, at(250), box=(600, 0, 800, 200))
         db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [tobin], "Tobin Quill"))
         self.assertEqual([face], self.named_by_its_tags(), "a cousin the photo's other face holds kept the face from Mara")
 
     def test_well_ahead_it_is_offered_and_named_by_each(self):
-        face = self.cousins(0.85, 0.06, by_hand=True)
+        face = self.cousins(LIKENESS, WELL_AHEAD, by_hand=True)
 
         self.assertEqual(("Mara Quill", "likely"), self.offered(face))
         self.assertEqual(1, self.re_examined())
@@ -648,14 +657,14 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
     def test_a_name_the_face_carries_stays_through_two_reruns(self):
         """#855: the margin gates names given from now on; the name an earlier run gave, which the photo's keywords bear out,
         stays (about 18,500 of photo_index's would go otherwise, counted 2026-10-17)."""
-        face = self.cousins(0.805, 0.01, carried="Mara Quill")
+        face = self.cousins(LIKENESS, A_HAIR, carried="Mara Quill")
 
         for _run in range(2):
             self.run_while(lambda conn: None)
             self.assertEqual(("Mara Quill", None), self.row(face), "a name the face carried was taken away by the margin")
 
     def test_a_name_given_by_hand_with_no_margin_at_all_is_untouched_through_two_reruns(self):
-        face = self.cousins(0.805, 0.0)
+        face = self.cousins(LIKENESS, 0.0)
         db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [face], "Tobin Quill"))
 
         for _run in range(2):
@@ -665,7 +674,7 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
     def test_a_rerun_names_nothing_new_and_a_run_stopped_at_saving_writes_nothing(self):
         """The face between the cousins stays unnamed run after run (no flip-flop); a run stopped as it saves leaves the
         library as it was."""
-        face = self.cousins(0.805, 0.01)
+        face = self.cousins(LIKENESS, A_HAIR)
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
             before = conn.execute("SELECT id, name, tag_id FROM faces ORDER BY id").fetchall()
@@ -690,7 +699,7 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
     def test_in_a_library_with_one_known_person_the_face_is_named_as_before(self):
         """Two libraries: the cousins' (well apart), and one where only Mara is known: no second person, so nothing to be
         ahead of (an infinite margin, by the arithmetic)."""
-        cousins = self.cousins(0.85, 0.06)
+        cousins = self.cousins(LIKENESS, WELL_AHEAD)
         self.run_while(lambda conn: None)
         self.db_path = os.path.join(self.tmpdir, "one_person.db")
         self.index.close()
@@ -698,8 +707,8 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         self.index.load()   # the second library, made as the first
         self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
         pair = self.photo_tagged("pair.jpg", ["Mara Quill"])
-        face = self.add_face(pair, at(math.degrees(math.acos(0.805))), box=(0, 0, 200, 200))
-        stranger = self.add_face(pair, at(120), box=(300, 0, 500, 200))
+        face = self.add_face(pair, at(math.degrees(math.acos(LIKENESS))), box=(0, 0, 200, 200))
+        stranger = self.add_face(pair, at(180), box=(300, 0, 500, 200))
 
         self.run_while(lambda conn: None)
 
@@ -717,8 +726,8 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
         self.add_face(self.photo_tagged("tobin.jpg", ["Tobin Quill"]), at(120))
         for number in range(4):   # the cousins together, each face well ahead of the other cousin, on no anchor's cluster
             together = self.photo_tagged("together_%d.jpg" % number, ["Mara Quill", "Tobin Quill"])
-            self.add_face(together, at(31 + number), box=(0, 0, 200, 200))
-            self.add_face(together, at(89 - number), box=(300, 0, 500, 200))
+            self.add_face(together, at(40 + number), box=(0, 0, 200, 200))
+            self.add_face(together, at(80 - number), box=(300, 0, 500, 200))
         self.add_face(self.photo_tagged("between.jpg", ["Mara Quill", "Tobin Quill"]), at(60), box=(0, 0, 200, 200))
 
         def planned(ahead):
@@ -739,10 +748,10 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
 
     def test_new_person_gathers_by_the_margin_a_name_is_offered_at(self):
         """New Person on a face nobody is named for gathers the faces like it, for the owner to look over before they are
-        named: an offer, so the margin it asks over everyone named is the offer's, 0.02 (owner, 2026-10-17). Mara, a
-        cousin, is named. One face is 0.851 like the chosen face and 0.83 like Mara (0.021 ahead: 0.02 itself is float32's
-        coin toss): gathered. One is 0.845 like it and 0.84
-        like Mara: it could as well be hers, and is left."""
+        named: an offer, so the margin it asks over everyone named is the offer's, the new face model's 0.09 (owner,
+        2026-10-17), and the likeness the one of naming unasked, 0.52. Mara, a cousin, is named. One face is 0.70 like the
+        chosen face and 0.60 like Mara (0.10 ahead): gathered. One is 0.70 like it and 0.65 like Mara: it could as well be
+        hers, and is left."""
         mara = self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
         db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [mara], "Mara Quill"))
         chosen_at = math.radians(60)
@@ -754,23 +763,23 @@ class AFaceBetweenTwoCousins(FaceClusteringTestBase):
             vector = np.zeros(512, dtype=np.float32)
             vector[0], vector[1], vector[2] = to_mara, across, math.sqrt(1 - to_mara ** 2 - across ** 2)
             return vector
-        ahead = self.add_face(self.add_photo("ahead.jpg"), like(0.83, 0.851))
-        between = self.add_face(self.add_photo("between.jpg"), like(0.84, 0.845))
+        ahead = self.add_face(self.add_photo("ahead.jpg"), like(0.60, 0.70))
+        between = self.add_face(self.add_photo("between.jpg"), like(0.65, 0.70))
 
         found = identify.unnamed_like(self.library(), target, named=self.named())
 
         gathered = [match["id"] for match in found["matches"]]
         self.assertNotIn(between, gathered, "a face as like Mara as the new person was gathered for them")
-        self.assertEqual([ahead], gathered, "a face 0.02 ahead of Mara was not offered for the new person")
+        self.assertEqual([ahead], gathered, "a face 0.10 ahead of Mara was not offered for the new person")
 
 class AFaceThatGroupedAlone(FaceClusteringTestBase):
     """A face alone in its cluster in a photo of two or more faces was "voted" its photo's one keyword person: the
     vote of a cluster of one is its own photo's keywords, which say the person is in the photo, not which face is theirs
     (docs/AI_PIPELINE.md, phase 2c; owner, 2026-10-17). Its name, given from now on, asks what the tag's name asks
-    (clustering.names_from_the_tag: 0.70 like the person and 0.04 ahead of everyone named the photo's other faces do not
-    hold). Mara and Tobin Quill are cousins with a solo photo each; a photo tagged Mara alone holds the face and a second
-    face, which groups with Tobin's. Mutation: the vote of a cluster of one asked nothing (the old code) names the face
-    0.83 like Mara and 0.85 like Tobin."""
+    (clustering.names_from_the_tag: the new face model's 0.31 like the person and 0.205 ahead of everyone named the photo's
+    other faces do not hold). Mara and Tobin Quill are cousins with a solo photo each; a photo tagged Mara alone holds the
+    face, which groups with neither (each short of 0.80), and a second face, which groups with Tobin's. Mutation: the vote
+    of a cluster of one asked nothing (the old code) names the face 0.60 like Mara and 0.70 like Tobin."""
 
     photo_tagged = ClusteringMeetsNaming.photo_tagged
     run_while = ClusteringMeetsNaming.run_while
@@ -792,7 +801,7 @@ class AFaceThatGroupedAlone(FaceClusteringTestBase):
         return face
 
     def test_a_face_more_like_the_cousin_is_not_named_by_its_photos_keyword(self):
-        face = self.tagged_mara(0.83, 0.85)
+        face = self.tagged_mara(0.60, 0.70)
 
         self.run_while(lambda conn: None)
 
@@ -802,7 +811,7 @@ class AFaceThatGroupedAlone(FaceClusteringTestBase):
                       "the face was not left to the last pass, which asks the same of it")
 
     def test_the_same_face_well_ahead_of_the_cousin_is_named_as_before(self):
-        face = self.tagged_mara(0.85, 0.80)
+        face = self.tagged_mara(0.70, 0.40)
 
         self.run_while(lambda conn: None)
 
@@ -810,7 +819,7 @@ class AFaceThatGroupedAlone(FaceClusteringTestBase):
         self.assertEqual("cluster_majority_vote", self.traces()[face]["resolution_method"])
 
     def test_a_name_the_face_carries_stays_through_two_reruns(self):
-        face = self.tagged_mara(0.83, 0.84, carried="Mara Quill")
+        face = self.tagged_mara(0.60, 0.65, carried="Mara Quill")
 
         for _run in range(2):
             self.run_while(lambda conn: None)
@@ -818,9 +827,9 @@ class AFaceThatGroupedAlone(FaceClusteringTestBase):
 
     def test_an_anchor_more_like_the_cousin_keeps_its_name(self):
         """A photo of one face and one keyword person is that person's anchor: no other face of the photo could be theirs."""
-        face_at = math.degrees(math.acos(0.83))
+        face_at = math.degrees(math.acos(0.60))
         self.add_face(self.photo_tagged("mara.jpg", ["Mara Quill"]), at(0))
-        self.add_face(self.photo_tagged("tobin.jpg", ["Tobin Quill"]), at(face_at + math.degrees(math.acos(0.85))))
+        self.add_face(self.photo_tagged("tobin.jpg", ["Tobin Quill"]), at(face_at + math.degrees(math.acos(0.70))))
         anchor = self.add_face(self.photo_tagged("mara_again.jpg", ["Mara Quill"]), at(face_at))
 
         self.run_while(lambda conn: None)
@@ -828,7 +837,7 @@ class AFaceThatGroupedAlone(FaceClusteringTestBase):
         self.assertEqual(("Mara Quill", None), self.row(anchor))
 
     def test_three_runs_agree_and_a_run_stopped_at_saving_writes_nothing(self):
-        face = self.tagged_mara(0.83, 0.85)
+        face = self.tagged_mara(0.60, 0.70)
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
             before = conn.execute("SELECT id, name, tag_id FROM faces ORDER BY id").fetchall()
