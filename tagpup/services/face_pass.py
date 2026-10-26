@@ -14,12 +14,20 @@ The model is handed in (tagpup.ml.scrfd_adaface.ScrfdAdaFace, or a test's stand-
   switch) leaves it out (tagpup.store.faces.WITH_VECTOR);
 - a detection no old face takes that the model makes no face of (under the floor) is not made, and is counted (`too_small`).
 
-A photo is done when one of its faces holds a vector under the key (tagpup.store.faces.vectors_under): a run resumes by
-what is held, and a second run writes nothing. No `faces_detected` row is written. A photo the model finds no face in
-writes nothing and is looked at again next run, as is one whose detections are all under the floor and take no old face (no
-row can say it was looked at: a photo is done by a vector); a turned photo (tagpup.services.photos.box_shape, DECISIONS 2026-10-16:
-its boxes are not converted) is skipped; a photo whose picture does not decode or whose model fails is failed. All three
-are counted, and nothing of them is written.
+A photo that holds no face, and that the model finds no face in or only detections under the floor (`none_found`), is
+recorded as looked at: its `faces_detected` row, under the name the model's detections are recorded under
+(tagpup.services.faces.detector_of, as the index and Suggest record theirs and Suggest and a bake read it), with the
+number of detections the model returned. Not journaled, as the index's and Suggest's are not: it is a fact of the photo,
+which no undo of a change makes untrue; and no change of the journal is opened for it, nor a snapshot taken. Written in
+the photo's own transaction, as its faces are, and read again there the same way. It replaces the row of another detector
+(one row a photo): the library's MTCNN record of no face, which a library on the new model no longer reads.
+
+A photo is done when one of its faces holds a vector under the key (tagpup.store.faces.vectors_under), or when it holds
+no face and the model's row says it was looked at (tagpup.store.faces_detected.faceless_under): a run resumes by what is
+held, and a second run writes nothing and looks at nothing. A photo with old faces that the model takes none of and makes
+none beside is not recorded: its old faces are listed, and it is looked at again next run. A turned photo
+(tagpup.services.photos.box_shape, DECISIONS 2026-10-16: its boxes are not converted) is skipped; a photo whose picture
+does not decode or whose model fails is failed. Both are counted, and nothing of them is written, a row of it neither.
 
 Each photo is one transaction (BEGIN IMMEDIATE), in which the photo is read again: its row still there at the path listed,
 still not done, its faces as they were read; else nothing is written and it is failed for this run (a row sync removed or
@@ -46,7 +54,8 @@ from tagpup.core import clustering, paths, read_ahead
 from tagpup.files import images
 from tagpup.services import faces as face_service
 from tagpup.services import photos as photo_service
-from tagpup.store import db, journal
+from tagpup.store import db, faces_detected, journal
+from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
@@ -76,8 +85,9 @@ class Folder:
     too_small: int = 0
     #: (photo id, face id) of each old face no detection took: listed for review, untouched.
     unmatched: List[Tuple[int, int]] = field(default_factory=list)
-    #: Photos the model was asked about; turned (skipped), already done, in which no face was found (looked at again
-    #: next run).
+    #: Photos the model was asked about; turned (skipped); already done (a face holds the model's vector, or the photo
+    #: holds no face and the model's row says it was looked at); holding no face and in which the model found none, or
+    #: only detections under the floor (recorded as looked at with `apply`: done next run).
     looked: int = 0
     skipped: int = 0
     done: int = 0
@@ -125,7 +135,9 @@ def _folder(db_path, conn, model, name, photos, apply, held, reading, stop, befo
     operation = OPERATION % model.key
     here = paths.key(store_roots.to_row(conn, name))
     found.held = [change_id for change_id, summary in held if paths.key(summary.get("folder")) == here]
-    done = store_faces.vectors_under(conn, model.key, [photo_id for photo_id, _path in photos])
+    detector = face_service.detector_of(model, None)
+    ids = [photo_id for photo_id, _path in photos]
+    done = set(store_faces.vectors_under(conn, model.key, ids)) | faces_detected.faceless_under(conn, detector, ids)
     passed = {}
 
     def begin(photo):
@@ -170,17 +182,14 @@ def _folder(db_path, conn, model, name, photos, apply, held, reading, stop, befo
             if not face_service.ran(detected):
                 found.failed.append((photo_id, UNREADABLE))
                 continue
-            change_id = _photo(db_path, model, operation, name, found, change_id, photo_id, path, old, picture,
-                               detected, apply, before_first_write)
+            change_id = _photo(db_path, model, detector, operation, name, found, change_id, photo_id, path, old,
+                               picture, detected, apply, before_first_write)
     return found
 
 
-def _photo(db_path, model, operation, name, found, change_id, photo_id, path, old, picture, detected, apply,
+def _photo(db_path, model, detector, operation, name, found, change_id, photo_id, path, old, picture, detected, apply,
            before_first_write):
     """One photo the model found `detected` in: counted into `found`, and written with `apply`. The folder's change id."""
-    if not detected:
-        found.none_found += 1
-        return change_id
     paired = clustering.pairs([box for _face, box, _named in old], [each["box"] for each in detected],
                               first=[i for i, (_face, _box, named) in enumerate(old) if named])
     matched = [(old[i][0], face_service.vector_bytes(detected[j]["embedding"])) for i, j in sorted(paired.items())]
@@ -189,10 +198,21 @@ def _photo(db_path, model, operation, name, found, change_id, photo_id, path, ol
     big = model.new_faces(untaken, picture)
     new = [(each["box"], float(each["prob"]), face_service.vector_bytes(each["embedding"]), each["crop_image"])
            for each in big]
+    unmatched = [(photo_id, face_id) for i, (face_id, _box, _named) in enumerate(old) if i not in paired]
     if not matched and not new:
         found.too_small += len(untaken)
+        if old:
+            found.unmatched += unmatched   # every old face: listed, and the photo looked at again next run
+            return change_id
+        if apply:
+            stamp = store_embeddings.stamp_of(path)   # the file, read outside the write: a share is not asked under it
+            if not db.write_with_connection(
+                    db_path, lambda write: _looked(write, model.key, detector, photo_id, path, stamp, len(detected)),
+                    label="face pass"):
+                found.failed.append((photo_id, CHANGED))
+                return change_id
+        found.none_found += 1
         return change_id
-    unmatched = [(photo_id, face_id) for i, (face_id, _box, _named) in enumerate(old) if i not in paired]
     if apply:
         before_first_write()
         written = db.write_with_connection(
@@ -216,13 +236,25 @@ def _write(conn, key, operation, folder, change_id, photo_id, path, old, matched
     when the photo's row is gone or at another path than `path`, the photo is done, or its faces are not as `old` read
     them."""
     db.begin(conn, immediate=True)
-    row = store_photos.thumb_row(conn, photo_id)
-    if row is None or not paths.same(row.path, path):
-        return None
-    if store_faces.vectors_under(conn, key, [photo_id]) or store_faces.boxes_of(conn, photo_id) != old:
+    if not _as_read(conn, key, photo_id, path, old):
         return None
     if change_id is None or not journal.kept(conn, change_id):
         change_id = journal.record(conn, operation, [],
                                    {"folder": store_roots.to_row(conn, folder), "matched": 0, "new": 0})
     store_faces.give_vectors(conn, change_id, path, key, matched, new, {"matched": len(matched), "new": len(new)})
     return change_id
+
+
+def _looked(conn, key, detector, photo_id, path, stamp, count):
+    """Record, in one transaction, that `detector` looked at a photo that holds no face and made none, its file at `stamp`
+    and `count` detections returned: True, or False, nothing written, when the photo is not as read (_as_read)."""
+    db.begin(conn, immediate=True)
+    return _as_read(conn, key, photo_id, path, []) and faces_detected.record(conn, path, detector, stamp, count) == 1
+
+
+def _as_read(conn, key, photo_id, path, old):
+    """Is the photo as the pass read it, in its write: its row there at `path`, not done, its faces as `old` read them?"""
+    row = store_photos.thumb_row(conn, photo_id)
+    if row is None or not paths.same(row.path, path):
+        return False
+    return not store_faces.vectors_under(conn, key, [photo_id]) and store_faces.boxes_of(conn, photo_id) == old

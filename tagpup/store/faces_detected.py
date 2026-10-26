@@ -7,7 +7,8 @@ nothing at all, so Suggest could not tell it from one never looked at: it took t
 graphics card, loaded the face model and detected again, every time (10,732 of
 photo_index's 68,324 photos had no face). A row here says detection ran, so Suggest asks
 it before detecting (tagpup.services.suggester). Written by the indexer (record_batch) and
-by Suggest (record_detected) for every photo they detect.
+by Suggest (record_detected) for every photo they detect, and by the new face model's pass
+(tagpup.services.face_pass) for a photo it found no face in and that holds none.
 
 A row is read only under the detector it names: detected again under other face settings,
 a photo may find faces it did not. The stamp is kept, not compared: a write of a photo's
@@ -58,6 +59,21 @@ def detected(conn, photo_path, name):
     where, params = store_roots.sql_equals(conn, "p.path", photo_path)
     return conn.execute("SELECT 1 FROM photos p JOIN faces_detected d ON d.photo_id = p.id WHERE " + where
                         + " AND d.detector = ? LIMIT 1", tuple(params) + (name,)).fetchone() is not None
+
+
+def faceless_under(conn, name, photo_ids):
+    """The ids among `photo_ids` of the photos detector `name` has run on that hold no face row: those it found no face
+    in (or none it made a face of), and none was made since. The face pass's photos done that hold no face. Chunked; the
+    row's key and idx_faces_photo_id."""
+    photo_ids = sorted(photo_ids)
+    found = set()
+    for start in range(0, len(photo_ids), 500):
+        chunk = photo_ids[start:start + 500]
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT d.photo_id FROM faces_detected d WHERE d.photo_id IN (%s) AND d.detector = ?"
+            " AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = d.photo_id)" % ",".join("?" * len(chunk)),
+            chunk + [name]))
+    return found
 
 
 def forget_faceless(conn, photo_ids):

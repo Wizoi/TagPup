@@ -1261,11 +1261,12 @@ def _stop_after_this_photo(what="photo"):
             signal.signal(kind, previous[kind])
 
 
-def _folder_lines(number, found, reveal):
+def _folder_lines(number, found, reveal, apply_):
     """What `face-pass` says of one folder: counts, and its path and ids only with --reveal."""
     lines = ["Folder %d%s:%s" % (number, " " + found.folder if reveal else "", " (stopped here)" if found.stopped else ""),
-             "  %d photo(s) looked at, %d done before, %d turned (skipped), %d with no face found, %d failed"
-             % (found.looked, found.done, found.skipped, found.none_found, len(found.failed)),
+             "  %d photo(s) looked at, %d done before, %d turned (skipped), %d with no face found (%s), %d failed"
+             % (found.looked, found.done, found.skipped, found.none_found,
+                "recorded as looked at" if apply_ else "--apply records them as looked at", len(found.failed)),
              "  %d old face(s) given the new vector, %d new face(s) (unnamed), %d detection(s) too small to make a new face,"
              " %d old face(s) unmatched (listed for review, untouched)"
              % (found.matched, found.new, found.too_small, len(found.unmatched))]
@@ -1356,7 +1357,7 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
         console.print("The library holds no photo under the folder(s) given.", markup=False)
         return
     for number, folder in enumerate(found, 1):
-        for line in _folder_lines(number, folder, reveal):
+        for line in _folder_lines(number, folder, reveal, apply_):
             console.print(line, markup=False, soft_wrap=True)
     total = sum(folder.looked for folder in found)
     console.print("%d folder(s), %d photo(s) looked at: %d old face(s) given the new vector, %d new, %d unmatched, "
@@ -1364,13 +1365,15 @@ def _face_pass(library, look, directories, apply_, reveal, asked):
                                            sum(len(f.unmatched) for f in found), sum(len(f.failed) for f in found)),
                   markup=False, soft_wrap=True)
     if asked.is_set():
-        if not any(folder.changes for folder in found):   # a dry run, or a stop before any photo was written
+        # A dry run, or a stop before any photo was written: no change, and no photo recorded as looked at.
+        if not apply_ or not any(folder.changes or folder.none_found for folder in found):
             _stopped_before_writing()
         console.print("Stopped: what was written stays written and undoable; run it again to go on.", markup=False)
         raise SystemExit(1)
     if not apply_:
         console.print("Nothing changed. --apply writes it, after a snapshot of the library unless one is from today: one "
-                      "change of the journal per folder, which `undo` takes back.", markup=False, soft_wrap=True)
+                      "change of the journal per folder, which `undo` takes back; and records each photo with no face "
+                      "found as looked at, which no undo takes back.", markup=False, soft_wrap=True)
 
 
 def _stopped_before_writing():

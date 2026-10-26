@@ -5,7 +5,8 @@ A library of two folders holds a mix: photos to bake, one already baked, one nev
 by the face model, one with a face of another model, one changed since its vector was made, one whose file is not a
 picture. The dry run counts each, by folder and in all, says never examined as that and never as none found, decodes for
 its sample only the photos it can plan, and leaves the library, its journal, its snapshots and every file as they were,
-byte for byte; a second run says the same. Ctrl+C after the first folder ends the run with that folder's totals, and nothing written. A share that stops answering ExifTool ends the run at that folder, which
+byte for byte; a second run says the same. A photo never examined until the new face model's pass looked at it and
+found no face is then to bake, with no regions. Ctrl+C after the first folder ends the run with that folder's totals, and nothing written. A share that stops answering ExifTool ends the run at that folder, which
 is counted and named by its number, and no later folder is read.
 
 Real ExifTool, on JPEGs made here, in a home of the test's own; rows as the indexer stores them (photo_rows.add_read,
@@ -30,7 +31,7 @@ import tagpup_cli  # noqa: E402
 from tagpup.core import paths, validation  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
-from tagpup.services import baking, baking_report  # noqa: E402
+from tagpup.services import baking, baking_report, face_pass  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, embeddings  # noqa: E402
@@ -158,6 +159,19 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
         again = self.cli()
         self.assertEqual(out, again.output, "a second run says the same")
         self.assertEqual(before, self.home_as_it_is())
+
+    def test_a_photo_the_face_pass_found_no_face_in_is_to_bake_and_no_longer_never_examined(self):
+        """The live shape (photo_index, 2026-10-25: 10,407 photos with no face and no record of the new model looking):
+        refused as never examined until the pass looks at it; then it holds no face and the model's record, and is to bake
+        as a photo with no regions."""
+        self.photo("a.jpg", faces=1)
+        self.photo("nobody.jpg")
+        before = baking_report.dry_run(self.library, baked_files.EXIFTOOL, DETECTOR).total
+        self.assertEqual((2, 1, 1), (before.photos, before.to_bake, before.cannot[baking.NEVER_EXAMINED]))
+        (passed,) = face_pass.run(self.library.path, NewFaces({}), self.folder, apply=True)
+        self.assertEqual((1, 1), (passed.done, passed.none_found))
+        after = baking_report.dry_run(self.library, baked_files.EXIFTOOL, DETECTOR).total
+        self.assertEqual((2, 2, 0), (after.photos, after.to_bake, sum(after.cannot.values())))
 
     def test_a_share_that_stops_answering_ends_the_run_at_that_folder(self):
         self.a_mix()
