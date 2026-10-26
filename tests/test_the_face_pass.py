@@ -1,6 +1,7 @@
 """Scenario P8: the new face model's pass over a folder (tagpup.services.face_pass), with the model stood in for
 (tests/stand_in_models.NewFaces): what each old face keeps, what is made new, what is listed, skipped or failed, a run
-stopped part-way and resumed, run twice, undone from History, a dry run, and two libraries holding one folder.
+stopped part-way and resumed, run twice, undone from History, a dry run, and two libraries holding one folder; a photo
+with no face recorded as looked at, so a second run looks at nothing, and what Suggest and an index make of it after.
 
 Photos are real files (Pillow), rows as the index makes them (tests/photo_rows.py), faces as it stores them
 (tests/face_rows.py). Each library in a home of the test's own (tests/own_home.py)."""
@@ -18,18 +19,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import FACENET, add_face, person_of  # noqa: E402
-from stand_in_models import NewFaces  # noqa: E402
+from stand_in_models import Faces, NewFaces  # noqa: E402
 
 from tagpup.services import face_pass  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
-from tagpup.store import db, journal, schema  # noqa: E402
+from tagpup.store import db, faces_detected, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 NEW = NewFaces.key
+#: The name the new model's detections are recorded under, as the index, Suggest and a bake spell it; and MTCNN's.
+DETECTOR = face_service.detector_of(NewFaces(), None)
+MTCNN = face_service.detector_of(Faces(), None)
 #: The journal's own record, and the counters every write moves: not what the pass is to leave as it found.
 BOOKKEEPING = ("changes", "change_rows", "generations", "sqlite_sequence")
 
@@ -172,7 +176,7 @@ class FacePass(unittest.TestCase):
             self.assertEqual([old], [row[0] for row in store_faces.identify_candidates(conn)], "nor does Identify's queue")
         finally:
             conn.close()
-        self.assertEqual([], self.query("SELECT 1 FROM faces_detected"), "the pass records no detection")
+        self.assertEqual([], self.query("SELECT 1 FROM faces_detected"), "a photo holding a face records no detection")
 
     def test_no_new_face_is_made_under_the_floor_a_matched_small_face_still_gets_its_vector_and_the_next_run_has_nothing_to_do(self):
         """Owner, 2026-10-18: the new detector found 31 smudges under 40 px in 40 new faces of one folder. A detection
@@ -193,15 +197,105 @@ class FacePass(unittest.TestCase):
         self.assertEqual([], model.asked)
         self.assertEqual((before, changes), (self.dump(), self.changes()))
 
-    def test_a_photo_whose_only_detections_are_under_the_floor_writes_nothing_and_is_counted_not_as_no_face(self):
-        """Nothing is held for it (a photo is done when a face holds a vector), so it is looked at again as a photo with no
-        face found is: the same count of detections each run, nothing written."""
-        self.photo("tiny.jpg")
+    def looked_at(self):
+        """[(photo id, detector, found)] of faces_detected."""
+        return self.query("SELECT photo_id, detector, found FROM faces_detected ORDER BY photo_id")
+
+    def test_a_photo_with_no_face_is_recorded_as_looked_at_and_a_second_run_looks_at_nothing(self):
+        """The live shape (photo_index, 2026-10-25: 10,407 photos with no face and no record, after a whole pass): the
+        model found no face, so the photo is recorded as looked at under the model's name, and is done. A dry run
+        records nothing."""
+        photo, path = self.photo("empty.jpg")
         before = self.dump()
+        rehearsed = self.run_pass(NewFaces({}), apply=False)
+        self.assertEqual((1, 1), (rehearsed.looked, rehearsed.none_found))
+        self.assertEqual(before, self.dump(), "a dry run records nothing")
+        found = self.run_pass(NewFaces({}))
+        self.assertEqual((1, 1, 0, [], []), (found.looked, found.none_found, found.done, found.failed, found.changes))
+        self.assertEqual([(photo, DETECTOR, 0)], self.looked_at())
+        stat = os.stat(path)
+        self.assertEqual([(stat.st_mtime, stat.st_size)], self.query("SELECT mtime, size FROM faces_detected"))
+        self.assertEqual([], self.changes(), "not journaled: no change in History for it")
+        recorded = self.dump()
+        model = NewFaces({})
+        again = self.run_pass(model)
+        self.assertEqual((0, 1, 0), (again.looked, again.done, again.none_found))
+        self.assertEqual([], model.asked, "a second run looks at nothing")
+        self.assertEqual(recorded, self.dump())
+
+    def test_suggest_reads_the_record_under_the_model_that_made_it_alone(self):
+        """Suggest asks "detected before" under its own face model's name (face_service.detector_of): one on the new
+        model detects this photo no more, one on MTCNN is not told the photo was looked at. The library's MTCNN record
+        of no face (one row a photo) gives way to the new model's."""
+        _photo, path = self.photo("empty.jpg")
+        mtcnn_only, mtcnn_path = self.photo("mtcnn.jpg")
+        conn = db.connect(self.db_path)
+        faces_detected.record(conn, mtcnn_path, MTCNN, None, 0)
+        conn.commit()
+        conn.close()
+        self.run_pass(NewFaces({}))
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            self.assertEqual((True, False), (faces_detected.detected(conn, path, DETECTOR),
+                                             faces_detected.detected(conn, path, MTCNN)))
+            self.assertTrue(faces_detected.detected(conn, mtcnn_path, DETECTOR))
+        finally:
+            conn.close()
+        self.assertIn((mtcnn_only, DETECTOR, 0), self.looked_at())
+
+    def test_a_photo_whose_only_detections_are_under_the_floor_is_recorded_and_a_second_run_looks_at_nothing(self):
+        """No face is made of a detection under the floor, so the photo holds none, as one with no face found: it is
+        recorded as looked at, with the count after the floor (0, as the index and Suggest record it), and counted as
+        both."""
+        photo, _path = self.photo("tiny.jpg")
         found = self.run_pass(NewFaces({"tiny.jpg": [((5, 5, 35, 70), 0.9, 2)]}))
-        self.assertEqual((1, 0, 0, 1, 0, []), (found.looked, found.new, found.none_found, found.too_small, found.done,
+        self.assertEqual((1, 0, 1, 1, 0, []), (found.looked, found.new, found.none_found, found.too_small, found.done,
                                               found.changes))
-        self.assertEqual((before, []), (self.dump(), self.changes()))
+        self.assertEqual([(photo, DETECTOR, 0)], self.looked_at())
+        self.assertEqual([], self.query("SELECT 1 FROM faces"))
+        model = NewFaces({"tiny.jpg": [((5, 5, 35, 70), 0.9, 2)]})
+        again = self.run_pass(model)
+        self.assertEqual((0, 1, 0), (again.looked, again.done, again.too_small))
+        self.assertEqual([], model.asked)
+
+    def test_a_photo_given_a_face_meanwhile_is_not_recorded_and_left_for_the_next_run(self):
+        """The server (Name Faces, an index) gives the photo a face while the model looks: what the model found is no
+        longer the photo's whole answer, so nothing is recorded."""
+        photo, path = self.photo("busy.jpg")
+        test = self
+
+        class Meanwhile(NewFaces):
+            def detect_and_embed(self, picture):
+                test.face(path, [200, 10, 300, 130], 2)
+                return super().detect_and_embed(picture)
+        found = self.run_pass(Meanwhile({}))
+        self.assertEqual(([(photo, face_pass.CHANGED)], 0), (found.failed, found.none_found))
+        self.assertEqual([], self.looked_at())
+
+    def test_a_photo_recorded_then_given_a_face_is_done_by_it_and_looked_at_again_once_it_is_deleted(self):
+        """An index forced again (record_batch, overwrite) under the new model finds a face: the pass's record gives way
+        to the index's and the photo is done by its face's vector. That face deleted, its record goes with it
+        (faces_detected.forget_faceless), and the next run looks at the photo again."""
+        photo, path = self.photo("later.jpg")
+        self.run_pass(NewFaces({}))
+        conn = db.connect(self.db_path)
+        try:
+            face_service.record_batch(conn, {path: [{"box": [40, 40, 140, 160], "prob": 0.9,
+                                                     "embedding": NewFaces.vector(3)}]},
+                                      model=NEW, overwrite=True, detector=DETECTOR)
+        finally:
+            conn.close()
+        self.assertEqual([(photo, DETECTOR, 1)], self.looked_at())
+        model = NewFaces({})
+        self.assertEqual((1, 0), (self.run_pass(model).done, len(model.asked)))
+        conn = db.connect(self.db_path)
+        store_faces.delete(conn, [face_id for (face_id,) in conn.execute("SELECT id FROM faces")])
+        conn.commit()
+        conn.close()
+        self.assertEqual([], self.looked_at())
+        model = NewFaces({})
+        self.assertEqual(1, self.run_pass(model).none_found)
+        self.assertEqual(["later.jpg"], model.asked)
 
     def test_a_turned_photo_is_skipped_and_one_that_does_not_decode_or_fails_is_reported_and_nothing_is_written(self):
         _turned, turned_path = self.photo("turned.jpg", turned=True)
@@ -209,14 +303,22 @@ class FacePass(unittest.TestCase):
         broken, _ = self.photo("broken.jpg", broken=True)
         failing, failing_path = self.photo("failing.jpg")
         self.face(failing_path, [10, 10, 110, 130], 2)
-        self.photo("empty.jpg")
+        empty, _ = self.photo("empty.jpg")
+        _blank, blank_path = self.photo("turned-blank.jpg", turned=True)
+        broken_blank, _ = self.photo("broken-blank.jpg", broken=True)
+        failing_blank, _ = self.photo("failing-blank.jpg")
         before = self.dump()
-        model = NewFaces({"turned.jpg": [((10, 10, 110, 130), 0.9, 1)], "failing.jpg": None})
+        model = NewFaces({"turned.jpg": [((10, 10, 110, 130), 0.9, 1)], "failing.jpg": None, "failing-blank.jpg": None})
         found = self.run_pass(model)
-        self.assertEqual((1, 1, 0, 0), (found.skipped, found.none_found, found.matched, found.new))
-        self.assertEqual(sorted([broken, failing]), sorted(photo for photo, _why in found.failed))
+        self.assertEqual((2, 1, 0, 0), (found.skipped, found.none_found, found.matched, found.new))
+        self.assertEqual(sorted([broken, failing, broken_blank, failing_blank]),
+                         sorted(photo for photo, _why in found.failed))
         self.assertNotIn("turned.jpg", model.asked, "a turned photo is not detected: its boxes are not converted")
-        self.assertEqual(before, self.dump())
+        self.assertEqual([(empty, DETECTOR, 0)], self.looked_at(),
+                         "only the photo the model looked at and found no face in: never a turned or a failed one")
+        after = self.dump()
+        self.assertEqual({table: rows for table, rows in before.items() if table != "faces_detected"},
+                         {table: rows for table, rows in after.items() if table != "faces_detected"})
         self.assertEqual([], self.changes(), "a folder that wrote nothing has no change")
 
     def test_a_photo_whose_faces_change_while_the_model_looks_is_left_for_the_next_run(self):
@@ -327,6 +429,20 @@ class FacePass(unittest.TestCase):
         self.assertEqual([("undone",)], self.query("SELECT status FROM changes WHERE id = ?", (change_id,)))
         self.assertEqual(4, self.run_pass(NewFaces(found)).matched, "undone, the folder is not done")
         self.assertEqual(1, len(self.changes()))
+
+    def test_an_undo_of_the_folder_leaves_a_photo_recorded_as_looked_at_and_the_next_run_does_not_look_again(self):
+        """The record is a fact of the photo, not a row of the change: the undo takes the faces and vectors and leaves it,
+        and its photo is done when the folder is run again."""
+        found = self.four_photos()
+        nobody, _path = self.photo("nobody.jpg")
+        (change_id,) = self.run_pass(NewFaces(found)).changes
+        self.assertEqual([(nobody, DETECTOR, 0)], self.looked_at())
+        journal.undo(self.db_path, change_id)
+        self.assertEqual([(nobody, DETECTOR, 0)], self.looked_at())
+        model = NewFaces(found)
+        again = self.run_pass(model)
+        self.assertEqual((4, 1), (again.matched, again.done))
+        self.assertNotIn("nobody.jpg", model.asked)
 
     def test_an_undo_is_refused_once_a_new_face_is_named_and_a_matched_face_named_since_keeps_its_name(self):
         found = self.four_photos()

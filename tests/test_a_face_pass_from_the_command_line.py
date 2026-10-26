@@ -5,7 +5,8 @@ out by a real Runtime (Runtime.look_at_faces), as on the owner's machine.
 What the owner lives through:
 * a dry run, the default, says what it would do, folder by folder, in counts, and writes nothing, no snapshot either;
 * --apply takes one snapshot before its first write, and a second --apply the same day writes nothing and takes none;
-  an --apply that finds nothing to write (every photo done, or no face found) takes no snapshot;
+  an --apply that finds nothing to write (every photo done), or only photos with no face found, which it records as
+  looked at (not journaled), takes no snapshot;
 * Ctrl+C half way stops after the photo under way (that photo written whole), and a run again finishes the folder;
   Ctrl+C before the first photo stops it too, saying so, never that the folder holds no photo; a dry run stopped
   says nothing was written;
@@ -177,15 +178,23 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         self.assertEqual([change_id], self.changes())
         self.assertEqual(1, len(self.dailies()), "one snapshot a day")
 
-    def test_an_apply_with_nothing_to_write_takes_no_snapshot(self):
+    def test_an_apply_that_only_records_photos_with_no_face_takes_no_snapshot(self):
         self.three_photos(self.regatta)
+        dry = self.cli(NewFaces({}), "face-pass", self.regatta)
+        self.assertIn("2 with no face found (--apply records them as looked at)", dry.output)
         before = self.dump()
         ran = self.cli(NewFaces({}), "face-pass", self.regatta, "--apply")
         self.assertEqual(0, ran.exit_code, ran.output)
-        self.assertIn("3 with no face found", ran.output)
+        self.assertIn("2 with no face found (recorded as looked at)", ran.output,
+                      "the photo holding a face is not one: its face is listed")
         self.assertNotIn("snapshot", ran.output)
-        self.assertEqual(before, self.dump())
-        self.assertEqual([], self.dailies(), "no snapshot for a run that writes nothing: the oldest stays")
+        after = self.dump()
+        self.assertEqual(2, len(after["faces_detected"]))
+        self.assertEqual({table: rows for table, rows in before.items() if table != "faces_detected"},
+                         {table: rows for table, rows in after.items() if table != "faces_detected"})
+        self.assertEqual([], self.dailies(), "no snapshot for a run that journals nothing: the oldest stays")
+        again = self.cli(NewFaces({}), "face-pass", self.regatta, "--apply")
+        self.assertIn("1 photo(s) looked at, 2 done before", again.output)
 
     def test_a_snapshot_from_late_yesterday_is_not_todays_the_run_takes_one(self):
         found = self.three_photos(self.regatta)
@@ -225,6 +234,16 @@ class FacePassFromTheCommandLine(unittest.TestCase):
         self.assertIn("Stopped: nothing was written; run it again to go on.", stopped.output)
         self.assertNotIn("stays written", stopped.output)
         self.assertEqual(before, self.dump())
+
+    def test_ctrl_c_after_an_apply_that_only_recorded_photos_does_not_say_an_undo_takes_them_back(self):
+        for name in ("first.jpg", "second.jpg", "third.jpg"):
+            self.photo(self.regatta, name)
+        stopped = self.cli(CtrlCAt({}, "second.jpg"), "face-pass", self.regatta, "--apply")
+        self.assertEqual(1, stopped.exit_code, stopped.output)
+        self.assertIn("Stopped: what was written stays written; recording photos as looked at is not taken back by an "
+                      "undo; run it again to go on.", stopped.output)
+        self.assertNotIn("undoable", stopped.output)
+        self.assertEqual([], self.changes())
 
     def test_ctrl_c_before_the_first_photo_says_it_stopped_and_writes_nothing(self):
         found = self.three_photos(self.regatta)
