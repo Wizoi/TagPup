@@ -15,7 +15,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, faces, people, person_ids, schema  # noqa: E402
@@ -115,8 +115,8 @@ class JournalLibrary(unittest.TestCase):
             conn.close()
 
     def detected(self, conn, path, box, embedding, crop, prob):
-        """Record a face as the indexer does (tagpup.store.faces.insert), its vector FaceNet's. Returns its id."""
-        return faces.insert(conn, path, box, embedding, model=FACENET, crop=crop, prob=prob)
+        """Record a face as the indexer does (tagpup.store.faces.insert), its vector under the library's model. Returns its id."""
+        return faces.insert(conn, path, box, embedding, model=FACE_MODEL, crop=crop, prob=prob)
 
     # ---- Reading -----------------------------------------------------------------------
 

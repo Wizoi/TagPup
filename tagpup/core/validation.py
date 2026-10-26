@@ -85,12 +85,21 @@ IGNORED_CLUSTER = "ignored cluster"
 #: (docs/findings.md, #53, #74). A kind since #224, as the turn of a photo is.
 EXCLUSION_REASONS = (DEFAULT_EXCLUSION_REASON, "stranger", "bad crop", "duplicate", IGNORED_CLUSTER)
 
-#: The face models a library can be set to (faces.model): MTCNN and FaceNet, which made every face vector the three
-#: libraries hold, and SCRFD and AdaFace (tagpup.ml.scrfd_adaface; docs/AI_PIPELINE.md, phase 3). A library keeps the
-#: vectors of each apart (face_embeddings, by model), and the rule refuses any other value.
+#: The face models a library can be set to (faces.model): SCRFD and AdaFace (tagpup.ml.scrfd_adaface; docs/AI_PIPELINE.md,
+#: phase 3), every library's since phase 3 and a new library's, and MTCNN and FaceNet, which made the libraries' first face
+#: vectors and are retired from all three (docs/OLD_MODEL_VESTIGES.md). A library keeps the vectors of each apart
+#: (face_embeddings, by model), and the rule refuses any other value.
 MTCNN_FACENET = "mtcnn-facenet"
 SCRFD_ADAFACE = "scrfd-adaface"
 FACE_MODELS = (MTCNN_FACENET, SCRFD_ADAFACE)
+
+#: The face model of a library that holds settings and no faces.model row: one stamped before the face model was a
+#: setting (migration 33), every one of which was on FaceNet. Not a new library's (it is stamped with the setting's
+#: default, the new model): what store.settings.face_model and services.settings read for a missing row. The three live
+#: libraries hold the row, inserted by their switch (photo_index's change 3244, kr-track's 342, renton_parkrun's 1221,
+#: read 2026-10-25); undone, the row goes and the library is on FaceNet again, which the undo's check asks of
+#: (services.settings.undo_check: refused once FaceNet's vectors are retired, as they are in all three).
+BEFORE_FACE_MODELS = MTCNN_FACENET
 
 #: The ways Rotate turns a photo, a quarter each (tagpup.services.photos.rotate).
 ROTATE_DIRECTIONS = ("left", "right")
@@ -305,12 +314,13 @@ def _setting(group, label, value_type, default, info, rules):
 #: key, from which a library in use is stamped once.
 SETTINGS = {
     "model.name": _setting(
-        "clip", "Model", "text", "ViT-H-14",
-        "The CLIP architecture Suggest compares photos and words with (an open_clip model name). "
+        "clip", "Model", "text", "ViT-SO400M-14-SigLIP2",
+        "The photo model Suggest and search compare photos and words with (an open_clip model name; SigLIP 2 SO400M, "
+        "every library's since phase 5). "
         "Every photo's vector is made with it when its folder is indexed.",
         [_required("The CLIP model"), _no_controls("The CLIP model")]),
     "model.pretrained": _setting(
-        "clip", "Weights", "text", "laion2b_s32b_b79k",
+        "clip", "Weights", "text", "webli",
         "The trained weights the model is loaded with (an open_clip pretrained tag for the model above).",
         [_required("The CLIP weights"), _no_controls("The CLIP weights")]),
     "model.preserve_full_frame": _setting(
@@ -325,19 +335,20 @@ SETTINGS = {
          # 1 is square; below it is the same ratio turned.
          _between("The widest aspect ratio", 1, 4)]),
     "model.force_image_size": _setting(
-        "clip", "Image size", "integer", "512",
+        "clip", "Image size", "integer", "",
         "The size in pixels a photo is scaled to before the model sees it. Empty is the model's own size.",
         [{"rule": "optional"},
          {"rule": "integer", "message": "The image size is a whole number of pixels."},
          _between("The image size", 32, 2048)]),
     "faces.model": _setting(
-        "face-model", "Face model", "text", MTCNN_FACENET,
-        "The models indexing and Suggest find faces and make their vectors with: %s (MTCNN and FaceNet, which made "
-        "the libraries' first face vectors) or %s (SCRFD and AdaFace). The %s settings are MTCNN's. Every reader "
+        "face-model", "Face model", "text", SCRFD_ADAFACE,
+        "The models indexing and Suggest find faces and make their vectors with: %s (SCRFD and AdaFace, every "
+        "library's since phase 3) or %s (MTCNN and FaceNet, which made the libraries' first face vectors, retired). "
+        "The %s settings are MTCNN's. Every reader "
         "compares a face by its vector under this model, so switching to %s waits for its pass (face-pass) to give "
         "the library's faces their new vectors: a switch is refused, with the counts, while too many faces are in photos "
         "where no face holds its vector (the pass has not reached them, or found no face in them). Switching back is always allowed (docs/AI_PIPELINE.md, phase 3)." % (
-            MTCNN_FACENET, SCRFD_ADAFACE, SETTING_GROUPS["faces"]["title"], SCRFD_ADAFACE),
+            SCRFD_ADAFACE, MTCNN_FACENET, SETTING_GROUPS["faces"]["title"], SCRFD_ADAFACE),
         [{"rule": "one_of", "choices": list(FACE_MODELS),
           "message": "The face model is one of %s." % ", ".join(FACE_MODELS)}]),
     "faces.min_face_size": _setting(

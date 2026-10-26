@@ -22,7 +22,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import add_face, add_people, photo_id, FACENET  # noqa: E402
+from face_rows import add_face, add_people, photo_id, FACE_MODEL  # noqa: E402
 from shipped_sources import ROOT  # noqa: E402
 
 from mcp import types  # noqa: E402
@@ -105,8 +105,8 @@ class McpServer(unittest.TestCase):
             # face the other face model found holds none (add_face without one: the writer always files one).
             camp1, camp2 = os.path.join(cls.gone, "camp_001.jpg"), os.path.join(cls.gone, "camp_002.jpg")
             cls.faces = {
-                "rowan": faces.insert(conn, cls.sailing, [10, 20, 110, 140], b"\x00" * 16, prob=0.99, model=FACENET),
-                "stranger": faces.insert(conn, cls.sailing, [200, 20, 260, 90], b"\x00" * 16, prob=0.91, model=FACENET),
+                "rowan": faces.insert(conn, cls.sailing, [10, 20, 110, 140], b"\x00" * 16, prob=0.99, model=FACE_MODEL),
+                "stranger": faces.insert(conn, cls.sailing, [200, 20, 260, 90], b"\x00" * 16, prob=0.91, model=FACE_MODEL),
                 "both": add_face(conn, cls.dinghy, [0, 0, 10, 10]),
                 # #42: names on the rows of a folder whose files are gone.
                 "camp1": add_face(conn, camp1, [0, 0, 10, 10]),

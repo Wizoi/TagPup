@@ -25,7 +25,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
-from face_rows import FACENET  # noqa: E402
+from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 import stand_in_models  # noqa: E402
 import web_client  # noqa: E402
@@ -96,7 +96,7 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
     def face(self, photo_path, degrees, name=None):
         """A face `degrees` round the circle, named by hand as `name` when given."""
         def add(conn):
-            face_id = faces.insert(conn, photo_path, [10, 10, 110, 110], at(degrees), model=FACENET)
+            face_id = faces.insert(conn, photo_path, [10, 10, 110, 110], at(degrees), model=FACE_MODEL)
             if name:
                 conn.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (name, face_id))
                 face_rows.give_their_person(conn, face_id)

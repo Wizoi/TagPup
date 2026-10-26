@@ -1,0 +1,83 @@
+# What is left of the old models (2026-10-25)
+
+The old models are MTCNN + FaceNet (`mtcnn-facenet`) and OpenCLIP ViT-H-14 `laion2b_s32b_b79k`; the new ones are
+`scrfd-adaface` and SigLIP 2 (`ViT-SO400M-14-SigLIP2`, `webli`). Owner, 2026-10-25: everything uses the new ones. A model
+change means re-embedding everything and naming again, and that is taken as given: there is no mixed-model arm.
+
+**Live counts** (read-only through `db.readonly_uri`, 2026-10-25; photo_index / kr-track / renton_parkrun):
+
+- The settings hold SigLIP 2 / webli, full frame true, aspect ratio 1.4, an empty image size (forcing one is refused for
+  SigLIP 2), and `scrfd-adaface`. All three still hold MTCNN's rows (20, 0.85, "0.6, 0.7, 0.7"). None holds
+  `faces.detect_max_side`.
+- `face_embeddings` holds `scrfd-adaface` only: 182,803 / 10,884 / 3,315. No FaceNet vector is left.
+- `embeddings` holds the SigLIP 2 key only (`...|full-frame|1.4|native`): 59,523 / 1,634 / 1,309. `tag_embeddings`
+  holds 0 rows in each.
+- `faces_detected` still holds rows under MTCNN's detector name: 0 / 175 / 139. Under the new model it holds 10,189 / 156 / 31.
+- Each library's switch INSERTED its `faces.model` row: changes 3244 / 342 / 1221. Undone, the row goes, and the
+  library reads the default. Today that undo is refused (NONE_HELD: no FaceNet vector is left). Each library's photo
+  switch (3249 / 343 / 1222) updated rows the stamp had written.
+- The weights on this machine: SCRFD 640 and 1280 and AdaFace, in torch's checkpoints folder, and SigLIP 2 SO400M in the
+  Hugging Face cache. FaceNet's `20180402-114759-vggface2.pt` and four other CLIP checkpoints sit there unused.
+
+## The table
+
+Actions: CONVERT (make it use the new models), DELETE (dead: no live instance), KEEP (say why). "next cut" means it is
+planned below and not built in this branch.
+
+| # | Where | What it does | Live instances | Action |
+|---|---|---|---|---|
+| 1 | `core/validation.py` SETTINGS defaults: `model.name` ViT-H-14, `model.pretrained` laion2b, `model.force_image_size` 512, `faces.model` mtcnn-facenet | The values a new library is stamped with (#1974) and the values read for a missing row | Every new library | CONVERT. Designed and tried, NOT committed: 46 test files fail (see "Cut A") |
+| 2 | `services/settings.py` `undo_check` (`DEFAULTS[FACE_MODEL]` for an inserted row), `_filled`, `store/settings.py` `face_model()` | Gives a missing faces.model row the default | 3 (changes 3244/342/1221, if undone) | CONVERT with 1: a missing row in a library that holds settings reads `BEFORE_FACE_MODELS = mtcnn-facenet`; only the stamp changes |
+| 3 | `FACE_MODELS = (MTCNN_FACENET, SCRFD_ADAFACE)`, the `one_of` rule, the gear's info text, `SETTING_GROUPS["face-model"]` consequences ("set back to mtcnn-facenet") | The old model is offered first and a library can be switched back | 0 libraries on it, 0 FaceNet vectors | CONVERT the order and text now (Cut A); DELETE MTCNN_FACENET as a choice in Cut B |
+| 4 | `faces.min_face_size`, `faces.confidence_threshold`, `faces.mtcnn_thresholds`, `faces.detect_max_side`, the "Face detection" group, `LibrarySettings.faces` MTCNN arm, `detect_max_side` property | MTCNN's settings; scrfd-adaface takes none (`model_alone`) | 3 libraries hold 3 rows each that nothing reads; 0 hold detect_max_side | DELETE in Cut B. Rows left in a live library are unread; deleting them is a journaled write and the owner's call |
+| 5 | `tagpup/ml/faces.py` (265 lines): FaceModel, `facenet_pytorch` import; `runtime._build_faces` FaceModel arm | The old detector and embedder | 0 | DELETE in Cut B. Move `SMALLEST_FACE`, `NotDetected` and `detection_picture` first: `scrfd_adaface` imports them, so loading the new model imports facenet_pytorch today |
+| 6 | `requirements.txt` facenet-pytorch; `scripts/sandbox.py` version list | The old model's package | 0 | DELETE with 5. `open-clip-torch` stays: SigLIP 2 loads through open_clip |
+| 7 | `settings.switch_on` FaceNet "back" arm, `NONE_HELD`, `holds_vectors_under` | Allows a switch back to FaceNet, or refuses it | 0 (all three refuse it) | DELETE in Cut B. The undo of 3244/342/1221 then needs a plain refusal ("a library's first face model is not undone"). That is a new refusal of D2's matrix: the Data owner's row |
+| 8 | `core/clustering.py` `FACENET_CUTS`, `CUTS[MTCNN_FACENET]`; `scripts/verify_workflow.py`'s FaceNet cut | FaceNet's naming, offer and group cuts | 0 libraries | DELETE in Cut B, after the People tests are ported (their numbers are FaceNet's; about 40 files import `face_rows.FACENET`) |
+| 9 | `ml/photo_models.py` row `("ViT-H-14", "laion2b_s32b_b79k")`, listed first | ViT-H's word cut 0.23 and its forced size | 0 vectors, 0 libraries | Order now (Cut A); DELETE the row in Cut B. The undo of 3249/343/1222 stays refused (UNKNOWN_PHOTO_MODEL instead of TOO_FEW) |
+| 10 | `services/face_gate.py` (235), `scripts/measure_face_gate.py` (192), `tests/test_the_gate_reads_both_models.py` (349), the gate section of `store/faces.py` (`pass_counts`' gate half), `core/holdout.py` for its gate use | Phase 3's gate: old against new on faces holding both vectors | 0 faces hold both | DELETE (Cut B; a deletion; scenario P9 leaves `tests/owners.py`) |
+| 11 | `retire-faces`, `retire-vectors` (CLI), `services/retire_faces.py` (531), `OLD = MTCNN_FACENET`, and its tests (895 lines) | Retires the old detector's faces and FaceNet's vectors | Applied once in each library; 0 left to retire | DELETE the commands in Cut B. Their undo checks (`retiring_check`, `vectors_check`, `pass_check`) move to `journal.RETIRED` while the journals hold the changes (1 each; journal retention 90 days). The generic "retire the old model's data" step is the seam's (Cut C) |
+| 12 | `face-pass` (`services/face_pass.py`, 260), `pass_counts(conn, MTCNN_FACENET, model)` in `switch_on` | Re-embeds faces and carries names by overlap from the old faces to the new ones | 0 libraries need it now | CONVERT in Cut C: "old" becomes the library's current model, not FaceNet. This is the flow's re-embed and naming-again step |
+| 13 | `embed-photos`, `set-photo-model`, `retire-photo-vectors`, `services/photo_reembed.py`, `retire_photo_vectors.py`, `settings.photo_switch_on` / `covers` | Re-embed, declare, retire, for any photo key | Generic | KEEP as the photo half of the flow. The 5% gate (`covers`) is the check that the re-embed was done. Nothing in it is ViT-H's |
+| 14 | `cluster-faces`, `tags-from-faces`, automatch | Naming again after a new model | Generic | KEEP: the flow's naming step |
+| 15 | `faces_detected` rows under MTCNN's detector name | A record of "looked at" that no library on the new model reads | 0 / 175 / 139 | KEEP (unread). Deleting them writes the live libraries: the owner's call |
+| 16 | `store/schema.py` migration 33 (`FACENET_KEY`, `FACENET_BYTES`) | Frozen migration | Read by an older library or snapshot | KEEP (frozen) |
+| 17 | `services/bake_reading.py` `OTHER_MODELS` | A bake under a key that is not the library's: that side is worked out | Generic (the next swap) | KEEP. A new library on the new models reads a bake from the live libraries without a model once 1 is in |
+| 18 | `--skip-faces` | Index without faces | Generic | KEEP. Only its SPEC text names MTCNN |
+| 19 | Tests: `stand_in_models.FaceModelStandIn.key = MTCNN_FACENET`, `face_rows.FACENET` (the helpers' default), `people_by_id`, `journal_library`, `face_rows.configured_model()` (from DEFAULTS) | Seed faces and vectors under FaceNet | Fixtures only | CONVERT with 1 (Cut A): the new library's model is the default; FaceNet only where a test is about the old model |
+| 20 | Docs: README 52/74; SPEC_TAGPUP_CLI 16/31/33/47/64/194/222; EXAMPLE 80; DATABASE 81/343/355/356; SPEC_TAGTUNER 189/580/611; domains/people 103/227, views 34/78; AI_PIPELINE (default mentions); INVARIANTS 21 (a history line: KEEP) | Name the old models as the default or the engine | - | CONVERT in Cut A (the default) and Cut B (the engine) |
+| 21 | UI: the gear is built from validation (no model literal in `web/`); the group title "The CLIP model", `web/tuner/index.html`'s menu title | Calls the photo model "CLIP" | - | CONVERT the wording (low), Cut A |
+| 22 | `scripts/measure_pipeline_stages.py` (MTCNN hooks), `measure_pipeline_holdouts.py` (ViT-H candidates and cut), `prepare_test_environment.py` (seeds `MTCNN_FACENET`) | Measurement and sandbox programs on the old models | 0 | CONVERT or DELETE in Cut B, with 5 |
+
+Counts by action: CONVERT 11 (1, 2, 3, 9 in part, 12, 19, 20, 21, 22 in part), DELETE 8 (3 in part, 4, 5, 6, 7, 8, 10, 11),
+KEEP 7 (13, 14, 15, 16, 17, 18, INVARIANTS' history line).
+
+## The switch machinery against the one flow
+
+The flow is: declare the new model, re-embed, name again, retire the old model's data. **The flow itself:**
+embed-photos, set-photo-model, retire-photo-vectors, face-pass (re-embed and carry names), cluster-faces / tags-from-faces
+/ automatch (name again), the switch's coverage gate. **Extra**, kept only so FaceNet could stay a choice: the switch back
+and NONE_HELD (7), FaceNet's cuts (8), MTCNN's settings (4), the gate between models (10), retire-faces and retire-vectors
+as written for FaceNet alone (11), and face-pass's FaceNet-as-old (12).
+
+## The cuts (none of them writes the live libraries)
+
+- **Cut A** (next, about 700 to 900 lines): rows 1 to 3, 9's order, 19, 20's defaults, 21. The patch is designed:
+  validation's defaults become SigLIP 2 / webli / an empty size / scrfd-adaface, and `BEFORE_FACE_MODELS` is what a
+  library stamped before faces.model was a setting reads (`store.settings.face_model`, `settings._filled` when
+  `held` is non-empty, `undo_check`). That keeps the three undos refused as they are today. Tried on the trunk: 46
+  test files fail, mostly People tests that seed FaceNet vectors through `face_rows` into a library that now reads
+  `scrfd-adaface`. Port `face_rows` / `stand_in_models` to the library's default model. Port the tests that check the
+  cuts to AdaFace's numbers, or, for the ones about the old model (switching, retiring), stamp FaceNet explicitly
+  (`settings.stamp(..., {"faces.model": MTCNN_FACENET}, FROM_REPLACED)`, as `tests/test_an_index_reads_a_bake.py` does
+  for the new model). Add a scenario: a library made by Create alone indexes a folder baked under the live libraries'
+  keys with no model asked (fails on the old code).
+- **Cut B** (a deletion; about +300 lines, more than 2,500 deleted): rows 4 to 8, 9's row, 10, 11, 22. Move
+  `NotDetected` / `SMALLEST_FACE` / `detection_picture` out of `ml/faces.py`. Move retire's undo checks into
+  `journal.RETIRED`. The Data owner gives the refusal of an undo of an inserted faces.model row.
+- **Cut C, the seam** (about 500 to 700 lines): one module declares each model kind (photo: key spelling, loader,
+  dimensions, word cut, sizes; face: key, loader, vector dimension, the detector record's spelling, the floor). Runtime,
+  settings (`embedder`, `faces`), validation's choices, bake (`PHOTO_DIM`, `FACE_DIM`), clustering's cuts and the switch
+  ask it. face-pass and retire are one flow with "old" = the library's current model. `photo_models.py` folds into it.
+- **The owner's**: deleting the unread MTCNN settings rows and `faces_detected` rows from the live libraries (a
+  journaled write).

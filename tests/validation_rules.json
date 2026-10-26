@@ -1,5 +1,5 @@
 {
- "version": "86d84ea7d967",
+ "version": "8f823901b407",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -216,8 +216,8 @@
    "group": "clip",
    "label": "Model",
    "type": "text",
-   "default": "ViT-H-14",
-   "info": "The CLIP architecture Suggest compares photos and words with (an open_clip model name). Every photo's vector is made with it when its folder is indexed.",
+   "default": "ViT-SO400M-14-SigLIP2",
+   "info": "The photo model Suggest and search compare photos and words with (an open_clip model name; SigLIP 2 SO400M, every library's since phase 5). Every photo's vector is made with it when its folder is indexed.",
    "locked": true,
    "consequences": [
     "Each photo's vector is kept under the settings that made it, and Suggest and search compare by the vectors of the settings the library has: a change is refused, with the counts, while too many of the library's photos hold no vector under the new settings. Make the new model's vectors first; the old ones stay.",
@@ -239,7 +239,7 @@
    "group": "clip",
    "label": "Weights",
    "type": "text",
-   "default": "laion2b_s32b_b79k",
+   "default": "webli",
    "info": "The trained weights the model is loaded with (an open_clip pretrained tag for the model above).",
    "locked": true,
    "consequences": [
@@ -304,7 +304,7 @@
    "group": "clip",
    "label": "Image size",
    "type": "integer",
-   "default": "512",
+   "default": "",
    "info": "The size in pixels a photo is scaled to before the model sees it. Empty is the model's own size.",
    "locked": true,
    "consequences": [
@@ -331,8 +331,8 @@
    "group": "face-model",
    "label": "Face model",
    "type": "text",
-   "default": "mtcnn-facenet",
-   "info": "The models indexing and Suggest find faces and make their vectors with: mtcnn-facenet (MTCNN and FaceNet, which made the libraries' first face vectors) or scrfd-adaface (SCRFD and AdaFace). The Face detection settings are MTCNN's. Every reader compares a face by its vector under this model, so switching to scrfd-adaface waits for its pass (face-pass) to give the library's faces their new vectors: a switch is refused, with the counts, while too many faces are in photos where no face holds its vector (the pass has not reached them, or found no face in them). Switching back is always allowed (docs/AI_PIPELINE.md, phase 3).",
+   "default": "scrfd-adaface",
+   "info": "The models indexing and Suggest find faces and make their vectors with: scrfd-adaface (SCRFD and AdaFace, every library's since phase 3) or mtcnn-facenet (MTCNN and FaceNet, which made the libraries' first face vectors, retired). The Face detection settings are MTCNN's. Every reader compares a face by its vector under this model, so switching to scrfd-adaface waits for its pass (face-pass) to give the library's faces their new vectors: a switch is refused, with the counts, while too many faces are in photos where no face holds its vector (the pass has not reached them, or found no face in them). Switching back is always allowed (docs/AI_PIPELINE.md, phase 3).",
    "locked": true,
    "consequences": [
     "Set to scrfd-adaface, Identify, cluster-faces, New Person and Suggest compare faces by the new model's vectors, with its own cuts for naming and offering a person; photos indexed after it find faces with the new model. A face the pass has not given a new vector takes no part, and a named one leaves the named faces compared with, until the pass reaches its photo.",

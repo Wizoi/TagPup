@@ -12,12 +12,27 @@ from tagpup.core import validation
 #: The faces with their photo's path: `SELECT p.path, f.name FROM ` + FACES_WITH_PATHS.
 FACES_WITH_PATHS = "faces f JOIN photos p ON p.id = f.photo_id"
 
-#: The key FaceNet's vectors are kept under (`face_embeddings.model`): the faces.model a library made in a test's home holds by
-#: default, and the key every vector of the three live libraries is under.
+#: The face model a library made in a test's home is on, and the key its vectors are kept under (`face_embeddings.model`):
+#: the setting's default, which a new library is stamped with (SCRFD and AdaFace, every live library's). What every helper
+#: here files a face's vector under unless given another.
+FACE_MODEL = validation.SETTINGS["faces.model"]["default"]
+
+#: FaceNet's key, the old model's: given explicitly, by a test about the old model (switching to or from it, retiring
+#: it), to a library stamped on it (`on_facenet`).
 FACENET = validation.MTCNN_FACENET
 
-#: A face's vector under FaceNet's key, as `v`: `SELECT f.id, v.vector FROM faces f` + VECTOR_OF_FACE.
-VECTOR_OF_FACE = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = '%s'" % FACENET
+#: A face's vector under the library's key, as `v`: `SELECT f.id, v.vector FROM faces f` + VECTOR_OF_FACE.
+VECTOR_OF_FACE = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = '%s'" % FACE_MODEL
+
+
+def on_facenet(db_path):
+    """Stamp the library at `db_path`, which holds no settings yet, on FaceNet, as the libraries stamped before the new
+    model were: for a test about the old model. The library's other settings are the defaults."""
+    from tagpup.core.library import Library   # a test helper stamps as the picker's Create does
+    from tagpup.services import settings
+    stamped = settings.stamp(Library(db_path), {settings.FACE_MODEL: FACENET}, operation=settings.FROM_REPLACED)
+    if not stamped.changed:
+        raise ValueError("the library at %s holds settings already: it is not stamped on FaceNet" % db_path)
 
 
 def photo_id(conn, photo_path):
@@ -112,11 +127,11 @@ def give_their_person(conn, face_id):
         conn.execute("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", (found, name, face_id))
 
 
-def add_face(conn, photo_path, box=(0, 0, 10, 10), embedding=None, model=FACENET, **columns):
+def add_face(conn, photo_path, box=(0, 0, 10, 10), embedding=None, model=FACE_MODEL, **columns):
     """Insert a face into the photo at `photo_path`; `columns` are any others of faces
     (name, prob, name_source, excluded, excluded_reason, id). A box that is
     not a string is written as JSON. Its `embedding`, if given (float32 bytes), is its vector in `face_embeddings` under `model`,
-    FaceNet's unless given, as the indexer files it. A face given a `name` is given the person the tree says it is, as every
+    the library's (FACE_MODEL) unless given, as the indexer files it. A face given a `name` is given the person the tree says it is, as every
     writer that names a face does (tagpup.store.person_ids.target: the id of the one node called so; none for a name no node, or
     two, is called). Returns the face's id. The caller commits."""
     values = dict(columns, photo_id=photo_id(conn, photo_path),
@@ -131,7 +146,7 @@ def add_face(conn, photo_path, box=(0, 0, 10, 10), embedding=None, model=FACENET
     return face_id
 
 
-def add_vector_of_face(conn, face_id, vector, model=FACENET):
-    """Keep `vector` (float32 bytes) as the face's under `model`, FaceNet's unless given, replacing one it had. The caller
-    commits."""
+def add_vector_of_face(conn, face_id, vector, model=FACE_MODEL):
+    """Keep `vector` (float32 bytes) as the face's under `model`, the library's (FACE_MODEL) unless given, replacing one
+    it had. The caller commits."""
     conn.execute("INSERT OR REPLACE INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)", (face_id, model, vector))

@@ -3,6 +3,8 @@
 
 What the owner lives through, adding a folder whose photos were baked:
 
+* a library made by the picker's Create alone is on the models every live library is on: a folder baked under their keys
+  is indexed from its files and no model is asked;
 * a folder baked under the library's keys is indexed and no model is asked: each photo's vector and faces are the bake's,
   a JPEG, a TIFF and a photo of 60 faces whose bake spans Extended XMP alike; a bake that found none gives no face and the
   faces_detected row a detection finding none writes; the photo's raw_metadata holds nothing of the bake;
@@ -28,7 +30,8 @@ What the owner lives through, adding a folder whose photos were baked:
 
 CLIP and the face model are stood in for (tests/test_no_test_loads_a_model.py); a stand-in asked while `refused` raises
 and is noted. Pillow and ExifTool are real; the bakes are written through the one writer (tests/baked_files.py, or
-planned and written as a bake run does: bake_as_planned); the library is stamped with the new face model and made by the picker's Create in a home of its own.
+planned and written as a bake run does: bake_as_planned); the library is made by the picker's Create alone, in a home of
+its own.
 """
 import json
 import os
@@ -68,6 +71,10 @@ from tagpup.store import embeddings as store_embeddings  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 FACES = validation.SCRFD_ADAFACE
+#: The keys every live library's vectors are under (photo_index, kr-track and renton_parkrun, read 2026-10-25: their
+#: settings, and `embeddings.model` and `face_embeddings.model`, each one key): what a bake made from them holds.
+LIVE_PHOTO_KEY = "ViT-SO400M-14-SigLIP2|webli|full-frame|1.4|native"
+LIVE_FACE_MODEL = "scrfd-adaface"
 SIZE = (640, 480)
 #: The detector the stand-in face model's detections are recorded under.
 DETECTOR = face_service.detector_of(NewFaces(), None)
@@ -136,11 +143,9 @@ class AnIndexReadsABake(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def made(self, name):
-        """A library made by the picker's Create, stamped with the new face model."""
+        """A library made by the picker's Create, and nothing else."""
         db_path = self.home.library(name)
-        library_actions.bring_up_to_date(db_path)
-        library_settings.stamp(Library(db_path), {"faces.model": FACES}, operation=library_settings.FROM_REPLACED)
-        self.assertEqual(1, library_actions.create(db_path).ok)
+        self.assertEqual(1, library_actions.create(db_path).changed)
         return db_path
 
     # ---- the photos and their bakes ----------------------------------------------------------------------------------
@@ -297,6 +302,24 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(1, len(self.detected(bare)))
         self.assertEqual(self.detected(bare), self.detected(empty))
         self.assertEqual(0, self.detected(empty)[0][1])
+
+    def test_a_library_made_by_create_alone_reads_a_bake_of_the_live_libraries_keys_and_asks_no_model(self):
+        self.db_path = self.made("cove.db")
+        folder = self.folder("Cove Baked")
+        jetty = self.picture(folder, "jetty.jpg", "navy")
+        upright = images.opened(jetty, upright=True)
+        held = baked_files.baked(baked_files.unit(bake.PHOTO_DIM, 7), [(baked_files.area(0), baked_files.unit(bake.FACE_DIM, 70))],
+                                 upright.size, photo_model=LIVE_PHOTO_KEY, face_model=LIVE_FACE_MODEL,
+                                 fingerprint=images.fingerprint(upright))
+        baked_files.write(jetty, held)
+        self.refused = self.detector.refused = True
+        result = self.index(folder)
+        self.assertEqual([], self.on_card, result.output)
+        self.assertEqual([], self.detector.asked, result.output)
+        self.photo_key = LIVE_PHOTO_KEY
+        self.assertHoldsTheBake(jetty, held, SIZE)
+        self.assertIn("Baked into the files: 1 photo(s) read from their file, 0 worked out on the graphics card",
+                      " ".join(result.output.split()))
 
     def test_a_bake_not_of_the_library_or_not_of_the_picture_is_worked_out_and_counted(self):
         folder = self.folder("Harbour Mixed")
@@ -544,12 +567,7 @@ class AnIndexReadsABake(unittest.TestCase):
 
     def test_a_library_at_33_is_brought_up_as_the_index_opens_it_and_its_fingerprints_recorded(self):
         with migration_names.up_to(33):
-            self.db_path = self.home.library("old_harbour.db")
-            library_actions.bring_up_to_date(self.db_path)
-            library_settings.stamp(Library(self.db_path), {"faces.model": FACES},
-                                   operation=library_settings.FROM_REPLACED)
-            made = library_actions.create(self.db_path)
-            self.assertTrue(made.ok, made.message())
+            self.db_path = self.made("old_harbour.db")
         self.assertEqual([], self.query("SELECT name FROM sqlite_master WHERE name = 'photo_fingerprints'"))
         self.assertEqual(33, self.query("SELECT MAX(version) FROM schema_version")[0][0])
         folder = self.folder("Harbour Before")
