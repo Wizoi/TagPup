@@ -97,12 +97,14 @@ class StandIns:
             stand_ins.card_threads.add(threading.current_thread().name)
             if isinstance(picture, face_models.NotDetected):
                 return picture
-            width, height = picture.stored.size
+            width, height = picture.upright.size
             with stand_ins.lock:
-                stand_ins.detected.append((picture.path, picture.stored.size))
-            colour = colour_of(picture.stored)
-            return [{"box": [0, 0, min(width, FACE_SIDE), min(height, FACE_SIDE)], "prob": 0.99, "landmarks": [],
-                     "embedding": [c / 255.0 for c in colour] + [0.0] * 509, "norm": 20.0}]
+                stand_ins.detected.append((picture.path, picture.upright.size))
+            colour = colour_of(picture.upright)
+            # Found at the top left of the picture as shown, kept in the picture as stored, as the model keeps it.
+            return [dict(face, embedding=[c / 255.0 for c in colour] + [0.0] * 509, norm=20.0)
+                    for face in scrfd_adaface.kept([([0, 0, min(width, FACE_SIDE), min(height, FACE_SIDE)], 0.99, [])],
+                                                   picture)]
         for patcher in (mock.patch("torch.cuda.is_available", return_value=False),
                         mock.patch.object(clip.ClipModel, "_init_model"),
                         mock.patch.object(clip.ClipModel, "picture_input", picture_input),
@@ -425,15 +427,16 @@ class AnIndexReadingAhead(unittest.TestCase):
             for name, (_given, vector, found, _detected) in rows.items():
                 self.assertEqual(vector[2:5], found[0][1], "%s took a neighbour's picture" % name)
 
-    def test_a_turned_photo_is_shown_to_clip_upright_and_detected_as_stored(self):
+    def test_a_turned_photo_is_shown_upright_to_clip_and_to_the_detector_its_box_kept_stored(self):
         library = self.library("quay.db")
         folder = os.path.join(self.home.root, "Quay")
         turned = photo(os.path.join(folder, "turned.jpg"), (40, 90, 160), size=(80, 60), orientation=6)
         self.index(library, folder)
         self.assertEqual([(60, 80)], [size for size, _colour in self.models.shown])
-        self.assertEqual([(turned, (80, 60))], self.models.detected)
+        self.assertEqual([(turned, (60, 80))], self.models.detected)
         _given, _vector, found, _detected = recorded(library)["turned.jpg"]
-        self.assertEqual("[0, 0, %d, %d]" % (FACE_SIDE, FACE_SIDE), found[0][0])
+        # The top left of the picture shown under Orientation 6 is the bottom left of the 80 x 60 picture as stored.
+        self.assertEqual("[0, %d, %d, 60]" % (60 - FACE_SIDE, FACE_SIDE), found[0][0])
 
 
 class ThePhotosReadAhead(unittest.TestCase):

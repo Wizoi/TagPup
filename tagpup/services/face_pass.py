@@ -9,7 +9,7 @@ The model is handed in (tagpup.ml.scrfd_adaface.ScrfdAdaFace, or a test's stand-
   vector under the model's key;
 - an old face no detection overlaps is listed (photo id, face id) for review, and nothing of it changes;
 - a detection no old face takes is a new face, if the model makes one of it (its `new_faces`, as the index and Suggest
-  make theirs: tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR, the crop cut from the picture as stored by its box): unnamed, not
+  make theirs: tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR, the crop cut upright by its box): unnamed, not
   excluded, its vector under the model's key alone, so every reader keyed by the library's model (FaceNet's until the
   switch) leaves it out (tagpup.store.faces.WITH_VECTOR);
 - a detection no old face takes that the model makes no face of (under the floor) is not made, and is counted (`too_small`).
@@ -25,9 +25,10 @@ the photo's own transaction, as its faces are, and read again there the same way
 A photo is done when one of its faces holds a vector under the key (tagpup.store.faces.vectors_under), or when it holds
 no face and the model's row says it was looked at (tagpup.store.faces_detected.faceless_under): a run resumes by what is
 held, and a second run writes nothing and looks at nothing. A photo with old faces that the model takes none of and makes
-none beside is not recorded: its old faces are listed, and it is looked at again next run. A turned photo
-(tagpup.services.photos.box_shape, DECISIONS 2026-10-16: its boxes are not converted) is skipped; a photo whose picture
-does not decode or whose model fails is failed. Both are counted, and nothing of them is written, a row of it neither.
+none beside is not recorded: its old faces are listed, and it is looked at again next run. A photo turned by its
+Orientation is looked at as shown, its detections' boxes in the picture as stored as every box is, so they pair with its
+old faces' (tagpup.ml.scrfd_adaface; DECISIONS 2026-10-27). A photo whose picture does not decode or whose model fails is
+failed: counted, and nothing of it is written, a row of it neither.
 
 Each photo is one transaction (BEGIN IMMEDIATE), in which the photo is read again: its row still there at the path listed,
 still not done, its faces as they were read; else nothing is written and it is failed for this run (a row sync removed or
@@ -53,7 +54,6 @@ from typing import List, Tuple
 from tagpup.core import clustering, paths, read_ahead
 from tagpup.files import images
 from tagpup.services import faces as face_service
-from tagpup.services import photos as photo_service
 from tagpup.store import db, faces_detected, journal
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
@@ -85,11 +85,10 @@ class Folder:
     too_small: int = 0
     #: (photo id, face id) of each old face no detection took: listed for review, untouched.
     unmatched: List[Tuple[int, int]] = field(default_factory=list)
-    #: Photos the model was asked about; turned (skipped); already done (a face holds the model's vector, or the photo
-    #: holds no face and the model's row says it was looked at); holding no face and in which the model found none, or
-    #: only detections under the floor (recorded as looked at with `apply`: done next run).
+    #: Photos the model was asked about; already done (a face holds the model's vector, or the photo holds no face and
+    #: the model's row says it was looked at); holding no face and in which the model found none, or only detections
+    #: under the floor (recorded as looked at with `apply`: done next run).
     looked: int = 0
-    skipped: int = 0
     done: int = 0
     none_found: int = 0
     #: (photo id, why) of each photo nothing was written for that the model was asked about.
@@ -138,18 +137,10 @@ def _folder(db_path, conn, model, name, photos, apply, held, reading, stop, befo
     detector = face_service.detector_of(model, None)
     ids = [photo_id for photo_id, _path in photos]
     done = set(store_faces.vectors_under(conn, model.key, ids)) | faces_detected.faceless_under(conn, detector, ids)
-    passed = {}
 
     def begin(photo):
-        """In this thread, as a photo enters the read-ahead: None, nothing read, for one done or turned."""
-        photo_id, path = photo
-        if photo_id in done:
-            passed[photo_id] = "done"
-        elif photo_service.box_shape(path)["turned"]:
-            passed[photo_id] = "skipped"
-        else:
-            return True
-        return None
+        """In this thread, as a photo enters the read-ahead: None, nothing read, for one done."""
+        return None if photo[0] in done else True
 
     def read(photo, _begun, reserve):
         """On a thread of the read-ahead: the photo made ready for the model, nothing on the graphics card."""
@@ -165,7 +156,7 @@ def _folder(db_path, conn, model, name, photos, apply, held, reading, stop, befo
                 found.stopped = True
                 break
             if begun is None:
-                setattr(found, passed[photo_id], getattr(found, passed[photo_id]) + 1)
+                found.done += 1
                 continue
             found.looked += 1
             # Read before the model is asked, and again in the write: a face deleted, added or its box moved, or the

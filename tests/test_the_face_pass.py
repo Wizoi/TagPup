@@ -1,10 +1,11 @@
 """Scenario P8: the new face model's pass over a folder (tagpup.services.face_pass), with the model stood in for
-(tests/stand_in_models.NewFaces): what each old face keeps, what is made new, what is listed, skipped or failed, a run
-stopped part-way and resumed, run twice, undone from History, a dry run, and two libraries holding one folder; a photo
+(tests/stand_in_models.NewFaces): what each old face keeps, what is made new, what is listed or failed, a photo turned by
+its Orientation looked at as shown, a run stopped part-way and resumed, run twice, undone from History, a dry run, and two libraries holding one folder; a photo
 with no face recorded as looked at, so a second run looks at nothing, and what Suggest and an index make of it after.
 
 Photos are real files (Pillow), rows as the index makes them (tests/photo_rows.py), faces as it stores them
 (tests/face_rows.py). Each library in a home of the test's own (tests/own_home.py)."""
+import io
 import json
 import os
 import struct
@@ -21,6 +22,7 @@ import photo_rows  # noqa: E402
 from face_rows import FACENET, add_face, on_facenet, person_of  # noqa: E402
 from stand_in_models import NewFaces  # noqa: E402
 
+from tagpup.core import orientation  # noqa: E402
 from tagpup.services import face_pass  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
@@ -303,25 +305,49 @@ class FacePass(unittest.TestCase):
         self.assertEqual(1, self.run_pass(model).none_found)
         self.assertEqual(["later.jpg"], model.asked)
 
-    def test_a_turned_photo_is_skipped_and_one_that_does_not_decode_or_fails_is_reported_and_nothing_is_written(self):
-        _turned, turned_path = self.photo("turned.jpg", turned=True)
-        self.face(turned_path, [10, 10, 110, 130], 1)
+    def test_a_turned_photo_is_looked_at_as_shown_its_boxes_kept_stored_its_crop_upright(self):
+        """Photos stored sideways (Orientation 6: 400 x 300 stored, 300 x 400 shown), as a phone keeps them. The model
+        finds their faces on the picture as shown; an old face (a box in the stored pixels) takes the detection of the
+        same face (clustering.pairs, on stored boxes: no second face made beside it), and a face no old face takes is
+        made new, its box in the stored pixels and its crop cut as a person sees the face. A second run looks at neither
+        (DECISIONS 2026-10-27; #1975: the turned photos were skipped, and an index found no face in them)."""
+        _held, held_path = self.photo("turned.jpg", turned=True)
+        old = self.face(held_path, [100, 50, 220, 110], 1, name="Rowan Thackeray", name_source="manual")
+        fresh, fresh_path = self.photo("turned-new.jpg", turned=True)
+        new_box = [200, 150, 320, 210]   # 120 wide and 60 high as stored: 60 wide and 120 high as shown
+
+        def shown(box):
+            return orientation.to_upright(box, 400, 300, 6)
+        found = self.run_pass(NewFaces({"turned.jpg": [(shown([104, 52, 218, 112]), 0.9, 1)],
+                                        "turned-new.jpg": [(shown(new_box), 0.9, 2)]}))
+        self.assertEqual((2, 1, 1, [], []), (found.looked, found.matched, found.new, found.unmatched, found.failed))
+        self.assertEqual([FACENET, NEW], self.vectors(old))
+        self.assertEqual([("[100, 50, 220, 110]", "Rowan Thackeray")],
+                         self.query("SELECT f.box, f.name FROM faces f JOIN photos p ON p.id = f.photo_id"
+                                    " WHERE p.path = ?", (held_path,)))
+        ((box, jpeg),) = self.query("SELECT f.box, c.jpeg FROM faces f JOIN face_crops c ON c.face_id = f.id"
+                                    " WHERE f.photo_id = ?", (fresh,))
+        self.assertEqual(new_box, json.loads(box))
+        self.assertEqual((60, 120), Image.open(io.BytesIO(jpeg)).size, "the face as a person sees it")
+        again = NewFaces({"turned.jpg": [(shown([104, 52, 218, 112]), 0.9, 1)],
+                          "turned-new.jpg": [(shown(new_box), 0.9, 2)]})
+        self.assertEqual((2, []), (self.run_pass(again).done, again.asked))
+
+    def test_a_photo_that_does_not_decode_or_fails_is_reported_and_nothing_is_written(self):
         broken, _ = self.photo("broken.jpg", broken=True)
         failing, failing_path = self.photo("failing.jpg")
         self.face(failing_path, [10, 10, 110, 130], 2)
         empty, _ = self.photo("empty.jpg")
-        _blank, blank_path = self.photo("turned-blank.jpg", turned=True)
         broken_blank, _ = self.photo("broken-blank.jpg", broken=True)
         failing_blank, _ = self.photo("failing-blank.jpg")
         before = self.dump()
-        model = NewFaces({"turned.jpg": [((10, 10, 110, 130), 0.9, 1)], "failing.jpg": None, "failing-blank.jpg": None})
+        model = NewFaces({"failing.jpg": None, "failing-blank.jpg": None})
         found = self.run_pass(model)
-        self.assertEqual((2, 1, 0, 0), (found.skipped, found.none_found, found.matched, found.new))
+        self.assertEqual((1, 0, 0), (found.none_found, found.matched, found.new))
         self.assertEqual(sorted([broken, failing, broken_blank, failing_blank]),
                          sorted(photo for photo, _why in found.failed))
-        self.assertNotIn("turned.jpg", model.asked, "a turned photo is not detected: its boxes are not converted")
         self.assertEqual([(empty, DETECTOR, 0)], self.looked_at(),
-                         "only the photo the model looked at and found no face in: never a turned or a failed one")
+                         "only the photo the model looked at and found no face in: never a failed one")
         after = self.dump()
         self.assertEqual({table: rows for table, rows in before.items() if table != "faces_detected"},
                          {table: rows for table, rows in after.items() if table != "faces_detected"})

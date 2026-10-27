@@ -3,9 +3,11 @@ lands on the picture as a person sees it, and of the Orientation a quarter turn 
 
 A face box is kept in the pixels Pillow shows a photo in (tagpup.files.images.shown_shape): the stored pixels, which an
 Orientation change leaves where they are -- except a TIFF, whose Orientation Pillow applies as it loads it, so its boxes
-are already upright and it counts as orientation 1 here (`boxes_turn`). A region written into a file for other programs
-(XMP-mwg-rs, phase 6) is upright, the picture as shown, so a box is turned at the file's edge only, by `to_upright` and
-`to_stored`, and nowhere else.
+are already upright and it counts as orientation 1 here (`boxes_turn`). Everything that sees a face sees the picture as
+shown, upright, and a box is turned between the two by this module alone (`to_upright`, `box_to_stored`, `to_stored`):
+at the file's edge (a region written into a file for other programs, XMP-mwg-rs, phase 6, and read back), at the
+detector's edge (the detector looks at the picture as shown, and its boxes are kept stored: tagpup.ml.scrfd_adaface;
+DECISIONS 2026-10-27), and in the page's answer (a crop cut as a person sees the face: tagpup.files.images.face_crop_of).
 
 Coordinates are continuous: a box is [x1, y1, x2, y2] with x2 and y2 past its last pixel, as Pillow's getbbox gives it,
 so a turn maps a box onto the box of the same pixels turned. For a stored picture W wide and H high, the point (x, y) is
@@ -64,6 +66,13 @@ def to_upright(box, stored_w, stored_h, orientation):
     return _corners(_shown(x1, y1, stored_w, stored_h, orientation), _shown(x2, y2, stored_w, stored_h, orientation))
 
 
+def box_to_stored(box, stored_w, stored_h, orientation):
+    """The box [x1, y1, x2, y2] of the picture as shown under `orientation` (upright_size of a stored picture `stored_w` x
+    `stored_h`) in the stored pixels: `to_upright` backwards."""
+    u1, v1, u2, v2 = box
+    return _corners(_stored(u1, v1, stored_w, stored_h, orientation), _stored(u2, v2, stored_w, stored_h, orientation))
+
+
 def area_of(box, width, height):
     """(X, Y, W, H) of the box [x1, y1, x2, y2] of a `width` x `height` picture, as an MWG region's Area holds it: its
     centre and size, each a fraction of the picture's."""
@@ -78,7 +87,6 @@ def to_stored(area, applied_w, applied_h, orientation, stored_w, stored_h):
     x, y, w, h = area
     shown_w, shown_h = upright_size(stored_w, stored_h, orientation)
     across, down = shown_w / float(applied_w), shown_h / float(applied_h)
-    u1, v1 = (x - w / 2.0) * applied_w * across, (y - h / 2.0) * applied_h * down
-    u2, v2 = (x + w / 2.0) * applied_w * across, (y + h / 2.0) * applied_h * down
-    return [int(round(value)) for value in _corners(_stored(u1, v1, stored_w, stored_h, orientation),
-                                                    _stored(u2, v2, stored_w, stored_h, orientation))]
+    upright = [(x - w / 2.0) * applied_w * across, (y - h / 2.0) * applied_h * down,
+               (x + w / 2.0) * applied_w * across, (y + h / 2.0) * applied_h * down]
+    return [int(round(value)) for value in box_to_stored(upright, stored_w, stored_h, orientation)]
