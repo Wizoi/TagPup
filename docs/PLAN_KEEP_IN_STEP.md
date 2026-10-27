@@ -43,7 +43,7 @@ written from the row (journaled, one change per folder). Both current -> nothing
 11. **The app is killed between a file write and its row.** The next start settles it; the fingerprint row follows in the done transaction. `test_a_bake_is_written_folder_by_folder`; cut 2.
 12. **An update is installed mid-run.** The drain waits for the index's folder; nothing half-written. `test_server_drain`, `test_one_library_three_programs` (I2/I3); cut 2.
 13. **I delete a face.** The next index writes the file from the index; the face does not come back. `test_a_bake_is_planned_from_the_library.py`; cut 2 (rule: the file gives to the row only where the row has no current copy).
-14. **I undo an automatic bake in History.** Whatever is decided below, no loop. `test_undo_after_every_later_kind` (D2); cut 2.
+14. **A bake is not an operation I undo.** A bake stamps the index's values on the file; if the index later changes (a face deleted, a keyword, a rotation), the next index bakes the correct values over it. History lists no bake and offers no undo of one. `test_undo_after_every_later_kind` (D2) loses its bake rows; cut 2.
 15. **I install this version with the backlog still open** (59k / 1.6k / 1.3k unbaked, about 223 never-examined photos, the 74 stuck, the 30 Pixel JPEGs, the 3 cleared-XMP photos). Sync and the index bring every library in step on their own, paced, resumable, the card taken one turn at a time; I run no command and see progress in Activity. NEW, in the cut-1 scenario file; cut 3.
 16. **The model changes.** Old-key bakes count as other models; vectors computed and files re-baked (decision below). `test_switching_a_librarys_photo_model.py` (V12); cut 2.
 
@@ -60,9 +60,9 @@ Until cut 3 is installed there is nothing for the owner to run. The bake already
 ## Decisions that are the owner's (recommendation first)
 
 1. **A laptop with no GPU:** compute on the processor (what happens today); the alternative is to leave the photo waiting for a GPU machine.
-2. **Undo of an automatic bake:** keep it journaled (the crash settle needs that) but leave it out of History, since it is a copy of the index and undoing a copy only gets it written again. Alternative: undoable, with a rule that stops the index redoing it.
+2. **DECIDED (owner, 2026-10-27): a bake is never undone.** It is not an operation: it is the index's values stamped on the file, and a later change is baked over it. No History row, no undo; the crash-safety record a write needs (settling a half-written file at the next start) stays as an internal record, not a change the owner sees. Supersedes PHASE6_DESIGN 6.3 ("journaled and undoable") for bakes written from now on; the 2,908 bake changes already in the three journals stay as they are.
 3. **A deleted face:** the index wins where it has a current copy. Alternative: the file's bake wins and the face returns.
-4. **A model switch:** re-bake every file automatically (about another 499 MB of journal text in photo_index). Alternative: confirm first.
+4. **A model switch:** re-bake every file automatically. With no bake text in the journal (decision 2) there is no growth of the journal to weigh. Alternative: confirm first.
 5. **Delete `bake-photos` and `face-pass` after cut 3:** yes.
 
 Low: the indexer's closing line says "worked out on the graphics card" for a processor-made vector (`tagpup_cli.py:512`); fixed in cut 2.
