@@ -51,7 +51,7 @@ written from the row (journaled, one change per folder). Both current -> nothing
 
 1. **The fingerprint is a vector's currency (~350).** `same_picture`; `search.current` also checks the vector; the indexer keeps and restamps on a matching fingerprint with no GPU; sync queues a changed file whose vector stamp no longer describes it (same path new files take); `plan_photo` compares keys + fingerprint. Deletes `CHANGED`, `size_changed`, sync's "left as they are / fix by hand" paragraph. Fixes the 74 and the three photos. Reviewers: Files, Data.
 2. **The indexer writes the bake (~600).** After each folder's batch is recorded and the card turn is released, every photo `plan_photo` marks ToBake is written through `file_changes.write_fields`, one "bake photos" change per folder; the indexer hands its decode fingerprint and vectors over with no second decode. Reviewers: Files, People, Integration (contract rows 15, 16, 19, 28, 66; drain).
-3. **The backlog finishes itself (~500).** The index treats a never-examined photo as a photo to detect (replaces `face-pass`); a photo with no fingerprint row gets one at its next decode; a folder sync walks has its files' bake fields read once (existing batched ExifTool read) to find files never baked; paced, resumable. Reviewers: Files, Data, Integration.
+3. **The one-time catch-up (~400).** (Owner, 2026-10-27: an indexed photo that was never baked is not a supported steady state, so no permanent way to find one is built; an outside edit changes the file's stamp and takes the ordinary changed-file path.) After install, once per library, every photo the backlog left unbaked (the backfill's misses, the never-examined photos, the three cleared-XMP photos, the 30 Pixel JPEGs) is brought in step by that same path: paced, resumable, the card held one folder at a time, no command from the owner. The index treats a never-examined photo as a photo to detect (replaces `face-pass`). Cut 5 deletes this with `bake-photos`. Reviewers: Files, Data, Integration.
 4. **A client with no GPU (~400).** Per the decision below. Reviewers: Views/AI, Integration.
 5. **DECIDED (owner, 2026-10-27): delete `bake-photos` and `face-pass` after cut 3.**
 
@@ -66,17 +66,5 @@ Until cut 3 is installed there is nothing for the owner to run. The bake already
 5. **DECIDED (owner, 2026-10-27): delete `bake-photos` and `face-pass` after cut 3.**
 
 Low: the indexer's closing line says "worked out on the graphics card" for a processor-made vector (`tagpup_cli.py:512`); fixed in cut 2.
-
-## Open between the owners (settled before cut 1 is briefed)
-
-6. **How a file never baked is found.** Files and Data: `photo_fingerprints` means "the index's vectors describe this
-   picture" (no schema change, no clearing); a never-baked file is found by reading its bake fields once per folder with
-   the batched ExifTool read (cut 3). Integration: `photo_fingerprints` means "the fingerprint this file holds, baked",
-   written only when a bake is adopted or written; a vector with no row is "to bake" by one anti-join, which is cheaper
-   than reading every file's XMP, but needs every existing row deleted once (unjournaled, a cache-like fact) and is a new
-   meaning for an existing idea, so it is the owner's. Recommendation: Files and Data's meaning for cut 1 (it fixes the 74
-   and the three photos with no clearing), and take Integration's anti-join into cut 3 only if reading every folder's bake
-   fields once proves too slow on the share, measured then.
-
 
 Counted read-only 2026-10-27: the three cleared-XMP photos of photo_index (ids 39695, 39863, 40018) have NO fingerprint row. So cut 1's rule for a vector is: stamp matches the file -> trusted; stamp differs and a fingerprint row exists -> compare, same hash keeps and restamps with no GPU; stamp differs and no row -> computed again. The GPU is used for at most the 74 photos whose vector stamp differs now (3 of them are these).
