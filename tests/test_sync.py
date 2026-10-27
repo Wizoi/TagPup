@@ -473,11 +473,14 @@ class MovedWithoutAnIdentity(SyncTestCase):
         self.assertEqual(2, result.details["counts"]["moved"])
 
 
-class ASizeChange(SyncTestCase):
-    """Lifted from test_sync_counts_a_size_change (#336, #903, #904). A keyword write changes a file's size too, so sync
-    only COUNTS the photos whose size changed and the owner fixes a real picture edit by hand: the row is read again like
-    any changed row and keeps its CLIP vector, face boxes and decided names. Breaks: `resized.add` gone; `resized -=
-    unreadable` gone; the size test made `True`."""
+class APictureToCheck(SyncTestCase):
+    """A file written outside the app after its photo vector was made: the vector's stamp no longer describes it
+    (photo_fingerprints.same_picture, the one rule; owner, DECISIONS 2026-10-27). Sync decodes nothing and decides
+    nothing of the picture: its row is read again as any changed row is, its vector, faces and decided names are left,
+    and its folder is queued for the index as a new file's is (`to_check`), whose decode tells another program's
+    metadata write (the same picture, kept) from a crop (computed again). A sync before this counted a size change and
+    left the photo for the owner to fix by hand (#336, #903, #904); a row it had read again was current from then on, its
+    vector the old picture's (74 such in photo_index, 2026-10-27)."""
 
     def setUp(self):
         super().setUp()
@@ -497,44 +500,124 @@ class ASizeChange(SyncTestCase):
             conn.commit()
         finally:
             conn.close()
+        # Sync decodes no picture: a decode is the index's.
+        for name in ("opened", "fingerprint"):
+            patcher = mock.patch.object(images, name, side_effect=AssertionError("sync decoded a picture"))
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def edit(self, path, body):
-        """The file written elsewhere: more (or as many) bytes, a later time."""
+        """The file written elsewhere: `body` (more, fewer or as many bytes), a later time."""
         with open(path, "wb") as handle:
             handle.write(body)
         os.utime(path, (THEN + 100, THEN + 100))
 
     def held(self, path):
-        """(faces, vectors, detection records, face names) the library holds of the photo."""
+        """(faces, vectors, detection records, face names, the vector's stamp) the library holds of the photo."""
         return self.query(
             "SELECT (SELECT COUNT(*) FROM faces WHERE photo_id = p.id), (SELECT COUNT(*) FROM embeddings WHERE photo_id = p.id),"
             " (SELECT COUNT(*) FROM faces_detected WHERE photo_id = p.id),"
-            " (SELECT GROUP_CONCAT(name) FROM faces WHERE photo_id = p.id) FROM photos p WHERE p.path = ?", (path,))[0]
+            " (SELECT GROUP_CONCAT(name) FROM faces WHERE photo_id = p.id),"
+            " (SELECT mtime FROM embeddings WHERE photo_id = p.id) FROM photos p WHERE p.path = ?", (path,))[0]
 
-    def test_a_file_that_grew_is_counted_read_again_and_its_picture_and_decided_faces_are_left(self):
+    def queue(self):
+        asked = []
+
+        def queue(folders):
+            asked.append(list(folders))
+            return Result(attempted=len(folders), changed=len(folders))
+        return asked, queue
+
+    def test_an_outside_metadata_write_is_queued_and_never_decoded_and_the_owner_is_told_how_many_to_check(self):
         self.truth["IMG_0001.jpg"] = {"XMP:Subject": ["Events/Classic"]}
-        self.edit(self.path, b"the picture, edited elsewhere and longer")
-        queued = []
+        self.edit(self.path, b"the picture as it was, and a keyword")
         before = self.held(self.path)
         rehearsal = self.run_sync()
-        self.assertEqual((1, before), (rehearsal.details["counts"]["size_changed"], self.held(self.path)))
-        result = self.run_sync(apply=True, queue=lambda folders: queued.append(folders))
-        self.assertTrue(result.ok, result.message())
-        self.assertEqual((1, 1), (result.details["counts"]["size_changed"], result.details["changed"]["from_files"]))
-        tags = json.loads(self.query("SELECT tags FROM photos WHERE path = ?", (self.path,))[0][0])
-        self.assertEqual((True, False), ("Events/Classic" in tags, "Events/Invitational" in tags))
-        self.assertEqual("Rowan Thackeray", self.held(self.path)[3])
-        self.assertEqual((1, 1, 1), self.held(self.path)[:3], "its faces, vector and the record of them stay")
-        self.assertEqual((1, 1, 1), self.held(self.other)[:3])
-        self.assertEqual([], queued)
+        self.assertEqual((1, False, [self.meet]), (rehearsal.details["counts"]["to_check"], rehearsal.details["in_step"],
+                                                   rehearsal.details["reveal"]["new_folders"]))
+        self.assertEqual(before, self.held(self.path), "a dry run wrote nothing")
 
-    def test_a_write_that_kept_the_size_or_could_not_be_read_is_not_a_size_change(self):
+        asked, queue = self.queue()
+        result = self.run_sync(apply=True, queue=queue)
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual((1, 1, [[self.meet]]), (result.details["counts"]["to_check"],
+                                                 result.details["changed"]["from_files"], asked))
+        tags = json.loads(self.query("SELECT tags FROM photos WHERE path = ?", (self.path,))[0][0])
+        self.assertEqual((True, False), ("Events/Classic" in tags, "Events/Invitational" in tags), "its row read again")
+        self.assertEqual(before, self.held(self.path), "its faces, names, vector and its stamp are the index's to settle")
+        self.assertFalse(sync.last(self.library)["last_run"]["in_step"], "a picture to check is not in step")
+
+        # The row read again describes its file; the vector's stamp still does not: queued again until the index settles
+        # it (the shape of the 74 an earlier sync left current with the old picture's vector).
+        asked, queue = self.queue()
+        again = self.run_sync(apply=True, queue=queue)
+        self.assertEqual((0, 1, [[self.meet]]), (again.details["counts"]["changed"], again.details["counts"]["to_check"],
+                                                 asked))
+
+        # The owner is told, in counts.
+        from click.testing import CliRunner
+        from tagpup_cli import cli
+        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
+                        side_effect=Reads(self.truth).batch_read), \
+                mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=Reads(self.truth).session):
+            said = CliRunner().invoke(cli, ["--db", self.db_path, "sync"])
+        self.assertIn("1 file(s) changed since their photo vector was made: their folders go to the index", said.output)
+
+    def test_a_cropped_picture_is_queued_the_same_way(self):
+        self.edit(self.path, b"cropped")
+        asked, queue = self.queue()
+        result = self.run_sync(apply=True, queue=queue)
+        self.assertEqual((1, [[self.meet]]), (result.details["counts"]["to_check"], asked))
+        self.assertEqual((1, 1, 1, "Rowan Thackeray"), self.held(self.path)[:4], "never thrown away by sync")
+
+    def test_a_photo_whose_vector_stamp_describes_its_file_is_left_alone_with_no_fingerprint_row(self):
+        # 10,724 of photo_index's vectors have no fingerprint row (2026-10-27): their stamps are trusted.
+        self.assertEqual([], self.query("SELECT * FROM photo_fingerprints"))
+        asked, queue = self.queue()
+        result = self.run_sync(apply=True, queue=queue)
+        self.assertEqual((0, True, []), (result.details["counts"]["to_check"], result.details["in_step"], asked))
+        self.assertEqual([], self.reads.read)
+
+    def test_a_write_that_kept_the_size_is_checked_and_a_file_exiftool_cannot_read_is_still_queued(self):
         self.edit(self.path, b"the picture as it was")       # the same length, a later time
         self.edit(self.other, b"another picture, longer")
         self.truth["IMG_0002.jpg"] = {}                      # ExifTool answers nothing for it
-        counts = self.run_sync(apply=True, queue=lambda folders: Result(attempted=0, changed=0)).details["counts"]
-        self.assertEqual((2, 0, 1), (counts["changed"], counts["size_changed"], counts["unreadable"]))
+        asked, queue = self.queue()
+        counts = self.run_sync(apply=True, queue=queue).details["counts"]
+        self.assertEqual((2, 2, 1), (counts["changed"], counts["to_check"], counts["unreadable"]))
+        self.assertEqual([[self.meet, self.trip]], asked)
         self.assertEqual([(1, 1, 1)] * 2, [self.held(self.path)[:3], self.held(self.other)[:3]])
+
+    def test_a_share_that_does_not_answer_calls_nothing_changed_or_missing(self):
+        self.edit(self.path, b"cropped")
+        answers = {self.meet: "unanswered"}
+        real = sync.shares.folder_state
+        with mock.patch.object(sync.shares, "folder_state", side_effect=lambda f, *a: answers.get(f) or real(f, *a)):
+            asked, queue = self.queue()
+            result = self.run_sync(apply=True, queue=queue, folder=self.meet)
+        counts = result.details["counts"]
+        self.assertEqual((0, 0, 0, 1), (counts["to_check"], counts["changed"], counts["missing"], counts["not_looked_at"]))
+        self.assertEqual([], asked)
+        self.assertFalse(result.details["in_step"])
+
+    def test_a_sync_stopped_mid_walk_leaves_nothing_marked_and_two_in_a_row_queue_the_same_folder(self):
+        self.edit(self.path, b"cropped")
+        before = (self.held(self.path), self.held(self.other), self.rows())
+        def stops_part_way(folder, unlisted):
+            raise KeyboardInterrupt("the owner closed the window as the walk listed %s" % os.path.basename(folder))
+        with mock.patch.object(images, "stamps_under", side_effect=stops_part_way), \
+                self.assertRaises(KeyboardInterrupt):
+            self.run_sync(apply=True, queue=self.queue()[1], roots=[self.pictures])
+        self.assertEqual(before, (self.held(self.path), self.held(self.other), self.rows()), "nothing half-marked")
+
+        # Two syncs before the index runs: each finds the same picture to check and queues its folder; the index
+        # queue's own key keeps one run a folder (tagpup.jobs.indexing). The second writes nothing the first did not.
+        first_asked, first = self.queue()
+        second_asked, second = self.queue()
+        one = self.run_sync(apply=True, queue=first)
+        two = self.run_sync(apply=True, queue=second)
+        self.assertEqual(([[self.meet]], [[self.meet]]), (first_asked, second_asked))
+        self.assertEqual((1, 1, 0), (one.details["counts"]["to_check"], two.details["counts"]["to_check"], two.changed))
 
 
 class MissingFiles(SyncTestCase):

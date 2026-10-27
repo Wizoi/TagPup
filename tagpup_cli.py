@@ -868,9 +868,10 @@ def sync(ctx, folder, apply_):
                           "by hand.")
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
-    if counts.get("size_changed"):
-        console.print("  %d of the changed file(s) changed SIZE: their vectors and face boxes may be of an older picture "
-                      "(a keyword write changes the size too); they are left as they are." % counts["size_changed"])
+    if counts.get("to_check"):
+        console.print("  %d file(s) changed since their photo vector was made: their folders go to the index, which "
+                      "keeps a vector whose picture is the same and makes one again for an edited picture."
+                      % counts["to_check"], markup=False, soft_wrap=True)
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         console.print("In step." if result.details["in_step"] else
