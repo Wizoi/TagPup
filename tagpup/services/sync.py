@@ -69,7 +69,6 @@ import time
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images, shares
-from tagpup.services import faces as face_records
 from tagpup.services import maintenance, refresh_rows, relink_photos, settings
 from tagpup.services import roots as roots_service
 from tagpup.store import db, generations, job_runs, photo_fingerprints, schema
@@ -349,6 +348,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 changed[path] = photo_id
                 never_stamped += mtime is None or size is None
         # The work the index owes: the one answer the index asks too (photo_fingerprints.owed). Nothing decoded.
+        from tagpup.services import faces as face_records   # faces reaches file_changes, which reaches settings and sync
         held_settings = settings.on(conn)
         owed = photo_fingerprints.owed(conn, settings.photo_key_on(conn),
                                        face_records.detector_named(held_settings.faces, held_settings.detect_max_side),
