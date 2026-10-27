@@ -57,6 +57,19 @@ class EachOrientation(unittest.TestCase):
                 self.assertEqual(shown.size, orientation.upright_size(WIDTH, HEIGHT, value))
                 self.assertEqual(block_in(shown), orientation.to_upright(BLOCK, WIDTH, HEIGHT, value))
 
+    def test_a_box_found_on_the_picture_as_shown_is_the_block_as_stored(self):
+        """The detector looks at the picture upright and its boxes are kept stored (box_to_stored): for each
+        Orientation, mirrored ones too, the block found on the picture as shown comes back to the block as stored, to
+        the pixel, and a box with fractions makes the round trip exactly."""
+        for value in range(1, 9):
+            with self.subTest(orientation=value):
+                path = photo(os.path.join(self.home.root, "d%d.jpg" % value), value)
+                found = block_in(images.opened(path, upright=True))
+                self.assertEqual(BLOCK, orientation.box_to_stored(found, WIDTH, HEIGHT, value))
+                box = [10.5, 7.25, 31.0, 29.75]
+                self.assertEqual(box, orientation.box_to_stored(orientation.to_upright(box, WIDTH, HEIGHT, value),
+                                                                WIDTH, HEIGHT, value))
+
     def test_eight_orientations_put_the_block_in_eight_places(self):
         self.assertEqual(8, len({tuple(orientation.to_upright(BLOCK, WIDTH, HEIGHT, value)) for value in range(1, 9)}))
 
