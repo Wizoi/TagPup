@@ -91,7 +91,15 @@ KEYS = {
     "embeddings": ("photo_id", "model"),
     "suggestions": ("photo_id",),
     "settings": ("key",),
+    # A photo's record of the detector that looked at it, keyed by the photo's id, which SQLite never hands out again
+    # (photos is AUTOINCREMENT); no foreign key, a row whose photo is gone being read as none (tagpup.store.faces_detected).
+    # Journaled only where a change deletes it (the old detector's rows: tagpup.services.old_detector_rows); the index and
+    # Suggest record their detections unjournaled, as indexing is.
+    "faces_detected": ("photo_id",),
 }
+
+#: Tables keyed by a photo's id without a foreign key to it: (table, the table the id is of).
+UNLINKED = {"faces_detected": "photos"}
 
 #: Tables keyed by a name, not by an id SQLite hands out: a row put back under its name is
 #: the same thing again -- a setting is "faces.min_face_size" whichever row holds it -- so

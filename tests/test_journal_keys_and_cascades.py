@@ -83,8 +83,11 @@ class ANewLibrary(unittest.TestCase):
                 self.assertNotIn("INTEGER", self.sql[table].upper(),
                                  "%s is named NAMED but keyed by a number" % table)
                 continue
-            # Else its key starts with the id of a table that is AUTOINCREMENT.
+            # Else its key starts with the id of a table that is AUTOINCREMENT: by a foreign key, or, for a table that
+            # names its parent's id without one, by journal.UNLINKED.
             parents = [row[2] for row in self.foreign[table] if row[3] == key[0] and row[4] == "id"]
+            if table in journal.UNLINKED:
+                parents = [journal.UNLINKED[table]]
             self.assertTrue(parents and all(self.autoincrement(p) for p in parents),
                             "%s is keyed by %s, which SQLite may hand out again" % (table, key[0]))
 

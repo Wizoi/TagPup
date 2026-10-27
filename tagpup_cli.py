@@ -76,6 +76,7 @@ from tagpup.services import thumbnails
 from tagpup.services import photo_reembed
 from tagpup.services import face_pass as face_pass_service
 from tagpup.services import retire_photo_vectors
+from tagpup.services import old_detector_rows
 from tagpup import launcher
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
@@ -1667,6 +1668,59 @@ def _retire_vectors_applied(library, plans, say):
         say("Written: change %s, which is not undone: the snapshot taken first is the way back %s. `compact`, with the "
             "apps closed, gives the space back to the disk." % (", ".join(map(str, changes)), SNAPSHOT_STANDS))
     return found
+
+
+@cli.command("delete-old-detector-rows")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write: after a snapshot of the library (unless one is from today), one change of the journal, "
+                   "undone from History or `undo`. Without it, only says what it would do.")
+@click.pass_context
+def delete_old_detector_rows(ctx, apply_):
+    """Delete the rows the old face detector (MTCNN) left in a library on the new face model, which nothing reads: the
+    "Face detection" settings and the photos' records of detection under MTCNN's name (owner, 2026-10-26;
+    tagpup.services.old_detector_rows). A dry run unless --apply; counts only. Refused for a library still on the old
+    model; a library holding none writes nothing."""
+    library = _existing_library(ctx)
+    say = functools.partial(console.print, markup=False, soft_wrap=True)
+    planned = old_detector_rows.delete(library)
+    counts = planned.details["counts"]
+    if planned.refused:
+        say(planned.refused)
+        raise SystemExit(1)
+    say("%s is on %s. The old detector's rows: %d setting(s), %d detection record(s) under %d name(s); %d record(s) "
+        "under the library's own detector stay." % (library.name, counts["model"], counts["settings"],
+                                                   counts["faces_detected"], counts["old_names"], counts["kept"]))
+    if not planned.attempted:
+        say("Nothing to delete: the library holds none of them. Nothing was written.")
+        return
+    say(maintenance.rehearsed(planned))
+    for line in maintenance.failed(planned):
+        say(line)
+    if planned.errors:
+        raise SystemExit(1)
+    if not apply_:
+        say("Nothing changed. --apply deletes them, after a snapshot of the library unless one is from today: one "
+            "change of the journal (%s), undone from History." % old_detector_rows.OPERATION)
+        return
+    try:
+        taken = library_snapshots.before_a_long_write(library)
+    except Exception as problem:
+        say("Nothing was written: the snapshot of the library could not be taken (%s: %s)."
+            % (type(problem).__name__, problem))
+        raise SystemExit(1) from None
+    say("Took a snapshot of the library first (%s)." % ", ".join(taken.details["taken"]) if taken.changed
+        else "A snapshot of the library from today stands; none taken.")
+    applied = old_detector_rows.delete(library, apply=True)
+    if applied.refused:
+        say(applied.refused)
+        raise SystemExit(1)
+    changed = applied.details["changed"]
+    say("Deleted %d row(s): %d setting(s), %d detection record(s). %s" % (
+        applied.changed, changed["settings"], changed["faces_detected"], maintenance.recorded(applied, library.path)))
+    for line in maintenance.failed(applied):
+        say(line)
+    if applied.errors:
+        raise SystemExit(1)
 
 
 @cli.group()

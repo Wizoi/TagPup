@@ -37,6 +37,7 @@ from tagpup.services import (
     face_pass,
     face_people,
     file_changes,
+    old_detector_rows,
     retire_photo_vectors,
     sync,
     tagging,
@@ -109,6 +110,8 @@ UNDO_CHECKS = {
     "dedupe_faces": None,
     "faces_from_tags": None,
     "merge_duplicate_person_tags": None,
+    # The old detector's rows (settings and detection records), recorded whole: the journal's account is the whole.
+    old_detector_rows.OPERATION: None,
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
 UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.values()})
