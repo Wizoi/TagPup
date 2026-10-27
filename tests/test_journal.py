@@ -449,6 +449,25 @@ class HistoryAndPruning(JournalLibrary):
         self.assertEqual(("<2048 bytes>", None), (vector["old"]["vector"], vector["new"]))
 
 
+    def test_a_crop_row_an_old_change_recorded_is_in_neither_the_counts_nor_the_keys(self):
+        """A change made before a crop was a cache holds the crop's rows (journal.CACHES); History counts what an undo
+        touches, so the dialog's "N rows" is the undo's N."""
+        applied = journal.apply(self.db_path, "dedupe_faces", [journal.delete("faces", (self.ids["copy"],), {})],
+                                {"counts": {"redundant": 1}})
+        key = schema.row_key((self.ids["copy"],))
+
+        def work(conn):
+            conn.executemany("INSERT INTO change_rows (change_id, action, table_name, row_key, column_name, old, new)"
+                             " VALUES (?, 'delete', 'face_crops', ?, ?, ?, NULL)",
+                             [(applied.change_id, key, "face_id", self.ids["copy"]), (applied.change_id, key, "jpeg", jpeg(3))])
+        db.write_with_connection(self.db_path, work)
+        listed = journal.history(self.db_path, change_id=applied.change_id)[0]
+        self.assertEqual({"faces": {"delete": 1}, "face_embeddings": {"delete": 1}}, listed["rows"])
+        self.assertEqual({"faces", "face_embeddings"}, set(listed["keys"]))
+        values = journal.history(self.db_path, change_id=applied.change_id, values=True)[0]["values"]
+        self.assertEqual({"faces", "face_embeddings"}, {v["table"] for v in values})
+
+
 class TheSchemaMovedOn(unittest.TestCase):
     """A change made at an older schema is undone unless a migration since could have changed what
     its rows mean: one that is not additive, or that touches a table a change can name. The steps are synthetic

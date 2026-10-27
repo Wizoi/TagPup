@@ -105,8 +105,12 @@ UNLINKED = {"faces_detected": "photos"}
 #: crop is cut again from its photo when asked for (tagpup.services.photos.face_crop, images.face_crop_of), upright by the
 #: Orientation the photo has then. Not in KEYS: no change records one, the trigger face_crops_go_with_their_face takes it
 #: with its face and nothing puts it back. A row of one recorded by a change made before (a face pass's inserts, a
-#: deletion's) is left out when the change is read (_load): an undo neither asks for it nor writes it back.
+#: deletion's) is left out when the change is read (NOT_CACHED: _load and History): an undo neither asks for it nor writes it back.
 CACHES = ("face_crops",)
+
+#: The one statement that a cache's rows are not a change's rows, for every read of change_rows that counts, lists or
+#: loads what a change wrote (history's counts and keys, _load): a cache's rows an old change recorded stay unread.
+NOT_CACHED = " AND table_name NOT IN (%s)" % ",".join("'%s'" % table for table in CACHES)
 
 #: Tables keyed by a name, not by an id SQLite hands out: a row put back under its name is
 #: the same thing again -- a setting is "faces.min_face_size" whichever row holds it -- so
@@ -640,13 +644,11 @@ def _load(conn, change_id, canonical=True):
     """The rows change `change_id` wrote, in the order it wrote them: with their paths in the
     form the library holds them in now (a change made before the library was adopted by a root
     recorded them native), unless not `canonical`, which is for showing what was recorded. A
-    cache's rows a change recorded before it was one (CACHES) are not among them."""
+    cache's rows a change recorded before it was one (CACHES, NOT_CACHED) are not among them."""
     changes, index = [], {}
     for action, table, key_text, column, old, new in conn.execute(
             "SELECT action, table_name, row_key, column_name, old, new FROM change_rows"
-            " WHERE change_id = ? ORDER BY id", (change_id,)):
-        if table in CACHES:
-            continue
+            " WHERE change_id = ?" + NOT_CACHED + " ORDER BY id", (change_id,)):
         slot = (action, table, key_text)
         change = index.get(slot)
         if change is None:
@@ -1429,16 +1431,17 @@ def history(db_path, limit=20, change_id=None, values=False):
             chunk = ids[start:start + CHUNK]
             for cid, table, action, count in conn.execute(
                     "SELECT change_id, table_name, action, COUNT(DISTINCT row_key) FROM change_rows"
-                    " WHERE change_id IN (%s) GROUP BY change_id, table_name, action" % ",".join("?" * len(chunk)),
+                    " WHERE change_id IN (%s)" % ",".join("?" * len(chunk)) + NOT_CACHED
+                    + " GROUP BY change_id, table_name, action",
                     chunk):
                 by_id[cid]["rows"].setdefault(table, {})[action] = count
         if change_id is not None and entries:
             # The keys alone: the old and new values -- a deleted face's vector, and its crop in a
-            # change made before a crop was a cache (CACHES) -- are read only when asked for.
+            # change made before a crop was a cache (CACHES), which no read here takes -- are read only when asked for.
             keys = collections.defaultdict(list)
             for table, key_text in conn.execute(
-                    "SELECT table_name, row_key FROM change_rows WHERE change_id = ?"
-                    " GROUP BY action, table_name, row_key ORDER BY MIN(id)", (change_id,)):
+                    "SELECT table_name, row_key FROM change_rows WHERE change_id = ?" + NOT_CACHED
+                    + " GROUP BY action, table_name, row_key ORDER BY MIN(id)", (change_id,)):
                 keys[table].append(json.loads(key_text))
             entries[0]["keys"] = dict(keys)
             if values:
