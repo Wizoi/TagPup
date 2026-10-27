@@ -35,8 +35,11 @@ from test_file_journal import EXIFTOOL, Crash, crash_at, requires_exiftool  # no
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import file_changes, journal as journal_service, photos as photo_actions  # noqa: E402
-from tagpup.store import db, embeddings, faces_detected, photo_fingerprints, schema  # noqa: E402
+from tagpup.services import duplicate_faces, face_pass, file_changes, journal as journal_service  # noqa: E402
+from tagpup.services import photos as photo_actions  # noqa: E402
+from tagpup.store import db, embeddings, faces_detected, journal, photo_fingerprints, schema  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 MODEL = embeddings.model_key("ViT-T", "tiny", True, 1.4, 512)
 WIDTH, HEIGHT = 60, 40
@@ -189,9 +192,15 @@ class TheTurn(RotationCase):
 
 class TheFacesOfATurnedPhoto(RotationCase):
     """A turn changes the picture faces are detected on and crops are cut from (both as shown, #1975): the faces' cached
-    crops and the photo's record of what looked at it go, forward and in an undo; the faces themselves stay."""
+    crops and the photo's record of what looked at it go, forward and in an undo; the faces themselves stay. A crop is a
+    cache (owner, 2026-10-27; journal.CACHES): a change that made or deleted a face is undone after a turn took the face's
+    crop, as it records it now and as a change made before recorded the crop (a row of its own in change_rows)."""
 
     DETECTOR = faces_detected.detector({"model": "scrfd-adaface"})
+    KEY = "scrfd-adaface"
+    VECTOR = b"\x00\x00\x80\x3f" * 4
+    CROP = bytes([7]) * 64
+    SHAPES = ("as a change records it now", "with the crop recorded, as before 2026-10-27")
 
     def faces(self):
         return self.rows("SELECT f.id, f.name, f.tag_id, f.excluded, f.box, v.vector FROM faces f"
@@ -228,6 +237,74 @@ class TheFacesOfATurnedPhoto(RotationCase):
         self.assertEqual(self.undo(change).changed, 2)
         self.assertEqual((self.orientations([with_face, faceless]), self.faces(), self.counts()), ([None, None], faces, (0, 0)))
         self.assertEqual(self.crop_size(face), (10, 8))
+
+    def crop_recorded(self, conn, change_id, action, face_id, crop):
+        """The crop's row in change `change_id` exactly as journal._record wrote it before a crop was a cache."""
+        key = schema.row_key((face_id,))
+        conn.executemany("INSERT INTO change_rows (change_id, action, table_name, row_key, column_name, old, new)"
+                         " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         [(change_id, action, "face_crops", key, column,
+                           None if action == "insert" else value, value if action == "insert" else None)
+                          for column, value in (("face_id", face_id), ("jpeg", crop))])
+
+    def a_pass(self, path, shape):
+        """A face pass that finds one new face, with its crop, in the photo at `path`, through the pass's writer."""
+        def work(conn):
+            change_id = journal.record(conn, face_pass.OPERATION % self.KEY, [],
+                                       {"folder": store_roots.to_row(conn, os.path.dirname(path)), "matched": 0, "new": 0})
+            (face_id,) = store_faces.give_vectors(conn, change_id, path, self.KEY, [],
+                                                  [(list(BOX), 0.99, self.VECTOR, self.CROP)], {"matched": 0, "new": 1})
+            if shape != self.SHAPES[0]:
+                self.crop_recorded(conn, change_id, "insert", face_id, self.CROP)
+            return change_id
+        return self.execute_with(work)
+
+    def assertUndone(self, change_id):
+        undone = self.undo(change_id)
+        self.assertEqual((undone.refused, self.status(change_id)), (None, "undone"))
+
+    def test_a_pass_is_undone_after_a_turn_took_its_crop(self):
+        for n, shape in enumerate(self.SHAPES):
+            with self.subTest(shape):
+                path = self.make("pass%d.jpg" % n)
+                passed = self.a_pass(path, shape)
+                self.assertEqual(self.rows("SELECT COUNT(*) FROM face_crops")[0][0], 1)
+                photo_actions.rotate_photos(self.library, [path], "left", EXIFTOOL)
+                self.assertEqual(self.rows("SELECT COUNT(*) FROM face_crops")[0][0], 0)
+                rehearsed = journal_service.undo(self.library, passed, apply=False, exiftool_path=EXIFTOOL)
+                self.assertIsNone(rehearsed.refused)
+                self.assertUndone(passed)
+                self.assertEqual(self.rows("SELECT (SELECT COUNT(*) FROM faces), (SELECT COUNT(*) FROM face_crops),"
+                                           " (SELECT COUNT(*) FROM face_embeddings)"), [(0, 0, 0)])
+
+    def test_a_turn_then_a_pass_are_undone_the_turn_first(self):
+        for n, shape in enumerate(self.SHAPES):
+            with self.subTest(shape):
+                path = self.make("turned%d.jpg" % n)
+                turned = photo_actions.rotate_photos(self.library, [path], "left", EXIFTOOL).details["change"]
+                passed = self.a_pass(path, shape)
+                self.assertUndone(turned)   # takes the pass's crop: it was cut from the turned picture
+                self.assertEqual((self.orientation(path), self.rows("SELECT COUNT(*) FROM face_crops")[0][0]), (None, 0))
+                self.assertUndone(passed)
+                self.assertEqual(self.rows("SELECT COUNT(*) FROM faces"), [(0,)])
+
+    def test_a_dedupe_undone_after_a_turn_brings_the_face_back_cut_as_the_photo_is_now(self):
+        for n, shape in enumerate(self.SHAPES):
+            with self.subTest(shape):
+                self.execute("DELETE FROM faces")   # the other shape's
+                path = self.make("copies%d.jpg" % n)
+                kept, copy = self.face(path), self.face(path)
+                self.assertEqual((self.crop_size(kept), self.crop_size(copy)), ((10, 8), (10, 8)))   # cut and kept
+                (crop,) = self.rows("SELECT jpeg FROM face_crops WHERE face_id = ?", (copy,))[0]
+                self.assertEqual(duplicate_faces.dedupe_faces(self.library, apply=True).changed, 1)
+                deduped = self.last_change()
+                if shape != self.SHAPES[0]:
+                    self.execute_with(lambda conn: self.crop_recorded(conn, deduped, "delete", copy, crop))
+                photo_actions.rotate_photos(self.library, [path], "left", EXIFTOOL)
+                self.assertUndone(deduped)
+                self.assertEqual(self.rows("SELECT id FROM faces WHERE id = ?", (copy,)), [(copy,)])
+                self.assertEqual(self.rows("SELECT COUNT(*) FROM face_crops WHERE face_id = ?", (copy,)), [(0,)])
+                self.assertEqual(self.crop_size(copy), (8, 10))   # cut again, upright for the turned photo
 
 
 class WhereTheLibraryDoesNotHoldTheFolder(RotationCase):
