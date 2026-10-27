@@ -1531,6 +1531,12 @@ def _baked_lines(baked, reveal):
     return lines
 
 
+def _bake_written(written, changes):
+    """The sentence ending a bake's totals: the files `written` and the `changes` of the journal they are in."""
+    return "Written: %d file(s) in %d change(s)%s." % (written, len(changes),
+                                                       " (%s)" % ", ".join(map(str, changes)) if changes else "")
+
+
 def _bake(library, exiftool_path, detector, directories, reveal, verbose, say):
     """`bake-photos --apply`: baking_report.apply, saying each folder as it is written and the run's totals last; exit
     status 1 on a stop, a stall, a refusal, a conflict, a failure, or a photo whose file could not be reached or read (an
@@ -1567,8 +1573,7 @@ def _bake(library, exiftool_path, detector, directories, reveal, verbose, say):
                                    if run.stopped or run.stalled or run.refused or run.interrupted else ""))
     for line in _bake_lines(total, hints=True) + _baked_lines(total, False)[1:]:
         say(line)
-    say("  Written: %d file(s) in %d change(s)%s." % (total.written, len(changes),
-                                                      " (%s)" % ", ".join(map(str, changes)) if changes else ""))
+    say("  " + _bake_written(total.written, changes))
     if run.snapshot is not None:
         details = run.snapshot.details
         say("  Snapshot before the first write: %s." % (
