@@ -53,17 +53,17 @@ written from the row (journaled, one change per folder). Both current -> nothing
 2. **The indexer writes the bake (~600).** After each folder's batch is recorded and the card turn is released, every photo `plan_photo` marks ToBake is written through `file_changes.write_fields`, one "bake photos" change per folder; the indexer hands its decode fingerprint and vectors over with no second decode. Reviewers: Files, People, Integration (contract rows 15, 16, 19, 28, 66; drain).
 3. **The backlog finishes itself (~500).** The index treats a never-examined photo as a photo to detect (replaces `face-pass`); a photo with no fingerprint row gets one at its next decode; a folder sync walks has its files' bake fields read once (existing batched ExifTool read) to find files never baked; paced, resumable. Reviewers: Files, Data, Integration.
 4. **A client with no GPU (~400).** Per the decision below. Reviewers: Views/AI, Integration.
-5. **Delete `bake-photos`, `face-pass`, `baking_report`'s CLI, the launcher clause (removal only).** All owners skim.
+5. **DECIDED (owner, 2026-10-27): delete `bake-photos` and `face-pass` after cut 3.**
 
 Until cut 3 is installed there is nothing for the owner to run. The bake already running may be left or stopped.
 
 ## Decisions that are the owner's (recommendation first)
 
-1. **A laptop with no GPU:** compute on the processor (what happens today); the alternative is to leave the photo waiting for a GPU machine.
+1. **DECIDED (owner, 2026-10-27): compute on the processor, as today.** A client with no GPU adopts a current bake with no card and works a photo out on the processor otherwise; no queue.
 2. **DECIDED (owner, 2026-10-27): a bake is never undone.** It is not an operation: it is the index's values stamped on the file, and a later change is baked over it. No History row, no undo; the crash-safety record a write needs (settling a half-written file at the next start) stays as an internal record, not a change the owner sees. Supersedes PHASE6_DESIGN 6.3 ("journaled and undoable") for bakes written from now on; the 2,908 bake changes already in the three journals stay as they are.
-3. **A deleted face:** the index wins where it has a current copy. Alternative: the file's bake wins and the face returns.
-4. **A model switch:** re-bake every file automatically. With no bake text in the journal (decision 2) there is no growth of the journal to weigh. Alternative: confirm first.
-5. **Delete `bake-photos` and `face-pass` after cut 3:** yes.
+3. **DECIDED (owner, 2026-10-27): the most recent change wins, and the fingerprint is how a change is told.** A picture that differs is a change of the file; a face deleted in TagPup is a change of the index, newer than the file's bake, so the file is written from the index and the face does not come back. Cut 2 settles how 'newer' is told for an index-side change (the face's change time against the bake's write).
+4. **DECIDED (owner, 2026-10-27): nothing to decide.** A model switch re-embeds every file, and any GPU reindex re-bakes what it computed; the bake follows automatically.
+5. **DECIDED (owner, 2026-10-27): delete `bake-photos` and `face-pass` after cut 3.**
 
 Low: the indexer's closing line says "worked out on the graphics card" for a processor-made vector (`tagpup_cli.py:512`); fixed in cut 2.
 
@@ -77,3 +77,6 @@ Low: the indexer's closing line says "worked out on the graphics card" for a pro
    meaning for an existing idea, so it is the owner's. Recommendation: Files and Data's meaning for cut 1 (it fixes the 74
    and the three photos with no clearing), and take Integration's anti-join into cut 3 only if reading every folder's bake
    fields once proves too slow on the share, measured then.
+
+
+Counted read-only 2026-10-27: the three cleared-XMP photos of photo_index (ids 39695, 39863, 40018) have NO fingerprint row. So cut 1's rule for a vector is: stamp matches the file -> trusted; stamp differs and a fingerprint row exists -> compare, same hash keeps and restamps with no GPU; stamp differs and no row -> computed again. The GPU is used for at most the 74 photos whose vector stamp differs now (3 of them are these).
