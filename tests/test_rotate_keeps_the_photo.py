@@ -222,8 +222,8 @@ class TestTheRotateRoute(unittest.TestCase):
         self.assertAlmostEqual(entries[0][1]["mtime"], stat.st_mtime, places=3)
 
     def test_a_jpeg_face_box_still_frames_the_face(self):
-        # The box is in the coordinates face detection and the crops see: Pillow's
-        # view of a JPEG, which is its stored pixels, and those did not move.
+        # The box is in the stored pixels, which did not move; the crop, cut upright by the old Orientation, is dropped
+        # and cut again on the next request (test_rotate_is_journaled.TheFacesOfATurnedPhoto).
         from PIL import Image
 
         def face_pixels():
@@ -234,7 +234,7 @@ class TestTheRotateRoute(unittest.TestCase):
         before = face_pixels()
         self.assertEqual(self.rotate("left")[0], 200)
         self.assertEqual(face_pixels(), before)
-        self.assertEqual(self.lib.rows("SELECT (SELECT jpeg FROM face_crops c WHERE c.face_id = faces.id) FROM faces")[0][0], b"crop")
+        self.assertEqual(self.lib.rows("SELECT COUNT(*) FROM face_crops"), [(0,)])
 
     def test_a_tiff_face_box_turns_with_the_photo(self):
         from PIL import Image

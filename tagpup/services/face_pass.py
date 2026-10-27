@@ -31,7 +31,8 @@ old faces' (tagpup.ml.scrfd_adaface; DECISIONS 2026-10-27). A photo whose pictur
 failed: counted, and nothing of it is written, a row of it neither.
 
 Each photo is one transaction (BEGIN IMMEDIATE), in which the photo is read again: its row still there at the path listed,
-still not done, its faces as they were read; else nothing is written and it is failed for this run (a row sync removed or
+still not done, its faces as they were read, its row's (mtime, size) as they were before its picture was read (a rotation,
+a Save, any journaled write of its file committed meanwhile stamps them: tagpup.store.photos.follow_fields); else nothing is written and it is failed for this run (a row sync removed or
 moved meanwhile is not made again at the path listed: a new face's writer makes a row it does not find). Each folder is one journaled change, opened at its first
 photo that writes, "face pass (<key>)": the operation History and the MCP `history` show without reveal names no path. The
 folder is the summary's `folder`, as the library holds it (store.roots.to_row), behind reveal as every summary's folder is
@@ -139,8 +140,9 @@ def _folder(db_path, conn, model, name, photos, apply, held, reading, stop, befo
     done = set(store_faces.vectors_under(conn, model.key, ids)) | faces_detected.faceless_under(conn, detector, ids)
 
     def begin(photo):
-        """In this thread, as a photo enters the read-ahead: None, nothing read, for one done."""
-        return None if photo[0] in done else True
+        """In this thread, as a photo enters the read-ahead, before its picture is read: None, nothing read, for one done;
+        else its row's (mtime, size), which its write asks again (_as_read)."""
+        return None if photo[0] in done else store_photos.row_stamp(conn, photo[0])
 
     def read(photo, _begun, reserve):
         """On a thread of the read-ahead: the photo made ready for the model, nothing on the graphics card."""
@@ -173,14 +175,15 @@ def _folder(db_path, conn, model, name, photos, apply, held, reading, stop, befo
             if not face_service.ran(detected):
                 found.failed.append((photo_id, UNREADABLE))
                 continue
-            change_id = _photo(db_path, model, detector, operation, name, found, change_id, photo_id, path, old,
+            change_id = _photo(db_path, model, detector, operation, name, found, change_id, photo_id, path, begun, old,
                                picture, detected, apply, before_first_write)
     return found
 
 
-def _photo(db_path, model, detector, operation, name, found, change_id, photo_id, path, old, picture, detected, apply,
-           before_first_write):
-    """One photo the model found `detected` in: counted into `found`, and written with `apply`. The folder's change id."""
+def _photo(db_path, model, detector, operation, name, found, change_id, photo_id, path, begun, old, picture, detected,
+           apply, before_first_write):
+    """One photo the model found `detected` in, its row stamped `begun` before it was read: counted into `found`, and
+    written with `apply`. The folder's change id."""
     paired = clustering.pairs([box for _face, box, _named in old], [each["box"] for each in detected],
                               first=[i for i, (_face, _box, named) in enumerate(old) if named])
     matched = [(old[i][0], face_service.vector_bytes(detected[j]["embedding"])) for i, j in sorted(paired.items())]
@@ -198,7 +201,7 @@ def _photo(db_path, model, detector, operation, name, found, change_id, photo_id
         if apply:
             stamp = store_embeddings.stamp_of(path)   # the file, read outside the write: a share is not asked under it
             if not db.write_with_connection(
-                    db_path, lambda write: _looked(write, model.key, detector, photo_id, path, stamp, len(new)),
+                    db_path, lambda write: _looked(write, model.key, detector, photo_id, path, begun, stamp, len(new)),
                     label="face pass"):
                 found.failed.append((photo_id, CHANGED))
                 return change_id
@@ -207,7 +210,8 @@ def _photo(db_path, model, detector, operation, name, found, change_id, photo_id
     if apply:
         before_first_write()
         written = db.write_with_connection(
-            db_path, lambda write: _write(write, model.key, operation, name, change_id, photo_id, path, old, matched, new),
+            db_path, lambda write: _write(write, model.key, operation, name, change_id, photo_id, path, begun, old, matched,
+                                         new),
             label="face pass")
         if written is None:
             found.failed.append((photo_id, CHANGED))
@@ -222,12 +226,11 @@ def _photo(db_path, model, detector, operation, name, found, change_id, photo_id
     return change_id
 
 
-def _write(conn, key, operation, folder, change_id, photo_id, path, old, matched, new):
+def _write(conn, key, operation, folder, change_id, photo_id, path, begun, old, matched, new):
     """One photo's rows, in one transaction: the id of the folder's change they were recorded in, or None, nothing written,
-    when the photo's row is gone or at another path than `path`, the photo is done, or its faces are not as `old` read
-    them."""
+    when the photo is not as read (_as_read)."""
     db.begin(conn, immediate=True)
-    if not _as_read(conn, key, photo_id, path, old):
+    if not _as_read(conn, key, photo_id, path, begun, old):
         return None
     if change_id is None or not journal.kept(conn, change_id):
         change_id = journal.record(conn, operation, [],
@@ -236,16 +239,19 @@ def _write(conn, key, operation, folder, change_id, photo_id, path, old, matched
     return change_id
 
 
-def _looked(conn, key, detector, photo_id, path, stamp, count):
+def _looked(conn, key, detector, photo_id, path, begun, stamp, count):
     """Record, in one transaction, that `detector` looked at a photo that holds no face and made none, its file at `stamp`
     and `count` detections returned: True, or False, nothing written, when the photo is not as read (_as_read)."""
     db.begin(conn, immediate=True)
-    return _as_read(conn, key, photo_id, path, []) and faces_detected.record(conn, path, detector, stamp, count) == 1
+    return (_as_read(conn, key, photo_id, path, begun, [])
+            and faces_detected.record(conn, path, detector, stamp, count) == 1)
 
 
-def _as_read(conn, key, photo_id, path, old):
-    """Is the photo as the pass read it, in its write: its row there at `path`, not done, its faces as `old` read them?"""
+def _as_read(conn, key, photo_id, path, begun, old):
+    """Is the photo as the pass read it, in its write: its row there at `path`, stamped `begun` as before its picture was
+    read (a journaled write of its file since, a rotation's among them, stamps it again), not done, its faces as `old`
+    read them?"""
     row = store_photos.thumb_row(conn, photo_id)
-    if row is None or not paths.same(row.path, path):
+    if row is None or not paths.same(row.path, path) or store_photos.row_stamp(conn, photo_id) != begun:
         return False
     return not store_faces.vectors_under(conn, key, [photo_id]) and store_faces.boxes_of(conn, photo_id) == old

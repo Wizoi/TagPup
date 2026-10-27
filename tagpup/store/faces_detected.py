@@ -13,7 +13,9 @@ by Suggest (record_detected) for every photo they detect, and by the new face mo
 A row is read only under the detector it names: detected again under other face settings,
 a photo may find faces it did not. The stamp is kept, not compared: a write of a photo's
 metadata changes its stamp and not its picture, as with the faces' own rows, which are not
-compared either. Photos indexed before migration 25 have no row and are detected once
+compared either -- but for its Orientation, which changes the picture the detector looks at
+(it detects on the photo as shown): a rotation takes the row away (`forget`,
+tagpup.services.rotation), so the photo is looked at again. Photos indexed before migration 25 have no row and are detected once
 more, by the next Suggest that looks at them: no rule tells from the library that the
 index detected a photo's faces (an index run with --skip-faces made vectors without, and
 Suggest makes vectors of photos it never detected faces in).
@@ -67,6 +69,15 @@ def record(conn, photo_path, name, stamp, found, now=None):
     conn.execute("INSERT OR REPLACE INTO faces_detected (photo_id, detector, mtime, size, found, at) "
                  "VALUES (?, ?, ?, ?, ?, ?)", (photo_id, name, mtime, size, int(found), now or time.strftime(TIME)))
     return 1
+
+
+def forget(conn, photo_path):
+    """Take away the row of the photo at `photo_path`, under any detector: its picture as shown turned (a rotation), so
+    what was found in it is not what is there now. Not journaled, as the photo's vectors are not: a fact of the picture,
+    which the next look records again. Returns rows deleted. The caller commits."""
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
+    return conn.execute("DELETE FROM faces_detected WHERE photo_id IN (SELECT id FROM photos WHERE %s)" % where,
+                        params).rowcount
 
 
 def detected(conn, photo_path, name):

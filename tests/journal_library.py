@@ -21,9 +21,10 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, faces, people, person_ids, schema  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
-#: The tables a change can touch, derived ones included, with the order to list them in.
+#: The tables a change can touch, derived ones included, with the order to list them in. Not a face's crop: a cache
+#: (journal.CACHES), which a delete's trigger takes and no undo puts back.
 TABLES = {
-    "photos": "id", "faces": "id", "face_crops": "face_id", "face_embeddings": "face_id, model",
+    "photos": "id", "faces": "id", "face_embeddings": "face_id, model",
     "embeddings": "photo_id, model",
     "suggestions": "photo_id", "tag_taxonomy": "id", "photo_people": "photo_id, position",
 }

@@ -533,6 +533,13 @@ def thumb_row(conn, photo_id):
     return ThumbRow(photo_id, row[0], native)
 
 
+def row_stamp(conn, photo_id):
+    """(mtime, size) the row of the photo with this id holds, (None, None) for no row: one read by primary key. A
+    journaled write of the photo's file stamps them in the transaction that marks it done (follow_fields), so a reader
+    that holds them knows whether the file was written since it read it."""
+    return conn.execute("SELECT mtime, size FROM photos WHERE id = ?", (photo_id,)).fetchone() or (None, None)
+
+
 def thumb_rows(conn, folder=None, after=0, limit=1000):
     """[(id, path as the row holds it, native path)] of the photos with an id above `after`, in id order, at
     most `limit`: those under `folder` at any depth, or every one. What warming the cache walks, a batch

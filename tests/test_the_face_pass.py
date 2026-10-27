@@ -417,9 +417,10 @@ class FacePass(unittest.TestCase):
         ((summary,),) = self.query("SELECT summary FROM changes WHERE operation = ?", (operation,))
         self.assertEqual({"matched": 2, "new": 2}, {key: value for key, value in json.loads(summary).items()
                                                      if key != "folder"}, "the change says what was committed")
-        self.assertEqual({"face_embeddings": {"insert": 4}, "faces": {"insert": 2}, "face_crops": {"insert": 2}},
+        self.assertEqual({"face_embeddings": {"insert": 4}, "faces": {"insert": 2}},
                          journal.history(self.db_path, limit=1)[0]["rows"],
-                         "History counts a vector for each matched face, and each new face with its crop and vector")
+                         "History counts a vector for each matched face, and each new face with its vector (its crop, a"
+                         " cache, is not recorded: journal.CACHES)")
         model = NewFaces(found)
         resumed = self.run_pass(model)
         self.assertEqual(["lap3.jpg", "lap4.jpg"], model.asked)

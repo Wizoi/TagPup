@@ -362,8 +362,8 @@ beside it, and it beside one), the card taken once at its first use and let go, 
 Scenario V11, `tests/test_switching_a_librarys_face_model.py`.
 
 **Merge 3 brief (the pass; after migration 33).**
-- The crop is cut from the picture as stored (`ScrfdPicture.stored`) by the face's box, as every face's crop is
-  (`images.face_crop_of`), by the model's `new_faces`: wherever a detection makes a new face (the index, Suggest, the
+- The crop is cut upright, from the picture as shown (`ScrfdPicture.upright`), by the face's box (kept in stored pixels)
+  turned upright, as every face's crop is (`images.face_crop_of`), by the model's `new_faces`: wherever a detection makes a new face (the index, Suggest, the
   pass), as built in item 3 below. (`ScrfdAdaFace.faces_in`, which gave no crop, is gone.)
 - The name a detection is recorded under (`tagpup.services.faces.detector_of`, `faces_detected`) is the model's own
   (`detector(max_side)`): `{"model": "scrfd-adaface"}` for the new model, and MTCNN's settings spelled as before, so the

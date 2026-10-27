@@ -10,7 +10,8 @@ undoing that one first: undone in that order, both are.
 
 The kinds: a stamp of the settings, a change of the settings, a switch of face model and a switch back, a face pass, a
 migration's record (a synthetic additive step, tests/migration_names.py), a sync and a refresh of a row re-read from its
-file, Save on a photo, Smart Rename and a bake of a folder's photos (real ExifTool, changes of photo files). Left to the
+file, Save on a photo, Smart Rename, a rotation (of the photo the later pass gave a face and its crop) and a bake of a
+folder's photos (real ExifTool, changes of photo files). Left to the
 guard (tests/test_every_change_kind_has_an_undo_check.py): dedupe_faces and merge_duplicate_person_tags (no live library
 holds a duplicate face or a bare person tag, counted 2026-10-24), the bulk edits, tag renames and face namings (each a
 change of photo files or of faces whose way back is the journal's alone, None in UNDO_CHECKS, as Save's is).
@@ -90,6 +91,13 @@ def a_later_pass(case, library):
     return change_id
 
 
+def a_rotate(case, library):
+    """Rotate left on the sixth photo, the one the later pass gives a face with a crop: the turn drops the crops and the
+    record of what looked at the photo (tagpup.services.rotation), which no change holds (a crop is a cache)."""
+    turned = photo_actions.rotate_photos(library, [case.photo[6]], "left", EXIFTOOL)
+    return turned.details.get("change") if turned.changed else None
+
+
 def a_migration(case, library):
     """The synthetic additive step (migration_names.ahead, entered by the pair for as long as it runs): its record."""
     if not schema.ensure(library.path):
@@ -164,6 +172,7 @@ WRITERS = {
     "refresh": a_refresh,
     "save photo": a_save,
     "smart rename": a_smart_rename,
+    "rotate": a_rotate,
     "bake": a_bake,
 }
 #: The changes the library holds when it is built: earlier kinds only (name -> the case's attribute holding the id).
@@ -397,10 +406,11 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertTrue(set(EXPECTED_REFUSED) <= made, "a pair the promise names was not made")
         self.assertEqual(set(), {pair for pair, refused in outcomes.items() if refused is None},
                          "a later kind's writer made nothing after an earlier kind")
-        # Every later kind after every earlier one, the diagonal not generated: 12 earlier by 9 later, less 9 (the retirings'
-        # kinds and Suggest's step left with retire-faces and retire-vectors, 2026-10-25).
+        # Every later kind after every earlier one, the diagonal not generated: 13 earlier by 10 later, less 10 (the
+        # retirings' kinds and Suggest's step left with retire-faces and retire-vectors, 2026-10-25; a rotation came in,
+        # 2026-10-27).
         self.assertEqual(len(earlier) * len(later) - len(later), len(made), "the pairs a library can hold were not made")
-        self.assertEqual(99, len(made))
+        self.assertEqual(120, len(made))
         self.assertEqual(3, ordered, "the pairs undone in order: the switch, a bake and the rename after it, a rename and "
                                      "the bake after it")
         # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.

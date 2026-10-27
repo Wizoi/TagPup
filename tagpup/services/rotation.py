@@ -1,4 +1,4 @@
-"""What a quarter turn of a held photo brings with its Orientation: the face boxes and the vectors.
+"""What a quarter turn of a held photo brings with its Orientation: the face boxes, crops and record, and the vectors.
 
 A rotation is a journaled change of the file's EXIF Orientation (tagpup.services.photos.rotate_photos, through
 file_changes.write_fields). The Orientation is all the file holds of it; the rest is rows, and they are made in the
@@ -7,8 +7,15 @@ never leave a turned file with boxes of the old picture, or the reverse (docs/IN
 
 - the photo's vectors go, since the embedder applies the Orientation and they describe the photo before the turn, and its
   fingerprint (tagpup.store.photo_fingerprints), the hash of the upright decode;
-- for a TIFF, which Pillow shows already turned, the face boxes turn with it and their cached crops are dropped. For
-  every other format the boxes are in the stored pixels, which do not move (tagpup.files.images.shown_shape).
+- its faces' cached crops go, every format: each was cut upright by the old Orientation (images.face_crop_of), and the
+  next request cuts it again; and its record of the detectors that looked at it (tagpup.store.faces_detected), since
+  faces are detected on the picture as shown: the next index or face pass looks at it again, and adds only what no face
+  already has (pairing by overlap, clustering.pairs). The faces themselves -- names, exclusions, boxes, vectors -- stay;
+- for a TIFF, which Pillow shows already turned, the face boxes turn with it. For every other format the boxes are in
+  the stored pixels, which do not move (tagpup.files.images.shown_shape).
+
+None of these is journaled: each is a fact of the picture as it now is, made again by reading it, so an undo of the turn
+takes them away once more rather than putting the old ones back.
 
 The direction of the turn is not stored beside the file: it is what the journaled Orientation says (the value before and
 the value after), and the picture's size before it is the size the file shows now, swapped.
@@ -18,7 +25,7 @@ import logging
 from tagpup.core import fields
 from tagpup.core.orientation import ROTATED_ORIENTATION
 from tagpup.files import images
-from tagpup.store import embeddings, faces, photo_fingerprints
+from tagpup.store import embeddings, faces, faces_detected, photo_fingerprints
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +86,8 @@ def follower(row, state):
     def follow(conn):
         embeddings.forget(conn, row.path)
         photo_fingerprints.forget(conn, row.path)   # the decode the fingerprint hashed turns too
+        faces.forget_crops(conn, row.path)
+        faces_detected.forget(conn, row.path)
         row.followed = faces.turn_boxes_in(conn, row.path, *turn) if turn else 0
         row.turned = turn if forward else None
     return follow

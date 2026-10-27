@@ -28,7 +28,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import FACE_MODEL  # noqa: E402
-from journal_library import MODEL, JournalLibrary, jpeg, vector  # noqa: E402
+from journal_library import MODEL, JournalLibrary, vector  # noqa: E402
 
 from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -180,7 +180,6 @@ class InsertsRehearsed(Checked):
                 "tag": "Friends/Maren Oakhollow", "parent_id": self.ids["Friends"], "name": "Maren Oakhollow",
                 "has_face": 1}),
             "a node without tag or name": journal.insert("tag_taxonomy", {"parent_id": self.ids["Activity"]}),
-            "a crop": journal.insert("face_crops", {"face_id": self.ids["excluded"], "jpeg": jpeg(7)}),
             "a vector under a second model": journal.insert("embeddings", {
                 "photo_id": start, "model": MODEL + "-b", "mtime": 1.5, "size": 4, "vector": vector(11)}),
             "a suggestion": journal.insert("suggestions", {"photo_id": start, "tags": "[]", "people": "[]",
@@ -309,14 +308,13 @@ class HistoryReadsKeysOnly(JournalLibrary):
             journal.update("photos", (self.ids["start"],), {}, {"captions": '["Quay"]'})])
         with mock.patch.object(journal, "_load", side_effect=AssertionError("loaded every value")):
             entry = journal.history(self.db_path, change_id=applied.change_id)[0]
-        self.assertEqual({"face_crops": [[self.ids["copy"]], [self.ids["named"]]],
-                          "face_embeddings": [[self.ids["copy"], FACE_MODEL], [self.ids["named"], FACE_MODEL]],
+        self.assertEqual({"face_embeddings": [[self.ids["copy"], FACE_MODEL], [self.ids["named"], FACE_MODEL]],
                           "faces": [[self.ids["copy"]], [self.ids["named"]]],
                           "photos": [[self.ids["start"]]]}, entry["keys"])
         self.assertNotIn("values", entry)
         values = journal.history(self.db_path, change_id=applied.change_id, values=True)[0]["values"]
-        self.assertEqual(7, len(values))
-        self.assertTrue(re.match(r"<\d+ bytes>", values[0]["old"]["jpeg"]))
+        self.assertEqual(5, len(values))
+        self.assertTrue(re.match(r"<\d+ bytes>", values[0]["old"]["vector"]))
 
 
 if __name__ == "__main__":

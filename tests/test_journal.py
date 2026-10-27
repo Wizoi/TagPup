@@ -34,12 +34,12 @@ class ForwardThenUndo(JournalLibrary):
     def apply(self, edits, operation="test"):
         return journal.apply(self.db_path, operation, edits, {"counts": {"n": len(edits)}})
 
-    def test_deleted_faces_come_back_with_their_crops_byte_for_byte(self):
+    def test_deleted_faces_come_back_with_their_vectors_byte_for_byte_and_their_crops_are_cut_again(self):
         before = self.dump()
         applied = self.apply([journal.delete("faces", (self.ids["copy"],), {"name": None}),
                               journal.delete("faces", (self.ids["named"],), {"name": "Maren Oakhollow"})])
-        self.assertEqual((2, 6, True), (applied.changed, applied.rows, applied.settled),
-                         "two faces, their two vectors and two crops")
+        self.assertEqual((2, 4, True), (applied.changed, applied.rows, applied.settled),
+                         "two faces and their two vectors; their crops go with them, not recorded (journal.CACHES)")
         self.assertEqual([], self.query("SELECT id FROM faces WHERE id IN (?, ?)", (self.ids["copy"], self.ids["named"])))
         self.assertEqual([], self.query("SELECT face_id FROM face_crops WHERE face_id IN (?, ?)",
                                         (self.ids["copy"], self.ids["named"])))
@@ -51,21 +51,23 @@ class ForwardThenUndo(JournalLibrary):
                                 " AND table_name = 'faces' AND row_key = ?", (applied.change_id, "[%d]" % self.ids["copy"])))
         self.assertEqual(("text", "real", "integer", "null"),
                          (types["box"], types["prob"], types["excluded"], types["name"]))
-        for table, column in (("face_crops", "jpeg"), ("face_embeddings", "vector")):
+        for table, column in (("face_embeddings", "vector"),):
             self.assertEqual([("blob",)], self.query("SELECT DISTINCT typeof(old) FROM change_rows"
                                                      " WHERE table_name = ? AND column_name = ?", (table, column)))
 
         undone = journal.undo(self.db_path, applied.change_id)
-        self.assertEqual((6, True), (undone.rows, undone.settled))
+        self.assertEqual((4, True), (undone.rows, undone.settled))
         self.assertEqual(before, self.dump())
+        self.assertEqual([], self.query("SELECT face_id FROM face_crops WHERE face_id IN (?, ?)",
+                                        (self.ids["copy"], self.ids["named"])), "a crop is cut again when asked for")
         self.assertEqual([(applied.change_id, "test", "undone")], self.changes())
 
     def test_a_deleted_photo_comes_back_with_everything_it_took(self):
         before = self.dump()
         applied = self.apply([journal.delete("photos", (self.ids["finish"],), {"tags": '["Friends/Imogen Vale", "People/Rowan Thackeray"]'})])
-        # The photo, its two faces, their vectors, the one crop they had, and its vector; its people rebuilt.
+        # The photo, its two faces, their vectors, and its vector; its people rebuilt. The crop they had is not recorded.
         tables = dict(self.query("SELECT table_name, COUNT(DISTINCT row_key) FROM change_rows GROUP BY table_name"))
-        self.assertEqual({"photos": 1, "faces": 2, "face_embeddings": 2, "face_crops": 1, "embeddings": 1}, tables)
+        self.assertEqual({"photos": 1, "faces": 2, "face_embeddings": 2, "embeddings": 1}, tables)
         self.assertEqual([], self.query("SELECT * FROM photo_people WHERE photo_id = ?", (self.ids["finish"],)))
         self.assertEqual([], self.query("SELECT photo_id FROM embeddings WHERE photo_id = ?", (self.ids["finish"],)))
         journal.undo(self.db_path, applied.change_id)
@@ -239,8 +241,10 @@ class Refusals(JournalLibrary):
         applied = journal.apply(self.db_path, "t", [journal.insert("faces", {"photo_id": self.ids["prize"], "box": "[]"})])
         face = self.query("SELECT MAX(id) FROM faces")[0][0]
         self.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, x'ffd8ffd9')", (face,))
+        self.execute("INSERT INTO face_embeddings (face_id, model, vector) VALUES (?, 'm', x'00')", (face,))
         message = self.refused(lambda: journal.undo(self.db_path, applied.change_id))
-        self.assertIn("faces %d has rows in face_crops made since" % face, message)
+        self.assertIn("faces %d has rows in face_embeddings made since" % face, message)
+        self.assertNotIn("face_crops", message, "a crop cut since is a cache: it goes with its face")
 
 
 class AFacePassFolderUndone(JournalLibrary):
@@ -358,7 +362,7 @@ class Rehearsals(JournalLibrary):
         before = self.dump()
         generations = self.query("SELECT name, value FROM generations ORDER BY name")
         rehearsal = journal.rehearse(self.db_path, "t", self.edits())
-        self.assertEqual((None, 7, 3, True, True, [], 0),
+        self.assertEqual((None, 5, 3, True, True, [], 0),
                          (rehearsal.refused, rehearsal.rows, rehearsal.changed, rehearsal.exact,
                           rehearsal.derived_exact, rehearsal.differences, rehearsal.derived_stale))
         self.assertEqual(before, self.dump())
@@ -407,7 +411,7 @@ class Rehearsals(JournalLibrary):
         applied = journal.apply(self.db_path, "t", self.edits())
         after = self.dump()
         rehearsal = journal.rehearse_undo(self.db_path, applied.change_id)
-        self.assertEqual((None, 7, True, True), (rehearsal.refused, rehearsal.rows, rehearsal.exact,
+        self.assertEqual((None, 5, True, True), (rehearsal.refused, rehearsal.rows, rehearsal.exact,
                                                  rehearsal.derived_exact))
         self.assertEqual(after, self.dump())
         self.assertEqual([(1, "t", "applied")], self.changes())
@@ -428,7 +432,7 @@ class HistoryAndPruning(JournalLibrary):
         listed = journal.history(self.db_path)
         self.assertEqual([(second, "refresh_rows", "applied"), (first, "dedupe_faces", "applied")],
                          [(c["id"], c["operation"], c["status"]) for c in listed])
-        self.assertEqual({"faces": {"delete": 1}, "face_crops": {"delete": 1}, "face_embeddings": {"delete": 1}},
+        self.assertEqual({"faces": {"delete": 1}, "face_embeddings": {"delete": 1}},
                          listed[1]["rows"])
         self.assertEqual({"counts": {"redundant": 1}}, listed[1]["summary"], "the rows are counted from change_rows")
         self.assertEqual(schema.LATEST, listed[1]["schema_version"])
@@ -437,12 +441,31 @@ class HistoryAndPruning(JournalLibrary):
     def test_one_change_lists_its_keys_and_its_values_only_when_asked(self):
         first, _second = self.two_changes()
         entry = journal.history(self.db_path, change_id=first)[0]
-        self.assertEqual({"faces": [[self.ids["copy"]]], "face_crops": [[self.ids["copy"]]],
+        self.assertEqual({"faces": [[self.ids["copy"]]],
                           "face_embeddings": [[self.ids["copy"], FACE_MODEL]]}, entry["keys"])
         self.assertNotIn("values", entry)
         values = journal.history(self.db_path, change_id=first, values=True)[0]["values"]
         vector = next(v for v in values if v["table"] == "face_embeddings")
         self.assertEqual(("<2048 bytes>", None), (vector["old"]["vector"], vector["new"]))
+
+
+    def test_a_crop_row_an_old_change_recorded_is_in_neither_the_counts_nor_the_keys(self):
+        """A change made before a crop was a cache holds the crop's rows (journal.CACHES); History counts what an undo
+        touches, so the dialog's "N rows" is the undo's N."""
+        applied = journal.apply(self.db_path, "dedupe_faces", [journal.delete("faces", (self.ids["copy"],), {})],
+                                {"counts": {"redundant": 1}})
+        key = schema.row_key((self.ids["copy"],))
+
+        def work(conn):
+            conn.executemany("INSERT INTO change_rows (change_id, action, table_name, row_key, column_name, old, new)"
+                             " VALUES (?, 'delete', 'face_crops', ?, ?, ?, NULL)",
+                             [(applied.change_id, key, "face_id", self.ids["copy"]), (applied.change_id, key, "jpeg", jpeg(3))])
+        db.write_with_connection(self.db_path, work)
+        listed = journal.history(self.db_path, change_id=applied.change_id)[0]
+        self.assertEqual({"faces": {"delete": 1}, "face_embeddings": {"delete": 1}}, listed["rows"])
+        self.assertEqual({"faces", "face_embeddings"}, set(listed["keys"]))
+        values = journal.history(self.db_path, change_id=applied.change_id, values=True)[0]["values"]
+        self.assertEqual({"faces", "face_embeddings"}, {v["table"] for v in values})
 
 
 class TheSchemaMovedOn(unittest.TestCase):
