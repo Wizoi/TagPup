@@ -39,6 +39,8 @@ What the owner lives through when a photo's file changes after it was indexed, n
   it;
 * a photo whose stamp describes its file but that has no fingerprint row (every photo indexed before 34) is left
   alone; once its file changes it is worked out again, nothing to compare its decode with;
+* a photo replaced while the run waits for the card (behind Suggest), after the check that kept it by its fingerprint
+  decoded it: worked out again from the new picture, its old vector never recorded as the new picture's;
 * an index that stops as it records the batch leaves the stamp stale; the next run restamps it with no model;
 * a watcher's sync after another program wrote keywords into a folder: every photo is kept by its fingerprint, so the
   index builds no model, imports no torch and takes no turn on the graphics card (it never waits behind Suggest or
@@ -661,6 +663,41 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual("LOADED=", [line for line in done.stdout.splitlines() if line.startswith("LOADED=")][-1])
         for path in (first, second):
             self.assertEqual(self.file_stamp(path), self.stamp(path))
+
+    def test_a_photo_replaced_while_the_run_waits_for_the_card_is_worked_out_again_not_kept_from_the_old_decode(self):
+        folder = self.folder("Harbour Replaced While Waiting")
+        first = self.picture(folder, "a first.jpg", "navy")
+        second = self.picture(folder, "b second.jpg", "teal")
+        self.detector.found = {"a first.jpg": [([300, 200, 400, 330], 0.99, 1)],
+                               "b second.jpg": [([100, 50, 200, 180], 0.99, 2)]}
+        self.index(folder)
+        # Keywords written outside the first (kept by its fingerprint, decoded by the no-model check), the second cropped
+        # (the run needs a model, so the card's turn is waited for).
+        self.outside(first, "-XMP:Subject+=Places/Harbour")
+        self.crop(second)
+        old_vector = self.vector(first)
+
+        def waits(runtime, what, *args, **kwargs):
+            # While the run waits behind Suggest, an editor saves other pixels (a larger file) over the first photo.
+            self.turns.append(what)
+            Image.new("RGB", (SIZE[0] + 40, SIZE[1]), "gold").save(first, "JPEG")
+            return _Hold()
+        del self.detector.asked[:], self.on_card[:], self.turns[:]
+        self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 95).tolist()
+        with mock.patch.object(Runtime, "gpu_turn", waits):
+            result = self.index(folder)
+        self.assertEqual(1, len(self.turns), result.output)
+        with open(first, "rb") as held:
+            as_saved = held.read()
+        self.assertFalse(np.allclose(old_vector, self.computed))
+        # The first photo's vector is worked out from the picture now in the file, and its row is that picture's.
+        self.assertTrue(np.allclose(self.computed, self.vector(first)), "the old picture's vector was kept")
+        self.assertEqual([self.decoded(first)], self.fingerprint(first))
+        self.assertEqual(2, self.on_card.count("embed"), "both photos worked out")
+        self.assertEqual(["a first.jpg", "b second.jpg"], sorted(self.detector.asked))
+        self.kept_line(result, 0, 0, 0, 2, 0)
+        with open(first, "rb") as held:
+            self.assertEqual(as_saved, held.read(), "nothing written into the replaced file")
 
     def test_force_reembed_works_out_a_photo_again_and_the_line_says_the_processor_on_a_machine_with_no_card(self):
         folder = self.folder("Harbour Forced")

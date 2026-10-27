@@ -534,8 +534,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             decoded = early.get(paths.key(path)) if begun["stale"] is not None else None
             if isinstance(decoded, Exception):
                 raise decoded
-            if decoded is not None and begun["stale"].same(decoded[1]):
-                # Decoded as the run began (_kept_with_no_model), its picture the vector's: not decoded again.
+            if (decoded is not None and tuple(decoded[0]) == tuple(begun["stale"].file_stamp)
+                    and begun["stale"].same(decoded[1])):
+                # Decoded as the run began (_kept_with_no_model), of the file as `begin` found it, its picture the
+                # vector's: not decoded again. A file replaced since (the wait for the graphics card can be long behind
+                # Suggest) has another stamp: decoded below, its old vector never recorded as the new picture's.
                 picture = None
                 if face_processor and begun["examine"]:
                     width, height = image_files.picture_size(path)
