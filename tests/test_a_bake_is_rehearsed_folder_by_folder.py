@@ -141,7 +141,7 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
     def test_a_dry_run_counts_each_kind_by_folder_writes_nothing_and_says_the_same_again(self):
         self.a_mix()
         before = self.home_as_it_is()
-        first = self.cli()
+        first = self.cli("--verbose")
         self.assertEqual(0, first.exit_code, first.output)
         out = first.output
         self.assertIn("Folder 1 of 2:\n  6 photo(s): 1 to bake, 1 already current", out)
@@ -151,8 +151,10 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
                       "be baked.", total)
         self.assertIn("To bake, by format: .jpg 2.", total)
         self.assertNotIn("XMP", out, "Extended XMP is ExifTool's detail, not the owner's (2026-10-25)")
-        for said in ("1 never examined by the face model", "1 with a face holding no vector under the face model",
-                     "1 whose file changed since its photo vector was made", "1 whose file could not be read"):
+        for said in ("1 never examined by the face model: run face-pass on its folder first",
+                     "1 with a face holding no vector under the face model: run face-pass on its folder",
+                     "1 whose file changed since its photo vector was made: index it again",
+                     "1 whose file could not be reached or read: the file or the share did not answer: run again when it does"):
             self.assertIn("Cannot be baked: %s" % said, total)
         self.assertNotIn("none found", out.lower())
         self.assertIn("Sample: 3 photo(s) decoded for their fingerprint", total,
@@ -161,7 +163,7 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
         self.assertIn("Nothing changed", out)
         self.assertEqual(before, self.home_as_it_is(), "no row, no journal entry, no snapshot, no file touched")
 
-        again = self.cli()
+        again = self.cli("--verbose")
         self.assertEqual(out, again.output, "a second run says the same")
         self.assertEqual(before, self.home_as_it_is())
 
@@ -193,7 +195,7 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
                 return {paths.key(one): field_values.NotAnswered("ExifTool did not answer in 300 s") for one in photo_paths}
             return real(et, photo_paths, *args, **kwargs)
         with mock.patch.object(baking_report.field_values, "read", side_effect=read):
-            stalled = self.cli()
+            stalled = self.cli("--verbose")
         out = stalled.output
         self.assertEqual(1, stalled.exit_code, out)
         self.assertEqual("Second", asked[-1])
