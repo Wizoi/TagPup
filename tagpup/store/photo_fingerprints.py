@@ -13,9 +13,16 @@ handed out again, so deleting a photo takes nothing the journal must account for
 Two write a row: the index, as it saves a photo it decoded (tagpup.services.search), and a bake's write, in the transaction
 that marks it done (tagpup.services.baking.follower), from the Fingerprint the file holds after. An undo of a bake leaves
 the row: the picture is the one it was.
+
+The one rule of a vector's currency (owner, DECISIONS 2026-10-27; docs/INVARIANTS.md) is `same_picture`'s: a photo's
+vector is of the picture its file holds now when the vector's stamp describes the file (trusted, nothing decoded), or else
+when the decode's fingerprint equals this table's row. A metadata write (keywords, a caption, XMP another program wrote)
+changes the stamp and never the picture, so it never makes a vector stale. Sync (what to queue), the index (what is
+current) and baking (what is to be baked) each ask it.
 """
 import collections
 
+from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
 TABLE = "photo_fingerprints"
@@ -23,11 +30,46 @@ TABLE = "photo_fingerprints"
 #: A photo's fingerprint: the key of the way it was taken, and the hash (bytes).
 Fingerprint = collections.namedtuple("Fingerprint", "key hash")
 
+#: What same_picture answers. STAMPED: the vector's stamp describes the file, so the vector is of its picture (nothing
+#: decoded). SAME: the stamp does not, and the decode's fingerprint equals the row's: the picture is the vector's, the
+#: file's metadata alone changed. CHANGED: no vector, no row to compare with, or a different fingerprint: the vector is
+#: not of the picture as it is now. UNDECIDED: the stamp does not describe the file and the row was not read (NOT_READ),
+#: or there is a row and nothing was decoded to compare with it.
+STAMPED, SAME, CHANGED, UNDECIDED = "stamped", "same", "changed", "undecided"
+
+#: same_picture's `row` when the caller has not read it.
+NOT_READ = object()
+
+
+def same_picture(vector_stamp, file_stamp, row=NOT_READ, decoded=None):
+    """Is a photo's vector of the picture its file holds now? `vector_stamp`, the (mtime, size) the vector was stamped
+    with (None: no vector); `file_stamp`, the file's (mtime, size); `row`, the photo's Fingerprint (None: none), or
+    NOT_READ; `decoded`, the (key, hash) of the file's decode now, or None. STAMPED, SAME, CHANGED or UNDECIDED (above)."""
+    if vector_stamp is None:
+        return CHANGED
+    if store_photos.describes(vector_stamp[0], vector_stamp[1], file_stamp):
+        return STAMPED
+    if row is NOT_READ:
+        return UNDECIDED
+    if row is None:
+        return CHANGED
+    if decoded is None:
+        return UNDECIDED
+    return SAME if (decoded[0], bytes(decoded[1])) == (row.key, bytes(row.hash)) else CHANGED
+
 
 def get(conn, photo_id):
     """The Fingerprint of the photo with id `photo_id`, or None: none recorded, or its photo is gone."""
     row = conn.execute("SELECT f.key, f.hash FROM photo_fingerprints f JOIN photos p ON p.id = f.photo_id"
                        " WHERE f.photo_id = ?", (photo_id,)).fetchone()
+    return Fingerprint(*row) if row else None
+
+
+def of_path(conn, photo_path):
+    """The Fingerprint of the photo at `photo_path`, or None: none recorded, or no such photo."""
+    where, params = store_roots.sql_equals(conn, "p.path", photo_path)
+    row = conn.execute("SELECT f.key, f.hash FROM photos p JOIN photo_fingerprints f ON f.photo_id = p.id WHERE " + where,
+                       params).fetchone()
     return Fingerprint(*row) if row else None
 
 

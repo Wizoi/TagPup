@@ -89,6 +89,16 @@ def detected(conn, photo_path, name):
                         + " AND d.detector = ? LIMIT 1", tuple(params) + (name,)).fetchone() is not None
 
 
+def unexamined(conn, name):
+    """The ids of the photos never examined for faces by detector `name`: no face row (under any model) and no row here
+    under `name` -- the test baking.plan_photo calls NEVER_EXAMINED, for the whole library at once. Not "no row under
+    `name`" alone: most photos of a library indexed before migration 25 hold faces and no row, and are examined. One scan
+    of the photos, each asked of idx_faces_photo_id and this table's key."""
+    return {photo_id for (photo_id,) in conn.execute(
+        "SELECT p.id FROM photos p WHERE NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = p.id)"
+        " AND NOT EXISTS (SELECT 1 FROM faces_detected d WHERE d.photo_id = p.id AND d.detector = ?)", (name,))}
+
+
 def faceless_under(conn, name, photo_ids):
     """The ids among `photo_ids` of the photos detector `name` has run on that hold no face row: those it found no face
     in (or none it made a face of), and none was made since. The face pass's photos done that hold no face. Chunked; the
