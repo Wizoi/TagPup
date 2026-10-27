@@ -85,7 +85,7 @@ from tagpup.core.result import NotFound
 from tagpup.services import maintenance
 from tagpup.services import refresh_rows
 from tagpup.jobs import indexing as indexing_jobs
-from tagpup.services.search import PhotoIndex
+from tagpup.services.search import PhotoEmbeddings, PhotoIndex
 from tagpup.store.locks import PathLocker
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.files import images as image_files
@@ -120,6 +120,49 @@ def read_ahead_bytes(width, height, clip=None, faces=None, max_side=None):
     if clip is not None:
         halves.append(clip.input_bytes(width, height))
     return max(halves, default=0)
+
+
+def _kept_with_no_model(metas, embeddings, unexamined):
+    """What the index keeps of each of `metas` [records of MetadataExtractor.batch_read] with no model, asked before any
+    model is built or the graphics card's turn taken: (looked, complete). `looked` is {paths.key: {"vector", "stale",
+    "decoded"}}: the vector kept by its stamp, or the Stale one (PhotoEmbeddings.kept), and of a stale one its decode,
+    (stamp, fingerprint, zero tail) -- or what the decode raised -- which the index's read uses and never decodes again.
+    `complete` is True when every photo is kept by its stamp or by its fingerprint (photo_fingerprints.same_picture: only
+    its metadata changed): none is in `unexamined`, none holds a bake to read, none has no vector. Then the index builds
+    no model, imports no torch and takes no turn: the photos are stamped again with what they are. Asked in order and
+    stopped at the first photo that needs a model: its decode, and those read ahead of it, are made again by the index.
+
+    `embeddings` is the library's (PhotoEmbeddings, its model None). The stale photos are decoded on the read-ahead's
+    threads, within its bound."""
+    looked = {}
+    for meta in metas:
+        key = paths.key(meta["path"])
+        if key in unexamined or bake_reading.holds(bake_reading.parsed(meta)):
+            return looked, False
+        kept, stale = embeddings.kept(meta["path"])
+        if kept is None and stale is None:
+            return looked, False
+        looked[key] = {"vector": kept, "stale": stale, "decoded": None}
+
+    def read(meta, begun, reserve):
+        width, height = image_files.picture_size(meta["path"])
+        reserve(width * height * 3)
+        stamp, upright = embeddings.opened(meta["path"])
+        return stamp, image_files.fingerprint(upright), upright.info.get(image_files.ZERO_TAIL_INFO, 0)
+    stale = [meta for meta in metas if looked[paths.key(meta["path"])]["stale"] is not None]
+    with read_ahead.ReadAhead(stale, lambda meta: looked[paths.key(meta["path"])], read, threads=READ_THREADS,
+                              ahead=READ_AHEAD, budget=READ_AHEAD_BYTES) as decodes:
+        for meta, begun, result in decodes:
+            try:
+                decoded = result.result()
+            except Exception as error:
+                # The index's read raises it again, in the photo's turn: said as the index says it, and no model asked.
+                begun["decoded"] = error
+                continue
+            if not begun["stale"].same(decoded[1]):
+                return looked, False
+            begun["decoded"] = decoded
+    return looked, True
 
 
 def get_exiftool_path(db_path, read_only=False) -> str:
@@ -325,10 +368,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         photo_index.close()
         return
 
-    # Only now that a photo is to be embedded: the CLIP model's library (open_clip, torch) takes seconds to import,
-    # and a run that finds nothing to index -- every sync, every watcher run -- needs none of it (docs/findings.md, #1089).
-    # A model's vectors are kept under its own key (tagpup.store.embeddings.model_key): another model's are never compared.
-    embeddings = runtime.embeddings(Library(db_path), photo_index)
+    # The vectors kept, under the library's model's key (tagpup.store.embeddings.model_key: another model's are never
+    # compared), read with no model: a model is built below only when a photo needs one.
+    embeddings = PhotoEmbeddings(None, photo_index, model_key=runtime.model_key(Library(db_path), settings))
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")
@@ -382,10 +424,22 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         photo_index.close()
         return
 
+    # Whether any photo needs a model, decided before one is built: a run where every photo is kept, by its stamp or by
+    # its fingerprint (another program wrote its metadata: a watcher's sync queues its folder), stamps them again with no
+    # model -- CLIP's library and the face model's (open_clip, torch) take seconds to import (#1089) -- and takes no turn
+    # on the graphics card, so it never waits behind Suggest or another index for it. Each stale photo's decode is kept
+    # for the read below, which does not decode it again.
+    looked, complete = ({}, False) if force_reembed else _kept_with_no_model(
+        to_index_meta, embeddings, set() if skip_faces else unexamined)
+    early = {key: answer["decoded"] for key, answer in looked.items() if answer["decoded"] is not None}
+    face_processor = None
+    if not complete:
+        embeddings = runtime.embeddings(Library(db_path), photo_index)
+        face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
+
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
-    face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
     # The indexer records what it reads, so it may give a photo its identity -- after the
     # photo's picture has decoded in full, never before (IdentityWriter).
     identity_writer = IdentityWriter(exiftool_path)
@@ -408,10 +462,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             waited.append(line)
             console.print(line, markup=False, soft_wrap=True)
         try:
-            turn = runtime.gpu_turn("indexing %s (%s)" % (names, Library(db_path).name),
-                                    (embeddings.clip, face_processor),
-                                    cancelled=lambda: bool(stop_file) and os.path.exists(stop_file),
-                                    report=say_waiting)
+            # Not taken when every photo is kept with no model (`complete`).
+            turn = None if complete else runtime.gpu_turn(
+                "indexing %s (%s)" % (names, Library(db_path).name), (embeddings.clip, face_processor),
+                cancelled=lambda: bool(stop_file) and os.path.exists(stop_file), report=say_waiting)
         except gpu_turns.Cancelled:
             console.print(indexing_service.CANCELLED_WAITING, markup=False, soft_wrap=True)
             raise SystemExit(indexing_service.EXIT_CANCELLED) from None
@@ -453,8 +507,12 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 locked_out.append(path)
                 return None
             # A vector whose stamp no longer describes the file is `stale`: kept if the decode's fingerprint is its
-            # row's (photo_fingerprints.same_picture), else worked out.
-            kept, stale = (None, None) if force_reembed else embeddings.kept(path)
+            # row's (photo_fingerprints.same_picture), else worked out. A run that built no model keeps what it read
+            # before (_kept_with_no_model): read again, it could ask for a model this run does not have.
+            if complete:
+                kept, stale = looked[paths.key(path)]["vector"], looked[paths.key(path)]["stale"]
+            else:
+                kept, stale = (None, None) if force_reembed else embeddings.kept(path)
             # --force-reembed works every photo out again: no bake is read.
             found = bake_reading.parsed({} if force_reembed else meta)
             loads = kept is None and stale is None and not bake_reading.gives_vector(found, photo_key)
@@ -470,6 +528,18 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             the picture's fingerprint, nothing written and nothing on the graphics card. A picture that does not decode
             raises images.Unreadable, handed to the loop below in the photo's turn."""
             path = meta["path"]
+            decoded = early.get(paths.key(path)) if begun["stale"] is not None else None
+            if isinstance(decoded, Exception):
+                raise decoded
+            if decoded is not None and begun["stale"].same(decoded[1]):
+                # Decoded as the run began (_kept_with_no_model), its picture the vector's: not decoded again.
+                picture = None
+                if face_processor and begun["examine"]:
+                    width, height = image_files.picture_size(path)
+                    reserve(read_ahead_bytes(width, height, None, face_processor, detect_max_side))
+                    picture = face_processor.picture(path, max_side=detect_max_side)
+                return None, decoded[2], picture, {"stamp": decoded[0], "upright": None, "fingerprint": decoded[1],
+                                                   "took": bake_reading.Taken(), "same": True}
             width, height = image_files.picture_size(path)
             decodes = begun["vector"] is None or bake_reading.holds(begun["bake"])
             reserve(read_ahead_bytes(width, height, embeddings.clip if decodes else None,

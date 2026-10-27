@@ -40,6 +40,10 @@ What the owner lives through when a photo's file changes after it was indexed, n
 * a photo whose stamp describes its file but that has no fingerprint row (every photo indexed before 34) is left
   alone; once its file changes it is worked out again, nothing to compare its decode with;
 * an index that stops as it records the batch leaves the stamp stale; the next run restamps it with no model;
+* a watcher's sync after another program wrote keywords into a folder: every photo is kept by its fingerprint, so the
+  index builds no model, imports no torch and takes no turn on the graphics card (it never waits behind Suggest or
+  another index for it), and still stamps each again with its fingerprint row; a run with one photo cropped takes the
+  turn once;
 * a photo cropped outside and then Suggested (Suggest keeps the cropped picture's vector), then restored from a copy: the
   index works it out again, and its fingerprint row is the restored picture's -- Suggest's vector forgot the row of the
   picture before the crop, which told the index the cropped picture's vector was the restored one's;
@@ -71,7 +75,7 @@ from stand_in_models import NewFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
-from tagpup.core import fields, orientation, paths, validation  # noqa: E402
+from tagpup.core import fields, orientation, paths, processes, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -144,6 +148,8 @@ class AnIndexReadsABake(unittest.TestCase):
         self.db_path = self.made("harbour.db")
         self.photo_key = store_embeddings.model_key(**library_settings.read(Library(self.db_path)).embedder)
         self.refused, self.on_card = False, []
+        #: What each turn on the graphics card was asked for, and each build of the face model: counted, not refused.
+        self.turns, self.face_models = [], []
         self.computed = baked_files.unit(bake.PHOTO_DIM, 99).tolist()
 
         def card(what, value=None):
@@ -157,10 +163,12 @@ class AnIndexReadsABake(unittest.TestCase):
         for patcher in (mock.patch.object(clip.ClipModel, "_init_model", side_effect=card("load")),
                         mock.patch.object(clip.ClipModel, "picture_input", side_effect=card("input", "input")),
                         mock.patch.object(clip.ClipModel, "embed_input", side_effect=card("embed", self.computed)),
-                        mock.patch.object(Runtime, "gpu_turn", lambda *args, **kwargs: _Hold()),
+                        mock.patch.object(Runtime, "gpu_turn",
+                                          lambda runtime, what, *args, **kwargs: self.turns.append(what) or _Hold()),
                         # The models are taken to be on the graphics card, whatever this machine has.
                         mock.patch.object(runtimes, "on_the_card", return_value=True),
-                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector)):
+                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None:
+                                          self.face_models.append(library) or self.detector)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -475,7 +483,9 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertNotEqual(self.file_stamp(captioned), self.stamp(captioned))
         del self.detector.asked[:], self.on_card[:]
         self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 98).tolist()
+        del self.turns[:]
         result = self.index(folder)
+        self.assertEqual(1, len(self.turns), "the cropped photo needs the models: one turn, for the run")
         # The caption's photo: the same picture (its decode's fingerprint is its row's), its vector and faces kept, no
         # model asked, its vector stamped with the file as it is now.
         self.assertEqual(["cropped.jpg"], self.detector.asked, result.output)
@@ -589,11 +599,57 @@ class AnIndexReadsABake(unittest.TestCase):
             stopped = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder])
         self.assertNotEqual(0, stopped.exit_code, stopped.output)
         self.assertEqual(stale, self.stamp(path), "nothing recorded")
+        del self.turns[:], self.face_models[:]
         result = self.index(folder)
         self.assertEqual(([], []), (self.on_card, self.detector.asked), result.output)
+        self.assertEqual(([], []), (self.turns, self.face_models), "restamped with no model and no turn")
         self.assertEqual(self.file_stamp(path), self.stamp(path))
         self.assertTrue(np.allclose(vector, self.vector(path)))
         self.kept_line(result, 0, 1, 0, 0)
+
+    def test_keywords_written_into_a_folder_outside_are_restamped_with_no_model_no_torch_and_no_turn(self):
+        folder = self.folder("Harbour Keywords Outside")
+        first = self.picture(folder, "first.jpg", "navy")
+        second = self.picture(folder, "second.jpg", "teal")
+        self.detector.found = {"first.jpg": [([300, 200, 400, 330], 0.99, 1)],
+                               "second.jpg": [([100, 50, 200, 180], 0.99, 2)]}
+        self.index(folder)
+        before = {path: (self.vector(path), self.boxes(path), self.fingerprint(path)) for path in (first, second)}
+        # Another program writes a keyword into each: the watcher's sync queues the folder.
+        for path in (first, second):
+            self.outside(path, "-XMP:Subject+=Places/Harbour")
+        del self.turns[:], self.face_models[:], self.on_card[:]
+        self.refused = self.detector.refused = True
+        result = self.index(folder)
+        self.assertEqual(([], [], []), (self.turns, self.face_models, self.on_card), result.output)
+        self.assertNotIn("graphics card", result.output)
+        for path in (first, second):
+            vector, boxes, fingerprint = before[path]
+            self.assertTrue(np.allclose(vector, self.vector(path)), path)
+            self.assertEqual(boxes, self.boxes(path), path)
+            self.assertEqual(self.file_stamp(path), self.stamp(path), "stamped again with the file as it is")
+            self.assertEqual(fingerprint, self.fingerprint(path), "its fingerprint row recorded again")
+            self.assertIn("Places/Harbour", self.row(path, "tags") or "", "its row read again")
+        self.kept_line(result, 0, 2, 0, 0)
+        self.assertIn("All images are up to date!", self.index(folder).output)
+
+        # Run as the server's queue runs it, in a process of its own: no model's library is imported (#1089).
+        for path in (first, second):
+            self.outside(path, "-XMP:Description=Boats at dusk")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        probe = ("import sys\n"
+                 "import tagpup_cli\n"
+                 "try:\n"
+                 "    tagpup_cli.cli(sys.argv[1:], standalone_mode=False)\n"
+                 "finally:\n"
+                 "    print('LOADED=' + ','.join(m for m in ('open_clip', 'torch') if m in sys.modules))\n")
+        done = processes.run([sys.executable, "-c", probe, "--db", self.db_path, "index", folder], cwd=root,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertIn(tagpup_cli.KEPT_LINE % (0, 2, 0, 0), " ".join(done.stdout.split()))
+        self.assertEqual("LOADED=", [line for line in done.stdout.splitlines() if line.startswith("LOADED=")][-1])
+        for path in (first, second):
+            self.assertEqual(self.file_stamp(path), self.stamp(path))
 
     def test_force_reembed_works_out_a_photo_again_and_the_line_says_the_processor_on_a_machine_with_no_card(self):
         folder = self.folder("Harbour Forced")

@@ -39,14 +39,16 @@ class PhotoEmbeddings:
     written on a connection of its own. Without one, nothing is kept.
     """
 
-    def __init__(self, clip, photo_index=None, remember=True):
+    def __init__(self, clip, photo_index=None, remember=True, model_key=None):
+        #: None when only the vectors kept are read (`model_key` given): the CLI's index asks what it keeps of each
+        #: photo before it builds a model, and an index where every photo is kept builds none (tagpup_cli.py).
         self.clip = clip
         self.photo_index = photo_index
         #: False: the library's vectors are read, and none is ever written (a Just look run,
         #: tagpup.jobs.suggestions: a vector is a row of the library).
         self.remember = remember
         #: The name its vectors are kept under in a library (tagpup.store.embeddings).
-        self.model_key = store_embeddings.model_key(**clip.settings)
+        self.model_key = model_key if clip is None else store_embeddings.model_key(**clip.settings)
 
     def _library(self):
         return self.photo_index is not None and self.photo_index.conn is not None
