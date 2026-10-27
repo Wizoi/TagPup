@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-10-27 keep-in-step cut 1b | low: the plan had the index make the face model to ask its detector's name before it knows it has a photo to work out; building a face model imports torch, which broke test_imports_no_models_library (#1089: a run with nothing to do imports no model library). Corrected in the build: validation.face_detector is the one rule of a detection's name, services.faces.detector_named asks it from the library settings with no model made, `unexamined` is asked by that name, and the face model is built late, as before. | decided: worker, cut 1b (549e4d4e) |
+| B-2 | 2026-10-27 keep-in-step cut 1b | low: a photo whose face decode fails (NotDetected) gets no faces_detected record (a failed detection is not one that found none), so it stays never examined and is decoded again on every index of its folder. Of photo_index's 223 never-examined photos (EXIF Orientation 6 x216, 8 x6, 3 x1; counted read-only 2026-10-27), 0 fail: Pillow decodes all 223 upright. No live instance; nothing written for it. | open |
+| B-3 | 2026-10-27 keep-in-step cut 1b | low: EXPLAIN QUERY PLAN on photo_index (read-only, 2026-10-27) of faces_detected.unexamined: SCAN p USING COVERING INDEX idx_photos_caption, each photo asked of idx_faces_photo_id and faces_detected's key: 0.04 s warm for 59,524 photos. PhotoIndex.unexamined then reads store.photos.stamps a second time (current reads it with vector_stamps), 0.21-0.27 s warm, on every index of photo_index while any never-examined photo remains (223 now); one read could answer both. | open |
