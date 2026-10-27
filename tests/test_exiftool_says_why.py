@@ -13,6 +13,7 @@ write, is what makes it refuse.
 import logging
 import os
 import unittest
+from unittest import mock
 
 from tests.handler_harness import Library
 from tests.test_bulk_writes_start_from_the_file import make_photo
@@ -103,6 +104,20 @@ class SaidBriefly(unittest.TestCase):
         said = exiftool_session.said_briefly(stderr, ["-overwrite_original", "D:\\Photos\\Rowan.jpg"])
         self.assertEqual("Error: Error creating file: <file>_exiftool_tmp - <file>; Error: File not found - <file>",
                          said)
+
+    def test_the_log_says_it_on_one_line_the_error_first(self):
+        # A failed bake's log line showed the warning, and the error that failed it two lines down (#2015).
+        stderr = ("Warning: [minor] Fixed incorrect URI for xmlns:MicrosoftPhoto - D:/Photos/Rowan.jpg\r\n"
+                  "Error: [minor] Different 'rdf:about' attributes not handled - D:/Photos/Rowan.jpg\r\n")
+        refused = ExifToolExecuteError(1, "", stderr, ["-overwrite_original", "D:/Photos/Rowan.jpg"])
+        with self.assertLogs(exiftool_session.logger, logging.WARNING) as logged, \
+                mock.patch("exiftool.ExifToolHelper.execute", side_effect=refused):
+            with self.assertRaises(ExifToolExecuteError):
+                ExifToolSession(executable="exiftool").execute("-overwrite_original", "D:/Photos/Rowan.jpg")
+        self.assertEqual(1, len(logged.output))
+        line = logged.output[0]
+        self.assertNotIn("\n", line)
+        self.assertLess(line.index("Error: [minor] Different"), line.index("Warning: [minor] Fixed"), line)
 
     def test_nothing_said_is_nothing(self):
         self.assertEqual("", exiftool_session.said_briefly(b"", []))
