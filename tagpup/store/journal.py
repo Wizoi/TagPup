@@ -24,7 +24,7 @@ each with what the plan read of the row (`expect`). Then:
   change left, when a newer change touched the same rows (named), or when the schema
   has moved on since. Undoing an insert is refused while rows made since depend on the
   row; rows the change itself inserted do not count against an insert's undo (a face and
-  the crop and vector given with it go together: `_not_as_left`).
+  the vector given with it go together: `_not_as_left`).
 - **rehearse**: the change and its undo inside a transaction that is rolled back,
   saying whether the undo restored every row exactly. Nothing is written.
 
@@ -45,9 +45,10 @@ A delete takes more than its row: triggers delete a face's crop and a photo's ve
 people and suggestions, and ON DELETE CASCADE, on a connection with foreign keys on,
 a node's children and a photo's faces. The journal writes on connections with foreign
 keys off and makes each of those explicit (CASCADES): recorded as deletes of their own,
-rebuilt, or forbidden. `tests/test_journal_keys_and_cascades.py` holds every cascade
-of a new library to one of the three, and every journaled table to keys SQLite never
-hands out again, so an undo that puts a row back cannot meet a newer one.
+rebuilt, or forbidden -- but for a cache (CACHES), which the trigger takes and nothing
+records. `tests/test_journal_keys_and_cascades.py` holds every cascade of a new library
+to one of those, and every journaled table to keys SQLite never hands out again, so an
+undo that puts a row back cannot meet a newer one.
 
 A library that holds a root (tagpup.store.roots) holds a photo's path, its raw_metadata's
 SourceFile, a suggestion's paths and the folders of the two folder settings as the root's row
@@ -86,7 +87,6 @@ KEYS = {
     "photos": ("id",),
     "faces": ("id",),
     "tag_taxonomy": ("id",),
-    "face_crops": ("face_id",),
     "face_embeddings": ("face_id", "model"),
     "embeddings": ("photo_id", "model"),
     "suggestions": ("photo_id",),
@@ -100,6 +100,13 @@ KEYS = {
 
 #: Tables keyed by a photo's id without a foreign key to it: (table, the table the id is of).
 UNLINKED = {"faces_detected": "photos"}
+
+#: Caches: rows made again from the file whenever they are missing, so never part of a change (owner, 2026-10-27). A face's
+#: crop is cut again from its photo when asked for (tagpup.services.photos.face_crop, images.face_crop_of), upright by the
+#: Orientation the photo has then. Not in KEYS: no change records one, the trigger face_crops_go_with_their_face takes it
+#: with its face and nothing puts it back. A row of one recorded by a change made before (a face pass's inserts, a
+#: deletion's) is left out when the change is read (_load): an undo neither asks for it nor writes it back.
+CACHES = ("face_crops",)
 
 #: Tables keyed by a name, not by an id SQLite hands out: a row put back under its name is
 #: the same thing again -- a setting is "faces.min_face_size" whichever row holds it -- so
@@ -136,12 +143,12 @@ RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
 
 #: What deleting a row of one table takes from another -- (parent, child): (the child's
 #: column naming the parent's key, what the journal does). Recorded: deleted first, as
-#: rows of the change, so an undo puts them back byte for byte; a deleted face's crop and vectors and
+#: rows of the change, so an undo puts them back byte for byte; a deleted face's vectors and
 #: a deleted photo's vectors cannot be made again without the file and the models.
 #: Rebuilt: derived, made again from the rows. Forbidden: a change deleting the parent
-#: is refused unless it deletes the children too -- a node with nodes under it.
+#: is refused unless it deletes the children too -- a node with nodes under it. A cache
+#: (CACHES), a face's crop, is none of these: its trigger takes it, and it is cut again.
 CASCADES = {
-    ("faces", "face_crops"): ("face_id", RECORDED),
     ("faces", "face_embeddings"): ("face_id", RECORDED),
     ("photos", "faces"): ("photo_id", RECORDED),
     ("photos", "embeddings"): ("photo_id", RECORDED),
@@ -632,11 +639,14 @@ def _record(conn, change_id, changes):
 def _load(conn, change_id, canonical=True):
     """The rows change `change_id` wrote, in the order it wrote them: with their paths in the
     form the library holds them in now (a change made before the library was adopted by a root
-    recorded them native), unless not `canonical`, which is for showing what was recorded."""
+    recorded them native), unless not `canonical`, which is for showing what was recorded. A
+    cache's rows a change recorded before it was one (CACHES) are not among them."""
     changes, index = [], {}
     for action, table, key_text, column, old, new in conn.execute(
             "SELECT action, table_name, row_key, column_name, old, new FROM change_rows"
             " WHERE change_id = ? ORDER BY id", (change_id,)):
+        if table in CACHES:
+            continue
         slot = (action, table, key_text)
         change = index.get(slot)
         if change is None:

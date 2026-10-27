@@ -122,8 +122,9 @@ def remove(library, face_ids):
 
 def _edits(planned):
     """Each copy, by id, while it still carries what the plan saw: the app may name or
-    exclude one between the plan and the write, and then the change is refused. Its crop
-    goes with it, recorded (tagpup.store.journal.CASCADES)."""
+    exclude one between the plan and the write, and then the change is refused. Its vectors
+    go with it, recorded (tagpup.store.journal.CASCADES); its crop, a cache, is not
+    (journal.CACHES)."""
     return [journal.delete("faces", (face_id,), {"name": person.name if person else None,
                                                  "tag_id": person.id if person else None,
                                                  "name_source": source, "excluded": excluded})

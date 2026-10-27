@@ -374,8 +374,9 @@ def give_vectors(conn, change_id, photo_path, key, matched, new, counts):
     stored, with `counts` added to the change's summary (tagpup.store.journal.record_inserted), in the caller's
     transaction: `matched`, [(face id, vector)], each an existing face's vector under `key`, the face's name, box, crop
     and decisions untouched; `new`, [(box, prob, vector, crop)], each a new face, unnamed and not excluded, with its crop
-    and a vector under `key` alone (insert, unnamed), in the photo at `photo_path`. Vectors are float32 bytes. No face is
-    named, so no photo's people move. Returns the new faces' ids. The caller commits."""
+    and a vector under `key` alone (insert, unnamed), in the photo at `photo_path`. Vectors are float32 bytes. The crop is
+    kept and not recorded: a cache (journal.CACHES), which the undo's delete of its face takes. No face is named, so no
+    photo's people move. Returns the new faces' ids. The caller commits."""
     from tagpup.store import journal   # journal imports the photos store, which imports this module
     rows = []
     for face_id, vector in matched:
@@ -385,7 +386,7 @@ def give_vectors(conn, change_id, photo_path, key, matched, new, counts):
     for box, prob, vector, crop in new:
         face_id = insert(conn, photo_path, box, vector, model=key, crop=crop, prob=prob)
         added.append(face_id)
-        rows += [("faces", (face_id,)), ("face_crops", (face_id,)), ("face_embeddings", (face_id, key))]
+        rows += [("faces", (face_id,)), ("face_embeddings", (face_id, key))]
     journal.record_inserted(conn, change_id, rows, counts)
     return added
 

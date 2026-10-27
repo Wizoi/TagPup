@@ -10,7 +10,8 @@ A delete also takes rows it does not name: a trigger deletes a face's crop and a
 vectors, people and suggestions on any connection, and ON DELETE CASCADE deletes a
 photo's faces and a node's children on a connection with foreign keys on. Each of those,
 read from a new library's schema rather than from a list, must be one the journal
-records, rebuilds (derived data only) or refuses (journal.CASCADES). A new trigger or
+records, rebuilds (derived data only) or refuses (journal.CASCADES), or a cache, which no
+change records (journal.CACHES: a face's crop, cut again when asked for). A new trigger or
 foreign key that deletes from a journaled table fails here until the journal says what
 it does about it (docs/ARCHITECTURE.md, phase 7.5).
 """
@@ -55,7 +56,7 @@ class ANewLibrary(unittest.TestCase):
     def setUpClass(cls):
         folder = tempfile.mkdtemp(prefix="journal_keys_")
         cls.addClassCleanup(shutil.rmtree, folder, True)
-        path = os.path.join(folder, "library.db")
+        path = cls.path = os.path.join(folder, "library.db")
         schema.ensure(path)
         conn = db.connect(db.readonly_uri(path), uri=True)
         try:
@@ -112,7 +113,7 @@ class ANewLibrary(unittest.TestCase):
     def test_every_cascade_is_recorded_rebuilt_or_forbidden(self):
         cascades = self.cascades()
         self.assertIn(("faces", "face_crops"), cascades, "the schema was not read")
-        unknown = cascades - set(journal.CASCADES)
+        unknown = {(parent, child) for parent, child in cascades - set(journal.CASCADES) if child not in journal.CACHES}
         self.assertEqual(set(), unknown, "deletes the journal would not see: say in journal.CASCADES what it does")
         for (parent, child), (column, how) in journal.CASCADES.items():
             self.assertIn(how, (journal.RECORDED, journal.REBUILT, journal.FORBIDDEN))
@@ -124,6 +125,14 @@ class ANewLibrary(unittest.TestCase):
                 self.assertIn(child, journal.DERIVED, "only derived data is rebuilt: %s" % child)
             if how == journal.RECORDED:
                 self.assertIn(child, journal.KEYS, "a recorded cascade is a journaled table: %s" % child)
+
+    def test_a_cache_is_never_journaled_and_goes_with_its_parent_by_a_trigger(self):
+        self.assertEqual(set(), set(journal.CACHES) & set(journal.KEYS), "a cache in KEYS would be recorded")
+        self.assertEqual(set(), {child for _parent, child in journal.CASCADES} & set(journal.CACHES))
+        taken = {child for _parent, child in cascades_in(self.triggers, {})}
+        self.assertTrue(set(journal.CACHES) <= taken, "a cache no trigger takes would outlive its row")
+        with self.assertRaises(ValueError):
+            journal.rehearse(self.path, "t", [journal.insert("face_crops", {"face_id": 1, "jpeg": b"x"})])
 
     def test_derived_tables_are_never_journaled(self):
         self.assertEqual(set(), set(journal.DERIVED) & set(journal.KEYS))
