@@ -1408,7 +1408,7 @@ CANNOT_BAKE = {
 def _bake_lines(tally, hints=False):
     """What `bake-photos` says of a Tally (a folder's, or the run's): counts only; with `hints`, each reason that
     cannot be baked says what to do about it."""
-    lines = ["  %d photo(s): %d to bake, %d already current (skipped: --apply goes on from where it stopped), %d cannot "
+    lines = ["  %d photo(s): %d to bake, %d already current (left alone), %d cannot "
              "be baked." % (tally.photos, tally.to_bake, tally.current, sum(tally.cannot.values()))]
     if tally.to_bake:
         lines.append("  To bake, by format: %s." % ", ".join(
