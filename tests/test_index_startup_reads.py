@@ -29,7 +29,8 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import search  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.core import paths  # noqa: E402
+from tagpup.store import db, faces_detected  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
@@ -98,6 +99,20 @@ class TheStore(Harbour):
         self.assertEqual((stat.st_mtime, stat.st_size, True), found[self.path])
         self.assertEqual(False, found[self.bare][2])
         self.assertEqual(3, len(found), "the held row, the two photos")
+        with_stamps = {path: vector for _id, path, _m, _s, vector in store_photos.stamps(conn, vector_stamps=MODEL)}
+        self.assertEqual(((stat.st_mtime, stat.st_size), None), (with_stamps[self.path], with_stamps[self.bare]),
+                         "the vector's stamp, or None for a photo with no vector")
+
+    def test_a_photo_with_no_face_row_and_no_record_of_the_detector_is_unexamined(self):
+        detector = faces_detected.detector({"min_face_size": 20})
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        ids = dict((path, photo_id) for photo_id, path, _m, _s in store_photos.stamps(conn))
+        self.assertTrue({ids[self.path], ids[self.bare]} <= faces_detected.unexamined(conn, detector))
+        faces_detected.record(conn, self.path, faces_detected.detector({"min_face_size": 40}), None, 0)
+        self.assertIn(ids[self.path], faces_detected.unexamined(conn, detector), "another detector's record is not one")
+        faces_detected.record(conn, self.path, detector, None, 0)
+        self.assertNotIn(ids[self.path], faces_detected.unexamined(conn, detector), "looked at, none found")
 
 
 class OpeningTheIndex(Harbour):
@@ -158,6 +173,31 @@ class TheIndexCommand(Harbour):
             conn.close()
         result, read = self.index()
         self.assertTrue(read, result.output)
+
+    def test_a_row_a_sync_read_again_whose_vector_is_stamped_before_is_read_again(self):
+        # The shape of photo_index's 74 (2026-10-27): a file written outside, its row read again by a sync (stamped as
+        # the file is), its vector stamped as the file was. Its row describes its file; its vector's stamp does not.
+        with open(self.path, "ab") as handle:
+            handle.write(b"\0")
+        stat = os.stat(self.path)
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE path = ?", (stat.st_mtime, stat.st_size, self.path))
+            conn.commit()
+        finally:
+            conn.close()
+        result, read = self.index()
+        self.assertTrue(read, result.output)
+
+    def test_a_photo_never_examined_for_faces_is_not_current(self):
+        index = search.PhotoIndex(self.db_path, model=MODEL)
+        self.addCleanup(index.close)
+        self.assertTrue(index.open())
+        stat = os.stat(self.path)
+        on_disk = {paths.key(self.path): (self.path, stat.st_mtime, stat.st_size)}
+        photo_id = next(i for i, path, _m, _s in store_photos.stamps(index.conn) if paths.key(path) in on_disk)
+        self.assertEqual(set(on_disk), index.current(on_disk))
+        self.assertEqual(set(), index.current(on_disk, unexamined={photo_id}))
 
     def test_a_photo_with_no_vector_is_read(self):
         self.photo("bare.jpg", vector=False)

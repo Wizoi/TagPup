@@ -248,12 +248,19 @@ class PhotoIndex:
         with self._read_lock:
             return store_photos.stamps(self.conn, with_vectors=self.model)
 
-    def current(self, on_disk):
+    def current(self, on_disk, unexamined=()):
         """The paths.key of each photo of `on_disk` ({key: (path, mtime, size)}: the files as they are) whose row
-        holds a vector and describes its file (store.photos.describes: the one answer sync gives too)."""
-        return {key for _id, path, mtime, size, vectored in self.stamps()
-                if vectored and (key := paths.key(path)) in on_disk
-                and store_photos.describes(mtime, size, on_disk[key][1:])}
+        describes its file (store.photos.describes: the one answer sync gives too), whose vector's stamp does as well
+        (photo_fingerprints.same_picture STAMPED: a vector whose stamp does not is the indexer's to settle), and whose
+        id is not among `unexamined` (faces_detected.unexamined: never looked at for faces). [] when not connected."""
+        if self.conn is None:
+            return set()
+        with self._read_lock:
+            rows = store_photos.stamps(self.conn, vector_stamps=self.model)
+        return {key for photo_id, path, mtime, size, vector in rows
+                if (key := paths.key(path)) in on_disk and photo_id not in unexamined
+                and store_photos.describes(mtime, size, on_disk[key][1:])
+                and photo_fingerprints.same_picture(vector, on_disk[key][1:]) == photo_fingerprints.STAMPED}
 
     def _load_unlocked(self, vectors=True) -> bool:
         try:
