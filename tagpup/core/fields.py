@@ -342,6 +342,16 @@ def _as_read(key, text, charset):
     return text
 
 
+def as_written(field, value):
+    """The texts of `value` a write sends for `field`: an IPTC field's each cut to the characters IPTC keeps
+    (IPTC_LIMITS; in ExifTool's default Latin a letter is one byte), as ExifTool cut them itself until every write was
+    told an objection it calls minor does not stop it (-m, which also stops that cut: DECISIONS 2026-10-27). A file
+    holds a keyword of IPTC's length, as before, and as_read says what it holds."""
+    limit = IPTC_LIMITS.get(read_key(field))
+    texts = field_values(value)
+    return [text[:limit] for text in texts] if limit is not None else texts
+
+
 def as_read(field, value, charset=IPTC_CHARSETS[0]):
     """What a read of a file gives for `value` written to `field`, as the journal keeps a
     value (field_values), trimmed: IPTC cuts a keyword at 64 bytes and writes a letter

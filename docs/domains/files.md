@@ -62,8 +62,8 @@ A photo file is written only through `file_changes.write_fields` and `rename` (t
 exceptions, each unjournaled by decision:
 
 - **The DocumentID the indexer mints**: `files/field_values.ensure_document_id`, through `field_values.write`. It is
-  one command, made again with `-m` only on ExifTool's minor refusal, and then carries the keyword fields as they hold
-  (#1355). It is never written into a photo whose picture did not decode.
+  one command, made with `-m` as every write is (`field_values.WRITE_OPTIONS`, #2009, DECISIONS 2026-10-27) (#1355).
+  It is never written into a photo whose picture did not decode.
 - **Just look**: `services/file_only.py`, the files of a folder the library does not hold (#527).
 
 ## By design (each row closed `decided:`)
