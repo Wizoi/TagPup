@@ -257,9 +257,12 @@ def _holds_the_roots(command):
     return run
 
 
-#: The line an index ends with, counts only: what became of each photo's vector (photo_fingerprints.same_picture).
+#: The line an index ends with, counts only: what became of each photo's vector (photo_fingerprints.same_picture), the
+#: four adding up to the photos the run indexed; and the photos never examined for faces whose detection ran (one that
+#: failed, NotDetected, records nothing and is owed still).
 KEPT_LINE = ("Photo vectors: %d kept (the file as it was), %d kept with the picture unchanged (only the file's metadata "
-             "changed: stamped again, no model run), %d worked out; %d photo(s) never examined for faces looked at.")
+             "changed: stamped again, no model run), %d read from a bake, %d worked out; %d photo(s) never examined for "
+             "faces looked at.")
 
 
 @cli.command()
@@ -605,7 +608,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     emb, kind = begun["stale"].vector, "same"
                 elif took.vector is not None:
                     # As a vector worked out is kept: stamped with the file as it was opened.
-                    emb = took.vector
+                    emb, kind = took.vector, "baked"
                     embeddings.keep(path, emb, decoded["stamp"])
                 else:
                     if prepared is None:
@@ -641,7 +644,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                         on_card = on_card or face_records.ran(detected)
                     faces = face_processor.new_faces(detected, picture)
                     batch_faces[path] = faces
-                    examined = begun["examine"]
+                    # Looked at only when the detection ran: one that failed records nothing (_record_detection).
+                    examined = begun["examine"] and face_records.ran(detected)
                 if not decoded["same"]:
                     tally.add(took.verdict, from_file=took.vector is not None or took.detected is not None,
                               on_card=on_card)
@@ -730,7 +734,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             console.print("[yellow]No new embeddings generated.[/yellow]")
         if tally.said():
             console.print(tally.said(), markup=False, soft_wrap=True, highlight=False)
-        console.print(KEPT_LINE % (vectors["stamp"], vectors["same"], vectors["made"], vectors["examined"]),
+        console.print(KEPT_LINE % (vectors["stamp"], vectors["same"], vectors["baked"], vectors["made"],
+                                   vectors["examined"]),
                       markup=False, soft_wrap=True, highlight=False)
         if unreadable:
             console.print(
@@ -1016,7 +1021,7 @@ def sync(ctx, folder, apply_):
     for line in maintenance.skipped(result) + maintenance.failed(result) + result.details["warnings"]:
         console.print(line, markup=False, soft_wrap=True)
     if result.details["queued"]:
-        console.print("Indexing %d folder(s) with new files, one at a time..." % result.details["queued"])
+        console.print("Indexing %d folder(s) with new files or work owed, one at a time..." % result.details["queued"])
         queue = indexing_jobs.queue_for(library)
         queue.wait()
         for folder_path in result.details["reveal"]["new_folders"]:

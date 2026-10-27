@@ -247,8 +247,11 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(0, result.exit_code, result.output)
         return result
 
-    def kept_line(self, result, stamp, same, made, examined):
-        self.assertIn(tagpup_cli.KEPT_LINE % (stamp, same, made, examined), " ".join(result.output.split()))
+    def kept_line(self, result, stamp, same, baked, made, examined):
+        """The index's closing line: its first four counts add up to the photos the library holds (each test's run
+        indexes every photo of its library, or found it current)."""
+        self.assertIn(tagpup_cli.KEPT_LINE % (stamp, same, baked, made, examined), " ".join(result.output.split()))
+        self.assertEqual(self.query("SELECT COUNT(*) FROM photos")[0][0], stamp + same + baked + made, result.output)
 
     # ---- what the library holds ----------------------------------------------------------------------------------------
 
@@ -355,6 +358,7 @@ class AnIndexReadsABake(unittest.TestCase):
         for path, size in ((two, SIZE), (tiff, SIZE), (crowd, (1600, 1200)), (empty, SIZE)):
             self.assertHoldsTheBake(path, held[path], size)
         self.assertEqual(60, len(self.faces(crowd)))
+        self.kept_line(result, 0, 0, 4, 0, 0)
         self.assertIn("Baked into the files: 4 photo(s) read from their file, 0 worked out on the graphics card; 0 bake(s) "
                       "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 4 photo(s) "
                       "needed no graphics card.",
@@ -458,7 +462,7 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(["Baked into the files: 0 photo(s) read from their file, 1 worked out on the graphics card; 1 bake(s) "
                           "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 0 "
                           "photo(s) needed no graphics card."], self.said(result))
-        self.assertIn(tagpup_cli.KEPT_LINE % (0, 1, 1, 0), " ".join(result.output.split()))
+        self.kept_line(result, 0, 1, 0, 1, 0)
         self.assertEqual(["edited.jpg"], self.detector.asked, "the repainted photo's faces are looked for again")
         self.assertEqual(1, self.on_card.count("embed"))
         # The caption's edit left the bake its picture's: read again, it is current. The repainted one is to bake again,
@@ -495,7 +499,7 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(self.file_stamp(captioned), self.stamp(captioned))
         self.assertTrue(np.allclose(self.computed, self.vector(cropped)))
         self.assertEqual([], self.said(result), "no photo held a bake")
-        self.kept_line(result, 0, 1, 1, 0)
+        self.kept_line(result, 0, 1, 0, 1, 0)
         # Both stamps now describe their files: nothing to do.
         self.refused = self.detector.refused = True
         self.assertIn("All images are up to date!", self.index(folder).output)
@@ -503,6 +507,7 @@ class AnIndexReadsABake(unittest.TestCase):
     def test_a_turned_photo_never_examined_for_faces_is_looked_at_and_its_vector_kept(self):
         folder = self.folder("Harbour Never Examined")
         turned = self.picture(folder, "turned.jpg", "navy", turned=6)
+        failing = self.picture(folder, "failing.jpg", "olive")
         upright = orientation.to_upright([100, 50, 200, 180], *SIZE, 6)
         self.detector.found = {"turned.jpg": [(upright, 0.99, 1)]}
         self.index(folder)
@@ -518,15 +523,21 @@ class AnIndexReadsABake(unittest.TestCase):
             conn.close()
         del self.detector.asked[:], self.on_card[:]
         self.refused = True
+        # The other's detection fails this time (NotDetected): it records nothing, is not counted as looked at, and is
+        # owed still.
+        self.detector.found["failing.jpg"] = None
         result = self.index(folder)
-        self.assertEqual(["turned.jpg"], self.detector.asked, result.output)
+        self.assertEqual(["failing.jpg", "turned.jpg"], sorted(self.detector.asked), result.output)
+        self.assertEqual([], self.detected(failing))
         self.assertEqual([], self.on_card, "its vector is current: CLIP is not asked")
         self.assertEqual(boxes, self.boxes(turned), "the faces of the picture as shown")
         self.assertEqual(1, len(self.detected(turned)))
         self.assertTrue(np.allclose(vector, self.vector(turned)))
         self.assertEqual(stamp, self.stamp(turned))
         self.assertEqual([self.decoded(turned)], self.fingerprint(turned), "kept by its stamp, with its fingerprint row")
-        self.kept_line(result, 1, 0, 0, 1)
+        self.kept_line(result, 2, 0, 0, 0, 1)
+        self.detector.found["failing.jpg"] = []
+        self.kept_line(self.index(folder), 2, 0, 0, 0, 1)
         self.detector.refused = True
         self.assertIn("All images are up to date!", self.index(folder).output)
 
@@ -553,7 +564,7 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(["quay.jpg"], self.detector.asked)
         self.assertEqual(self.file_stamp(path), self.stamp(path))
         self.assertEqual(1, self.query("SELECT COUNT(*) FROM photo_fingerprints")[0][0])
-        self.kept_line(result, 0, 0, 1, 0)
+        self.kept_line(result, 0, 0, 0, 1, 0)
 
     def test_a_photo_suggested_while_cropped_and_then_restored_is_worked_out_again_not_kept_from_the_crop(self):
         folder = self.folder("Harbour Restored")
@@ -581,7 +592,7 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertTrue(np.allclose(self.computed, self.vector(path)))
         self.assertEqual(self.file_stamp(path), self.stamp(path))
         self.assertEqual([first], self.fingerprint(path))
-        self.kept_line(result, 0, 0, 1, 0)
+        self.kept_line(result, 0, 0, 0, 1, 0)
 
     def test_an_index_stopped_as_it_records_leaves_the_stamp_stale_and_the_next_restamps_with_no_model(self):
         folder = self.folder("Harbour Stopped")
@@ -605,7 +616,7 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(([], []), (self.turns, self.face_models), "restamped with no model and no turn")
         self.assertEqual(self.file_stamp(path), self.stamp(path))
         self.assertTrue(np.allclose(vector, self.vector(path)))
-        self.kept_line(result, 0, 1, 0, 0)
+        self.kept_line(result, 0, 1, 0, 0, 0)
 
     def test_keywords_written_into_a_folder_outside_are_restamped_with_no_model_no_torch_and_no_turn(self):
         folder = self.folder("Harbour Keywords Outside")
@@ -630,7 +641,7 @@ class AnIndexReadsABake(unittest.TestCase):
             self.assertEqual(self.file_stamp(path), self.stamp(path), "stamped again with the file as it is")
             self.assertEqual(fingerprint, self.fingerprint(path), "its fingerprint row recorded again")
             self.assertIn("Places/Harbour", self.row(path, "tags") or "", "its row read again")
-        self.kept_line(result, 0, 2, 0, 0)
+        self.kept_line(result, 0, 2, 0, 0, 0)
         self.assertIn("All images are up to date!", self.index(folder).output)
 
         # Run as the server's queue runs it, in a process of its own: no model's library is imported (#1089).
@@ -646,7 +657,7 @@ class AnIndexReadsABake(unittest.TestCase):
         done = processes.run([sys.executable, "-c", probe, "--db", self.db_path, "index", folder], cwd=root,
                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, done.returncode, done.stdout + done.stderr)
-        self.assertIn(tagpup_cli.KEPT_LINE % (0, 2, 0, 0), " ".join(done.stdout.split()))
+        self.assertIn(tagpup_cli.KEPT_LINE % (0, 2, 0, 0, 0), " ".join(done.stdout.split()))
         self.assertEqual("LOADED=", [line for line in done.stdout.splitlines() if line.startswith("LOADED=")][-1])
         for path in (first, second):
             self.assertEqual(self.file_stamp(path), self.stamp(path))
@@ -660,7 +671,7 @@ class AnIndexReadsABake(unittest.TestCase):
         result = self.index(folder, "--force-reembed")
         self.assertEqual(["quay.jpg"], self.detector.asked)
         self.assertEqual(1, self.on_card.count("embed"))
-        self.kept_line(result, 0, 0, 1, 0)
+        self.kept_line(result, 0, 0, 0, 1, 0)
         self.assertEqual(self.file_stamp(path), self.stamp(path))
 
         # On the processor: one photo read from its bake, one worked out there.
