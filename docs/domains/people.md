@@ -154,6 +154,7 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
 - **#1 and #831**, faces of a sideways photo: DECISIONS 2026-10-07 un-tabled the redesign (boxes stored as the photo
   displays). It is a coordinate redesign, new work under the feature freeze; it is neither fixed nor by design until the
   owner chooses when.
+  Amended by DECISIONS 2026-10-27: faces are detected on the picture as shown, boxes kept stored, the panel draws them turned (#1975).
 
 ## The unit files that stay, and the rule each holds
 
