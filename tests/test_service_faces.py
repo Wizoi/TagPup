@@ -259,7 +259,7 @@ class AnAccountedWrite(FacesCase):
 
 class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
     def test_the_settings_a_detection_is_told_apart_by_are_those_a_face_model_is_made_from(self):
-        """services.faces.detector_of names an MTCNN detection by FaceModel's DETECTOR_SETTINGS, which spell the keys of
+        """services.faces.detector_of names an MTCNN detection by validation's MTCNN_DETECTOR_SETTINGS, which spell the keys of
         LibrarySettings.faces again (ml may not import services), and by the cap, LibrarySettings.detect_max_side: a
         setting added to one and not the other would let a changed setting reuse an old detection. Held equal here, with
         a cap set and with none. The face model (faces.model) is not in MTCNN's name, so the name every row was written
@@ -275,12 +275,17 @@ class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
                 on_mtcnn = library_settings.LibrarySettings(dict(
                     library_settings.DEFAULTS, **{"faces.detect_max_side": cap, "faces.model": validation.MTCNN_FACENET}))
                 mtcnn = {key: value for key, value in on_mtcnn.faces.items() if key != "model"}
-                self.assertEqual(tuple(mtcnn), face_models.DETECTOR_SETTINGS)
+                self.assertEqual(tuple(mtcnn), validation.MTCNN_DETECTOR_SETTINGS)
                 name = json.loads(faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), on_mtcnn.detect_max_side))
-                expected = dict(mtcnn, **({face_models.DETECTOR_CAP: on_mtcnn.detect_max_side} if cap else {}))
+                expected = dict(mtcnn, **({validation.MTCNN_DETECTOR_CAP: on_mtcnn.detect_max_side} if cap else {}))
                 self.assertEqual(expected, name)
+                self.assertEqual(faces.detector_named(on_mtcnn.faces, on_mtcnn.detect_max_side),
+                                 faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), on_mtcnn.detect_max_side),
+                                 "named with no model made as the model names it")
                 self.assertEqual({"model": "scrfd-adaface"},
                                  json.loads(faces.detector_of(ScrfdAdaFace(device="cpu"), made.detect_max_side)))
+                self.assertEqual(faces.detector_named(made.faces, made.detect_max_side),
+                                 faces.detector_of(ScrfdAdaFace(device="cpu"), made.detect_max_side))
 
 
 if __name__ == "__main__":

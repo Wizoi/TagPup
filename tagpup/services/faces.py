@@ -657,6 +657,12 @@ def detector_of(model, max_side):
     return faces_detected.detector(model.detector(max_side))
 
 
+def detector_named(faces, max_side):
+    """The name detector_of gives the face model that the library settings `faces` (LibrarySettings.faces) name, with no
+    model made: what the index asks which photos were never examined with, before it knows it has a photo to work out."""
+    return faces_detected.detector(validation.face_detector(faces, max_side))
+
+
 def ran(detected):
     """Did the detection that returned `detected` run to the end (tagpup.ml.faces.NotDetected)?"""
     return not getattr(detected, "failed", False)
