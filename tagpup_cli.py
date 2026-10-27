@@ -1392,30 +1392,54 @@ BAKE_WAY_BACK = ("`undo <change> --apply` takes a folder's bake back. A later wr
                  "rotation) blocks its folder's undo until that write is undone first; restoring a snapshot does not "
                  "un-bake the files.")
 
-#: How `bake-photos` says each kind of photo that cannot be baked (tagpup.services.baking's kinds).
+#: How `bake-photos` says each kind of photo that cannot be baked (tagpup.services.baking's kinds): what it is, and what
+#: the owner does about it (said in the run's closing summary).
 CANNOT_BAKE = {
-    baking.NEVER_EXAMINED: "never examined by the face model",
-    baking.FACES_WITHOUT_VECTORS: "with a face holding no vector under the face model (run face-pass on them first)",
-    baking.NO_VECTOR: "with no photo vector under the photo model",
-    baking.CHANGED: "whose file changed since its photo vector was made (index them again first)",
-    baking.UNREADABLE: "whose file could not be read",
-    baking.GONE: "gone from the library during the run",
+    baking.NEVER_EXAMINED: ("never examined by the face model", "run face-pass on its folder first"),
+    baking.FACES_WITHOUT_VECTORS: ("with a face holding no vector under the face model", "run face-pass on its folder"),
+    baking.NO_VECTOR: ("with no photo vector under the photo model", "index it (it has no photo embedding to write)"),
+    baking.CHANGED: ("whose file changed since its photo vector was made", "index it again"),
+    baking.UNREADABLE: ("whose file could not be reached or read",
+                        "the file or the share did not answer: run again when it does"),
+    baking.GONE: ("gone from the library during the run", "run it again"),
 }
 
 
-def _bake_lines(tally):
-    """What `bake-photos` says of a Tally (a folder's, or the run's): counts only."""
+def _bake_lines(tally, hints=False):
+    """What `bake-photos` says of a Tally (a folder's, or the run's): counts only; with `hints`, each reason that
+    cannot be baked says what to do about it."""
     lines = ["  %d photo(s): %d to bake, %d already current (skipped: --apply goes on from where it stopped), %d cannot "
              "be baked." % (tally.photos, tally.to_bake, tally.current, sum(tally.cannot.values()))]
     if tally.to_bake:
         lines.append("  To bake, by format: %s." % ", ".join(
             "%s %d" % (extension or "(none)", count) for extension, count in sorted(tally.formats.items())))
-    lines += ["  Cannot be baked: %d %s." % (tally.cannot[kind], why) for kind, why in CANNOT_BAKE.items()
-              if tally.cannot[kind]]
+    lines += ["  Cannot be baked: %d %s%s." % (tally.cannot[kind], why, ": " + todo if hints else "")
+              for kind, (why, todo) in CANNOT_BAKE.items() if tally.cannot[kind]]
     if tally.not_answered:
         lines.append("  Not read: %d photo(s) ExifTool did not answer for in its deadline (is the share there?)."
                      % tally.not_answered)
     return lines
+
+
+def _folder_line(tally, number, folders, reveal, applied):
+    """The one line `bake-photos` says of a folder with something to say (photos baked, to bake, in conflict, failed,
+    refused, not read), or None: a folder with nothing to say is not said without --verbose."""
+    said = []
+    if applied:
+        if tally.written:
+            said.append("%d baked, change %d" % (tally.written, tally.change))
+        if tally.conflicts:
+            said.append("%d in conflict" % len(tally.conflicts))
+        if tally.failed:
+            said.append("%d failed" % len(tally.failed))
+    elif tally.to_bake:
+        said.append("%d to bake" % tally.to_bake)
+    if tally.cannot and sum(tally.cannot.values()):
+        said.append("%d cannot be baked" % sum(tally.cannot.values()))
+    if tally.not_answered:
+        said.append("%d not read" % tally.not_answered)
+    if said:
+        return "Folder %d of %d%s: %s" % (number, folders, " " + tally.folder if reveal else "", ", ".join(said))
 
 
 @cli.command("bake-photos")
@@ -1424,12 +1448,15 @@ def _bake_lines(tally):
               help="Write: after one snapshot of the library (unless today's stands), one change of the journal per "
                    "folder, which `undo` takes back. Without it, only says what it would do.")
 @click.option("--reveal", is_flag=True, help="Name each folder's path, and why each photo failed. Paths can name people.")
+@click.option("--verbose", is_flag=True,
+              help="Say every folder's counts. Without it, only a folder with something to say gets one line.")
 @click.pass_context
 @_holds_the_roots
-def bake_photos(ctx, directories, apply_, reveal):
+def bake_photos(ctx, directories, apply_, reveal, verbose):
     """Bake each photo's vectors, faces and fingerprint into its file (docs/PHASE6_DESIGN.md, section 9), for the
     library's photos, or those under each DIRECTORY at any depth: per folder, the photos to bake, those already current,
-    and those that cannot be baked, and why. A dry run unless --apply: it writes nothing, to the library or to a file,
+    and those that cannot be baked, and why (a folder with nothing to say is not said without --verbose; the closing
+    summary says each reason with what to do about it). A dry run unless --apply: it writes nothing, to the library or to a file,
     and loads no model's weights. --apply writes each folder's photos as one change of the journal. Ctrl+C stops it
     after the folder under way (a second stops at once, keeping what was written); a share that stops answering stops
     it at that folder."""
@@ -1448,11 +1475,16 @@ def bake_photos(ctx, directories, apply_, reveal):
     # its weights load on first use, never here. Its class, not a constant here, says the name (the runtime's build_faces).
     detector = face_records.detector_of(get_runtime().faces(library, settings), settings.detect_max_side)
     if apply_:
-        _bake(library, runtimes.exiftool(library, settings), detector, directories, reveal, say)
+        _bake(library, runtimes.exiftool(library, settings), detector, directories, reveal, verbose, say)
         return
     say("Planning a bake of %s (a dry run: nothing is written)." % library.name)
 
     def heard(tally, number, folders):
+        if not verbose:
+            line = _folder_line(tally, number, folders, reveal, False)
+            if line:
+                say(line)
+            return
         say("Folder %d of %d%s:" % (number, folders, " " + tally.folder if reveal else ""))
         for line in _bake_lines(tally):
             say(line)
@@ -1467,7 +1499,7 @@ def bake_photos(ctx, directories, apply_, reveal):
     total = run.total
     say("All %d folder(s)%s:" % (len(run.folders), " (stopped: the photos planned so far)"
                                    if run.stopped or run.stalled else ""))
-    for line in _bake_lines(total):
+    for line in _bake_lines(total, hints=True):
         say(line)
     say("  Sample: %d photo(s) decoded for their fingerprint (every Nth by id, the same each run); %d had a fingerprint "
         "row, %d of them matched it." % (total.sampled, total.had_row, total.matched))
@@ -1499,9 +1531,10 @@ def _baked_lines(baked, reveal):
     return lines
 
 
-def _bake(library, exiftool_path, detector, directories, reveal, say):
+def _bake(library, exiftool_path, detector, directories, reveal, verbose, say):
     """`bake-photos --apply`: baking_report.apply, saying each folder as it is written and the run's totals last; exit
-    status 1 on a stop, a stall, a refusal, a conflict or a failure."""
+    status 1 on a stop, a stall, a refusal, a conflict, a failure, or a photo whose file could not be reached or read (an
+    unreachable file is not a success: a share found away at planning is not a stall)."""
     say("Baking %s: one change of the journal per folder." % library.name)
     said = []
 
@@ -1512,7 +1545,12 @@ def _bake(library, exiftool_path, detector, directories, reveal, say):
 
     def heard(baked, number, folders):
         said.append(number)
-        folder_lines(baked, "Folder %d of %d" % (number, folders))
+        if verbose:
+            folder_lines(baked, "Folder %d of %d" % (number, folders))
+        elif line := _folder_line(baked, number, folders, reveal, True):
+            say(line)
+            for failed in baked.failed if reveal else []:
+                say("    photo %d: %s" % failed)
     with _stop_after_this_photo("folder") as asked:
         run = baking_report.apply(library, exiftool_path, detector, folders=list(directories) or None, stop=asked,
                                   heard=heard, told=say)
@@ -1527,7 +1565,7 @@ def _bake(library, exiftool_path, detector, directories, reveal, say):
     changes = [baked.change for baked in run.folders if baked.change]
     say("All %d folder(s)%s:" % (len(run.folders), " (stopped: the photos planned so far)"
                                    if run.stopped or run.stalled or run.refused or run.interrupted else ""))
-    for line in _bake_lines(total) + _baked_lines(total, False)[1:]:
+    for line in _bake_lines(total, hints=True) + _baked_lines(total, False)[1:]:
         say(line)
     say("  Written: %d file(s) in %d change(s)%s." % (total.written, len(changes),
                                                       " (%s)" % ", ".join(map(str, changes)) if changes else ""))
@@ -1552,7 +1590,8 @@ def _bake(library, exiftool_path, detector, directories, reveal, say):
         say("Stopped as asked: what was written stays written and undoable; run it again to go on.")
     if changes:
         say(BAKE_WAY_BACK)
-    if run.stopped or run.stalled or run.refused or run.interrupted is not None or total.conflicts or total.failed:
+    if (run.stopped or run.stalled or run.refused or run.interrupted is not None or total.conflicts or total.failed
+            or total.cannot[baking.UNREADABLE] or total.not_answered):
         raise SystemExit(1)
 
 

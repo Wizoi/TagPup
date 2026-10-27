@@ -355,13 +355,13 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
     def test_from_the_cli_each_folder_is_said_as_it_is_written_and_the_way_back_last(self):
         self.a_mix()
         with migration_names.ahead():
-            dry = self.cli()
+            dry = self.cli("--verbose")
             self.assertEqual(0, dry.exit_code, dry.output)
             self.assertNotIn("Brought the library up to date", dry.output, "the dry run never migrates")
-            applied = self.cli("--apply")
-            again = self.cli("--apply")
+            applied = self.cli("--apply", "--verbose")
+            again = self.cli("--apply", "--verbose")
         out = applied.output
-        self.assertEqual(0, applied.exit_code, out)
+        self.assertEqual(1, applied.exit_code, "a photo whose file could not be read is not a success: " + out)
         self.assertIn("Brought the library up to date", out)
         first, second = [change for change in self.rows(
             "SELECT id FROM changes WHERE operation = ? ORDER BY id", (baking.OPERATION,))]
@@ -373,9 +373,52 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
         self.assertEqual(tagpup_cli.BAKE_WAY_BACK, out.splitlines()[-1], "the way back last (#1926)")
         self.assertNotIn(self.folder, out, "counts only without --reveal")
 
-        self.assertEqual(0, again.exit_code, again.output)
+        self.assertEqual(1, again.exit_code, again.output)
         self.assertIn("Written: 0 file(s) in 0 change(s).", again.output)
         self.assertNotIn("undo <change>", again.output, "no way back of nothing written")
+
+    def test_from_the_cli_a_run_is_quiet_by_default_and_says_each_reason_with_what_to_do(self):
+        """Owner, 2026-10-27: a folder with nothing to say is not said; one that wrote or refused gets one line; --verbose
+        restores each folder's block; the closing summary says each reason on its own line with what to do about it."""
+        self.a_mix()
+        dry = self.cli()
+        self.assertEqual(0, dry.exit_code, dry.output)
+        self.assertIn("Folder 1 of 2: 1 to bake, 4 cannot be baked\n", dry.output)
+        self.assertIn("Folder 2 of 2: 1 to bake\n", dry.output)
+        applied = self.cli("--apply")
+        first, second = [change[0] for change in self.rows(
+            "SELECT id FROM changes WHERE operation = ? ORDER BY id", (baking.OPERATION,))]
+        out = applied.output
+        self.assertIn("Folder 1 of 2: 1 baked, change %d, 4 cannot be baked\n" % first, out)
+        self.assertIn("Folder 2 of 2: 1 baked, change %d\n" % second, out)
+        for block in ("Folder 1 of 2:\n", "photo(s): 1 to bake", "Written: 1 file(s), change"):
+            self.assertNotIn(block, out.split("All 2 folder(s)")[0], "no per-folder block without --verbose")
+        total = out[out.index("All 2 folder(s):"):]
+        for said in ("1 never examined by the face model: run face-pass on its folder first",
+                     "1 with a face holding no vector under the face model: run face-pass on its folder",
+                     "1 whose file changed since its photo vector was made: index it again",
+                     "1 whose file could not be reached or read: the file or the share did not answer: run again when it does"):
+            self.assertIn("\n  Cannot be baked: %s.\n" % said, total)
+        again = self.cli("--apply")
+        self.assertIn("Folder 1 of 2: 4 cannot be baked\n", again.output)
+        self.assertNotIn("Folder 2 of 2", again.output, "a folder with nothing to bake or refuse is not said")
+        self.assertIn("1 whose file could not be reached or read", again.output.split("All ")[1])
+        verbose = self.cli("--apply", "--verbose")
+        self.assertIn("Folder 1 of 2:\n  6 photo(s): 0 to bake, 2 already current", verbose.output)
+        self.assertIn("  Written: 0 file(s).\nFolder 2 of 2:", verbose.output)
+
+    def test_from_the_cli_a_run_that_could_not_reach_a_file_exits_1(self):
+        """kr-track's run (2026-10-26): every file unreadable, "Cannot be baked: 1634 whose file could not be read", and
+        exit 0, which reads as success. An unreachable file is not."""
+        broken = self.photo("broken.jpg", faces=1)
+        stat = os.stat(broken)
+        with open(broken, "wb") as handle:
+            handle.write(b"x" * stat.st_size)
+        os.utime(broken, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        run = self.cli("--apply")
+        self.assertIn("1 whose file could not be reached or read", run.output)
+        self.assertEqual(1, run.exit_code, run.output)
+        self.assertEqual(0, len(self.changes()))
 
     def test_from_the_cli_a_stop_after_a_folder_keeps_it_and_exits_1(self):
         self.three_to_bake("Trip")
@@ -409,7 +452,8 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
         self.assertEqual(1, failed.exit_code, failed.output)
         self.assertIn("Failed: 1 photo(s) not written (photo ids %d); --reveal says why." % photo_id, failed.output)
         self.assertNotIn("read-only", failed.output)
-        self.assertIn("Written: 2 file(s), change", failed.output)
+        self.assertIn("Folder 1 of 1: 2 baked, change", failed.output)
+        self.assertIn("1 failed", failed.output)
         with mock.patch.object(file_changes.field_values, "write", side_effect=write):
             revealed = self.cli("--apply", "--reveal")
         self.assertIn("    photo %d: Error: the file is read-only" % photo_id, revealed.output)
