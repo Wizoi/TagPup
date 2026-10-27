@@ -36,7 +36,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, journal as journal_service, photos as photo_actions  # noqa: E402
-from tagpup.store import db, embeddings, photo_fingerprints, schema  # noqa: E402
+from tagpup.store import db, embeddings, faces_detected, photo_fingerprints, schema  # noqa: E402
 
 MODEL = embeddings.model_key("ViT-T", "tiny", True, 1.4, 512)
 WIDTH, HEIGHT = 60, 40
@@ -186,6 +186,49 @@ class TheTurn(RotationCase):
         self.assertEqual((result.details["mtime"], result.details["size"]), (stat.st_mtime, stat.st_size))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM embeddings"), [(0,)])
         self.assertEqual(self.rows("SELECT photo_id FROM photo_fingerprints"), [(kept,)])
+
+class TheFacesOfATurnedPhoto(RotationCase):
+    """A turn changes the picture faces are detected on and crops are cut from (both as shown, #1975): the faces' cached
+    crops and the photo's record of what looked at it go, forward and in an undo; the faces themselves stay."""
+
+    DETECTOR = faces_detected.detector({"model": "scrfd-adaface"})
+
+    def faces(self):
+        return self.rows("SELECT f.id, f.name, f.tag_id, f.excluded, f.box, v.vector FROM faces f"
+                         " LEFT JOIN face_embeddings v ON v.face_id = f.id ORDER BY f.id")
+
+    def crop_size(self, face):
+        """The size of the face's crop as the page's request gets it: kept, or cut and kept."""
+        import io
+        from PIL import Image
+        with Image.open(io.BytesIO(photo_actions.face_crop(self.library, face))) as img:
+            return img.size
+
+    def looked_at(self, *paths):
+        self.execute_with(lambda conn: [faces_detected.record(conn, path, self.DETECTOR, None, found)
+                                        for path, found in paths])
+
+    def counts(self):
+        return self.rows("SELECT (SELECT COUNT(*) FROM face_crops), (SELECT COUNT(*) FROM faces_detected)")[0]
+
+    def test_the_crops_and_the_record_go_and_the_faces_stay(self):
+        with_face, faceless = self.make("a.jpg"), self.make("b.jpg")
+        face = self.face(with_face, name="Rowan Thackeray", embedding=b"\x00\x00\x80\x3f" * 4)
+        self.face(with_face, box=[20, 10, 30, 30], excluded=1)
+        self.looked_at((with_face, 2), (faceless, 0))
+        self.assertEqual(self.crop_size(face), (10, 8))   # cut and kept, as the photo is shown before the turn
+        faces = self.faces()
+        self.assertEqual(self.counts(), (1, 2))
+
+        change = photo_actions.rotate_photos(self.library, [with_face, faceless], "left", EXIFTOOL).details["change"]
+        self.assertEqual((self.faces(), self.counts()), (faces, (0, 0)))
+        self.assertEqual(self.crop_size(face), (8, 10))   # cut again, upright for the new Orientation
+
+        self.looked_at((with_face, 2), (faceless, 0))
+        self.assertEqual(self.undo(change).changed, 2)
+        self.assertEqual((self.orientations([with_face, faceless]), self.faces(), self.counts()), ([None, None], faces, (0, 0)))
+        self.assertEqual(self.crop_size(face), (10, 8))
+
 
 class WhereTheLibraryDoesNotHoldTheFolder(RotationCase):
     def test_a_just_look_photo_is_turned_in_its_file_only(self):

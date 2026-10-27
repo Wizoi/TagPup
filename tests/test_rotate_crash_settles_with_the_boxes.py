@@ -16,7 +16,7 @@ from test_file_journal import EXIFTOOL, Crash, crash_at  # noqa: E402
 from test_rotate_is_journaled import BOX, HEIGHT, MODEL, WIDTH, RotationCase, picture  # noqa: E402
 
 from tagpup.services import batches, file_changes, photos as photo_actions  # noqa: E402
-from tagpup.store import embeddings, file_journal  # noqa: E402
+from tagpup.store import embeddings, faces_detected, file_journal  # noqa: E402
 from tagpup.store.faces import turned_box  # noqa: E402
 
 
@@ -47,12 +47,19 @@ class TheFaceBoxesTurnWithTheFile(RotationCase):
         # Taken out of its change (read back holding what it held): the boxes the done turned go back in the same transaction.
         self.assertEqual((self.orientation(path), self.boxes()), (1, [BOX]))
 
-    def test_a_jpegs_boxes_stay_where_the_stored_pixels_are(self):
+    def test_a_jpegs_boxes_stay_where_the_stored_pixels_are_and_its_crops_and_record_go_when_settled(self):
+        # Crops are cut upright and faces detected on the picture as shown (#1975): the turn takes both away, with the
+        # file's done mark, so a crash between the two leaves them as they were until the settling.
         path = self.make("a.jpg")
         face = self.face(path)
         self.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face, b"crop"))
-        self.assertEqual(self.rotate(path, "right").details["faces_turned"], 0)
-        self.assertEqual((self.boxes(), self.rows("SELECT jpeg FROM face_crops")), ([BOX], [(b"crop",)]))
+        self.execute_with(lambda conn: faces_detected.record(conn, path, "a detector", None, 1))
+        change = self.crash("file written", path, "right")
+        self.assertEqual((self.orientation(path), self.states(change)), (6, ["writing"]))
+        held = "SELECT (SELECT COUNT(*) FROM face_crops), (SELECT COUNT(*) FROM faces_detected)"
+        self.assertEqual(self.rows(held), [(1, 1)])
+        self.assertEqual(self.settle(), 1)
+        self.assertEqual((self.states(change), self.boxes(), self.rows(held)), (["done"], [BOX], [(0, 0)]))
 
     def test_a_crash_after_the_file_is_written_is_settled_forward_boxes_and_all(self):
         path = self.make("scan.tif", fmt="TIFF")

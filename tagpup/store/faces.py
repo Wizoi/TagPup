@@ -211,9 +211,8 @@ def turn_boxes_in(conn, photo_path, direction, width, height):
     `width` and `height` are the picture's size before the turn. Returns how many rows changed.
 
     Only for a photo Pillow shows already oriented (a TIFF: Pillow applies its
-    Orientation on load), where every box -- and every crop cut from it -- is in the
-    turned picture's coordinates once the Orientation changes. The cached crop is
-    dropped so the next request cuts it again from the right place.
+    Orientation on load), where every box is in the turned picture's coordinates once the
+    Orientation changes. The cached crops go by forget_crops, for every format.
     """
     cursor = conn.cursor()
     where, where_params = _on_photo(conn, photo_path)
@@ -229,8 +228,16 @@ def turn_boxes_in(conn, photo_path, direction, width, height):
         cursor.execute("UPDATE faces SET box = ? WHERE id = ?",
                        (json.dumps(turned_box(box, direction, width, height)), face_id))
         changed += cursor.rowcount
-        cursor.execute("DELETE FROM face_crops WHERE face_id = ?", (face_id,))
     return changed
+
+
+def forget_crops(conn, photo_path):
+    """Take away the cached crops of every face of the photo at `photo_path`: each was cut upright by the Orientation the
+    photo had (images.face_crop_of), and a rotation changed it, so the next request cuts it again (photos.face_crop).
+    Returns rows deleted. The caller commits."""
+    where, params = _on_photo(conn, photo_path)
+    return conn.execute("DELETE FROM face_crops WHERE face_id IN (SELECT id FROM faces WHERE " + where + ")",
+                        params).rowcount
 
 
 def crop_of(db_path, face_id):
