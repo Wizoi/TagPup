@@ -147,7 +147,7 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
         self.assertIn("Folder 1 of 2:\n  6 photo(s): 1 to bake, 1 already current", out)
         self.assertIn("Folder 2 of 2:\n  1 photo(s): 1 to bake, 0 already current", out)
         total = out[out.index("All 2 folder(s):"):]
-        self.assertIn("7 photo(s): 2 to bake, 1 already current (skipped: --apply goes on from where it stopped), 4 cannot "
+        self.assertIn("7 photo(s): 2 to bake, 1 already current (left alone), 4 cannot "
                       "be baked.", total)
         self.assertIn("To bake, by format: .jpg 2.", total)
         self.assertNotIn("XMP", out, "Extended XMP is ExifTool's detail, not the owner's (2026-10-25)")

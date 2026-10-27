@@ -127,14 +127,18 @@ def _text(value):
     return str(value or "")
 
 
+def _said(stderr):
+    """The lines of ExifTool's `stderr`, errors before warnings, blank ones dropped."""
+    lines = [line.strip() for line in _text(stderr).splitlines() if line.strip()]
+    return [line for line in lines if not line.startswith("Warning")] + \
+        [line for line in lines if line.startswith("Warning")]
+
+
 def said_briefly(stderr, params=()):
     """ExifTool's first SAID_LINES lines of `stderr` (errors before warnings), each file
     of the command, `params`, named "<file>": ExifTool spells a path with forward
     slashes, whichever it was given."""
-    lines = [line.strip() for line in _text(stderr).splitlines() if line.strip()]
-    lines = [line for line in lines if not line.startswith("Warning")] + \
-        [line for line in lines if line.startswith("Warning")]
-    return unnamed("; ".join(lines[:SAID_LINES]), params)
+    return unnamed("; ".join(_said(stderr)[:SAID_LINES]), params)
 
 
 def _files(params):
@@ -331,14 +335,15 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
 
     def execute(self, *params, **kwargs):
         """ExifToolHelper's, raising ExifToolFailed, which says what ExifTool said, for a
-        command ExifTool failed; logged in full."""
+        command ExifTool failed; logged in full, on one line, its errors before its warnings (#2015: the error that
+        failed a command was logged lines below the warning before it)."""
         try:
             return super().execute(*params, **kwargs)
         except ExifToolExecuteError as e:
             if isinstance(e, ExifToolFailed):
                 raise
             logger.warning("ExifTool failed a command (exit status %s, %s): %s", e.returncode,
-                           _describe(e.cmd), _text(e.stderr).strip() or "it said nothing")
+                           _describe(e.cmd), "; ".join(_said(e.stderr)) or "it said nothing")
             raise ExifToolFailed(e.returncode, e.stdout, e.stderr, e.cmd) from None
 
 
