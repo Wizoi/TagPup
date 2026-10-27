@@ -63,7 +63,7 @@ Until cut 2 is installed there is nothing for the owner to run. The bake already
 4. **DECIDED (owner, 2026-10-27): nothing to decide.** A model switch re-embeds every file, and any GPU reindex re-bakes what it computed; the bake follows automatically.
 5. **DECIDED (owner, 2026-10-27): delete `bake-photos` and `face-pass` once cut 2 is installed (cut 3).**
 
-Low: the indexer's closing line says "worked out on the graphics card" for a processor-made vector (`tagpup_cli.py:512`); fixed in cut 2.
+Low: the indexer's closing line said "worked out on the graphics card" for a processor-made vector; fixed in cut 1b (`runtime.on_the_card`, `bake_reading.Tally(card=...)`: "worked out on the processor", "needed no model").
 
 Counted read-only 2026-10-27: the three cleared-XMP photos of photo_index (ids 39695, 39863, 40018) have NO fingerprint row. So cut 1's rule for a vector is: stamp matches the file -> trusted; stamp differs and a fingerprint row exists -> compare, same hash keeps and restamps with no GPU; stamp differs and no row -> computed again. The GPU is used for at most the 74 photos whose vector stamp differs now (3 of them are these).
 
