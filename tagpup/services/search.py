@@ -280,6 +280,10 @@ class PhotoIndex:
         with self._read_lock:
             return store_photos.stamps(self.conn, with_vectors=self.model)
 
+    #: The reason `owed` gives for a photo never examined for faces (photo_fingerprints.UNEXAMINED), for a program that
+    #: reaches the store only through this service.
+    UNEXAMINED = photo_fingerprints.UNEXAMINED
+
     def owed(self, on_disk, detector):
         """{paths.key: reasons} of the photos of `on_disk` ({key: (path, mtime, size)}: the files as they are) the index
         owes work (photo_fingerprints.owed, the one answer sync gives too): no vector under this index's model, a vector

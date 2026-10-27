@@ -61,7 +61,6 @@ from tagpup.core import gpu_turns
 from tagpup.core import paths
 from tagpup.core import read_ahead
 from tagpup.store import db as tagpup_db
-from tagpup.store import photo_fingerprints
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.runtime import Runtime
@@ -307,7 +306,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # The work the index owes (photo_fingerprints.owed, sync's answer too): no vector, a stale stamp, never examined.
         owed = photo_index.owed(on_disk, None if skip_faces else
                                 face_records.detector_named(settings.faces, detect_max_side))
-        unexamined = {key for key, reasons in owed.items() if photo_fingerprints.UNEXAMINED in reasons}
+        unexamined = {key for key, reasons in owed.items() if PhotoIndex.UNEXAMINED in reasons}
         current = photo_index.current(on_disk, owed)
         images_to_process = [path for path in all_images if paths.key(path) not in current]
     skipped_count = len(all_images) - len(images_to_process)
