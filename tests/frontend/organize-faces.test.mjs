@@ -23,15 +23,16 @@ const TAXONOMY = [
   { id: 4, tag: "Trips", name: "Trips", parent_id: null, has_face: 0 },
 ];
 
+// As /api/photo-faces answers for a photo shown as stored (Orientation 1): the box the page draws is the box kept.
 const face = (id, box, extra = {}) => ({
-  id, box, area: (box[2] - box[0]) * (box[3] - box[1]), name: null, prob: 0.99, excluded: false,
+  id, box, shown_box: box, area: (box[2] - box[0]) * (box[3] - box[1]), name: null, prob: 0.99, excluded: false,
   suggestion: null, similarity: null, ...extra,
 });
 
 /** Three faces on a 4000 x 3000 photo, none named. */
 const THREE = {
   faces: [face(1, [400, 300, 800, 700]), face(2, [1000, 500, 1400, 900]), face(3, [2000, 600, 2600, 1200])],
-  total: 3, unmatched: 3, size: [4000, 3000], turned: false,
+  total: 3, unmatched: 3, size: [4000, 3000], shown_size: [4000, 3000],
 };
 
 const HAZEL = { id: 21, name: "Hazel Brookmire", tag: "People/Hazel Brookmire" };
@@ -151,7 +152,7 @@ const px = (el, property) => parseFloat(el.style[property]);
 
 describe("the face icon", () => {
   test("is not offered on a photo with no faces", async (t) => {
-    const ctx = await openPhoto(t, { photoFaces: { faces: [], total: 0, unmatched: 0, size: [4000, 3000], turned: false } });
+    const ctx = await openPhoto(t, { photoFaces: { faces: [], total: 0, unmatched: 0, size: [4000, 3000], shown_size: [4000, 3000] } });
     assert.equal(visible(ctx.layer()), false);
     assert.equal(ctx.icon(), null);
   });
@@ -235,20 +236,27 @@ describe("the boxes", () => {
   });
 
   test("are not drawn when the size of the pixels they are in is not known", async (t) => {
-    const ctx = await openPhoto(t, { photoFaces: { ...THREE, size: null } });
+    const ctx = await openPhoto(t, { photoFaces: { ...THREE, size: null, shown_size: null } });
     ctx.show();
     assert.equal(ctx.boxes().length, 0, "a box was drawn on a guess");
     assert.equal(visible(ctx.icon()), true);
   });
 
-  test("a photo stored turned draws them where the stored pixels put them, and the panel says they may be off", async (t) => {
-    // The known limit (the tabled orientation redesign): the picture is shown turned, the boxes are not.
-    const ctx = await openPhoto(t, { photoFaces: { ...THREE, size: [4000, 3000], turned: true } });
+  test("a photo stored sideways draws each box where the server put it on the picture as shown, and says nothing of a turn", async (t) => {
+    // A phone photo stored 4000 x 3000 with Orientation 6, shown 3000 x 4000: the server turns each kept box onto the picture
+    // shown (tagpup.core.orientation); the page draws that one, never the kept box over the upright picture.
+    const ctx = await openPhoto(t, { photoFaces: { ...THREE, shown_size: [3000, 4000], faces: [
+      face(1, [400, 300, 800, 700], { shown_box: [2300, 400, 2700, 800] }),
+      face(2, [1000, 500, 1400, 900], { shown_box: [2100, 1000, 2500, 1400] }),
+      face(3, [2000, 600, 2600, 1200], { shown_box: [1800, 2000, 2400, 2600] }),
+    ] } });
+    ctx.measure(300, 400);                     // the upright picture, a tenth
+    ctx.window.dispatchEvent(new ctx.window.Event("resize"));
     ctx.show();
-    assert.equal(px(ctx.boxes()[1], "left"), 100, "the box moved with the picture: that is the redesign, not this");
-    click(ctx.window, ctx.boxes()[1]);
-    assert.match(ctx.panel().textContent, /stored turned/);
-    assert.match(ctx.panel().textContent, /may not sit on the face/);
+    const second = ctx.boxes()[1];
+    assert.deepEqual([px(second, "left"), px(second, "top"), px(second, "width"), px(second, "height")], [210, 100, 40, 40]);
+    click(ctx.window, second);
+    assert.doesNotMatch(ctx.panel().textContent, /turned|may not sit/);
     await flush(ctx.window, 4);                // the suggestions it asked for arrive while the page is still there
   });
 
@@ -672,7 +680,7 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
       face(2, [1000, 500, 1400, 900], { suggestion: "Hazel Brookmire", similarity: 0.91 }),
       face(3, [2000, 600, 2600, 1200]),
     ],
-    total: 3, unmatched: 2, size: [4000, 3000], turned: false,
+    total: 3, unmatched: 2, size: [4000, 3000], shown_size: [4000, 3000],
   };
   const cards = (ctx) => [...ctx.document.querySelectorAll(".face-card")];
 
@@ -722,7 +730,7 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
   });
 
   test("a save of the photo's tags asks nothing of the faces when none is left to be named", async (t) => {
-    const done = { faces: [face(1, [400, 300, 800, 700], { name: "Anh Tran" })], total: 1, unmatched: 0, size: [4000, 3000], turned: false };
+    const done = { faces: [face(1, [400, 300, 800, 700], { name: "Anh Tran" })], total: 1, unmatched: 0, size: [4000, 3000], shown_size: [4000, 3000] };
     const ctx = await openPhoto(t, { photoFaces: done });
     const asked = () => ctx.server.calls.filter((c) => c.url.includes("/api/photo-faces")).length;
     const before = asked();
@@ -744,7 +752,7 @@ describe("in the full-window zoom (#859)", () => {
       face(2, [1000, 500, 1400, 900], { suggestion: "Hazel Brookmire", similarity: 0.91 }),
       face(3, [2000, 600, 2600, 1200]),
     ],
-    total: 3, unmatched: 2, size: [4000, 3000], turned: false,
+    total: 3, unmatched: 2, size: [4000, 3000], shown_size: [4000, 3000],
   };
 
   async function zoomed(t, options = {}) {
@@ -907,21 +915,26 @@ describe("in the full-window zoom (#859)", () => {
   });
 
   test("a photo whose pixel size is not known has no boxes in the zoom either", async (t) => {
-    const ctx = await zoomed(t, { photoFaces: { ...PHOTO, size: null } });
+    const ctx = await zoomed(t, { photoFaces: { ...PHOTO, size: null, shown_size: null } });
     ctx.show();
     ctx.zoomIn();
     await flush(ctx.window, 4);
     assert.equal(ctx.zoomBoxes().length, 0);
   });
 
-  test("a photo stored turned keeps the documented limit in the zoom: the panel says the box may be off", async (t) => {
-    const ctx = await zoomed(t, { photoFaces: { ...PHOTO, turned: true } });
+  test("a photo stored sideways draws its boxes on the zoomed picture as shown", async (t) => {
+    // Stored 4000 x 3000 with Orientation 6, shown 3000 x 4000 in a 1200 x 800 window: a fifth, 300 px in from the left.
+    const ctx = await zoomed(t, { photoFaces: { ...PHOTO, shown_size: [3000, 4000], faces: PHOTO.faces.map((one) => ({
+      ...one, shown_box: [3000 - one.box[3], one.box[0], 3000 - one.box[1], one.box[2]],
+    })) } });
     ctx.show();
     ctx.zoomIn();
     await flush(ctx.window, 4);
-    click(ctx.window, ctx.zoomBoxes()[1]);
+    const second = ctx.zoomBoxes()[1];
+    assert.deepEqual([px(second, "left"), px(second, "top"), px(second, "width")], [720, 200, 80]);
+    click(ctx.window, second);
     await flush(ctx.window, 4);
-    assert.match(ctx.zoomPanel().textContent, /may not sit on the face/);
+    assert.doesNotMatch(ctx.zoomPanel().textContent, /may not sit on the face/);
   });
 
   test("the window resized: the boxes follow the picture", async (t) => {
@@ -939,7 +952,7 @@ describe("in the full-window zoom (#859)", () => {
   });
 
   test("a photo with no faces draws nothing in the zoom", async (t) => {
-    const ctx = await zoomed(t, { photoFaces: { faces: [], total: 0, unmatched: 0, size: [4000, 3000], turned: false } });
+    const ctx = await zoomed(t, { photoFaces: { faces: [], total: 0, unmatched: 0, size: [4000, 3000], shown_size: [4000, 3000] } });
     ctx.zoomIn();
     await flush(ctx.window, 4);
     assert.equal(ctx.zoomLayer().children.length, 0);

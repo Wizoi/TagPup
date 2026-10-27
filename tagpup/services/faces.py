@@ -18,7 +18,7 @@ import os
 
 import numpy as np
 
-from tagpup.core import clustering, paths, validation
+from tagpup.core import clustering, orientation, paths, validation
 from tagpup.core.result import Conflict, NotFound, Refused, Result
 from tagpup.services import identify
 from tagpup.services import people as people_service
@@ -567,11 +567,14 @@ def _library_there(library):
 
 def panel(library, photo_path, named):
     """The faces detected on one photo, for the strip under its details and the boxes over
-    it: {"faces", "total", "unmatched", "size", "turned"}, each face with its box, area, name,
+    it: {"faces", "total", "unmatched", "size", "shown_size"}, each face with its box, shown_box, area, name,
     the `person` that name is (tagpup.services.people), prob, exclusion, and for an unnamed one the
     first of the people the boxes list (identify.nearest_people over `named`, the shared matrix: its
-    `known` function is read only if a face needs it) and `suggestion_person`, the same of it, and how alike. `size` is [width, height] of the pixels the boxes are in, or None, and `turned`
-    says the photo declares an EXIF Orientation its boxes do not follow (photos.box_shape).
+    `known` function is read only if a face needs it) and `suggestion_person`, the same of it, and how alike. `size` is
+    [width, height] of the pixels the boxes are in (the file as stored), or None when the file was not read (no box is
+    drawn); `shown_size` the same picture as it is shown, turned by its Orientation, and each face's `shown_box` its box
+    on it (tagpup.core.orientation.to_upright), both from the one look at the file (photos.box_shape) -- what TagPup's
+    page draws, over the upright picture it serves. `box` and `size` stay as stored: TagTuner draws over the stored picture.
 
     The similarity is to the nearest single named face of that person, from the matrix
     `/api/face-matches` reads, so the strip and the boxes cannot disagree (#828). Below the value every screen offers a name from
@@ -591,6 +594,9 @@ def panel(library, photo_path, named):
     finally:
         conn.close()
     cuts, known = clustering.cuts_of(key), None
+    shape = photo_files.box_shape(photo_path)
+    size, turn = shape["size"], shape["turn"]
+    shown_size = list(orientation.upright_size(size[0], size[1], turn)) if size else None
 
     found = []
     for face_id, box_json, carried, prob, emb, excluded, reason in rows:
@@ -611,6 +617,7 @@ def panel(library, photo_path, named):
                     suggested = None
         found.append({
             "id": face_id, "box": box,
+            "shown_box": orientation.to_upright(box, size[0], size[1], turn) if size and len(box) == 4 else None,
             "area": (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0,
             "name": name, "person": everyone.of_id(carried.id) if carried else None, "prob": prob,
             "excluded": bool(excluded), "excluded_reason": reason,
@@ -621,7 +628,7 @@ def panel(library, photo_path, named):
     found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
     return {"faces": found, "total": len(found),
             "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"]),
-            **photo_files.box_shape(photo_path)}
+            "size": size, "shown_size": shown_size}
 
 
 # ---- The faces detection finds ---------------------------------------------------------
