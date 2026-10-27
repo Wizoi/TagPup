@@ -1264,8 +1264,8 @@ def _stop_after_this_photo(what="photo"):
 def _folder_lines(number, found, reveal, apply_):
     """What `face-pass` says of one folder: counts, and its path and ids only with --reveal."""
     lines = ["Folder %d%s:%s" % (number, " " + found.folder if reveal else "", " (stopped here)" if found.stopped else ""),
-             "  %d photo(s) looked at, %d done before, %d turned (skipped), %d with no face found (%s), %d failed"
-             % (found.looked, found.done, found.skipped, found.none_found,
+             "  %d photo(s) looked at, %d done before, %d with no face found (%s), %d failed"
+             % (found.looked, found.done, found.none_found,
                 "recorded as looked at" if apply_ else "--apply records them as looked at", len(found.failed)),
              "  %d old face(s) given the new vector, %d new face(s) (unnamed), %d detection(s) too small to make a new face,"
              " %d old face(s) unmatched (listed for review, untouched)"
