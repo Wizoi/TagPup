@@ -8,6 +8,7 @@ upright (images.opened, the decode the fingerprint and the embedder use), and ba
 the stored box again, also from a region applied to a smaller copy. A TIFF, whose Orientation Pillow applies as it loads it,
 counts as orientation 1: its box is already upright.
 """
+import io
 import os
 import sys
 import unittest
@@ -70,6 +71,16 @@ class EachOrientation(unittest.TestCase):
                 self.assertEqual(box, orientation.box_to_stored(orientation.to_upright(box, WIDTH, HEIGHT, value),
                                                                 WIDTH, HEIGHT, value))
 
+    def test_a_crop_by_a_stored_box_is_cut_as_a_person_sees_it(self):
+        """A face's crop is cut from the picture upright by its stored box (images.face_crop): the whole stored picture
+        cut is the picture as shown, its block where the photo shows it, for each Orientation."""
+        for value in range(1, 9):
+            with self.subTest(orientation=value):
+                path = photo(os.path.join(self.home.root, "c%d.jpg" % value), value)
+                crop = Image.open(io.BytesIO(images.face_crop(path, [0, 0, WIDTH, HEIGHT])))
+                self.assertEqual(orientation.upright_size(WIDTH, HEIGHT, value), crop.size)
+                self.assertEqual(orientation.to_upright(BLOCK, WIDTH, HEIGHT, value), block_in(crop))
+
     def test_eight_orientations_put_the_block_in_eight_places(self):
         self.assertEqual(8, len({tuple(orientation.to_upright(BLOCK, WIDTH, HEIGHT, value)) for value in range(1, 9)}))
 
@@ -103,6 +114,10 @@ class ATiff(unittest.TestCase):
         box = block_in(images.opened(path, upright=False))   # where a detector found it: the pixels Pillow shows
         self.assertEqual(block_in(images.opened(path, upright=True)), orientation.to_upright(box, width, height, value))
         self.assertEqual((width, height), (HEIGHT, WIDTH), "Pillow turned it as it loaded it")
+        # Opened upright it is the same picture (Pillow turned it already), so a crop by its box is cut where it was.
+        self.assertEqual(images.opened(path, upright=False).size, images.opened(path, upright=True).size)
+        crop = Image.open(io.BytesIO(images.face_crop(path, [0, 0, width, height])))
+        self.assertEqual(box, block_in(crop))
 
     def test_a_jpeg_keeps_its_own(self):
         self.assertEqual(6, orientation.boxes_turn(6, False))
