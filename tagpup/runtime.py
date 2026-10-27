@@ -514,6 +514,12 @@ def _unload(models):
                 logger.error("Could not unload a model: %s", e)
 
 
+def on_the_card(models):
+    """Does any of `models` (None for one not used) run on the graphics card? Else a turn is nothing to wait for, and
+    what they work out is the processor's (the index's closing line says which)."""
+    return any(gpu.on_the_card(getattr(model, "device", None)) for model in models if model is not None)
+
+
 class Runtime:
     """What lives as long as the process: the models, one per set of settings a library
     it serves names, and each library's photo index for Suggest.
@@ -663,7 +669,7 @@ class Runtime:
         process (tagpup.ml.gpu.Card.hold, with `cancelled` and `report`); nothing to wait
         for when none of them runs on the card. What the CLI's index takes before its first
         photo."""
-        if not any(gpu.on_the_card(getattr(model, "device", None)) for model in models if model is not None):
+        if not on_the_card(models):
             return gpu.NoHold()
         return self.card.hold(what, cancelled=cancelled, report=report)
 
@@ -823,7 +829,7 @@ class Runtime:
             logger.error("Could not make the models to warm them up: %s", e)
             return
         hold = gpu.NoHold()
-        if any(gpu.on_the_card(getattr(model, "device", None)) for model in models):
+        if on_the_card(models):
             hold = self.card.try_hold(what)
             if hold is None:
                 holder = gpu.read_holder(self.card.where)

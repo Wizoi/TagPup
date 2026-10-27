@@ -84,14 +84,16 @@ def detections(found, picture):
 
 
 class Tally:
-    """What an index took from bakes, for the line the owner reads at its end (`said`)."""
+    """What an index took from bakes, for the line the owner reads at its end (`said`). `card`: the run's models are on
+    the graphics card; else on the processor, and the line says so (a machine with no card works each photo out there)."""
 
-    def __init__(self):
+    def __init__(self, card=True):
         self.counts = collections.Counter()
+        self.card = card
 
     def add(self, verdict, from_file, on_card):
-        """One photo: its verdict, whether a side of it was read from its file, and whether one was worked out on the
-        graphics card."""
+        """One photo: its verdict, whether a side of it was read from its file, and whether one was worked out by a model
+        (`on_card`: on the graphics card, or on the processor on a machine whose models run there)."""
         self.counts[verdict] += 1
         self.counts["from file"] += bool(from_file)
         self.counts["on card"] += bool(on_card)
@@ -102,8 +104,9 @@ class Tally:
         counts = self.counts
         if not (counts[READ] or counts[STALE] or counts[UNREADABLE] or counts[OTHER_MODELS]):
             return None
+        where, none = ("on the graphics card", "no graphics card") if self.card else ("on the processor", "no model")
         return SAID + (
-            "%d photo(s) read from their file, %d worked out on the graphics card; %d bake(s) stale (the picture changed "
-            "after it was baked), %d unreadable, %d made under other models; %d photo(s) needed no graphics card."
-            % (counts["from file"], counts["on card"], counts[STALE], counts[UNREADABLE], counts[OTHER_MODELS],
-               counts["no card"]))
+            "%d photo(s) read from their file, %d worked out %s; %d bake(s) stale (the picture changed "
+            "after it was baked), %d unreadable, %d made under other models; %d photo(s) needed %s."
+            % (counts["from file"], counts["on card"], where, counts[STALE], counts[UNREADABLE], counts[OTHER_MODELS],
+               counts["no card"], none))
