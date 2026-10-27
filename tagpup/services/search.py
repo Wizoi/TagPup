@@ -23,6 +23,7 @@ from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
 from tagpup.store import derived as store_derived
 from tagpup.store import embeddings as store_embeddings
+from tagpup.store import faces_detected
 from tagpup.store import photo_fingerprints
 from tagpup.store import photos as store_photos
 from tagpup.store import taxonomy as store_taxonomy
@@ -56,17 +57,35 @@ class PhotoEmbeddings:
         the file is as it was when it was computed. Without a library, nothing is kept:
         the JSON files that stood in for one were imported into it, and retired with it
         on 2026-09-24."""
-        if not os.path.exists(file_path):
-            return None
-        if self._library():
-            try:
-                stat = os.stat(file_path)
-                row = store_embeddings.get(self.photo_index.conn, file_path, self.model_key)
-                if row and store_photos.describes(row.mtime, row.size, (stat.st_mtime, stat.st_size)):
-                    return np.frombuffer(row.vector, dtype=np.float32).tolist()
-            except Exception as e:
-                logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
-        return None
+        vector, _stale = self.kept(file_path, compare=False)
+        return vector
+
+    def kept(self, file_path, compare=True):
+        """(vector, Stale) of what the library keeps of this file's vector under these model settings, by
+        photo_fingerprints.same_picture: (the vector, None) when its stamp describes the file (nothing decoded);
+        (None, Stale) when it does not and, with `compare`, the photo has a fingerprint row a decode of the file is to be
+        compared with (Stale.same); else (None, None) -- no vector, no row, no file, no library: it is worked out."""
+        if not os.path.exists(file_path) or not self._library():
+            return None, None
+        try:
+            stat = os.stat(file_path)
+            row = store_embeddings.get(self.photo_index.conn, file_path, self.model_key)
+            if row is None:
+                return None, None
+            vector_stamp, file_stamp = (row.mtime, row.size), (stat.st_mtime, stat.st_size)
+            answer = photo_fingerprints.same_picture(vector_stamp, file_stamp)
+            if answer == photo_fingerprints.STAMPED:
+                return np.frombuffer(row.vector, dtype=np.float32).tolist(), None
+            if not compare:
+                return None, None
+            fingerprint = photo_fingerprints.of_path(self.photo_index.conn, file_path)
+            if fingerprint is None:
+                return None, None
+            return None, Stale(np.frombuffer(row.vector, dtype=np.float32).tolist(), vector_stamp, file_stamp,
+                               fingerprint)
+        except Exception as e:
+            logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
+        return None, None
 
     def keep(self, file_path, embedding, stamp=None):
         """Keep the vector in the library, stamped with `stamp`: the file's (mtime, size)
@@ -168,6 +187,20 @@ class PhotoEmbeddings:
         return embedding
 
 
+class Stale:
+    """A photo's vector whose stamp no longer describes its file (a write of the file since: its metadata, or its picture),
+    with the photo's fingerprint row: `same` says, from a decode of the file, which (photo_fingerprints.same_picture)."""
+
+    def __init__(self, vector, vector_stamp, file_stamp, row):
+        self.vector, self.vector_stamp, self.file_stamp, self.row = vector, vector_stamp, file_stamp, row
+
+    def same(self, fingerprint):
+        """Is the picture the file's decode shows, whose fingerprint (images.FINGERPRINT_KEY) is `fingerprint`, the one
+        the vector was made of: only the file's metadata changed, so the vector is kept and stamped again?"""
+        return photo_fingerprints.same_picture(self.vector_stamp, self.file_stamp, self.row,
+                                               (images.FINGERPRINT_KEY, fingerprint)) == photo_fingerprints.SAME
+
+
 class Prepared:
     """A photo made ready for CLIP on the processor (PhotoEmbeddings.prepared): `stamp`, the file's (mtime, size) before
     it was opened, and `image_input`, what the model is shown."""
@@ -252,15 +285,26 @@ class PhotoIndex:
         """The paths.key of each photo of `on_disk` ({key: (path, mtime, size)}: the files as they are) whose row
         describes its file (store.photos.describes: the one answer sync gives too), whose vector's stamp does as well
         (photo_fingerprints.same_picture STAMPED: a vector whose stamp does not is the indexer's to settle), and whose
-        id is not among `unexamined` (faces_detected.unexamined: never looked at for faces). [] when not connected."""
+        key is not among `unexamined` (the unexamined method's: never looked at for faces). [] when not connected."""
         if self.conn is None:
             return set()
         with self._read_lock:
             rows = store_photos.stamps(self.conn, vector_stamps=self.model)
         return {key for photo_id, path, mtime, size, vector in rows
-                if (key := paths.key(path)) in on_disk and photo_id not in unexamined
+                if (key := paths.key(path)) in on_disk and key not in unexamined
                 and store_photos.describes(mtime, size, on_disk[key][1:])
                 and photo_fingerprints.same_picture(vector, on_disk[key][1:]) == photo_fingerprints.STAMPED}
+
+    def unexamined(self, detector, on_disk):
+        """The paths.key of each photo of `on_disk` ({key: ...}) never examined for faces by `detector` (a
+        faces_detected name: faces.detector_of): no face row and no record of it (faces_detected.unexamined). Empty when
+        not connected."""
+        if self.conn is None:
+            return set()
+        with self._read_lock:
+            ids = faces_detected.unexamined(self.conn, detector)
+            rows = store_photos.stamps(self.conn) if ids else []
+        return {key for photo_id, path, _mtime, _size in rows if photo_id in ids and (key := paths.key(path)) in on_disk}
 
     def _load_unlocked(self, vectors=True) -> bool:
         try:

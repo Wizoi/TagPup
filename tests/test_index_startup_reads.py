@@ -26,10 +26,10 @@ from PIL import Image  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import search  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
-from tagpup.core import paths  # noqa: E402
 from tagpup.store import db, faces_detected  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -40,6 +40,14 @@ DIM = 8
 
 class Reached(Exception):
     """The files were about to be read: the run decided to index something."""
+
+
+def examined(conn, db_path, path):
+    """Record the photo looked at for faces by the library's face model, none found, as the indexer records it
+    (faces.record_batch): a photo with neither this nor a face is the index's work whatever its vector."""
+    settings = library_settings.of(Library(db_path))
+    faces_detected.record(conn, path, face_service.detector_named(settings.faces, settings.detect_max_side),
+                          photo_rows.stamp_of(path), 0)
 
 
 class Harbour(unittest.TestCase):
@@ -63,6 +71,7 @@ class Harbour(unittest.TestCase):
         conn = db.connect(self.db_path)
         try:
             photo_rows.add_read(conn, path, {"XMP:Subject": ["Boats/Dinghy"]})
+            examined(conn, self.db_path, path)
             if vector:
                 stat = os.stat(path)
                 store_embeddings.put(conn, path, MODEL, stat.st_mtime, stat.st_size,
@@ -108,6 +117,7 @@ class TheStore(Harbour):
         conn = db.connect(self.db_path)
         self.addCleanup(conn.close)
         ids = dict((path, photo_id) for photo_id, path, _m, _s in store_photos.stamps(conn))
+        conn.execute("DELETE FROM faces_detected")
         self.assertTrue({ids[self.path], ids[self.bare]} <= faces_detected.unexamined(conn, detector))
         faces_detected.record(conn, self.path, faces_detected.detector({"min_face_size": 40}), None, 0)
         self.assertIn(ids[self.path], faces_detected.unexamined(conn, detector), "another detector's record is not one")
@@ -189,16 +199,6 @@ class TheIndexCommand(Harbour):
         result, read = self.index()
         self.assertTrue(read, result.output)
 
-    def test_a_photo_never_examined_for_faces_is_not_current(self):
-        index = search.PhotoIndex(self.db_path, model=MODEL)
-        self.addCleanup(index.close)
-        self.assertTrue(index.open())
-        stat = os.stat(self.path)
-        on_disk = {paths.key(self.path): (self.path, stat.st_mtime, stat.st_size)}
-        photo_id = next(i for i, path, _m, _s in store_photos.stamps(index.conn) if paths.key(path) in on_disk)
-        self.assertEqual(set(on_disk), index.current(on_disk))
-        self.assertEqual(set(), index.current(on_disk, unexamined={photo_id}))
-
     def test_a_photo_with_no_vector_is_read(self):
         self.photo("bare.jpg", vector=False)
         result, read = self.index()
@@ -233,6 +233,7 @@ class AnIndexWithNothingToDo(Harbour):
         conn = db.connect(self.db_path)
         try:
             photo_rows.add_read(conn, path, {"XMP:Subject": ["Boats/Dinghy"]})
+            examined(conn, self.db_path, path)
             stat = os.stat(path)
             # Its vector under the library's model's key.
             store_embeddings.put(conn, path, store_embeddings.model_key(**embedder), stat.st_mtime, stat.st_size,

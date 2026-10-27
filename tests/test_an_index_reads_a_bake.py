@@ -380,10 +380,12 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertIsInstance(self.plan(kept), baking.Current)
         self.assertEqual(baking.NO_VECTOR, self.plan(edited).kind)
         del self.detector.asked[:], self.on_card[:]
-        said = self.said(self.index(folder))
-        self.assertEqual(["Baked into the files: 1 photo(s) read from their file, 1 worked out on the graphics card; 1 bake(s) "
-                          "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 1 "
-                          "photo(s) needed no graphics card."], said)
+        result = self.index(folder)
+        # The caption's photo keeps its vector by its fingerprint: no bake read, no model run, stamped again.
+        self.assertEqual(["Baked into the files: 0 photo(s) read from their file, 1 worked out on the graphics card; 1 bake(s) "
+                          "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 0 "
+                          "photo(s) needed no graphics card."], self.said(result))
+        self.assertIn(tagpup_cli.KEPT_LINE % (0, 1, 1, 0), " ".join(result.output.split()))
         self.assertEqual(["edited.jpg"], self.detector.asked, "the repainted photo's faces are looked for again")
         self.assertEqual(1, self.on_card.count("embed"))
         # The caption's edit left the bake its picture's: read again, it is current. The repainted one is to bake again,
