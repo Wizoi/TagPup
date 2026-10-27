@@ -66,3 +66,14 @@ Until cut 3 is installed there is nothing for the owner to run. The bake already
 5. **Delete `bake-photos` and `face-pass` after cut 3:** yes.
 
 Low: the indexer's closing line says "worked out on the graphics card" for a processor-made vector (`tagpup_cli.py:512`); fixed in cut 2.
+
+## Open between the owners (settled before cut 1 is briefed)
+
+6. **How a file never baked is found.** Files and Data: `photo_fingerprints` means "the index's vectors describe this
+   picture" (no schema change, no clearing); a never-baked file is found by reading its bake fields once per folder with
+   the batched ExifTool read (cut 3). Integration: `photo_fingerprints` means "the fingerprint this file holds, baked",
+   written only when a bake is adopted or written; a vector with no row is "to bake" by one anti-join, which is cheaper
+   than reading every file's XMP, but needs every existing row deleted once (unjournaled, a cache-like fact) and is a new
+   meaning for an existing idea, so it is the owner's. Recommendation: Files and Data's meaning for cut 1 (it fixes the 74
+   and the three photos with no clearing), and take Integration's anti-join into cut 3 only if reading every folder's bake
+   fields once proves too slow on the share, measured then.
