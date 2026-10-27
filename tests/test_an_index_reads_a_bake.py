@@ -19,9 +19,9 @@ What the owner lives through, adding a folder whose photos were baked:
 * an index killed part-way leaves every row whole and the next run completes the folder;
 * the index's read (`-struct`) answers every field of METADATA_FIELDS as the plain read does;
 * a photo baked as a bake run bakes it (planned from the library, written through file_changes.write_fields), then tagged
-  in the app, is still current: the write restamps its vector; then edited outside, it plans CHANGED (its vector's stamp,
-  not its fingerprint, is what the planner compares) until indexed again: an edit of its metadata alone leaves the bake
-  its picture's (read again, no card, current again), an edit of its pixels makes it stale (worked out, to bake again);
+  in the app, is still current: the write restamps its vector; then edited outside: an edit of its metadata alone
+  leaves the bake its picture's (its decode's fingerprint equals its row: current with no index; read again, no card),
+  an edit of its pixels has no vector of its picture until indexed again (worked out, to bake again);
 * a folder baked on the desktop and copied by hand to the server (each copy a new mtime) is read there under the
   server library's keys, no card asked; a copy baked under another photo model gives its faces and not its vector, and a
   copy whose picture was repainted is not trusted (PHASE6_DESIGN, sections 5 and 6).
@@ -372,12 +372,13 @@ class AnIndexReadsABake(unittest.TestCase):
             self.assertIsInstance(self.plan(path), baking.Current, path)
             self.assertEqual(1, len(baked_files.held(path).faces))
 
-        # Then edits each outside: one's caption, the other's pixels. Both plan CHANGED until indexed again: the planner
-        # compares the vector's stamp (mtime, size), not the fingerprint.
+        # Then edits each outside: one's caption, the other's pixels. The caption's photo is the same picture (its
+        # decode's fingerprint equals its row: photo_fingerprints.same_picture), the repainted one has no vector of its
+        # picture until indexed again.
         self.outside(kept, "-XMP:Description=Boats at dusk")
         self.repaint(edited, "maroon")
-        for path in (kept, edited):
-            self.assertEqual(baking.CHANGED, self.plan(path).kind, path)
+        self.assertIsInstance(self.plan(kept), baking.Current)
+        self.assertEqual(baking.NO_VECTOR, self.plan(edited).kind)
         del self.detector.asked[:], self.on_card[:]
         said = self.said(self.index(folder))
         self.assertEqual(["Baked into the files: 1 photo(s) read from their file, 1 worked out on the graphics card; 1 bake(s) "

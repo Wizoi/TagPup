@@ -1397,8 +1397,8 @@ BAKE_WAY_BACK = ("`undo <change> --apply` takes a folder's bake back. A later wr
 CANNOT_BAKE = {
     baking.NEVER_EXAMINED: ("never examined by the face model", "run face-pass on its folder first"),
     baking.FACES_WITHOUT_VECTORS: ("with a face holding no vector under the face model", "run face-pass on its folder"),
-    baking.NO_VECTOR: ("with no photo vector under the photo model", "index it (it has no photo embedding to write)"),
-    baking.CHANGED: ("whose file changed since its photo vector was made", "index it again"),
+    baking.NO_VECTOR: ("with no photo vector of its picture as it is now under the photo model",
+                       "index its folder (sync queues it)"),
     baking.UNREADABLE: ("whose file could not be reached or read",
                         "the file or the share did not answer: run again when it does"),
     baking.GONE: ("gone from the library during the run", "run it again"),

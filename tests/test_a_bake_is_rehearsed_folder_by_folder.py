@@ -153,7 +153,7 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
         self.assertNotIn("XMP", out, "Extended XMP is ExifTool's detail, not the owner's (2026-10-25)")
         for said in ("1 never examined by the face model: run face-pass on its folder first",
                      "1 with a face holding no vector under the face model: run face-pass on its folder",
-                     "1 whose file changed since its photo vector was made: index it again",
+                     "1 with no photo vector of its picture as it is now under the photo model: index its folder (sync queues it)",
                      "1 whose file could not be reached or read: the file or the share did not answer: run again when it does"):
             self.assertIn("Cannot be baked: %s" % said, total)
         self.assertNotIn("none found", out.lower())

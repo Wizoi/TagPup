@@ -396,7 +396,7 @@ class ABakeIsWrittenFolderByFolder(ALibraryToBake):
         total = out[out.index("All 2 folder(s):"):]
         for said in ("1 never examined by the face model: run face-pass on its folder first",
                      "1 with a face holding no vector under the face model: run face-pass on its folder",
-                     "1 whose file changed since its photo vector was made: index it again",
+                     "1 with no photo vector of its picture as it is now under the photo model: index its folder (sync queues it)",
                      "1 whose file could not be reached or read: the file or the share did not answer: run again when it does"):
             self.assertIn("\n  Cannot be baked: %s.\n" % said, total)
         again = self.cli("--apply")
