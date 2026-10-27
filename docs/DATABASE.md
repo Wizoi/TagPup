@@ -216,7 +216,7 @@ What each change found and left, one row per changed column (`tagpup.store.journ
 | `id` | INTEGER | PRIMARY KEY | The order the rows were written in; an undo reverses it. |
 | `change_id` | INTEGER | NOT NULL, → `changes.id`, INDEXED | The change. |
 | `action` | TEXT | NOT NULL, `insert`, `update` or `delete` | What was done to the row: tells an insert from an update whose old values were NULL. |
-| `table_name` | TEXT | NOT NULL, INDEXED (with `row_key`) | The table: `photos`, `faces`, `tag_taxonomy`, `face_crops`, `face_embeddings`, `embeddings`, `suggestions`, `settings` or `faces_detected` (`journal.KEYS`). |
+| `table_name` | TEXT | NOT NULL, INDEXED (with `row_key`) | The table: `photos`, `faces`, `tag_taxonomy`, `face_embeddings`, `embeddings`, `suggestions`, `settings` or `faces_detected` (`journal.KEYS`); `face_crops` in a change made before 2026-10-27, a cache since and not read (`journal.CACHES`). |
 | `row_key` | TEXT | NOT NULL | The row's key as a JSON list, `[123]` or `[123, "<model>"]`. |
 | `column_name` | TEXT | NOT NULL | The column. |
 | `old` | (none) | | The value before, as SQLite stored it: an integer, a real, text or a BLOB. No declared type, so nothing is converted. NULL for an insert. |

@@ -402,7 +402,7 @@ def _resolve(conn, edits):
         deletes[edit.table][key] = change
 
     # What the deletes take with them, a level at a time: photos, then their faces, then
-    # the faces' crops and vectors. One query per table and chunk, not one per row.
+    # the faces' vectors (a crop, a cache, the trigger takes). One query per table and chunk, not one per row.
     planned = {(table, key) for table, rows in deletes.items() for key in rows}
     level = deletes
     while level:
@@ -520,7 +520,7 @@ def _blocked(conn, writes):
     """Why writing `writes`, in order, would leave a row naming a row that is not there,
     or break a UNIQUE constraint: [] when it would not. Every foreign key and UNIQUE of the
     tables written, read from the schema -- faces.photo_id, tag_taxonomy.parent_id,
-    face_crops.face_id, tag_taxonomy.tag, photos.path... A parent the same writes insert
+    face_embeddings.face_id, tag_taxonomy.tag, photos.path... A parent the same writes insert
     counts as there, one they delete as gone; a value a row they delete or move held is
     free. Names rows and columns, never values. Reads only."""
     constraints = {}
@@ -686,8 +686,8 @@ def _not_as_left(conn, change_id, changes):
     """Why the rows are not what change `change_id` left them: [] when they are."""
     reasons = []
     roots = store_roots.roots_for(conn)
-    # The rows the change itself inserted: the undo deletes them too, so a child row among them (a face's crop and vector
-    # given with it) is not one made since.
+    # The rows the change itself inserted: the undo deletes them too, so a child row among them (a face's vector given
+    # with it) is not one made since.
     inserted = {(change.table, tuple(change.key)) for change in changes if change.action == "insert"}
     for change in changes:
         if change.action == "delete":
@@ -1433,8 +1433,8 @@ def history(db_path, limit=20, change_id=None, values=False):
                     chunk):
                 by_id[cid]["rows"].setdefault(table, {})[action] = count
         if change_id is not None and entries:
-            # The keys alone: the old and new values -- a deleted face's crop and vector,
-            # 8 KB a face -- are read only when asked for.
+            # The keys alone: the old and new values -- a deleted face's vector, and its crop in a
+            # change made before a crop was a cache (CACHES) -- are read only when asked for.
             keys = collections.defaultdict(list)
             for table, key_text in conn.execute(
                     "SELECT table_name, row_key FROM change_rows WHERE change_id = ?"
