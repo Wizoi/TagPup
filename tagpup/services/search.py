@@ -86,13 +86,23 @@ class PhotoEmbeddings:
             logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
         return None, None
 
+    def fingerprint_of(self, file_path):
+        """The (key, hash) of the photo's fingerprint row (photo_fingerprints.of_path), or None: what a vector kept by
+        its stamp is recorded again with (tagpup_cli.py's index)."""
+        if not self._library():
+            return None
+        found = photo_fingerprints.of_path(self.photo_index.conn, file_path)
+        return (found.key, bytes(found.hash)) if found else None
+
     def keep(self, file_path, embedding, stamp=None):
         """Keep the vector in the library, stamped with `stamp`: the file's (mtime, size)
         as it was opened to be embedded, else as it is now. Taken after, a photo rotated
         while it was embedded kept the vector from before the turn as current (#86).
 
         By path, a photo with no row is given one (store.embeddings.put: Suggest's photo of a folder just added); a
-        pass over the rows it read keeps by id (keep_batch).
+        pass over the rows it read keeps by id (keep_batch). No fingerprint is taken here, so the photo's row is
+        forgotten (photo_fingerprints.follows): a row of the picture before a crop must not say a vector of the cropped
+        picture is the restored one's. The index records the decode's with the vector (PhotoIndex.build_or_update).
 
         True when the vector was written; False when it was not -- a looking run, a file gone, no library, a row gone,
         or a failed write (logged) -- so a pass can count what it kept rather than what it tried (#1823)."""
@@ -107,7 +117,7 @@ class PhotoEmbeddings:
             vector = np.array(embedding, dtype=np.float32).tobytes()
 
             def store(conn):
-                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector)
+                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector, None)
                 return True
 
             # On a connection of its own. Every worker in the suggestion pool writes its
@@ -127,7 +137,8 @@ class PhotoEmbeddings:
     def keep_batch(self, found):
         """Keep each of `found` [(photo id, vector, (mtime, size) of the file as it was opened)] at that row, by id, in
         ONE transaction (one connection, one take of the write lock, one commit; #1839): a pass over the rows it read
-        (tagpup.services.photo_reembed). A row gone meanwhile is not kept, and none is made for it (put_by_id). How many
+        (tagpup.services.photo_reembed). A row gone meanwhile is not kept, and none is made for it (put_by_id); the
+        fingerprint row of each kept is forgotten, as keep's. How many
         were kept; none in a looking run or without a library. A write that fails raises: what earlier batches kept is
         kept, and the photos of this one are made again by the next run."""
         if not found or not self.remember or not self._library():
@@ -135,7 +146,7 @@ class PhotoEmbeddings:
         rows = [(photo_id, np.asarray(vector, dtype=np.float32).tobytes(), stamp) for photo_id, vector, stamp in found]
 
         def store(conn):
-            return sum(store_embeddings.put_by_id(conn, photo_id, self.model_key, stamp[0], stamp[1], vector)
+            return sum(store_embeddings.put_by_id(conn, photo_id, self.model_key, stamp[0], stamp[1], vector, None)
                        for photo_id, vector, stamp in rows)
 
         return self.photo_index.write_on_own_connection(store, label="the vectors of %d photos" % len(rows))
@@ -367,8 +378,9 @@ class PhotoIndex:
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
     def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512):
-        """Batch insert/update photos inside the SQLite database (transaction-safe). A meta holding a "fingerprint", (key,
-        hash) of the picture the index decoded (tagpup.files.images.fingerprint), has it recorded with its row."""
+        """Batch insert/update photos inside the SQLite database (transaction-safe). Each meta's "fingerprint", the (key,
+        hash) of the picture its vector was made of (tagpup.files.images.fingerprint), is recorded with the vector; a
+        meta with none forgets the photo's row (store.embeddings.put)."""
         if not embeddings or self.conn is None:
             return
         # A row is stamped with the read it records: MetadataExtractor gives every record its mtime and size.
@@ -383,21 +395,20 @@ class PhotoIndex:
                 known = store_taxonomy.read_people_vocabulary(self.conn)
             batch.prepared = True
             for meta, emb in zip(metas, embeddings):
-                photo_id = store_photos.record_indexed(self.conn, meta["path"], {
+                store_photos.record_indexed(self.conn, meta["path"], {
                     "mtime": meta["mtime"],
                     "size": meta["size"],
                     "tags": meta.get("tags", []),
                     "captions": meta.get("captions", []),
                     "raw_metadata": meta.get("raw_metadata", {}),
                     "embedding": np.array(emb, dtype=np.float32).tobytes(),
+                    "fingerprint": meta.get("fingerprint"),
                     # The photo's identity beside its path. Where the file has one it is
                     # already in raw_metadata; where it does not, the extractor has
                     # minted one into the file by now.
                     "document_id": (meta.get("document_id")
                                     or read_document_id(meta.get("raw_metadata", {}))),
                 }, model=self.model, known=known, batch=batch)
-                if meta.get("fingerprint"):
-                    photo_fingerprints.put(self.conn, photo_id, *meta["fingerprint"])
             self.conn.commit()
         except Exception as e:
             index_log.error(f"Error saving batch to SQLite: {e}")

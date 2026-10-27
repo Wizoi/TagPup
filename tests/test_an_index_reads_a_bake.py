@@ -35,10 +35,14 @@ What the owner lives through when a photo's file changes after it was indexed, n
   no model asked, its vector stamped again with the file; the cropped one is worked out again; the next run has nothing
   to do;
 * a turned photo (Orientation 6) whose vector is current and that was never examined for faces (no face row, no record
-  of a look: 223 such in photo_index, 2026-10-27) is looked at for faces, its vector kept;
+  of a look: 223 such in photo_index, 2026-10-27) is looked at for faces, its vector kept, and its fingerprint row with
+  it;
 * a photo whose stamp describes its file but that has no fingerprint row (every photo indexed before 34) is left
   alone; once its file changes it is worked out again, nothing to compare its decode with;
 * an index that stops as it records the batch leaves the stamp stale; the next run restamps it with no model;
+* a photo cropped outside and then Suggested (Suggest keeps the cropped picture's vector), then restored from a copy: the
+  index works it out again, and its fingerprint row is the restored picture's -- Suggest's vector forgot the row of the
+  picture before the crop, which told the index the cropped picture's vector was the restored one's;
 * --force-reembed works the photo out again, its vector and its faces;
 * on a machine whose models run on the processor, the bake line says so.
 
@@ -74,6 +78,7 @@ from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
+from tagpup.ml.clip import ClipModel  # noqa: E402
 from tagpup.ml.faces import NotDetected  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
@@ -273,6 +278,26 @@ class AnIndexReadsABake(unittest.TestCase):
 
     def boxes(self, path):
         return [box for box, *_ in self.faces(path)]
+
+    def fingerprint(self, path):
+        """[(key, hash)] of the photo's fingerprint row (none, or one)."""
+        return [(key, bytes(hash)) for path_of, key, hash in self.query(
+            "SELECT p.path, f.key, f.hash FROM photo_fingerprints f JOIN photos p ON p.id = f.photo_id")
+            if paths.key(path_of) == paths.key(path)]
+
+    def decoded(self, path):
+        """The (key, hash) of the file's picture now, as the index takes it."""
+        return images.FINGERPRINT_KEY, bytes(images.fingerprint(images.opened(path, upright=True)))
+
+    def suggested(self, path):
+        """Suggest asks the photo's vector (PhotoEmbeddings.of): not current, it is made and kept."""
+        settings = library_settings.read(Library(self.db_path)).embedder
+        index = search.PhotoIndex(self.db_path, self.photo_key)
+        index.open()
+        try:
+            return search.PhotoEmbeddings(ClipModel(**settings, device="cpu"), index).of(path)
+        finally:
+            index.close()
 
     def detected(self, path):
         return [(detector, found) for path_of, detector, found in self.query(
@@ -490,6 +515,7 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(1, len(self.detected(turned)))
         self.assertTrue(np.allclose(vector, self.vector(turned)))
         self.assertEqual(stamp, self.stamp(turned))
+        self.assertEqual([self.decoded(turned)], self.fingerprint(turned), "kept by its stamp, with its fingerprint row")
         self.kept_line(result, 1, 0, 0, 1)
         self.detector.refused = True
         self.assertIn("All images are up to date!", self.index(folder).output)
@@ -517,6 +543,34 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual(["quay.jpg"], self.detector.asked)
         self.assertEqual(self.file_stamp(path), self.stamp(path))
         self.assertEqual(1, self.query("SELECT COUNT(*) FROM photo_fingerprints")[0][0])
+        self.kept_line(result, 0, 0, 1, 0)
+
+    def test_a_photo_suggested_while_cropped_and_then_restored_is_worked_out_again_not_kept_from_the_crop(self):
+        folder = self.folder("Harbour Restored")
+        path = self.picture(folder, "quay.jpg", "navy")
+        self.detector.found = {"quay.jpg": [([300, 200, 400, 330], 0.99, 1)]}
+        self.index(folder)
+        original = os.path.join(self.home.root, "quay before the crop.jpg")
+        shutil.copyfile(path, original)
+        first = self.decoded(path)
+        self.assertEqual([first], self.fingerprint(path))
+        # Cropped in an editor, then Suggest asked of it: its vector is not current, so Suggest makes the cropped
+        # picture's and keeps it.
+        self.crop(path)
+        self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 97).tolist()
+        self.suggested(path)
+        self.assertTrue(np.allclose(self.computed, self.vector(path)))
+        self.assertEqual([], self.fingerprint(path), "a vector of the crop beside the row of the picture before it")
+        # Restored from the copy (a new mtime): the picture is the first one again; the vector is the crop's.
+        shutil.copyfile(original, path)
+        self.assertEqual(first, self.decoded(path))
+        del self.detector.asked[:], self.on_card[:]
+        self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 96).tolist()
+        result = self.index(folder)
+        self.assertEqual(1, self.on_card.count("embed"), "the crop's vector was kept for the restored picture")
+        self.assertTrue(np.allclose(self.computed, self.vector(path)))
+        self.assertEqual(self.file_stamp(path), self.stamp(path))
+        self.assertEqual([first], self.fingerprint(path))
         self.kept_line(result, 0, 0, 1, 0)
 
     def test_an_index_stopped_as_it_records_leaves_the_stamp_stale_and_the_next_restamps_with_no_model(self):

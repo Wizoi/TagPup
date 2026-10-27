@@ -656,7 +656,7 @@ class APictureToCheck(SyncTestCase):
         try:   # the new model's pass: every photo but the one in the pier's folder, and the two photos set up
             for path in photos[:-1] + [self.path, self.other]:
                 stat = os.stat(path)
-                embeddings.put(conn, path, new_key, stat.st_mtime, stat.st_size, photo_rows.VECTOR)
+                embeddings.put(conn, path, new_key, stat.st_mtime, stat.st_size, photo_rows.VECTOR, None)
             conn.commit()
         finally:
             conn.close()

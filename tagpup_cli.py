@@ -546,6 +546,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     emb, on_card, kind = embeddings.made(path, prepared), True, "made"
                 if decoded["fingerprint"] is not None:
                     meta["fingerprint"] = (image_files.FINGERPRINT_KEY, decoded["fingerprint"])
+                else:
+                    # Not decoded: its vector was kept by its stamp, and is recorded again with the fingerprint row it
+                    # has (store.embeddings.put records or forgets one with every vector) -- stamped again, as its row
+                    # is, after an identity written into the file.
+                    meta["fingerprint"] = embeddings.fingerprint_of(path)
                 if zeros >= image_files.ZERO_TAIL:
                     # It decodes, perhaps grey below a line: indexed, and left as it is.
                     incomplete.append((path, zeros))

@@ -75,7 +75,7 @@ class ALibraryToBake(BakeCase):
             conn.close()
         stamp = embeddings.stamp_of(path)
         self.write(lambda conn: embeddings.put(conn, path, photo_key, stamp[0], stamp[1],
-                                               baked_files.unit(bake.PHOTO_DIM, 1).tobytes()))
+                                               baked_files.unit(bake.PHOTO_DIM, 1).tobytes(), None))
         if faces is not None:
             found = [{"box": [n % 8 * 2, n // 8 * 1.5, n % 8 * 2 + 1.5, n // 8 * 1.5 + 1.25],
                       "embedding": baked_files.unit(bake.FACE_DIM, 10 + n).tolist(), "prob": 0.9} for n in range(faces)]

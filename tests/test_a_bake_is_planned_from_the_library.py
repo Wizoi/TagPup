@@ -86,7 +86,7 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
 
         def seed(conn):
             stamp = embeddings.stamp_of(path)
-            embeddings.put(conn, path, photo_key, stamp[0], stamp[1], baked_files.unit(bake.PHOTO_DIM, 1).tobytes())
+            embeddings.put(conn, path, photo_key, stamp[0], stamp[1], baked_files.unit(bake.PHOTO_DIM, 1).tobytes(), None)
         if vector:
             self.write(seed)
         if faces is not None:

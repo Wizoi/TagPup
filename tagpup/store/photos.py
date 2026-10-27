@@ -441,8 +441,9 @@ def stored_spelling(conn, photo_path):
 
 def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
-    raw_metadata (as values), embedding (bytes) and document_id; the embedding is kept
-    under `model`, stamped with the row's mtime and size, and the photo's people are
+    raw_metadata (as values), embedding (bytes), fingerprint and document_id; the embedding is kept
+    under `model`, stamped with the row's mtime and size, with the fingerprint, the (key, hash) of the picture it was
+    made of, or none (embeddings.put: a row with no fingerprint forgets the photo's), and the photo's people are
     rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits. Returns the row's id.
 
     A photo indexed before is updated in place, under the spelling its row already has.
@@ -486,7 +487,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
             raise ValueError("An embedding is kept under the model that made it; none was named.")
-        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"])
+        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"], row.get("fingerprint"))
     return photo_id
 
 

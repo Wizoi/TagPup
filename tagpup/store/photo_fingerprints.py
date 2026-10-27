@@ -10,9 +10,14 @@ metadata write leaves is the picture it found. A rotation changes the picture th
 No foreign key and no trigger, as `faces_detected`: a row whose photo is gone is read as none, a photo's id never being
 handed out again, so deleting a photo takes nothing the journal must account for.
 
-Two write a row: the index, as it saves a photo it decoded (tagpup.services.search), and a bake's write, in the transaction
-that marks it done (tagpup.services.baking.follower), from the Fingerprint the file holds after. An undo of a bake leaves
-the row: the picture is the one it was.
+The row says which picture the photo's vectors were made of, so it goes with them: every write of a vector records the
+fingerprint of the picture it was made of, or forgets the row when the writer does not know it (`follows`, called by
+store.embeddings.put and put_by_id, whose `fingerprint` argument is required). Suggest keeping a vector it made, and a
+re-embedding pass, decode no fingerprint and forget the row; the index records the decode's (tagpup.services.search,
+build_or_update). Left behind, a row of the picture before a crop told the index a vector of the cropped picture was of
+the picture restored after it (same_picture SAME). A bake's write records the Fingerprint the file holds after, in the
+transaction that marks it done (tagpup.services.baking.follower). An undo of a bake leaves the row: the picture is the
+one it was.
 
 The one rule of a vector's currency (owner, DECISIONS 2026-10-27; docs/INVARIANTS.md) is `same_picture`'s: a photo's
 vector is of the picture its file holds now when the vector's stamp describes the file (trusted, nothing decoded), or else
@@ -118,6 +123,16 @@ def put(conn, photo_id, key, hash):
     """Record the fingerprint of the photo with id `photo_id`, in place of any it had. The caller commits."""
     conn.execute("INSERT OR REPLACE INTO photo_fingerprints (photo_id, key, hash) VALUES (?, ?, ?)",
                  (photo_id, key, bytes(hash)))
+
+
+def follows(conn, photo_id, fingerprint):
+    """A vector of the photo with id `photo_id` was just written (store.embeddings): its row is `fingerprint`, the (key,
+    hash) of the picture the vector was made of, or none when `fingerprint` is None -- a vector made with no fingerprint
+    taken leaves no row of another picture beside it. The caller commits."""
+    if fingerprint is None:
+        conn.execute("DELETE FROM photo_fingerprints WHERE photo_id = ?", (photo_id,))
+    else:
+        put(conn, photo_id, *fingerprint)
 
 
 def forget(conn, photo_path):

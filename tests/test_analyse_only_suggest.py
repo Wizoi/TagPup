@@ -200,7 +200,7 @@ class Base(unittest.TestCase):
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Trips/Regatta"]})
                 stamp = store_embeddings.stamp_of(path)
                 store_embeddings.put(conn, path, model, stamp[0], stamp[1],
-                                     np.array(vector_of(path), dtype=np.float32).tobytes())
+                                     np.array(vector_of(path), dtype=np.float32).tobytes(), None)
             store_taxonomy.add_node(conn, "Trips/Regatta")
             store_taxonomy.add_node(conn, "People/Rowan Thackeray")
             store_faces.insert(conn, self.held[0], [0, 0, 100, 100], ROWAN.tobytes(), name="Rowan Thackeray", prob=0.99, model=FACE_MODEL)

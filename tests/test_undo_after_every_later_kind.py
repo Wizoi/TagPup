@@ -153,7 +153,7 @@ def a_bake(case, library):
             if os.path.exists(path):
                 found = rng.normal(size=bake.PHOTO_DIM).astype(np.float32)
                 mtime, size = embeddings.stamp_of(path)
-                embeddings.put(conn, path, key, mtime, size, (found / np.linalg.norm(found)).tobytes())
+                embeddings.put(conn, path, key, mtime, size, (found / np.linalg.norm(found)).tobytes(), None)
         conn.commit()
     finally:
         conn.close()

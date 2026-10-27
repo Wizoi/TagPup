@@ -180,7 +180,7 @@ class TheTurn(RotationCase):
         self.make("b.jpg")
         turned, kept = [photo_id for (photo_id,) in self.rows("SELECT id FROM photos ORDER BY id")]
         stat = os.stat(path)
-        self.execute_with(lambda conn: embeddings.put(conn, path, MODEL, stat.st_mtime, stat.st_size, b"\x00\x00\x80\x3f" * 4))
+        self.execute_with(lambda conn: embeddings.put(conn, path, MODEL, stat.st_mtime, stat.st_size, b"\x00\x00\x80\x3f" * 4, None))
         for photo_id in (turned, kept):
             self.execute_with(lambda conn: photo_fingerprints.put(conn, photo_id, "upright-sha256-1", b"\x5a" * 32))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM embeddings"), [(1,)])

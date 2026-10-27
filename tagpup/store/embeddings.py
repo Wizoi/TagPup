@@ -46,23 +46,34 @@ def get(conn, photo_path, model):
     return Stored(*row) if row else None
 
 
-def put(conn, photo_path, model, mtime, size, vector):
+def put(conn, photo_path, model, mtime, size, vector, fingerprint):
     """Keep `vector` as the photo's under `model`, computed from the file at `mtime` and
     `size`, replacing any before it. A photo with no row gets one (photos.ensure_row).
-    The caller commits."""
+    `fingerprint`, required, is the (key, hash) of the picture the vector was made of, recorded as the photo's row, or
+    None, which forgets the row (photo_fingerprints.follows). The caller commits."""
     from tagpup.store import photos   # photos imports this module
     photo_id = photos.ensure_row(conn, photo_path)
     conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
                  " VALUES (?, ?, ?, ?, ?)", (photo_id, model, mtime, size, vector))
+    _follows(conn, photo_id, fingerprint)
 
 
-def put_by_id(conn, photo_id, model, mtime, size, vector):
-    """Keep `vector` as the photo `photo_id`'s under `model`, as put does, while the photo has a row: True when it was
-    written, False when the row is gone (removed by a sync or a delete meanwhile), and no row is made for it -- a pass
-    over the rows it read (tagpup.services.photo_reembed) never brings back one taken away. The caller commits."""
-    return conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
-                        " SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM photos WHERE id = ?)",
-                        (photo_id, model, mtime, size, vector, photo_id)).rowcount > 0
+def put_by_id(conn, photo_id, model, mtime, size, vector, fingerprint):
+    """Keep `vector` as the photo `photo_id`'s under `model`, as put does, with its `fingerprint` (as put), while the
+    photo has a row: True when it was written, False when the row is gone (removed by a sync or a delete meanwhile), and
+    no row is made for it -- a pass over the rows it read (tagpup.services.photo_reembed) never brings back one taken
+    away. The caller commits."""
+    written = conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
+                           " SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM photos WHERE id = ?)",
+                           (photo_id, model, mtime, size, vector, photo_id)).rowcount > 0
+    if written:
+        _follows(conn, photo_id, fingerprint)
+    return written
+
+
+def _follows(conn, photo_id, fingerprint):
+    from tagpup.store import photo_fingerprints   # it imports photos, which imports this module
+    photo_fingerprints.follows(conn, photo_id, fingerprint)
 
 
 def stamps_by_path(conn, photo_paths):

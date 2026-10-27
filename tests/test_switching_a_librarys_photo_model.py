@@ -144,7 +144,7 @@ class _Libraries(unittest.TestCase):
             for path in photos:
                 self.seed += 1
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put(conn, path, key, mtime, size, vector(DIMS[model[0]], self.seed).tobytes())
+                store_embeddings.put(conn, path, key, mtime, size, vector(DIMS[model[0]], self.seed).tobytes(), None)
             conn.commit()
         finally:
             conn.close()
@@ -200,7 +200,7 @@ class TheSwitchWaitsForTheVectors(_Libraries):
         try:
             for path in harbour.photos:
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put(conn, path, key, mtime, size, vector(1152, 7).tobytes())
+                store_embeddings.put(conn, path, key, mtime, size, vector(1152, 7).tobytes(), None)
             conn.commit()
         finally:
             conn.close()

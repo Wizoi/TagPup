@@ -116,7 +116,7 @@ class TheStore(Folders, unittest.TestCase):
         writes = {
             "a row": lambda conn: store_photos.ensure_row(conn, self.shared[0]),
             "a face": lambda conn: store_faces.insert(conn, self.shared[0], [1, 2, 3, 4], b"\0" * 16, model=FACE_MODEL),
-            "a vector": lambda conn: store_embeddings.put(conn, self.shared[0], "clip", 1.0, 4, b"\0" * 16),
+            "a vector": lambda conn: store_embeddings.put(conn, self.shared[0], "clip", 1.0, 4, b"\0" * 16, None),
             "a suggestion": lambda conn: store_suggestions.put(conn, self.shared[0], {"tags": ["Family/Work"]}),
         }
         for what, write in writes.items():
