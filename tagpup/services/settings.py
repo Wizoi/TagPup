@@ -213,10 +213,15 @@ def photo_switch_to(library, held, putting):
     return _asked_of(library, photo_switch_on, held, putting)
 
 
+def on(conn):
+    """The LibrarySettings the library holds, read on the caller's connection (unstamped keys filled with the defaults)."""
+    return LibrarySettings(_filled(store_settings.held_on(conn)))
+
+
 def photo_key_on(conn):
     """The key the library's photo vectors are kept under (tagpup.store.embeddings.model_key), from the settings it holds,
     on the caller's connection: what a retiring of the other keys' vectors reads again in each transaction."""
-    return store_embeddings.model_key(**LibrarySettings(_filled(store_settings.held_on(conn))).embedder)
+    return store_embeddings.model_key(**on(conn).embedder)
 
 
 def undo_check(conn, change_id, _operation, _summary):

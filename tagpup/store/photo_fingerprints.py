@@ -19,9 +19,14 @@ vector is of the picture its file holds now when the vector's stamp describes th
 when the decode's fingerprint equals this table's row. A metadata write (keywords, a caption, XMP another program wrote)
 changes the stamp and never the picture, so it never makes a vector stale. Sync (what to queue), the index (what is
 current) and baking (what is to be baked) each ask it.
+
+Which photos the index owes work is `owed`'s, the one answer sync (what to queue) and the index (what is current) ask:
+a photo with no vector, one whose vector's stamp does not describe its file, and one never examined for faces.
 """
 import collections
 
+from tagpup.core import paths
+from tagpup.store import faces_detected
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
@@ -56,6 +61,42 @@ def same_picture(vector_stamp, file_stamp, row=NOT_READ, decoded=None):
     if decoded is None:
         return UNDECIDED
     return SAME if (decoded[0], bytes(decoded[1])) == (row.key, bytes(row.hash)) else CHANGED
+
+
+#: Why the index owes a photo work (owed). NO_VECTOR: it holds no vector under the library's photo model. STALE: its
+#: vector's stamp does not describe its file (same_picture not STAMPED): the index's decode tells a metadata write (kept)
+#: from another picture (worked out). UNEXAMINED: never examined for faces by the library's detector
+#: (faces_detected.unexamined): no face row and no record of a look.
+NO_VECTOR, STALE, UNEXAMINED = "no vector", "stale", "unexamined"
+
+#: A photo the index owes work: its path as the walk spelled it, and why (a tuple of NO_VECTOR or STALE, and UNEXAMINED).
+Owed = collections.namedtuple("Owed", "path reasons")
+
+
+def owed(conn, photo_key, detector, on_disk, folder=None):
+    """{photo id: Owed} of the photos (under `folder`, or every one) whose file is among `on_disk` ({paths.key: (path,
+    mtime, size)}: the files as a walk found them) and that the index owes work: no vector under `photo_key` (an
+    embeddings.model_key), a vector whose stamp does not describe the file, or -- `detector` a faces_detected name, None
+    when faces are not asked (--skip-faces) -- never examined for faces. A row whose stamp does not describe its file is
+    sync's to read again (store.photos.describes), not a reason here. Nothing decoded, nothing written: one read of the
+    rows' stamps with their vectors' (store.photos.stamps) and one of the never-examined (0.03 s warm on photo_index's
+    59,524 photos)."""
+    unexamined = faces_detected.unexamined(conn, detector) if detector is not None else set()
+    found = {}
+    for photo_id, path, _mtime, _size, vector in store_photos.stamps(conn, folder, vector_stamps=photo_key):
+        disk = on_disk.get(paths.key(path))
+        if disk is None:
+            continue
+        reasons = ()
+        if vector is None:
+            reasons = (NO_VECTOR,)
+        elif same_picture(vector, disk[1:]) != STAMPED:
+            reasons = (STALE,)
+        if photo_id in unexamined:
+            reasons += (UNEXAMINED,)
+        if reasons:
+            found[photo_id] = Owed(disk[0], reasons)
+    return found
 
 
 def get(conn, photo_id):

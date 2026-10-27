@@ -61,6 +61,7 @@ from tagpup.core import gpu_turns
 from tagpup.core import paths
 from tagpup.core import read_ahead
 from tagpup.store import db as tagpup_db
+from tagpup.store import photo_fingerprints
 from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.runtime import Runtime
@@ -303,9 +304,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     if force_reembed:
         images_to_process, unexamined = all_images, set()
     else:
-        unexamined = (set() if skip_faces else
-                      photo_index.unexamined(face_records.detector_named(settings.faces, detect_max_side), on_disk))
-        current = photo_index.current(on_disk, unexamined)
+        # The work the index owes (photo_fingerprints.owed, sync's answer too): no vector, a stale stamp, never examined.
+        owed = photo_index.owed(on_disk, None if skip_faces else
+                                face_records.detector_named(settings.faces, detect_max_side))
+        unexamined = {key for key, reasons in owed.items() if photo_fingerprints.UNEXAMINED in reasons}
+        current = photo_index.current(on_disk, owed)
         images_to_process = [path for path in all_images if paths.key(path) not in current]
     skipped_count = len(all_images) - len(images_to_process)
 
@@ -872,6 +875,15 @@ def _not_looked_at(counts):
             " not in step until a sync looks at them." % (counts["folders_not_looked_at"], counts["not_looked_at"]))
 
 
+#: What `sync` says of the work the index owes (photo_fingerprints.owed), counts only: a photo may owe two (a stale
+#: vector, and never examined).
+OWED_LINE = ("%d photo(s) in %d folder(s) the index owes work: %d with no photo vector, %d whose file changed since its "
+             "vector was made (the index keeps a vector whose picture is the same), %d never examined for faces. Their "
+             "folders go to the index.")
+#: Said after OWED_LINE of the folders among them sync holds back.
+OWED_HELD_BACK = (" %d of those folder(s) are held back: a new file in each may be a copy of a missing photo; settle that"
+                  " first.")
+
 #: What `sync` says of each thing it counts.
 SYNC_FOUND = (("new", "new file(s), in %d folder(s)", "new_folders"), ("changed", "changed file(s)", None),
               ("moved", "moved file(s)", None), ("missing", "missing file(s), in %d folder(s)", "missing_folders"))
@@ -913,9 +925,10 @@ def sync(ctx, folder, apply_):
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
     if counts.get("to_check"):
-        console.print("  %d file(s) changed since their photo vector was made: their folders go to the index, which "
-                      "keeps a vector whose picture is the same and makes one again for an edited picture."
-                      % counts["to_check"], markup=False, soft_wrap=True)
+        console.print(OWED_LINE % (counts["to_check"], counts["owed_folders"], counts["owed_no_vector"],
+                                   counts["owed_stale"], counts["owed_unexamined"])
+                      + (OWED_HELD_BACK % counts["owed_held_back"] if counts["owed_held_back"] else ""),
+                      markup=False, soft_wrap=True)
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         console.print("In step." if result.details["in_step"] else

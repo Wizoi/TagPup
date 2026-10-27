@@ -23,7 +23,6 @@ from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
 from tagpup.store import derived as store_derived
 from tagpup.store import embeddings as store_embeddings
-from tagpup.store import faces_detected
 from tagpup.store import photo_fingerprints
 from tagpup.store import photos as store_photos
 from tagpup.store import taxonomy as store_taxonomy
@@ -281,30 +280,28 @@ class PhotoIndex:
         with self._read_lock:
             return store_photos.stamps(self.conn, with_vectors=self.model)
 
-    def current(self, on_disk, unexamined=()):
-        """The paths.key of each photo of `on_disk` ({key: (path, mtime, size)}: the files as they are) whose row
-        describes its file (store.photos.describes: the one answer sync gives too), whose vector's stamp does as well
-        (photo_fingerprints.same_picture STAMPED: a vector whose stamp does not is the indexer's to settle), and whose
-        key is not among `unexamined` (the unexamined method's: never looked at for faces). [] when not connected."""
+    def owed(self, on_disk, detector):
+        """{paths.key: reasons} of the photos of `on_disk` ({key: (path, mtime, size)}: the files as they are) the index
+        owes work (photo_fingerprints.owed, the one answer sync gives too): no vector under this index's model, a vector
+        whose stamp does not describe its file, or never examined for faces by `detector` (None: not asked). {} when not
+        connected."""
         if self.conn is None:
-            return set()
+            return {}
         with self._read_lock:
-            rows = store_photos.stamps(self.conn, vector_stamps=self.model)
-        return {key for photo_id, path, mtime, size, vector in rows
-                if (key := paths.key(path)) in on_disk and key not in unexamined
-                and store_photos.describes(mtime, size, on_disk[key][1:])
-                and photo_fingerprints.same_picture(vector, on_disk[key][1:]) == photo_fingerprints.STAMPED}
+            found = photo_fingerprints.owed(self.conn, self.model, detector, on_disk)
+        return {paths.key(owed.path): owed.reasons for owed in found.values()}
 
-    def unexamined(self, detector, on_disk):
-        """The paths.key of each photo of `on_disk` ({key: ...}) never examined for faces by `detector` (a
-        faces_detected name: faces.detector_of): no face row and no record of it (faces_detected.unexamined). Empty when
-        not connected."""
+    def current(self, on_disk, owed):
+        """The paths.key of each photo of `on_disk` ({key: (path, mtime, size)}: the files as they are) whose row
+        describes its file (store.photos.describes: the one answer sync gives too) and that is not among `owed` (the owed
+        method's: work the index owes it). [] when not connected."""
         if self.conn is None:
             return set()
         with self._read_lock:
-            ids = faces_detected.unexamined(self.conn, detector)
-            rows = store_photos.stamps(self.conn) if ids else []
-        return {key for photo_id, path, _mtime, _size in rows if photo_id in ids and (key := paths.key(path)) in on_disk}
+            rows = store_photos.stamps(self.conn)
+        return {key for photo_id, path, mtime, size in rows
+                if (key := paths.key(path)) in on_disk and key not in owed
+                and store_photos.describes(mtime, size, on_disk[key][1:])}
 
     def _load_unlocked(self, vectors=True) -> bool:
         try:

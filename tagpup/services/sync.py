@@ -20,11 +20,13 @@ folder scan's rule), and sorts what differs:
   reported as ambiguous, never guessed, and the folders of its files are not queued.
   What that leaves is matched by the DocumentID (or, renamed in its folder by TagPup,
   the PreservedFileName) read from those new files alone (relink_photos.claims_of, pair);
-- pictures to check -- a file whose photo vector's stamp no longer describes it (photo_fingerprints.same_picture,
-  the one rule; owner, DECISIONS 2026-10-27), whether or not its row does (a row an earlier sync re-read keeps the
-  vector's old stamp): its folder is queued for the index as a new file's is (`to_check`), and the index tells a
-  metadata write (the same picture: the vector kept) from an edited picture (computed again). Sync decodes nothing
-  and leaves the vector and the faces as they are;
+- work the index owes -- a photo with no vector under the library's photo model, one whose vector's stamp no longer
+  describes its file (photo_fingerprints.same_picture, the one rule; owner, DECISIONS 2026-10-27), whether or not its
+  row does (a row an earlier sync re-read keeps the vector's old stamp), and one never examined for faces by the
+  library's detector: photo_fingerprints.owed, the one answer the index asks too. Its folder is queued for the index
+  as a new file's is (`to_check`, counted by reason: `owed_no_vector`, `owed_stale`, `owed_unexamined`), and the index
+  tells a metadata write (the same picture: the vector kept) from an edited picture (computed again). Sync decodes
+  nothing and leaves the vector and the faces as they are;
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
   removed. A folder renamed in Explorer looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
@@ -58,6 +60,7 @@ changed, and whether it left the library in step -- nothing new, changed or move
 over and no folder left unlooked at; missing files do not count against it -- which is the
 pages' "last in step".
 """
+import collections
 import logging
 import os
 import threading
@@ -66,6 +69,7 @@ import time
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images, shares
+from tagpup.services import faces as face_records
 from tagpup.services import maintenance, refresh_rows, relink_photos, settings
 from tagpup.services import roots as roots_service
 from tagpup.store import db, generations, job_runs, photo_fingerprints, schema
@@ -164,20 +168,16 @@ def watch_states(folders):
     return {paths.key(folder): shares.folder_state(folder) for folder in folders}
 
 
-def _scan(conn, folder, roots, library_folders, vectors=None):
+def _scan(conn, folder, roots, library_folders):
     """What is on disk against the rows: (by_key {key: (id, path, mtime, size)} of the rows
     looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there,
-    those that did not answer, those under them that would not list, and {key: the (mtime, size) of its photo vector}
-    of the rows holding one under the key `vectors`; {} without).
+    those that did not answer, and those under them that would not list).
     The whole library walks every root and every folder of the library's
     (`library_folders`, tagpup.store.folders: those with rows, and those added), each once
     from the topmost; a folder, that folder alone. Each is asked through shares.folder_state."""
-    by_key, vector_of = {}, {}
-    for photo_id, path, mtime, size, *vector in store_photos.stamps(conn, folder, vector_stamps=vectors):
-        key = paths.key(path)
-        by_key.setdefault(key, (photo_id, path, mtime, size))
-        if vector and vector[0] is not None:
-            vector_of.setdefault(key, vector[0])
+    by_key = {}
+    for photo_id, path, mtime, size in store_photos.stamps(conn, folder):
+        by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
     walked = [paths.stored(folder)] if folder else walk_roots(set(roots) | set(library_folders.walked()))
     on_disk, gone, unanswered, unlisted = {}, [], [], []
     for root in walked:
@@ -188,7 +188,7 @@ def _scan(conn, folder, roots, library_folders, vectors=None):
             gone.append(root)
         else:
             unanswered.append(root)
-    return by_key, on_disk, walked, gone, unanswered, unlisted, vector_of
+    return by_key, on_disk, walked, gone, unanswered, unlisted
 
 
 def _unseen(by_key, on_disk, not_looked_at):
@@ -331,8 +331,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         library_folders = store_folders.of(conn, list(ignored_by_key.values()))
-        by_key, on_disk, walked, roots_gone, unanswered, unlisted, vector_of = _scan(
-            conn, folder, roots, library_folders, settings.photo_key_on(conn))
+        by_key, on_disk, walked, roots_gone, unanswered, unlisted = _scan(conn, folder, roots, library_folders)
         if (folder is not None and not by_key and not library_folders.holds(folder)
                 and not _under_any(folder, {paths.key(r): r for r in roots})):
             return maintenance.Plan(refused=(
@@ -341,7 +340,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
 
         not_looked_at = unanswered + unlisted
         missing, unseen = _unseen(by_key, on_disk, not_looked_at)
-        changed, never_stamped, to_check = {}, 0, {}
+        changed, never_stamped = {}, 0
         for key, (photo_id, path, mtime, size) in by_key.items():
             stamp = on_disk.get(key)
             if stamp is None:
@@ -349,9 +348,13 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
             if not store_photos.describes(mtime, size, stamp[1:]):
                 changed[path] = photo_id
                 never_stamped += mtime is None or size is None
-            if key in vector_of and (photo_fingerprints.same_picture(vector_of[key], stamp[1:])
-                                     != photo_fingerprints.STAMPED):
-                to_check[stamp[0]] = photo_id
+        # The work the index owes: the one answer the index asks too (photo_fingerprints.owed). Nothing decoded.
+        held_settings = settings.on(conn)
+        owed = photo_fingerprints.owed(conn, settings.photo_key_on(conn),
+                                       face_records.detector_named(held_settings.faces, held_settings.detect_max_side),
+                                       on_disk, folder)
+        to_check = {found.path: photo_id for photo_id, found in owed.items()}
+        owed_by = collections.Counter(reason for found in owed.values() for reason in found.reasons)
         new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
 
         # Moved: a missing row whose file turns up among the new ones. A folder alone also
@@ -389,7 +392,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     stops = {paths.key(root) for root in walked + roots}
     queued, review, ignored_files, held_back, outside = _sort_new(
         new, by_key, stops, ignored_by_key, ambiguous_files, {paths.key(r): r for r in roots}, library_folders)
-    # A picture to check is the index's, queued with its folder as a new file is; a folder held back (a file in it may
+    # Work the index owes is the index's, queued with its folder as a new file is; a folder held back (a file in it may
     # be a copy of a missing photo) is not indexed until that is settled.
     to_index = {paths.key(f): f for f in queued}
     held = {paths.key(f) for f in held_back}
@@ -408,7 +411,10 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "review_folders": len(review), "review_photos": sum(review.values()),
                 "ignored_files": ignored_files, "outside_roots_files": outside,
                 "changed": len(changed), "never_stamped": never_stamped, "to_write": len(to_write),
-                "to_check": len(to_check),
+                "to_check": len(to_check), "owed_no_vector": owed_by[photo_fingerprints.NO_VECTOR],
+                "owed_stale": owed_by[photo_fingerprints.STALE], "owed_unexamined": owed_by[photo_fingerprints.UNEXAMINED],
+                "owed_folders": len({paths.key(os.path.dirname(path)) for path in to_check}),
+                "owed_held_back": len({paths.key(os.path.dirname(path)) for path in to_check} & held),
                 "fields": dict(fields.most_common()), "unreadable": len(unreadable),
                 "moved": len(moves), "moved_faces": sum(m["faces"] for m in moves),
                 "moved_named": sum(m["named"] for m in moves), "moved_changed": moved_changed,
@@ -441,7 +447,7 @@ def review(library, roots=(), ignored=()):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         library_folders = store_folders.of(conn, [paths.stored(f) for f in ignored])
-        by_key, on_disk, walked, _gone, unanswered, unlisted, _vectors = _scan(conn, None, roots, library_folders)
+        by_key, on_disk, walked, _gone, unanswered, unlisted = _scan(conn, None, roots, library_folders)
         missing, _unseen_ids = _unseen(by_key, on_disk, unanswered + unlisted)
         new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
         ambiguous_files = set()

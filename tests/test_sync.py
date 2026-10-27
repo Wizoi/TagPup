@@ -93,10 +93,10 @@ class SyncTestCase(unittest.TestCase):
         return path
 
     def indexed(self, *photo_paths):
-        """Rows for the photos, as the indexer records a read of each."""
+        """Rows for the photos, as a whole index leaves each: read, its vector kept, looked at for faces."""
         conn = db.connect(self.db_path)
         try:
-            ids = [photo_rows.add_read(conn, path, self.truth[os.path.basename(path)]) for path in photo_paths]
+            ids = [photo_rows.add_indexed(conn, path, self.truth[os.path.basename(path)]) for path in photo_paths]
             conn.commit()
         finally:
             conn.close()
