@@ -22,10 +22,7 @@ other tools recognise them.
 RAW file and every JPEG derived from it, which is exactly what makes it useful for
 grouping and useless for telling two files apart.
 """
-import logging
 import uuid
-
-logger = logging.getLogger("tagpup_cli.identity")
 
 #: Where the identity lives. The short spelling is what ExifTool returns in a
 #: metadata dict; the long one is what it must be written as.
@@ -40,62 +37,3 @@ def mint_document_id():
     """
     return "xmp.did:%s" % uuid.uuid4()
 
-
-#: Keyword fields a forced write carries as they hold, and checks afterwards. If one of
-#: these changes, the write cost the photo something it will not get back.
-KEYWORD_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject")
-
-
-def _keywords(et, path):
-    """The photo's keyword fields as they stand, for comparison."""
-    try:
-        found = et.get_tags([path], tags=list(KEYWORD_FIELDS))[0]
-    except Exception:
-        return None
-    snapshot = {}
-    for field in KEYWORD_FIELDS:
-        value = found.get(field)
-        if isinstance(value, str):
-            value = [value]
-        snapshot[field] = list(value) if value else []
-    return snapshot
-
-
-#: How ExifTool marks an error `-m` lets it write past.
-MINOR = "[minor]"
-
-
-def is_minor_refusal(error):
-    """Did ExifTool refuse a write for an error it calls minor (its message holds
-    "[minor]", on stderr)? Not a timeout, a locked file, a file it cannot read."""
-    stderr = getattr(error, "stderr", None)
-    if isinstance(stderr, bytes):
-        stderr = stderr.decode("utf-8", "replace")
-    return MINOR in ("%s %s" % (stderr or "", error)).lower()
-
-
-def tolerating_minor_errors(et, path, write, written=()):
-    """Make a write that sets or takes away a photo's identity -- `write(extra_params,
-    keep)`, one ExifTool command, with whatever else it writes (tagpup.files.field_values)
-    -- and when ExifTool refuses it for an error it calls minor, and only then, make it
-    again with `-m`. `-m` rewrites the photo's XMP, so the keyword fields the write does
-    not set (`written`: the fields it sets, as ExifTool answers them) go in that same
-    command as `keep`, with the values they hold: one command, as the file journal
-    records it; they were put back afterwards in a second, unrecorded one. Any other
-    failure -- a timeout, a locked file -- is raised as it is, and so is the refusal when
-    the keyword fields cannot be read to carry: a read that fails is not a photo with no
-    keywords, and nothing is forced. Raises when the write is not made."""
-    try:
-        write([], {})
-    except Exception as error:
-        if not is_minor_refusal(error):
-            raise
-        before = _keywords(et, path)
-        if before is None:
-            raise
-        keep = {field: values for field, values in before.items() if values and field not in written}
-        write(["-m"], keep)
-        after = _keywords(et, path)
-        lost = sorted(field for field, values in keep.items() if after is not None and after.get(field) != values)
-        if lost:
-            logger.error("Writing %s past a minor error left %s other than it held", path, ", ".join(lost))

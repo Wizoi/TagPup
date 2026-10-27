@@ -38,6 +38,14 @@ MIME_TYPE = "File:MIMEType"
 #: Photos read in one ExifTool command.
 READ_BATCH = 200
 
+#: The options of every write: ExifTool told that an objection it calls minor does not stop the write (#2009). A photo
+#: whose XMP holds descriptions under two rdf:about attributes (a phone's Extended XMP beside another program's packet)
+#: is refused without it, and written with it, each description under the first about and nothing else changed; a
+#: corrupt packet is refused with it as without it, and its warnings of a field not written (NOT_WRITTEN) are the same.
+#: It also stops ExifTool cutting an IPTC value to IPTC's length, so a write cuts it first (fields.as_written). Never on
+#: a read: it changes what ExifTool answers (DECISIONS 2026-10-27).
+WRITE_OPTIONS = ("-m", "-overwrite_original")
+
 class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
 
@@ -162,9 +170,8 @@ def read_one(et, photo_path, wanted):
 
 def write(et, photo_path, values):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
-    field whose value is empty. A write of the photo's identity that ExifTool refuses is
-    made again telling it an objection to the photo's XMP is minor, and checked to have
-    cost the keywords nothing (tagpup.files.identity.tolerating_minor_errors). Raises
+    field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
+    with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
     when ExifTool fails. Nothing beside the photo is deleted, a temporary file ExifTool left included: one ExifTool
     fails after deleting the original is the photo's only copy (#1410).
 
@@ -179,7 +186,7 @@ def write(et, photo_path, values):
                          "does not" % own[0])
     params, clear = {}, []
     for field, value in values.items():
-        texts = fields.field_values(value)
+        texts = fields.as_written(field, value)
         named = fields.WRITTEN_AS.get(field, field)
         if fields.is_struct(field) and len(texts) > 1:
             raise ValueError("%s is one structure, one text, not %d" % (field, len(texts)))
@@ -189,22 +196,11 @@ def write(et, photo_path, values):
             params[named] = list(texts)
         else:
             params[named] = texts[0]
-
-    def command(extra, keep):
-        # `keep`: fields the write does not set, written as they hold in the same command
-        # when it is forced (identity.tolerating_minor_errors).
-        tags = dict(params)
-        tags.update(keep)
-        if tags:
-            # The clears go before the values, in the same command.
-            et.set_tags([photo_path], tags=tags, params=list(extra) + ["-overwrite_original"] + clear)
-        elif clear:
-            et.execute(*extra, *clear, "-overwrite_original", photo_path)
-
-    if identity.DOCUMENT_ID_FIELD in values:
-        identity.tolerating_minor_errors(et, photo_path, command, written=[fields.read_key(f) for f in values])
-    else:
-        command([], {})
+    if params:
+        # The clears go before the values, in the same command.
+        et.set_tags([photo_path], tags=params, params=list(WRITE_OPTIONS) + clear)
+    elif clear:
+        et.execute(*clear, *WRITE_OPTIONS, photo_path)
     if own or any(fields.is_struct(field) for field in values):
         # A write that reported what it attempted: the file holds less than it was given (#1881).
         dropped = [line.strip() for line in exiftool_session.unnamed(et.last_stderr, [photo_path]).splitlines()
@@ -220,9 +216,8 @@ def ensure_document_id(et, path, metadata=None):
     that has an identity -- costs nothing beyond a dictionary lookup. Only a photo
     without one is written to, through write(): the one writer of a photo's fields.
 
-    The write is one command, made again with `-m` only when ExifTool refuses it for an
-    error it calls minor -- a photo with two XMP blocks -- carrying the keywords as they
-    hold (identity.tolerating_minor_errors); a lock or a timeout leaves the photo as it was.
+    The write is one command, as every write is (write: an objection ExifTool calls minor does not stop it); a lock
+    or a timeout leaves the photo as it was.
     A failure to write is logged and swallowed: an identity is an improvement on
     knowing the path, and a photo that cannot take one is still perfectly indexable.
     Returns None in that case, which every caller must treat as "no identity", not as
