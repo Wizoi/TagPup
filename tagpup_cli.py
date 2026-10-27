@@ -1264,8 +1264,8 @@ def _stop_after_this_photo(what="photo"):
 def _folder_lines(number, found, reveal, apply_):
     """What `face-pass` says of one folder: counts, and its path and ids only with --reveal."""
     lines = ["Folder %d%s:%s" % (number, " " + found.folder if reveal else "", " (stopped here)" if found.stopped else ""),
-             "  %d photo(s) looked at, %d done before, %d turned (skipped), %d with no face found (%s), %d failed"
-             % (found.looked, found.done, found.skipped, found.none_found,
+             "  %d photo(s) looked at, %d done before, %d with no face found (%s), %d failed"
+             % (found.looked, found.done, found.none_found,
                 "recorded as looked at" if apply_ else "--apply records them as looked at", len(found.failed)),
              "  %d old face(s) given the new vector, %d new face(s) (unnamed), %d detection(s) too small to make a new face,"
              " %d old face(s) unmatched (listed for review, untouched)"
@@ -1531,6 +1531,12 @@ def _baked_lines(baked, reveal):
     return lines
 
 
+def _bake_written(written, changes):
+    """The sentence ending a bake's totals: the files `written` and the `changes` of the journal they are in."""
+    return "Written: %d file(s) in %d change(s)%s." % (written, len(changes),
+                                                       " (%s)" % ", ".join(map(str, changes)) if changes else "")
+
+
 def _bake(library, exiftool_path, detector, directories, reveal, verbose, say):
     """`bake-photos --apply`: baking_report.apply, saying each folder as it is written and the run's totals last; exit
     status 1 on a stop, a stall, a refusal, a conflict, a failure, or a photo whose file could not be reached or read (an
@@ -1567,8 +1573,7 @@ def _bake(library, exiftool_path, detector, directories, reveal, verbose, say):
                                    if run.stopped or run.stalled or run.refused or run.interrupted else ""))
     for line in _bake_lines(total, hints=True) + _baked_lines(total, False)[1:]:
         say(line)
-    say("  Written: %d file(s) in %d change(s)%s." % (total.written, len(changes),
-                                                      " (%s)" % ", ".join(map(str, changes)) if changes else ""))
+    say("  " + _bake_written(total.written, changes))
     if run.snapshot is not None:
         details = run.snapshot.details
         say("  Snapshot before the first write: %s." % (

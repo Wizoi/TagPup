@@ -36,6 +36,7 @@ from test_a_bake_is_rehearsed_folder_by_folder import DETECTOR, ALibraryToBake  
 
 import tagpup_web  # noqa: E402
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
+import tagpup_cli  # noqa: E402
 from tagpup import launcher, runtime  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -306,7 +307,7 @@ class ABakeBesideTheOtherPrograms(Waits, ALibraryToBake):
         (change,) = [change for (change,) in self.rows("SELECT id FROM changes WHERE operation = ?", (baking.OPERATION,))]
         self.assertEqual([("done",)] * 3, self.rows("SELECT state FROM change_files WHERE change_id = ?", (change,)),
                          "the change applied whole")
-        self.assertIn("Written: 3 file(s), change %d." % change, self.said(out))
+        self.assertIn(tagpup_cli._bake_written(3, [change]), self.said(out))
         self.whole(trip, ["bake"])
 
     def test_two_bakes_at_once_bake_each_photo_once_and_the_second_leaves_the_firsts_change(self):
@@ -324,9 +325,11 @@ class ABakeBesideTheOtherPrograms(Waits, ALibraryToBake):
         open(go, "w").close()
         self.assertEqual(0, first.wait(timeout=120), self.said(first_out))
         self.whole(trip, ["first", "second"])
-        self.assertIn("Written: 1 file(s), change %d." % change, self.said(first_out),
+        self.assertIn(tagpup_cli._bake_written(1, [change]), self.said(first_out),
                       "the first says the one file it wrote, not the two the second wrote since its plan")
-        self.assertIn("Written: 2 file(s), change", self.said(second_out))
+        (other,) = [each for (each,) in self.rows("SELECT id FROM changes WHERE operation = ?", (baking.OPERATION,))
+                    if each != change]
+        self.assertIn(tagpup_cli._bake_written(2, [other]), self.said(second_out))
 
     def three_to_bake(self):
         os.makedirs(os.path.join(self.folder, "Trip"), exist_ok=True)

@@ -1,7 +1,7 @@
 """docs/findings.md, #791: faces on the open photo, in TagPup's Organize -- what the server gives and takes.
 
-The page draws a box over each face from `/api/photo-faces` (which now says the pixel size the boxes are
-in and whether the photo is stored turned), suggests people from `/api/face-matches` and names, takes a
+The page draws a box over each face from `/api/photo-faces` (which says the pixel size the boxes are
+in, and each box on the picture as it is shown, turned by its Orientation), suggests people from `/api/face-matches` and names, takes a
 name off or rules out a face through TagTuner's own views of one face (`/api/face/match`, `/api/face/unmatch`,
 `/api/faces/exclude`), served by TagPup too. The photo's tag is written by the page's own save of its
 keywords; these tests stand in for that with the index record a save leaves (photos.record_tags), and check
@@ -11,6 +11,7 @@ tests/test_faces_and_tags_in_step.py); ExifTool is a table of files, for the wri
 Rows are made as the code that makes them makes them: the photo by the indexer's record (tests/photo_rows.py),
 the tree by tagpup.store.taxonomy, the faces by tagpup.store.faces.
 """
+import io
 import json
 import math
 import os
@@ -122,24 +123,10 @@ class WhatTheBoxesAreDrawnOn(Case):
         self.face(photo, box=(1000, 500, 1400, 900))
         answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
         self.assertEqual([4000, 3000], answer["size"])
-        self.assertFalse(answer["turned"])
+        self.assertEqual([4000, 3000], answer["shown_size"])
         self.assertEqual([1000, 500, 1400, 900], answer["faces"][0]["box"])
-
-    def test_a_photo_stored_turned_says_so_for_the_page_to_say_its_boxes_may_be_off(self):
-        # The known limit: boxes are in the stored pixels and the picture is shown turned, so a box
-        # does not sit on its face until the tabled orientation redesign (docs/ARCHITECTURE.md).
-        for orientation in (2, 3, 6, 8):
-            with self.subTest(orientation):
-                photo = self.photo("turned_%d.jpg" % orientation, orientation=orientation, size=(60, 40))
-                self.face(photo)
-                answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
-                self.assertTrue(answer["turned"])
-                self.assertEqual([60, 40], answer["size"], "the size is the stored pixels', not the turned picture's")
-
-    def test_an_upright_photo_is_not_turned(self):
-        photo = self.photo("upright.jpg", orientation=1)
-        self.face(photo)
-        self.assertFalse(self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()["turned"])
+        self.assertEqual([1000, 500, 1400, 900], answer["faces"][0]["shown_box"])
+        self.assertNotIn("turned", answer)
 
     def test_a_file_that_cannot_be_read_has_no_size_and_so_no_box(self):
         photo = self.photo("gone_001.jpg")
@@ -147,12 +134,68 @@ class WhatTheBoxesAreDrawnOn(Case):
         os.remove(photo)
         answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
         self.assertIsNone(answer["size"])
+        self.assertIsNone(answer["shown_size"])
+        self.assertIsNone(answer["faces"][0]["shown_box"])
         self.assertEqual(1, len(answer["faces"]), "the faces are still there, to be named")
 
     def test_a_photo_with_no_faces_has_none_to_box(self):
         photo = self.photo("empty_001.jpg")
         answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
         self.assertEqual([], answer["faces"])
+
+
+class ABoxSitsOnItsFaceInATurnedPhoto(Case):
+    """A phone photo stored sideways (EXIF Orientation 6), and every other Orientation, mirrored ones too: its faces were
+    found and kept in the stored pixels, and the page shows the picture upright (/api/photo-file, as the page asks for it).
+    Each face's box the page draws (`shown_box` in `shown_size`) covers that face on the picture the page is served --
+    before, the page drew the stored box over the upright picture, beside the faces, and said the photo was turned."""
+
+    STORED = (80, 48)
+    FACES = ([8, 6, 24, 18], [52, 28, 72, 42])   # two bright blocks, the faces, in the stored pixels
+
+    def turned_photo(self, name, value, fmt="JPEG"):
+        photo_path = os.path.join(self.folder, name)
+        os.makedirs(self.folder, exist_ok=True)
+        picture = Image.new("RGB", self.STORED, (0, 0, 0))
+        for block in self.FACES:
+            picture.paste((255, 255, 255), tuple(block))
+        exif = Image.Exif()
+        exif[0x0112] = value
+        picture.save(photo_path, fmt, exif=exif.tobytes(), **({"quality": 100} if fmt == "JPEG" else {}))
+        db.write_with_connection(self.path, lambda conn: photo_rows.add_read(conn, photo_path, {"XMP:Subject": []}))
+        for block in self.FACES:
+            self.face(photo_path, box=block)
+        return photo_path
+
+    def served(self, photo_path):
+        """The picture the page shows: what it asks /api/photo-file for (web/tagpup/photo.js photoFileUrl)."""
+        reply = self.client.get("/library/api/photo-file", query_string={"path": photo_path, "size": 800})
+        self.assertEqual(200, reply.status_code)
+        return Image.open(io.BytesIO(reply.data)).convert("L")
+
+    def test_each_box_covers_its_face_on_the_picture_as_shown(self):
+        for value in range(1, 9):
+            with self.subTest(orientation=value):
+                photo = self.turned_photo("phone_%d.jpg" % value, value)
+                answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+                shown = self.served(photo)
+                self.assertEqual(list(shown.size), answer["shown_size"])
+                self.assertEqual(list(self.STORED), answer["size"], "the stored size stays, for TagTuner")
+                self.assertEqual(sorted(self.FACES), sorted(face["box"] for face in answer["faces"]))
+                for face in answer["faces"]:
+                    x1, y1, x2, y2 = face["shown_box"]
+                    inside = shown.crop((x1 + 2, y1 + 2, x2 - 2, y2 - 2))
+                    self.assertGreater(inside.getextrema()[0], 200, "the box %s is not on its face" % face["shown_box"])
+                    bright = shown.point(lambda level: 255 if level > 128 else 0).crop((x1 - 2, y1 - 2, x2 + 2, y2 + 2))
+                    self.assertEqual((2, 2, 2 + x2 - x1, 2 + y2 - y1), bright.getbbox(), "the box is the face, no more")
+
+    def test_a_tiff_is_shown_as_its_boxes_are_kept(self):
+        # Pillow turns a TIFF by its Orientation as it loads it, so its boxes are kept on the picture as shown already.
+        photo = self.turned_photo("scan.tif", 6, fmt="TIFF")
+        answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+        self.assertEqual(answer["size"], answer["shown_size"])
+        for face in answer["faces"]:
+            self.assertEqual(face["box"], face["shown_box"])
 
 
 class TheFileIsLookedAtOnceAndNotForeverOnAShare(Case):
@@ -179,7 +222,7 @@ class TheFileIsLookedAtOnceAndNotForeverOnAShare(Case):
             answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
             details = self.tuner().get("/library/api/photo-details", query_string={"path": photo}).get_json()
         self.assertIsNone(answer["size"])
-        self.assertFalse(answer["turned"])
+        self.assertIsNone(answer["faces"][0]["shown_box"])
         self.assertEqual(1, len(answer["faces"]), "the faces are still there, to be named")
         self.assertIsNone(details["size"])
         self.assertTrue(asked.called)

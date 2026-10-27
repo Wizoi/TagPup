@@ -230,7 +230,7 @@ def census(library, deep=False, report=print):
     """The photos of `library` a measurement may draw from, and the counts behind them, read-only:
     (rows, counts). Each row {"id", "path", "faces", "megapixels", "turned", "folder"}: a photo whose file is
     there and whose header reads, with the faces it has in play (a named face, or an unnamed one not excluded:
-    services.identify.photos_waiting) and its size (services.photos.box_shape: "turned" is an Orientation of 2 to
+    services.identify.photos_waiting) and its size (services.photos.box_shape; "turned" is its `turn`, an Orientation, of 2 to
     8). The counts say how many photos are gone, not looked at (a share that did not answer), fail to open
     (with `deep`: services.inspect.files_that_fail_to_open, which reads each file's end and header), and have no
     readable header. `path` is for the copy alone and never written into a measurement's output."""
@@ -258,7 +258,7 @@ def census(library, deep=False, report=print):
             continue
         width, height = shape["size"]
         rows.append({"id": photo_id, "path": path, "faces": in_play.get(paths.key(path), 0),
-                     "megapixels": width * height / 1e6, "turned": shape["turned"],
+                     "megapixels": width * height / 1e6, "turned": shape["turn"] != 1,
                      "folder": paths.key(os.path.dirname(path))})
         if number % 5000 == 0:
             report("  %d of %d headers read" % (number, len(held)))

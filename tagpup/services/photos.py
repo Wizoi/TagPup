@@ -232,14 +232,14 @@ SHAPE_AWAY = 30.0
 def box_shape(photo_path):
     """What a page needs to draw a face's box over the photo: {"size": [width, height] of the
     pixels the boxes are in (the file as stored; images.shown_shape), or None when the file
-    cannot be read -- no size, no box, rather than a box on the wrong face (#787) --, "turned":
-    does the file declare an Orientation (2 to 8) that the picture is shown by, so that a box
-    drawn over it in the stored pixels is not where the face is. Only the header is read, once (a
-    TIFF is decoded, and its boxes turn with it: never "turned"). On a network share or drive the look is
+    cannot be read -- no size, no box, rather than a box on the wrong face (#787) --, "turn": the
+    Orientation (orientation.boxes_turn) the boxes are turned by onto the picture as shown. Only the
+    header is read, once (a TIFF is decoded, and its boxes turn with
+    it: its turn is always 1). On a network share or drive the look is
     bounded (tagpup.files.shares.bounded): a share that does not answer in a second gives no size
     and no box, and is not asked again for a while, never a request stalled for as long as Windows
     waits (#836)."""
-    none = {"size": None, "turned": False}
+    none = {"size": None, "turn": 1}
     if shares.on_a_network_drive(photo_path):
         state, shape = shares.bounded(photo_path, lambda: images.shown_shape(photo_path), SHAPE_WAIT, SHAPE_AWAY)
     else:
@@ -256,7 +256,7 @@ def box_shape(photo_path):
     width, height, _oriented, turn = shape
     if width <= 0 or height <= 0:
         return none
-    return {"size": [width, height], "turned": turn != 1}
+    return {"size": [width, height], "turn": turn}
 
 
 def face_crop(library, face_id):

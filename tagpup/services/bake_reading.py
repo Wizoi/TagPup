@@ -69,18 +69,17 @@ def taken(found, meta, fingerprint, picture, *, photo_key, face_key):
     # face side from the bake, so the photo's detection is worked out, or fails, exactly as it does without a bake.
     if (face_key is not None and found.face_model == face_key and picture is not None
             and not getattr(picture, "failed", False)):
-        detected = detections(found, picture.stored)
+        detected = detections(found, picture)
     return Taken(vector, detected, READ if vector is not None or detected is not None else OTHER_MODELS)
 
 
-def detections(found, stored):
+def detections(found, picture):
     """The faces of the bake `found` as a detection gives them: each region turned from the upright picture it was made
-    against into `stored`, the picture as stored the face model's decode made (images.opened), by the turn that decode
-    read (images.BOXES_TURN_INFO, orientation.boxes_turn: an XMP tiff:Orientation counts, a TIFF's is 1) -- with its
-    vector and no score."""
-    turn = stored.info[images.BOXES_TURN_INFO]
-    width, height = stored.size
-    return [{"box": orientation.to_stored(face.area, *found.applied, turn, width, height),
+    against into the picture as stored, the box a detection keeps, by what the face model's `picture` read of the photo
+    (tagpup.ml.scrfd_adaface.ScrfdPicture: `turn`, images.BOXES_TURN_INFO, orientation.boxes_turn: an XMP
+    tiff:Orientation counts, a TIFF's is 1; `stored_size`) -- with its vector and no score."""
+    width, height = picture.stored_size
+    return [{"box": orientation.to_stored(face.area, *found.applied, picture.turn, width, height),
              "embedding": face.vector.tolist(), "prob": None} for face in found.faces]
 
 

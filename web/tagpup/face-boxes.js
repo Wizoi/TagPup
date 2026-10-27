@@ -27,11 +27,10 @@
 // open (#859): one surface at a time, the zoom's while it covers the window, with the icon to turn the boxes on and off. A panel
 // open over the picture goes before the zoom does (Escape, or a click on the backdrop).
 //
-// The boxes are in the stored pixels of the file and are placed by the one geometry both pages share
-// (boxInContainedImage). A photo stored turned (EXIF Orientation 2 to 8) is shown turned, and its boxes
-// are not: they are drawn where the stored pixels put them, which is not where the faces are, until the
-// orientation redesign (the panel says so). Never in a folder the library does not hold ("Just look"): no
-// faces are recorded there, and the icon is not offered.
+// The boxes are drawn on the picture as it is shown: each face's `shown_box` in `shown_size`, which the server turns from
+// the stored pixels by the photo's Orientation (tagpup.core.orientation; the page holds no copy of that table), placed by
+// the one geometry both pages share (boxInContainedImage). No size (a file that was not read): no box. Never in a folder
+// the library does not hold ("Just look"): no faces are recorded there, and the icon is not offered.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { boxInContainedImage, onImageZoomChange, onImageZoomDismiss, zoomLayer, zoomedPicture } from './common/image-zoom.js';
@@ -104,8 +103,7 @@ export function showPhotoFaces(photoPath, data) {
     const samePhoto = box.path !== null && samePath(box.path, photoPath);
     box.path = photoPath;
     box.faces = faces;
-    box.size = (data && Array.isArray(data.size) && data.size.length === 2) ? data.size : null;
-    box.turned = Boolean(data && data.turned);
+    box.size = (data && Array.isArray(data.shown_size) && data.shown_size.length === 2) ? data.shown_size : null;
     if (!samePhoto) {
         box.matches = {};
         box.open = null;
@@ -122,7 +120,6 @@ export function clearPhotoFaces() {
     box.path = null;
     box.faces = [];
     box.size = null;
-    box.turned = false;
     box.open = null;
     box.matches = {};
     box.busy = false;
@@ -187,7 +184,7 @@ export function redrawFaceBoxes() {
     if (box.shown) {
         const natural = box.size ? { width: box.size[0], height: box.size[1] } : null;
         for (const face of faces) {
-            const placed = natural ? boxInContainedImage(natural, area, face.box) : null;
+            const placed = natural && face.shown_box ? boxInContainedImage(natural, area, face.shown_box) : null;
             if (placed) children.push(faceBox(face, placed, faces));
         }
         if (box.open !== null && faceById(box.open) && !faceById(box.open).excluded) children.push(facePanel(faceById(box.open)));
@@ -311,13 +308,6 @@ function facePanel(face) {
     close.addEventListener('click', () => closeFacePanel());
     heading.append(close);
     panel.append(heading);
-
-    if (box.turned) {
-        panel.append(buildElement('p', {
-            className: 'face-panel-note', attrs: { role: 'note' },
-            text: 'This photo is stored turned, and the box is placed by its stored pixels: it may not sit on the face.',
-        }));
-    }
 
     // Who it looks like.
     panel.append(buildElement('div', { className: 'face-panel-section', text: 'Looks like' }));
