@@ -44,7 +44,7 @@ written from the row (journaled, one change per folder). Both current -> nothing
 12. **An update is installed mid-run.** The drain waits for the index's folder; nothing half-written. `test_server_drain`, `test_one_library_three_programs` (I2/I3); cut 2.
 13. **I delete a face.** The next index writes the file from the index; the face does not come back. `test_a_bake_is_planned_from_the_library.py`; cut 2 (rule: the file gives to the row only where the row has no current copy).
 14. **A bake is not an operation I undo.** A bake stamps the index's values on the file; if the index later changes (a face deleted, a keyword, a rotation), the next index bakes the correct values over it. History lists no bake and offers no undo of one. `test_undo_after_every_later_kind` (D2) loses its bake rows; cut 2.
-15. **I install this version with the backlog still open** (59k / 1.6k / 1.3k unbaked, about 223 never-examined photos, the 74 stuck, the 30 Pixel JPEGs, the 3 cleared-XMP photos). Sync and the index bring every library in step on their own, paced, resumable, the card taken one turn at a time; I run no command and see progress in Activity. NEW, in the cut-1 scenario file; cut 3.
+15. **I install this version with the backlog still open** (59k / 1.6k / 1.3k unbaked, about 223 never-examined photos, the 74 stuck, the 30 Pixel JPEGs, the 3 cleared-XMP photos). Sync and the index bring every library in step on their own, paced, resumable, the card taken one turn at a time; I run no command and see progress in Activity. NEW, in the cut-1 scenario file; cut 2.
 16. **The model changes.** Old-key bakes count as other models; vectors computed and files re-baked (decision below). `test_switching_a_librarys_photo_model.py` (V12); cut 2.
 
 ## Cuts (each <= 1,200 lines, one concern, trunk whole after each)
@@ -52,9 +52,9 @@ written from the row (journaled, one change per folder). Both current -> nothing
 1. **The fingerprint is a vector's currency (~350).** `same_picture`; `search.current` also checks the vector; the indexer keeps and restamps on a matching fingerprint with no GPU; sync queues a changed file whose vector stamp no longer describes it (same path new files take); `plan_photo` compares keys + fingerprint. Deletes `CHANGED`, `size_changed`, sync's "left as they are / fix by hand" paragraph. Fixes the 74 and the three photos. Reviewers: Files, Data. Also (owner, 2026-10-27): a photo with no `faces_detected` record for the current face model is work for the indexer (faces detected on the picture as shown, vectors kept); this finds the 223 turned photos of photo_index (counted 2026-10-27: Orientation 6 x216, 8 x6, 3 x1) and, later, every photo after a face-model switch.
 2. **The indexer writes the bake (~600).** After each folder's batch is recorded and the card turn is released, every photo `plan_photo` marks ToBake is written through `file_changes.write_fields`, one "bake photos" change per folder; the indexer hands its decode fingerprint and vectors over with no second decode. Reviewers: Files, People, Integration (contract rows 15, 16, 19, 28, 66; drain).
 3. **A client with no GPU (~400).** Per the decision below. Reviewers: Views/AI, Integration.
-5. **DECIDED (owner, 2026-10-27): delete `bake-photos` and `face-pass` after cut 3.**
+4. **Delete `bake-photos`, `face-pass`, `baking_report`'s CLI and the launcher clause (removal only; never over budget).** The one-time catch-up is gone: leftovers are marked by touching the file or setting the vector's stamp to 0, and the ordinary sync does the rest. All owners skim.
 
-Until cut 3 is installed there is nothing for the owner to run. The bake already running may be left or stopped.
+Until cut 2 is installed there is nothing for the owner to run. The bake already running may be left or stopped.
 
 ## Decisions that are the owner's (recommendation first)
 
@@ -62,7 +62,7 @@ Until cut 3 is installed there is nothing for the owner to run. The bake already
 2. **DECIDED (owner, 2026-10-27): a bake is never undone.** It is not an operation: it is the index's values stamped on the file, and a later change is baked over it. No History row, no undo; the crash-safety record a write needs (settling a half-written file at the next start) stays as an internal record, not a change the owner sees. Supersedes PHASE6_DESIGN 6.3 ("journaled and undoable") for bakes written from now on; the 2,908 bake changes already in the three journals stay as they are.
 3. **DECIDED (owner, 2026-10-27): the most recent change wins, and the fingerprint is how a change is told.** A picture that differs is a change of the file; a face deleted in TagPup is a change of the index, newer than the file's bake, so the file is written from the index and the face does not come back. Cut 2 settles how 'newer' is told for an index-side change (the face's change time against the bake's write).
 4. **DECIDED (owner, 2026-10-27): nothing to decide.** A model switch re-embeds every file, and any GPU reindex re-bakes what it computed; the bake follows automatically.
-5. **DECIDED (owner, 2026-10-27): delete `bake-photos` and `face-pass` after cut 3.**
+5. **DECIDED (owner, 2026-10-27): delete `bake-photos` and `face-pass` once cut 2 is installed (cut 4).**
 
 Low: the indexer's closing line says "worked out on the graphics card" for a processor-made vector (`tagpup_cli.py:512`); fixed in cut 2.
 
