@@ -24,7 +24,7 @@ from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import tagpup_cli  # noqa: E402
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -32,6 +32,7 @@ from tagpup.services import search  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, faces_detected  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
+from tagpup.store import photo_fingerprints  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
 MODEL = "ViT-B-32|openai|cropped|2.0|native"
@@ -123,6 +124,58 @@ class TheStore(Harbour):
         self.assertIn(ids[self.path], faces_detected.unexamined(conn, detector), "another detector's record is not one")
         faces_detected.record(conn, self.path, detector, None, 0)
         self.assertNotIn(ids[self.path], faces_detected.unexamined(conn, detector), "looked at, none found")
+
+
+class TheWorkTheIndexOwes(Harbour):
+    """photo_fingerprints.owed, asked through PhotoIndex.owed: the index's start and sync's look give one answer to which
+    photos the index owes work, and why. Before it, the index asked current() and unexamined() and sync asked the
+    vectors' stamps alone: sync said "In step" over photos the index would have worked on."""
+
+    def setUp(self):
+        super().setUp()
+        self.done = self.photo("done.jpg")
+        self.bare = self.photo("bare.jpg", vector=False)
+        self.edited = self.photo("edited.jpg")
+        self.unlooked = self.photo("unlooked.jpg")
+        with open(self.edited, "ab") as handle:   # written elsewhere after its vector was made
+            handle.write(b"\0")
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("DELETE FROM faces_detected WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
+                         (self.unlooked,))
+            conn.commit()
+        finally:
+            conn.close()
+        self.index = search.PhotoIndex(self.db_path, model=MODEL)
+        self.addCleanup(self.index.close)
+        self.assertTrue(self.index.open())
+        settings = library_settings.of(Library(self.db_path))
+        self.detector = face_service.detector_named(settings.faces, settings.detect_max_side)
+
+    def on_disk(self, *photos):
+        return {paths.key(path): (path, os.stat(path).st_mtime, os.stat(path).st_size) for path in photos}
+
+    def test_each_photo_is_owed_for_its_reasons_and_a_photo_done_is_current(self):
+        on_disk = self.on_disk(self.done, self.bare, self.edited, self.unlooked)
+        owed = self.index.owed(on_disk, self.detector)
+        self.assertEqual({paths.key(self.bare): (photo_fingerprints.NO_VECTOR,),
+                          paths.key(self.edited): (photo_fingerprints.STALE,),
+                          paths.key(self.unlooked): (photo_fingerprints.UNEXAMINED,)}, owed)
+        self.assertEqual({paths.key(self.done)}, self.index.current(on_disk, owed))
+
+    def test_faces_not_asked_owe_no_look_and_a_file_not_on_disk_is_not_asked(self):
+        owed = self.index.owed(self.on_disk(self.done, self.unlooked, self.edited), None)
+        self.assertEqual({paths.key(self.edited): (photo_fingerprints.STALE,)}, owed)
+
+    def test_a_photo_never_looked_at_with_no_vector_owes_both(self):
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("DELETE FROM faces_detected WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (self.bare,))
+            conn.commit()
+        finally:
+            conn.close()
+        owed = self.index.owed(self.on_disk(self.bare), self.detector)
+        self.assertEqual({paths.key(self.bare): (photo_fingerprints.NO_VECTOR, photo_fingerprints.UNEXAMINED)}, owed)
 
 
 class OpeningTheIndex(Harbour):

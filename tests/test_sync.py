@@ -340,11 +340,15 @@ class ChangedFiles(SyncTestCase):
         self.assertEqual(["Events/Invitational", "Weather/Rain"], row[3])
         self.assertEqual([("sync", "applied")], self.query(
             "SELECT operation, status FROM changes WHERE id = ?", (result.details["change"],)))
-        self.assertTrue(sync.last(self.library)["last_run"]["in_step"])
+        # Its vector's stamp is the file's before the edit: the index owes it a look (photo_fingerprints.owed), so the
+        # folder is queued and the library is not in step until the index has settled it.
+        self.assertEqual((1, [path]), (result.details["counts"]["owed_stale"], result.details["reveal"]["to_check"]))
+        self.assertFalse(sync.last(self.library)["last_run"]["in_step"])
 
         again = self.run_sync()
         self.assertEqual([], self.reads.read, "the row describes its file again")
-        self.assertTrue(again.details["in_step"])
+        self.assertEqual((0, 1, False), (again.details["counts"]["changed"], again.details["counts"]["to_check"],
+                                         again.details["in_step"]))
 
 
 class MovedFiles(SyncTestCase):
@@ -561,7 +565,112 @@ class APictureToCheck(SyncTestCase):
                         side_effect=Reads(self.truth).batch_read), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=Reads(self.truth).session):
             said = CliRunner().invoke(cli, ["--db", self.db_path, "sync"])
-        self.assertIn("1 file(s) changed since their photo vector was made: their folders go to the index", said.output)
+        from tagpup_cli import OWED_LINE
+        self.assertIn(OWED_LINE % (1, 1, 0, 1, 0), said.output)
+
+    def said(self):
+        """What the CLI's `sync` (a dry run) tells the owner."""
+        from click.testing import CliRunner
+        from tagpup_cli import cli
+        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
+                        side_effect=Reads(self.truth).batch_read), \
+                mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=Reads(self.truth).session):
+            return CliRunner().invoke(cli, ["--db", self.db_path, "sync"]).output
+
+    def unfinished(self, folder):
+        """Two photos in `folder` an index left part done, as photo_index holds 223 (18 folders, 2026-10-27): one read
+        and looked at for faces with no vector kept, one read with its vector kept and never looked at for faces."""
+        bare, unlooked = self.photo(folder, "IMG_0003.jpg"), self.photo(folder, "IMG_0004.jpg")
+        self.indexed(bare, unlooked)
+        self.query_write("DELETE FROM embeddings WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (bare,))
+        self.query_write("DELETE FROM faces_detected WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (unlooked,))
+        return bare, unlooked
+
+    def query_write(self, sql, params=()):
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute(sql, params)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_a_photo_with_no_vector_and_one_never_examined_are_queued_and_the_owner_is_told_why(self):
+        """A sync said "In step" over 223 never-examined photos of photo_index and two with no vector (2026-10-27): it
+        asked only whether a vector's stamp described its file. Now it asks photo_fingerprints.owed, the index's own
+        answer, and says how many by reason."""
+        regatta = os.path.join(self.pictures, "2025-12 Regatta")
+        os.makedirs(regatta)
+        self.unfinished(regatta)
+        rehearsal = self.run_sync()
+        counts = rehearsal.details["counts"]
+        self.assertEqual((2, 1, 0, 1, 1, 0, False),
+                         (counts["to_check"], counts["owed_no_vector"], counts["owed_stale"], counts["owed_unexamined"],
+                          counts["owed_folders"], counts["owed_held_back"], rehearsal.details["in_step"]))
+        self.assertEqual([], self.reads.read, "nothing read: the rows describe their files")
+
+        asked, queue = self.queue()
+        result = self.run_sync(apply=True, queue=queue)
+        self.assertEqual(([[regatta]], False), (asked, result.details["in_step"]), "its folder goes to the index")
+        self.assertFalse(sync.last(self.library)["last_run"]["in_step"])
+        from tagpup_cli import OWED_LINE
+        said = self.said()
+        self.assertIn(OWED_LINE % (2, 1, 1, 0, 1), said)
+        self.assertNotIn("In step.", said)
+        self.assertNotIn("IMG_000", said, "counts, never a file")
+
+    def test_a_folder_held_back_is_not_queued_for_the_work_owed_in_it_and_the_owner_is_told(self):
+        regatta = os.path.join(self.pictures, "2025-12 Regatta")
+        os.makedirs(regatta)
+        self.unfinished(regatta)
+        # A photo gone from its folder, and a copy of it in two folders: which one it moved to is the owner's to say.
+        gone = self.photo(self.meet, "IMG_0009.jpg", body=b"the ninth")
+        self.indexed(gone)
+        os.remove(gone)
+        self.photo(regatta, "IMG_0009.jpg", body=b"the ninth")
+        self.photo(self.trip, "IMG_0009.jpg", body=b"the ninth")
+        asked, queue = self.queue()
+        result = self.run_sync(apply=True, queue=queue)
+        counts = result.details["counts"]
+        self.assertEqual((2, 1, 1), (counts["to_check"], counts["owed_folders"], counts["owed_held_back"]))
+        self.assertNotIn(regatta, [folder for folders in asked for folder in folders], "a held-back folder was indexed")
+        from tagpup_cli import OWED_HELD_BACK, OWED_LINE
+        self.assertIn(OWED_LINE % (2, 1, 1, 0, 1) + OWED_HELD_BACK % 1, self.said())
+
+    def test_a_photo_model_switched_owes_the_photos_its_pass_did_not_reach(self):
+        """A switch of photo model (a journaled settings change, allowed once all but UNPASSED_SHARE_ALLOWED of the photos
+        hold a vector under its key: settings.photo_switch_on) leaves the photos its pass did not reach with no vector
+        under the key the library now names: sync owes them, folder by folder, and nothing else. Before, sync asked only
+        the vectors it found and said "In step" (photo_index's 1 + 1 with no vector after its switch, 2026-10-27)."""
+        from tagpup.services import settings as library_settings
+        from tagpup.store import embeddings
+        regatta, pier = os.path.join(self.pictures, "2025-12 Regatta"), os.path.join(self.trip, "Pier")
+        photos = []
+        for folder, count in ((regatta, 20), (pier, 1)):
+            os.makedirs(folder)
+            photos += [self.photo(folder, "IMG_%04d.jpg" % (100 + len(photos) + n)) for n in range(count)]
+        self.indexed(*photos)
+        switch = {"model.preserve_full_frame": "false"}
+        new_key = library_settings.change(self.library, switch, acknowledged=["clip"], apply=False)
+        new_key = new_key.details["photo_vectors"]["key"]
+        conn = db.connect(self.db_path)
+        try:   # the new model's pass: every photo but the one in the pier's folder, and the two photos set up
+            for path in photos[:-1] + [self.path, self.other]:
+                stat = os.stat(path)
+                embeddings.put(conn, path, new_key, stat.st_mtime, stat.st_size, photo_rows.VECTOR)
+            conn.commit()
+        finally:
+            conn.close()
+        asked, queue = self.queue()
+        self.assertTrue(self.run_sync(apply=True, queue=queue).details["in_step"], "the index owes nothing yet")
+        switched = library_settings.change(self.library, switch, acknowledged=["clip"])
+        self.assertTrue(switched.ok, switched.message())
+
+        result = self.run_sync(apply=True, queue=queue)
+        counts = result.details["counts"]
+        self.assertEqual((1, 1, 0, 0, 1), (counts["to_check"], counts["owed_no_vector"], counts["owed_stale"],
+                                           counts["owed_unexamined"], counts["owed_folders"]))
+        self.assertEqual([[pier]], asked)
+        self.assertEqual(([], False), (self.reads.read, result.details["in_step"]))
 
     def test_a_cropped_picture_is_queued_the_same_way(self):
         self.edit(self.path, b"cropped")

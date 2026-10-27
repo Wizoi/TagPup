@@ -364,9 +364,10 @@ class WhichProcessWatches(unittest.TestCase):
 
 
 def seed(library_path, photo):
-    """The photo's row as the indexer leaves it (photo_rows.add_read): its stamp, what it holds, and its folder. It was an
-    INSERT of the photo alone, with no folder row: a shape nothing real makes."""
-    db.write_with_connection(library_path, lambda conn: photo_rows.add_read(conn, photo, {}))
+    """The photo as a whole index leaves it (photo_rows.add_indexed): its row's stamp, what it holds, its folder, its
+    vector and its look for faces -- the index owes it nothing, so a sync that finds it unchanged leaves the library in
+    step. It was an INSERT of the photo alone, with no folder row: a shape nothing real makes."""
+    db.write_with_connection(library_path, lambda conn: photo_rows.add_indexed(conn, photo, {}))
 
 
 class WhichFoldersALibraryHas(unittest.TestCase):

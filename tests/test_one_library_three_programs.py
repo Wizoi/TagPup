@@ -193,7 +193,7 @@ class OneLibrary(Waits, unittest.TestCase):
         os.utime(known, (THEN, THEN))
         conn = db.connect(self.path)
         try:
-            photo_rows.add_read(conn, known, {})
+            photo_rows.add_indexed(conn, known, {})   # the index owes it nothing: "In step" at the end
             conn.commit()
         finally:
             conn.close()
