@@ -2929,14 +2929,6 @@ body.just-looking .face-layer {
     cursor: pointer;
 }
 
-.face-panel-note {
-    margin: 8px 0 0;
-    padding: 4px 6px;
-    border-radius: 4px;
-    background: rgba(245, 158, 11, 0.16);
-    font-size: 11px;
-}
-
 .face-panel-section {
     margin: 10px 0 4px;
     color: var(--text-muted, #9ca3af);

@@ -31,13 +31,13 @@ const TAXONOMY = [
 ];
 
 const face = (id, box, extra = {}) => ({
-  id, box, area: (box[2] - box[0]) * (box[3] - box[1]), name: null, prob: 0.99, excluded: false, suggestion: null, similarity: null, ...extra,
+  id, box, shown_box: box, area: (box[2] - box[0]) * (box[3] - box[1]), name: null, prob: 0.99, excluded: false, suggestion: null, similarity: null, ...extra,
 });
 
 /** Two faces on a 4000 x 3000 photo: the first is the friend Sam, the second is not named. */
 const FACES = {
   faces: [face(1, [400, 300, 800, 700], { name: "Sam", person: SAM_FRIEND }), face(2, [1000, 500, 1400, 900])],
-  total: 2, unmatched: 1, size: [4000, 3000], turned: false,
+  total: 2, unmatched: 1, size: [4000, 3000], shown_size: [4000, 3000],
 };
 
 const MATCHES = [
