@@ -68,3 +68,10 @@ Low: the indexer's closing line says "worked out on the graphics card" for a pro
 Counted read-only 2026-10-27: the three cleared-XMP photos of photo_index (ids 39695, 39863, 40018) have NO fingerprint row. So cut 1's rule for a vector is: stamp matches the file -> trusted; stamp differs and a fingerprint row exists -> compare, same hash keeps and restamps with no GPU; stamp differs and no row -> computed again. The GPU is used for at most the 74 photos whose vector stamp differs now (3 of them are these).
 
 After cut 1 is installed (owner, 2026-10-27): the 223 turned photos of photo_index are touched (file mtime only, listed first as a dry run; a PowerShell touch of any single photo or folder works the same way later), and the ordinary sync reindexes them. Touching before cut 1 does nothing: sync would restamp the row and the vector would stay.
+
+## Decided 2026-10-27 after the cut-1 reviews (owner)
+
+- **A changed picture's faces are detected again** (a crop or any change of the pixels, told by its fingerprint). The indexer today runs detection and then keeps the old face rows (`record_batch(overwrite=False)`), throwing the new detections away: old boxes stay on the new picture, and a bake would write them into the file. The fix, in cut 2 before any automatic bake: a picture whose fingerprint changed drops its faces, crops and detection record as a rotation does (services/rotation.py) and takes the new detections; a person's name returns through the photo's person tags (names from tags), which are in IPTC/XMP and are not changed by a crop. The People owner reviews it.
+- **A covering index on `embeddings`** (photo_id, model, mtime, size) so the stamp join of every sync and index start reads no vector row (migration 35, its own cut 1c, installed and run on the three live libraries before any other schema change). The Files owner measured the join at 1.2 to 5.1 s cold on photo_index against 0.26 s without it; the Data owner 0.28 s warm.
+- Order now: 1 (fixes in review) -> 1c (the index) -> 2 (faces of a changed picture, the indexer writes the bake) -> 3.
+
