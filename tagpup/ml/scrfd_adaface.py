@@ -7,6 +7,10 @@ nose, the corners of the mouth), from which it is aligned onto the 112 x 112 tem
 the recogniser runs in half precision on the card, in fixed chunks. A face's vector is given normalized, and its length
 before (the norm) beside it: AdaFace's measure of how recognisable the face is.
 
+The detector looks at the photo as a person sees it, turned by its Orientation, and each face's box is kept in the
+picture as stored, as every face box is (tagpup.core.orientation.box_to_stored; DECISIONS 2026-10-27): a photo stored
+sideways is looked at upright, where its faces are found.
+
 Built like tagpup.ml.faces.FaceModel, by tagpup.runtime only, and answering what FaceModel answers the index, Suggest and
 the face pass: `key`, `picture(path, max_side=)`, `picture_bytes`, `detect_and_embed(picture)`, `new_faces`,
 `detect_and_embed_faces(path, max_side=)` and `detector(max_side)` (docs/AI_PIPELINE.md, phase 3, merge 3 item 3). The
@@ -27,7 +31,7 @@ import torch
 from PIL import Image
 from torchvision.ops import nms
 
-from tagpup.core import validation
+from tagpup.core import orientation, validation
 from tagpup.files import images
 from tagpup.ml import free_device_memory, gpu, refuse_in_tests
 from tagpup.ml.faces import SMALLEST_FACE, NotDetected
@@ -136,14 +140,14 @@ def merged(found):
 
 def new_faces(detected, picture):
     """Of the faces detected in `picture` (detect_and_embed, of a ScrfdPicture), those that may be made new faces: at
-    least NEW_FACE_FLOOR on the shorter side, each with its crop, cut from the picture as stored by its box as every face's crop is
-    (images.face_crop_of). NotDetected is handed back."""
+    least NEW_FACE_FLOOR on the shorter side, each with its crop, cut from the picture upright by its stored box as every
+    face's crop is (images.face_crop_of). NotDetected is handed back."""
     if isinstance(detected, NotDetected):
         return detected
     made = [dict(face) for face in detected
             if images.is_big_enough(face["box"])]
     for face in made:
-        face["crop_image"] = images.face_crop_of(picture.stored, face["box"])
+        face["crop_image"] = images.face_crop_of(picture.upright, face["box"])
     return made
 
 
@@ -169,13 +173,35 @@ def aligned(img, landmarks):
     return np.asarray(img.transform((ALIGNED, ALIGNED), Image.AFFINE, tuple(inverse), Image.BILINEAR))
 
 
-class ScrfdPicture:
-    """A photo made ready for the detector on the processor (ScrfdAdaFace.picture): `stored`, the picture as stored --
-    the coordinates face boxes are kept in, and what faces are aligned from --, `squares`, {side: (canvas, scale back
-    to `stored`)}, and `path`, the photo's, for the log."""
+def kept(found, picture):
+    """Of the faces found in `picture.upright` ([(box, score, landmarks)], merged's, the highest score first), those at
+    least SMALLEST_FACE a side once clamped to it, as detect_and_embed gives them: each a dict of its `box` in the
+    picture as stored (orientation.box_to_stored: the coordinates face boxes are kept in), `prob` and `landmarks` (in the
+    picture upright, what the face is aligned from)."""
+    width, height = picture.upright.size
+    faces = []
+    for box, score, points in found:
+        x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
+        x2, y2 = min(width, int(box[2])), min(height, int(box[3]))
+        if (x2 - x1) < SMALLEST_FACE or (y2 - y1) < SMALLEST_FACE:
+            continue
+        stored = orientation.box_to_stored([x1, y1, x2, y2], *picture.stored_size, picture.turn)
+        faces.append({"box": stored, "prob": score, "landmarks": points})
+    return faces
 
-    def __init__(self, stored, squares, path):
-        self.stored, self.squares, self.path = stored, squares, path
+
+class ScrfdPicture:
+    """A photo made ready for the detector on the processor (ScrfdAdaFace.picture): `upright`, the picture as a person
+    sees it (images.opened upright) -- what the detector looks at and faces are aligned and cut from --, `turn`, the
+    Orientation between it and the picture as stored (images.BOXES_TURN_INFO), `stored_size`, (width, height) of the
+    picture as stored, the coordinates face boxes are kept in, `squares`, {side: (canvas, scale back to `upright`)}, and
+    `path`, the photo's, for the log."""
+
+    def __init__(self, upright, squares, path):
+        self.upright, self.squares, self.path = upright, squares, path
+        self.turn = upright.info[images.BOXES_TURN_INFO]
+        # The stored size is the upright one turned back: a swap is its own inverse.
+        self.stored_size = orientation.upright_size(*upright.size, self.turn)
 
 
 class ScrfdAdaFace:
@@ -258,14 +284,14 @@ class ScrfdAdaFace:
         return {"model": self.key}
 
     def picture(self, img_path, *, max_side):
-        """The photo made ready for the detector, on the processor alone (ScrfdPicture): decoded as stored, a turned
-        photo's boxes being kept in the picture as stored (tagpup.files.images), and fitted into each square: the
-        squares are this detector's cap, and `max_side` (MTCNN's, the library's) is not used.
+        """The photo made ready for the detector, on the processor alone (ScrfdPicture): decoded upright, as a person
+        sees it (its faces' boxes kept in the picture as stored: kept), and fitted into each square: the squares are
+        this detector's cap, and `max_side` (MTCNN's, the library's) is not used.
         NotDetected when the file is gone or its picture does not decode."""
         if not os.path.exists(img_path):
             return NotDetected()
         try:
-            img = images.opened(img_path, upright=False)
+            img = images.opened(img_path, upright=True)
             return ScrfdPicture(img, squares(img), img_path)
         except Exception as e:
             logger.error("Error processing faces in %s: %s", img_path, e)
@@ -278,7 +304,7 @@ class ScrfdAdaFace:
 
     @staticmethod
     def picture_bytes(width, height, *, max_side):
-        """The bytes `picture` holds for a photo of `width` x `height`, at most: the picture as stored (RGB), and for each
+        """The bytes `picture` holds for a photo of `width` x `height`, at most: the picture upright (RGB), and for each
         square its canvas and the picture scaled into it, `max_side` not used (picture). What the read-ahead of the index
         and of the face pass reserves (tagpup_cli.read_ahead_bytes, tagpup.services.face_pass); said here, beside what it
         counts."""
@@ -286,8 +312,9 @@ class ScrfdAdaFace:
 
     def detect_and_embed(self, picture):
         """The faces of a picture made ready (ScrfdPicture), the highest score first, each a dict of its `box` (in the
-        picture as stored, clamped to it, at least SMALLEST_FACE a side), `prob` (its score), `landmarks` (five
-        points), `embedding` (the vector, normalized) and `norm` (the vector's length before). NotDetected handed in is
+        picture as stored, found on the picture upright and clamped to it, at least SMALLEST_FACE a side: kept), `prob`
+        (its score), `landmarks` (five points of the picture upright), `embedding` (the vector, normalized) and `norm`
+        (the vector's length before). NotDetected handed in is
         handed back, and given when a model fails."""
         if isinstance(picture, NotDetected):
             return picture
@@ -299,7 +326,7 @@ class ScrfdAdaFace:
             faces = self._detected(detectors, picture)
             if not faces:
                 return []
-            vectors = self.embed(recogniser, [aligned(picture.stored, face["landmarks"]) for face in faces])
+            vectors = self.embed(recogniser, [aligned(picture.upright, face["landmarks"]) for face in faces])
             for face, (vector, norm) in zip(faces, vectors):
                 face["embedding"], face["norm"] = vector, norm
             return faces
@@ -308,20 +335,12 @@ class ScrfdAdaFace:
             return NotDetected()
 
     def _detected(self, detectors, picture):
-        width, height = picture.stored.size
         found = []
         with torch.inference_mode():
             for side, (canvas, back) in picture.squares.items():
                 blob = (torch.from_numpy(canvas).to(self.device).permute(2, 0, 1)[None].float() - 127.5) / 128.0
                 found.append(decoded([output.float().cpu().numpy() for output in detectors[side](blob)], side, back))
-        faces = []
-        for box, score, points in merged(found):
-            x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
-            x2, y2 = min(width, int(box[2])), min(height, int(box[3]))
-            if (x2 - x1) < SMALLEST_FACE or (y2 - y1) < SMALLEST_FACE:
-                continue
-            faces.append({"box": [x1, y1, x2, y2], "prob": score, "landmarks": points.tolist()})
-        return faces
+        return kept([(box, score, points.tolist()) for box, score, points in merged(found)], picture)
 
     def embed(self, recogniser, crops):
         """[(vector normalized, its length before)] of each aligned face in `crops` (112 x 112 RGB arrays), CHUNK at a

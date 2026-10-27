@@ -509,9 +509,11 @@ class AnIndexReadsABake(unittest.TestCase):
         xmp_detected = self.picture(folder, "xmp turned detected.jpg", "navy", xmp_turned=6)
         xmp_baked = self.picture(folder, "xmp turned baked.jpg", "navy", xmp_turned=6)
         box = [100, 50, 200, 180]
-        self.detector.found = {"turned detected.jpg": [(box, 0.99, 1)], "xmp turned detected.jpg": [(box, 0.99, 2)]}
-        # The bake's region, as the writer will make it: the stored box shown upright, a fraction of the upright picture.
+        # The detector looks at the picture as shown and finds the face there; the bake's region, as the writer makes
+        # it: the stored box shown upright, a fraction of the upright picture.
         upright = orientation.to_upright(box, *SIZE, 6)
+        self.detector.found = {"turned detected.jpg": [(upright, 0.99, 1)],
+                               "xmp turned detected.jpg": [(upright, 0.99, 2)]}
         shown = orientation.upright_size(*SIZE, 6)
         self.assertEqual(shown, images.opened(xmp_baked, upright=True).size, "Pillow turns the XMP-only photo")
         self.bake(baked, [orientation.area_of(upright, *shown)])

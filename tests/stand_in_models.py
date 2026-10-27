@@ -64,23 +64,20 @@ class Faces:
 
 
 class NewFaces:
-    """The new face model (tagpup.ml.scrfd_adaface.ScrfdAdaFace) as the face pass is handed it: its `key`, a `picture` of
-    the photo as stored (decoded by images.opened, as the model's own, NotDetected when it does not decode, handed back by
-    `detect_and_embed`), the model's own
-    `new_faces` and `detector`, and
+    """The new face model (tagpup.ml.scrfd_adaface.ScrfdAdaFace) as the face pass is handed it: its `key`, the model's own
+    `picture` of the photo upright (scrfd_adaface.ScrfdPicture of images.opened upright, no squares; NotDetected when it
+    does not decode, handed back by `detect_and_embed`), the model's own `new_faces` and `detector`, and
     `detect_and_embed`, which answers what the test says each photo holds -- `found`, {file name: [(box, prob, seed)]},
-    highest score first, each a detection with a vector made from `seed` (`vector`); a file name given None is a model
-    that fails (NotDetected); one not given has no face. `kill_at`, a file name, raises Killed there: the process stopped."""
+    highest score first, each box where the detector finds the face, on the picture upright, kept as the model keeps it
+    (scrfd_adaface.kept: clamped, and in the picture as stored), with a vector made from `seed` (`vector`); a file name
+    given None is a model that fails (NotDetected); one not given has no face. `kill_at`, a file name, raises Killed
+    there: the process stopped."""
     key = validation.SCRFD_ADAFACE
     detector = scrfd_adaface.ScrfdAdaFace.detector
     new_faces = scrfd_adaface.ScrfdAdaFace.new_faces
 
     class Killed(BaseException):
         """The run stopped part-way: a crash, the window closed."""
-
-    class Picture:
-        def __init__(self, stored, path):
-            self.stored, self.path = stored, path
 
     def __init__(self, found=None, kill_at=None):
         self.found = dict(found or {})
@@ -107,7 +104,7 @@ class NewFaces:
         from tagpup.files import images
         from tagpup.ml.faces import NotDetected
         try:
-            return self.Picture(images.opened(path, upright=False), path)
+            return scrfd_adaface.ScrfdPicture(images.opened(path, upright=True), {}, path)
         except Exception:
             return NotDetected()
 
@@ -121,8 +118,9 @@ class NewFaces:
             raise self.Killed(name)
         if name in self.found and self.found[name] is None:
             return NotDetected()
-        return [{"box": list(box), "prob": prob, "landmarks": [], "embedding": self.vector(seed), "norm": 20.0}
-                for box, prob, seed in self.found.get(name, [])]
+        return [dict(face, embedding=self.vector(seed), norm=20.0)
+                for box, prob, seed in self.found.get(name, [])
+                for face in scrfd_adaface.kept([(box, prob, [])], picture)]
 
 
 class Clip:
