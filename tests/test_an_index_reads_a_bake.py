@@ -73,7 +73,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baked_files  # noqa: E402
 import migration_names  # noqa: E402
 import own_home  # noqa: E402
-from stand_in_models import NewFaces  # noqa: E402
+from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
@@ -85,7 +85,6 @@ from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.ml.clip import ClipModel  # noqa: E402
-from tagpup.ml.faces import NotDetected  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
@@ -106,28 +105,9 @@ SIZE = (640, 480)
 DETECTOR = face_service.detector_of(NewFaces(), None)
 
 
-class _Hold:
-    def release(self):
-        pass
-
-
-class _Faces(NewFaces):
-    """The new face model, which raises when the test refuses it (and notes the photo either way)."""
-    refused = False
-    undecodable = ()
-    #: A face vector as long as the face model's (a bake holds no other).
-    vector = staticmethod(lambda seed: baked_files.unit(bake.FACE_DIM, seed).tolist())
-
-    def picture(self, path, *, max_side):
-        if os.path.basename(path) in self.undecodable:
-            return NotDetected()
-        return super().picture(path, max_side=max_side)
-
-    def detect_and_embed(self, picture):
-        if self.refused:
-            self.asked.append(os.path.basename(picture.path))
-            raise AssertionError("the face model was asked of %s" % os.path.basename(picture.path))
-        return super().detect_and_embed(picture)
+def _faces(found=None, kill_at=None):
+    """The new face model, refusable, its vectors as long as the face model's (a bake holds no other)."""
+    return RefusableFaces(found, kill_at, vector=baked_files.face_vector)
 
 
 def box_of(area, width, height):
@@ -161,12 +141,12 @@ class AnIndexReadsABake(unittest.TestCase):
                     raise AssertionError("CLIP was asked: %s" % what)
                 return value
             return asked
-        self.detector = _Faces()
+        self.detector = _faces()
         for patcher in (mock.patch.object(clip.ClipModel, "_init_model", side_effect=card("load")),
                         mock.patch.object(clip.ClipModel, "picture_input", side_effect=card("input", "input")),
                         mock.patch.object(clip.ClipModel, "embed_input", side_effect=card("embed", self.computed)),
                         mock.patch.object(Runtime, "gpu_turn",
-                                          lambda runtime, what, *args, **kwargs: self.turns.append(what) or _Hold()),
+                                          lambda runtime, what, *args, **kwargs: self.turns.append(what) or Hold()),
                         # The models are taken to be on the graphics card, whatever this machine has.
                         mock.patch.object(runtimes, "on_the_card", return_value=True),
                         mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None:
@@ -681,7 +661,7 @@ class AnIndexReadsABake(unittest.TestCase):
             # While the run waits behind Suggest, an editor saves other pixels (a larger file) over the first photo.
             self.turns.append(what)
             Image.new("RGB", (SIZE[0] + 40, SIZE[1]), "gold").save(first, "JPEG")
-            return _Hold()
+            return Hold()
         del self.detector.asked[:], self.on_card[:], self.turns[:]
         self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 95).tolist()
         with mock.patch.object(Runtime, "gpu_turn", waits):
@@ -746,7 +726,7 @@ class AnIndexReadsABake(unittest.TestCase):
         self.db_path = self.made("server.db")
         del self.on_card[:]
         self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 98).tolist()
-        self.detector = _Faces({name: [([300, 200, 400, 330], 0.99, 50 + n)] for n, name in enumerate(names)})
+        self.detector = _faces({name: [([300, 200, 400, 330], 0.99, 50 + n)] for n, name in enumerate(names)})
         said = self.said(self.index(server))
         self.assertEqual(["Baked into the files: 2 photo(s) read from their file, 2 worked out on the graphics card; 1 bake(s) "
                           "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 1 "
@@ -878,7 +858,7 @@ class AnIndexReadsABake(unittest.TestCase):
         self.bake(first, [baked_files.area(0)])
         for name, colour in (("b unbaked.jpg", "olive"), ("c unbaked.jpg", "teal")):
             self.picture(folder, name, colour)
-        self.detector = _Faces({"b unbaked.jpg": [([300, 200, 400, 330], 0.99, 1)]}, kill_at="b unbaked.jpg")
+        self.detector = _faces({"b unbaked.jpg": [([300, 200, 400, 330], 0.99, 1)]}, kill_at="b unbaked.jpg")
         with self.assertRaises(NewFaces.Killed):
             CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder], catch_exceptions=False)
         # Every photo recorded read holds its vector, its fingerprint and its detection; a vector kept before its photo's
@@ -888,7 +868,7 @@ class AnIndexReadsABake(unittest.TestCase):
                           "(SELECT COUNT(*) FROM faces_detected d WHERE d.photo_id = p.id) FROM photos p")
         self.assertLessEqual({tuple(counts) for read, *counts in rows if read}, {(1, 1, 1)})
         self.assertEqual(set(), {tuple(counts[1:]) for read, *counts in rows if not read} - {(0, 0)})
-        self.detector = _Faces({"b unbaked.jpg": [([300, 200, 400, 330], 0.99, 1)]})
+        self.detector = _faces({"b unbaked.jpg": [([300, 200, 400, 330], 0.99, 1)]})
         self.index(folder)
         self.assertEqual(3, self.query("SELECT COUNT(*) FROM photos")[0][0])
         self.assertEqual(3, self.query("SELECT COUNT(*) FROM faces_detected")[0][0])

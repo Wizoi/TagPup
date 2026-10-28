@@ -31,8 +31,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baked_files  # noqa: E402
 import own_home  # noqa: E402
-from stand_in_models import NewFaces  # noqa: E402
-from test_an_index_reads_a_bake import _Faces, _Hold  # noqa: E402
+from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
@@ -62,12 +61,13 @@ class ACroppedPictureGetsNewFaces(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="cropped_picture_")
         self.db_path = self.made("harbour.db")
-        self.detector = _Faces({"pier.jpg": [(LEFT, 0.99, 1), (RIGHT, 0.98, 2)]})
+        self.detector = RefusableFaces({"pier.jpg": [(LEFT, 0.99, 1), (RIGHT, 0.98, 2)]},
+                                       vector=baked_files.face_vector)
         computed = baked_files.unit(bake.PHOTO_DIM, 99).tolist()
         for patcher in (mock.patch.object(clip.ClipModel, "_init_model"),
                         mock.patch.object(clip.ClipModel, "picture_input", return_value="input"),
                         mock.patch.object(clip.ClipModel, "embed_input", return_value=computed),
-                        mock.patch.object(Runtime, "gpu_turn", lambda runtime, what, *args, **kwargs: _Hold()),
+                        mock.patch.object(Runtime, "gpu_turn", lambda runtime, what, *args, **kwargs: Hold()),
                         mock.patch.object(runtimes, "on_the_card", return_value=True),
                         mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector)):
             patcher.start()

@@ -123,6 +123,38 @@ class NewFaces:
                 for face in scrfd_adaface.kept([(box, prob, [])], picture)]
 
 
+class RefusableFaces(NewFaces):
+    """The new face model (NewFaces), which raises when the test refuses it (`refused`, noting the photo either way), and
+    whose `picture` of a file named in `undecodable` does not decode (NotDetected). `vector`, given, makes each face's
+    vector from its seed instead (a bake's test: one as long as the face model's, baked_files.face_vector)."""
+    refused = False
+    undecodable = ()
+
+    def __init__(self, found=None, kill_at=None, *, vector=None):
+        super().__init__(found, kill_at)
+        if vector is not None:
+            self.vector = vector
+
+    def picture(self, path, *, max_side):
+        from tagpup.ml.faces import NotDetected
+        if os.path.basename(path) in self.undecodable:
+            return NotDetected()
+        return super().picture(path, max_side=max_side)
+
+    def detect_and_embed(self, picture):
+        if self.refused:
+            self.asked.append(os.path.basename(picture.path))
+            raise AssertionError("the face model was asked of %s" % os.path.basename(picture.path))
+        return super().detect_and_embed(picture)
+
+
+class Hold:
+    """The CLI's turn on the graphics card, as the runtime hands it (tagpup.ml.gpu.Hold): nothing to give back."""
+
+    def release(self):
+        pass
+
+
 class Clip:
     """CLIP as the runtime hands it to a run: the library's default settings, a word embedded to a zero vector `dim` long
     (alike nothing), and `ready` -- the run's turn on the graphics card -- with nothing to wait for."""
