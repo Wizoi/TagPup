@@ -749,11 +749,30 @@ class TheOwnersLibraryAt34MeetsMigration35(Migrated):
         self.assertEqual([], self.query("SELECT id FROM tag_taxonomy WHERE tag = 'Fresh'"))
         self.assertEqual([], schema.ensure(self.db_path))
 
-    def test_a_syncs_stamp_join_answers_as_before(self):
-        answer = self.stamp_join()
+    def test_a_syncs_stamp_join_answers_as_before_and_reads_no_vector(self):
+        """The query names the index (INDEXED BY), so it can only run at 35; at 34 the same join is asked by hand."""
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            answer = sorted(conn.execute(
+                "SELECT p.id, p.path, p.mtime, p.size, e.mtime, e.size FROM photos p"
+                " LEFT JOIN embeddings e ON e.photo_id = p.id AND e.model = ?", (MODEL,)).fetchall())
+        finally:
+            conn.close()
         self.assertEqual(3, sum(1 for row in answer if row[-1] is not None), "each seeded photo holds a stamped vector")
         schema.ensure(self.db_path)
-        self.assertEqual(answer, self.stamp_join())
+        after = sorted((r[0], r[1], r[2], r[3]) + (r[4] or (None, None)) for r in self.stamp_join())
+        self.assertEqual(answer, after)
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            seen = []
+            conn.set_trace_callback(seen.append)
+            store_photos.stamps(conn, vector_stamps=MODEL)
+            conn.set_trace_callback(None)
+            [sql] = [q for q in seen if "embeddings" in q]
+            plan = " ".join(str(r[-1]) for r in conn.execute("EXPLAIN QUERY PLAN " + sql).fetchall())
+        finally:
+            conn.close()
+        self.assertIn("COVERING INDEX idx_embeddings_stamp", plan)
 
     def test_killed_part_way_it_is_still_at_34_and_migrates_at_the_next_open(self):
         code = textwrap.dedent("""

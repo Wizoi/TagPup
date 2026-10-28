@@ -640,7 +640,7 @@ def stamps(conn, folder=None, with_vectors=None, vector_stamps=None):
         params.append(with_vectors)
     if vector_stamps is not None:
         columns += ", e.photo_id IS NOT NULL, e.mtime, e.size"
-        joined = " LEFT JOIN embeddings e ON e.photo_id = p.id AND e.model = ?"
+        joined = " LEFT JOIN embeddings e INDEXED BY idx_embeddings_stamp ON e.photo_id = p.id AND e.model = ?"
         params.append(vector_stamps)
     query = "SELECT " + columns + " FROM photos p" + joined
     if folder:
