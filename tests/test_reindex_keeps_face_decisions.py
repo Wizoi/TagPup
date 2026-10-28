@@ -55,7 +55,7 @@ def fake_meta(path):
 class FakeFaceProcessor(stand_in_models.Faces):
     """Detects one new, unnamed face in every photo -- what the real detector returns."""
 
-    def detect_and_embed_faces(self, path, *, max_side):
+    def detect_and_embed_faces(self, path):
         return [{"box": [1, 1, 5, 5], "embedding": [0.5] * 512, "prob": 0.99,
                  "crop_image": None}]
 

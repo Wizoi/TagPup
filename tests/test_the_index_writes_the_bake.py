@@ -51,7 +51,7 @@ from tagpup.store import db, file_journal  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 SIZE = (640, 480)
-DETECTOR = face_service.detector_of(NewFaces(), None)
+DETECTOR = face_service.detector_of(NewFaces())
 FACE = [300, 200, 400, 330]
 SECOND = [60, 60, 160, 180]
 

@@ -22,7 +22,7 @@ import { OPEN_DIALOG } from "../../web/common/dialog.js";
 afterEach(() => closeAllApps());
 
 const LIBRARY = "kr-track";
-const GROUP_TITLES = { clip: "The photo model", "face-model": "The face model", faces: "Face detection",
+const GROUP_TITLES = { clip: "The photo model", "face-model": "The face model",
                        exiftool: "ExifTool", library: "Library folders", suggest: "Suggest", renaming: "Smart Rename" };
 
 /** What /api/settings answers for a library holding the defaults, from the declarations. */
@@ -85,7 +85,7 @@ describe("the settings dialog", () => {
     assert.equal(document.getElementById("settings-title").textContent, `Library settings: ${LIBRARY}`);
     assert.deepEqual([...dialog.querySelectorAll("[data-setting]")].map((i) => i.dataset.setting), DECLARED);
     assert.deepEqual([...dialog.querySelectorAll(".settings-group h4")].map((h) => h.textContent),
-                     ["The photo model", "The face model", "Face detection", "ExifTool", "Library folders", "Suggest",
+                     ["The photo model", "The face model", "ExifTool", "Library folders", "Suggest",
                       "Smart Rename"]);
     assert.equal(field("model.name").value, "ViT-SO400M-14-SigLIP2");
     assert.equal(field("model.preserve_full_frame").type, "checkbox");
@@ -111,9 +111,7 @@ describe("the settings dialog", () => {
 
   test("locked settings show their value and cannot be edited; the others can", async (t) => {
     const { field } = await tunerWithSettings(t);
-    assert.deepEqual(LOCKED.sort(), ["faces.confidence_threshold", "faces.detect_max_side", "faces.min_face_size",
-                                     "faces.model", "faces.mtcnn_thresholds",
-                                     "model.force_image_size", "model.max_aspect_ratio", "model.name",
+    assert.deepEqual(LOCKED.sort(), ["faces.model", "model.force_image_size", "model.max_aspect_ratio", "model.name",
                                      "model.preserve_full_frame", "model.pretrained", "paths.exiftool"]);
     for (const key of LOCKED) {
       const input = field(key);
@@ -196,13 +194,13 @@ describe("the settings dialog", () => {
 
   test("a value the rules refuse is shown, and keeps Save disabled", async (t) => {
     const { window, dialog, save, changeButton, boxes, type } = await tunerWithSettings(t);
-    click(window, changeButton("faces"));
-    boxes("faces").forEach((box) => click(window, box));
-    type("faces.confidence_threshold", "1.5");
+    click(window, changeButton("clip"));
+    boxes("clip").forEach((box) => click(window, box));
+    type("model.max_aspect_ratio", "9");
     assert.ok(save().disabled);
-    const problem = dialog.querySelector('.settings-row[data-key="faces.confidence_threshold"] .validation-error');
-    assert.equal(problem.textContent, "The confidence must be between 0 and 1.");
-    type("faces.confidence_threshold", "0.9");
+    const problem = dialog.querySelector('.settings-row[data-key="model.max_aspect_ratio"] .validation-error');
+    assert.equal(problem.textContent, "The widest aspect ratio must be between 1 and 4.");
+    type("model.max_aspect_ratio", "1.2");
     assert.ok(!save().disabled);
     assert.equal(problem.textContent, "");
     type("renaming.format", "{grouping}");
@@ -222,18 +220,18 @@ describe("the settings dialog", () => {
   });
 
   test("the page reloads after a locked setting is saved", async (t) => {
-    const ctx = await tunerWithSettings(t, { saved: { success: true, changed: 1, settings: ["faces.min_face_size"],
+    const ctx = await tunerWithSettings(t, { saved: { success: true, changed: 1, settings: ["paths.exiftool"],
                                                       locked: true, change: 8 } });
     const { window, save, changeButton, boxes, type, posted, consoleErrors } = ctx;
-    click(window, changeButton("faces"));
-    type("faces.min_face_size", "40");
-    boxes("faces").forEach((box) => click(window, box));
+    click(window, changeButton("exiftool"));
+    type("paths.exiftool", "C:/Tools/exiftool.exe");
+    boxes("exiftool").forEach((box) => click(window, box));
     click(window, save());
     await flush(window, 6);
     // The server refuses a locked change its group is not acknowledged for: the
     // dialog names the group whose consequences were ticked.
-    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.min_face_size": "40" },
-                                                     acknowledged: ["faces"] }]);
+    assert.deepEqual(posted().map((c) => c.body), [{ values: { "paths.exiftool": "C:/Tools/exiftool.exe" },
+                                                     acknowledged: ["exiftool"] }]);
     // jsdom does not navigate; it reports the reload it was asked for as not implemented.
     assert.ok(consoleErrors.some((e) => /navigation/i.test(String(e && (e.message || e)))),
               "the page did not reload after a locked setting was saved");

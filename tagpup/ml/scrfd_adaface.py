@@ -11,10 +11,9 @@ The detector looks at the photo as a person sees it, turned by its Orientation, 
 picture as stored, as every face box is (tagpup.core.orientation.box_to_stored; DECISIONS 2026-10-27): a photo stored
 sideways is looked at upright, where its faces are found.
 
-Built by tagpup.runtime only, and answering the index and Suggest: `key`, `picture(path, max_side=)`, `picture_bytes`, `detect_and_embed(picture)`, `new_faces`,
-`detect_and_embed_faces(path, max_side=)` and `detector(max_side)` (docs/AI_PIPELINE.md, phase 3, merge 3 item 3). The
-library's cap on the detector's picture (faces.detect_max_side, MTCNN's) is taken and not used: the two squares are
-this detector's own.
+Built by tagpup.runtime only, and answering the index and Suggest: `key`, `picture(path)`, `picture_bytes`,
+`detect_and_embed(picture)`, `new_faces`, `detect_and_embed_faces(path)` and `detector()` (docs/AI_PIPELINE.md, phase
+3, merge 3 item 3). The two squares are this detector's own cap on the picture it looks at.
 
 The weights are three files in torch's checkpoints folder: the detector traced
 once for each square (TorchScript: the converted model cannot be traced for every size at once), and AdaFace's
@@ -275,10 +274,10 @@ class ScrfdAdaFace:
         self.detectors = detectors
         logger.info("Face models loaded.")
 
-    def detect_and_embed_faces(self, img_path, *, max_side):
+    def detect_and_embed_faces(self, img_path):
         """The faces of the photo at `img_path` made new faces of (new_faces): what Suggest records of a photo with no face
-        on file. `max_side` is taken and not used (picture)."""
-        picture = self.picture(img_path, max_side=max_side)
+        on file."""
+        picture = self.picture(img_path)
         return self.new_faces(self.detect_and_embed(picture), picture)
 
     def new_faces(self, detected, picture):
@@ -286,15 +285,15 @@ class ScrfdAdaFace:
         them (the module's new_faces: at least NEW_FACE_FLOOR, each with its crop)."""
         return new_faces(detected, picture)
 
-    def detector(self, max_side):
+    def detector(self):
         """The settings its detections are recorded under (tagpup.services.faces.detector_of): validation.face_detector's,
         its key alone."""
-        return validation.face_detector({"model": self.key}, max_side)
+        return validation.face_detector(self.key)
 
-    def picture(self, img_path, *, max_side):
+    def picture(self, img_path):
         """The photo made ready for the detector, on the processor alone (ScrfdPicture): decoded upright, as a person
         sees it (its faces' boxes kept in the picture as stored: kept), and fitted into each square: the squares are
-        this detector's cap, and `max_side` (MTCNN's, the library's) is not used.
+        this detector's cap.
         NotDetected when the file is gone or its picture does not decode."""
         if not os.path.exists(img_path):
             return NotDetected()
@@ -311,9 +310,9 @@ class ScrfdAdaFace:
         return missing_weights(self.folder)
 
     @staticmethod
-    def picture_bytes(width, height, *, max_side):
+    def picture_bytes(width, height):
         """The bytes `picture` holds for a photo of `width` x `height`, at most: the picture upright (RGB), and for each
-        square its canvas and the picture scaled into it, `max_side` not used (picture). What the read-ahead of the index
+        square its canvas and the picture scaled into it. What the read-ahead of the index
         reserves (tagpup_cli.read_ahead_bytes); said here, beside what it
         counts."""
         return 3 * width * height + sum(2 * 3 * side * side for side in SCALES)

@@ -115,7 +115,7 @@ CACHES = ("face_crops",)
 NOT_CACHED = " AND table_name NOT IN (%s)" % ",".join("'%s'" % table for table in CACHES)
 
 #: Tables keyed by a name, not by an id SQLite hands out: a row put back under its name is
-#: the same thing again -- a setting is "faces.min_face_size" whichever row holds it -- so
+#: the same thing again -- a setting is "renaming.format" whichever row holds it -- so
 #: a key used again cannot mean another row (tests/test_journal_keys_and_cascades.py).
 NAMED = ("settings",)
 

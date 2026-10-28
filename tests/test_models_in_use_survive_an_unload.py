@@ -104,7 +104,7 @@ class TheFaceModelsLetGoMidPhoto(unittest.TestCase):
             Image.new("RGB", (80, 80), "navy").save(photo, "JPEG")
             with mock.patch.object(model, "_init_models", init), mock.patch.object(model, "_detected", detected), \
                     mock.patch.object(scrfd_adaface, "free_device_memory"):
-                found = model.detect_and_embed(model.picture(photo, max_side=None))
+                found = model.detect_and_embed(model.picture(photo))
         self.assertEqual(1, len(found))
         self.assertEqual(512, len(found[0]["embedding"]))
         self.assertEqual([True], weights.modes)

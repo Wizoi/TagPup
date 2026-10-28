@@ -132,9 +132,8 @@ class TheSettings(unittest.TestCase):
     #: The settings config.ini held, which a library in use is stamped from; where the
     #: libraries are (paths.data_dir) is not one.
     HELD = {"paths.exiftool", "model.name", "model.pretrained", "model.preserve_full_frame",
-            "model.max_aspect_ratio", "model.force_image_size", "candidates.tags", "faces.min_face_size",
-            "faces.confidence_threshold", "faces.mtcnn_thresholds", "renaming.format", "library.roots",
-            "library.ignored", "faces.detect_max_side", "faces.model"}
+            "model.max_aspect_ratio", "model.force_image_size", "candidates.tags", "renaming.format", "library.roots",
+            "library.ignored", "faces.model"}
 
     def test_every_setting_is_declared(self):
         self.assertEqual(set(validation.SETTINGS), self.HELD)
@@ -155,9 +154,8 @@ class TheSettings(unittest.TestCase):
     def test_the_locked_ones_are_those_with_consequences(self):
         locked = {key for key, declared in validation.SETTINGS.items() if declared["locked"]}
         self.assertEqual(locked, {"model.name", "model.pretrained", "model.preserve_full_frame",
-                                  "model.max_aspect_ratio", "model.force_image_size", "faces.min_face_size",
-                                  "faces.confidence_threshold", "faces.mtcnn_thresholds", "faces.detect_max_side",
-                                  "faces.model", "paths.exiftool"})
+                                  "model.max_aspect_ratio", "model.force_image_size", "faces.model",
+                                  "paths.exiftool"})
         for key, declared in validation.SETTINGS.items():
             with self.subTest(setting=key):
                 self.assertEqual(declared["locked"], bool(declared["consequences"]))

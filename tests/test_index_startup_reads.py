@@ -47,7 +47,7 @@ def examined(conn, db_path, path):
     """Record the photo looked at for faces by the library's face model, none found, as the indexer records it
     (faces.record_batch): a photo with neither this nor a face is the index's work whatever its vector."""
     settings = library_settings.of(Library(db_path))
-    faces_detected.record(conn, path, face_service.detector_named(settings.faces, settings.detect_max_side),
+    faces_detected.record(conn, path, face_service.detector_named(settings.faces),
                           photo_rows.stamp_of(path), 0)
 
 
@@ -150,7 +150,7 @@ class TheWorkTheIndexOwes(Harbour):
         self.addCleanup(self.index.close)
         self.assertTrue(self.index.open())
         settings = library_settings.of(Library(self.db_path))
-        self.detector = face_service.detector_named(settings.faces, settings.detect_max_side)
+        self.detector = face_service.detector_named(settings.faces)
 
     def on_disk(self, *photos):
         return {paths.key(path): (path, os.stat(path).st_mtime, os.stat(path).st_size) for path in photos}

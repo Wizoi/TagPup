@@ -109,12 +109,12 @@ READ_AHEAD = 3
 READ_AHEAD_BYTES = 1 << 30
 
 
-def read_ahead_bytes(width, height, clip=None, faces=None, max_side=None):
+def read_ahead_bytes(width, height, clip=None, faces=None):
     """What a photo of `width` x `height` is reserved while it is read ahead: the larger of what each half it goes
     through holds at once -- CLIP's (`clip`, when its vector is to be made: ClipModel.input_bytes), whose pictures
     are let go before the faces' are made, and the faces' (`faces`: its picture_bytes), held until the card
     has detected them. Each half says its own; this only takes the larger."""
-    halves = [faces.picture_bytes(width, height, max_side=max_side)] if faces is not None else []
+    halves = [faces.picture_bytes(width, height)] if faces is not None else []
     if clip is not None:
         halves.append(clip.input_bytes(width, height))
     return max(halves, default=0)
@@ -341,15 +341,12 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # even when its vector is current: its faces are detected on the picture as shown, its vector kept. Asked by the
     # model's name, no model made (a run with nothing to do imports none, #1089). Not with --skip-faces; --force-reembed
     # works every photo again.
-    # The library's cap on the picture the detector looks at, as the run began: one argument of each detection, not
-    # part of the model (two libraries differing only in it share one).
-    detect_max_side = settings.detect_max_side
     if force_reembed:
         images_to_process, unexamined = all_images, set()
     else:
         # The work the index owes (photo_fingerprints.owed, sync's answer too): no vector, a stale stamp, never examined.
         owed = photo_index.owed(on_disk, None if skip_faces else
-                                face_records.detector_named(settings.faces, detect_max_side))
+                                face_records.detector_named(settings.faces))
         unexamined = {key for key, reasons in owed.items() if PhotoIndex.UNEXAMINED in reasons}
         current = photo_index.current(on_disk, owed)
         images_to_process = [path for path in all_images if paths.key(path) not in current]
@@ -544,14 +541,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 picture = None
                 if face_processor and begun["examine"]:
                     width, height = image_files.picture_size(path)
-                    reserve(read_ahead_bytes(width, height, None, face_processor, detect_max_side))
-                    picture = face_processor.picture(path, max_side=detect_max_side)
+                    reserve(read_ahead_bytes(width, height, None, face_processor))
+                    picture = face_processor.picture(path)
                 return None, decoded[2], picture, {"stamp": decoded[0], "upright": None, "fingerprint": decoded[1],
                                                    "took": bake_reading.Taken(), "same": True}
             width, height = image_files.picture_size(path)
             decodes = begun["vector"] is None or bake_reading.holds(begun["bake"])
-            reserve(read_ahead_bytes(width, height, embeddings.clip if decodes else None,
-                                     face_processor, detect_max_side))
+            reserve(read_ahead_bytes(width, height, embeddings.clip if decodes else None, face_processor))
             stamp = upright = fingerprint = prepared = None
             if decodes:
                 # Reads the file once and decodes the whole picture, upright; a vector kept from the file as it is was
@@ -567,11 +563,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             if begun["stale"] is not None and begun["stale"].same(fingerprint):
                 # The picture is the vector's: only the file's metadata changed. Nothing for CLIP, no bake read, and
                 # no face picture but a never-examined photo's.
-                picture = (face_processor.picture(path, max_side=detect_max_side)
-                           if face_processor and begun["examine"] else None)
+                picture = face_processor.picture(path) if face_processor and begun["examine"] else None
                 return None, zeros, picture, {"stamp": stamp, "upright": None, "fingerprint": fingerprint,
                                               "took": bake_reading.Taken(), "same": True}
-            picture = face_processor.picture(path, max_side=detect_max_side) if face_processor and looks else None
+            picture = face_processor.picture(path) if face_processor and looks else None
             took = bake_reading.taken(begun["bake"], meta, fingerprint, picture, photo_key=photo_key, face_key=face_key)
             if begun["vector"] is None and took.vector is None and begun["clip"]:
                 # Never loading CLIP: it was loaded in begin, on the thread that has the card, and a read still under
@@ -693,7 +688,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                         # existing face rows, and the curation on them, are kept.
                         face_records.record_batch(photo_index.conn, batch_faces, model=face_processor.key,
                                                   overwrite=force_reembed,
-                                                  detector=face_records.detector_of(face_processor, detect_max_side))
+                                                  detector=face_records.detector_of(face_processor))
                         batch_faces.clear()
 
                     # Release locks for saved images
@@ -723,7 +718,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             # Save the remaining face embeddings
             if batch_faces:
                 face_records.record_batch(photo_index.conn, batch_faces, model=face_processor.key, overwrite=force_reembed,
-                                          detector=face_records.detector_of(face_processor, detect_max_side))
+                                          detector=face_records.detector_of(face_processor))
                 batch_faces.clear()
             
             for saved_meta in batch_metas:
@@ -804,7 +799,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # The files of the folders it recorded are written from the library (docs/PLAN_KEEP_IN_STEP.md, cut 2), the card let
     # go above: every way of indexing does it, and the owner runs no bake. Not with --skip-faces: no face was looked for.
     if touched and not skip_faces:
-        _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces, detect_max_side),
+        _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
                           list(touched.values()), handed, stop_file)
 
 

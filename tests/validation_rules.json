@@ -1,5 +1,5 @@
 {
- "version": "023a678fa11c",
+ "version": "041272e83302",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -345,113 +345,6 @@
       "scrfd-adaface"
      ],
      "message": "The face model is scrfd-adaface; mtcnn-facenet (MTCNN and FaceNet) is deleted."
-    }
-   ]
-  },
-  "setting faces.min_face_size": {
-   "group": "faces",
-   "label": "Smallest face",
-   "type": "integer",
-   "default": "20",
-   "info": "The smallest face, in pixels, that indexing looks for. Smaller finds more faces in crowds, and more that are not faces.",
-   "locked": true,
-   "consequences": [
-    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
-    "Indexing a folder again applies it to that folder."
-   ],
-   "rules": [
-    {
-     "rule": "integer",
-     "message": "The smallest face is a whole number of pixels."
-    },
-    {
-     "rule": "range",
-     "min": 1,
-     "max": 2000,
-     "message": "The smallest face must be between 1 and 2000."
-    }
-   ]
-  },
-  "setting faces.confidence_threshold": {
-   "group": "faces",
-   "label": "Confidence",
-   "type": "number",
-   "default": "0.85",
-   "info": "How sure the detector must be that it found a face before the face is kept, from 0 to 1.",
-   "locked": true,
-   "consequences": [
-    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
-    "Indexing a folder again applies it to that folder."
-   ],
-   "rules": [
-    {
-     "rule": "number",
-     "message": "The confidence is a number."
-    },
-    {
-     "rule": "range",
-     "min": 0,
-     "max": 1,
-     "message": "The confidence must be between 0 and 1."
-    }
-   ]
-  },
-  "setting faces.mtcnn_thresholds": {
-   "group": "faces",
-   "label": "Stage thresholds",
-   "type": "list",
-   "default": "0.6, 0.7, 0.7",
-   "info": "The face detector's (MTCNN's) threshold at each of its three stages, from 0 to 1.",
-   "locked": true,
-   "consequences": [
-    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
-    "Indexing a folder again applies it to that folder."
-   ],
-   "rules": [
-    {
-     "rule": "list",
-     "separator": ",",
-     "count": 3,
-     "message": "Face detection takes three thresholds, one for each stage.",
-     "each": [
-      {
-       "rule": "number",
-       "message": "Each threshold is a number."
-      },
-      {
-       "rule": "range",
-       "min": 0,
-       "max": 1,
-       "message": "Each threshold must be between 0 and 1."
-      }
-     ]
-    }
-   ]
-  },
-  "setting faces.detect_max_side": {
-   "group": "faces",
-   "label": "Look at most",
-   "type": "integer",
-   "default": "",
-   "info": "The longest side, in pixels, of the picture the face detector looks at: a larger photo is scaled down to it for finding faces, and each face found is cut from the full photo. Faster, and less of the graphics card, on large photos; the smallest faces in a large photo may be missed. Empty looks at the full photo.",
-   "locked": true,
-   "consequences": [
-    "Only photos indexed after the change, and photos with no face that Suggest looks at, are detected with it; the faces already found stay as they are.",
-    "Indexing a folder again applies it to that folder."
-   ],
-   "rules": [
-    {
-     "rule": "optional"
-    },
-    {
-     "rule": "integer",
-     "message": "Look at most is a whole number of pixels."
-    },
-    {
-     "rule": "range",
-     "min": 160,
-     "max": 20000,
-     "message": "Look at most must be between 160 and 20000."
     }
    ]
   },
