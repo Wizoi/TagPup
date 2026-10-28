@@ -265,7 +265,7 @@ SETTING_GROUPS = {
         "consequences": [
             "Set to %s, Identify, cluster-faces, New Person and Suggest compare faces by the new model's vectors, "
             "with its own cuts for naming and offering a person; photos indexed after it find faces with the new "
-            "model. A face holding no vector under it takes no part." % SCRFD_ADAFACE,
+            "model." % SCRFD_ADAFACE,
             "It is the one face model: %s (MTCNN and FaceNet) is deleted, and a switch to the new model is not "
             "undone." % MTCNN_FACENET,
         ],

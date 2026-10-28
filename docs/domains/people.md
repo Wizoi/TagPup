@@ -21,11 +21,11 @@ given the key it reads under (a required argument): a decision reads the library
 (`store.faces.model_key`, on its own connection), reads its vectors under it and decides by that key's cuts; a set of
 vectors kept between reads carries its key (`clustering.FaceRows.key`, `identify.UnnamedFaces.key`) and is compared only
 with vectors of the same key (`FaceRows.under`), so a switch committed meanwhile never sets one model's vectors beside the
-other's, nor reads them by the other's cuts. The join with a vector
-(`store.faces.WITH_VECTOR`, `HAS_VECTOR`) is the one place that leaves a face without one out of what compares faces:
-clustering, New Person's pool, the Identify queue and grid. No face of the three libraries lacks one (counted
-read-only 2026-10-28) and no writer files a face without its vector, so nothing says it: `identify.NO_VECTOR` and
-cluster-faces' "took no part" were deleted 2026-10-28 (Cut B).
+other's, nor reads them by the other's cuts. Every face holds a vector under its library's model: no face of the three
+libraries lacks one (0 of 197,285, counted read-only 2026-10-28) and no writer files a face without its vector, so every
+reader of a face's vector joins it (`store.faces.WITH_VECTOR`) and none answers for a face without one: `identify.NO_VECTOR`,
+cluster-faces' "took no part", the store's `VECTOR` left join and `HAS_VECTOR`, and baking's `FACES_WITHOUT_VECTORS` were
+deleted 2026-10-28 (Cut B).
 
 ## The seven conditions (2026-10-15)
 
@@ -74,9 +74,9 @@ cluster-faces' "took no part" were deleted 2026-10-28 (Cut B).
   key and no other photo waiting (#839), the tag's own route. Two models' vectors never meet in one product; the next
   index or cluster-faces reads them again.
 - **Identify on a library switched to the new face model (2026-10-18; 2026-10-20)**: every reader compares faces under the
-  library's model, so a face with no vector under it takes no part, with no sentence of its own in the queue, a person's
-  grid or the person page: an old face the deleted pass matched with nothing it found (1,195 of kr-track's, counted
-  2026-10-20), and a face of a photo the index has not yet re-embedded under the model. A switch to the new model is
+  library's model. The faces that held no vector under it (an old face the deleted pass matched with nothing it found,
+  1,195 of kr-track's, counted 2026-10-20) were deleted by `retire-faces` (2026-10-25); none is left (counted read-only
+  2026-10-28), so no reader keeps one. A switch to the new model is
   not refused and counts nothing (`settings.change`); a switch to FaceNet is refused for every library, and so is an undo in History that would put it back, by the same
   rule and sentence (`settings.NOT_FACENET`, asked by `settings.undo_check` through `services.journal.why_not`;
   owner, 2026-10-28). The consequence is stated where the owner switches (the settings dialog's face model group,
