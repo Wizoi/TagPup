@@ -794,18 +794,19 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         for root, count in sorted(roots.items(), key=lambda x: -x[1]):
             console.print(f"  • {root}: {count} path(s)")
 
+    # An index is followed by matching the faces it made (owner, DECISIONS 2026-10-23), here, so that every way of
+    # indexing -- both apps' queue and sync's, which run this command, and this command by hand -- does it alike. Only
+    # after a run that recorded a photo: one that recorded none made no face. The card's turn was let go above: the
+    # matching is the processor's work, and writes nothing. Before the bake: a bake stopped by a Ctrl+C, or a slow one,
+    # does not leave this run's faces unmatched.
+    if total_new_indexed:
+        _match_new_faces(db_path, after, upto)
+
     # The files of the folders it recorded are written from the library (docs/PLAN_KEEP_IN_STEP.md, cut 2), the card let
     # go above: every way of indexing does it, and the owner runs no bake. Not with --skip-faces: no face was looked for.
     if touched and not skip_faces:
         _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces, detect_max_side),
                           list(touched.values()), handed, stop_file)
-
-    # An index is followed by matching the faces it made (owner, DECISIONS 2026-10-23), here, so that every way of
-    # indexing -- both apps' queue and sync's, which run this command, and this command by hand -- does it alike. Only
-    # after a run that recorded a photo: one that recorded none made no face. The card's turn was let go above: the
-    # matching is the processor's work, and writes nothing.
-    if total_new_indexed:
-        _match_new_faces(db_path, after, upto)
 
 
 def _recorded(metas, touched, handed):

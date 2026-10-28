@@ -183,6 +183,23 @@ class TheIndexWritesTheBake(unittest.TestCase):
         for path, faces in zip(paths_made, (1, 0)):
             self.assertBaked(path, faces)
 
+    def test_a_ctrl_c_in_the_bake_leaves_the_runs_new_faces_matched(self):
+        self.picture("a.jpg", (200, 40, 40))
+        matched = []
+        real = tagpup_cli._match_new_faces
+
+        def match(db_path, after, upto):
+            matched.append((after, upto))
+            return real(db_path, after, upto)
+        with mock.patch.object(tagpup_cli, "_match_new_faces", side_effect=match), \
+                mock.patch.object(bake_after_index, "bake_folders", side_effect=KeyboardInterrupt):
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder])
+        self.assertNotEqual(0, result.exit_code, "the Ctrl+C stopped the run")
+        ((face_id,),) = self.query("SELECT id FROM faces")
+        self.assertEqual(1, len(matched), "the run's new faces were not matched")
+        after, upto = matched[0]
+        self.assertTrue(after < face_id <= upto, matched)
+
     def test_a_share_that_stops_answering_in_the_bake_names_no_change_to_undo(self):
         photos = [self.picture(name, colour) for name, colour in (("a.jpg", (200, 40, 40)), ("b.jpg", (40, 200, 40)),
                                                                   ("c.jpg", (40, 40, 200)))]
