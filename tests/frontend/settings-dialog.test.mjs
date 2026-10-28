@@ -148,7 +148,7 @@ describe("the settings dialog", () => {
   test("a switch of the photo model says what the photos hold under it before the reload", async (t) => {
     const said = "30 of the library's 30 photos hold a vector under the new key; 0 hold none.";
     const { window, save, changeButton, boxes, type, posted } = await tunerWithSettings(t, { saved: {
-      success: true, changed: 1, settings: ["model.name"], locked: true, change: 9, face_vectors: null,
+      success: true, changed: 1, settings: ["model.name"], locked: true, change: 9,
       photo_vectors: { key: "new", holds: 30, without: 0, said } } });
     const shown = [];
     window.alert = (text) => shown.push(text);
@@ -162,10 +162,8 @@ describe("the settings dialog", () => {
   });
 
   test("the face model is one of the choices the rules publish, locked behind its own consequences", async (t) => {
-    const said = "2 of the library's 2 faces hold a vector under mtcnn-facenet.";
     const { window, field, save, changeButton, boxes, posted } = await tunerWithSettings(t, { saved: {
-      success: true, changed: 1, settings: ["faces.model"], locked: true, change: 9,
-      face_vectors: { faces: 2, without: 0, named_without: 0, said } } });
+      success: true, changed: 1, settings: ["faces.model"], locked: true, change: 9 } });
     const shown = [];
     window.alert = (text) => shown.push(text);
     const declared = PUBLISHED_RULES.kinds["setting faces.model"];
@@ -187,7 +185,7 @@ describe("the settings dialog", () => {
     await flush(window, 6);
     assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.model": "mtcnn-facenet" },
                                                      acknowledged: ["face-model"] }]);
-    assert.deepEqual(shown, [said], "the switch's counts were not shown before the reload");
+    assert.deepEqual(shown, [], "a switch of the face model counts nothing to show");
   });
 
   test("the library's folders are one a line, and a whole drive is refused as it is typed", async (t) => {

@@ -521,9 +521,8 @@ hold two models' vectors, counted read-only 2026-10-28); the readings below are 
   FaceNet through. **Superseded 2026-10-28 (owner; DECISIONS 2026-10-28):** with the face pass deleted nothing could
   meet that share, and no library is switched to FaceNet. `settings.switch_on` refuses a switch to `mtcnn-facenet` for
   every library, empty or not, with one sentence and nothing counted (`settings.NOT_FACENET`, `face_model_refusal`); a
-  switch to the new model is not refused by it and says, for a library with faces, how many hold a vector under the
-  model and how many named faces hold none and take no part in Identify (`details["face_vectors"]`, from
-  `store.faces.vector_counts`, read-only). An undo in History that would put FaceNet back (among them each live
+  switch to the new model is not refused and counts nothing (its `face_vectors` reply, how many faces held its vector,
+  was deleted 2026-10-28 in Cut B: every library is on it, and no face lacks its vector). An undo in History that would put FaceNet back (among them each live
   library's first switch, which inserted its `faces.model` row) is refused by the same rule and sentence
   (`settings.undo_check`, asked by `services.journal.why_not` over `UNDO_CHECKS`). Counted 2026-10-20, read-only,
   when the share was the rule: kr-track 11,457
@@ -559,9 +558,7 @@ hold two models' vectors, counted read-only 2026-10-28); the readings below are 
   the writers show a person a face offered whatever its score (`SuggestionModel.offered`; owner and main session,
   2026-10-20); `suggesting.OFFER_A_TAG` (0.60) is the floor of a tag alone. FaceNet's offers are from 0.70, so nothing
   it shows changed; the new model's from 0.310 are shown now.
-- The switch is a journaled change of the settings (`change settings`): History shows it and Undo takes it back. The
-  dialog's reply carries what the faces hold under the model switched to (`face_vectors`, its sentence shown before the
-  page reloads). A running server reads the model at each read: the faces fingerprint holds the model, so Identify's
+- The switch is a journaled change of the settings (`change settings`): History shows it and Undo takes it back. A running server reads the model at each read: the faces fingerprint holds the model, so Identify's
   cached grids are read again; a Suggest run or an index begun before the switch keeps the model it began with to its
   end, and the next one reads the library's. Scenario P10 switches in the dialog and undid the switch in History
   (since 2026-10-28 it finds that undo refused: it would put FaceNet back).

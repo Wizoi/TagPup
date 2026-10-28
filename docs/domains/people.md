@@ -76,8 +76,7 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   library's model, so a face with no vector under it takes no part, with no sentence of its own in the queue, a person's
   grid or the person page: an old face the deleted pass matched with nothing it found (1,195 of kr-track's, counted
   2026-10-20), and a face of a photo the index has not yet re-embedded under the model. A switch to the new model is
-  not refused and says how many named faces hold no vector under it (`settings.change`, `details["face_vectors"]`); a
-  switch to FaceNet is refused for every library, and so is an undo in History that would put it back, by the same
+  not refused and counts nothing (`settings.change`); a switch to FaceNet is refused for every library, and so is an undo in History that would put it back, by the same
   rule and sentence (`settings.NOT_FACENET`, asked by `settings.undo_check` through `services.journal.why_not`;
   owner, 2026-10-28). The consequence is stated where the owner switches (the settings dialog's face model group,
   which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).

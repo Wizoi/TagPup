@@ -36,7 +36,6 @@ from tagpup.ml import photo_models
 from tagpup.services import sync as sync_service
 from tagpup.store import db, journal, schema
 from tagpup.store import embeddings as store_embeddings
-from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
 from tagpup.store import settings as store_settings
 
@@ -110,31 +109,8 @@ def _asked_of(library, ask, *args):
 
 def face_model_refusal(model):
     """Why a library may not be put on the face model `model`, or None: FaceNet, for every library (NOT_FACENET); the new
-    model, never. The one rule of it: a switch (switch_on) and an undo putting a model back (undo_check) ask it."""
+    model, never. The one rule of it: a switch (change) and an undo putting a model back (undo_check) ask it."""
     return NOT_FACENET if model == validation.MTCNN_FACENET else None
-
-
-def switch_to(library, model):
-    """switch_on, on a read-only connection of `library`'s own: what settings.change asks."""
-    return _asked_of(library, switch_on, model)
-
-
-def switch_on(conn, model):
-    """(refusal or None, what the faces hold under `model` or None): a switch to FaceNet is refused, nothing counted
-    (face_model_refusal); a switch to the new model is not, and says, for a library with faces, how many hold a vector
-    under it and how many named faces hold none and take no part in Identify. Read-only, by
-    tagpup.store.faces.vector_counts on the caller's connection."""
-    refusal = face_model_refusal(model)
-    if refusal:
-        return refusal, None
-    held = store_faces.vector_counts(conn, model)
-    if held["faces"]:
-        held["said"] = ("%d of the library's %d faces hold a vector under %s; %d named face%s hold%s none and take%s no "
-                        "part in Identify." % (
-                            held["faces"] - held["without"], held["faces"], model, held["named_without"],
-                            "" if held["named_without"] == 1 else "s", "s" if held["named_without"] == 1 else "",
-                            "s" if held["named_without"] == 1 else ""))
-    return None, held
 
 
 def photo_model_refusal(name, pretrained, size=None):
@@ -470,11 +446,10 @@ def change(library, values, acknowledged=(), apply=True):
     to a locked setting whose group (validation.SETTING_GROUPS: "clip", "face-model",
     "faces", "exiftool") `acknowledged` does not name: the refusal lists each such group and what
     changing it means, and details["unacknowledged"] holds them. A change of the face model
-    (faces.model) to FaceNet is refused first (NOT_FACENET, switch_to); so is a switch of photo model (PHOTO_MODEL)
-    more than UNPASSED_SHARE_ALLOWED of whose photos hold no vector under its new key, or one forcing an image size on a
-    model that takes none (photo_switch_on; details["photo_vectors"]: the new key, how many photos hold a vector under it
-    and how many none, and its sentence). For a switch to the new face model, details["face_vectors"] holds what its
-    faces hold under it, and, for a library with faces, its sentence ("said"; None for a switch refused). Every caller -- the
+    (faces.model) to FaceNet is refused first (NOT_FACENET, face_model_refusal); so is a switch of photo model
+    (PHOTO_MODEL) more than UNPASSED_SHARE_ALLOWED of whose photos hold no vector under its new key, or one forcing an
+    image size on a model that takes none (photo_switch_on; details["photo_vectors"]: the new key, how many photos hold a
+    vector under it and how many none, and its sentence). Every caller -- the
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;
     details["locked"] says whether any was a locked one, after which what the models
@@ -539,7 +514,7 @@ def change(library, values, acknowledged=(), apply=True):
             return result
     if FACE_MODEL in changed:
         # Before the consequences are asked for: ticking them cannot put a library on FaceNet.
-        refusal, result.details["face_vectors"] = switch_to(library, _trim(wanted[FACE_MODEL]))
+        refusal = face_model_refusal(_trim(wanted[FACE_MODEL]))
         if refusal:
             result.refuse(refusal)
             return result
