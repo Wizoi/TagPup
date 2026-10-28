@@ -734,6 +734,23 @@ def record_detected(db_path, photo_path, detected, *, model, detector=None):
         )
         return 0
 
+def forget_for_new_picture(db_path, photo_path):
+    """Forget the faces of a photo whose picture changed -- a crop, any edit of its pixels, told by its decode's
+    fingerprint differing from its fingerprint row (photo_fingerprints.same_picture) -- as a quarter turn does
+    (tagpup.services.rotation): their rows, crops and vectors, and every record of a detector's look at it, so its old
+    boxes are never kept on the new picture (owner, 2026-10-27; docs/PLAN_KEEP_IN_STEP.md, scenario 4).
+
+    In a write of its own, before the new picture is detected: a run stopped at any point after it, or a batch whose
+    write fails, leaves the photo never examined, which the next index detects (photo_fingerprints.owed), and its
+    batch's record_batch records the new faces as a photo with none. Its person tags name them again (#788); a name or
+    an exclusion given by hand goes with its face (accepted, owner 2026-10-27). Returns the face rows removed."""
+    def forget(conn):
+        removed = faces.remove_for_photo(conn, photo_path)
+        faces_detected.forget(conn, photo_path)
+        return removed
+    return db.write_with_connection(db_path, forget, label="faces of the new picture of %s" % os.path.basename(photo_path))
+
+
 def record_batch(conn, batch, *, model, overwrite=False, detector=None):
     """Record the faces found in a batch of photos ({path: faces}) in one transaction, their vectors under `model`, the key
     of the face model that found them (tagpup.ml.faces.FaceModel.key).
