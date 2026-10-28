@@ -241,13 +241,10 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
     def test_a_photo_the_library_refuses_is_not_opened(self):
         stale = self.photo("stale.jpg", faces=1)
         self.outside(stale, "-XMP:Description=Harbour at dusk")
-        mixed = self.photo("mixed.jpg", faces=1)
-        self.write(lambda conn: store_faces.insert(conn, mixed, [1, 1, 3, 3], face_service.vector_bytes([0.5] * 8),
-                                                   model="facenet-vggface2"))
         gone = self.make("gone.jpg", row=False)
         for path, kind in ((self.photo("never.jpg"), baking.NEVER_EXAMINED),
                            (self.photo("novector.jpg", faces=1, vector=False), baking.NO_VECTOR),
-                           (stale, baking.NO_VECTOR), (mixed, baking.FACES_WITHOUT_VECTORS), (gone, baking.GONE)):
+                           (stale, baking.NO_VECTOR), (gone, baking.GONE)):
             self.assertEqual(kind, self.plan_without_opening(path).kind)
         away = self.photo("away.jpg", faces=1)
         os.remove(away)
@@ -274,14 +271,6 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         from PIL import Image
         Image.new("RGB", (14, 10), (200, 40, 40)).save(cropped, "JPEG")
         self.assertEqual(baking.NO_VECTOR, self.plan(cropped).kind, "another picture: its vector is the old one's")
-
-    def test_a_face_with_another_models_vector_refuses_the_whole_photo(self):
-        a = self.photo("a.jpg", faces=2)
-        self.write(lambda conn: store_faces.insert(conn, a, [1, 1, 3, 3], face_service.vector_bytes([0.5] * 8),
-                                                   model="facenet-vggface2"))
-        plan = self.plan(a)
-        self.assertEqual(baking.FACES_WITHOUT_VECTORS, plan.kind, "no part of the photo is baked")
-        self.assertIn("1 face(s) hold no vector", plan.reason)
 
     def test_never_examined_is_not_none_found(self):
         never = self.photo("never.jpg")

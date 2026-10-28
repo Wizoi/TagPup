@@ -284,7 +284,7 @@ def photo_details(library, photo_path, named):
     # gallery as the boxes and the strip ask it (FaceRows.likeness: of the years around its own, never a face of its own
     # photo, so never itself). It was a raw maximum over every named face: a named face showed 1.0, its own.
     known = face_rules.FaceRows.of(named()).under(key)
-    asked = [(row[0], row[3]) for row in face_rows if row[3] is not None] if known[2] is not None else []
+    asked = [(row[0], row[3]) for row in face_rows] if known[2] is not None else []
     alike = {}
     if asked:
         where = [eras.get(face_id, (None, None)) for face_id, _blob in asked]

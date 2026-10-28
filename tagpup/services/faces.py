@@ -606,7 +606,7 @@ def panel(library, photo_path, named):
         except Exception:
             box = []
         suggestion = suggested = similarity = None
-        if emb and name is None and not excluded:
+        if name is None and not excluded:
             if known is None:   # read only when a face needs it, and only of the vectors' model
                 known = clustering.FaceRows.of(named()).under(key)
             for suggested, alike, margin in identify.nearest_people(known, np.frombuffer(emb, dtype=np.float32), face_id, 1,
