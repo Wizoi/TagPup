@@ -236,9 +236,9 @@ class Cap(T.Bulk):
 
 
 class SeenFromTheJournal(T.Bulk):
-    def plan_by(self, owner, files=30):
+    def plan_by(self, owner, files=30, operation="bulk tags"):
         untagged = [each for n, each in enumerate(self.ids) if n % 3]       # the photos that hold no tag
-        change_id, _rows = file_journal.plan(self.library.path, "bulk tags", [
+        change_id, _rows = file_journal.plan(self.library.path, operation, [
             {"photo_id": each, "path": self.path(each), "before": {"XMP:Subject": []}, "after": {"XMP:Subject": ["Trips/Coast"]}}
             for each in untagged[:files]])
         db.write_with_connection(self.library.path, lambda conn: conn.execute(
@@ -253,6 +253,12 @@ class SeenFromTheJournal(T.Bulk):
         self.assertEqual(0, batches.running_here())
         reply = self.app.test_client().post("/api/activity/batches/cancel", json={"library": self.library.name, "ticket": 1})
         self.assertEqual(404, reply.status_code)
+
+    def test_the_index_bake_of_another_process_is_no_batch_as_history_and_undo_know_no_such_change(self):
+        change_id = self.plan_by(ANOTHER, operation=file_journal.INDEX_BAKE)
+        self.assertEqual([], batches.listing(self.library))
+        self.assertEqual([], [entry for entry in journal_service.history(self.library, limit=1000)["changes"]
+                              if entry["id"] == change_id])
 
     def test_a_change_whose_process_is_gone_is_not_running_and_the_next_open_settles_it(self):
         change_id = self.plan_by(GONE)

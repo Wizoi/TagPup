@@ -164,14 +164,17 @@ def _row(batch, position, counts):
 def listing(library):
     """The batches running or waiting in `library`, any process: [{ticket (this process's, to cancel by; None for another's), id (the
     journal's change, None until planned), operation, library, photos, done, conflict, planned, started, state, position, here}].
-    Never raises for a library that cannot be read: the journal's batches are then left out and logged."""
+    Never raises for a library that cannot be read: the journal's batches are then left out and logged. An internal change
+    (file_journal.INTERNAL: the index's bake) is none: it is the index's work, shown as its job, and History and Undo know
+    no such change, so a batch of it would name an id nothing else does."""
     with _turn:
         here = list(_line)
     mine = [(position, batch) for position, batch in enumerate(here) if batch.library.key == library.key]
     counts = {}
     try:
         changes = [change for change in file_journal.unfinished(library.path)
-                   if change.owner and not change.undoing and file_journal.owner_alive(change.owner)]
+                   if change.owner and not change.undoing and change.operation not in file_journal.INTERNAL
+                   and file_journal.owner_alive(change.owner)]
         if changes:
             conn = db.connect(db.readonly_uri(library.path), uri=True)
             try:
