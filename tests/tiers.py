@@ -68,7 +68,6 @@ SCENARIO = frozenset({
     "test_two_cousins_called_alike",
     # Undo of every change kind after every later kind, real writers and real ExifTool (#1805).
     "test_undo_after_every_later_kind",
-    "test_the_gate_reads_by_year_gap",
     "test_a_library_indexes_and_suggests_with_its_face_model",
     "test_a_library_from_a_newer_tagpup",
     # Roots: the folders a library holds, through a whole scenario.

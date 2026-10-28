@@ -130,7 +130,7 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   lookups of a gallery (`FaceRows._where`, `columns`; `FacesByPerson._eras`) are filled without its lock: each is the
   same answer of the same rows, so two Suggest workers that build one at once build it twice and keep either (the
   grouping itself is made under the lock, as it is large). `FacesByPerson.table`'s loop a face at a time is slower for a
-  whole folder held out at once, which only `scripts/measure_face_gate.py` asks. The named matrix is rebuilt after any
+  whole folder held out at once, which nothing asks now (the gate that did was deleted 2026-10-28). The named matrix is rebuilt after any
   photo write (the photos stamp moves on any save): 1.25 s on photo_index, paid by the first boxes request after a tag
   save; by design (measured 2026-10-22).
 
