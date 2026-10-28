@@ -8,6 +8,7 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
 - the process is killed at each step of a file's write: the next start settles it, the fingerprint row follows, and the
   finished record is gone;
 - the index's own decode of a photo is its fingerprint: the bake decodes no photo again;
+- a share stops answering part-way through the bake: what it says names no change in History to undo;
 - a face deleted in TagPup is gone from the file at the folder's next index, and does not come back. One of a photo's two:
   deleting a photo's only face forgets its detection (faces_detected.forget_faceless, #779), and the next index looks
   for its faces again, as it did before the bake.
@@ -31,7 +32,7 @@ import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import images  # noqa: E402
+from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import bake_after_index, baking, duplicate_faces, file_changes, tagging  # noqa: E402
@@ -181,6 +182,24 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertIn("Bake: 2 file(s) written", " ".join(result.output.split()))
         for path, faces in zip(paths_made, (1, 0)):
             self.assertBaked(path, faces)
+
+    def test_a_share_that_stops_answering_in_the_bake_names_no_change_to_undo(self):
+        photos = [self.picture(name, colour) for name, colour in (("a.jpg", (200, 40, 40)), ("b.jpg", (40, 200, 40)),
+                                                                  ("c.jpg", (40, 40, 200)))]
+        found, real = bake.WRITTEN[bake.FACES_FOUND], field_values.read_one
+
+        def read_one(et, path, *args, **kwargs):
+            if paths.key(path) == paths.key(photos[1]):
+                raise field_values.NotAnswered("ExifTool did not answer in 300 s")
+            return real(et, path, *args, **kwargs)
+        with mock.patch.object(file_changes.field_values, "read_one", side_effect=read_one):
+            result = file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, photos, [found],
+                                               lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
+        said = " ".join(result.refused.split())
+        self.assertIn("ExifTool stopped answering after 1 of 3 photos: 1 file(s) were written; the rest", said)
+        self.assertNotIn("History", said)
+        self.assertNotIn("undone", said)
+        self.assertNoBakeListed()
 
     def test_a_face_deleted_in_tagpup_is_gone_from_the_file_at_the_folders_next_index_and_does_not_return(self):
         self.two_faces_in_a()
