@@ -361,7 +361,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
         from tagpup.services import faces as face_records   # faces reaches file_changes, which reaches settings and sync
         held_settings = settings.on(conn)
         owed = photo_fingerprints.owed(conn, settings.photo_key_on(conn),
-                                       face_records.detector_named(held_settings.faces, held_settings.detect_max_side),
+                                       face_records.detector_named(held_settings.faces),
                                        on_disk, folder)
         to_check = {found.path: photo_id for photo_id, found in owed.items()}
         owed_by = collections.Counter(reason for found in owed.values() for reason in found.reasons)

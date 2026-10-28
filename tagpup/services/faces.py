@@ -656,10 +656,9 @@ def detector_of(model):
     return faces_detected.detector(model.detector())
 
 
-def detector_named(faces, _cap=None):
+def detector_named(faces):
     """The name detector_of gives the face model that the library settings `faces` (LibrarySettings.faces) name, with no
-    model made: what the index asks which photos were never examined with, before it knows it has a photo to work out.
-    `_cap` is not read: removed with sync.py:364 once the share fix merges."""
+    model made: what the index asks which photos were never examined with, before it knows it has a photo to work out."""
     return faces_detected.detector(validation.face_detector(faces["model"]))
 
 

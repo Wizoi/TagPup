@@ -234,12 +234,6 @@ class LibrarySettings:
         return {"model": _trim(self.values["faces.model"])}
 
     @property
-    def detect_max_side(self):
-        """None: the old detector's cap is deleted with it (2026-10-28). Removed with sync.py:364 once the share fix
-        merges."""
-        return None
-
-    @property
     def candidate_words(self):
         """The words CLIP is asked about a photo, before the tree's
         (tagpup.core.suggesting.zero_shot_words), in order."""
