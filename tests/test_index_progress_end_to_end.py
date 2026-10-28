@@ -102,6 +102,33 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertFalse(any("Generating embeddings" in (message or "") for message, _p in heard_again), heard_again)
         self.assertEqual("Folder indexed: no photo was added or read again.", again.details["message"])
 
+    def test_an_index_whose_every_photo_failed_says_so_and_not_that_the_folder_is_current(self):
+        """#1995: the CLI's per-photo loop logs a failure and goes on, exits 0 having recorded nothing; the message told
+        the owner no photo was added or read again, as for a folder that is current."""
+        home = own_home.for_test(self, "index_failed_")
+        shim = os.path.join(home.root, "shim")
+        os.makedirs(shim)
+        with open(os.path.join(shim, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(SITECUSTOMIZE % {"root": ROOT}
+                         + "mock.patch.object(clip.ClipModel, 'embed_input', side_effect=RuntimeError('refused')).start()\n")
+        folder = os.path.join(home.root, "Regatta")
+        os.makedirs(folder)
+        for name in ("one.jpg", "two.jpg", "three.jpg"):
+            Image.new("RGB", (64, 64), "navy").save(os.path.join(folder, name), "JPEG")
+        library = Library(home.library("harbour.db"))
+        saved = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = shim
+        try:
+            result = indexing.index_folder(library, folder, ROOT, report=lambda message=None, percent=None: None)
+        finally:
+            if saved is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = saved
+        self.assertTrue(result.ok, result.errors)
+        self.assertTrue(result.details["message"].startswith("3 photo(s) failed and were not indexed"),
+                        result.details["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

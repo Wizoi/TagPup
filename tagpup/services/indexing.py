@@ -46,6 +46,9 @@ CANCELLED_WAITING = "Cancelled while it waited for the graphics card; nothing wa
 #: tagpup.services.faces.automatch_new), as new_faces_said says it, or that the matching failed. index_folder reads the
 #: line whole, before the bar cuts it, and ends its message with it.
 NEW_FACES = "New faces: "
+#: The line the CLI prints when photos failed in its per-photo loop (#1995), read whole like NEW_FACES: the message says
+#: how many, since a run whose every photo failed exits 0 having recorded nothing.
+FAILED = "Photos that failed: "
 
 
 def new_faces_said(matched):
@@ -167,7 +170,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     if hasattr(report, "stop_file"):
         report.stop_file = stop_file
 
-    said, baked, wrote = [], [], []
+    said, baked, wrote, failed = [], [], [], []
 
     def run(args):
         proc = processes.start(
@@ -181,6 +184,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                 if whole.startswith(NEW_FACES):
                     # Whole: the bar's summary cuts a line at 90 characters.
                     said.append(whole[len(NEW_FACES):])
+                elif whole.startswith(FAILED):
+                    failed.append(whole[len(FAILED):])
                 elif whole.startswith(bake_reading.SAID):
                     baked.append(whole)
                 elif whole.startswith(bake_after_index.SAID):
@@ -218,7 +223,9 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         return result
 
     result.changed = 1
-    result.details.update(percent=100, message=(
-        " ".join(["Folder indexed. " + said[-1]] + baked[-1:] + wrote[-1:]) if said
-        else "Folder indexed: no photo was added or read again."))
+    message = (" ".join(["Folder indexed. " + said[-1]] + baked[-1:] + wrote[-1:]) if said
+               else "Folder indexed: no photo was added or read again.")
+    if failed:
+        message = "%s photo(s) failed and were not indexed (the indexer's log says why). %s" % (failed[-1], message)
+    result.details.update(percent=100, message=message)
     return result

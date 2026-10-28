@@ -487,6 +487,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         given = set()  # The paths of the photos given their identity, read again before their batch is recorded
         total_new_indexed = 0
         locked_out = []
+        failed_photos = []
 
         # A photo's bake gives what it holds only under the library's own keys (tagpup.services.bake_reading): the photo
         # model's, and the face model's, the one the runtime hands for the library's setting (Runtime.faces).
@@ -702,6 +703,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     batch_metas = []
             except Exception as e:
                 logger.error(f"Error indexing {path}: {e}")
+                failed_photos.append(path)
                 locker.release(path)
             finally:
                 # The decoded pictures go with the photo: what the read-ahead counts as held is given back when the
@@ -744,6 +746,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 f"[cyan]Recovered {locker.stolen} lock(s) abandoned by a previous run.[/cyan]"
             )
 
+        if failed_photos:
+            console.print(indexing_service.FAILED + str(len(failed_photos)), markup=False, highlight=False)
         if total_new_indexed > 0:
             console.print("[bold green]Indexing successfully completed![/bold green]")
         else:
