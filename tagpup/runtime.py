@@ -44,7 +44,7 @@ import threading
 import time
 
 from tagpup import config as tagpup_config
-from tagpup.core import gpu_turns, validation
+from tagpup.core import gpu_turns
 from tagpup.core import library as libraries
 from tagpup.core.idle import IdleCaches
 from tagpup.core.library import Library
@@ -356,13 +356,11 @@ def _build_clip(settings):
 
 
 def _build_faces(settings):
-    """The face models `settings` (LibrarySettings.faces) name: their `model`, made with the rest."""
-    settings = dict(settings)
-    if settings.pop("model") == validation.SCRFD_ADAFACE:
-        from tagpup.ml.scrfd_adaface import ScrfdAdaFace
-        return ScrfdAdaFace()
-    from tagpup.ml.faces import FaceModel
-    return FaceModel(**settings)
+    """The face models of a library (LibrarySettings.faces): SCRFD and AdaFace, the one face model. MTCNN and FaceNet were
+    deleted (2026-10-28, docs/OLD_MODEL_VESTIGES.md row 5): every library is on scrfd-adaface and holds no FaceNet
+    vector, and a switch to mtcnn-facenet is refused (tagpup.services.settings.NOT_FACENET)."""
+    from tagpup.ml.scrfd_adaface import ScrfdAdaFace
+    return ScrfdAdaFace()
 
 
 #: The two parts of a library's settings that name a model, in the order of a model set.
@@ -524,7 +522,7 @@ class Runtime:
     it serves names, and each library's photo index for Suggest.
 
     `build_clip` and `build_faces` make a model from its settings (tagpup.ml.clip.ClipModel's
-    and tagpup.ml.faces.FaceModel's keyword arguments): a test's stand-ins are built so, one
+    keyword arguments; LibrarySettings.faces): a test's stand-ins are built so, one
     way, and are then held, kept and let go as a real model is. `read_only` reads
     each library's settings without stamping one that holds none (peek_settings): for a
     command that only looks.
@@ -637,8 +635,7 @@ class Runtime:
         on those settings asks for them. Their weights load on first use, or in warm_up.
 
         Every write of faces gets its face models here (the CLI's index, Suggest's begin, Just look included, the
-        warm-up), whichever the library names: each answers the same calls (tagpup.ml.faces.FaceModel,
-        tagpup.ml.scrfd_adaface.ScrfdAdaFace)."""
+        warm-up): tagpup.ml.scrfd_adaface.ScrfdAdaFace."""
         settings = settings or self.settings(library)
         self.idle.used(MODELS)
         with self._lock:

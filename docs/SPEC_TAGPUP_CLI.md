@@ -30,7 +30,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 - **`tagpup/runtime.py` (The models)**: Builds the CLIP model and the face models once for each set of settings, from the settings of the library the command is given (`--db`; `tagpup.services.settings`), and hands them to what needs them. Nothing else builds a model.
 - **`tagpup/ml/clip.py` (Visual Embeddings)**: The photo model (SigLIP 2 SO400M, `ViT-SO400M-14-SigLIP2` / `webli`, at its native 224 pixels, every library's) using PyTorch (supporting GPU/CUDA acceleration if available with FP16 half-precision, or falling back to CPU). Generates normalized embeddings. `tagpup/services/search.py` (`PhotoEmbeddings`) keeps each photo's in the library, so an unchanged file is not embedded again.
 - **`tagpup/services/search.py` (SQLite & FAISS Vector Index)**: `PhotoIndex` loads a library's photo records and their vectors from the store (`tagpup/store/`) and builds an in-memory `faiss.IndexFlatIP` flat index (`tagpup/ml/vector_index.py`) for rapid cosine similarity queries.
-- **`tagpup/ml/faces.py` (Face Recognition)**: Detects face bounding boxes and generates face vectors with the library's face model: **SCRFD + AdaFace** (`scrfd-adaface`, every new library's), or **MTCNN + InceptionResnetV1** (`mtcnn-facenet`, 512-dimensional vectors) for a library not yet switched (supporting GPU/CUDA and FP16 acceleration).
+- **`tagpup/ml/scrfd_adaface.py` (Face Recognition)**: Detects face bounding boxes and generates face vectors with the face model, **SCRFD + AdaFace** (`scrfd-adaface`, every library's; MTCNN and FaceNet were deleted 2026-10-28), on the GPU in half precision or on the processor.
 - **`tagpup/services/identities.py` (Identity Clustering)**: Performs density-based clustering (**DBSCAN**) of a library's faces to resolve and assign names to visual identities based on co-occurrence tagging patterns, by the rules in `tagpup/core/clustering.py`.
 - **`tagpup/store/taxonomy.py` (Hierarchical Tag Taxonomy)**: Builds and updates a tree of all known hierarchical paths (e.g. `Family/Immediate/John Doe`). Resolves leaf tags to their ancestors.
 - **`tagpup/services/suggester.py` (Tag Suggestion Engine)**: Scores tags using cosine similarity of nearest visual neighbors and boosts matched tags if specific face embeddings are recognized in the target image. It is given its models.
@@ -61,7 +61,6 @@ Configured in `requirements.txt`:
 - **`click`**: CLI creation library.
 - **`tqdm`**: Command-line progress bars.
 - **`Pillow`**: Standard Python Imaging Library for image preprocessing.
-- **`facenet-pytorch`**: GPU/CPU-compatible MTCNN face detector and InceptionResnetV1 face embedder.
 - **`scikit-learn`**: Machine learning library for DBSCAN clustering algorithms.
 
 ---

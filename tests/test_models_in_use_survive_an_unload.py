@@ -11,13 +11,12 @@ import tempfile
 import unittest
 from unittest import mock
 
-import numpy as np
 import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tagpup.ml import clip, faces  # noqa: E402
+from tagpup.ml import clip, scrfd_adaface  # noqa: E402
 
 
 class Weights:
@@ -91,21 +90,21 @@ class TheTextModelLetGoBetweenTheCheckAndTheLock(unittest.TestCase):
 class TheFaceModelsLetGoMidPhoto(unittest.TestCase):
     def test_a_photo_detected_while_the_models_are_let_go_finishes_with_the_ones_it_had(self):
         weights = Weights()
-        model = faces.FaceModel(40, 0.9, [0.6, 0.7, 0.7], device="cpu")
+        model = scrfd_adaface.ScrfdAdaFace(device="cpu")
 
-        class Detector:
-            def detect(self, picture):
-                model.unload()          # the idle release, while this photo is in the detector
-                return np.array([[0.0, 0.0, 60.0, 60.0]]), [0.99]
+        def detected(detectors, picture):
+            model.unload()          # the idle release, while this photo is in the detector
+            return [{"box": [0, 0, 60, 60], "prob": 0.99, "landmarks": list(scrfd_adaface.TEMPLATE)}]
 
         def init():
-            model.mtcnn, model.resnet = Detector(), weights
+            model.detectors, model.recogniser = {640: object()}, weights
 
         with tempfile.TemporaryDirectory() as folder:
             photo = os.path.join(folder, "one.jpg")
             Image.new("RGB", (80, 80), "navy").save(photo, "JPEG")
-            with mock.patch.object(model, "_init_models", init), mock.patch.object(faces, "free_device_memory"):
-                found = model.detect_and_embed_faces(photo, max_side=None)
+            with mock.patch.object(model, "_init_models", init), mock.patch.object(model, "_detected", detected), \
+                    mock.patch.object(scrfd_adaface, "free_device_memory"):
+                found = model.detect_and_embed(model.picture(photo, max_side=None))
         self.assertEqual(1, len(found))
         self.assertEqual(512, len(found[0]["embedding"]))
         self.assertEqual([True], weights.modes)

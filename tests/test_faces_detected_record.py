@@ -35,7 +35,7 @@ from face_rows import add_face, FACE_MODEL  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.ml.faces import NotDetected  # noqa: E402
+from tagpup.ml.scrfd_adaface import NotDetected  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402

@@ -13,6 +13,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tagpup import ml  # noqa: E402
 
 
+def face_model(test):
+    """The face model on the processor, its weight files there (empty: nothing reads them before the refusal)."""
+    import tempfile
+    from tagpup.ml import scrfd_adaface
+    folder = tempfile.TemporaryDirectory()
+    test.addCleanup(folder.cleanup)
+    for name in [scrfd_adaface.DETECTOR_FILE % side for side in scrfd_adaface.SCALES] + [scrfd_adaface.RECOGNISER_FILE]:
+        open(os.path.join(folder.name, name), "wb").close()
+    return scrfd_adaface.ScrfdAdaFace(device="cpu", folder=folder.name)
+
+
 class TheLoadersRefuse(unittest.TestCase):
     def test_a_test_run_is_known_without_the_flag(self):
         # `unittest discover -s tests` never imports the tests package, which sets it.
@@ -27,10 +38,8 @@ class TheLoadersRefuse(unittest.TestCase):
             model.load()
 
     def test_the_face_models_refuse(self):
-        from tagpup.ml.faces import FaceModel
-        model = FaceModel(40, 0.9, [0.6, 0.7, 0.7], device="cpu")
         with self.assertRaisesRegex(RuntimeError, "under test"):
-            model.load()
+            face_model(self).load()
 
 
 class TheModelsLetGo(unittest.TestCase):
@@ -55,10 +64,9 @@ class TheModelsLetGo(unittest.TestCase):
             model.load()   # used again, it would load again
 
     def test_the_face_models_let_their_weights_and_the_gpu_memory_go(self):
-        from tagpup.ml.faces import FaceModel
-        model = FaceModel(40, 0.9, [0.6, 0.7, 0.7], device="cpu")
-        model.mtcnn, model.resnet = object(), object()
-        self.unloaded(model, ("mtcnn", "resnet"))
+        model = face_model(self)
+        model.detectors, model.recogniser = {640: object()}, object()
+        self.unloaded(model, ("detectors", "recogniser"))
         with self.assertRaisesRegex(RuntimeError, "under test"):
             model.load()
 

@@ -537,7 +537,7 @@ takes no turn of the card.
   refusal of FaceNet; the switch to the new model is P10's).
 
 **Merge 3, item 3, as built (2026-10-20): the index, Suggest and the pass write faces with the library's model, whichever.**
-- One surface, answered by `tagpup.ml.faces.FaceModel` and `tagpup.ml.scrfd_adaface.ScrfdAdaFace` alike, built by
+- One surface, answered by `tagpup.ml.scrfd_adaface.ScrfdAdaFace` (and the old `FaceModel` until it was deleted, 2026-10-28), built by
   `tagpup.runtime` from the library's `faces.model`: `key` (what its vectors are filed under), `picture(path, max_side=)`
   (the processor's half, on a read-ahead thread), `picture_bytes(width, height, max_side=)` (what the read-ahead
   reserves), `detect_and_embed(picture)` (the card's half), `new_faces(detected, picture)` (of what it found, the faces a

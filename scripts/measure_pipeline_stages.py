@@ -355,7 +355,6 @@ def child(plan_path):
     started = time.perf_counter()
     import torch
     import open_clip  # noqa: F401
-    import facenet_pytorch  # noqa: F401
     fixed["model libraries import"] = time.perf_counter() - started
     sync = torch.cuda.synchronize if torch.cuda.is_available() else (lambda: None)
     timeline = Timeline(sync)

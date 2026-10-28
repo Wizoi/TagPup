@@ -293,7 +293,7 @@ class Card:
     def ensure(self, what):
         """Have the turn before a model is loaded onto the card: at once when this process
         has it, else waited for (each change of the waiting line logged) and kept until it
-        is given up -- the models' own check (tagpup.ml.clip, tagpup.ml.faces), for a load
+        is given up -- the models' own check (tagpup.ml.clip, tagpup.ml.scrfd_adaface), for a load
         no run took a turn for."""
         with self._cond:
             if self._fd is not None and not self._yielding:

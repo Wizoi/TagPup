@@ -634,7 +634,7 @@ def panel(library, photo_path, named):
 # ---- The faces detection finds ---------------------------------------------------------
 #
 # What indexing and Suggest record of the faces a face model found in a photo
-# (tagpup.ml.faces), and the named faces a new one is compared with. PhotoIndex held a
+# (tagpup.ml.scrfd_adaface), and the named faces a new one is compared with. PhotoIndex held a
 # wrapper for each (docs/ARCHITECTURE.md, phase 5.5).
 
 def vector_bytes(embedding):
@@ -651,8 +651,7 @@ def _insert_detected(conn, photo_path, face, model):
 
 def detector_of(model, max_side):
     """The name the detections of face model `model` at cap `max_side` are recorded under (tagpup.store.faces_detected):
-    the settings the model says (its `detector`: MTCNN's settings and the cap when there is one,
-    tagpup.ml.faces.FaceModel; the new model's key, tagpup.ml.scrfd_adaface.ScrfdAdaFace). The one name of it, for the
+    the settings the model says (its `detector`: the model's key, tagpup.ml.scrfd_adaface.ScrfdAdaFace). The one name of it, for the
     write (the index, Suggest) and the read (Suggest's "detected before")."""
     return faces_detected.detector(model.detector(max_side))
 
@@ -664,7 +663,7 @@ def detector_named(faces, max_side):
 
 
 def ran(detected):
-    """Did the detection that returned `detected` run to the end (tagpup.ml.faces.NotDetected)?"""
+    """Did the detection that returned `detected` run to the end (tagpup.ml.scrfd_adaface.NotDetected)?"""
     return not getattr(detected, "failed", False)
 
 
@@ -678,7 +677,7 @@ def _record_detection(conn, photo_path, detector, detected):
 
 def record_detected(db_path, photo_path, detected, *, model, detector=None):
     """Record the faces found in a photo only when it has none yet, their vectors under `model`, the key of the face model
-    that found them (tagpup.ml.faces.FaceModel.key): never the library's setting, which may have moved since. Returns rows
+    that found them (tagpup.ml.scrfd_adaface.ScrfdAdaFace.key): never the library's setting, which may have moved since. Returns rows
     inserted.
 
     Never deletes: record_batch(overwrite=True) clears the photo's rows first, which would discard
@@ -759,7 +758,7 @@ def forget_for_new_picture(db_path, photo_path):
 
 def record_batch(conn, batch, *, model, overwrite=False, detector=None):
     """Record the faces found in a batch of photos ({path: faces}) in one transaction, their vectors under `model`, the key
-    of the face model that found them (tagpup.ml.faces.FaceModel.key).
+    of the face model that found them (tagpup.ml.scrfd_adaface.ScrfdAdaFace.key).
 
     By default a photo that already has face rows is left alone. Those rows carry
     assigned names, manual overrides, exclusions and cached crops, and re-detection

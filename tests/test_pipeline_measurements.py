@@ -188,28 +188,6 @@ class TheHooksReachTheModelsAsTheIndexCallsThem(unittest.TestCase):
             self.assertIn(stage, found)
         self.assertEqual([64, 48], self.timeline.record(self.photo)["upright"])
 
-    def test_faces_are_timed_from_their_decode_to_the_detector(self):
-        import torch
-        from tagpup.ml import faces
-        model = faces.FaceModel(20, 0.85, [0.6, 0.7, 0.7], device="cpu")
-
-        class Detector:
-            def detect(self, pixels):
-                return None, None
-
-        def load():
-            if model.mtcnn is None:
-                model.mtcnn, model.resnet = Detector(), torch.nn.Identity()
-        model._init_models = load
-        stages._watch_faces(model, self.timeline)
-        self.assertEqual([], model.detect_and_embed(model.picture(self.photo, max_side=None)))
-        record = self.timeline.record(self.photo)
-        self.assertEqual([64, 48], record["stored"])
-        self.assertEqual(0, record["faces_found"])
-        found = stages.stages_of(record)
-        for stage in ("decode for faces", "MTCNN"):
-            self.assertIn(stage, found)
-
     def test_the_cards_wait_for_each_photo_is_timed_and_its_begin_apart(self):
         """Phase 1c's question: what of the processor's work the read-ahead did not hide. The photos come back in
         their order through the wrapped iteration, each with its wait and its `begin`'s share of it."""

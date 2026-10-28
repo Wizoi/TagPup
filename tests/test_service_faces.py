@@ -266,7 +266,6 @@ class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
         under stands; the new model's detections (a new library's, the default) are named by its key alone, the cap not
         used."""
         from tagpup.core import validation
-        from tagpup.ml import faces as face_models
         from tagpup.ml.scrfd_adaface import ScrfdAdaFace
         from tagpup.services import settings as library_settings
         for cap in ("", "2048"):
@@ -276,12 +275,9 @@ class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
                     library_settings.DEFAULTS, **{"faces.detect_max_side": cap, "faces.model": validation.MTCNN_FACENET}))
                 mtcnn = {key: value for key, value in on_mtcnn.faces.items() if key != "model"}
                 self.assertEqual(tuple(mtcnn), validation.MTCNN_DETECTOR_SETTINGS)
-                name = json.loads(faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), on_mtcnn.detect_max_side))
+                name = json.loads(faces.detector_named(on_mtcnn.faces, on_mtcnn.detect_max_side))
                 expected = dict(mtcnn, **({validation.MTCNN_DETECTOR_CAP: on_mtcnn.detect_max_side} if cap else {}))
                 self.assertEqual(expected, name)
-                self.assertEqual(faces.detector_named(on_mtcnn.faces, on_mtcnn.detect_max_side),
-                                 faces.detector_of(face_models.FaceModel(**mtcnn, device="cpu"), on_mtcnn.detect_max_side),
-                                 "named with no model made as the model names it")
                 self.assertEqual({"model": "scrfd-adaface"},
                                  json.loads(faces.detector_of(ScrfdAdaFace(device="cpu"), made.detect_max_side)))
                 self.assertEqual(faces.detector_named(made.faces, made.detect_max_side),
