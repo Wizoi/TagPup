@@ -8,7 +8,9 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
 - the process is killed at each step of a file's write: the next start settles it, the fingerprint row follows, and the
   finished record is gone;
 - the index's own decode of a photo is its fingerprint: the bake decodes no photo again;
-- a face deleted in TagPup is gone from the file at the folder's next index, and does not come back.
+- a face deleted in TagPup is gone from the file at the folder's next index, and does not come back. One of a photo's two:
+  deleting a photo's only face forgets its detection (faces_detected.forget_faceless, #779), and the next index looks
+  for its faces again, as it did before the bake.
 """
 import json
 import os
@@ -42,6 +44,7 @@ EXIFTOOL = own_home.installed_exiftool()
 SIZE = (640, 480)
 DETECTOR = face_service.detector_of(NewFaces(), None)
 FACE = [300, 200, 400, 330]
+SECOND = [60, 60, 160, 180]
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
@@ -84,6 +87,17 @@ class TheIndexWritesTheBake(unittest.TestCase):
         finally:
             conn.close()
 
+    def two_faces_in_a(self):
+        """a.jpg holds two faces, FACE and SECOND, the second smaller."""
+        self.detector.found["a.jpg"] = [(FACE, 0.99, 1), (SECOND, 0.98, 2)]
+
+    def delete_the_second_face(self, path):
+        """Delete SECOND of the photo at `path` as the owner does, by its id; its photo keeps FACE."""
+        (face_id,) = [face_id for face_id, path_of, box in self.query(
+            "SELECT f.id, p.path, f.box FROM faces f JOIN photos p ON p.id = f.photo_id")
+            if paths.key(path_of) == paths.key(path) and json.loads(box) == SECOND]
+        self.assertEqual(1, duplicate_faces.remove(self.library, [face_id]))
+
     def boxes(self, path):
         return [json.loads(box) for path_of, box in self.query(
             "SELECT p.path, f.box FROM faces f JOIN photos p ON p.id = f.photo_id") if paths.key(path_of) == paths.key(path)]
@@ -124,20 +138,20 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertNoBakeListed()
 
     def test_history_lists_no_bake_and_a_save_before_one_is_undone_past_it(self):
+        self.two_faces_in_a()
         a = self.picture("a.jpg", (200, 40, 40))
         self.index()
         saved = tagging.save_photo(self.library, a, "Ferry at the quay", ["Harbour/Ferry"], None, EXIFTOOL, "")
         self.assertTrue(saved.changed, saved.refused)
-        (face_id,) = [face_id for (face_id,) in self.query("SELECT id FROM faces")]
-        self.assertEqual(1, duplicate_faces.remove(self.library, [face_id]))
+        self.delete_the_second_face(a)
         self.picture("b.jpg", (40, 200, 40))
         self.index()   # the folder's bake writes a.jpg again, after the save
-        self.assertBaked(a, 0)
+        self.assertBaked(a, 1)
         self.assertNoBakeListed()
         self.assertIsNone(journal_service.history(self.library, change_id=saved.details["change"])["changes"][0]["why_not"])
         undone = journal_service.undo(self.library, saved.details["change"], apply=True, exiftool_path=EXIFTOOL)
         self.assertFalse(undone.refused, undone.refused)
-        self.assertBaked(a, 0)
+        self.assertBaked(a, 1)
 
     def test_a_crash_at_each_step_of_a_files_write_is_settled_and_leaves_no_record(self):
         for n, step in enumerate(file_changes.STEPS):
@@ -169,18 +183,18 @@ class TheIndexWritesTheBake(unittest.TestCase):
             self.assertBaked(path, faces)
 
     def test_a_face_deleted_in_tagpup_is_gone_from_the_file_at_the_folders_next_index_and_does_not_return(self):
+        self.two_faces_in_a()
         a = self.picture("a.jpg", (200, 40, 40))
         self.index()
-        self.assertBaked(a, 1)
-        (face_id,) = [face_id for (face_id,) in self.query("SELECT id FROM faces")]
-        self.assertEqual(1, duplicate_faces.remove(self.library, [face_id]))
-        self.picture("b.jpg", (40, 200, 40))
+        self.assertBaked(a, 2)
+        self.delete_the_second_face(a)
+        self.picture("b.jpg", (40, 200, 40))   # the folder recorded again (a deletion alone does not: findings)
         self.index()
-        self.assertBaked(a, 0)
+        self.assertBaked(a, 1)
         self.picture("c.jpg", (40, 40, 200))
         self.index()
-        self.assertEqual([], self.boxes(a), "the file's old bake gave the face back")
-        self.assertBaked(a, 0)
+        self.assertEqual([FACE], self.boxes(a), "the file's old bake gave the face back")
+        self.assertBaked(a, 1)
 
 
 if __name__ == "__main__":
