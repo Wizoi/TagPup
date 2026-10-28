@@ -18,21 +18,19 @@ never overwritten. A read or a write ExifTool does not answer in its deadline (a
 folder; the folders after it are baked by the next index. One snapshot of the library is taken before the first write
 (snapshots.before_a_long_write: none when today's stands); if it fails nothing is written.
 
-A photo with no fingerprint row (photo_fingerprints.NO_FINGERPRINT: what sync owes the index for a current vector whose
-picture was never fingerprinted) is planned with its decode however its file reads. The one rule of its row (_adopt): it
-is recorded only for a file that holds the library's current bake, or whose write no retry changes. A written file's
-follows its write (baking.follower); one whose file was planned holding a current bake already, or whose write failed
-on a file marked read-only (file_changes' `read_only`), is given the decode's (photo_fingerprints.adopt), so sync does
-not queue its folder again for a write that cannot change. Every other photo keeps none and the next sync owes its
-folder to the index again: a write that failed otherwise (a file another program holds open; a packet ExifTool refuses
-even with -m, which has no live instance since DECISIONS 2026-10-27 and is retried at each sync), a conflict, a photo
-not answered (a share that stopped answering while its folder was read or written), or not reached.
-
-A run that ends early -- asked to stop, a share that stopped answering, the roots changed, or an exception (a Ctrl+C
-included) -- forgets the rows the index recorded this run (`handed`) of the photos of the folders it did not finish and
-did not write (_owe_again): left, they would keep a new photo's unbaked file from being owed until something else in its
-folder changed. A process killed or a power cut runs nothing: its photos stay unbaked until their folder's next index
-(by design; no live instance).
+The one rule of a photo's fingerprint row here: a photo the run is handed -- one the index recorded this run (`handed`),
+or one with no row (photo_fingerprints.NO_FINGERPRINT: what sync owes the index for a current vector whose picture was
+never fingerprinted) -- holds a row after it only when its file was written (the row follows the write, in the
+transaction that marks it done: baking.follower), was planned holding the library's current bake already, or failed its
+write on a file marked read-only (file_changes' `read_only`, the one failure no retry changes); the last two are given
+the decode's (_adopt, photo_fingerprints.adopt), so sync does not queue their folder again for a write that cannot
+change. To hold it, the rows the index recorded this run are taken away before the first folder is planned (_owe_first):
+a row comes back only by one of those three. Every other photo has none and the next sync owes its folder to the index
+again, however the run went: a write that failed otherwise (a file another program holds open; a packet ExifTool refuses
+even with -m, which has no live instance since DECISIONS 2026-10-27 and is retried at each sync), a conflict, a photo not
+answered (a share that stopped answering while its folder was read or written), a folder not reached (asked to stop, the
+roots changed, an exception, a Ctrl+C), and a process killed or a power cut part-way. Left, the index's row would keep a
+new photo's unbaked file from being owed until something else in its folder changed.
 """
 import collections
 import dataclasses
@@ -97,64 +95,48 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
     the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did.
-    A run that ends early forgets the rows of `handed`'s photos it did not finish (_owe_again)."""
+    A handed photo keeps its row only when its file is written, holds the current bake or is read-only (_owe_first)."""
     baked, snapshot, walk = Baked(), [], baking.walk(stop)
-    # The folders not finished, the first the one under way; `under_way`, its photos still to bake once it is planned.
-    unfinished, under_way = list(folders), None
-    try:
-        with field_values.session(exiftool_path) as session:
-            et = exiftool_session.StaysDead(session)
-            for folder in folders:
-                under_way = None
-                if stop is not None and stop():
-                    break
-                to_bake, stored, unfingerprinted = _planned(library, et, detector, folder, handed, baked, walk)
-                under_way, written = set(to_bake), None
-                if to_bake and not baked.stalled:
-                    if not snapshot:
-                        snapshot.append(snapshot_service.before_a_long_write(library))
-                    written = _write(library, exiftool_path, et, stored, to_bake, baked)
-                    under_way -= {paths.key(path) for path in written.details.get("written", {})}
-                _adopt(library, unfingerprinted, to_bake, written, baked)
-                if baked.stalled or et.dead:
-                    baked.stalled = True
-                    break
-                if baked.roots_changed:
-                    break
-                unfinished.pop(0)
-    except (Exception, KeyboardInterrupt):
-        try:
-            _owe_again(library, unfinished, under_way, handed)
-        except Exception:
-            logger.exception("The rows of the photos the bake did not reach were not forgotten")
-        raise
-    _owe_again(library, unfinished, under_way, handed)
+    _owe_first(library, folders, handed)
+    with field_values.session(exiftool_path) as session:
+        et = exiftool_session.StaysDead(session)
+        for folder in folders:
+            if stop is not None and stop():
+                break
+            to_bake, stored, unfingerprinted = _planned(library, et, detector, folder, handed, baked, walk)
+            written = None
+            if to_bake and not baked.stalled:
+                if not snapshot:
+                    snapshot.append(snapshot_service.before_a_long_write(library))
+                written = _write(library, exiftool_path, et, stored, to_bake, baked)
+            _adopt(library, unfingerprinted, to_bake, written, handed, baked)
+            if baked.stalled or et.dead:
+                baked.stalled = True
+                break
+            if baked.roots_changed:
+                break
     if told is not None:
         told(baked.said())
     return baked
 
 
-def _owe_again(library, unfinished, under_way, handed):
-    """Forget the fingerprint rows the index recorded this run (`handed`'s photos) in the folders of `unfinished` that
-    the bake did not write: of the first, the one under way, those of `under_way` (its photos to bake not written) or,
-    not planned yet (None), all of them; of the rest, all. sync then owes them (NO_FINGERPRINT) and the next index bakes
-    them, a decode each. Deleting a row only makes a photo owed: a writer racing it loses nothing."""
-    if not unfinished or not handed:
+def _owe_first(library, folders, handed):
+    """Take away the fingerprint rows the index recorded this run (`handed`'s photos, directly in `folders`) before the
+    bake plans anything: each is then planned as a photo with no row, and has one again only by its file's write
+    (baking.follower) or _adopt. Whatever ends the run -- a stop, a share away, an exception, a process killed -- the
+    photos it did not bake are owed (NO_FINGERPRINT) and the next index bakes them, the index's decode lost (one decode
+    each). Deleting a row only makes a photo owed: a writer racing it loses nothing."""
+    if not handed:
         return
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        ids = []
-        for n, folder in enumerate(unfinished):
-            for photo_id, path in inspection.under(conn, folder):
-                key = paths.key(path)
-                if paths.key(os.path.dirname(path)) == paths.key(folder) and key in handed and (
-                        n or under_way is None or key in under_way):
-                    ids.append(photo_id)
+        ids = [photo_id for folder in folders for photo_id, path in inspection.under(conn, folder)
+               if paths.key(path) in handed and paths.key(os.path.dirname(path)) == paths.key(folder)]
     finally:
         conn.close()
     if ids:
         db.write_with_connection(library.path, lambda conn: photo_fingerprints.forget_photos(conn, ids),
-                                 label="the fingerprints of the photos a bake that ended early did not reach")
+                                 label="the fingerprints the index recorded of the photos its bake is to write")
 
 
 def _planned(library, et, detector, folder, handed, baked, walk):
@@ -209,12 +191,13 @@ class _Decode:
         return digest
 
 
-def _adopt(library, unfingerprinted, to_bake, written, baked):
-    """Give its decode's fingerprint row (photo_fingerprints.adopt) to each photo of `unfingerprinted` (_planned's) whose
-    file holds the library's current bake -- planned Current, not in `to_bake` -- or whose write failed on a file marked
-    read-only (`written`, the folder's write's Result, file_changes' `read_only`; None when no write ran). Nothing else:
-    a written file's row followed its write, and a photo not written for any other reason stays owed. Counted in
-    `baked.adopted`."""
+def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
+    """Give its decode's fingerprint row (photo_fingerprints.adopt) to each photo of `unfingerprinted` (_planned's: the
+    index's this run among them, _owe_first) whose file holds the library's current bake -- planned Current, not in
+    `to_bake` -- or whose write failed on a file marked read-only (`written`, the folder's write's Result, file_changes'
+    `read_only`; None when no write ran). Nothing else: a written file's row followed its write, and a photo not written
+    for any other reason stays owed. Counted in `baked.adopted`, but for `handed`'s: the index recorded theirs this
+    run, and given back it is nothing new to say."""
     read_only = {paths.key(path) for path in (written.details.get("read_only", []) if written is not None else [])}
     unfingerprinted = {key: found for key, found in unfingerprinted.items() if key not in to_bake or key in read_only}
     # A file whose look did not answer when it was decoded has no stamp to hold the vector's against: no row.
@@ -225,8 +208,8 @@ def _adopt(library, unfingerprinted, to_bake, written, baked):
     def adopt(conn):
         photo_key = settings.photo_key_on(conn)
         return sum(photo_fingerprints.adopt(conn, photo_id, photo_key, decode.stamp,
-                                            (images.FINGERPRINT_KEY, decode.digest))
-                   for photo_id, decode in unfingerprinted.values())
+                                            (images.FINGERPRINT_KEY, decode.digest)) and key not in handed
+                   for key, (photo_id, decode) in unfingerprinted.items())
     baked.adopted += db.write_with_connection(library.path, adopt, label="the fingerprints of the photos whose files hold their bake")
 
 

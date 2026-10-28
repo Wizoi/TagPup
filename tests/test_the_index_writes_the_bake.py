@@ -23,7 +23,9 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
   that stops answering while its folder is planned, a file another program holds open (it is baked once let go), a file
   another program changed between the plan and the write (a conflict), and a bake that falls over between two folders
   of a new index (the index's rows of the folder not reached are forgotten) each leave their photos owed, and the next
-  index bakes them.
+  index bakes them; so do a new folder's photos whose share stops answering while the bake reads the folder, a new
+  photo another program holds open through its first index, and a Ctrl+C part-way through a folder's write, after which
+  the files written keep their rows and the rest are owed.
 
 Lifted: the deleted `bake-photos` command's tests of a PNG and of a turn between the plan and the write
 (test_a_bake_is_written_folder_by_folder), now of the index's bake.
@@ -536,6 +538,63 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertIn("Bake: 2 file(s) written", self.index_with_no_model(self.folder, quay))
         for path in second:
             self.assertBaked(path, 1 if os.path.basename(path) == "a.jpg" else 0)
+        self.assertEqual((0, 0, True), self.looked())
+
+    def test_a_new_folders_share_that_stops_answering_while_the_bake_reads_it_leaves_its_photos_owed(self):
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        real_read, real_bake = field_values.read, bake_after_index.bake_folders
+
+        def folder_read(et, photo_paths, *args, **kwargs):
+            # The bake's one read of the folder (baking.FolderRead), in batches of one: the share goes away after the first.
+            if len(photo_paths) > 1:
+                return real_read(_StallsAfter(et, 1), photo_paths, *args, **kwargs)
+            return real_read(et, photo_paths, *args, **kwargs)
+
+        def bake(*args, **kwargs):
+            with mock.patch.object(field_values, "READ_BATCH", 1), \
+                    mock.patch.object(field_values, "read", side_effect=folder_read):
+                return real_bake(*args, **kwargs)
+        with mock.patch.object(bake_after_index, "bake_folders", side_effect=bake):
+            said = " ".join(self.index().output.split())
+        self.assertIn("ended at a folder whose share stopped answering", said)
+        self.assertEqual([[], []], [self.fingerprint_row(path) for path in (a, b)],
+                         "the index's row of a photo the bake did not write keeps it from being owed")
+        self.assertEqual((2, 1, False), self.looked(), "an unbaked new photo was called in step")
+        self.assertIn("Bake: 2 file(s) written", self.index_with_no_model())
+        self.assertBaked(a, 1)
+        self.assertBaked(b, 0)
+        self.assertEqual((0, 0, True), self.looked())
+
+    def test_a_new_photo_another_program_holds_open_through_its_first_index_stays_owed_until_it_is_let_go(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        held = open(a, "rb")   # Explorer's preview, a scanner, another machine: ExifTool cannot replace the file
+        self.addCleanup(held.close)
+        said = " ".join(self.index().output.split())
+        self.assertIn("Bake: 0 file(s) written, 0 already held it; 1 failed", said)
+        self.assertEqual([], self.fingerprint_row(a), "a write that may pass next time kept the index's row")
+        self.assertEqual((1, 1, False), self.looked(), "an unbaked new photo was called in step")
+        held.close()
+        self.assertIn("Bake: 1 file(s) written", self.index_with_no_model())
+        self.assertBaked(a, 1)
+        self.assertEqual((0, 0, True), self.looked())
+
+    def test_a_ctrl_c_part_way_through_a_folders_write_keeps_the_rows_of_the_files_written(self):
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        stops_at_the_second = crash_at("file writing", nth=2)
+
+        def reached(step):
+            try:
+                stops_at_the_second(step)
+            except Crash:
+                raise KeyboardInterrupt from None
+        with mock.patch.object(file_changes, "_reached", side_effect=reached):
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder])
+        self.assertNotEqual(0, result.exit_code, "the Ctrl+C stopped the run")
+        self.assertBaked(a, 1)
+        self.assertEqual([], self.fingerprint_row(b), "a file the Ctrl+C kept from its write kept the index's row")
+        self.assertEqual((1, 1, False), self.looked())
+        self.assertIn("Bake: 1 file(s) written, 1 already held it", self.index_with_no_model())
+        self.assertBaked(b, 0)
         self.assertEqual((0, 0, True), self.looked())
 
 

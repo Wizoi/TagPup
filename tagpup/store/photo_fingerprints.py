@@ -177,9 +177,9 @@ def follows(conn, photo_id, fingerprint):
 
 
 def forget_photos(conn, photo_ids):
-    """Take away the fingerprints of the photos with ids `photo_ids`: rows the index recorded whose file a bake that
-    ended early did not reach, so `owed` counts them again (tagpup.services.bake_after_index). Returns rows deleted. The
-    caller commits."""
+    """Take away the fingerprints of the photos with ids `photo_ids`: rows the index recorded of the photos its bake is
+    to write, so that one the bake does not write or find current is counted by `owed` again
+    (tagpup.services.bake_after_index). Returns rows deleted. The caller commits."""
     photo_ids, deleted = list(photo_ids), 0
     for start in range(0, len(photo_ids), 500):
         chunk = photo_ids[start:start + 500]
