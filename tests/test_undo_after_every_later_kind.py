@@ -45,7 +45,7 @@ from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import baking, baking_report, face_pass, file_changes, refresh_rows, sync, tagging  # noqa: E402
+from tagpup.services import baking, baking_report, file_changes, refresh_rows, sync, tagging  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -81,7 +81,7 @@ def a_later_pass(case, library):
     path = case.photo[6]
     conn = db.connect(library.path)
     try:
-        change_id = journal.record(conn, face_pass.OPERATION % NEW, [],
+        change_id = journal.record(conn, journal_service.FACE_PASS % NEW, [],
                                    {"folder": store_roots.to_row(conn, os.path.dirname(path)), "matched": 0, "new": 0})
         store_faces.give_vectors(conn, change_id, path, NEW, [],
                                  [([7, 7, 27, 27], 0.99, vector(np.random.default_rng(8)), bytes([7]) * 64)],
@@ -275,7 +275,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
             face(5, False, automatic=tamsin)
             face(5, True)
             face(6, False)
-            cls.pass_change = journal.record(conn, face_pass.OPERATION % NEW, [],
+            cls.pass_change = journal.record(conn, journal_service.FACE_PASS % NEW, [],
                                              {"folder": store_roots.to_row(conn, cls.folder), "matched": 0, "new": 0})
             for n, matched in matched_in.items():
                 if matched:

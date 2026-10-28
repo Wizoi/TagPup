@@ -25,7 +25,7 @@ import numpy as np
 
 from tagpup.core import clustering, holdout
 from tagpup.core.validation import MTCNN_FACENET, SCRFD_ADAFACE
-from tagpup.services import face_pass
+from tagpup.services import journal as journal_service
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 
@@ -84,7 +84,7 @@ def read(db_path, old=OLD, new=NEW):
         unnamed = store_faces.under_each(conn, (old, new), named=False) if named else []
         nobody = {face_id for face_id, ref in store_faces.manual_names(conn).items() if ref is None} if unnamed else set()
         counts = store_faces.pass_counts(conn, old, new)
-        kept = journal.kept_named(conn, face_pass.OPERATION % new)
+        kept = journal.kept_named(conn, journal_service.FACE_PASS % new)
     finally:
         conn.close()
     counts.update(changes=len(kept), journal_matched=sum(int(s.get("matched", 0)) for _id, s in kept),

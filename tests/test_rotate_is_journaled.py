@@ -251,7 +251,7 @@ class TheFacesOfATurnedPhoto(RotationCase):
     def a_pass(self, path, shape):
         """A face pass that finds one new face, with its crop, in the photo at `path`, through the pass's writer."""
         def work(conn):
-            change_id = journal.record(conn, face_pass.OPERATION % self.KEY, [],
+            change_id = journal.record(conn, journal_service.FACE_PASS % self.KEY, [],
                                        {"folder": store_roots.to_row(conn, os.path.dirname(path)), "matched": 0, "new": 0})
             (face_id,) = store_faces.give_vectors(conn, change_id, path, self.KEY, [],
                                                   [(list(BOX), 0.99, self.VECTOR, self.CROP)], {"matched": 0, "new": 1})

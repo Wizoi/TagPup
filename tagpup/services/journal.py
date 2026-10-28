@@ -34,7 +34,6 @@ from tagpup.services import (
     baking,
     bulk_edit,
     face_batch,
-    face_pass,
     face_people,
     file_changes,
     old_detector_rows,
@@ -52,6 +51,10 @@ logger = logging.getLogger(__name__)
 #: (RETIRED), which a face pass's undo still asks of (pass_check).
 RETIRED_FACES = "retire faces (%s)"
 
+#: The new face model's pass over a folder, by its operation's name with the model key: the journal's kind, which the
+#: face gate reads the passes by and pass_check matches.
+FACE_PASS = "face pass (%s)"
+
 #: Why an undo of a face pass's change is refused while a retiring after it stands (pass_check).
 PASS_STANDS_IN = "change %d (retire faces) deleted the old faces this pass's new faces stand in for, and is not undone"
 
@@ -63,7 +66,7 @@ def pass_check(conn, change_id, operation, _summary):
     undone (RETIRED). The journal alone allows it -- each wrote other rows than the other did. Live: photo_index's passes
     before change 3247, kr-track's before 347, renton_parkrun's before 1225 (2026-10-26). Removed with RETIRED by the
     baseline migration, which drops the journals holding both. The caller's read-only connection."""
-    head, tail = face_pass.OPERATION.split("%s")
+    head, tail = FACE_PASS.split("%s")
     key = operation[len(head):len(operation) - len(tail)]
     later = [kept_id for kept_id, _kept in journal.kept_named(conn, RETIRED_FACES % key) if kept_id > change_id]
     return PASS_STANDS_IN % later[-1] if later else None
@@ -85,7 +88,7 @@ UNDO_CHECKS = {
     **{stamp: library_settings.NOT_UNDONE for stamp in library_settings.STAMPS - library_settings.RETIRED_STAMPS},
     library_settings.CHANGE: library_settings.undo_check,
     "migration %d: %s": "change %(change)d (%(operation)s): a migration is not undone",
-    face_pass.OPERATION: pass_check,
+    FACE_PASS: pass_check,
     retire_photo_vectors.VECTORS_OPERATION: retire_photo_vectors.vectors_check,
     face_people.UNNAMED: None,
     face_people.ADDED: None,
