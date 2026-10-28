@@ -23,8 +23,9 @@ vectors kept between reads carries its key (`clustering.FaceRows.key`, `identify
 with vectors of the same key (`FaceRows.under`), so a switch committed meanwhile never sets one model's vectors beside the
 other's, nor reads them by the other's cuts. The join with a vector
 (`store.faces.WITH_VECTOR`, `HAS_VECTOR`) is the one place that leaves a face without one out of what compares faces:
-clustering, New Person's pool, the Identify queue and grid. Asked who such a face resembles, Identify answers one
-sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how many faces took no part.
+clustering, New Person's pool, the Identify queue and grid. No face of the three libraries lacks one (counted
+read-only 2026-10-28) and no writer files a face without its vector, so nothing says it: `identify.NO_VECTOR` and
+cluster-faces' "took no part" were deleted 2026-10-28 (Cut B).
 
 ## The seven conditions (2026-10-15)
 
@@ -79,7 +80,7 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   not refused and counts nothing (`settings.change`); a switch to FaceNet is refused for every library, and so is an undo in History that would put it back, by the same
   rule and sentence (`settings.NOT_FACENET`, asked by `settings.undo_check` through `services.journal.why_not`;
   owner, 2026-10-28). The consequence is stated where the owner switches (the settings dialog's face model group,
-  which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
+  which must be acknowledged).
 - **The face pass names nobody (2026-10-18, owner; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY")**: the new face
   model's pass (`services.face_pass`, deleted 2026-10-27 with `face-pass`: the index re-embeds after a switch) made its
   new faces unnamed and left a matched face's name as it was; Name faces from tags named the new faces after the gate.

@@ -366,27 +366,11 @@ def excluded_ids(conn):
 
 def for_clustering(conn, key):
     """(id, photo_path, box JSON, embedding bytes, Ref or None, prob, photo id, dates.era_year of the photo's Date Taken)
-    of every face with a vector under `key`, the face model's (WITH_VECTOR; count_without_vector says how many are left
-    out). The crop is left behind: 6 KB a face, and clustering never looks at it."""
+    of every face with a vector under `key`, the face model's (WITH_VECTOR). The crop is left behind: 6 KB a face, and clustering never looks at it."""
     return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob, photo_id, dates.era_year(taken))
             for face_id, photo_path, box, embedding, tag_id, name, prob, photo_id, taken in store_roots.natives(
                 conn, conn.execute("SELECT f.id, p.path, f.box, v.vector, f.tag_id, f.name, f.prob, f.photo_id, p.taken"
                                    " FROM faces f" + PHOTO + WITH_VECTOR, (key,)).fetchall(), 1)]
-
-
-def vector_counts(conn, key):
-    """{"faces", "without" (holding no vector under `key`), "named_without" (of those, the ones naming a person and not
-    excluded: the named faces the gallery of who a face looks like, for_named_matrix, would lose read under `key`)}. The key is given,
-    never the library's (model_key): a switch of the face model asks it of the model switched to
-    (tagpup.services.settings.change). One scan of faces, each face's vector by its key (face_id, model); no vector read."""
-    row = conn.execute("SELECT COUNT(*), TOTAL(NOT " + HAS_VECTOR + "), TOTAL(f.tag_id IS NOT NULL AND f.excluded = 0"
-                       " AND NOT " + HAS_VECTOR + ") FROM faces f", (key, key)).fetchone()
-    return {"faces": row[0], "without": int(row[1]), "named_without": int(row[2])}
-
-
-def count_without_vector(conn, key):
-    """How many faces have no vector under `key`, and so take no part in clustering (for_clustering)."""
-    return vector_counts(conn, key)["without"]
 
 
 def in_photo(conn, photo_path, key):

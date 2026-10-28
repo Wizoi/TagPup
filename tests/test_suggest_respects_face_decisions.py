@@ -23,7 +23,7 @@ from tagpup.store import taxonomy  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stand_in_models  # noqa: E402
 import photo_rows  # noqa: E402
-from face_rows import FACE_MODEL, FACENET, add_face, person_of  # noqa: E402
+from face_rows import FACE_MODEL, add_face, person_of  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]
 
@@ -55,12 +55,11 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.index.close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def add_face(self, path, name, name_source, excluded, vector=True, box="[0, 0, 100, 100]"):
-        """A face with its vector under the library's model, or, not `vector`, under another model's alone (FaceNet's): a
-        face the library's readers hold no vector of."""
+    def add_face(self, path, name, name_source, excluded, box="[0, 0, 100, 100]"):
+        """A face with its vector under the library's model."""
         conn = self.index.conn
         photo_rows.add_unread(conn, path)
-        add_face(conn, path, box, np.asarray(ROWAN, dtype=np.float32).tobytes(), model=FACE_MODEL if vector else FACENET,
+        add_face(conn, path, box, np.asarray(ROWAN, dtype=np.float32).tobytes(), model=FACE_MODEL,
                  prob=0.99, name=name, tag_id=person_of(conn, name) if name else None, name_source=name_source,
                  excluded=excluded)
         conn.commit()
@@ -86,20 +85,6 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         # The other tests only show detection is skipped; this one needs the model (found in review of 6.5).
         self.assertIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\new.jpg"))
         self.assertEqual(1, self.processor.calls)
-
-    def test_a_face_with_no_vector_under_the_model_is_on_file_but_compared_with_nobody(self):
-        """Part-way through the new model's pass a photo holds a face with a vector under the library's model and one
-        with the new model's alone (the reader answers None for it). Suggest completes -- it raised on the None, failed the photo, and the
-        run tried it again for ever -- names the face it can compare, and detects nothing again."""
-        self.add_face(r"D:\Pictures\half.jpg", None, None, 0)
-        self.add_face(r"D:\Pictures\half.jpg", None, None, 0, vector=False, box="[200, 0, 300, 100]")
-        self.assertIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\half.jpg"))
-        self.assertEqual(0, self.processor.calls)
-
-    def test_a_photo_whose_only_face_has_no_vector_is_not_detected_again_and_names_nobody(self):
-        self.add_face(r"D:\Pictures\pending.jpg", None, None, 0, vector=False)
-        self.assertNotIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\pending.jpg"))
-        self.assertEqual(0, self.processor.calls)
 
     def test_a_face_is_never_matched_with_a_named_face_of_its_own_photo(self):
         """Two faces in a photo are two people (main session, 2026-10-22): a photo of the library holding Oda's named face

@@ -21,7 +21,7 @@ import numpy as np
 
 from tagpup.core import clustering as face_rules
 from tagpup.core import dates, vocabulary
-from tagpup.core.result import NotFound, Refused
+from tagpup.core.result import NotFound
 from tagpup.ml import grouping
 from tagpup.services import people as people_service
 from tagpup.services import photos as photos_service
@@ -325,20 +325,13 @@ def photo_details(library, photo_path, named):
 
 # ---- Who a face resembles -------------------------------------------------------------------
 
-#: Said when a face asked who it resembles has no vector under the library's face model: an old face the model
-#: matched with no face it found, or a face in a photo it has not looked at yet (docs/AI_PIPELINE.md,
-#: phase 3). The routes answer it with 400.
-NO_VECTOR = ("This face has no vector under this library's face model, so it cannot be compared with anyone: the model's "
-             "pass found no face of its own there, or has not reached this photo yet.")
-
-
 def _embedding_of(conn, face_id, key):
-    """The face's vector under face model `key`; NotFound for no such face, Refused (NO_VECTOR) for one with none."""
+    """The face's vector under face model `key`; NotFound for no such face. Every face holds one under the library's
+    model: a face is filed with its vector (store.faces.insert, journaled together), and none of the three libraries'
+    faces lacks it (counted read-only 2026-10-28)."""
     row = faces.embedding_row(conn, face_id, key)
     if not row:
         raise NotFound("Face not found")
-    if row[0] is None:
-        raise Refused(NO_VECTOR)
     return np.frombuffer(row[0], dtype=np.float32)
 
 
@@ -551,9 +544,8 @@ def unnamed_like(library, face_id, unnamed=None, *, named):
 def person_faces(library, person, limit=100, page=1):
     """A page of a person's faces (`person`: the id of their node, or a tag path or a name; a name two people have is
     refused, naming their paths), each scored against their closest other face of the years around it, never one of its own photo
-    (tagpup.core.clustering, #71), and flagged when the name looks wrong. A face with no vector under the library's face model
-    (`no_vector`: one the new model's pass matched with nothing it found) is not scored, its similarity None, nor is one with
-    no other face to be compared with. A negative limit is no limit."""
+    (tagpup.core.clustering, #71), and flagged when the name looks wrong. A face with no other face to be compared with is not
+    scored, its similarity None. A negative limit is no limit."""
     offset = (page - 1) * limit
     conn = _reading(library)
     try:
@@ -574,14 +566,12 @@ def person_faces(library, person, limit=100, page=1):
 
     # The page's faces against the person's, in one pass: of the years around each, never one of its own photo (the one
     # gallery, FaceRows.likeness_of).
-    asked = [r for r in rows if r[5] is not None and len(r[5]) > 0]
-    likenesses = iter(theirs.likeness_of(key, np.stack([face_rules.unit(np.frombuffer(r[5], dtype=np.float32)) for r in asked]),
-                                         [r[8] for r in asked], [r[7] for r in asked]).tolist() if asked else ())
+    likenesses = iter(theirs.likeness_of(key, np.stack([face_rules.unit(np.frombuffer(r[5], dtype=np.float32)) for r in rows]),
+                                         [r[8] for r in rows], [r[7] for r in rows]).tolist() if rows else ())
 
     found = []
     for r in rows:
-        held = r[5] is not None and len(r[5]) > 0
-        similarity = next(likenesses) if held else None
+        similarity = next(likenesses)
         similarity = similarity if similarity is not None and math.isfinite(similarity) else None   # nobody to compare
         found.append({
             "id": r[0],
@@ -594,7 +584,6 @@ def person_faces(library, person, limit=100, page=1):
             # Shown as it is; whether the name looks wrong is decided here, not on the
             # page (tagpup.core.clustering.Cuts.looks_wrong, the library's face model's).
             "similarity": similarity,
-            "no_vector": not held,
             "possibly_wrong": cuts.looks_wrong(similarity),
         })
 
