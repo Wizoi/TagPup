@@ -30,6 +30,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | A person by the id of their tag-tree node | `tagpup/store/person_ids.py` | `tests/test_person_ids.py` |
 | ExifTool | `tagpup/files/exiftool_session.py` | `tests/test_rules_have_one_owner.py` |
 | Writing a photo file's fields | `tagpup/files/field_values.py`, `tagpup/services/file_changes.py` | `tests/test_file_journal.py` |
+| The bake the index writes after it records a folder (each photo `baking.plan_photo` marks ToBake, the folder one internal change of `write_fields`, listed in no History and erased once finished; the index's rows win) | `tagpup/services/bake_after_index.py` | `tests/test_the_index_writes_the_bake.py` |
 | Child processes | `tagpup/core/processes.py` | `tests/test_processes_single_owner.py` |
 | The graphics card, one process at a time | `tagpup/ml/gpu.py` (turns through `tagpup/runtime.py`) | `tests/test_gpu_single_owner.py` |
 | Models built once, from a library's settings | `tagpup/runtime.py` | `tests/test_gpu_single_owner.py` |
