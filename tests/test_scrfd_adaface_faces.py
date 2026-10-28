@@ -191,8 +191,19 @@ class AnInstallWithoutTheOldModelsPackage(unittest.TestCase):
     def test_the_face_model_is_imported_with_no_facenet_pytorch(self):
         """The old face model (MTCNN, FaceNet) was deleted with its package: the new model, which took its smallest face
         and its NotDetected from the old one's module, imports on a machine that never installed facenet-pytorch."""
+        names = ("tagpup.ml.faces", "tagpup.ml.scrfd_adaface", "tagpup.runtime")
+        kept = {name: sys.modules.get(name) for name in names}
+
+        def put_back():
+            """patch.dict puts the modules back in sys.modules, but each package's attribute stays the import made here:
+            a later test of the same process patched `tagpup.ml.scrfd_adaface` and the runtime built from the other."""
+            for name, module in kept.items():
+                if module is not None:
+                    parent, _, leaf = name.rpartition(".")
+                    setattr(sys.modules[parent], leaf, module)
+        self.addCleanup(put_back)
         with mock.patch.dict(sys.modules, {"facenet_pytorch": None}):   # imported, it raises ImportError
-            for name in ("tagpup.ml.faces", "tagpup.ml.scrfd_adaface", "tagpup.runtime"):
+            for name in names:
                 sys.modules.pop(name, None)
             importlib.import_module("tagpup.ml.scrfd_adaface")
             importlib.import_module("tagpup.runtime")
