@@ -236,7 +236,7 @@ def _pinned(function):
     returns a Result answers it as a refusal naming why; a rename raises."""
     @functools.wraps(function)
     def held(library, *args, **kwargs):
-        _running.result = None
+        _running.result, _running.internal = None, False
         try:
             with roots_service.pinned(library):
                 return function(library, *args, **kwargs)
@@ -249,7 +249,7 @@ def _pinned(function):
             said = roots_service.stopped(stop)
             if result.changed or result.details.get("change"):
                 said += " Before it stopped %d file(s) were written%s." % (
-                    result.changed, _kept_as(getattr(_running, "operation", None), result.details.get("change")))
+                    result.changed, _kept_as(getattr(_running, "internal", False), result.details.get("change")))
             result.refuse(said)
             _settle_stopped(library, result.details.get("change"))
             return _nothing_more(result)
@@ -376,7 +376,7 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
 def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
                   stop_at_first_error, fresh, whole, on_planned=None, alongside=None):
     result = Result(attempted=len(photo_paths))
-    _running.result, _running.operation = result, operation
+    _running.result, _running.internal = result, operation in file_journal.INTERNAL
     written = result.details["written"] = {}
     # The photos ExifTool did not answer for (a share away, a read or a write that timed out, and the photos after it):
     # nothing is known of their files, as against a photo it answered with its own error (#1942).
@@ -496,12 +496,13 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
         stopped = result.details.get("stopped")
         if stopped and stopped.get("share"):
-            _share_stopped(library, operation, change_id, result, stopped, stalled)
+            _share_stopped(library, operation in file_journal.INTERNAL, change_id, result, stopped, stalled)
         else:
             file_journal.finish(library.path, change_id, also=face_batch.tidy)
             if stopped:
                 result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written%s; the rest were not written."
-                              % (stopped["after"], stopped["of"], result.changed, _kept_as(operation, change_id)))
+                              % (stopped["after"], stopped["of"], result.changed,
+                                 _kept_as(operation in file_journal.INTERNAL, change_id)))
     except BaseException as stopped:
         # The files recorded done so far are read back all the same: settling reads
         # back only the files it writes (docs/findings.md, #286).
@@ -522,19 +523,19 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     return result
 
 
-def _kept_as(operation, change_id, left=0):
+def _kept_as(internal, change_id, left=0):
     """What a write stopped part-way says the files it wrote are kept as: change `change_id` in History, which can be
-    undone (once the `left` files still under way are settled); or, for an internal change (file_journal.INTERNAL: the
-    index's bake), listed nowhere and never undone, nothing more than the files still to settle."""
+    undone (once the `left` files still under way are settled); or, `internal` (its operation one of
+    file_journal.INTERNAL: the index's bake), listed nowhere and never undone, nothing more than the files to settle."""
     more = "; %d more is settled the next time it can be read" % left if left else ""
-    if operation in file_journal.INTERNAL:
+    if internal:
         return more
     if left:
         return ", recorded as change %s in History%s, and then the change can be undone" % (change_id, more)
     return ", recorded as change %s in History, which can be undone" % change_id
 
 
-def _share_stopped(library, operation, change_id, result, stopped, stalled):
+def _share_stopped(library, internal, change_id, result, stopped, stalled):
     """A forward write ExifTool stopped answering for part-way at the file of `stalled` (_Stalled), ended as a Ctrl+C ends
     one (_settle_stopped): the files not reached are taken out, the change is applied with what was written, and the write
     is refused saying so. The file whose write was under way, if it was, cannot be read now: it stays `writing`, the change
@@ -554,7 +555,7 @@ def _share_stopped(library, operation, change_id, result, stopped, stalled):
         return
     result.refuse("ExifTool stopped answering after %d of %d photos: %d file(s) were written%s; the rest were not "
                   "written. Check that the share or drive is there, then run it again."
-                  % (stopped["after"], stopped["of"], result.changed, _kept_as(operation, change_id, left)))
+                  % (stopped["after"], stopped["of"], result.changed, _kept_as(internal, change_id, left)))
 
 
 def _stopped_before_writing(result):
