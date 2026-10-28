@@ -17,22 +17,29 @@ FACES_WITH_PATHS = "faces f JOIN photos p ON p.id = f.photo_id"
 #: here files a face's vector under unless given another.
 FACE_MODEL = validation.SETTINGS["faces.model"]["default"]
 
-#: FaceNet's key, the old model's: given explicitly, by a test about the old model (switching to or from it, retiring
-#: it), to a library stamped on it (`on_facenet`).
+#: FaceNet's key, the deleted model's: given explicitly, by a test about the vectors and journals it left (a switch's
+#: undo, a migration's vectors), in a library stamped before the face model was a setting (`before_the_face_model`).
 FACENET = validation.MTCNN_FACENET
 
 #: A face's vector under the library's key, as `v`: `SELECT f.id, v.vector FROM faces f` + VECTOR_OF_FACE.
 VECTOR_OF_FACE = " LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = '%s'" % FACE_MODEL
 
 
-def on_facenet(db_path):
-    """Stamp the library at `db_path`, which holds no settings yet, on FaceNet, as the libraries stamped before the new
-    model were: for a test about the old model. The library's other settings are the defaults."""
+def before_the_face_model(db_path):
+    """Stamp the library at `db_path`, which holds no settings yet, as the three live libraries were before their switch
+    to the new face model: the defaults, and no faces.model row (they were stamped before it was a setting, and each
+    switch inserted it: changes 3244, 342, 1221). Today's stamp writes the row, so it is deleted here in plain SQL."""
     from tagpup.core.library import Library   # a test helper stamps as the picker's Create does
     from tagpup.services import settings
-    stamped = settings.stamp(Library(db_path), {settings.FACE_MODEL: FACENET}, operation=settings.FROM_REPLACED)
-    if not stamped.changed:
-        raise ValueError("the library at %s holds settings already: it is not stamped on FaceNet" % db_path)
+    from tagpup.store import db
+    if not settings.stamp(Library(db_path)).changed:
+        raise ValueError("the library at %s holds settings already" % db_path)
+    conn = db.connect(db_path)
+    try:
+        conn.execute("DELETE FROM settings WHERE key = ?", (settings.FACE_MODEL,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def photo_id(conn, photo_path):

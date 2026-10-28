@@ -22,7 +22,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 - Connections, schema, journal: `tagpup/store/db.py`, `tagpup/store/schema.py`, `tagpup/store/journal.py`, `tagpup/store/file_journal.py`, `tagpup/store/locks.py`
 - Derived tables and the word index: `tagpup/store/derived.py`, `tagpup/store/search_index.py`, `tagpup/store/generations.py`
 - Backups and checks: `tagpup/store/snapshots.py`, `tagpup/services/snapshots.py`, `tagpup/store/checks.py`, `tools/doctor.py`
-- Journal and maintenance services: `tagpup/services/journal.py`, `tagpup/services/maintenance.py`, `tagpup/services/old_detector_rows.py`, `tagpup/services/job_runs.py`, `tagpup/store/job_runs.py`
+- Journal and maintenance services: `tagpup/services/journal.py`, `tagpup/services/maintenance.py`, `tagpup/services/job_runs.py`, `tagpup/store/job_runs.py`
 - Settings: `tagpup/store/settings.py`, `tagpup/services/settings.py` (the `SETTINGS` registry in `tagpup/core/validation.py` is shared with Integration)
 - Roots as data: `tagpup/store/roots.py`, `tagpup/store/root_rows.py`, `tagpup/store/roots_check.py`, `tagpup/services/roots.py`, `tagpup/services/roots_location.py`, `tagpup/services/roots_sample.py`
 - Small stores: `tagpup/store/added_folders.py`, `tagpup/store/faces_detected.py`, `tagpup/store/photo_fingerprints.py`, `tagpup/store/removals.py`

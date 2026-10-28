@@ -36,7 +36,6 @@ from tagpup.services import (
     face_batch,
     face_people,
     file_changes,
-    old_detector_rows,
     retire_photo_vectors,
     sync,
     tagging,
@@ -112,8 +111,6 @@ UNDO_CHECKS = {
     "dedupe_faces": None,
     "faces_from_tags": None,
     "merge_duplicate_person_tags": None,
-    # The old detector's rows (settings and detection records), recorded whole: the journal's account is the whole.
-    old_detector_rows.OPERATION: None,
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
 UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.values()})
@@ -127,6 +124,11 @@ RETIRED = {
                           "restore the snapshot taken before (TagPup CLI: snapshots list, snapshots restore)"),
     # A stamp of the settings read from config.ini: photo_index 1, kr-track 1.
     **{stamp: library_settings.NOT_UNDONE for stamp in library_settings.RETIRED_STAMPS},
+    # The deletion of the old detector's rows (MTCNN's settings and its detection records), from a command since deleted
+    # with the model (2026-10-28): 1 applied in each library (photo_index 4871, kr-track 371, renton_parkrun 1235,
+    # counted read-only 2026-10-28). Recorded whole: the journal's account is the whole; undone, it puts back rows
+    # nothing reads (settings no longer declared, records under a detector name no library is on).
+    "delete old detector rows (mtcnn)": None,
     # The roots' adoption of a folder and repair of a root's address: 1 adopt in each library, 1 repair in renton_parkrun.
     "roots adopt: %s": None,
     "roots repair-address: %s": None,

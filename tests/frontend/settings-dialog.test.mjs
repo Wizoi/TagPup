@@ -161,31 +161,23 @@ describe("the settings dialog", () => {
     assert.deepEqual(shown, [said]);
   });
 
-  test("the face model is one of the choices the rules publish, locked behind its own consequences", async (t) => {
-    const { window, field, save, changeButton, boxes, posted } = await tunerWithSettings(t, { saved: {
-      success: true, changed: 1, settings: ["faces.model"], locked: true, change: 9 } });
-    const shown = [];
-    window.alert = (text) => shown.push(text);
+  test("the face model is the one choice the rules publish, locked behind its own consequences", async (t) => {
+    const { window, field, save, changeButton, boxes, posted } = await tunerWithSettings(t);
     const declared = PUBLISHED_RULES.kinds["setting faces.model"];
     const select = field("faces.model");
-    // The server's list, not a copy of it: the rule's choices.
+    // The server's list, not a copy of it: the rule's choices, the new model alone since FaceNet was deleted.
     assert.equal(select.tagName, "SELECT");
     assert.deepEqual([...select.options].map((o) => o.value), declared.rules.find((r) => r.choices).choices);
+    assert.deepEqual([...select.options].map((o) => o.value), [declared.default]);
     assert.equal(select.value, declared.default);
     assert.ok(select.disabled, "the face model is editable before Change...");
     click(window, changeButton("face-model"));
     assert.ok(!select.disabled, "Change... left the face model locked");
     assert.equal(boxes("face-model").length, declared.consequences.length);
-    select.value = "mtcnn-facenet";
     select.dispatchEvent(new window.Event("change", { bubbles: true }));
-    assert.ok(save().disabled, "Save is enabled before the consequences are ticked");
     boxes("face-model").forEach((box) => click(window, box));
-    assert.ok(!save().disabled);
-    click(window, save());
-    await flush(window, 6);
-    assert.deepEqual(posted().map((c) => c.body), [{ values: { "faces.model": "mtcnn-facenet" },
-                                                     acknowledged: ["face-model"] }]);
-    assert.deepEqual(shown, [], "a switch of the face model counts nothing to show");
+    assert.ok(save().disabled, "Save is enabled with nothing changed");
+    assert.deepEqual(posted(), [], "a choice of the model it is on is posted");
   });
 
   test("the library's folders are one a line, and a whole drive is refused as it is typed", async (t) => {

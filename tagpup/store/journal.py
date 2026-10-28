@@ -94,8 +94,9 @@ KEYS = {
     "settings": ("key",),
     # A photo's record of the detector that looked at it, keyed by the photo's id, which SQLite never hands out again
     # (photos is AUTOINCREMENT); no foreign key, a row whose photo is gone being read as none (tagpup.store.faces_detected).
-    # Journaled only where a change deletes it (the old detector's rows: tagpup.services.old_detector_rows); the index and
-    # Suggest record their detections unjournaled, as indexing is.
+    # Journaled only by the deletion of the old detector's rows (the live journals' "delete old detector rows (mtcnn)",
+    # tagpup.services.journal.RETIRED), which its undo puts back; the index and Suggest record their detections
+    # unjournaled, as indexing is.
     "faces_detected": ("photo_id",),
 }
 

@@ -51,13 +51,9 @@ def read_only(db_path):
 
 def face_model(conn):
     """The library's face model on `conn` (faces.model), trimmed as the validator trims: the key every reader of a face's
-    vector reads `face_embeddings` under (tagpup.store.faces). A library that holds settings and no faces.model row was
-    stamped before it was a setting, on FaceNet (validation.BEFORE_FACE_MODELS); one holding none is given the default, as
-    its stamp will be. Read on the reader's own connection, in its transaction, so one read cannot mix two models'
-    vectors. A writer does not ask it: it files a vector under the model that made it."""
+    vector reads `face_embeddings` under (tagpup.store.faces). Every live library holds the row (its switch inserted it,
+    an undo of which is refused: tagpup.services.settings.undo_check) and a new one is stamped with it; one holding none
+    is given the default, as its stamp will be. Read on the reader's own connection, in its transaction, so one read
+    cannot mix two models' vectors. A writer does not ask it: it files a vector under the model that made it."""
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (FACE_MODEL,)).fetchone()
-    if row:
-        return validation.trim(row[0])
-    if conn.execute("SELECT 1 FROM settings LIMIT 1").fetchone():
-        return validation.BEFORE_FACE_MODELS
-    return validation.SETTINGS[FACE_MODEL]["default"]
+    return validation.trim(row[0]) if row else validation.SETTINGS[FACE_MODEL]["default"]
