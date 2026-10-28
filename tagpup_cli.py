@@ -833,7 +833,7 @@ def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_fi
                                       stop=lambda: bool(stop_file) and os.path.exists(stop_file), told=say)
     except Exception as error:
         logger.exception("The bake after the index stopped")
-        say("The bake after the index stopped (%s); the photos are indexed, and the next index of their folders "
+        say(bake_after_index.SAID + "stopped (%s); the photos are indexed, and the next index of their folders "
             "writes it." % type(error).__name__)
 
 

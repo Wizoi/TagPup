@@ -28,6 +28,10 @@ from tagpup.store import db, inspection
 from tagpup.store import roots as store_roots
 
 
+#: The start of each line the index's bake says (Baked.said, and the CLI's when it stops): the index queue keeps it in
+#: the job's message (tagpup.services.indexing).
+SAID = "Bake: "
+
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
 ROOTS_CHANGED = "the library's roots were changed by another process"
 
@@ -52,7 +56,7 @@ class Baked:
 
     def said(self):
         """The run in one line, counts only (the paths name people)."""
-        line = "Bake: %d file(s) written, %d already held it" % (self.written, self.current)
+        line = SAID + "%d file(s) written, %d already held it" % (self.written, self.current)
         more = [("%d conflict(s), left as they are" % self.conflicts) if self.conflicts else "",
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",

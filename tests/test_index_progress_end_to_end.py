@@ -84,7 +84,8 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertIn(100, percents, heard)
         self.assertTrue(any("Generating embeddings: 100% (3/3)" == message for message, _p in heard), heard)
         self.assertEqual(100, result.details["percent"])
-        self.assertEqual("Folder indexed. No new face is waiting for a name.", result.details["message"])
+        self.assertEqual("Folder indexed. No new face is waiting for a name. Bake: 3 file(s) written, 0 already held it.",
+                         result.details["message"])
         conn = db.connect(library.path)
         try:
             # Every scanned photo is indexed, tagged or not, and as genuinely untagged (no borrowed metadata).
