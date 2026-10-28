@@ -182,16 +182,44 @@ def stamp_of(photo_path):
     return found if state == "ok" else UNANSWERED
 
 
+#: How often a patient walk, waiting out a share's away, asks whether it is to stop, in seconds.
+STOP_EVERY = 0.5
+
+
+def wait_out(share, stop=None):
+    """Wait until `share` (share_of) is no longer taken as away -- at most AWAY_SECONDS from when it was found away --
+    asking `stop()` every STOP_EVERY seconds: False when it said stop, else True."""
+    with _guard:
+        since = _away.get(share)
+    if since is None:
+        return True
+    while True:
+        left = since + AWAY_SECONDS - time.monotonic()
+        if left <= 0:
+            return True
+        if stop is not None and stop():
+            return False
+        time.sleep(min(left, STOP_EVERY))
+
+
 class Walk:
-    """One pass over many photos (a warm, a repair): each share found away is asked ONCE, its photos counted as
+    """One pass over many photos (a warm, a repair, a bake): each share found away is asked ONCE, its photos counted as
     skipped, not asked again and never counted as unreadable. The one owner of this rule; the passes used to write it
     each (#1543). `away` names the shares found away (share_of: a drive, or \\\\server\\share), in the order found;
-    `skipped` counts their photos."""
+    `skipped` counts their photos.
 
-    def __init__(self):
+    A `patient` walk (a bake's: a run over a library's files, not a page) takes no share as away on one slow answer: a
+    share asleep is slower than SHARE_WAIT to give its first answer (1.3 s, measured 2026-10-27), and an impatient walk
+    then counted every photo on it unreachable in seconds. It waits the away out (wait_out, `stop()` asked as it waits)
+    and asks the same photo once more; only a share that does not answer that either is found away. Once per share, so
+    a share that stays away costs one AWAY_SECONDS and one SHARE_WAIT, not one for each photo."""
+
+    def __init__(self, patient=False, stop=None):
         self.away = []
         self.skipped = 0
         self._shares = set()
+        self.patient, self.stop = patient, stop
+        self._waited = set()
 
     def stamp_of(self, photo_path):
         """`stamp_of(photo_path)`, except UNANSWERED at once, unasked, for a share this walk found away."""
@@ -200,6 +228,11 @@ class Walk:
             self.skipped += 1
             return UNANSWERED
         stamp = stamp_of(photo_path)
+        if stamp is UNANSWERED and self.patient and share not in self._waited:
+            self._waited.add(share)
+            logger.info("%s did not answer; waiting its away out before asking it once more.", share)
+            if wait_out(share, self.stop):
+                stamp = stamp_of(photo_path)
         if stamp is UNANSWERED:
             self._shares.add(share)
             self.away.append(share)

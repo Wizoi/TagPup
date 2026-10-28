@@ -74,12 +74,13 @@ def keys(conn, detector):
     return Keys(settings.photo_key_on(conn), store_faces.model_key(conn), detector)
 
 
-def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
+def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None, stamp_of=shares.stamp_of):
     """ToBake, Current or Cannot for the photo at `photo_path`. `held()`, the fields its file holds (field_values.read of
     bake.WRITTEN's values), or the Exception that read gave (returned or raised); `shape()`, (stored width, stored height,
     turn) as images.shown_shape gives them, or raising (the picture cannot be opened). None of the three is called for a photo the
     library refuses (GONE, NO_VECTOR, NEVER_EXAMINED, FACES_WITHOUT_VECTORS) or cannot reach (UNREADABLE: a file
-    deleted outside the app, a drive or share away; shares.stamp_of is the one bounded look): its file is not opened for nothing.
+    deleted outside the app, a drive or share away; `stamp_of`, the one bounded look: shares.stamp_of, or a run's
+    shares.Walk, PhotoAt's): its file is not opened for nothing.
     `fingerprint()`, the digest of its upright decode (images.fingerprint), called last, only for a photo that reaches the
     file; or None for the function: then nothing is planned to be written (ToBake.values None) and the Fingerprint the
     file holds is not compared. It may raise as `shape` does: the photo is UNREADABLE.
@@ -93,7 +94,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     stored = embeddings.get(conn, photo_path, keys.photo)
     if stored is None:
         return Cannot(NO_VECTOR, "It has no photo vector under the library's photo model.")
-    stamp = shares.stamp_of(photo_path)   # bounded: a share that is away is asked once, within a second
+    stamp = stamp_of(photo_path)   # bounded: a share that is away is asked once, within a second
     if stamp is None or stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
         return Cannot(UNREADABLE, "Its file could not be reached.")
     row = photo_fingerprints.NOT_READ
@@ -166,13 +167,25 @@ class FolderRead:
         return any(isinstance(held, field_values.NotAnswered) for held in (self.found or {}).values())
 
 
+def walk(stop=None):
+    """The shares.Walk a bake run looks at its files through (PhotoAt): patient, so a share slow to wake is not taken as
+    away on its first answer; `stop()`, asked while it waits."""
+    return shares.Walk(patient=True, stop=stop)
+
+
 class PhotoAt:
     """One photo of a FolderRead as plan_photo asks it: its fields from the folder's read (`given`, each answer, the last
     its latest plan's; empty when no plan reached its file), its shape from its header, read once however often it is
-    planned."""
+    planned; its file looked at through the run's `walk` (baking.walk)."""
 
-    def __init__(self, path, read):
+    def __init__(self, path, read, walk):
         self.path, self.read, self.given, self._shaped = path, read, [], None
+        self.walk, self.unanswered = walk, False
+
+    def stamp_of(self, photo_path):
+        stamp = self.walk.stamp_of(photo_path)
+        self.unanswered = stamp is shares.UNANSWERED
+        return stamp
 
     def held(self):
         self.given.append(self.read.of(self.path))
@@ -186,12 +199,12 @@ class PhotoAt:
 
     def plan(self, conn, keys, fingerprint=None):
         """plan_photo of the photo, `fingerprint` as plan_photo takes it."""
-        return plan_photo(conn, self.path, keys, self.held, self.shape, fingerprint)
+        return plan_photo(conn, self.path, keys, self.held, self.shape, fingerprint, self.stamp_of)
 
     @property
     def not_answered(self):
-        """Did the folder's read not reach its file (a share that did not answer)?"""
-        return bool(self.given) and isinstance(self.given[-1], field_values.NotAnswered)
+        """Did its share not answer: the walk's look at its file (after its wait), or the folder's read?"""
+        return self.unanswered or (bool(self.given) and isinstance(self.given[-1], field_values.NotAnswered))
 
     @property
     def stopped(self):
