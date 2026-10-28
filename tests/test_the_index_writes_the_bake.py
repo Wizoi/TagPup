@@ -18,7 +18,12 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
 - a photo whose vector Suggest kept (no fingerprint taken: its row forgotten) was never baked (9,882 such in
   photo_index, 2026-10-28): sync owes its folder to the index, which bakes its file with no model and no GPU turn and
   records its row; a file holding its bake already, or one ExifTool cannot write (read-only), is given its row with no
-  write, so sync is quiet after; a share that stops answering in the second of two folders leaves only that one owed.
+  write, so sync is quiet after; a share that stops answering in the second of two folders leaves only that one owed;
+- a row is recorded only for a file that holds the library's bake, or whose write no retry changes (read-only): a share
+  that stops answering while its folder is planned, a file another program holds open (it is baked once let go), a file
+  another program changed between the plan and the write (a conflict), and a bake that falls over between two folders
+  of a new index (the index's rows of the folder not reached are forgotten) each leave their photos owed, and the next
+  index bakes them.
 
 Lifted: the deleted `bake-photos` command's tests of a PNG and of a turn between the plan and the write
 (test_a_bake_is_written_folder_by_folder), now of the index's bake.
@@ -43,7 +48,7 @@ import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import bake, field_values, images  # noqa: E402
+from tagpup.files import bake, exiftool_session, field_values, images  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import bake_after_index, baking, batches, duplicate_faces, file_changes, tagging  # noqa: E402
@@ -61,6 +66,23 @@ SIZE = (640, 480)
 DETECTOR = face_service.detector_of(NewFaces())
 FACE = [300, 200, 400, 330]
 SECOND = [60, 60, 160, 180]
+
+
+class _StallsAfter:
+    """An ExifTool session that answers its first `answered` reads and then does not, as a share that goes away
+    part-way through a folder's read: field_values.read's batch read sees ExifTool time out."""
+
+    def __init__(self, et, answered):
+        self.et, self.answered = et, answered
+
+    def get_tags(self, *args, **kwargs):
+        if self.answered <= 0:
+            raise exiftool_session.ExifToolTimeout("ExifTool did not answer in 300 s")
+        self.answered -= 1
+        return self.et.get_tags(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self.et, name)
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
@@ -425,6 +447,96 @@ class TheIndexWritesTheBake(unittest.TestCase):
         for path in made[quay]:
             self.assertEqual([], self.fingerprint_row(path), "a file not written was given a row")
         self.assertEqual((2, 1, False), self.looked(), "the folder the share did not answer for is owed again")
+
+    def never_baked(self, *names):
+        """Photos of the folder indexed, not baked, and their vectors kept by Suggest: owed only their bake."""
+        made = [self.picture(name, colour) for name, colour in zip(names, ((200, 40, 40), (40, 200, 40), (40, 40, 200)))]
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            self.index()
+        self.suggest_keeps_a_vector(*made)
+        return made
+
+    def test_a_share_that_stops_answering_while_its_folder_is_read_leaves_every_photo_not_written_owed(self):
+        a, b = self.never_baked("a.jpg", "b.jpg")
+        real = field_values.read
+
+        def folder_read(et, photo_paths, *args, **kwargs):
+            # The folder's one read (baking.FolderRead), in batches of one: the share goes away after the first.
+            if len(photo_paths) > 1:
+                return real(_StallsAfter(et, 1), photo_paths, *args, **kwargs)
+            return real(et, photo_paths, *args, **kwargs)
+        with mock.patch.object(field_values, "READ_BATCH", 1), \
+                mock.patch.object(field_values, "read", side_effect=folder_read):
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {})
+        self.assertEqual((True, 0, 0), (baked.stalled, baked.written, baked.adopted))
+        self.assertEqual([[], []], [self.fingerprint_row(path) for path in (a, b)],
+                         "a photo planned to bake and never written was given a row")
+        self.assertEqual((2, 1, False), self.looked())
+        said = self.index_with_no_model()
+        self.assertIn("Bake: 2 file(s) written", said)
+        self.assertBaked(a, 1)
+        self.assertBaked(b, 0)
+        self.assertEqual((0, 0, True), self.looked())
+
+    def test_a_file_another_program_holds_open_is_said_and_stays_owed_until_it_is_let_go(self):
+        (a,) = self.never_baked("a.jpg")
+        held = open(a, "rb")   # Explorer's preview, a scanner, another machine: ExifTool cannot replace the file
+        self.addCleanup(held.close)
+        said = self.index_with_no_model()
+        self.assertIn("Bake: 0 file(s) written, 0 already held it; 1 failed", said)
+        self.assertNotIn("recorded with no write", said)
+        self.assertEqual([], self.fingerprint_row(a), "a write that may pass next time was given a row")
+        self.assertEqual((1, 1, False), self.looked())
+        held.close()
+        self.assertIn("Bake: 1 file(s) written", self.index_with_no_model())
+        self.assertBaked(a, 1)
+        self.assertEqual((0, 0, True), self.looked())
+
+    def test_a_file_another_program_changes_between_the_plan_and_the_write_is_a_conflict_and_gets_no_row(self):
+        (a,) = self.never_baked("a.jpg")
+        named = [EXIFTOOL, "-overwrite_original", "-XMP-mwg-rs:RegionInfo={AppliedToDimensions={W=640,H=480,Unit=pixel},"
+                 "RegionList=[{Area={X=0.5,Y=0.5,W=0.1,H=0.1,Unit=normalized},Name=Ada Quill,Type=Face}]}", a]
+        once = []
+
+        def another_program_names_a_face(step):
+            if step == "plan committed" and not once:
+                once.append(step)
+                done = processes.run(named, capture_output=True, text=True, timeout=60)
+                self.assertEqual(0, done.returncode, done.stderr)
+        with mock.patch.object(file_changes, "_reached", side_effect=another_program_names_a_face):
+            said = self.index_with_no_model()
+        self.assertEqual(["plan committed"], once)
+        self.assertIn("1 conflict(s), left as they are", said)
+        self.assertNotIn("recorded with no write", said)
+        self.assertEqual([], self.fingerprint_row(a), "a photo whose write met a conflict was given a row")
+
+    def test_a_bake_that_falls_over_between_two_folders_leaves_the_second_owed_and_the_next_index_bakes_it(self):
+        quay = paths.stored(os.path.join(self.home.root, "Quay"))
+        os.makedirs(quay)
+        made = {folder: [os.path.join(folder, name) for name in ("a.jpg", "b.jpg")] for folder in (self.folder, quay)}
+        for folder_paths in made.values():
+            for path, colour in zip(folder_paths, ((200, 40, 40), (40, 200, 40))):
+                Image.new("RGB", SIZE, colour).save(path, "JPEG")
+        real, planned = bake_after_index._planned, []
+
+        def falls_over_at_the_second(library, et, detector, folder, *args):
+            planned.append(folder)
+            if len(planned) == 2:
+                raise RuntimeError("the bake fell over")
+            return real(library, et, detector, folder, *args)
+        with mock.patch.object(bake_after_index, "_planned", side_effect=falls_over_at_the_second):
+            said = " ".join(self.index(self.folder, quay).output.split())
+        self.assertIn("Bake: stopped (RuntimeError)", said)
+        first, second = (made[paths.stored(folder)] for folder in planned)
+        for path in first:
+            self.assertBaked(path, 1 if os.path.basename(path) == "a.jpg" else 0)
+        self.assertEqual([[], []], [self.fingerprint_row(path) for path in second],
+                         "the index's rows of a folder the bake never reached keep it from being owed")
+        self.assertEqual((2, 1, False), self.looked())
+        self.assertIn("Bake: 2 file(s) written", self.index_with_no_model(self.folder, quay))
+        for path in second:
+            self.assertBaked(path, 1 if os.path.basename(path) == "a.jpg" else 0)
+        self.assertEqual((0, 0, True), self.looked())
 
 
 if __name__ == "__main__":

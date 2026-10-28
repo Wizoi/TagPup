@@ -176,6 +176,18 @@ def follows(conn, photo_id, fingerprint):
         put(conn, photo_id, *fingerprint)
 
 
+def forget_photos(conn, photo_ids):
+    """Take away the fingerprints of the photos with ids `photo_ids`: rows the index recorded whose file a bake that
+    ended early did not reach, so `owed` counts them again (tagpup.services.bake_after_index). Returns rows deleted. The
+    caller commits."""
+    photo_ids, deleted = list(photo_ids), 0
+    for start in range(0, len(photo_ids), 500):
+        chunk = photo_ids[start:start + 500]
+        deleted += conn.execute("DELETE FROM photo_fingerprints WHERE photo_id IN (%s)" % ",".join("?" * len(chunk)),
+                                chunk).rowcount
+    return deleted
+
+
 def forget(conn, photo_path):
     """Take away the fingerprint of the photo at `photo_path`: its picture now decodes differently (a rotation). Returns
     rows deleted. The caller commits."""
