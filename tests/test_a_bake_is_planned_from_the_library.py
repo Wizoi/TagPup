@@ -196,6 +196,11 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         self.bake([b], other)   # journaled, so its photo vector is restamped over the write
         self.assertIsInstance(self.plan(b), baking.ToBake, "a file baked under another face model")
 
+        d = self.photo("d.jpg", faces=1)
+        other_photo_model = dict(self.plan(d).values, **{bake.WRITTEN[bake.PHOTO_MODEL]: ["another-photo-model"]})
+        self.bake([d], other_photo_model)
+        self.assertIsInstance(self.plan(d), baking.ToBake, "a file baked under another photo model")
+
         c = self.photo("c.jpg", faces=1)
         another_picture = dict(self.plan(c).values,
                                **{bake.WRITTEN[bake.FINGERPRINT]: ["%s:%s" % (images.FINGERPRINT_KEY, "ab" * 32)]})
