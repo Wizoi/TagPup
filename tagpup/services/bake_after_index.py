@@ -9,7 +9,8 @@ file's bake differ the rows win (decision 3): a face deleted in TagPup is gone f
 
 A folder is planned twice, on a read-only connection of its own: first every photo without its decode (the bake fields
 of the folder's files read in one ExifTool read, the first time a photo asks), then only the photos to bake with their
-fingerprint, the index's own decode's when it handed one over (`handed`), so a photo it decoded is not decoded again.
+fingerprint, the index's own decode's when it handed one over (`handed`) and the file is still at the stamp the index
+recorded it under, so a photo it decoded is not decoded again; a file changed since is decoded.
 Each file is read again just before its write (write_fields with no `held`): one changed outside since is a conflict,
 never overwritten. A read or a write ExifTool does not answer in its deadline (a share gone away) ends the run at that
 folder; the folders after it are baked by the next index. One snapshot of the library is taken before the first write
@@ -20,7 +21,7 @@ import dataclasses
 import os
 
 from tagpup.core import paths
-from tagpup.files import bake, exiftool_session, field_values, images
+from tagpup.files import bake, exiftool_session, field_values, images, shares
 from tagpup.services import baking, file_changes
 from tagpup.services import snapshots as snapshot_service
 from tagpup.store import db, inspection
@@ -57,8 +58,8 @@ class Baked:
 def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, told=None):
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
-    (tagpup.services.faces.detector_named); `handed`, {paths.key(path): digest of the upright decode} the index took of
-    the photos it recorded; `stop()`, asked before each folder; `told(line)`, a line of what the run did."""
+    (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
+    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did."""
     baked, snapshot = Baked(), []
     with field_values.session(exiftool_path) as session:
         et = exiftool_session.StaysDead(session)
@@ -123,9 +124,13 @@ def _plan(conn, path, keys, read, fingerprint):
 
 
 def _fingerprint(path, handed):
-    """The digest of the photo's upright decode: the index's, handed over, or decoded now."""
+    """The digest of the photo's upright decode: the index's, handed over, while the file is at the stamp the index
+    recorded it under (a file changed since holds another picture, perhaps); or decoded now."""
     def fingerprint():
-        return handed.get(paths.key(path)) or images.fingerprint(images.opened(path, upright=True))
+        stamp, digest = handed.get(paths.key(path), (None, None))
+        if digest is not None and shares.stamp_of(path) == stamp:
+            return digest
+        return images.fingerprint(images.opened(path, upright=True))
     return fingerprint
 
 

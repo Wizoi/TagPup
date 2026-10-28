@@ -200,6 +200,22 @@ class TheIndexWritesTheBake(unittest.TestCase):
         after, upto = matched[0]
         self.assertTrue(after < face_id <= upto, matched)
 
+    def test_a_file_changed_between_the_index_and_the_bake_is_decoded_and_not_baked_with_the_old_picture(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        bake_folders, ran = bake_after_index.bake_folders, []
+
+        def after_a_change(*args, **kwargs):
+            Image.new("RGB", SIZE, (10, 10, 240)).save(a, "JPEG")   # another program saves another picture
+            later = os.stat(a).st_mtime + 5
+            os.utime(a, (later, later))
+            ran.append(bake_folders(*args, **kwargs))
+        with mock.patch.object(bake_after_index, "bake_folders", after_a_change):
+            self.index()
+        (baked,) = ran
+        self.assertEqual(0, baked.written)
+        self.assertEqual({baking.NO_VECTOR: 1}, dict(baked.cannot))
+        self.assertIsNone(getattr(baked_files.held(a), "fingerprint", None), "the old picture's bake was written into the new one")
+
     def test_a_share_that_stops_answering_in_the_bake_names_no_change_to_undo(self):
         photos = [self.picture(name, colour) for name, colour in (("a.jpg", (200, 40, 40)), ("b.jpg", (40, 200, 40)),
                                                                   ("c.jpg", (40, 40, 200)))]

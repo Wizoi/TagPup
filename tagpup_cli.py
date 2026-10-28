@@ -454,7 +454,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     total_new_indexed = 0
     after = upto = 0
     # The folders a recorded batch held a photo of, in order, and the fingerprint of each recorded photo's picture the
-    # index knows (_recorded): what the bake after the index writes, and the decodes it takes again for none of them.
+    # index knows, with the stamp it was recorded under (_recorded): what the bake after the index writes, and the decodes
+    # it takes again for none of the photos whose file is as the index recorded it.
     touched, handed = {}, {}
     try:
         # One process at a time has a model on the graphics card (tagpup.ml.gpu): its turn is
@@ -811,14 +812,15 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
 def _recorded(metas, touched, handed):
     """A batch of `metas` was recorded: its folders join `touched` ({paths.key: native folder}), and the fingerprint of
-    each photo's picture the index holds joins `handed` ({paths.key(path): digest}): its decode's, or the row a vector
-    kept by its stamp was recorded again with (the picture its stamp still describes). Another key's row is not."""
+    each photo's picture the index holds joins `handed` ({paths.key(path): ((mtime, size), digest)}), with the stamp its
+    row was recorded under: its decode's, or the row a vector kept by its stamp was recorded again with (the picture its
+    stamp still describes). Another key's row is not. The bake uses a digest only while the file is at that stamp."""
     for meta in metas:
         folder = os.path.dirname(meta["path"])
         touched.setdefault(paths.key(folder), folder)
         found = meta.get("fingerprint")
         if found is not None and found[0] == image_files.FINGERPRINT_KEY:
-            handed[paths.key(meta["path"])] = found[1]
+            handed[paths.key(meta["path"])] = ((meta["mtime"], meta["size"]), found[1])
 
 
 def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_file):
