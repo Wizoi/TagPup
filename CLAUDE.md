@@ -110,10 +110,12 @@ should own this? That question produced `db.py`, the tag vocabulary, and
 `write_keyword_fields` — each ended a whole class of bug. Reaching for it after the
 second round beats reaching for it after the fourth.
 
-**Watch an OS-level symptom before fixing it.** A window on the desktop, a port held,
-a file that will not delete: run `tools/watch_processes.ps1` while it happens and read
-which process did it. Three rounds of per-site fixes for terminal windows found nothing;
-one watched run found the test-home reaper.
+**Watch an OS-level symptom before fixing it** (a window, a port held, a file that will not delete): run
+`tools/watch_processes.ps1` while it happens and read which process did it.
+
+**A one-time command or backfill is briefed with its steady state first**: "a photo added or changed afterwards: which
+writer keeps it right, with no command run?" Unless the answer names a command, it is a one-off script (retro 2026-10-28:
+the bake was built as a command, then rebuilt as the indexer's job).
 
 **Check the destination before moving data into it.** Re-pointing rows at paths that
 already had rows created 233 duplicate faces.
@@ -145,7 +147,8 @@ domain and which files are its, plus what is particular to the task.
 - A number told to the owner about their libraries is one counted this session, not relayed.
 - Commit before launching background agents, and keep their work in worktrees.
 - One session per phase: `/clear` at a phase boundary (the memory handoff carries the state), `/compact` inside a long
-  one. A retro runs at each phase end and on its triggers, by [docs/RETRO.md](docs/RETRO.md) (the `retro` skill).
+  one, at about 300k of context at the latest; a worker brief is ONE concern and names what remains (47 of 122 worker
+  runs went past 150k, 2026-10-24..28). A retro runs at each phase end and on its triggers, by [docs/RETRO.md](docs/RETRO.md) (the `retro` skill).
 - Decide by the rules here and in docs/ARCHITECTURE.md; ask the owner only what they alone can answer. The cheapest
   correct change first: no extra backup, no workaround around the model where the model can be fixed.
 
@@ -157,8 +160,7 @@ checklist"; DECISIONS 2026-10-15 and 2026-10-16). The seven: no reach-ins, no ru
 concept that could collapse, no branch without an instance, scenario tests owned and mapped, no open `data`/`wrong` finding.
 A feature is taken one at a time, its live count in the brief, planned by the owners of the domains it touches (a sweep
 first, the single place that owns each rule named), built by one worker who checks its diff against the seven conditions,
-reviewed once by each owner: it adds no debt, or it is refused. No schema work while DECISIONS 2026-10-15's note stands, but migration 34 (phase 6, `photo_fingerprints`), the owner's decision of 2026-10-24; one migration in flight at a time still holds.
-- **A branch adds about 1,200 lines or fewer, one concern.** A larger piece is cut into merges that each leave the trunk
+reviewed once by each owner: it adds no debt, or it is refused.- **A branch adds about 1,200 lines or fewer, one concern.** A larger piece is cut into merges that each leave the trunk
   whole; a deletion is never over budget (DECISIONS 2026-10-16). A hook refuses a `git merge` adding over 1,200 lines
   without an `Over budget: <reason>` line, or whose subject is only a `Worktree:` line (`.claude/hooks/merge-budget.mjs`).
 - **At most two review rounds**, the ownership question ("which single place should own this?") in the second; a round
