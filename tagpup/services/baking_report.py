@@ -353,6 +353,7 @@ class Walk:
             by_folder[paths.key(os.path.dirname(path))].append((photo_id, path))
         self.groups = sorted(by_folder.values(), key=lambda group: store_roots.path_order(os.path.dirname(group[0][1])))
         self.stopped = False
+        self.walk = baking.walk(self._asked)
 
     def __len__(self):
         return len(self.groups)
@@ -390,7 +391,7 @@ class Walk:
         """Plan the photo at `path` into `folder`. A photo whose file ExifTool did not answer for is counted apart, not
         as unreadable: nothing is known of its file, not even that it cannot be read. A photo is decoded only when its
         plan asks (plan_photo, after the library's checks and the file's read)."""
-        photo, decoded = baking.PhotoAt(path, read), []
+        photo, decoded = baking.PhotoAt(path, read, self.walk), []
 
         def fingerprint():
             decoded.append(images.fingerprint(images.opened(path, upright=True)))

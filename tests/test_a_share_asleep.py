@@ -24,19 +24,30 @@ import time
 import unittest
 from unittest import mock
 
+from click.testing import CliRunner
+from PIL import Image
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+import baked_files  # noqa: E402
 import doctor  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import share_waits  # noqa: E402
 import web_client  # noqa: E402
+from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
+
+import tagpup_cli  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
-from tagpup.services import activity, inspect, library_view, settings, sync, tagging  # noqa: E402
+from tagpup.ml import clip  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import activity, bake_after_index, inspect, library_view, settings, sync, tagging  # noqa: E402
+from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -635,6 +646,118 @@ class TheCardStatsHaveABudget(unittest.TestCase):
         self.assertEqual(3, len(asked), "stats at 0, 0.6 and 1.2 s; the one due at 1.8 s is past the budget")
         self.assertEqual(["missing"] * 3, [card.get("stale") for card in cards[:3]])
         self.assertTrue(all("stale" not in card for card in cards[3:]), "the rest unmarked, quietly")
+
+
+@unittest.skipIf(own_home.installed_exiftool() is None, "ExifTool not installed")
+class ABakeOnAShareSlowToWake(unittest.TestCase):
+    """Scenario 10 (docs/PLAN_KEEP_IN_STEP.md): the index's bake runs over a folder on a share asleep. Its first answer
+    after idle is slower than the share's moment (1.3 s where SHARE_WAIT is 1.0, measured 2026-10-27), and the bake then
+    counted every photo of the library "could not be reached" in seconds and wrote nothing. A bake's walk waits the away
+    out and asks again once (shares.Walk, patient): a share that wakes is baked; one that stays away has its photos
+    counted not answered -- never unreachable -- after one bounded wait, its files untouched. Times shrunk. The library
+    is indexed by the CLI over a real ExifTool and the stand-in models, its bake held back until the share sleeps."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="bake_share_asleep_")
+        self.db_path = self.home.library("harbour.db")
+        self.assertEqual(1, library_actions.create(self.db_path).changed)
+        self.library = Library(self.db_path)
+        self.folder = paths.stored(os.path.join(self.home.root, "Harbour"))
+        os.makedirs(self.folder)
+        self.photos = []
+        for name, colour in (("a.jpg", (200, 40, 40)), ("b.jpg", (40, 200, 40))):
+            self.photos.append(os.path.join(self.folder, name))
+            Image.new("RGB", (640, 480), colour).save(self.photos[-1], "JPEG")
+        detector = RefusableFaces({"a.jpg": [([300, 200, 400, 330], 0.99, 1)]}, vector=baked_files.face_vector)
+        self.detector = face_service.detector_of(NewFaces(), None)
+        vector = baked_files.unit(1152, 99).tolist()
+        with mock.patch.object(clip.ClipModel, "_init_model"), \
+                mock.patch.object(clip.ClipModel, "picture_input", return_value="input"), \
+                mock.patch.object(clip.ClipModel, "embed_input", return_value=vector), \
+                mock.patch.object(Runtime, "gpu_turn", lambda runtime, what, *args, **kwargs: Hold()), \
+                mock.patch.object(runtimes, "on_the_card", return_value=True), \
+                mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: detector), \
+                mock.patch.object(tagpup_cli, "_bake_after_index"):
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder])
+        self.assertEqual(0, result.exit_code, result.output)
+        self.stamps = {path: os.stat(path).st_mtime_ns for path in self.photos}
+        shares.forget()
+        self.addCleanup(shares.forget)
+        self.asleep = threading.Event()
+        self.addCleanup(self.asleep.set)
+        under = os.path.normcase(self.folder)
+        for patcher in (mock.patch.object(shares, "on_a_network_drive",
+                                          lambda path: os.path.normcase(str(path)).startswith(under)),
+                        mock.patch.object(shares, "SHARE_WAIT", 0.1), mock.patch.object(shares, "AWAY_SECONDS", 0.4),
+                        mock.patch.object(shares, "STOP_EVERY", 0.05)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def share(self, slow):
+        """os.stat of a file in the folder takes `slow(n)` seconds at its n-th look (0 first), cut short by the test's end."""
+        real, under, looks = os.stat, os.path.normcase(self.folder), []
+
+        def stat(path, *args, **kwargs):
+            if os.path.normcase(str(path)).startswith(under):
+                looks.append(path)
+                self.asleep.wait(slow(len(looks) - 1))
+            return real(path, *args, **kwargs)
+        return mock.patch.object(os, "stat", stat)
+
+    def bake(self):
+        started = time.monotonic()
+        baked = bake_after_index.bake_folders(self.library, own_home.installed_exiftool(), self.detector, [self.folder], {})
+        return baked, time.monotonic() - started
+
+    def test_a_share_whose_first_answer_is_slower_than_its_moment_is_waited_for_and_its_photos_baked(self):
+        with self.share(lambda n: 0.3 if n == 0 else 0):
+            baked, _took = self.bake()
+        self.assertEqual((2, 0, 0), (baked.written, baked.not_answered, sum(baked.cannot.values())), baked.said())
+        self.assertFalse(baked.stalled)
+
+    def test_a_share_that_answers_late_is_asked_again_when_its_look_ends_not_when_the_away_window_does(self):
+        # The first answer takes 0.3 s against a moment of 0.1 s and an away window of 6 s: the bake asks again at 0.3 s.
+        with mock.patch.object(shares, "AWAY_SECONDS", 6.0), self.share(lambda n: 0.3 if n == 0 else 0):
+            baked, took = self.bake()
+        self.assertEqual((2, 0, 0), (baked.written, baked.not_answered, sum(baked.cannot.values())), baked.said())
+        self.assertLess(took, 3.0, "the look's own length, not the 6 s window the share was taken as away for")
+
+    def test_a_share_that_stays_away_is_counted_not_answered_after_one_bounded_wait_and_its_files_are_untouched(self):
+        with self.share(lambda n: 5.0):
+            baked, took = self.bake()
+        self.assertEqual((0, 2, 0), (baked.written, baked.not_answered, sum(baked.cannot.values())), baked.said())
+        self.assertIn("2 not answered (a share away)", baked.said())
+        self.assertNotIn("unreadable", baked.said())
+        self.assertLess(took, 3.0, "one wait of the away and one moment, not one for each photo")
+        self.asleep.set()
+        self.assertEqual(self.stamps, {path: os.stat(path).st_mtime_ns for path in self.photos})
+
+
+class AShareThatHangsAgain(unittest.TestCase):
+    """A share that hung, was let alone for its away window, and hangs again is away again from the new look: the pages
+    that ask of it next are answered at once, not each held for a full moment on the thread that still hangs."""
+
+    def test_after_its_window_ran_out_one_more_wait_then_every_ask_is_answered_at_once(self):
+        photo = "//server/share/a.jpg"
+        release = threading.Event()
+        self.addCleanup(release.set)
+        self.addCleanup(shares.forget)
+        shares.forget()
+        real = os.stat
+
+        def stat(path, *args, **kwargs):
+            if str(path) == photo:
+                release.wait(30)
+            return real(path, *args, **kwargs)
+        with mock.patch.object(shares, "SHARE_WAIT", 0.2), mock.patch.object(shares, "AWAY_SECONDS", 0.5), \
+                mock.patch.object(os, "stat", stat):
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(photo))
+            time.sleep(0.55)   # the first mark has expired; the look still hangs
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(photo))
+            for _ in range(3):
+                started = time.monotonic()
+                self.assertIs(shares.UNANSWERED, shares.stamp_of(photo))
+                self.assertLess(time.monotonic() - started, 0.1, "answered from the new mark, not joined for a moment")
 
 
 if __name__ == "__main__":

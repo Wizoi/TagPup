@@ -10,7 +10,9 @@ file's bake differ the rows win (decision 3): a face deleted in TagPup is gone f
 A folder is planned twice, on a read-only connection of its own: first every photo without its decode (the bake fields
 of the folder's files read in one ExifTool read, the first time a photo asks), then only the photos to bake with their
 fingerprint, the index's own decode's when it handed one over (`handed`) and the file is still at the stamp the index
-recorded it under, so a photo it decoded is not decoded again; a file changed since is decoded.
+recorded it under, so a photo it decoded is not decoded again; a file changed since is decoded. Its files are looked at
+through one patient walk (baking.walk): a share slow to wake is waited for once, and only one that stays away has its
+photos counted not answered -- nothing is called unreachable, and the next index bakes them.
 Each file is read again just before its write (write_fields with no `held`): one changed outside since is a conflict,
 never overwritten. A read or a write ExifTool does not answer in its deadline (a share gone away) ends the run at that
 folder; the folders after it are baked by the next index. One snapshot of the library is taken before the first write
@@ -75,13 +77,13 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
     the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did."""
-    baked, snapshot = Baked(), []
+    baked, snapshot, walk = Baked(), [], baking.walk(stop)
     with field_values.session(exiftool_path) as session:
         et = exiftool_session.StaysDead(session)
         for folder in folders:
             if stop is not None and stop():
                 break
-            to_bake, stored = _planned(library, et, detector, folder, handed, baked)
+            to_bake, stored = _planned(library, et, detector, folder, handed, baked, walk)
             if to_bake and not baked.stalled:
                 if not snapshot:
                     snapshot.append(snapshot_service.before_a_long_write(library))
@@ -96,7 +98,7 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
     return baked
 
 
-def _planned(library, et, detector, folder, handed, baked):
+def _planned(library, et, detector, folder, handed, baked, walk):
     """({paths.key(path): (path, values)} of the photos of `folder` to bake, the folder as the library stores it),
     counting into `baked` the photos current, not answered and that cannot be planned."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -108,7 +110,7 @@ def _planned(library, et, detector, folder, handed, baked):
         read = baking.FolderRead(et, group)
         to_bake = {}
         for path in group:
-            photo = baking.PhotoAt(path, read)
+            photo = baking.PhotoAt(path, read, walk)
             plan = photo.plan(conn, keys)
             if isinstance(plan, baking.ToBake):
                 plan = photo.plan(conn, keys, _fingerprint(path, handed))
