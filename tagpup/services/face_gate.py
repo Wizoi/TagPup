@@ -1,5 +1,5 @@
 """The gate of phase 3, read-only (docs/AI_PIPELINE.md, phase 3, "Gate", and slice C as built): the new face model and
-FaceNet scored on the same named faces -- those holding a vector under both keys after the pass -- each named face matched
+FaceNet scored on the same named faces -- those holding a vector under both keys -- each named face matched
 against the library's other named faces of every OTHER folder (tagpup.core.holdout, the way section 7 read FaceNet's curve),
 by the margin of its top person over the second-best (clustering.margins) and by its likeness.
 
@@ -10,12 +10,12 @@ not in the gallery by construction, so every name given it is wrong -- the preci
 (named of both), and its cut. Each is said with what it names: right, wrong, left for review, the recall (named right of
 the faces that could be), the library's unnamed faces it would name, and on the closed set the same by the face's shorter side (the bands, and the floors a new face could be made at:
 tagpup.ml.scrfd_adaface.NEW_FACE_FLOOR is read here). A reading is "too thin" when its faces cannot tell the precision asked from what is
-under it (holdout.too_thin). And the pass's counts, from the library's rows and journal. Nothing is written; a library is
+under it (holdout.too_thin). And the counts of the new model's faces, from the library's rows and journal. Nothing is written; a library is
 opened read-only (db.readonly_uri), and nothing said names a person, a photo or a folder: counts only.
 
 By year (phase 4a's gate): how often each model's best match is right by the years between a named face and the face it
 was matched with (by_gap), on every face and at the model's own naming cuts; for both models of the gate, or for the library's own model
-alone (read_alone: a library the pass has not reached, photo_index). A year outside the era is no year (core.dates.era_year).
+alone (read_alone: a library with no vector under the new model, photo_index). A year outside the era is no year (core.dates.era_year).
 Since phase 4a's one gallery (#1737) every match is made as the app makes it, of the person's faces of the years around
 the face's own (clustering.FacesByPerson.table) where the face has a year, of all years where it has none.
 """
@@ -29,7 +29,7 @@ from tagpup.services import journal as journal_service
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 
-#: The model the library reads today, and the one the pass gave its faces.
+#: The model the library reads today, and the one its faces were given.
 OLD, NEW = MTCNN_FACENET, SCRFD_ADAFACE
 #: The bands of a face's shorter side, in pixels of the picture as stored: [low, high).
 BANDS = ((0, 30), (30, 40), (40, 50), (50, None))
@@ -72,7 +72,7 @@ def _named_columns(named):
 
 def read(db_path, old=OLD, new=NEW):
     """What the gate reads of one library, opened read-only: {"pass": the rows' counts (store.faces.pass_counts) and the
-    journal's ("changes", "journal_matched", "journal_new" of the pass's kept changes), and "unnamed_nobody", the unnamed
+    journal's ("changes", "journal_matched", "journal_new" of the kept changes), and "unnamed_nobody", the unnamed
     faces holding both vectors a person called nobody by hand (store.faces.manual_names), left out of the unnamed; "models":
     {key: the named faces matched against each other by it, a face a row (_matched), and "short";
     "unnamed_likeness", "unnamed_margin" of the other unnamed faces holding both vectors against the named}},
@@ -111,7 +111,7 @@ def read(db_path, old=OLD, new=NEW):
 def read_alone(db_path):
     """The library's own face model alone (store.faces.model_key, never another's vectors), opened read-only:
     {"models": {key: its named faces matched against each other held out by folder (_matched)}}, empty when no named face
-    holds a vector under it. What by_gap reads of a library the face pass has not reached."""
+    holds a vector under it. What by_gap reads of a library with no vector under the new model."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         key = store_faces.model_key(conn)
@@ -190,7 +190,7 @@ def _reading(found, faces, precision, by, cuts):
 def _floor(found, at, floor, cut, by):
     """What a floor at `floor` px would have left of the named right at `cut`, read twice: "recall_counting_under" counts an
     old face under the floor as missed (right_under taken from the right, over every face that could be named), and
-    "recall_at_or_above" leaves those faces out (the floor stops the pass making a new face under it; an old face there is
+    "recall_at_or_above" leaves those faces out (the floor stops a new face being made under it; an old face there is
     kept, so this is the recall among the faces at or above it)."""
     under = found["reachable"] & (found["short"] < floor)
     right_under = int((under & found["right"] & (np.nan_to_num(found[by], nan=-np.inf) >= cut)).sum())

@@ -638,7 +638,7 @@ def panel(library, photo_path, named):
 # wrapper for each (docs/ARCHITECTURE.md, phase 5.5).
 
 def vector_bytes(embedding):
-    """A face model's vector as a face's vector is stored: float32 bytes (the index, Suggest and the face pass)."""
+    """A face model's vector as a face's vector is stored: float32 bytes (the index and Suggest)."""
     return np.array(embedding, dtype=np.float32).tobytes()
 
 
@@ -744,8 +744,8 @@ def forget_for_new_picture(db_path, photo_path):
     The fingerprint's key (images.FINGERPRINT_KEY) is one today: a change of it makes every stale photo's decode
     another picture, and forgets its faces, so a key change must come with a migration decision (the owner's).
 
-    In a write of its own, before its new vector is kept (and so before the new picture is detected, or with no
-    face pass at all, --skip-faces): a run stopped at any point after it, or a batch whose write fails, leaves the photo
+    In a write of its own, before its new vector is kept (and so before the new picture is detected, or with
+    --skip-faces): a run stopped at any point after it, or a batch whose write fails, leaves the photo
     never examined, which the next index detects (photo_fingerprints.owed), and its batch's record_batch records the
     new faces as a photo with none. Kept first, a stop before this write would leave a current vector on the old
     faces, never owed again. Its person tags name them again (#788); a name or

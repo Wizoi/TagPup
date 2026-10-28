@@ -578,7 +578,7 @@ def iou(a, b):
 def pairs(boxes, others, at=SAME_FACE, first=()):
     """{index in boxes: index in others}: each box paired once with the other it overlaps most, the largest overlaps
     first, at `at` (SAME_FACE) or more; of equal overlaps the lower indexes first, so a tie is settled the same way
-    every run. The boxes at the indexes in `first` are paired before the rest (the face pass: a named face before an
+    every run. The boxes at the indexes in `first` are paired before the rest (a named face before an
     unnamed duplicate of it, owner 2026-10-18)."""
     first = set(first)
     candidates = sorted(((overlap, i, j) for i, a in enumerate(boxes) for j, b in enumerate(others)

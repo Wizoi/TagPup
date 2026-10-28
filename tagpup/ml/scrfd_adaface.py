@@ -11,8 +11,8 @@ The detector looks at the photo as a person sees it, turned by its Orientation, 
 picture as stored, as every face box is (tagpup.core.orientation.box_to_stored; DECISIONS 2026-10-27): a photo stored
 sideways is looked at upright, where its faces are found.
 
-Built like tagpup.ml.faces.FaceModel, by tagpup.runtime only, and answering what FaceModel answers the index, Suggest and
-the face pass: `key`, `picture(path, max_side=)`, `picture_bytes`, `detect_and_embed(picture)`, `new_faces`,
+Built like tagpup.ml.faces.FaceModel, by tagpup.runtime only, and answering what FaceModel answers the index and
+Suggest: `key`, `picture(path, max_side=)`, `picture_bytes`, `detect_and_embed(picture)`, `new_faces`,
 `detect_and_embed_faces(path, max_side=)` and `detector(max_side)` (docs/AI_PIPELINE.md, phase 3, merge 3 item 3). The
 library's cap on the detector's picture (faces.detect_max_side, MTCNN's) is taken and not used: the two squares are
 this detector's own.
@@ -59,7 +59,7 @@ RECOGNISER_SOURCE = "https://huggingface.co/minchul/cvlface_adaface_ir101_webfac
 CONVERTER = "scripts/make_scrfd_torchscript.py"
 
 #: The shorter side, in pixels of the picture as stored, under which a detection is not made a new face, wherever one is
-#: made -- the index, Suggest, and the face pass for a detection no old face takes (owner, 2026-10-18): the detector's own
+#: made -- the index and Suggest, for a detection no old face takes (owner, 2026-10-18): the detector's own
 #: floor is SMALLEST_FACE, and in one real folder 31 of its 40 new faces were under 40 px, smudges no one can recognise (the
 #: old detector's smallest was 23, its median 64). An old face a detection of any size matches still gets the vector (the
 #: pass). Read in slice C against held-out named faces (tagpup.services.face_gate.FLOORS).

@@ -33,7 +33,7 @@ def take(library, now=None, force=False):
 
 
 def before_a_long_write(library, now=None):
-    """The one snapshot a long run of writes takes before its first (the CLI's face pass with --apply): a daily, unless
+    """The one snapshot a long run of writes takes before its first (the CLI's index with --apply): a daily, unless
     the newest daily of `library` was taken today (local time), then nothing -- so a run takes one at most, and a day of
     runs one. A Result as take()'s; skipped, details["today"] names the daily that stands."""
     now = time.time() if now is None else now

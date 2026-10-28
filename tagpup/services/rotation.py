@@ -9,7 +9,7 @@ never leave a turned file with boxes of the old picture, or the reverse (docs/IN
   fingerprint (tagpup.store.photo_fingerprints), the hash of the upright decode;
 - its faces' cached crops go, every format: each was cut upright by the old Orientation (images.face_crop_of), and the
   next request cuts it again; and its record of the detectors that looked at it (tagpup.store.faces_detected), since
-  faces are detected on the picture as shown: the next index or face pass looks at it again, and adds only what no face
+  faces are detected on the picture as shown: the next index looks at it again, and adds only what no face
   already has (pairing by overlap, clustering.pairs). The faces themselves -- names, exclusions, boxes, vectors -- stay;
 - for a TIFF, which Pillow shows already turned, the face boxes turn with it. For every other format the boxes are in
   the stored pixels, which do not move (tagpup.files.images.shown_shape).
