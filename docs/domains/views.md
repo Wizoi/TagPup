@@ -88,7 +88,7 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
   it made (DECISIONS 2026-10-23), no longer a clustering that rewrites names. The wait says what it waits for, and
   Cancel stops it.
 - **Phase 0 times the pipeline through hooks, not by importing the stages** (#1527). A program under `scripts/` may not
-  import store, files or ml, nor hold SQL (`tests/test_layers.py`), so `measure_pipeline_stages` hooks the objects the
+  import store, files or ml, nor hold SQL (`tests/test_layers.py`), so phase 0's `measure_pipeline_stages` (deleted 2026-10-28 with the old models) hooked the objects the
   runtime and services hand it, and the census reads through services. A later brief that needs a stage the hooks cannot
   reach needs a store read or an ml helper of its own, not a wider import.
 - **The census strata count a photo's faces in play, not every face found** (#1528): named, or unnamed and not excluded

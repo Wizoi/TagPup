@@ -122,7 +122,6 @@ NUMPY_TOP = re.compile(r"\b(?:nan)?arg(?:max|sort|partition)\(|\.reduceat\(|\bnp
 #: paths, names, cards or faces and none of people by likeness (read 2026-10-17, phase 2b); a new one is looked at and counted
 #: here, or goes through clustering.ranked / best_of.
 SORTS_OF_OTHER_THINGS = {
-    os.path.join("scripts", "measure_pipeline_stages.py"): 2,   # its runs by detect_max_side, its roots' places; pairs from clustering
     os.path.join("tagpup", "services", "faces.py"): 3,
     os.path.join("tagpup", "services", "identify.py"): 6,   # RANKS_FACES's one among them
     os.path.join("tagpup", "services", "suggester.py"): 4,

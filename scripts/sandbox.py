@@ -10,8 +10,8 @@ shares with the owner's apps (#810): a sandbox that loads models takes its turn 
 process on the machine does (tagpup.ml.gpu), so it never sits on the 10 GB card beside the owner's index (#750).
 Side effects, wanted: a sandbox waiting for the card makes the owner's idle server give up its models (its next
 Suggest loads them again, about 15 s), and a measurement that loads models measures a cold load.
-measure_pipeline_stages.py and measure_pipeline_holdouts.py share the census and the sample of
-docs/AI_PIPELINE.md's phase 0 here too (below). A script may not import another script, so what they share is here, a helper of scripts/
+measure_pipeline_holdouts.py keeps the census and the sample of docs/AI_PIPELINE.md's phase 0 here too (below),
+beside what the app measurements share. A script may not import another script, so what they share is here, a helper of scripts/
 (tests/test_layers.py, HELPERS) beside code_snapshot, which copies the code.
 """
 import os
@@ -120,7 +120,7 @@ def remove_sandbox(sandbox):
           % (size / 1e9, sandbox), file=sys.stderr)
     return False
 
-# ---- What the pipeline measurements share (measure_pipeline_stages, measure_pipeline_holdouts) ----------------------
+# ---- The pipeline measurement's census and sample (measure_pipeline_holdouts) ------------------------------------
 #
 # docs/AI_PIPELINE.md, phase 0. The sample is drawn from a library read-only, through the services and the home's own
 # machine map (run with TAGPUP_HOME at the owner's home): its photos, the faces each already has, and the size of each
@@ -316,71 +316,17 @@ def parse_smi(line):
     return utilisation, memory
 
 
-def window(samples, start, end):
-    """What the card did between `start` and `end` (epoch seconds), from Sampler.gpu's (time, util, MiB): the
-    samples, the share at 0% and under 10% utilisation, the mean, and the peak memory."""
-    inside = [(util, mib) for at, util, mib in samples if start <= at <= end]
-    if not inside:
-        return {"samples": 0}
-    return {"samples": len(inside), "idle_share": sum(1 for util, _ in inside if util == 0) / len(inside),
-            "under_10_share": sum(1 for util, _ in inside if util < 10) / len(inside),
-            "mean_utilisation": sum(util for util, _ in inside) / len(inside),
-            "peak_memory_mib": max(mib for _, mib in inside)}
-
-
-def _system_times():
-    """(idle, busy) 100-ns ticks of every processor since start (Windows)."""
-    import ctypes
-    idle, kernel, user = ctypes.c_ulonglong(), ctypes.c_ulonglong(), ctypes.c_ulonglong()
-    ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user))
-    return idle.value, kernel.value + user.value - idle.value
-
-
-def _process_ticks(pid):
-    """The processor time process `pid` has used, in 100-ns ticks, or None (Windows)."""
-    import ctypes
-    handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
-    if not handle:
-        return None
-    try:
-        created, ended, kernel, user = (ctypes.c_ulonglong() for _ in range(4))
-        if not ctypes.windll.kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(ended),
-                                                      ctypes.byref(kernel), ctypes.byref(user)):
-            return None
-        return kernel.value + user.value
-    finally:
-        ctypes.windll.kernel32.CloseHandle(handle)
-
-
 class Sampler:
-    """What the card and the processors did while a measurement ran: nvidia-smi's utilisation and memory every
-    `interval` milliseconds (`gpu`: [(epoch, util %, MiB)]; its utilisation is the share of its own sample period a
-    kernel ran), and every interval the machine's processor use and the measured process's (`cpu`: [(epoch, machine
-    %, process %)], both of all processors; the rest of the machine is the difference). `watch(pid)` names the
-    process, or `watch(file)` a file the process writes its own id into: the venv's python.exe is a launcher, and
-    the interpreter doing the work is its child (measured 2026-10-16: the launcher's own use read 0%). Nothing about any other process's use of the card is to be had from nvidia-smi on Windows: memory used
-    before the measurement starts is theirs."""
+    """What the card did while a measurement ran: nvidia-smi's utilisation and memory every `interval` milliseconds
+    (`gpu`: [(epoch, util %, MiB)]; its utilisation is the share of its own sample period a kernel ran). Nothing about
+    any other process's use of the card is to be had from nvidia-smi on Windows: memory used before the measurement
+    starts is theirs."""
 
     def __init__(self, interval=500):
         self.interval = interval
-        self.gpu, self.cpu = [], []
-        self.pid = None
+        self.gpu = []
         self._smi = None
-        self._stop = threading.Event()
         self._threads = []
-
-    def watch(self, pid):
-        self.pid = pid
-
-    def watched(self):
-        """The id of the process measured: the one named, or the one in the file named once it is written."""
-        if isinstance(self.pid, str):
-            try:
-                with open(self.pid, encoding="utf-8") as handle:
-                    return int(handle.read().strip())
-            except (OSError, ValueError):
-                return None
-        return self.pid
 
     def start(self):
         try:
@@ -391,7 +337,6 @@ class Sampler:
             self._smi = None
         if self._smi is not None:
             self._threads.append(threading.Thread(target=self._read_smi, daemon=True))
-        self._threads.append(threading.Thread(target=self._read_cpu, daemon=True))
         for thread in self._threads:
             thread.start()
         return self
@@ -402,23 +347,7 @@ class Sampler:
             if found is not None:
                 self.gpu.append((time.time(), found[0], found[1]))
 
-    def _read_cpu(self):
-        processors = os.cpu_count() or 1
-        before, process_before, then = _system_times(), None, time.time()
-        while not self._stop.wait(self.interval / 1000):
-            after, now = _system_times(), time.time()
-            idle, busy = after[0] - before[0], after[1] - before[1]
-            machine = 100.0 * busy / (idle + busy) if idle + busy else 0.0
-            pid = self.watched()
-            ticks = _process_ticks(pid) if pid else None
-            process = None
-            if ticks is not None and process_before is not None:
-                process = 100.0 * (ticks - process_before) / ((now - then) * 1e7 * processors)
-            self.cpu.append((now, machine, process))
-            before, process_before, then = after, ticks, now
-
     def stop(self):
-        self._stop.set()
         if self._smi is not None and self._smi.poll() is None:
             self._smi.terminate()
             try:
@@ -427,17 +356,6 @@ class Sampler:
                 self._smi.kill()
         for thread in self._threads:
             thread.join(timeout=5)
-
-    def processor(self, start, end):
-        """{"machine_mean", "process_mean", "others_mean"} processor use % between `start` and `end`."""
-        inside = [(machine, process) for at, machine, process in self.cpu if start <= at <= end]
-        if not inside:
-            return {"samples": 0}
-        machine = sum(m for m, _ in inside) / len(inside)
-        measured = [p for _, p in inside if p is not None]
-        process = sum(measured) / len(measured) if measured else None
-        return {"samples": len(inside), "machine_mean": machine, "process_mean": process,
-                "others_mean": None if process is None else max(0.0, machine - process)}
 
 
 def versions():

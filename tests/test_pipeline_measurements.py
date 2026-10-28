@@ -1,6 +1,5 @@
-"""The phase 0 measurements of the AI pipeline (scripts/measure_pipeline_stages.py, measure_pipeline_holdouts.py,
-the helpers they share in scripts/sandbox.py; docs/AI_PIPELINE.md): what they draw and how they count, on made-up
-numbers. Nothing here loads a model, opens a library or starts a process: the runs themselves are the owner's, in a
+"""The AI pipeline's measurements of a photo model and of the named faces (scripts/measure_pipeline_holdouts.py, the
+helpers it keeps in scripts/sandbox.py; docs/AI_PIPELINE.md): what they draw and how they count, on made-up numbers. Nothing here loads a model, opens a library or starts a process: the runs themselves are the owner's, in a
 window he names.
 
 The sample a person relies on: a third or more at 10 faces or more, the worst photo in it, each stratum spread from
@@ -24,7 +23,6 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import numpy as np  # noqa: E402
 
 import measure_pipeline_holdouts as holdouts  # noqa: E402
-import measure_pipeline_stages as stages  # noqa: E402
 import sandbox  # noqa: E402
 from tagpup.core import clustering, holdout  # noqa: E402
 
@@ -85,33 +83,12 @@ class TheCounts(unittest.TestCase):
         bins = sandbox.megapixel_bins([0.3, 5.9, 6.0, 12.1, 45.0])
         self.assertEqual({"under 2": 1, "2-6": 1, "6-12": 1, "12-20": 1, "20-30": 0, "30 and over": 1}, bins)
 
-    def test_the_card_is_idle_by_its_samples_inside_the_window(self):
+    def test_the_cards_samples_are_read_from_nvidia_smi_and_its_memory_before_is_the_others(self):
         self.assertEqual((37.0, 4100.0), sandbox.parse_smi("37, 4100\n"))
         self.assertIsNone(sandbox.parse_smi("[N/A], 4100"))
-        samples = [(1.0, 90, 5000), (2.0, 0, 6000), (3.0, 0, 6500), (4.0, 5, 6400), (5.0, 80, 9000)]
-        found = sandbox.window(samples, 2.0, 4.0)
-        self.assertEqual(3, found["samples"])
-        self.assertAlmostEqual(2 / 3, found["idle_share"])
-        self.assertEqual(1.0, found["under_10_share"])
-        self.assertEqual(6500, found["peak_memory_mib"])
-        self.assertEqual({"samples": 0}, sandbox.window(samples, 10, 11))
-
-    def test_the_process_measured_is_the_one_that_wrote_its_id(self):
-        # The venv's python.exe is a launcher: the child's own id comes from a file it writes.
-        import tempfile
-        folder = tempfile.mkdtemp(prefix="tagpup_pid_test_")
-        try:
-            sampler = sandbox.Sampler()
-            sampler.watch(os.path.join(folder, "child.pid"))
-            self.assertIsNone(sampler.watched())
-            with open(os.path.join(folder, "child.pid"), "w", encoding="utf-8") as handle:
-                handle.write("4242")
-            self.assertEqual(4242, sampler.watched())
-            sampler.watch(17)
-            self.assertEqual(17, sampler.watched())
-        finally:
-            import shutil
-            shutil.rmtree(folder, True)
+        samples = [(1.0, 0, 900), (2.0, 90, 5000), (3.0, 80, 6500)]
+        self.assertEqual({"before": 900, "peak": 6500, "peak_over_before": 5600}, holdouts.card_use(samples, 2.0))
+        self.assertEqual({"samples": 3}, holdouts.card_use(samples, 10.0))
 
     def test_output_goes_outside_the_repository(self):
         with self.assertRaises(SystemExit):
@@ -122,148 +99,6 @@ class TheCounts(unittest.TestCase):
         name, under = sandbox.owner_relative(os.path.join("D:" + os.sep, "Pictures", "2024", "a.jpg"), places)
         self.assertEqual(("pictures", os.path.join("2024", "a.jpg")), (name, under))
         self.assertIsNone(sandbox.owner_relative(os.path.join("E:" + os.sep, "a.jpg"), places))
-
-
-class ThePhotoStages(unittest.TestCase):
-    def test_each_stage_is_read_from_the_marks_and_a_load_is_not_a_decode(self):
-        record = {"t0": 0.0, "decoded": 12.1, "clip_load": 12.0, "prepared": 12.2, "clip_start": 12.2,
-                  "clip_end": 12.5, "identity write": 0.05, "f0": 0.0, "f_read": 0.1, "detect_in": 12.7,
-                  "detect_out": 13.2, "encode": 0.04, "resnet_in": 13.3, "f_end": 13.35}
-        found = stages.stages_of(record)
-        self.assertAlmostEqual(0.1, found["decode for CLIP"])
-        self.assertAlmostEqual(0.1, found["pad and resize"])
-        self.assertAlmostEqual(0.3, found["CLIP forward"])
-        self.assertAlmostEqual(0.1, found["decode for faces"])
-        self.assertAlmostEqual(0.5, found["MTCNN"])
-        self.assertAlmostEqual(0.06, found["crop and tensor"])
-        self.assertAlmostEqual(0.04, found["crop JPEG encode"])
-        self.assertAlmostEqual(0.05, found["recogniser forward"])
-
-    def test_a_photo_with_no_face_has_no_recogniser_stage(self):
-        found = stages.stages_of({"t0": 0, "decoded": 0.1, "prepared": 0.2, "clip_start": 0.2, "clip_end": 0.3,
-                                  "f0": 0.0, "f_read": 0.1, "detect_in": 0.4, "detect_out": 0.6, "f_end": 0.6})
-        self.assertNotIn("recogniser forward", found)
-        self.assertAlmostEqual(0.0, found["crop and tensor"])
-
-    def test_the_table_leaves_the_warm_up_out(self):
-        photo = {"stratum": "1-3", "faces_found": 2, "megapixels": 12.0, "total": 1.0, "stages": {"MTCNN": 0.4}}
-        warm_up = dict(photo, total=20.0, stages={"MTCNN": 9.0})
-        table = stages.stage_table([warm_up, photo, dict(photo, stratum="10+")])
-        self.assertEqual(2, table["all"]["photos"])
-        self.assertEqual(1.0, table["all"]["total"]["max"])
-        self.assertEqual(0.4, table["1-3"]["MTCNN"]["mean"])
-
-
-class TheHooksReachTheModelsAsTheIndexCallsThem(unittest.TestCase):
-    """The stages run's hooks wrap the models' own methods by name: a method renamed in tagpup.ml left the run timing
-    nothing (the processor/card split, phase 1b). Each hook is put on a real model, its weights stood in for, and a
-    photo is taken through it the way the index takes it -- the processor's half, then the card's."""
-
-    def setUp(self):
-        from PIL import Image
-        folder = tempfile.TemporaryDirectory()
-        self.addCleanup(folder.cleanup)
-        self.photo = os.path.join(folder.name, "quay.jpg")
-        Image.new("RGB", (64, 48), "navy").save(self.photo, "JPEG")
-        self.timeline = stages.Timeline(lambda: None)
-
-    def test_clip_is_timed_from_its_decode_to_its_forward(self):
-        import torch
-        from tagpup.ml import clip
-        from tagpup.services import search
-        model = clip.ClipModel("ViT-B-32", "openai", True, 1.4, None, device="cpu")
-
-        def load():
-            model.model = type("Weights", (), {"encode_image": lambda self, batch: torch.ones(1, 4)})()
-            model.preprocess = lambda picture: torch.zeros(3, 2, 2)
-        model._init_model = load
-        stages._watch_clip(model, self.timeline)
-        made = search.PhotoEmbeddings.made
-        self.addCleanup(setattr, search.PhotoEmbeddings, "made", made)
-        stages._watch_made(search.PhotoEmbeddings, self.timeline)
-        embeddings = search.PhotoEmbeddings(model, remember=False)
-        self.assertEqual(4, len(embeddings.made(self.photo, embeddings.prepared(self.photo))))
-        found = stages.stages_of(self.timeline.record(self.photo))
-        for stage in ("decode for CLIP", "pad and resize", "CLIP forward"):
-            self.assertIn(stage, found)
-        self.assertEqual([64, 48], self.timeline.record(self.photo)["upright"])
-
-    def test_the_cards_wait_for_each_photo_is_timed_and_its_begin_apart(self):
-        """Phase 1c's question: what of the processor's work the read-ahead did not hide. The photos come back in
-        their order through the wrapped iteration, each with its wait and its `begin`'s share of it."""
-        from tagpup.core import read_ahead
-        iterate = read_ahead.ReadAhead.__iter__
-        self.addCleanup(setattr, read_ahead.ReadAhead, "__iter__", iterate)
-        stages._watch_read_ahead(read_ahead.ReadAhead, self.timeline)
-        metas = [{"path": self.photo + str(n)} for n in range(5)]
-        with read_ahead.ReadAhead(metas, lambda meta: {}, lambda meta, begun, reserve: reserve(1) or meta["path"],
-                                  threads=2, ahead=2, budget=10) as photos:
-            seen = [result.result() for _meta, _begun, result in photos]
-        self.assertEqual([meta["path"] for meta in metas], seen)
-        for meta in metas:
-            record = self.timeline.record(meta["path"])
-            self.assertGreaterEqual(record["read wait"], record["begin"])
-        self.assertEqual(5, len(self.timeline.calls["read-ahead begin"]))
-
-    def test_the_waits_leave_the_warm_up_out_and_are_a_share_of_the_index(self):
-        photos = [{"read_wait": 9.0, "begin": 1.0}, {"read_wait": 0.5, "begin": 0.1}, {"read_wait": 1.5, "begin": 0.1}]
-        found = stages.waits(photos, 20.0)
-        self.assertAlmostEqual(2.0, found["sum"])
-        self.assertAlmostEqual(0.1, found["share"])
-        self.assertEqual(2, found["read wait"]["n"])
-
-
-class WhatACapLoses(unittest.TestCase):
-    """Phase 1a: a capped run against the one without a cap, photo by photo by its number in the sample."""
-
-    def photo(self, number, boxes, stored=(), stratum="10+"):
-        return {"number": number, "stratum": stratum, "boxes": [list(b) for b in boxes], "stored": [list(s) for s in stored]}
-
-    def test_a_face_is_one_face_at_half_overlap_each_paired_once(self):
-        """The one pairing rule, from the package (tagpup.core.clustering): the measurement and the face pass both
-        carry a face between two detections by it."""
-        self.assertAlmostEqual(1.0, clustering.iou([0, 0, 10, 10], [0, 0, 10, 10]))
-        self.assertEqual(0.0, clustering.iou([0, 0, 10, 10], [20, 20, 30, 30]))
-        self.assertEqual({0: 1}, clustering.pairs([[0, 0, 10, 10]], [[40, 40, 50, 50], [1, 0, 11, 10]]))
-        # Two boxes over one face: only one keeps it, the one overlapping it most.
-        self.assertEqual({1: 0}, clustering.pairs([[1, 1, 10, 10], [0, 0, 10, 10]], [[0, 0, 10, 10]]))
-        # Greedy, the largest overlap first: box 0 overlaps both, but box 1 takes the one it matches exactly.
-        self.assertEqual({0: 1, 1: 0}, clustering.pairs([[0, 0, 10, 10], [2, 0, 12, 10]],
-                                                        [[2, 0, 12, 10], [0, 0, 11, 10]]))
-        # Under SAME_FACE (one third here) nothing is paired.
-        self.assertEqual({}, clustering.pairs([[0, 0, 10, 10]], [[5, 0, 15, 10]]))
-        # A tie is settled by the lower indexes, every run.
-        self.assertEqual({0: 0}, clustering.pairs([[0, 0, 10, 10]], [[0, 0, 10, 10], [0, 0, 10, 10]]))
-        self.assertEqual({0: 0}, clustering.pairs([[0, 0, 10, 10], [0, 0, 10, 10]], [[0, 0, 10, 10]]))
-
-    def test_lost_faces_are_named_by_the_stored_face_they_match_and_gained_ones_are_counted(self):
-        named, unnamed, excluded = [100, 100, 140, 150], [300, 300, 312, 316], [500, 500, 540, 550]
-        off = {"photos": [self.photo(0, [named, unnamed, excluded],
-                                     stored=[(named, True, False), (unnamed, False, False), (excluded, True, True)]),
-                          self.photo(1, [[0, 0, 30, 30]], stratum="1-3")]}
-        capped = {"photos": [self.photo(0, [excluded, [700, 700, 760, 770]]),
-                             self.photo(1, [[1, 1, 30, 30]], stratum="1-3")]}
-        table = stages.compared(off, capped)
-        row = table["10+"]
-        self.assertEqual((3, 1, 2), (row["found_off"], row["named_off"], row["found"]))
-        # An excluded face is nobody: lost, it would count as unnamed.
-        self.assertEqual((1, 1, 1), (row["lost_named"], row["lost_unnamed"], row["gained"]))
-        self.assertEqual(50, row["lost_sides"]["max"])
-        self.assertEqual((2, 1, 1), (table["all"]["photos"], table["all"]["lost_named"], table["all"]["gained"]))
-
-    def test_a_run_without_its_faces_is_refused_not_compared_into_an_empty_table(self):
-        """The run without a cap ran without faces (no boxes on any photo): compare says so."""
-        with tempfile.TemporaryDirectory(prefix="pipeline_compare_") as folder:
-            files, rest = [], {"table": {}, "cli": {"seconds": 1.0}, "card": {}}
-            for name, run in (("off", dict(rest, photos=[{"number": 0, "stratum": "10+", "boxes": None}])),
-                              ("cap", dict(rest, detect_max_side=2048, photos=[self.photo(0, [[0, 0, 30, 30]])]))):
-                files.append(os.path.join(folder, name + ".json"))
-                with open(files[-1], "w", encoding="utf-8") as handle:
-                    json.dump(run, handle)
-            with self.assertRaises(SystemExit) as refused:
-                stages.compare(files, folder)
-            self.assertIn("nothing to compare", str(refused.exception))
-            self.assertEqual(["cap.json", "off.json"], sorted(os.listdir(folder)), "a comparison was written")
 
 
 class TheNamedFaceHoldOut(unittest.TestCase):
@@ -280,6 +115,23 @@ class TheNamedFaceHoldOut(unittest.TestCase):
         self.assertEqual(2, best[2])
         self.assertAlmostEqual(1.0, first[2], places=5)
         self.assertGreater(margin[2], 0)   # clustering.margins: the margin the gates ask
+
+    def test_a_face_is_one_face_at_half_overlap_each_paired_once(self):
+        """The one pairing rule, from the package (tagpup.core.clustering): a face carried between two detections of
+        one photo by it (services.rotation's turned photo, a detector's run against another's)."""
+        self.assertAlmostEqual(1.0, clustering.iou([0, 0, 10, 10], [0, 0, 10, 10]))
+        self.assertEqual(0.0, clustering.iou([0, 0, 10, 10], [20, 20, 30, 30]))
+        self.assertEqual({0: 1}, clustering.pairs([[0, 0, 10, 10]], [[40, 40, 50, 50], [1, 0, 11, 10]]))
+        # Two boxes over one face: only one keeps it, the one overlapping it most.
+        self.assertEqual({1: 0}, clustering.pairs([[1, 1, 10, 10], [0, 0, 10, 10]], [[0, 0, 10, 10]]))
+        # Greedy, the largest overlap first: box 0 overlaps both, but box 1 takes the one it matches exactly.
+        self.assertEqual({0: 1, 1: 0}, clustering.pairs([[0, 0, 10, 10], [2, 0, 12, 10]],
+                                                        [[2, 0, 12, 10], [0, 0, 11, 10]]))
+        # Under SAME_FACE (one third here) nothing is paired.
+        self.assertEqual({}, clustering.pairs([[0, 0, 10, 10]], [[5, 0, 15, 10]]))
+        # A tie is settled by the lower indexes, every run.
+        self.assertEqual({0: 0}, clustering.pairs([[0, 0, 10, 10]], [[0, 0, 10, 10], [0, 0, 10, 10]]))
+        self.assertEqual({0: 0}, clustering.pairs([[0, 0, 10, 10], [0, 0, 10, 10]], [[0, 0, 10, 10]]))
 
     def test_a_face_held_out_by_folder_meets_none_of_its_events_faces(self):
         # A burst: person 1 twice in one folder, once in another; person 2 in a third folder.
@@ -353,6 +205,10 @@ class TheOtherChecks(unittest.TestCase):
         self.assertEqual(100, len(holdouts.pooled(rows, held, 1000, seed=1)))
 
     def test_the_baseline_needs_suggests_own_cuts_and_a_model_with_higher_likenesses_needs_higher(self):
+        cut = holdouts.WORD_CUT   # the baseline's own, from the table of photo models
+        lower, under, over = ("%.2f" % (cut + step) for step in (-0.11, -0.01, 0.01))
+        at = "%.2f" % cut
+
         def found(shift, floors, words):
             likeness = np.linspace(0.30, 0.90, 2001) + shift
             return {"suggest": {"by_folder": {
@@ -362,15 +218,15 @@ class TheOtherChecks(unittest.TestCase):
                         "floors": {cut: {"precision": precision} for cut, precision in floors.items()}}},
                     "words": {"cuts": {cut: {"pairs": pairs, "right": right} for cut, (pairs, right) in words.items()}}}
         baseline = found(0.0, {"0.55": 0.7, "0.60": 0.8, "0.65": 0.9},
-                         {"0.12": (20, 9), "0.22": (10, 5), "0.23": (8, 6), "0.24": (4, 3)})
+                         {lower: (20, 9), under: (10, 5), at: (8, 6), over: (4, 3)})
         itself = holdouts.cuts_needed(baseline, baseline)
         self.assertAlmostEqual(holdouts.NEIGHBOUR_CUT, itself["neighbour_cut"], places=3)
-        self.assertEqual((0.60, 0.23), (itself["offered_floor"], itself["word_cut"]))
+        self.assertEqual((0.60, float(at)), (itself["offered_floor"], itself["word_cut"]))
         higher = holdouts.cuts_needed(found(0.2, {"0.55": 0.6, "0.60": 0.7, "0.65": 0.8},
-                                            {"0.12": (8, 6), "0.23": (2, 2)}), baseline)
+                                            {lower: (8, 6), at: (2, 2)}), baseline)
         self.assertAlmostEqual(holdouts.NEIGHBOUR_CUT + 0.2, higher["neighbour_cut"], places=3)
-        self.assertEqual((0.65, 0.12), (higher["offered_floor"], higher["word_cut"]))
-        never = holdouts.cuts_needed(found(0.0, {"0.60": 0.1}, {"0.23": (0, 0)}), baseline)
+        self.assertEqual((0.65, float(lower)), (higher["offered_floor"], higher["word_cut"]))
+        never = holdouts.cuts_needed(found(0.0, {"0.60": 0.1}, {at: (0, 0)}), baseline)
         self.assertEqual((None, None), (never["offered_floor"], never["word_cut"]))
 
     def test_tag_scores(self):
@@ -513,6 +369,13 @@ class TheWorkFolderIsDeletedOnlyIfThisProgramMadeIt(unittest.TestCase):
         for text in holdouts.CANDIDATES:
             model = holdouts.candidate(text)
             self.assertIsNone(settings.photo_model_refusal(model["name"], model["pretrained"], model["size"]), text)
+
+    def test_the_baselines_word_cut_is_the_tables_for_its_model(self):
+        """The cut the candidates are compared at is the baseline model's own (tagpup.ml.photo_models), not a number
+        read on a model no library holds (ViT-H-14's 0.23 under SigLIP 2's 0.11)."""
+        from tagpup.ml import photo_models
+        baseline = holdouts.candidate(holdouts.CANDIDATES[0])
+        self.assertEqual(photo_models.word_cut(baseline["name"], baseline["pretrained"]), holdouts.WORD_CUT)
 
     def test_the_repository_and_a_folder_that_holds_it_are_refused(self):
         for work in (ROOT, os.path.dirname(ROOT), os.path.join(ROOT, "tests")):

@@ -83,7 +83,8 @@ def main():
     puppy2_path = paths.stored(os.path.join(new_dir, "puppy2.png"))
 
     # Embeddings (mock vectors)
-    clip_emb = np.random.randn(1024).astype(np.float32)
+    # 1152: the length of a vector of the default photo model, SigLIP 2 SO400M (docs/AI_PIPELINE.md).
+    clip_emb = np.random.randn(1152).astype(np.float32)
     clip_emb /= np.linalg.norm(clip_emb)
     
     face_emb = np.random.randn(512).astype(np.float32)
@@ -121,11 +122,11 @@ def main():
 
     # Insert face for puppy representing already matched face
     # A face is named by the id of the person's node, made above.
-    store_faces.insert(conn, puppy_path, puppy_face_box, face_emb.tobytes(), model=validation.MTCNN_FACENET,
+    store_faces.insert(conn, puppy_path, puppy_face_box, face_emb.tobytes(), model=validation.SCRFD_ADAFACE,
                        name=puppy, crop=puppy_crop, prob=0.98)  # matched to Puppy
 
     # Insert puppy2 image representing new content (untagged, unmatched face)
-    clip_emb_puppy2 = np.random.randn(1024).astype(np.float32)
+    clip_emb_puppy2 = np.random.randn(1152).astype(np.float32)
     clip_emb_puppy2 /= np.linalg.norm(clip_emb_puppy2)
     
     # We set puppy2's face embedding to be identical to puppy's face embedding
@@ -143,7 +144,7 @@ def main():
 
     # Insert unmatched face for puppy2
     # The same face embedding as the puppy's, unnamed: face recognition matches them.
-    store_faces.insert(conn, puppy2_path, puppy2_face_box, face_emb.tobytes(), model=validation.MTCNN_FACENET,
+    store_faces.insert(conn, puppy2_path, puppy2_face_box, face_emb.tobytes(), model=validation.SCRFD_ADAFACE,
                        crop=puppy2_crop, prob=0.98)
 
     conn.commit()

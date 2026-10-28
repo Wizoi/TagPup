@@ -8,14 +8,14 @@ or a person.
         --work <folder> [--candidates model:weights:size ...] [--packages <folder>] [--pool N]
     .venv/Scripts/python.exe scripts/measure_pipeline_holdouts.py table --source data/photo_index.db --out <folder>
 
-* `faces` (c), read-only, no model: every named face of the library (services.identify.named_faces, today's FaceNet
-  vectors) is matched against the named faces of every OTHER photo -- held out by photo, never by face, so a face is
+* `faces` (c), read-only, no model: every named face of the library (services.identify.named_faces, the library's
+  face model's vectors) is matched against the named faces of every OTHER photo -- held out by photo, never by face, so a face is
   never matched with its own photo's -- by the closest single face of each person (tagpup.core.holdout, which the
   gate of phase 3 reads too). The top person, its likeness and
   its margin over the second-best person give the precision of the top suggestion at each likeness cut and each
   margin cut, with the counts behind each point. A face whose person has no face in another photo cannot be matched
   by any recogniser and is counted apart.
-* `vectors` (a): the stratified sample of scripts/measure_pipeline_stages.py, copied at the paths its rows have into
+* `vectors` (a): the stratified sample (sandbox.choose_sample), copied at the paths its rows have into
   a sandbox's copy of the library, embedded again by the runtime's CLIP model one photo at a time (the indexer's
   way, ClipModel.input_of and embed_input) and in batches of 8 and 16 (the picture the model saw, captured by a hook on its visual
   tower, stacked and run at fp16): the cosine of each against the vector the library holds. Expected 0.999 or more.
@@ -25,8 +25,8 @@ or a person.
   (services.suggester, a Just look run) under each model, left out by photo and by folder, at no neighbour cut:
   precision and recall of the tags offered (at Suggest's floor and others) and of its first 1 and 5 against the photo's
   own tags (people left out: they come from faces), the word path alone (with its precision at each cut), seconds a
-  photo, the vector's dimension, the card's memory. Suggest's two cuts are ViT-H-14's likenesses: the table says the cut
-  each model would need to keep what the baseline's keeps (cuts_needed).
+  photo, the vector's dimension, the card's memory. Suggest's neighbour cut and the baseline's word cut are read on the
+  baseline's likenesses: the table says the cut each model would need to keep what the baseline's keeps (cuts_needed).
   One file a candidate in `--out`, written as it is done. SigLIP 2's tokenizer needs `transformers`, which the venv
   does not hold: `--packages` names a folder holding it. `--pool N`, for a smoke run: each candidate embeds only N
   photos, the held-out ones and others drawn at random as their neighbours; the baseline's neighbours are still every
@@ -207,12 +207,12 @@ CANDIDATES = (
     "ViT-SO400M-14-SigLIP2:webli:",
 )
 
-#: Suggest's neighbour cut and ViT-H-14's zero-shot word cut (tagpup.ml.photo_models.word_cut, whose table owns the cut of
-#: each model; a program may not import tagpup.ml, tests/test_layers.py), both read on ViT-H-14's
-#: likenesses. WORD_CUT is this measurement's own constant for the baseline it compares the candidates with, not
-#: Suggest's cut. A cut read on one model's likenesses is not another's (phase 5 reads its own again), so every model is
-#: scored with no neighbour cut, and the cut it would need is read off the held-out set (cuts_needed).
-NEIGHBOUR_CUT, WORD_CUT = 0.35, 0.23
+#: Suggest's neighbour cut, and the baseline's (CANDIDATES[0], the libraries' model) zero-shot word cut as the table of
+#: photo models holds it (tagpup.ml.photo_models, read through services.settings: a program may not import tagpup.ml,
+#: tests/test_layers.py). A cut read on one model's likenesses is not another's, so every model is scored with no
+#: neighbour cut, and the cut it would need to keep what the baseline's keep is read off the held-out set (cuts_needed).
+NEIGHBOUR_CUT = 0.35
+WORD_CUT = settings_service.photo_word_cut(*CANDIDATES[0].split(":")[:2])
 
 #: The floors the tags offered are scored at (Suggest's is suggesting.OFFER_A_TAG), and the word path's cuts.
 FLOORS = tuple(round(0.30 + 0.05 * n, 2) for n in range(14))
@@ -239,7 +239,7 @@ def candidate(text):
 
 
 def label_of(model):
-    """The candidate as the output names it: "ViT-H-14 laion2b_s32b_b79k 512"."""
+    """The candidate as the output names it: "ViT-SO400M-14-SigLIP2 webli native"."""
     return "%s %s %s" % (model["name"], model["pretrained"], model["size"] or "native")
 
 
