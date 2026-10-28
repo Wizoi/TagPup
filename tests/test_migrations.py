@@ -1,9 +1,10 @@
 """The migration runner, and a library meeting a step it has not had (docs/DATABASE.md, "The baseline"; tagpup.store.schema).
 
-There are three real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused);
+There are four real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused);
 33, which moves each face's vector to `face_embeddings` under FaceNet's key and drops `faces.embedding`, the empty
-`faces_pending` and the redundant `idx_faces_name`, on a library kept at 32 and on a new one alike; and 34, which adds the
-empty `photo_fingerprints` (additive: no backup, and a change made before it stays undoable).
+`faces_pending` and the redundant `idx_faces_name`, on a library kept at 32 and on a new one alike; 34, which adds the
+empty `photo_fingerprints`; and 35, which adds `idx_embeddings_stamp` (34 and 35 additive: no backup, and a change made
+before each stays undoable).
 The runner is held to what it promises by SYNTHETIC steps after the latest real one (tests/migration_names.py):
 
 * one that adds takes nothing and is watched to change nothing that was there; one that destroys takes one backup, under
@@ -19,7 +20,10 @@ The runner is held to what it promises by SYNTHETIC steps after the latest real 
   generation; killed after the backup it is still at 32 and migrates at the next open; the app before 33 refuses it after.
   The owner's library at 33 meets the real 34: no backup, the table and nothing else, every row as it was, a change made
   at 33 still undoable; killed part way it is still at 33 and migrates at the next open; the app before 34 refuses it
-  after; a photo's fingerprint is kept, and reads as none once its photo is deleted.
+  after; a photo's fingerprint is kept, and reads as none once its photo is deleted. The owner's library at 34 meets the
+  real 35: no backup, the index and nothing else, every row as it was, a change made at 34 still undoable, and a sync's
+  stamp join answering the same stamps; killed part way it is still at 34 and migrates at the next open; the app before
+  35 refuses it after.
 * A library below the baseline is refused with a sentence before anything is written to it, whoever opens it.
 
 A step is declared once, in tests/migration_names.py, not in a list of names in every test that says which ran (#689). However
@@ -41,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import migration_names  # noqa: E402
 from face_rows import FACENET, add_vector_of_face, photo_id  # noqa: E402
-from journal_library import JournalLibrary, vector  # noqa: E402
+from journal_library import MODEL, JournalLibrary, vector  # noqa: E402
 from migration_names import step  # noqa: E402
 
 from tagpup.core import processes  # noqa: E402
@@ -257,13 +261,17 @@ class AFailedCheck(Migrated):
 
 class TheRealMigrations(unittest.TestCase):
     def test_each_says_what_it_is_and_names_its_checks(self):
-        baseline, dropping, fingerprints = schema.MIGRATIONS
+        baseline, dropping, fingerprints, stamps = schema.MIGRATIONS
         self.assertEqual((32, schema.ADDITIVE), (baseline.version, baseline.kind))
         self.assertEqual((33, schema.DESTRUCTIVE, ("faces_pending", "faces", "face_embeddings"), "face vectors in face_embeddings"),
                          (dropping.version, dropping.kind, dropping.touches, dropping.name))
         self.assertEqual((34, schema.ADDITIVE, ("photo_fingerprints",), "photo fingerprints"),
                          (fingerprints.version, fingerprints.kind, fingerprints.touches, fingerprints.name))
-        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 34, 34))
+        # No table touched: an index writes no row, so a change made at 34 stays undoable (journal.schema_gap_blocker).
+        self.assertEqual((35, schema.ADDITIVE, (), "the vector stamps in an index"),
+                         (stamps.version, stamps.kind, stamps.touches, stamps.name))
+        self.assertIsNone(journal.schema_gap_blocker(34, 35))
+        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 35, 35))
         for migration in schema.MIGRATIONS:
             self.assertIn(migration.kind, schema.KINDS)
             self.assertTrue(migration.why and "\n" not in migration.why)
@@ -605,6 +613,7 @@ class TheOwnersLibraryAt33MeetsMigration34(Migrated):
         self.assertEqual(33, self.version())
         self.assertNotIn("photo_fingerprints", self.tables())
         self.before = (self.objects(), self.counts(), self.dump())
+        self.enterContext(migration_names.up_to(34))   # the app with 34 as its latest: 35 is its own class's
 
     objects = TheOwnersLibraryAt32MeetsMigration33.objects
     counts = TheOwnersLibraryAt32MeetsMigration33.counts
@@ -684,6 +693,101 @@ class TheOwnersLibraryAt33MeetsMigration34(Migrated):
         self.assertIsNone(photo_fingerprints.get(conn, self.ids["prize"]), "its photo is gone")
         self.assertEqual([(1,)], conn.execute("SELECT COUNT(*) FROM photo_fingerprints").fetchall(),
                          "the row stays: no foreign key, no trigger, nothing the journal accounts for")
+
+
+# ---- The owner's library at 34 meets migration 35 ------------------------------------------------------------------------
+
+class TheOwnersLibraryAt34MeetsMigration35(Migrated):
+    """Made and seeded by the app before 35, as the three live libraries are (at 34, each photo's vector in `embeddings` with
+    the stamp of its file), with a change of rows made at 34, then opened by this one (owner, 2026-10-27;
+    docs/PLAN_KEEP_IN_STEP.md, cut 1c)."""
+
+    NAME = "the vector stamps in an index"
+    INDEX = ("index", "idx_embeddings_stamp")
+
+    def setUp(self):
+        with migration_names.up_to(34):
+            super().setUp()
+            self.change = journal.apply(self.db_path, "add a node",
+                                        [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})]).change_id
+        self.assertEqual(34, self.version())
+        self.assertNotIn(self.INDEX, set(self.objects()))
+        self.before = (self.objects(), self.counts(), self.dump())
+
+    objects = TheOwnersLibraryAt32MeetsMigration33.objects
+    counts = TheOwnersLibraryAt32MeetsMigration33.counts
+
+    def stamp_join(self):
+        """What the query a sync asks of the vectors' stamps (store.photos.stamps with `vector_stamps`) answers."""
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            return sorted(store_photos.stamps(conn, vector_stamps=MODEL))
+        finally:
+            conn.close()
+
+    def test_it_adds_the_index_takes_no_backup_and_a_change_made_at_34_stays_undoable(self):
+        objects, counts, dump = self.before
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(35, self.version())
+        after = self.objects()
+        self.assertEqual({self.INDEX}, set(after) - set(objects), "the index and nothing else")
+        self.assertEqual(objects, {k: v for k, v in after.items() if k != self.INDEX})
+        counts.update(schema_version=counts["schema_version"] + 1, changes=counts["changes"] + 1)
+        self.assertEqual(counts, self.counts())
+        self.assertEqual(dump, self.dump(), "every row as it was")
+        self.assertEqual([], backups(self.db_path), "an additive migration takes none")
+        operation, version, status, summary = self.recorded()[-1]
+        self.assertEqual(("migration 35: " + self.NAME, 34, "applied", schema.ADDITIVE),
+                         (operation, version, status, summary["kind"]))
+        self.assertNotIn("backup", summary)
+        self.assertIn("nothing that was there changed", summary["checks"])
+        self.assertIn("rows kept in embeddings", summary["checks"])
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        self.addCleanup(conn.close)
+        self.assertEqual([], journal.refusal(conn, self.change))
+        journal.undo(self.db_path, self.change)
+        self.assertEqual([], self.query("SELECT id FROM tag_taxonomy WHERE tag = 'Fresh'"))
+        self.assertEqual([], schema.ensure(self.db_path))
+
+    def test_a_syncs_stamp_join_answers_as_before(self):
+        answer = self.stamp_join()
+        self.assertEqual(3, sum(1 for row in answer if row[-1] is not None), "each seeded photo holds a stamped vector")
+        schema.ensure(self.db_path)
+        self.assertEqual(answer, self.stamp_join())
+
+    def test_killed_part_way_it_is_still_at_34_and_migrates_at_the_next_open(self):
+        code = textwrap.dedent("""
+            import os, sys
+            sys.path.insert(0, %(root)r)
+            from tagpup.store import schema
+            [real] = [m for m in schema.MIGRATIONS if m.version == 35]
+
+            def killed(conn):
+                real.apply(conn)
+                os._exit(9)   # the power goes: the index made, nothing committed
+
+            schema.MIGRATIONS = tuple(m for m in schema.MIGRATIONS if m.version < 35) + (real._replace(apply=killed),)
+            schema.ensure(%(path)r)
+            """) % {"root": ROOT, "path": self.db_path}
+        child = processes.start([sys.executable, "-c", code], env=dict(os.environ, TAGPUP_HOME=self.home.root),
+                                stdout=-1, stderr=-1, text=True)
+        _out, err = child.communicate(timeout=120)
+        self.assertEqual(9, child.returncode, err)
+        self.assertEqual(34, self.version())
+        self.assertEqual(self.before, (self.objects(), self.counts(), self.dump()), "as it was")
+        self.assertEqual([], backups(self.db_path))
+        schema.forget()
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(35, self.version())
+        self.assertIn(self.INDEX, set(self.objects()))
+
+    def test_the_app_before_35_refuses_it_after(self):
+        schema.ensure(self.db_path)
+        before = digest(self.db_path)
+        with migration_names.up_to(34), self.assertRaises(schema.NewerLibrary) as refused:
+            schema.ensure(self.db_path)
+        self.assertEqual((35, 34), (refused.exception.found, refused.exception.known))
+        self.assertEqual(before, digest(self.db_path), "nothing written")
 
 
 def db_rows(path, sql):
@@ -773,9 +877,11 @@ class ANewLibrary(unittest.TestCase):
         schema.ensure(path)
         self.assertEqual([], backups(path))
         self.assertEqual([(0,)], db_rows(path, "SELECT COUNT(*) FROM changes"))
-        self.assertEqual([(32,), (33,), (34,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
+        self.assertEqual([(32,), (33,), (34,), (35,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
         self.assertEqual([], db_rows(path, "SELECT name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name')"),
-                         "made at the baseline and taken to 34 by the same runner")
+                         "made at the baseline and taken to 35 by the same runner")
+        self.assertEqual([("idx_embeddings_stamp",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'idx_embeddings_stamp'"),
+                         "the index from migration 35, not the baseline")
         self.assertEqual([("face_embeddings",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'face_embeddings'"))
         self.assertNotIn("embedding", [row[1] for row in db_rows(path, "PRAGMA table_info(faces)")])
 
@@ -791,8 +897,8 @@ class ANewLibrary(unittest.TestCase):
             out, err = each.communicate(timeout=120)
             self.assertEqual(0, each.returncode, err)
             answers.append(out.strip())
-        self.assertEqual(3, sum(int(answer) for answer in answers), answers)
-        self.assertEqual([(32,), (33,), (34,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
+        self.assertEqual(4, sum(int(answer) for answer in answers), answers)
+        self.assertEqual([(32,), (33,), (34,), (35,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
 
 
 if __name__ == "__main__":

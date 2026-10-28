@@ -667,6 +667,14 @@ def _photo_fingerprints(conn):
     conn.execute("CREATE TABLE photo_fingerprints (photo_id INTEGER PRIMARY KEY, key TEXT NOT NULL, hash BLOB NOT NULL)")
 
 
+def _vector_stamps_covered(conn):
+    """Migration 35 (owner, 2026-10-27; docs/PLAN_KEEP_IN_STEP.md, cut 1c): an index on `embeddings` (photo_id, model, mtime,
+    size), so the vector-stamp join every sync and index start makes (store.photos.stamps, `vector_stamps`) is answered from
+    the index alone and reads no vector: 1.2 to 5.1 s cold on photo_index with the vectors read, 0.26 s without. Spelled here,
+    not imported: a migration is frozen. Additive: an index, and nothing that was there changes."""
+    conn.execute("CREATE INDEX idx_embeddings_stamp ON embeddings (photo_id, model, mtime, size)")
+
+
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
@@ -685,6 +693,14 @@ MIGRATIONS = (
               "no backup",
               ("photo_fingerprints",),
               (RowsKept(but=("photo_fingerprints",)),) + STANDARD),
+    # It touches no table: an index writes no row, and `touches` naming `embeddings`, a table the journal keys, would refuse
+    # the undo of every change of rows made at 34 (journal.schema_gap_blocker). The watch holds every row as it was, and
+    # `embeddings` is counted by name.
+    Migration(35, "the vector stamps in an index", _vector_stamps_covered, ADDITIVE,
+              "adds idx_embeddings_stamp on embeddings (photo_id, model, mtime, size), so a sync reads no vector; nothing "
+              "that was there changes, so no backup",
+              (),
+              (RowsKept("embeddings"),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version
