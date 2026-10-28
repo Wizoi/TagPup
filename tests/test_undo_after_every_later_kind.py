@@ -12,10 +12,13 @@ lifted by undoing that one first: undone in that order, both are.
 The kinds: a stamp of the settings, a change of the settings, a switch of face model, a face pass (by its
 writer: a kind the live journals hold, its command deleted), a migration's record (a synthetic additive step, tests/migration_names.py), a sync and a refresh of a row re-read from its
 file, Save on a photo, Smart Rename, a rotation (of the photo the later pass gave a face and its crop) and a bake of a
-folder's photos (real ExifTool, changes of photo files; by its writer, as the face pass). Left to the
-guard (tests/test_every_change_kind_has_an_undo_check.py): dedupe_faces and merge_duplicate_person_tags (no live library
-holds a duplicate face or a bare person tag, counted 2026-10-24), the bulk edits, tag renames and face namings (each a
-change of photo files or of faces whose way back is the journal's alone, None in UNDO_CHECKS, as Save's is).
+folder's photos (real ExifTool, changes of photo files; by its writer, as the face pass). The refresh's writer is
+deleted (DECISIONS 2026-10-28, THE MCP SERVER ONLY READS; kr-track holds one, change 2): it is recorded as that writer
+recorded it, a row re-read through refresh_rows.reread and edits_for on the maintenance scaffold. Left to the guard
+(tests/test_every_change_kind_has_an_undo_check.py): the bulk edits, tag renames and face namings (each a change of photo
+files or of faces whose way back is the journal's alone, None in UNDO_CHECKS, as Save's is); merge_duplicate_person_tags,
+whose writer is deleted too (photo_index holds one, change 1), is listed and undone in
+tests/test_journal_through_the_services.py.
 
 Lifted (each scenario a pair here, their tests deleted): test_history_routes' listing agreeing with the rehearsal; test_journal's migration never undone; test_journal_through_the_services' refused undo writing
 nothing; the refusals of the face model's switch of P10 (now tests/test_a_library_indexes_and_suggests_with_its_face_model.py).
@@ -48,7 +51,7 @@ from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import baking, file_changes, refresh_rows, sync, tagging  # noqa: E402
+from tagpup.services import baking, file_changes, maintenance, refresh_rows, sync, tagging  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -56,6 +59,7 @@ from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, embeddings, file_journal, generations, inspection, journal, schema  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
+from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -123,9 +127,25 @@ def a_sync(case, library):
 
 
 def a_refresh(case, library):
-    """A caption written into the fifth photo by another program, then refresh_rows."""
+    """A caption written into the fifth photo by another program, then its row re-read from the file and recorded as the
+    deleted refresh_rows recorded it: one change, "refresh_rows", of rows from files, each held to what it was when
+    read, on the maintenance scaffold."""
     write_outside(case.photo[5], {"XMP:Description": "Ferry in the rain"})
-    refreshed = refresh_rows.refresh_rows(library, EXIFTOOL, apply=True)
+    path = case.photo[5]
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        ids = inspection.ids_of_stored(conn, [path])
+        tags, _people, captions, raw, mtime, size, _doc = store_photos.row_as_recorded(conn, path)
+        found = {path: {"mtime": mtime, "size": size, "tags": tags, "captions": captions, "raw_metadata": raw}}
+        records, to_write, _fields, _unreadable, identities = refresh_rows.reread(conn, ids, EXIFTOOL)
+    finally:
+        conn.close()
+
+    def plan(_library):
+        return maintenance.Plan(size=len(to_write), work=refresh_rows.edits_for(records, to_write, found, identities, ids))
+
+    refreshed = maintenance.run(library, "refresh_rows", plan, lambda planned: planned.work, apply=True,
+                                kinds=("from_files",))
     return refreshed.details.get("change") if refreshed.changed else None
 
 

@@ -53,7 +53,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, exiftool_session, field_values, images  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
-from tagpup.services import bake_after_index, baking, batches, duplicate_faces, file_changes, tagging  # noqa: E402
+from tagpup.services import bake_after_index, baking, batches, file_changes, tagging  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
@@ -132,11 +132,12 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.detector.found["a.jpg"] = [(FACE, 0.99, 1), (SECOND, 0.98, 2)]
 
     def delete_the_second_face(self, path):
-        """Delete SECOND of the photo at `path` as the owner does, by its id; its photo keeps FACE."""
+        """Delete SECOND of the photo at `path` from the library's rows, by its id; its photo keeps FACE."""
         (face_id,) = [face_id for face_id, path_of, box in self.query(
             "SELECT f.id, p.path, f.box FROM faces f JOIN photos p ON p.id = f.photo_id")
             if paths.key(path_of) == paths.key(path) and json.loads(box) == SECOND]
-        self.assertEqual(1, duplicate_faces.remove(self.library, [face_id]))
+        self.assertEqual(1, db.write_with_connection(
+            self.db_path, lambda conn: conn.execute("DELETE FROM faces WHERE id = ?", (face_id,)).rowcount))
 
     def boxes(self, path):
         return [json.loads(box) for path_of, box in self.query(

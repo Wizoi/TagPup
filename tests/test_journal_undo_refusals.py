@@ -7,10 +7,10 @@
   refused naming the row and the column, before writing; and an IntegrityError SQLite
   raises all the same is a refusal, never a traceback.
 - The maintenance services carry their errors in the Result: held once, on the scaffold they all run on
-  (tests/test_maintenance.py; the refresh, in tests/test_refresh_rows_guards.py).
+  (tests/test_maintenance.py).
 - journal.rehearse works for every shape of insert the journal allows.
-- A refresh skips a row saved during its run instead of refusing the whole change
-  (journal: skippable edits; tests/test_refresh_rows_guards.py).
+- A sync skips a row saved while it reads the files instead of refusing the whole change
+  (journal: skippable edits; tests/test_sync.py, ChangedFiles).
 - One keyword spelling, in tagpup.core.vocabulary: tests/test_vocabulary.py.
 - journal.history of one change lists its keys without reading its values.
 - A face pass recorded before a retiring of the old detector's faces is not undone while the retiring stands: its faces
@@ -332,7 +332,7 @@ class SkippableEdits(JournalLibrary):
                          (applied.change_id, applied.skipped))
 
     def test_only_the_refresh_skips(self):
-        # Merging and deduplicating stay all or nothing: their rows depend on each other.
+        # Merging stays all or nothing: its rows depend on each other.
         # Recording an identity a file holds, and re-pointing a dead row at its renamed
         # file, are each one row's own business, as a refresh's rows are (phase 7.5); so is unnaming a face whose person was taken off its
         # photo (face_people, #908): a face renamed meanwhile is the owner's newer decision and the others go on.

@@ -4,11 +4,9 @@ only while every row is what the plan read, and counts what the writes changed.
 
 tagpup.services.maintenance is what the maintenance operations run on (docs/ARCHITECTURE.md,
 phase 7): the scripts it replaced printed what they planned as what they had removed, and six
-wrote without a backup (#54). Each operation is tested here through its service:
-removing duplicate faces and merging duplicate person tags (re-reading rows from their
-files: tests/test_refresh_rows.py).
+wrote without a backup (#54). The operations on it are tested through their own services (sync: tests/test_sync.py;
+faces from tags: tests/test_faces_from_tags.py).
 """
-import json
 import os
 import shutil
 import sqlite3
@@ -21,12 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import duplicate_faces, maintenance, person_tags  # noqa: E402
+from tagpup.services import maintenance  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
-from face_rows import add_face  # noqa: E402
-
-PHOTO = r"D:\Pictures\Regatta\start.jpg"
-OTHER = r"D:\Pictures\Regatta\finish.jpg"
 
 
 class LibraryCase(unittest.TestCase):
@@ -171,8 +165,7 @@ class TheScaffold(LibraryCase):
 
     def test_a_failed_rehearsal_write_or_rebuild_is_said_with_what_was_recorded(self):
         """#3: each operation carries its failures in result.errors, as the line a script prints (maintenance.failed), and
-        says what was recorded. Every operation runs on this scaffold, so the cases are held here once (dedupe's and
-        merge's copies went: tests/test_journal_undo_refusals)."""
+        says what was recorded. Every operation runs on this scaffold, so the cases are held here once."""
         plan, edits = self.operation(2)
         with mock.patch.object(journal, "rehearse", side_effect=RuntimeError("disk I/O error")):
             result = maintenance.run(self.library, "test_op", plan, edits)
@@ -194,120 +187,6 @@ class TheScaffold(LibraryCase):
         self.assertEqual([(change, "test_op", "derived_pending")], self.changes())
         self.assertEqual(['["Harbour"]'] * 2, self.captions(), "the rows were written; only their derived rows wait")
         self.assertIn("Recorded as change %d" % change, maintenance.recorded(result, self.db))
-
-    def test_remaining_is_read_after_the_write(self):
-        plan, edits = self.operation(2)
-        result = maintenance.run(self.library, "test_op", plan, edits, apply=True,
-                                 remaining=lambda library: {"uncaptioned": self.captions().count("[]")})
-        self.assertEqual({"uncaptioned": 0}, result.details["remaining"])
-
-
-class DedupeFaces(LibraryCase):
-    def face(self, photo=PHOTO, **columns):
-        conn = db.connect(self.db)
-        try:
-            face_id = add_face(conn, photo, box="[1, 2, 3, 4]", **columns)
-            conn.commit()
-            return face_id
-        finally:
-            conn.close()
-
-    def face_ids(self):
-        return {face_id for (face_id,) in self.query("SELECT id FROM faces")}
-
-    def seed(self):
-        self.kept = self.face(name="Rowan Thackeray", name_source="manual")
-        self.copy = self.face()
-        self.other_kept = self.face(photo=OTHER)
-        self.other_copy = self.face(photo=OTHER)
-        self.disputed = [self.face(photo=r"D:\Pictures\Regatta\prize.jpg", name="Rowan Thackeray"),
-                         self.face(photo=r"D:\Pictures\Regatta\prize.jpg", name="Imogen Vale")]
-
-    def test_a_dry_run_names_the_copies_and_changes_nothing(self):
-        self.seed()
-        before = self.face_ids()
-        result = duplicate_faces.dedupe_faces(self.library)
-        self.assertEqual(before, self.face_ids())
-        self.assertEqual([], self.query("SELECT id FROM changes"))
-        self.assertTrue(result.details["rehearsal"]["exact"])
-        self.assertEqual([self.copy, self.other_copy], sorted(result.details["ids"]["redundant"]))
-        self.assertEqual([sorted(self.disputed)], result.details["ids"]["disputed"])
-        self.assertEqual({"redundant": 2, "redundant_named": 0, "redundant_excluded": 0, "disputed": 1},
-                         result.details["counts"])
-        self.assertEqual((2, 0), (result.attempted, result.changed))
-
-    def test_an_apply_removes_what_the_plan_named_as_one_change(self):
-        self.seed()
-        planned = set(duplicate_faces.dedupe_faces(self.library).details["ids"]["redundant"])
-        before = self.face_ids()
-        result = duplicate_faces.dedupe_faces(self.library, apply=True)
-        self.assertEqual(before - planned, self.face_ids())
-        self.assertEqual((2, 2), (result.attempted, result.changed))
-        self.assertEqual([], self.backups())
-        self.assertEqual([(result.details["change"], "dedupe_faces", "applied")],
-                         self.query("SELECT id, operation, status FROM changes"))
-        self.assertEqual({"redundant": 0, "disputed": 1}, result.details["remaining"])
-
-    def test_a_face_gone_before_the_write_refuses_the_change(self):
-        # It deleted the other copies and counted one fewer; the plan no longer holds, so
-        # nothing is written, and a second run plans again.
-        self.seed()
-        real = duplicate_faces._plan
-
-        def plan_then_someone_deletes(library):
-            planned = real(library)
-            self.execute("DELETE FROM faces WHERE id = ?", (self.copy,))
-            return planned
-
-        with mock.patch.object(duplicate_faces, "_plan", plan_then_someone_deletes):
-            result = duplicate_faces.dedupe_faces(self.library, apply=True)
-        self.assertEqual((2, 0), (result.attempted, result.changed))
-        self.assertIn("faces %d is gone" % self.copy, result.refused)
-        self.assertIn(self.other_copy, self.face_ids())
-
-
-class MergeDuplicatePersonTags(LibraryCase):
-    def seed(self):
-        root = self.execute("INSERT INTO tag_taxonomy (tag, name, has_face) VALUES ('People', 'People', 1)")
-        self.execute("INSERT INTO tag_taxonomy (tag, name, has_face, parent_id)"
-                     " VALUES ('People/Rowan Thackeray', 'Rowan Thackeray', 1, ?)", (root,))
-        # Not flagged as holding faces, as every bare duplicate in the owner's libraries
-        # is: a flagged root-level node is a people root (store.taxonomy.people_roots).
-        self.bare = self.execute("INSERT INTO tag_taxonomy (tag, name, has_face)"
-                                 " VALUES ('Rowan Thackeray', 'Rowan Thackeray', 0)")
-        self.execute("INSERT INTO tag_taxonomy (tag, name, has_face) VALUES ('Sailing', 'Sailing', 0)")
-        self.tags = json.dumps(["People/Rowan Thackeray", "Rowan Thackeray"])
-        self.photo = self.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
-                                  " VALUES (?, ?, '[]', '{}')", (PHOTO, self.tags))
-        self.execute("INSERT INTO photos (path, tags, captions, raw_metadata)"
-                     " VALUES (?, '[\"Sailing\"]', '[]', '{}')", (OTHER,))
-
-    def nodes(self):
-        return {tag for (tag,) in self.query("SELECT tag FROM tag_taxonomy")}
-
-    def test_a_dry_run_names_the_bare_tag_and_changes_nothing(self):
-        self.seed()
-        before = self.nodes()
-        result = person_tags.merge_duplicate_person_tags(self.library)
-        self.assertEqual(before, self.nodes())
-        self.assertEqual([], self.query("SELECT id FROM changes"))
-        self.assertTrue(result.details["rehearsal"]["exact"])
-        self.assertEqual({"duplicates": 1, "affected_photos": 1}, result.details["counts"])
-        self.assertEqual({"duplicates": [self.bare], "affected_photos": [self.photo]}, result.details["ids"])
-        self.assertEqual([("Rowan Thackeray", "People/Rowan Thackeray")], result.details["reveal"]["duplicates"])
-
-    def test_an_apply_removes_the_node_and_leaves_the_photos(self):
-        self.seed()
-        result = person_tags.merge_duplicate_person_tags(self.library, apply=True)
-        self.assertEqual(self.nodes(), {"People", "People/Rowan Thackeray", "Sailing"})
-        self.assertEqual([(self.tags,)], self.query("SELECT tags FROM photos WHERE path = ?", (PHOTO,)))
-        self.assertEqual((1, 1), (result.attempted, result.changed))
-        self.assertEqual([], self.backups())
-        self.assertEqual([("tag_taxonomy", "delete", 1)], self.query(
-            "SELECT table_name, action, COUNT(DISTINCT row_key) FROM change_rows WHERE change_id = ?"
-            " GROUP BY table_name, action", (result.details["change"],)))
-        self.assertEqual({"duplicates": 0}, result.details["remaining"])
-
 
 
 if __name__ == "__main__":
