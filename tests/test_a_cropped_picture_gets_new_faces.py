@@ -9,8 +9,10 @@ person's tag, the other face excluded:
   with its face (accepted: owner, 2026-10-27);
 * another program writes a keyword into it (its metadata alone): its faces and their rows are left as they were, no
   model asked;
-* the index is killed as it detects the cropped photo, or its write of the faces fails: no old box and no half of the new
-  ones, and the next index finishes it;
+* the index is killed as it works out the cropped photo's vector, or as it detects it, or its write of the faces fails:
+  no old box and no half of the new ones, and the next index finishes it;
+* the cropped photo is indexed with --skip-faces (typed by hand): its old boxes go all the same, and the next index
+  gives it the new picture's faces;
 * two libraries hold the folder: each replaces its own faces of the cropped photo when it indexes it, not the other's.
 
 A photo whose vector is stale and that has no fingerprint row (74 in photo_index, counted 2026-10-27) is not known to be
@@ -83,8 +85,8 @@ class ACroppedPictureGetsNewFaces(unittest.TestCase):
         self.assertEqual(1, library_actions.create(db_path).changed)
         return db_path
 
-    def index(self, db_path=None):
-        result = CliRunner().invoke(tagpup_cli.cli, ["--db", db_path or self.db_path, "index", self.folder])
+    def index(self, db_path=None, *options):
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", db_path or self.db_path, "index", *options, self.folder])
         self.assertEqual(0, result.exit_code, result.output)
         return result
 
@@ -166,6 +168,14 @@ class ACroppedPictureGetsNewFaces(unittest.TestCase):
     def test_an_index_killed_or_failing_as_it_records_leaves_no_old_box_and_no_half_and_the_next_finishes(self):
         self.named_by_hand()
         self.crop()
+        # Stopped as its new vector is worked out, before it is kept.
+        with mock.patch.object(clip.ClipModel, "embed_input", side_effect=NewFaces.Killed("embed")):
+            with self.assertRaises(NewFaces.Killed):
+                CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder],
+                                   catch_exceptions=False)
+        self.assertEqual([], self.boxes(), "an old box kept on the new picture")
+        self.assertEqual([], self.looks(), "never examined, so the next index looks at it")
+        # Stopped as it is detected.
         self.detector.kill_at = "pier.jpg"
         with self.assertRaises(NewFaces.Killed):
             CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder], catch_exceptions=False)
@@ -186,6 +196,16 @@ class ACroppedPictureGetsNewFaces(unittest.TestCase):
         self.assertNotEqual(0, failed.exit_code, failed.output)
         self.assertEqual(([], []), (self.boxes(), self.looks()), "half of the new faces written")
         self.detector.found = {"pier.jpg": [(CROPPED, 0.99, 7)]}
+        self.index()
+        self.assertTheNewPictures()
+
+    def test_a_cropped_photo_indexed_without_faces_loses_its_old_boxes_and_the_next_index_gives_the_new(self):
+        self.named_by_hand()
+        self.crop()
+        self.detector.refused = True
+        self.index(None, "--skip-faces")
+        self.assertEqual(([], []), (self.boxes(), self.looks()), "an old box kept on the new picture")
+        self.detector.refused = False
         self.index()
         self.assertTheNewPictures()
 

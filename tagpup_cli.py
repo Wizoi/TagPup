@@ -601,6 +601,19 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     logger.info(f"Not indexed, and not written to: {path} does not decode: {damaged}")
                     locker.release(path)
                     continue
+                if begun["stale"] is not None and not decoded["same"]:
+                    # Its picture changed (its decode's fingerprint is not its row's): its old faces are forgotten
+                    # before its new vector is kept, with a face pass or without (--skip-faces). A stop after the kept
+                    # vector would leave them on it, never owed again; forgotten first, the photo is owed its faces
+                    # (never examined) after any stop, and its batch records the new picture's. A stale vector with no
+                    # fingerprint row is not known to be another picture, and keeps its faces.
+                    try:
+                        face_records.forget_for_new_picture(db_path, path)
+                    except Exception as failed:
+                        # No vector is kept: its stale stamp stays owed, and the next index forgets them.
+                        logger.error(f"Not indexed: the old faces of {path} were not forgotten: {failed}")
+                        locker.release(path)
+                        continue
                 took, on_card, kind, examined = decoded["took"], False, None, False
                 if took.verdict == bake_reading.UNREADABLE:
                     logger.info(f"Its bake is not read, and it is worked out: {path}: {begun['bake'].reason}")
@@ -641,11 +654,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved): of a
                 # photo whose vector was worked out, or one never examined; a kept vector's photo keeps its faces.
                 if face_processor and (begun["examine"] or not (begun["vector"] is not None or decoded["same"])):
-                    if begun["stale"] is not None and not decoded["same"]:
-                        # Its picture changed (its decode's fingerprint is not its row's): its old faces are forgotten
-                        # before it is detected, and its batch records the new picture's. A stale vector with no
-                        # fingerprint row is not known to be another picture, and keeps its faces.
-                        face_records.forget_for_new_picture(db_path, path)
                     detected = took.detected
                     if detected is None:
                         detected = face_processor.detect_and_embed(picture)

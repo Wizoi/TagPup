@@ -740,9 +740,11 @@ def forget_for_new_picture(db_path, photo_path):
     (tagpup.services.rotation): their rows, crops and vectors, and every record of a detector's look at it, so its old
     boxes are never kept on the new picture (owner, 2026-10-27; docs/PLAN_KEEP_IN_STEP.md, scenario 4).
 
-    In a write of its own, before the new picture is detected: a run stopped at any point after it, or a batch whose
-    write fails, leaves the photo never examined, which the next index detects (photo_fingerprints.owed), and its
-    batch's record_batch records the new faces as a photo with none. Its person tags name them again (#788); a name or
+    In a write of its own, before its new vector is kept (and so before the new picture is detected, or with no
+    face pass at all, --skip-faces): a run stopped at any point after it, or a batch whose write fails, leaves the photo
+    never examined, which the next index detects (photo_fingerprints.owed), and its batch's record_batch records the
+    new faces as a photo with none. Kept first, a stop before this write would leave a current vector on the old
+    faces, never owed again. Its person tags name them again (#788); a name or
     an exclusion given by hand goes with its face (accepted, owner 2026-10-27). Returns the face rows removed."""
     def forget(conn):
         removed = faces.remove_for_photo(conn, photo_path)
