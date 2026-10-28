@@ -71,9 +71,9 @@ _TRUE = frozenset({"true", "yes", "on", "1"})
 
 #: The share of a library's photos that may hold no vector under a photo model's key when the library is switched to it
 #: (photo_switch_on refuses a switch above it; covers) or the other keys' vectors are retired. Those photos take no part
-#: in Suggest or search until their vectors are made. Not zero: a pass leaves a few photos it could not read or that were
+#: in Suggest or search until their vectors are made. Not zero: a pass of the photo vectors (photo_reembed) leaves a few photos it could not read or that were
 #: added after it, and the owner switches with those and finishes them by a pass again. 5% is the default the owner may
-#: change here (the faces switch's share until 2026-10-20's switches, read on the faces then).
+#: change here.
 UNPASSED_SHARE_ALLOWED = 0.05
 
 #: The photo model's settings (LibrarySettings.embedder): together they name the key its vectors are kept under
@@ -156,8 +156,8 @@ def photo_switch_on(conn, held, putting):
     may be given `putting` ({key: value}) for its photo model's settings (PHOTO_MODEL). None, None when the key its
     vectors are kept under stays the same. A forced image size for a model that takes none is refused
     (NATIVE_SIZE_ONLY: the owner picking SigLIP 2 SO400M with the default 512 still set); then a switch more than
-    UNPASSED_SHARE_ALLOWED of whose photos hold no vector under the new key, with the counts -- the faces switch's share
-    (switch_on): a pass leaves a few photos it could not read. An empty library passes (0 of 0). Read-only, by
+    UNPASSED_SHARE_ALLOWED of whose photos hold no vector under the new key, with the counts -- a pass leaves
+    a few photos it could not read. An empty library passes (0 of 0). Read-only, by
     tagpup.store.photos.counts on the caller's connection."""
     before = LibrarySettings(_filled(held)).embedder
     after = LibrarySettings(_filled({**held, **putting})).embedder

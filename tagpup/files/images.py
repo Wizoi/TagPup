@@ -462,7 +462,7 @@ def face_crop_of(img, box):
     """The face in `box`, a box of the picture as stored, cut from `img`, the photo's picture upright as
     `opened(path, upright=True)` gives it (its `info[BOXES_TURN_INFO]` the turn between the two): the box turned upright
     (orientation.to_upright) and clamped to the picture, the face as a person sees it (DECISIONS 2026-10-27), as the JPEG
-    a face's crop is kept as (crop_jpeg): what the index, Suggest, the face pass and a crop cut again keep. A box that
+    a face's crop is kept as (crop_jpeg): what the index, Suggest and a crop cut again keep. A box that
     falls outside the picture gives a plain grey square."""
     turn = img.info[BOXES_TURN_INFO]
     width, height = img.size

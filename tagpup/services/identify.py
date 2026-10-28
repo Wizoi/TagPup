@@ -325,8 +325,8 @@ def photo_details(library, photo_path, named):
 
 # ---- Who a face resembles -------------------------------------------------------------------
 
-#: Said when a face asked who it resembles has no vector under the library's face model: an old face the model's pass
-#: matched with no face it found (no pass gives it one), or a face in a photo the pass has not reached (docs/AI_PIPELINE.md,
+#: Said when a face asked who it resembles has no vector under the library's face model: an old face the model
+#: matched with no face it found, or a face in a photo it has not looked at yet (docs/AI_PIPELINE.md,
 #: phase 3). The routes answer it with 400.
 NO_VECTOR = ("This face has no vector under this library's face model, so it cannot be compared with anyone: the model's "
              "pass found no face of its own there, or has not reached this photo yet.")

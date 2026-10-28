@@ -606,7 +606,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     continue
                 if begun["stale"] is not None and not decoded["same"]:
                     # Its picture changed (its decode's fingerprint is not its row's): its old faces are forgotten
-                    # before its new vector is kept, with a face pass or without (--skip-faces). A stop after the kept
+                    # before its new vector is kept, with the faces or without (--skip-faces). A stop after the kept
                     # vector would leave them on it, never owed again; forgotten first, the photo is owed its faces
                     # (never examined) after any stop, and its batch records the new picture's. A stale vector with no
                     # fingerprint row is not known to be another picture, and keeps its faces.
