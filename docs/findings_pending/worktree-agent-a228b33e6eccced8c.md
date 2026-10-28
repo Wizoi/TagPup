@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-10-27 keep-in-step cut 1c | low: migration 35's `idx_embeddings_stamp` is not chosen by the stamp join it was made for (#2035's 'the covering index of the next cut helps the join' does not hold until the query names it): `store.photos.stamps(vector_stamps=...)` joins `embeddings` on `photo_id = ? AND model = ?`, which the primary key's unique index answers in one row, and SQLite 3.45.1 prefers it to the covering index (EXPLAIN QUERY PLAN on a sandbox library at 35: `SEARCH e USING INDEX sqlite_autoindex_embeddings_1`; with `INDEXED BY idx_embeddings_stamp`, `SEARCH e USING COVERING INDEX idx_embeddings_stamp`). The three libraries hold no ANALYZE statistics (counted read-only 2026-10-27). The query is in tagpup/store/photos.py, not this branch's file: it needs `LEFT JOIN embeddings e INDEXED BY idx_embeddings_stamp ON ...`, and tests/test_migrations.py's `test_a_syncs_stamp_join_answers_as_before` an assertion that its plan says `USING COVERING INDEX idx_embeddings_stamp` | open |
+| B-2 | 2026-10-27 keep-in-step cut 1c | low: `store.embeddings.stamps_by_path` has no caller in tagpup/ (only tests/test_roots_store.py calls it); after migration 35 its join does use the new index (`SEARCH e USING COVERING INDEX idx_embeddings_stamp (photo_id=?)`) | open: delete it with its test line, or name the caller that needs it |
+| B-3 | 2026-10-27 keep-in-step cut 1c | low: decided, not copied: migration 35 names no table in `touches` (an index writes no row; naming `embeddings`, a table the journal keys, would have refused the undo of every change of rows made at 34 through `journal.schema_gap_blocker`); its checks are `RowsKept("embeddings")` and the standard two, which with no touched table check nothing beyond the runner's watch, as the baseline's do | decided: tests/test_migrations.py asserts `schema_gap_blocker(34, 35)` is None and a change made at 34 is undone after 35 |
