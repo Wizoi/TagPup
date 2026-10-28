@@ -154,7 +154,7 @@ class TagSuggester:
     Given everything it uses. `index` is the library's (tagpup.services.search.PhotoIndex):
     its neighbours, its connection and its tag embeddings. `embedder` is the CLIP model
     (tagpup.ml.clip.ClipModel) the candidate words are embedded with, and `faces` the face
-    model (tagpup.ml.faces.FaceModel) a photo with no faces on file is detected with: both
+    model (tagpup.ml.scrfd_adaface.ScrfdAdaFace) a photo with no faces on file is detected with: both
     always, as a run is given them (model_for_run). The face model was a module-level one the
     suggester made for itself.
     """

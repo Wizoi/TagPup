@@ -267,7 +267,7 @@ class LibrarySettings:
     @property
     def faces(self):
         """The face models' settings, what one set of face models is told apart by (tagpup.runtime): `model`
-        (faces.model) and, for MTCNN and FaceNet, tagpup.ml.faces.FaceModel's keyword arguments; the other model
+        (faces.model) and, for MTCNN and FaceNet, the keyword arguments of the model deleted 2026-10-28; the other model
         (tagpup.ml.scrfd_adaface) takes none of MTCNN's, so it is `model` alone. The cap a detection looks at is not one
         of them: detect_max_side."""
         model = _trim(self.values["faces.model"])
@@ -283,7 +283,7 @@ class LibrarySettings:
     @property
     def detect_max_side(self):
         """The longest side of the picture the face detector looks at (faces.detect_max_side), or None when the library
-        sets no cap (the default): an argument of each detection (tagpup.ml.faces.FaceModel.detect_and_embed_faces),
+        sets no cap (the default): an argument of each detection (ScrfdAdaFace.detect_and_embed_faces, which does not use it),
         so libraries differing only in it share one set of face models (docs/AI_PIPELINE.md, phase 1a)."""
         cap = _trim(self.values["faces.detect_max_side"])
         return int(cap) if cap else None

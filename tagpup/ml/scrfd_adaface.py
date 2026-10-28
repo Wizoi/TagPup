@@ -11,13 +11,12 @@ The detector looks at the photo as a person sees it, turned by its Orientation, 
 picture as stored, as every face box is (tagpup.core.orientation.box_to_stored; DECISIONS 2026-10-27): a photo stored
 sideways is looked at upright, where its faces are found.
 
-Built like tagpup.ml.faces.FaceModel, by tagpup.runtime only, and answering what FaceModel answers the index and
-Suggest: `key`, `picture(path, max_side=)`, `picture_bytes`, `detect_and_embed(picture)`, `new_faces`,
+Built by tagpup.runtime only, and answering the index and Suggest: `key`, `picture(path, max_side=)`, `picture_bytes`, `detect_and_embed(picture)`, `new_faces`,
 `detect_and_embed_faces(path, max_side=)` and `detector(max_side)` (docs/AI_PIPELINE.md, phase 3, merge 3 item 3). The
 library's cap on the detector's picture (faces.detect_max_side, MTCNN's) is taken and not used: the two squares are
 this detector's own.
 
-The weights are three files in torch's checkpoints folder (facenet-pytorch keeps its own there): the detector traced
+The weights are three files in torch's checkpoints folder: the detector traced
 once for each square (TorchScript: the converted model cannot be traced for every size at once), and AdaFace's
 safetensors. Nothing downloads them: the detector is made by conversion (scripts/make_scrfd_torchscript.py), and a
 missing file is said in a sentence naming each file, the folder and how to make it (missing_weights).
@@ -34,9 +33,18 @@ from torchvision.ops import nms
 from tagpup.core import orientation, validation
 from tagpup.files import images
 from tagpup.ml import free_device_memory, gpu, refuse_in_tests
-from tagpup.ml.faces import SMALLEST_FACE, NotDetected
 
 logger = logging.getLogger("tagpup_cli.faces")
+
+#: The smallest face kept, either side in pixels of the picture as stored: a box smaller is noise.
+SMALLEST_FACE = 15
+
+
+class NotDetected(list):
+    """What detect_and_embed_faces returns when detection did not run to the end -- the file
+    is gone, the picture did not decode, the model failed: no faces, as before, but not
+    "none found", which is recorded (tagpup.store.faces_detected) and never detected again."""
+    failed = True
 
 #: The squares the detector looks at a photo in, each side in pixels.
 SCALES = (640, 1280)
@@ -67,7 +75,7 @@ NEW_FACE_FLOOR = images.NEW_FACE_FLOOR
 
 
 def weights_folder():
-    """torch's checkpoints folder, where facenet-pytorch keeps its weights too."""
+    """torch's checkpoints folder."""
     return os.path.join(os.path.dirname(torch.hub.get_dir()), "checkpoints")
 
 
@@ -92,7 +100,7 @@ def squares(img):
     """{side: (canvas, scale back to `img`)} for each of SCALES: `img` (RGB, as images.opened gives it) scaled so that
     its long side is the square's, at the top left of a black square canvas, as an array of RGB bytes. The largest
     square first, each smaller one scaled from the one before (on the processor, a third of the time of scaling each
-    from the full picture), and Pillow's reducing gap as the detector's cap uses it (faces.detection_picture)."""
+    from the full picture), and Pillow's reducing gap of 3."""
     found, source = {}, img
     width, height = img.size
     for side in sorted(SCALES, reverse=True):

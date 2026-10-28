@@ -16,7 +16,6 @@ tqdm
 # Pinned: a photo's fingerprint is a hash of Pillow's decode (tagpup.files.images.fingerprint), and a
 # decoder that changes its output changes every fingerprint. A new Pillow is a new FINGERPRINT_KEY.
 Pillow==12.2.0
-facenet-pytorch
 safetensors
 scikit-learn
 # The web layer (tagpup.web): the apps' routes, and the server that runs both.

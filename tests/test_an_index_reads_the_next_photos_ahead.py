@@ -47,7 +47,7 @@ from tagpup.core.fields import read_document_id  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.ml import clip, faces as face_models, scrfd_adaface  # noqa: E402
+from tagpup.ml import clip, scrfd_adaface  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -95,7 +95,7 @@ class StandIns:
 
         def detect_and_embed(model, picture):
             stand_ins.card_threads.add(threading.current_thread().name)
-            if isinstance(picture, face_models.NotDetected):
+            if isinstance(picture, scrfd_adaface.NotDetected):
                 return picture
             width, height = picture.upright.size
             with stand_ins.lock:

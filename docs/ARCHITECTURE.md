@@ -182,7 +182,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        added_folders, faces_detected, photo_fingerprints, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
                        thumbs, names, shares, lock_owners, recycle_bin
-  ml/                  models: clip, faces, scrfd_adaface (phase 3's: built for a library set to it, faces.model), vector_index, grouping, and gpu (the card's turn)
+  ml/                  models: clip, scrfd_adaface (the face model: SCRFD and AdaFace; MTCNN and FaceNet deleted 2026-10-28), vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
                        roots*, settings, journal, file_changes, batches, bulk_edit, selection,

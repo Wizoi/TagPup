@@ -102,14 +102,14 @@ class NewFaces:
 
     def picture(self, path, *, max_side):
         from tagpup.files import images
-        from tagpup.ml.faces import NotDetected
+        from tagpup.ml.scrfd_adaface import NotDetected
         try:
             return scrfd_adaface.ScrfdPicture(images.opened(path, upright=True), {}, path)
         except Exception:
             return NotDetected()
 
     def detect_and_embed(self, picture):
-        from tagpup.ml.faces import NotDetected
+        from tagpup.ml.scrfd_adaface import NotDetected
         if isinstance(picture, NotDetected):
             return picture   # handed back, as the model's own
         name = os.path.basename(picture.path)
@@ -136,7 +136,7 @@ class RefusableFaces(NewFaces):
             self.vector = vector
 
     def picture(self, path, *, max_side):
-        from tagpup.ml.faces import NotDetected
+        from tagpup.ml.scrfd_adaface import NotDetected
         if os.path.basename(path) in self.undecodable:
             return NotDetected()
         return super().picture(path, max_side=max_side)

@@ -445,7 +445,7 @@ def versions():
     models are wanted anyway."""
     import importlib.metadata as metadata
     found = {}
-    for name in ("torch", "open_clip_torch", "facenet-pytorch", "faiss-cpu", "scikit-learn", "Pillow", "numpy"):
+    for name in ("torch", "open_clip_torch", "faiss-cpu", "scikit-learn", "Pillow", "numpy"):
         try:
             found[name] = metadata.version(name)
         except metadata.PackageNotFoundError:

@@ -1,9 +1,11 @@
 """The phase 3 face model (tagpup.ml.scrfd_adaface; docs/AI_PIPELINE.md, phase 3) on the photos an index meets: a
 wide photo with a crowd at the back and a face filling the front, found at the two squares and merged; a photo with no
-face; one that does not decode, or is gone; and an install where the weights were never made. The models are stood in
+face; one that does not decode, or is gone; an install where the weights were never made, and one without the old
+model's package (facenet-pytorch). The models are stood in
 for -- no weights load under test --: the detector answers with SCRFD's nine outputs for the square it is handed, as
 the traced files do, and the recogniser is a small fixed network.
 """
+import importlib
 import os
 import sys
 import tempfile
@@ -17,7 +19,7 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.ml import scrfd_adaface  # noqa: E402
-from tagpup.ml.faces import SMALLEST_FACE, NotDetected  # noqa: E402
+from tagpup.ml.scrfd_adaface import SMALLEST_FACE, NotDetected  # noqa: E402
 from tagpup.ml.scrfd_adaface import SCALES, STRIDES, TEMPLATE, ScrfdAdaFace  # noqa: E402
 
 
@@ -182,6 +184,18 @@ class TheNewFaceModel(unittest.TestCase):
         self.assertEqual((112, 112, 3), face.shape)
         self.assertGreater(face[72, 56].min(), 200)   # the nose where the template puts it (x 56.0, y 71.7)
         self.assertEqual(0, face[20, 20].max())
+
+
+
+class AnInstallWithoutTheOldModelsPackage(unittest.TestCase):
+    def test_the_face_model_is_imported_with_no_facenet_pytorch(self):
+        """The old face model (MTCNN, FaceNet) was deleted with its package: the new model, which took its smallest face
+        and its NotDetected from the old one's module, imports on a machine that never installed facenet-pytorch."""
+        with mock.patch.dict(sys.modules, {"facenet_pytorch": None}):   # imported, it raises ImportError
+            for name in ("tagpup.ml.faces", "tagpup.ml.scrfd_adaface", "tagpup.runtime"):
+                sys.modules.pop(name, None)
+            importlib.import_module("tagpup.ml.scrfd_adaface")
+            importlib.import_module("tagpup.runtime")
 
 
 if __name__ == "__main__":

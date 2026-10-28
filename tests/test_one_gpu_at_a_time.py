@@ -361,7 +361,7 @@ class TheRuntimesTurns(_Folder):
         self.assertFalse(card.holds())
 
     def test_a_run_takes_its_turn_for_the_card_half_of_a_face_detection_and_not_for_the_picture(self):
-        """The face models' halves (tagpup.ml.faces): `picture` uses no model and runs on the processor, so it takes
+        """The face models' halves (tagpup.ml.scrfd_adaface): `picture` uses no model and runs on the processor, so it takes
         no turn; `detect_and_embed` runs the detector and the recogniser on the card, and takes the run's turn."""
         from tagpup import runtime as runtimes
         card, faces = self.card(), self.Model()
