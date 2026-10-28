@@ -320,7 +320,6 @@ class TheOwnersValues(unittest.TestCase):
         offer, 0.520 and 0.205 to name unasked, 0.310 and 0.205 when the photo's keywords name the person."""
         import math
         from tagpup.core import clustering, validation
-        from tagpup.services import settings
         adaface = clustering.cuts_of(validation.SCRFD_ADAFACE)
         self.assertEqual((0.310, 0.520, 0.205, 0.090, 0.80), (adaface.offer_a_name, adaface.name_without_asking,
                                                                 adaface.name_margin, adaface.offer_margin, adaface.group_at))
@@ -336,8 +335,7 @@ class TheOwnersValues(unittest.TestCase):
                                                 adaface.gathers_for_a_new_person(0.519, 1),
                                                 adaface.gathers_for_a_new_person(0.9, 0.089)))
         # every model a library can be put on has its own cuts
-        self.assertEqual({model for model in validation.FACE_MODELS if settings.face_model_refusal(model) is None},
-                         set(clustering.CUTS))
+        self.assertEqual(set(validation.FACE_MODELS), set(clustering.CUTS))
         for cuts in clustering.CUTS.values():
             for decide in (cuts.is_offered, cuts.names_unasked, cuts.names_from_the_tag, cuts.gathers_for_a_new_person):
                 self.assertFalse(decide(None, None))   # nothing is decided about nothing

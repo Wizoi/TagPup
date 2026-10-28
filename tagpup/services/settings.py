@@ -91,10 +91,12 @@ UNKNOWN_PHOTO_MODEL = ("Nothing was written: %s (weights %s) is not a photo mode
 NATIVE_SIZE_ONLY = ("Nothing was written: %s (weights %s) is shown photos at its own size only: leave Image size "
                     "empty.")
 
-#: Why a library is not switched to FaceNet, nor an undo let put it back (owner, 2026-10-28; #1987): the old face model is
-#: retired from every library, empty or not (face_model_refusal).
-NOT_FACENET = ("Nothing was written: a library is no longer switched to %s, the old face model (MTCNN and FaceNet, "
-               "retired); %s is the face model." % (validation.MTCNN_FACENET, validation.SCRFD_ADAFACE))
+#: Why an undo of a change of the face model (faces.model) is refused (owner, 2026-10-28; #1987): it would put back a
+#: value the rule no longer allows (validation.FACE_MODELS: FaceNet, deleted), or delete the row a switch inserted -- the
+#: three live libraries' switches (changes 3244, 342, 1221), whose row must stay (undo_check). A switch to FaceNet is
+#: refused before, by the rule's own sentence (validation's one_of).
+NOT_FACENET = ("Nothing was written: undone, this change would take the library off %s, the one face model (%s, MTCNN "
+               "and FaceNet, is deleted)." % (validation.SCRFD_ADAFACE, validation.MTCNN_FACENET))
 
 
 def _asked_of(library, ask, *args):
@@ -105,12 +107,6 @@ def _asked_of(library, ask, *args):
         return ask(conn, *args)
     finally:
         conn.close()
-
-
-def face_model_refusal(model):
-    """Why a library may not be put on the face model `model`, or None: FaceNet, for every library (NOT_FACENET); the new
-    model, never. The one rule of it: a switch (change) and an undo putting a model back (undo_check) ask it."""
-    return NOT_FACENET if model == validation.MTCNN_FACENET else None
 
 
 def photo_model_refusal(name, pretrained, size=None):
@@ -176,22 +172,20 @@ def photo_key_on(conn):
 
 
 def undo_check(conn, change_id, _operation, _summary):
-    """Why change `change_id` of the settings (CHANGE) is not undone now, or None: its undo would put back a face model
-    (faces.model) no library is put on (face_model_refusal, the switch's own rule and sentence): FaceNet. A change that
-    inserted the faces.model row (a library stamped before it was a setting: photo_index's switch, change 3244,
-    kr-track's 342, renton_parkrun's 1221) puts FaceNet back, undone (validation.BEFORE_FACE_MODELS, not a new library's
-    default): the row goes. Asked by tagpup.services.journal.why_not (UNDO_CHECKS) on a read-only connection, before an
+    """Why change `change_id` of the settings (CHANGE) is not undone now, or None: NOT_FACENET when its undo would put
+    back a face model (faces.model) the rule refuses (validation.FACE_MODELS, the switch's own rule), or delete the
+    faces.model row it inserted (a library stamped before it was a setting: photo_index's switch, change 3244, kr-track's
+    342, renton_parkrun's 1221; the row never goes missing, so no reader is taught a default for a library holding
+    settings without it). Asked by tagpup.services.journal.why_not (UNDO_CHECKS) on a read-only connection, before an
     undo writes; reads the journal's old value and inserted key by the change's rows' index, and counts no face."""
     # One read of the journal for the face model and the five of the photo model.
     old = journal.old_values(conn, [change_id], store_settings.TABLE, [(key,) for key in (FACE_MODEL,) + PHOTO_MODEL],
                              "value").get(change_id, {})
     model = old.get((FACE_MODEL,))
     if FACE_MODEL in journal.recorded_values(conn, [change_id], store_settings.TABLE, "insert", "key").get(change_id, ()):
-        model = validation.BEFORE_FACE_MODELS
-    if model is not None:
-        refusal = face_model_refusal(_trim(model))
-        if refusal:
-            return refusal
+        return NOT_FACENET
+    if model is not None and validation.problem(validation.setting_kind(FACE_MODEL), model):
+        return NOT_FACENET
     # The photo model's settings the undo puts back (photo_switch_on): a switch undone is a switch, held to the same
     # share. Every library holds the five (stamped with them), so an undo puts back an updated row, never deletes one.
     putting = {key: old[(key,)] for key in PHOTO_MODEL if old.get((key,)) is not None}
@@ -340,13 +334,8 @@ def _as_text(value):
 
 
 def _filled(held):
-    """Every setting: those `held` holds, a default for the rest -- but the face model of a library that holds settings
-    and no faces.model row, stamped before it was a setting, which is FaceNet (validation.BEFORE_FACE_MODELS). For a
-    library holding none, what its stamp will give."""
-    filled = {key: held.get(key, default) for key, default in DEFAULTS.items()}
-    if held and FACE_MODEL not in held:
-        filled[FACE_MODEL] = validation.BEFORE_FACE_MODELS
-    return filled
+    """Every setting: those `held` holds, a default for the rest. For a library holding none, what its stamp will give."""
+    return {key: held.get(key, default) for key, default in DEFAULTS.items()}
 
 
 def _stamping(found):
@@ -445,8 +434,8 @@ def change(library, values, acknowledged=(), apply=True):
     stamped, or a setting changed by someone else since it was read -- and for a change
     to a locked setting whose group (validation.SETTING_GROUPS: "clip", "face-model",
     "faces", "exiftool") `acknowledged` does not name: the refusal lists each such group and what
-    changing it means, and details["unacknowledged"] holds them. A change of the face model
-    (faces.model) to FaceNet is refused first (NOT_FACENET, face_model_refusal); so is a switch of photo model
+    changing it means, and details["unacknowledged"] holds them. A face model other than the one
+    (validation.FACE_MODELS: FaceNet among them) is refused by its rule's sentence; so is a switch of photo model
     (PHOTO_MODEL) more than UNPASSED_SHARE_ALLOWED of whose photos hold no vector under its new key, or one forcing an
     image size on a model that takes none (photo_switch_on; details["photo_vectors"]: the new key, how many photos hold a
     vector under it and how many none, and its sentence). Every caller -- the
@@ -509,12 +498,6 @@ def change(library, values, acknowledged=(), apply=True):
         refusal, photo_vectors = photo_switch_to(library, held, {key: wanted[key] for key in changed})
         if photo_vectors is not None:
             result.details["photo_vectors"] = photo_vectors
-        if refusal:
-            result.refuse(refusal)
-            return result
-    if FACE_MODEL in changed:
-        # Before the consequences are asked for: ticking them cannot put a library on FaceNet.
-        refusal = face_model_refusal(_trim(wanted[FACE_MODEL]))
         if refusal:
             result.refuse(refusal)
             return result

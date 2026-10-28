@@ -3,14 +3,14 @@ are retired, and no library is switched to them (owner, 2026-10-25: the new mode
 re-name, no mixed-model compat; 2026-10-28: a switch to FaceNet is refused for every library, #1987). What the owner
 lives through:
 
-- (s) The owner picks FaceNet in TagTuner's gear for a library made on the new model, its faces found by the new model:
-  refused with one sentence (settings.NOT_FACENET), nothing written, nor in a dry run; the library stays on its model.
+- (s) A switch to FaceNet asked of a library made on the new model, its faces found by the new model (the CLI, a tool;
+  the gear offers the one model): refused with the rule's sentence (validation.FACE_MODELS), nothing written, nor in a
+  dry run; the library stays on its model.
 - (t) The same for a library made a moment ago, holding no face yet: it was allowed, nothing counting against it (#1987).
-- (u) A library stamped before the face model was a setting holds no faces.model row and reads FaceNet
-  (validation.BEFORE_FACE_MODELS); its first switch inserts the row, as the three live libraries' did (their changes
-  3244, 342, 1221). That switch is not undone in History: the undo deletes the row and puts FaceNet back. History lists
-  it with the sentence and no Undo, and the rehearsal and the undo refuse it so, writing nothing (#1781: it was undone
-  while FaceNet's vectors stood).
+- (u) The three live libraries' switches (changes 3244, 342, 1221) inserted the faces.model row, each library stamped
+  before it was a setting. That switch is not undone in History: the undo deletes the row. History lists it with the
+  sentence (settings.NOT_FACENET) and no Undo, and the rehearsal and the undo refuse it so, writing nothing (#1781: it
+  was undone while FaceNet's vectors stood); the row stays.
 
 Fictional names; libraries in a home of the test's own.
 """
@@ -55,14 +55,16 @@ def unit(rng):
 
 
 def refused_with_nothing_written(case, library):
-    """FaceNet picked for `library`, its consequences ticked, rehearsed and applied (settings.change, as the gear's route
-    calls it): refused with the sentence, every row as it was, the library on the new model."""
+    """FaceNet asked for `library`, its consequences ticked, rehearsed and applied (settings.change, as the gear's route
+    calls it): refused with the rule's sentence, every row as it was, the library on the new model."""
     before = rows_of(library.path)
     for apply in (False, True):
         with case.subTest(apply=apply):
             refused = library_settings.change(library, {"faces.model": FACENET}, acknowledged=["face-model"],
                                               apply=apply)
-            case.assertEqual((0, library_settings.NOT_FACENET), (refused.changed, refused.refused))
+            case.assertEqual((0, validation.problem(validation.setting_kind("faces.model"), FACENET)),
+                             (refused.changed, refused.refused))
+            case.assertIsNotNone(refused.refused)
     case.assertEqual(before, rows_of(library.path))
     case.assertEqual(NEW, library_settings.read(library)["faces.model"])
 
@@ -104,7 +106,6 @@ class TheLibraryStaysOnItsModel(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        self.assertEqual(FACENET, library_settings.read(self.harbour)["faces.model"])
         switched = library_settings.change(self.harbour, {"faces.model": NEW}, acknowledged=["face-model"])
         self.assertEqual(1, switched.changed, switched.refused)
         change = switched.details["change"]

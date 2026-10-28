@@ -358,7 +358,7 @@ def _build_clip(settings):
 def _build_faces(settings):
     """The face models of a library (LibrarySettings.faces): SCRFD and AdaFace, the one face model. MTCNN and FaceNet were
     deleted (2026-10-28, docs/OLD_MODEL_VESTIGES.md row 5): every library is on scrfd-adaface and holds no FaceNet
-    vector, and a switch to mtcnn-facenet is refused (tagpup.services.settings.NOT_FACENET)."""
+    vector, and the rule allows no other face model (tagpup.core.validation.FACE_MODELS)."""
     from tagpup.ml.scrfd_adaface import ScrfdAdaFace
     return ScrfdAdaFace()
 

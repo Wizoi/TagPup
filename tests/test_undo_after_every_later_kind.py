@@ -5,7 +5,7 @@ library really holds in sequence, each made by its real writer, the History dial
 the undo do not refuse; a refusal writes nothing -- no row, no generation, no change's status, no file; an undo allowed
 is a round trip the rehearsal found exact; and whether it is allowed is what the owner was promised (EXPECTED_REFUSED),
 saying so in the sentence of the check that owns it: a stamp, a migration and the switch to the new face model are never
-undone (the last would put FaceNet back: settings.NOT_FACENET, owner 2026-10-28; a switch back to FaceNet is refused at
+undone (the last would delete the faces.model row it inserted: settings.NOT_FACENET, owner 2026-10-28; a switch back to FaceNet is refused at
 its source, so no library holds one, scenario V11). A refusal that a later change of its own stands in the way of is
 lifted by undoing that one first: undone in that order, both are.
 
@@ -38,7 +38,7 @@ import migration_names  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import face_rows  # noqa: E402
-from face_rows import FACENET, on_facenet, person_of  # noqa: E402
+from face_rows import FACENET, before_the_face_model, person_of  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 import baked_files  # noqa: E402
 
@@ -236,11 +236,10 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         by ExifTool), faces as the pass left them -- matched faces holding FaceNet's vector and the new model's, faces
         the old detector alone found holding FaceNet's, one alone in the sixth photo -- named automatically, by hand,
         nobody, excluded or undecided; the pass one change; switched to the new model after it. Stamped on FaceNet, as
-        the live libraries were before the new model (a new library is stamped on it, and the switch would change
-        nothing)."""
+        the live libraries were before the new model: no faces.model row, which the switch inserts."""
         from PIL import Image
 
-        on_facenet(library.path)
+        before_the_face_model(library.path)
         library_actions.create(library.path)
         os.makedirs(cls.folder)
         library_actions.record_added(library, [cls.folder])

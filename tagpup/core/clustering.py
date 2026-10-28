@@ -151,8 +151,8 @@ ADAFACE_CUTS = Cuts(offer_a_name=0.310, name_without_asking=0.520, name_margin=0
                     source="the phase 3 gate, open set, pooled (2026-10-20): naming at precision 0.99, offering at 0.98;"
                            " grouping at FaceNet's impurity on 2,849 named faces (2026-10-20)")
 
-#: Each face model's cuts, by its key (tagpup.core.validation.FACE_MODELS): every model a library can be put on has
-#: its own (a library is not put on FaceNet: tagpup.services.settings.face_model_refusal).
+#: Each face model's cuts, by its key: every model a library can be put on (tagpup.core.validation.FACE_MODELS) has
+#: its own.
 CUTS = {validation.SCRFD_ADAFACE: ADAFACE_CUTS}
 
 
