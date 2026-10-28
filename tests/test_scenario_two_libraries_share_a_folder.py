@@ -9,6 +9,12 @@ test_roots_scenarios.py (AFolderTheLibraryDoesNotHold) already cover that half o
 
 ExifTool is stood in for, as test_service_change_tags.py and test_sync.py do; the
 photo files and both libraries' rows are real.
+
+Both libraries index the shared folder, and each index writes the bake (docs/PLAN_KEEP_IN_STEP.md, cut 2): a bake under
+the libraries' keys of the picture as it is now is the other's to adopt, never rewritten (owner, DECISIONS 2026-10-27).
+Beta indexed the folder before any bake, its photo vectors another machine's (a CPU's, not alpha's card's); alpha
+bakes; beta's next index writes no file; alpha turns a photo and bakes it again; beta's next index adopts that, and a
+third round writes nothing in either. Real ExifTool and the CLI's index, the stand-in models.
 """
 import json
 import os
@@ -22,11 +28,25 @@ import photo_rows  # noqa: E402
 
 from test_service_replace_tag import exiftool  # noqa: E402
 
+from click.testing import CliRunner  # noqa: E402
+from PIL import Image  # noqa: E402
+
+import baked_files  # noqa: E402
+from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
+
+import tagpup_cli  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+from tagpup.ml import clip  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import bake_after_index, baking, photos, sync, tagging  # noqa: E402
+from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import sync, tagging  # noqa: E402
 from tagpup.store import db  # noqa: E402
+
+EXIFTOOL = own_home.installed_exiftool()
 
 
 class Reads:
@@ -155,6 +175,94 @@ class SharedFolderTwoLibraries(unittest.TestCase):
         self.assertNotIn("Trips/Meet", self.tree_tags(self.alpha_path))
         # ...and made no row for a folder beta never held, alpha's private one.
         self.assertIsNone(self.tags_of(self.beta_path, alpha_private))
+
+
+@unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
+class TwoLibrariesAdoptEachOthersBake(unittest.TestCase):
+    """Alpha and beta, of the same models, each index Pictures/2025-10 Meet; the index writes the bake."""
+
+    FACE = [300, 200, 400, 330]
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="shared_bake_")
+        self.meet = paths.stored(os.path.join(self.home.root, "Pictures", "2025-10 Meet"))
+        os.makedirs(self.meet)
+        self.libraries = {}
+        for name in ("alpha", "beta"):
+            db_path = self.home.library(name + ".db")
+            self.assertEqual(1, library_actions.create(db_path).changed)
+            self.libraries[name] = db_path
+        self.detector = RefusableFaces({"a.jpg": [(self.FACE, 0.99, 1)]}, vector=baked_files.face_vector)
+        vector = baked_files.unit(1152, 99).tolist()
+        for patcher in (mock.patch.object(clip.ClipModel, "_init_model"),
+                        mock.patch.object(clip.ClipModel, "picture_input", return_value="input"),
+                        mock.patch.object(clip.ClipModel, "embed_input", return_value=vector),
+                        mock.patch.object(Runtime, "gpu_turn", lambda runtime, what, *args, **kwargs: Hold()),
+                        mock.patch.object(runtimes, "on_the_card", return_value=True),
+                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def picture(self, name, colour):
+        path = os.path.join(self.meet, name)
+        Image.new("RGB", (640, 480), colour).save(path, "JPEG")
+        return path
+
+    def index(self, name):
+        """The CLI's index of the folder in library `name`: what it says of its bake."""
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.libraries[name], "index", self.meet])
+        if isinstance(result.exception, BaseException) and not isinstance(result.exception, SystemExit):
+            raise result.exception
+        self.assertEqual(0, result.exit_code, result.output)
+        said = " ".join(result.output.split())
+        return said[said.index("Bake:"):] if "Bake:" in said else ""
+
+    def boxes(self, name, path):
+        conn = db.connect(db.readonly_uri(self.libraries[name]), uri=True)
+        try:
+            return [json.loads(box) for path_of, box in conn.execute(
+                "SELECT p.path, f.box FROM faces f JOIN photos p ON p.id = f.photo_id").fetchall()
+                if paths.key(path_of) == paths.key(path)]
+        finally:
+            conn.close()
+
+    def current_in(self, name, path):
+        return baked_files.plan(self.libraries[name], path, face_service.detector_of(NewFaces(), None))
+
+    def stamps(self, *photo_paths):
+        return {path: os.stat(path).st_mtime_ns for path in photo_paths}
+
+    def test_each_adopts_the_others_bake_and_neither_rewrites_a_file(self):
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        with mock.patch.object(clip.ClipModel, "embed_input", return_value=baked_files.unit(1152, 98).tolist()), \
+                mock.patch.object(bake_after_index, "bake_folders"):
+            self.index("beta")   # before any bake, on a machine whose vectors differ from alpha's
+        self.assertIn("Bake: 2 file(s) written, 0 already held it.", self.index("alpha"))
+        baked = self.stamps(a, b)
+
+        self.assertIn("Bake: 0 file(s) written, 2 already held it.", self.index("beta"))
+        self.assertEqual(baked, self.stamps(a, b), "beta rewrote alpha's bake with its own vectors")
+        self.assertEqual(self.boxes("alpha", a), self.boxes("beta", a))
+        self.assertEqual(1, len(baked_files.held(a).faces))
+        for name in ("alpha", "beta"):
+            self.assertIsInstance(self.current_in(name, a), baking.Current, name)
+
+        turned = photos.rotate(Library(self.libraries["alpha"]), a, "right", EXIFTOOL)
+        self.assertTrue(turned.changed, turned.refused or turned.errors)
+        self.index("alpha")   # alpha bakes the turned picture
+        held = baked_files.held(a)
+        self.assertIsInstance(self.current_in("alpha", a), baking.Current)
+        rebaked = self.stamps(a, b)
+        self.assertNotEqual(baked[a], rebaked[a], "alpha baked the turned picture")
+
+        self.index("beta")
+        self.assertEqual(rebaked, self.stamps(a, b), "beta rewrote alpha's bake of the turned picture")
+        self.assertEqual(held.fingerprint, baked_files.held(a).fingerprint)
+        self.assertIsInstance(self.current_in("beta", a), baking.Current, "beta adopted it")
+
+        for name in ("alpha", "beta"):
+            self.index(name)
+            self.assertEqual(rebaked, self.stamps(a, b), "a third round wrote a file in " + name)
 
 
 if __name__ == "__main__":
