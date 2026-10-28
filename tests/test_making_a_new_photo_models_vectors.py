@@ -60,6 +60,7 @@ from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import suggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.store import photo_fingerprints  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
@@ -161,7 +162,7 @@ class _Library(unittest.TestCase):
                 path = os.path.join(self.folder, "heron %02d.jpg" % n)
                 Image.new("RGB", (48, 32), (5 * n % 255, 90, 140)).save(path, "JPEG")
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
-                mtime, size = store_embeddings.stamp_of(path)
+                mtime, size = shares.read_stamp(path)
                 store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, n).tobytes(), None)
                 self.photos.append(path)
             conn.commit()
@@ -172,7 +173,7 @@ class _Library(unittest.TestCase):
         conn = db.connect(self.library.path)
         try:
             for path in photos:
-                mtime, size = store_embeddings.stamp_of(path)
+                mtime, size = shares.read_stamp(path)
                 store_embeddings.put(conn, path, NEW_KEY, mtime, size, vector(NEW_DIM, 7).tobytes(), None)
             conn.commit()
         finally:
@@ -310,7 +311,7 @@ class APhotoEditedWhileItIsEmbedded(_Library):
 
     def test_a_photo_edited_while_it_is_embedded_keeps_a_vector_of_before_and_the_next_look_makes_it_again(self):
         edited = self.photos[3]
-        opened = store_embeddings.stamp_of(edited)
+        opened = shares.read_stamp(edited)
         wanted = photo_reembed.wanted(self.runtime.settings(self.library), NEW)
 
         def the_owner_edits_it(path):
@@ -356,7 +357,7 @@ class TwoLibrariesHoldingOneFolder(_Library):
         try:
             for n, path in enumerate(self.photos):
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
-                mtime, size = store_embeddings.stamp_of(path)
+                mtime, size = shares.read_stamp(path)
                 store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, n).tobytes(), None)
             conn.commit()
         finally:

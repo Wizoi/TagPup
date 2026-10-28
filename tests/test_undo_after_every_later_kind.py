@@ -54,6 +54,7 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, embeddings, file_journal, generations, inspection, journal, schema  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -152,7 +153,7 @@ def a_bake(case, library):
         for _photo_id, path in inspection.ids_and_paths(conn):
             if os.path.exists(path):
                 found = rng.normal(size=bake.PHOTO_DIM).astype(np.float32)
-                mtime, size = embeddings.stamp_of(path)
+                mtime, size = shares.read_stamp(path)
                 embeddings.put(conn, path, key, mtime, size, (found / np.linalg.norm(found)).tobytes(), None)
         conn.commit()
         folder = os.path.dirname(case.photo[1])

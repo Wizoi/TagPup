@@ -42,6 +42,7 @@ from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.store import faces, faces_detected, journal  # noqa: E402
 
 
@@ -76,7 +77,7 @@ class Case(unittest.TestCase):
         settings = library_settings.of(Library(self.db_path))
         self.model_key = store_embeddings.model_key(**settings.embedder)
         self.vector = [1.0] + [0.0] * 7
-        stamp = store_embeddings.stamp_of(self.photo)
+        stamp = shares.read_stamp(self.photo)
         conn = db.connect(self.db_path)
         try:
             photo_rows.hold(conn, folder)

@@ -273,6 +273,28 @@ class Crashes(FilesCase):
         self.assertEqual((self.states(change)[0], keywords_of(self.a)), ("writing", ["Beach"]))
         self.assert_finished(change)
 
+    def test_the_vectors_stamp_and_the_journals_fingerprint_are_one_look_at_the_file(self):
+        """Just before a file is written its stamp (what its vectors are carried over the write from) and its fingerprint
+        (what the journal knows it by) are taken from ONE stat: two were two looks over a share, and could describe two
+        files when another program changed it between them (#1958). Break: either taken by a stat of its own. The
+        looks _carry makes itself, through a helper; the stat before the read that finds the file still to write
+        (_held_or_conflict) is the read's, not counted."""
+        looked = []
+        real = os.stat
+
+        def stat(path, *args, **kwargs):
+            if sys._getframe(2).f_code.co_name == "_carry":
+                looked.append(sys._getframe(1).f_code.co_name)
+            return real(path, *args, **kwargs)
+
+        def reached(step):
+            if step == "file writing":
+                raise Crash(step)
+        with mock.patch.object(os, "stat", stat), mock.patch.object(file_changes, "_reached", side_effect=reached):
+            with self.assertRaises(Crash):
+                self.add([self.a])
+        self.assertEqual(1, len(looked), "the writer looked at the file before its write by %s" % looked)
+
     def test_in_the_middle_of_the_batch(self):
         change = self.crash("file recorded", nth=2)
         self.assertEqual(self.states(change), ["done", "done", "planned"])

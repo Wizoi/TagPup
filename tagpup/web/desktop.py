@@ -58,7 +58,7 @@ def is_openable(photo_path):
     """May `photo_path` be opened in its own program? Only an existing file with a photo
     extension: startfile runs whatever it is handed, and this route only ever opens a
     photo."""
-    return bool(photo_path) and os.path.isfile(photo_path) and photo_actions.is_photo(photo_path)
+    return bool(photo_path) and photo_actions.is_photo(photo_path) and photo_actions.file_stamp(photo_path) is not None
 
 
 def open_photo(photo_path):

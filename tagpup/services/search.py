@@ -112,7 +112,7 @@ class PhotoEmbeddings:
             return False
         try:
             if stamp is None:
-                stamp = store_embeddings.stamp_of(file_path)
+                stamp = shares.read_stamp(file_path)
             if stamp is None or not self._library():
                 return False
 
@@ -177,14 +177,14 @@ class PhotoEmbeddings:
         nothing runs on the graphics card: the indexer prepares the next photos on threads of their own while the card
         is on this one (tagpup_cli.py's index; docs/AI_PIPELINE.md, phase 1b), with `load` False: a read never loads
         the model (ClipModel.picture_input). Raises images.Unreadable for a picture that does not decode."""
-        stamp = store_embeddings.stamp_of(file_path)
+        stamp = shares.read_stamp(file_path)
         return Prepared(stamp, self.clip.input_of(file_path, seen=seen, load=load))
 
     def opened(self, file_path):
         """(the file's stamp, taken before it is opened, and its picture decoded upright): the decode `prepared` makes,
         for the indexer to take the picture's fingerprint from before it decides whether CLIP is shown it
         (prepared_from) or its bake gives the vector (tagpup.services.bake_reading). Raises images.Unreadable."""
-        stamp = store_embeddings.stamp_of(file_path)
+        stamp = shares.read_stamp(file_path)
         return stamp, images.opened(file_path, upright=True)
 
     def prepared_from(self, stamp, picture, load=False):

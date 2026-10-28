@@ -29,6 +29,7 @@ from tagpup.services import baking  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, embeddings, faces_detected, photo_fingerprints  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -85,7 +86,7 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         photo_key = self.read(lambda conn: library_settings.photo_key_on(conn))
 
         def seed(conn):
-            stamp = embeddings.stamp_of(path)
+            stamp = shares.read_stamp(path)
             embeddings.put(conn, path, photo_key, stamp[0], stamp[1], baked_files.unit(bake.PHOTO_DIM, 1).tobytes(), None)
         if vector:
             self.write(seed)

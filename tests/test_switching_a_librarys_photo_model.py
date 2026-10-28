@@ -49,6 +49,7 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 
 #: The model a new library is on (SigLIP 2 SO400M), and the one the owner switches it to, declared by the test.
 OLD = ("ViT-SO400M-14-SigLIP2", "webli")
@@ -143,7 +144,7 @@ class _Libraries(unittest.TestCase):
         try:
             for path in photos:
                 self.seed += 1
-                mtime, size = store_embeddings.stamp_of(path)
+                mtime, size = shares.read_stamp(path)
                 store_embeddings.put(conn, path, key, mtime, size, vector(DIMS[model[0]], self.seed).tobytes(), None)
             conn.commit()
         finally:
@@ -199,7 +200,7 @@ class TheSwitchWaitsForTheVectors(_Libraries):
         conn = db.connect(harbour.path)
         try:
             for path in harbour.photos:
-                mtime, size = store_embeddings.stamp_of(path)
+                mtime, size = shares.read_stamp(path)
                 store_embeddings.put(conn, path, key, mtime, size, vector(1152, 7).tobytes(), None)
             conn.commit()
         finally:

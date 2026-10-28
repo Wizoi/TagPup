@@ -58,8 +58,24 @@ def page_record(path, meta, mtime=0.0, size=0):
 
 def file_stamp(path):
     """(mtime, size) of the file at `path` as it is now, or None when there is none, it cannot be read, or its share does
-    not answer (tagpup.files.shares.known_stamp): the look for the pages, which may not import tagpup.files."""
+    not answer (tagpup.files.shares.known_stamp): the look at a file for the pages and the jobs, which may not import
+    tagpup.files. With folder_state and subfolders, their one door to tagpup.files.shares."""
     return shares.known_stamp(path)
+
+
+def folder_state(folder):
+    """"there", "gone" or "unanswered" (a network share's that did not answer in time) of `folder` now
+    (tagpup.files.shares.folder_state): the look at a folder for the pages and the jobs."""
+    return shares.folder_state(folder)
+
+
+def subfolders(folder):
+    """The names of the folders `folder` holds, in its listing's order (tagpup.files.shares.listing, waited for on a
+    share); None when its share did not answer. Raises the listing's OSError. What the folder pickers list."""
+    listed = shares.listing(folder)
+    if listed is shares.UNANSWERED:
+        return None
+    return [entry.name for entry in listed if entry.is_dir()]
 
 
 def changed_on_disk(path, stamp):

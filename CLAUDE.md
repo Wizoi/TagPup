@@ -60,6 +60,9 @@ Each names its one owner and the guard that fails the build when it is broken.
 - **Never spell or compare a photo path by hand**: `tagpup/core/paths.py` (`stored()`, `key()`, `sql_equals()`,
   `sql_under()`); in the pages `pathKey` / `samePath` (`web/common/paths.js`) (`tests/test_rules_have_one_owner.py`,
   `tests/frontend/path-helpers.test.mjs`).
+- **Never look at a photo path yourself** (stat, exists, isdir, a listing): `tagpup/files/shares.py` (`stamp_of`, `there`,
+  `known_stamp`, `folder_state`, `listing`) bounds each look on a share; the pages and jobs ask `services.photos`
+  (`tests/test_photo_looks_have_one_owner.py`).
 - **A library's settings live in the library**, read through `tagpup.services.settings` and changed only by a journaled
   change; an entry point reads them from the library it was given (`tagpup.runtime.library_settings`); nothing reads
   `config.ini` (`tagpup/config.py` owns only where the libraries are) (`tests/test_config_single_owner.py`).

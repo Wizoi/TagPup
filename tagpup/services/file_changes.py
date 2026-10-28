@@ -72,7 +72,7 @@ from tagpup.core.result import Conflict, Refused, Result
 from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names, shares
 from tagpup.services import baking, batches, face_batch, rotation
 from tagpup.services import roots as roots_service
-from tagpup.store import db, derived, embeddings, file_journal, photos, schema
+from tagpup.store import db, derived, file_journal, photos, schema
 
 logger = logging.getLogger(__name__)
 
@@ -729,8 +729,10 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     row.found_holding = settled is not None and settled[0] == finished
     if settled is not None:
         return settled
-    stamp = row.stamp = embeddings.stamp_of(row.path)
-    row.known_as = _fingerprint(row.path)
+    # One look before the write, two projections: the vectors' stamp and the journal's fingerprint describe one file.
+    before = _stat(row.path)
+    stamp = row.stamp = (before.st_mtime, before.st_size) if before is not None else None
+    row.known_as = _fingerprint_of(before) if before is not None else None
     file_journal.writing(library.path, row.id, stamp)
     _reached("file writing")
     try:

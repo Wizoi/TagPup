@@ -84,7 +84,7 @@ def hold(conn, folder):
 def written(db_path, photo_path, values, before=None):
     """What the journaled write records of `values` ({field: value}) written into `photo_path`
     (store.photos.follow_fields, as tagpup.services.file_changes records a file done): the file's
-    stamp now, taken only where the row described the file at `before` (embeddings.stamp_of
+    stamp now, taken only where the row described the file at `before` (shares.read_stamp
     just before the write). True when the photo has a row."""
     try:
         stat = os.stat(photo_path)
