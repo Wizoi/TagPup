@@ -7,6 +7,8 @@ rather than the store, so a fixture does not agree with the code it tests.
 """
 import json
 
+import numpy as np
+
 from tagpup.core import validation
 
 #: The faces with their photo's path: `SELECT p.path, f.name FROM ` + FACES_WITH_PATHS.
@@ -16,6 +18,9 @@ FACES_WITH_PATHS = "faces f JOIN photos p ON p.id = f.photo_id"
 #: the setting's default, which a new library is stamped with (SCRFD and AdaFace, every live library's). What every helper
 #: here files a face's vector under unless given another.
 FACE_MODEL = validation.SETTINGS["faces.model"]["default"]
+
+#: The length of a vector the library's face model gives (AdaFace's last layer, tagpup/ml/scrfd_adaface.py), as float32.
+FACE_DIMENSION = 512
 
 #: FaceNet's key, the deleted model's: given explicitly, by a test about the vectors and journals it left (a switch's
 #: undo, a migration's vectors), in a library stamped before the face model was a setting (`before_the_face_model`).
@@ -134,13 +139,25 @@ def give_their_person(conn, face_id):
         conn.execute("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", (found, name, face_id))
 
 
+def vector_of(face_id):
+    """The vector a face is given when a test names none: FACE_DIMENSION float32 values of length one, as the face model
+    gives them, drawn from the face's id, so the same face has the same vector in every run and two faces are as unalike
+    as two strangers (512 random directions: a cosine near 0, under every threshold the matching uses)."""
+    values = np.random.default_rng(face_id).standard_normal(FACE_DIMENSION).astype(np.float32)
+    return (values / np.linalg.norm(values)).tobytes()
+
+
 def add_face(conn, photo_path, box=(0, 0, 10, 10), embedding=None, model=FACE_MODEL, **columns):
     """Insert a face into the photo at `photo_path`; `columns` are any others of faces
     (name, prob, name_source, excluded, excluded_reason, id). A box that is
-    not a string is written as JSON. Its `embedding`, if given (float32 bytes), is its vector in `face_embeddings` under `model`,
-    the library's (FACE_MODEL) unless given, as the indexer files it. A face given a `name` is given the person the tree says it is, as every
+    not a string is written as JSON. Its vector in `face_embeddings` under `model`, the library's (FACE_MODEL) unless given, is
+    `embedding` (float32 bytes) or, when none is given, the face's own (vector_of): every writer files a face with its vector
+    (tagpup.store.faces.insert), and every reader joins it, so a face without one is a shape nothing makes and no reader sees
+    (tests/test_fixtures_make_photo_rows_like_the_indexer.py). A face given a `name` is given the person the tree says it is, as every
     writer that names a face does (tagpup.store.person_ids.target: the id of the one node called so; none for a name no node, or
     two, is called). Returns the face's id. The caller commits."""
+    if embedding == b"":
+        raise ValueError("no writer files a face with an empty vector: give none, and the face is given its own")
     values = dict(columns, photo_id=photo_id(conn, photo_path),
                   box=box if isinstance(box, str) else json.dumps(list(box)))
     if values.get("name") and "tag_id" not in values:
@@ -148,8 +165,7 @@ def add_face(conn, photo_path, box=(0, 0, 10, 10), embedding=None, model=FACE_MO
     names = sorted(values)
     face_id = conn.execute("INSERT INTO faces (%s) VALUES (%s)" % (", ".join(names), ", ".join("?" * len(names))),
                            [values[name] for name in names]).lastrowid
-    if embedding is not None:
-        add_vector_of_face(conn, face_id, embedding, model)
+    add_vector_of_face(conn, face_id, vector_of(face_id) if embedding is None else embedding, model)
     return face_id
 
 

@@ -110,7 +110,7 @@ class TheLibraryAUrlNames(unittest.TestCase):
             conn = tagpup_db.connect(path)
             conn.execute("INSERT INTO photos (path, mtime, size) VALUES (?, ?, ?)", ("C:/photo.jpg", 1.0, 100))
             add_people(conn, "C:/photo.jpg", [person])
-            add_face(conn, "C:/photo.jpg", box="[]", embedding=b"", name=person)
+            add_face(conn, "C:/photo.jpg", box="[]", name=person)
             conn.commit()
             conn.close()
         self.assertEqual(["Alice"], [each["name"] for each in client.get("/created_db_1/api/people").get_json()])
