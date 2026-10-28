@@ -19,8 +19,8 @@ XMP PersonInImage or RegionName (all 0 in the three).
 ## The seven conditions (2026-10-15)
 
 1. **No reach-ins.** Met. Every use of a Files module by another domain is a row of the Integration charter's contract
-   table: Files is the callee of rows 6, 7, 38, 46, 47, 48 and 50 to 59. Rows 50 to 59 are this pass's: inspect, tags,
-   person_tags, identify, box_shape, the naming jobs' folder scope, the journal's undo and dating, the thumbnails' rows,
+   table: Files is the callee of rows 6, 7, 38, 46, 47, 48, 50, 51 and 53 to 59. Those from 50 are this pass's: inspect,
+   tags, identify, box_shape, the naming jobs' folder scope, the journal's undo and dating, the thumbnails' rows,
    and face_people's write through `file_changes.batch_exclusively`. Each names its guard test; box_shape is review only.
    face_people's own ExifTool session went (#1474).
 2. **No rule written twice.** Met.
