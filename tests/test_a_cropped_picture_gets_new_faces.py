@@ -149,7 +149,10 @@ class ACroppedPictureGetsNewFaces(unittest.TestCase):
         before = [face_id for _box, face_id, *_ in self.faces()]
         self.crop()
         del self.detector.asked[:]
-        self.index()
+        with self.assertLogs("tagpup_cli", "INFO") as logged:
+            self.index()
+        self.assertIn("Its picture changed: 2 old faces of %s forgotten" % self.photo,
+                      [record.getMessage() for record in logged.records])
         self.assertEqual(["pier.jpg"], self.detector.asked)
         self.assertTheNewPictures(before=before)
         # In step: the next run has nothing to do.

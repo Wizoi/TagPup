@@ -736,9 +736,13 @@ def record_detected(db_path, photo_path, detected, *, model, detector=None):
 
 def forget_for_new_picture(db_path, photo_path):
     """Forget the faces of a photo whose picture changed -- a crop, any edit of its pixels, told by its decode's
-    fingerprint differing from its fingerprint row (photo_fingerprints.same_picture) -- as a quarter turn does
-    (tagpup.services.rotation): their rows, crops and vectors, and every record of a detector's look at it, so its old
-    boxes are never kept on the new picture (owner, 2026-10-27; docs/PLAN_KEEP_IN_STEP.md, scenario 4).
+    fingerprint differing from its fingerprint row (photo_fingerprints.same_picture): their crops and vectors and every
+    record of a detector's look at it, as a quarter turn forgets them (tagpup.services.rotation), and here their rows
+    too -- a turn keeps its rows and turns their boxes, but these boxes are another picture's, never kept on the new one
+    (owner, 2026-10-27; docs/PLAN_KEEP_IN_STEP.md, scenario 4).
+
+    The fingerprint's key (images.FINGERPRINT_KEY) is one today: a change of it makes every stale photo's decode
+    another picture, and forgets its faces, so a key change must come with a migration decision (the owner's).
 
     In a write of its own, before its new vector is kept (and so before the new picture is detected, or with no
     face pass at all, --skip-faces): a run stopped at any point after it, or a batch whose write fails, leaves the photo
