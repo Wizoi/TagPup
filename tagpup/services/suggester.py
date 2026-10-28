@@ -445,10 +445,7 @@ class TagSuggester:
                     if excluded or (name is None and name_source == "manual"):
                         continue
                     box = json.loads(box_json)
-                    # A face with no vector under the run's face model (store_faces.VECTOR answers None: one the other
-                    # model made, or an old face its pass matched with nothing) is a face on file and a box among the
-                    # photo's, but it is compared with nobody.
-                    emb = None if emb_bytes is None else np.frombuffer(emb_bytes, dtype=np.float32).tolist()
+                    emb = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
                     detected.append({
                         "box": box,
                         "embedding": emb,

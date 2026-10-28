@@ -44,7 +44,6 @@ GONE = "gone"
 UNREADABLE = "unreadable"
 NEVER_EXAMINED = "never examined"
 NO_VECTOR = "no photo vector"
-FACES_WITHOUT_VECTORS = "faces without vectors"
 
 
 #: Why a photo whose vector is not of its picture as it is now (photo_fingerprints.same_picture) cannot be baked.
@@ -80,7 +79,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None, stamp_of=s
     """ToBake, Current or Cannot for the photo at `photo_path`. `held()`, the fields its file holds (field_values.read of
     bake.WRITTEN's values), or the Exception that read gave (returned or raised); `shape()`, (stored width, stored height,
     turn) as images.shown_shape gives them, or raising (the picture cannot be opened). None of the three is called for a photo the
-    library refuses (GONE, NO_VECTOR, NEVER_EXAMINED, FACES_WITHOUT_VECTORS) or cannot reach (UNREADABLE: a file
+    library refuses (GONE, NO_VECTOR, NEVER_EXAMINED) or cannot reach (UNREADABLE: a file
     deleted outside the app, a drive or share away; `stamp_of`, the one bounded look: shares.stamp_of, or a run's
     shares.Walk, PhotoAt's): its file is not opened for nothing.
     `fingerprint()`, the digest of its upright decode (images.fingerprint), called last, only for a photo that reaches the
@@ -108,10 +107,6 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None, stamp_of=s
     if not rows and not faces_detected.detected(conn, photo_path, keys.detector):
         return Cannot(NEVER_EXAMINED, "Its faces were never looked for by the library's face detector.")
     rows = [row for row in rows if images.is_big_enough(images.parse_box(row[1]))]   # a small face is not baked (#1973)
-    missing = sum(vector is None for _id, _box, _ref, vector, _excluded in rows)
-    if missing:
-        return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model "
-                      "(a re-index gives a face it holds already no vector)." % missing)
     try:
         stored_w, stored_h, turn = shape()
         file_holds = held()

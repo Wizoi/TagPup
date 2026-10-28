@@ -83,13 +83,10 @@ class Case(unittest.TestCase):
         return photo_path
 
     def face(self, photo_path, box=(10, 10, 110, 110), degrees=0, embedding=True, **columns):
-        """A face `degrees` round the circle; `embedding` None gives it no vector under the library's model (a face the other
-        model found), bytes give it those."""
+        """A face `degrees` round the circle; `embedding` bytes give it those instead."""
         def add(conn):
             face_id = faces.insert(conn, photo_path, list(box), at(degrees), model=FACE_MODEL)
-            if embedding is None:
-                conn.execute("DELETE FROM face_embeddings WHERE face_id = ?", (face_id,))
-            elif embedding is not True:
+            if embedding is not True:
                 face_rows.add_vector_of_face(conn, face_id, embedding)
             for column, value in columns.items():
                 conn.execute("UPDATE faces SET %s = ? WHERE id = ?" % column, (value, face_id))
@@ -393,18 +390,16 @@ class TheStripSuggestsWhatTheBoxesListFirst(Case):
         self.assertEqual(listed[0]["name"], shown["suggestion"])
         self.assertAlmostEqual(listed[0]["similarity"], shown["similarity"], places=3)
 
-    def test_a_face_below_the_offer_gets_none_and_an_excluded_or_vectorless_face_gets_none(self):
+    def test_a_face_below_the_offer_gets_none_and_an_excluded_face_gets_none(self):
         elsewhere = self.photo("regatta_032.jpg")
         self.face(elsewhere, degrees=0, name=WREN, name_source="manual")
         photo = self.photo("regatta_033.jpg")
         far = self.face(photo, degrees=80)
         out = self.face(photo, box=(30, 5, 50, 25), degrees=10, excluded=1)
-        blank = self.face(photo, box=(60, 5, 80, 25), embedding=None)
         near = self.face(photo, box=(90, 5, 110, 25), degrees=10)
         shown = self.strip(photo)
         self.assertIsNone(shown[far]["suggestion"])
         self.assertIsNone(shown[out]["suggestion"])
-        self.assertIsNone(shown[blank]["suggestion"])
         self.assertEqual(WREN, shown[near]["suggestion"])
         self.assertEqual(self.boxes(near)[0]["name"], shown[near]["suggestion"])
 

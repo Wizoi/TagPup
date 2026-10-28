@@ -212,23 +212,6 @@ class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
             "the queue did not come back with its Unknown Faces bucket: %s" % (buckets,),
         )
 
-    def test_a_face_with_no_embedding_is_not_counted_as_waiting(self):
-        """Not a performance point: a face with no vector cannot be identified."""
-        photo = self.add_photo("IMG_4343.jpg")
-        self.add_face(photo, seed=12)
-
-        conn = db.connect(self.TEST_DB)
-        add_face(conn, photo, box="[0,0,10,10]", embedding=None, prob=0.99)
-        conn.commit()
-        conn.close()
-
-        unknown = [b for b in self.queue() if b["name"] == "Unknown Faces"]
-        self.assertEqual(1, len(unknown), "no Unknown Faces bucket came back")
-        self.assertEqual(
-            1, unknown[0]["count"],
-            "a face with no embedding was counted as waiting to be identified",
-        )
-
 
 class TestAnUnderscoreInAFilenameIsNotAWildcard(MatchingTestBase):
     """`photo_path LIKE ?` does not mean "this photo", and the difference bites.
