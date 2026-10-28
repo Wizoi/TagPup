@@ -399,6 +399,9 @@ class TheSyncCardOfARootOnAShareAsleep(unittest.TestCase):
         (library,) = reply.get_json()["libraries"]
         self.assertEqual([{"path": share, "there": False, "answering": False}],
                          [{k: root[k] for k in ("path", "there", "answering") if k in root} for root in library["roots"]])
+        (root,) = library["roots"]
+        self.assertRegex(root["away_since"] or "", r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$",
+                         "the card says since when the share has not answered")
         self.assertEqual([0.05], waits, "the root was asked through shares.bounded, once")
 
 
