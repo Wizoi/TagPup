@@ -66,8 +66,7 @@ class FakeClip:
     """CLIP, as the runtime hands it out: the photo is decoded for real (a file that does not
     decode raises as the real model's does), the vector is made from its name."""
 
-    model_name = "ViT-H-14"
-    pretrained = "laion2b_s32b_b79k"
+    model_name, pretrained = "ViT-SO400M-14-SigLIP2", "webli"
 
     def __init__(self, settings):
         self.settings = settings

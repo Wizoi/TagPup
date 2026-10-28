@@ -201,10 +201,9 @@ def vectors_check(source, rows, size, seed, report):
 
 #: docs/AI_PIPELINE.md, phase 5: `model:weights:size`, an empty size the model's own. The first is the libraries'
 #: model and size today, whose vectors the copy already holds: the baseline, embedded by nothing here. Only pairs the
-#: table of photo models holds (models_main refuses any other).
+#: table of photo models holds (models_main refuses any other); the phase's ViT-H-14 candidates left with its row
+#: (2026-10-28), and a later model is added with its row, as `--candidates` names it.
 CANDIDATES = (
-    "ViT-H-14:laion2b_s32b_b79k:512",
-    "ViT-H-14:laion2b_s32b_b79k:224",
     "ViT-SO400M-14-SigLIP2:webli:",
 )
 
