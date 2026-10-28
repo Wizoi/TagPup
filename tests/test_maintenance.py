@@ -133,6 +133,15 @@ class TheScaffold(LibraryCase):
         self.assertEqual([], self.planned)
         self.assertEqual([], self.changes())
 
+    def test_a_rehearsal_that_failed_is_said_to_have_failed(self):
+        plan, edits = self.operation(2)
+        with mock.patch.object(journal, "rehearse", side_effect=sqlite3.OperationalError("database is locked")):
+            result = maintenance.run(self.library, "test_op", plan, edits, apply=False)
+        self.assertTrue(result.errors)
+        said = maintenance.rehearsed(result)
+        self.assertIn("database is locked", said)
+        self.assertNotIn("Nothing to rehearse", said)
+
     def test_a_refused_plan_is_neither_rehearsed_nor_written(self):
         def plan(library):
             return maintenance.Plan(size=2, refused="no tree")

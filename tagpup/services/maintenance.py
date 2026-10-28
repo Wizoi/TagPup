@@ -134,6 +134,8 @@ def rehearsed(result):
     if result.details.get("behind"):
         return ("Not rehearsed: the library is behind this version by %d migration(s); the rehearsal runs "
                 "once an app has opened it." % result.details["behind"])
+    if result.errors:
+        return "NOT rehearsed, it failed: %s" % "; ".join("%s: %s" % (what, error) for what, error in result.errors)
     if not rehearsal:
         return "Nothing to rehearse."
     if rehearsal["refused"]:
