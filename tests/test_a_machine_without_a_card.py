@@ -46,7 +46,7 @@ from tagpup.store import embeddings as store_embeddings  # noqa: E402
 EXIFTOOL = own_home.installed_exiftool()
 FACES = validation.SCRFD_ADAFACE
 SIZE = (640, 480)
-DETECTOR = face_service.detector_of(NewFaces(), None)
+DETECTOR = face_service.detector_of(NewFaces())
 FACE = [300, 200, 400, 330]
 
 

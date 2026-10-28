@@ -518,8 +518,7 @@ def run_candidate(runtime, library, target, model, sample, report):
                     held.append((record, kept))
             result["held_out_without_a_current_vector"] = unvectored
             model_run = suggester.model_for_run(index, clip, runtime.faces(library, settings),
-                                                runtime.candidate_words(library),
-                                                detect_max_side=settings.detect_max_side, remember=False)
+                                                runtime.candidate_words(library), remember=False)
             truths = [own_tags(record, model_run.suggester.taxonomy, model_run.face_roots) for record, _v in held]
             scoring = time.perf_counter()
             result["held_out"] = len(held)

@@ -649,17 +649,18 @@ def _insert_detected(conn, photo_path, face, model):
                  crop=face.get("crop_image"), prob=face.get("prob"))
 
 
-def detector_of(model, max_side):
-    """The name the detections of face model `model` at cap `max_side` are recorded under (tagpup.store.faces_detected):
-    the settings the model says (its `detector`: the model's key, tagpup.ml.scrfd_adaface.ScrfdAdaFace). The one name of it, for the
+def detector_of(model):
+    """The name the detections of face model `model` are recorded under (tagpup.store.faces_detected): the settings the
+    model says (its `detector`: the model's key, tagpup.ml.scrfd_adaface.ScrfdAdaFace). The one name of it, for the
     write (the index, Suggest) and the read (Suggest's "detected before")."""
-    return faces_detected.detector(model.detector(max_side))
+    return faces_detected.detector(model.detector())
 
 
-def detector_named(faces, max_side):
+def detector_named(faces, _cap=None):
     """The name detector_of gives the face model that the library settings `faces` (LibrarySettings.faces) name, with no
-    model made: what the index asks which photos were never examined with, before it knows it has a photo to work out."""
-    return faces_detected.detector(validation.face_detector(faces, max_side))
+    model made: what the index asks which photos were never examined with, before it knows it has a photo to work out.
+    `_cap` is not read: removed with sync.py:364 once the share fix merges."""
+    return faces_detected.detector(validation.face_detector(faces["model"]))
 
 
 def ran(detected):

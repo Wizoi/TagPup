@@ -25,7 +25,7 @@ from tagpup.store import db, schema  # noqa: E402
 #: put on it in the gear.
 OTHER_PHOTO_MODEL = stand_in_models.OTHER_PHOTO_MODEL
 ON_THE_OTHER = stand_in_models.ON_THE_OTHER_PHOTO_MODEL
-#: The face models' settings of every library: the new model, alone (tagpup.services.settings.model_alone).
+#: The face models' settings of every library: the new model, alone (LibrarySettings.faces).
 FACES = {"model": validation.SCRFD_ADAFACE}
 
 
@@ -155,7 +155,7 @@ class UnloadingModel(FakeModel):
 class FakeRun:
     """What model_for_run makes, for a run: it answers from the photo index it was given."""
 
-    def __init__(self, photo_index, clip, faces, words, detect_max_side=None, remember=True):
+    def __init__(self, photo_index, clip, faces, words, remember=True):
         self.photo_index, self.clip, self.faces = photo_index, clip, faces
         self.model_key = photo_index.model
         self.answered, self.failed = [], []

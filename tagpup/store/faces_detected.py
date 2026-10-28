@@ -37,7 +37,7 @@ TIME = "%Y-%m-%d %H:%M:%S"
 
 
 def detector(settings):
-    """The name a detector is kept under: its settings ({"min_face_size", ...}), as JSON
+    """The name a detector is kept under: its settings ({"model": its key}), as JSON
     with sorted keys."""
     return json.dumps(settings, sort_keys=True)
 

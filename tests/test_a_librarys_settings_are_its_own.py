@@ -141,7 +141,7 @@ class TheGearDialog(unittest.TestCase):
             with self.subTest(app=kind):
                 if library is None:
                     library = Library(tagpup[1].library("library.db"))
-                settings.change(library, {"faces.min_face_size": "40"}, acknowledged=["faces"])
+                settings.change(library, {"paths.exiftool": "C:/Tools/exiftool.exe"}, acknowledged=["exiftool"])
                 answer = client.get("/library/api/settings").get_json()
                 shown = {s["key"]: s for group in answer["groups"] for s in group["settings"]}
                 # Each app's gear shows its own features' settings (owner, 2026-09-25).
@@ -152,10 +152,10 @@ class TheGearDialog(unittest.TestCase):
                         self.assertEqual(shown[key][field], validation.SETTINGS[key][field], (key, field))
                 groups = {g["name"]: g for g in answer["groups"]}
                 if kind == "tuner":
-                    self.assertEqual("40", shown["faces.min_face_size"]["value"])
-                    self.assertEqual({"clip", "face-model", "faces", "exiftool", "library"}, set(groups))
+                    self.assertEqual("C:/Tools/exiftool.exe", shown["paths.exiftool"]["value"])
+                    self.assertEqual({"clip", "face-model", "exiftool", "library"}, set(groups))
                     # The library's folders change nothing already made: not locked.
-                    self.assertEqual({"clip", "face-model", "faces", "exiftool"},
+                    self.assertEqual({"clip", "face-model", "exiftool"},
                                      {name for name, g in groups.items() if g["locked"]})
                 else:
                     self.assertEqual({"suggest", "renaming"}, set(groups))
@@ -191,15 +191,15 @@ class WhatEachLibraryHolds(unittest.TestCase):
         settings.change(partial, {"candidates.tags": "Kayak"})
         conn = db.connect(partial.path)
         try:
-            conn.execute("DELETE FROM settings WHERE key IN ('renaming.format', 'faces.min_face_size')")
+            conn.execute("DELETE FROM settings WHERE key IN ('renaming.format', 'paths.exiftool')")
             conn.commit()
         finally:
             conn.close()
         before = history(partial)
         for read in (runtimes.library_settings, runtimes.peek_settings):
             found = read(partial)
-            self.assertEqual(("Kayak", settings.DEFAULTS["renaming.format"], settings.DEFAULTS["faces.min_face_size"], True),
-                             (found["candidates.tags"], found["renaming.format"], found["faces.min_face_size"], found.stamped))
+            self.assertEqual(("Kayak", settings.DEFAULTS["renaming.format"], settings.DEFAULTS["paths.exiftool"], True),
+                             (found["candidates.tags"], found["renaming.format"], found["paths.exiftool"], found.stamped))
         self.assertEqual((before, False), (history(partial), "renaming.format" in rows(partial)))
         # Stamped meanwhile by another process: left as it is.
         self.assertEqual(0, settings.stamp(whole, {"model.name": "ViT-B-32"}).changed)
@@ -218,10 +218,8 @@ class WhatEachLibraryHolds(unittest.TestCase):
 
     # What the validator says, in its words; each refusal writes nothing and is not journaled.
     CASES = [
-        ({"faces.min_face_size": "twenty"}, "The smallest face is a whole number of pixels."),
-        ({"faces.min_face_size": "0"}, "The smallest face must be between 1 and 2000."),
-        ({"faces.confidence_threshold": "1.5"}, "The confidence must be between 0 and 1."),
-        ({"faces.mtcnn_thresholds": "0.6, 0.7"}, "Face detection takes three thresholds, one for each stage."),
+        ({"model.force_image_size": "twenty"}, "The image size is a whole number of pixels."),
+        ({"model.force_image_size": "16"}, "The image size must be between 32 and 2048."),
         ({"model.preserve_full_frame": "maybe"}, "Keep the full frame is true or false."),
         ({"model.max_aspect_ratio": "9"}, "The widest aspect ratio must be between 1 and 4."),
         ({"model.name": " "}, "The photo model cannot be empty."),
@@ -233,7 +231,7 @@ class WhatEachLibraryHolds(unittest.TestCase):
          "ExifTool's path cannot contain a tab, a line break or another control character."),
         ({"paths.data_dir": "elsewhere"}, "There is no setting called paths.data_dir."),
         ({}, "Say which settings to change."),
-        ({"renaming.format": "{index}", "faces.min_face_size": "-1"}, "The smallest face must be between 1 and 2000."),
+        ({"renaming.format": "{index}", "model.max_aspect_ratio": "-1"}, "The widest aspect ratio must be between 1 and 4."),
     ]
 
     def test_each_refusal_says_why_in_the_validators_words_and_writes_nothing(self):
@@ -245,17 +243,19 @@ class WhatEachLibraryHolds(unittest.TestCase):
                 self.assertEqual((message, 0), (result.refused, result.changed))
         self.assertEqual((settings.STAMPED, 1), (rows(library), len(history(library))))
         # Locked groups: each is named until acknowledged, a name that is no group is refused, an unchanged one needs nothing.
-        result = settings.change(library, {"model.preserve_full_frame": False, "faces.min_face_size": "40", "candidates.tags": "Kayak"})
-        self.assertEqual(["clip", "faces"], [g["group"] for g in result.details["unacknowledged"]])
-        partly = settings.change(library, {"model.preserve_full_frame": False, "faces.min_face_size": "40"}, acknowledged=["clip"])
-        self.assertEqual(["faces"], [g["group"] for g in partly.details["unacknowledged"]])
+        result = settings.change(library, {"model.preserve_full_frame": False, "paths.exiftool": "C:/Tools/exiftool.exe",
+                                           "candidates.tags": "Kayak"})
+        self.assertEqual(["clip", "exiftool"], [g["group"] for g in result.details["unacknowledged"]])
+        partly = settings.change(library, {"model.preserve_full_frame": False, "paths.exiftool": "C:/Tools/exiftool.exe"},
+                                 acknowledged=["clip"])
+        self.assertEqual(["exiftool"], [g["group"] for g in partly.details["unacknowledged"]])
         unknown = settings.change(library, {"model.preserve_full_frame": False}, acknowledged=["clip", "everything"])
         self.assertEqual("There is no group of settings called everything to acknowledge.", unknown.refused)
         self.assertEqual(1, settings.change(library, {"candidates.tags": "Kayak", "model.name": settings.DEFAULTS["model.name"]}).changed)
         self.assertEqual(2, len(history(library)), "the stamp and that one change")
         never = Library(self.home.library("never.db"))
         schema.ensure(never.path)
-        self.assertIn("not been stamped", settings.change(never, {"faces.min_face_size": "40"}).refused)
+        self.assertIn("not been stamped", settings.change(never, {"renaming.format": "{index}"}).refused)
 
     def test_a_reset_names_its_stamp_for_the_library_it_replaced(self):
         from click.testing import CliRunner

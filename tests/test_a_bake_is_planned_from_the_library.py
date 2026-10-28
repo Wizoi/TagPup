@@ -34,7 +34,7 @@ from tagpup.store import roots as store_roots  # noqa: E402
 
 FACES = validation.SCRFD_ADAFACE
 #: The library's detector, and one that ran before it (MTCNN's settings).
-DETECTOR = face_service.detector_of(NewFaces(), None)
+DETECTOR = face_service.detector_of(NewFaces())
 OLD_DETECTOR = faces_detected.detector({"min_face_size": 20, "max_side": 1600})
 #: The floor of a baked face, as the library has it (the other tests lower it: their pictures are 16 x 12).
 THE_FLOOR = images.NEW_FACE_FLOOR

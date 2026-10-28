@@ -186,7 +186,7 @@ export function choicesOf(kind) {
 
 /**
  * Why `value` cannot be set as a `kind` ("tag", "name", "caption", "library name",
- * "grouping", "folder", "time shift", "setting faces.min_face_size", ...), or null if
+ * "grouping", "folder", "time shift", "setting renaming.format", ...), or null if
  * it can -- or if the rules have not arrived yet.
  */
 export function ruleProblem(kind, value) {

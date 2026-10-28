@@ -227,7 +227,7 @@ class TwoLibrariesAdoptEachOthersBake(unittest.TestCase):
             conn.close()
 
     def current_in(self, name, path):
-        return baked_files.plan(self.libraries[name], path, face_service.detector_of(NewFaces(), None))
+        return baked_files.plan(self.libraries[name], path, face_service.detector_of(NewFaces()))
 
     def stamps(self, *photo_paths):
         return {path: os.stat(path).st_mtime_ns for path in photo_paths}

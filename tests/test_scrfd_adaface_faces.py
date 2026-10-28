@@ -93,7 +93,7 @@ class TheNewFaceModel(unittest.TestCase):
         both_1280 = ((1004, 404, 1196, 596), 0.88)
         edge = ((2480, 1200, 2592, 1312), 0.6)      # half outside the photo: clamped to it
         model = self.model(at_640=[large, both_640], at_1280=[small, noise, both_1280, edge])
-        faces = model.detect_and_embed(model.picture(self.photo("wide.jpg"), max_side=None))
+        faces = model.detect_and_embed(model.picture(self.photo("wide.jpg")))
 
         self.assertNotIsInstance(faces, NotDetected)
         self.assertEqual([0.93, 0.88, 0.81, 0.6], [round(face["prob"], 2) for face in faces])
@@ -113,7 +113,7 @@ class TheNewFaceModel(unittest.TestCase):
     def test_a_photo_with_no_face_is_found_to_have_none(self):
         model = self.model()
         model.recogniser = mock.Mock(side_effect=AssertionError("no face to make a vector of"))
-        faces = model.detect_and_embed_faces(self.photo("empty.jpg"), max_side=None)
+        faces = model.detect_and_embed_faces(self.photo("empty.jpg"))
         self.assertEqual([], faces)
         self.assertNotIsInstance(faces, NotDetected)   # "none found" is recorded; "not detected" is tried again
 
@@ -123,7 +123,7 @@ class TheNewFaceModel(unittest.TestCase):
             handle.write(b"not a picture at all")
         model = ScrfdAdaFace(device="cpu", folder=self.weights)   # no weights: a load would raise
         for path in (broken, os.path.join(self.folder, "gone.jpg")):
-            found = model.detect_and_embed_faces(path, max_side=None)
+            found = model.detect_and_embed_faces(path)
             self.assertIsInstance(found, NotDetected)
             self.assertTrue(found.failed)
         self.assertFalse(model.loaded())
@@ -131,7 +131,7 @@ class TheNewFaceModel(unittest.TestCase):
     def test_a_model_failing_part_way_is_not_detected(self):
         model = self.model()
         model.detectors[1280] = mock.Mock(side_effect=RuntimeError("CUDA out of memory"))
-        self.assertIsInstance(model.detect_and_embed_faces(self.photo("one.jpg"), max_side=None), NotDetected)
+        self.assertIsInstance(model.detect_and_embed_faces(self.photo("one.jpg")), NotDetected)
 
     def test_weights_never_made_are_named_with_how_to_make_them(self):
         model = ScrfdAdaFace(device="cpu", folder=self.weights)

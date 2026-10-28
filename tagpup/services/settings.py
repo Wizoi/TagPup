@@ -2,7 +2,7 @@
 (docs/ARCHITECTURE.md, phase 7.6).
 
 They lived in config.ini, one file for the machine (no longer read, by anything), which nothing in the pages showed:
-the CLIP model a library's vectors were made with, the face-detection thresholds,
+the CLIP model a library's vectors were made with, the face detector's thresholds,
 Suggest's candidate words, the rename format and the ExifTool program. A library opened
 on another machine, or with the file edited, was read with settings it was not made
 with, and nothing said so. Now each library holds its own (tagpup.store.settings), and
@@ -17,7 +17,7 @@ this is their one owner:
 - `change` writes the ones asked, as a journaled change, so each is in the library's
   history and can be undone (tagpup.services.journal) -- refused, with nothing written,
   when a value is not one the validator allows, or when it changes a locked setting
-  (the CLIP model, face detection, ExifTool) whose group the caller does not name as
+  (the photo model, the face model, ExifTool) whose group the caller does not name as
   acknowledged. The lock is here, not in the page: a script, the CLI or a tool that set
   model.name unasked left Suggest finding nothing among vectors made with the old model.
 - A stamp is a library's first settings: undoing one is refused (STAMPS;
@@ -194,13 +194,6 @@ def undo_check(conn, change_id, _operation, _summary):
     return photo_switch_on(conn, store_settings.held_on(conn), putting)[0]
 
 
-def model_alone(model):
-    """The face models' settings (LibrarySettings.faces) of `model`, a model that takes none of MTCNN's arguments
-    (tagpup.ml.scrfd_adaface): `model` alone. The one maker of them, so every library on it names one set, and
-    shares one model built."""
-    return {"model": model}
-
-
 def _trim(text):
     """Trimmed as the validator trims (tagpup.core.validation.BLANK): a value it allowed
     parses here."""
@@ -236,27 +229,15 @@ class LibrarySettings:
 
     @property
     def faces(self):
-        """The face models' settings, what one set of face models is told apart by (tagpup.runtime): `model`
-        (faces.model) and, for MTCNN and FaceNet, the keyword arguments of the model deleted 2026-10-28; the other model
-        (tagpup.ml.scrfd_adaface) takes none of MTCNN's, so it is `model` alone. The cap a detection looks at is not one
-        of them: detect_max_side."""
-        model = _trim(self.values["faces.model"])
-        if model != validation.MTCNN_FACENET:
-            return model_alone(model)
-        return {
-            "model": model,
-            "min_face_size": int(_trim(self.values["faces.min_face_size"])),
-            "confidence_threshold": _float(self.values["faces.confidence_threshold"]),
-            "mtcnn_thresholds": [_float(x) for x in self.values["faces.mtcnn_thresholds"].split(",")],
-        }
+        """The face model's settings, what one set of face models is told apart by (tagpup.runtime): `model`
+        (faces.model) alone, the one face model (tagpup.ml.scrfd_adaface) taking no other."""
+        return {"model": _trim(self.values["faces.model"])}
 
     @property
     def detect_max_side(self):
-        """The longest side of the picture the face detector looks at (faces.detect_max_side), or None when the library
-        sets no cap (the default): an argument of each detection (ScrfdAdaFace.detect_and_embed_faces, which does not use it),
-        so libraries differing only in it share one set of face models (docs/AI_PIPELINE.md, phase 1a)."""
-        cap = _trim(self.values["faces.detect_max_side"])
-        return int(cap) if cap else None
+        """None: the old detector's cap is deleted with it (2026-10-28). Removed with sync.py:364 once the share fix
+        merges."""
+        return None
 
     @property
     def candidate_words(self):
@@ -433,7 +414,7 @@ def change(library, values, acknowledged=(), apply=True):
     that is no setting, a value the validator refuses (its message), a library never
     stamped, or a setting changed by someone else since it was read -- and for a change
     to a locked setting whose group (validation.SETTING_GROUPS: "clip", "face-model",
-    "faces", "exiftool") `acknowledged` does not name: the refusal lists each such group and what
+    "exiftool") `acknowledged` does not name: the refusal lists each such group and what
     changing it means, and details["unacknowledged"] holds them. A face model other than the one
     (validation.FACE_MODELS: FaceNet among them) is refused by its rule's sentence; so is a switch of photo model
     (PHOTO_MODEL) more than UNPASSED_SHARE_ALLOWED of whose photos hold no vector under its new key, or one forcing an

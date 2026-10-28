@@ -174,7 +174,7 @@ class _CudaClip:
 class _CudaFaces(stand_in_models.Faces):
     device = "cuda"
 
-    def detect_and_embed_faces(self, path, *, max_side):
+    def detect_and_embed_faces(self, path):
         return []
 
 

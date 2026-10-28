@@ -102,7 +102,7 @@ LIVE_PHOTO_KEY = "ViT-SO400M-14-SigLIP2|webli|full-frame|1.4|native"
 LIVE_FACE_MODEL = "scrfd-adaface"
 SIZE = (640, 480)
 #: The detector the stand-in face model's detections are recorded under.
-DETECTOR = face_service.detector_of(NewFaces(), None)
+DETECTOR = face_service.detector_of(NewFaces())
 
 
 def _faces(found=None, kill_at=None):

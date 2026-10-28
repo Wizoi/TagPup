@@ -59,7 +59,7 @@ class StandInFaces(stand_in_models.Faces):
     def ready(self):
         """The run's turn on the graphics card: nothing to wait for here."""
 
-    def detect_and_embed_faces(self, path, *, max_side):
+    def detect_and_embed_faces(self, path):
         raise AssertionError("the photo's faces are on file: nothing is detected")
 
 

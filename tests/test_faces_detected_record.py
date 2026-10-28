@@ -59,17 +59,9 @@ class FaceModel(stand_in_models.Faces):
     def ready(self):
         self.readied += 1
 
-    def detect_and_embed_faces(self, path, *, max_side):
+    def detect_and_embed_faces(self, path):
         self.detected += 1
         return []
-
-
-class TheOldDetector(FaceModel):
-    """MTCNN, as the faces_detected rows it left are spelled: its settings (kr-track and renton_parkrun still hold 175
-    and 139 such rows, unread, counted read-only 2026-10-25)."""
-
-    def detector(self, max_side):
-        return {"confidence_threshold": 0.85, "min_face_size": 20, "mtcnn_thresholds": [0.6, 0.7, 0.7]}
 
 
 class Case(unittest.TestCase):
@@ -99,14 +91,14 @@ class Case(unittest.TestCase):
         """Record a detection as the indexer does, at the end of a batch."""
         conn = db.connect(self.db_path)
         try:
-            face_records.record_batch(conn, {self.photo: found}, detector=face_records.detector_of(model, None), model=FACE_MODEL)
+            face_records.record_batch(conn, {self.photo: found}, detector=face_records.detector_of(model), model=FACE_MODEL)
         finally:
             conn.close()
 
     def recorded(self, model):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
-            return faces_detected.detected(conn, self.photo, face_records.detector_of(model, None))
+            return faces_detected.detected(conn, self.photo, face_records.detector_of(model))
         finally:
             conn.close()
 
@@ -126,12 +118,6 @@ class AFacelessPhotoTheIndexRead(Case):
         self.assertTrue(self.recorded(model))
         self.suggest(model)
         self.assertEqual((0, 0), (model.readied, model.detected), "Suggest took the card for a photo already detected")
-
-    def test_a_photo_recorded_by_the_old_detector_is_detected_again(self):
-        self.index_detects(TheOldDetector(), [])
-        model = FaceModel()
-        self.suggest(model)
-        self.assertEqual((1, 1), (model.readied, model.detected))
 
     def test_a_detection_that_failed_is_not_recorded(self):
         model = FaceModel()

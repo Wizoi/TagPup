@@ -340,7 +340,7 @@ class TheRuntimesTurns(_Folder):
             self.used += 1
             return [0.0]
 
-        def picture(self, path, *, max_side):
+        def picture(self, path):
             return path
 
         def detect_and_embed(self, picture):
@@ -367,7 +367,7 @@ class TheRuntimesTurns(_Folder):
         card, faces = self.card(), self.Model()
         turn = runtimes._RunTurn(card, "Suggest Harbour Wall (harbour)", (faces,))
         proxy = runtimes._OnTheCard(faces, turn)
-        picture = proxy.picture("quay.jpg", max_side=None)
+        picture = proxy.picture("quay.jpg")
         self.assertFalse(card.holds(), "a picture made ready took the card")
         proxy.detect_and_embed(picture)
         self.assertTrue(card.holds())

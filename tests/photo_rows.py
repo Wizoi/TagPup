@@ -54,7 +54,7 @@ def add_indexed(conn, photo_path, fields, people=None):
     photo_id = add_read(conn, photo_path, fields, people)
     held = settings.on(conn)
     embeddings.put(conn, photo_path, settings.photo_key_on(conn), record["mtime"], record["size"], VECTOR, None)
-    faces_detected.record(conn, photo_path, faces.detector_named(held.faces, held.detect_max_side),
+    faces_detected.record(conn, photo_path, faces.detector_named(held.faces),
                           (record["mtime"], record["size"]), 0)
     return photo_id
 

@@ -669,7 +669,7 @@ class ABakeOnAShareSlowToWake(unittest.TestCase):
             self.photos.append(os.path.join(self.folder, name))
             Image.new("RGB", (640, 480), colour).save(self.photos[-1], "JPEG")
         detector = RefusableFaces({"a.jpg": [([300, 200, 400, 330], 0.99, 1)]}, vector=baked_files.face_vector)
-        self.detector = face_service.detector_of(NewFaces(), None)
+        self.detector = face_service.detector_of(NewFaces())
         vector = baked_files.unit(1152, 99).tolist()
         with mock.patch.object(clip.ClipModel, "_init_model"), \
                 mock.patch.object(clip.ClipModel, "picture_input", return_value="input"), \

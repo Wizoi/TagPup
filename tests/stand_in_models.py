@@ -49,18 +49,17 @@ class Faces:
         """Every weight file is there."""
         return None
 
-    def picture(self, path, *, max_side):
+    def picture(self, path):
         """The processor's half, as the CLI's index asks it (the model's `picture`): what the test's
         detect_and_embed_faces is handed then."""
-        return path, max_side
+        return path
 
-    def picture_bytes(self, width, height, *, max_side):
+    def picture_bytes(self, width, height):
         """What the processor's half holds, as the read-ahead asks it: nothing decoded here."""
         return 0
 
     def detect_and_embed(self, picture):
-        path, max_side = picture
-        return self.detect_and_embed_faces(path, max_side=max_side)
+        return self.detect_and_embed_faces(picture)
 
 
 class NewFaces:
@@ -96,11 +95,11 @@ class NewFaces:
         return [v / length for v in values]
 
     @staticmethod
-    def picture_bytes(width, height, *, max_side):
+    def picture_bytes(width, height):
         """What the read-ahead reserves for the picture: the decoded RGB."""
         return 3 * width * height
 
-    def picture(self, path, *, max_side):
+    def picture(self, path):
         from tagpup.files import images
         from tagpup.ml.scrfd_adaface import NotDetected
         try:
@@ -135,11 +134,11 @@ class RefusableFaces(NewFaces):
         if vector is not None:
             self.vector = vector
 
-    def picture(self, path, *, max_side):
+    def picture(self, path):
         from tagpup.ml.scrfd_adaface import NotDetected
         if os.path.basename(path) in self.undecodable:
             return NotDetected()
-        return super().picture(path, max_side=max_side)
+        return super().picture(path)
 
     def detect_and_embed(self, picture):
         if self.refused:
@@ -178,4 +177,4 @@ class Clip:
 
 def run_for(photo_index, faces, dim, words=()):
     """What a Suggest run over `photo_index` is handed (model_for_run), CLIP stood in for and `faces` the face model."""
-    return suggester.model_for_run(photo_index, Clip(dim), faces, list(words), detect_max_side=None)
+    return suggester.model_for_run(photo_index, Clip(dim), faces, list(words))
