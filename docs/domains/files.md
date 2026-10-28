@@ -70,6 +70,9 @@ exceptions, each unjournaled by decision:
 
 - `tagpup/files/shares.py` is the one owner of a share being away and back: `away_since` (when it stopped answering),
   `on_back` (a callback on the look that hears it answer), `wait_back` (the one patient wait, up to a time or a stop).
+- Every look at a photo or its folder is shares': `stamp_of`, `there`, `known_stamp`, `folder_state`; `shares.listing` is
+  the listing every walk makes; `read_stamp` a reader's own stamp. The pages and jobs look through `services.photos`
+  (`file_stamp`, `folder_state`, `subfolders`), which they may import (`tests/test_photo_looks_have_one_owner.py`).
 - The catch-up sync (`sync._scan`) waits once for a root's share, up to `FOLDER_WAIT`; a root still away is not looked
   at, and nothing under it is called missing.
 - The watcher resumes a share within a tick of its being heard back (`watching._heard_back`); its 30 s `RECHECK` is the
