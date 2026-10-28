@@ -88,6 +88,8 @@ class ANewLibrary(unittest.TestCase):
             # names its parent's id without one, by journal.UNLINKED.
             parents = [row[2] for row in self.foreign[table] if row[3] == key[0] and row[4] == "id"]
             if table in journal.UNLINKED:
+                # Said to have no foreign key: it has none, so the constant cannot lie beside a real one.
+                self.assertEqual([], parents, "%s is in journal.UNLINKED but has a foreign key to its parent" % table)
                 parents = [journal.UNLINKED[table]]
             self.assertTrue(parents and all(self.autoincrement(p) for p in parents),
                             "%s is keyed by %s, which SQLite may hand out again" % (table, key[0]))

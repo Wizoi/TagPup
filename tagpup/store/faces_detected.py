@@ -22,8 +22,8 @@ Suggest makes vectors of photos it never detected faces in).
 
 No foreign key and no trigger -- a row whose photo is gone is read as
 none, a photo's id never being handed out again -- so deleting a photo takes nothing the
-journal must account for; not journaled when written, as indexing is not. A change that deletes rows records them
-(tagpup.store.journal.KEYS: the old detector's rows, tagpup.services.old_detector_rows), so its undo puts them back.
+journal must account for; not journaled when written, as indexing is not. The one change that deleted rows (the old
+detector's, tagpup.services.journal.RETIRED) recorded them (tagpup.store.journal.KEYS), so its undo puts them back.
 """
 import json
 import time
@@ -40,22 +40,6 @@ def detector(settings):
     """The name a detector is kept under: its settings ({"min_face_size", ...}), as JSON
     with sorted keys."""
     return json.dumps(settings, sort_keys=True)
-
-
-def detectors(conn):
-    """{detector name: rows recorded under it} of the library on `conn`: one scan of the table (one row a photo)."""
-    return dict(conn.execute("SELECT detector, COUNT(*) FROM faces_detected GROUP BY detector"))
-
-
-def rows_under(conn, names):
-    """{photo id: the row as stored, by column} of the rows recorded under any detector of `names`, in photo id order."""
-    names = sorted(names)
-    if not names:
-        return {}
-    cursor = conn.execute("SELECT photo_id, detector, mtime, size, found, at FROM faces_detected WHERE detector IN (%s)"
-                          " ORDER BY photo_id" % ",".join("?" * len(names)), names)
-    columns = [column[0] for column in cursor.description]
-    return {row[0]: dict(zip(columns[1:], row[1:])) for row in cursor}
 
 
 def record(conn, photo_path, name, stamp, found, now=None):
