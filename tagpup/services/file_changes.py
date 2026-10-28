@@ -491,9 +491,11 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.fail(path, why)
             if outcome == "conflict":
                 result.details["conflicts"].append(row.named())
-            elif row.read_only:
+                continue
+            if row.read_only:
+                # Told apart, and an error all the same: a run that stops at its first error stops here too.
                 result.details.setdefault("read_only", []).append(path)
-            elif stop_at_first_error:
+            if stop_at_first_error:
                 file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
                 break
         for row in _read_back(et, library, wrote, read_whole):
