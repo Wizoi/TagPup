@@ -107,10 +107,7 @@ UNDO_CHECKS = {
     "smart rename: original names": None,
     "time shift": None,
     "rotate": None,
-    "refresh_rows": None,
-    "dedupe_faces": None,
     "faces_from_tags": None,
-    "merge_duplicate_person_tags": None,
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
 UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.values()})
@@ -131,6 +128,13 @@ RETIRED = {
     "delete old detector rows (mtcnn)": ("change %(change)d (%(operation)s): the old detector's settings and detection "
                                          "records it deleted are not put back: the old detector and its settings are "
                                          "deleted, and no library is on it"),
+    # The maintenance operations deleted with the MCP server's write tools (DECISIONS 2026-10-28, THE MCP SERVER ONLY
+    # READS), counted read-only 2026-10-28: a merge of bare person tags into their People paths, photo_index change 1, and
+    # a refresh of rows from their files, kr-track change 2, each applied. The journal's account is the whole of either
+    # way back (the tree's nodes put back; each row put back only while it holds what the refresh wrote). dedupe_faces
+    # was never applied in any library: a name no table knows gets the journal's account alone, which is what it had.
+    "merge_duplicate_person_tags": None,
+    "refresh_rows": None,
     # The roots' adoption of a folder and repair of a root's address: 1 adopt in each library, 1 repair in renton_parkrun.
     "roots adopt: %s": None,
     "roots repair-address: %s": None,

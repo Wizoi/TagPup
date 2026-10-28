@@ -1,32 +1,21 @@
-"""Re-read the photos whose index rows no longer describe their files, and record them.
+"""Re-read a photo's file and record what it holds in its row: what sync (tagpup.services.sync) does with a
+row whose stamp no longer describes its file, and the CLI with the photos an identity was given.
 
-A row goes stale when its file changed under it and the indexer did not notice: a bulk
-keyword write that left mtime and size as they were, a row Suggest made from a path alone
-(no mtime, no size). This finds the rows whose mtime or size differ from the file's, reads
-those files the way the indexer does, and records what they hold: tags, people, captions, raw_metadata, mtime, size, and the DocumentID where the
-row has none. The files are only read, never written (no DocumentID is minted); embeddings
-and faces are untouched. A photo whose people are not what its keywords and faces make them
-is the doctor's (`people_out_of_date`, people.stale; --rebuild-derived rebuilds them): no file
-needs reading for it.
+A row goes stale when its file changed under it and the indexer did not notice: another program's keyword write, an
+edit. `reread` reads those files the way the indexer does and says which rows differ; `edits_for` makes the change
+that records what they hold: tags, people, captions, raw_metadata, mtime, size, and the DocumentID where the row has
+none. The files are only read, never written (no DocumentID is minted); embeddings and faces are untouched.
 
-Rows that show other signs -- text decoded as cp1252, tags that disagree with the keywords
-in raw_metadata, a row no read ever made, a caption listed twice -- are not looked for
-here: none exists in the three libraries (counted 2026-10-10), and if one appears the owner
-fixes it by hand (the doctor does not look for these; its checks are in tagpup.store.checks).
-
-`refresh_rows` runs on the maintenance scaffold (tagpup.services.maintenance).
-No entry point runs it since the MCP server's write tools were deleted (2026-10-28): only its tests do.
-`sync` reads a changed file's row again through `reread` and `edits_for`. Planning reads the files, so
-a dry run takes as long as the reading.
+The refresh that planned this over a whole library (`refresh_rows`, the MCP server's tool) is deleted with the server's
+write tools (DECISIONS 2026-10-28, THE MCP SERVER ONLY READS); kr-track's journal holds the one it applied, which still
+undoes (tagpup.services.journal.RETIRED).
 """
 import json
 from collections import Counter
 
 from tagpup.core.vocabulary import people_in_photo
-from tagpup.files import shares
 from tagpup.files.metadata import MetadataExtractor
-from tagpup.services import maintenance
-from tagpup.store import db, journal
+from tagpup.store import journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
 from tagpup.store import taxonomy as store_taxonomy
@@ -35,42 +24,7 @@ from tagpup.store import taxonomy as store_taxonomy
 BATCH = 200
 
 
-def why_stale(row):
-    """The reasons a row may not describe its file, [] if it looks right, or None if its
-    file is gone."""
-    path, mtime, size = row[:3]
-    stamp = shares.known_stamp(path)
-    if stamp is None:
-        return None   # file gone, or its share not answering: a job for sync, not this
-    return [] if store_photos.describes(mtime, size, stamp) else ["mtime/size"]
-
-
-def find_stale(conn, folder=None, seen=None, ids=None, found=None):
-    """{path as stored: the reasons its row may not describe its file} of the rows whose file must
-    be re-read, of the library open on `conn`.
-
-    `seen`, if given, is filled with each stale row's (mtime, size) as found here --
-    before any file is read. `found`, if given, with each named row's columns as found
-    here: {"mtime", "size", "tags", "captions", "raw_metadata"}, what the write checks
-    the row still has. `ids`, if given, is filled with the id of each row either kind
-    names.
-    """
-    stale = {}
-    for row in store_photos.rows_to_check(conn, folder):
-        reasons = why_stale(row[:6])
-        if reasons:
-            stale[row[0]] = reasons   # re-reading the file fixes its captions too
-            if seen is not None:
-                seen[row[0]] = (row[1], row[2])
-            if found is not None:
-                found[row[0]] = {"mtime": row[1], "size": row[2], "tags": row[3], "captions": row[4],
-                                 "raw_metadata": row[5]}
-            if ids is not None:
-                ids[row[0]] = row[6]
-    return stale
-
-
-def read_files(conn, photo_paths, exiftool_path, progress=None):
+def read_files(conn, photo_paths, exiftool_path):
     """{path: what its file holds}, read the way the indexer reads, of the library open
     on `conn`. Files are only read: no DocumentID is minted.
 
@@ -89,8 +43,6 @@ def read_files(conn, photo_paths, exiftool_path, progress=None):
             # keywords, and would take off everyone identified by face.
             record["people"] = people_in_photo(record["tags"], store_faces.face_refs(record["path"], conn=conn), known)
             records[record["path"]] = record
-        if progress is not None:
-            progress("read", {"done": min(start + BATCH, len(photo_paths)), "total": len(photo_paths)})
     return records
 
 
@@ -115,59 +67,27 @@ def differences(conn, path, record, stored=None):
     return changed, json.loads(captions or "[]"), (mtime, size)
 
 
-def reread(conn, stale, exiftool_path, examples=0, progress=None):
+def reread(conn, stale, exiftool_path):
     """What the files of the rows named in `stale` (paths as stored) hold, against their
     rows, on `conn`: (records, {path: what its file holds}; to_write, the paths whose row
     differs; fields, a Counter of the fields that differ; unreadable, the paths whose file
-    could not be read; shown, up to `examples` (path, old captions, new captions);
-    identities, {path: the row's document_id} of those to write). Reads the files; writes
-    nothing. The refresh's and sync's (tagpup.services.sync) one reading of stale rows."""
-    records, to_write, fields, unreadable, shown, identities = {}, [], Counter(), [], [], {}
+    could not be read; identities, {path: the row's document_id} of those to write). Reads
+    the files; writes nothing. Sync's (tagpup.services.sync) one reading of changed rows."""
+    records, to_write, fields, unreadable, identities = {}, [], Counter(), [], {}
     if stale:
-        records = read_files(conn, sorted(stale), exiftool_path, progress)
+        records = read_files(conn, sorted(stale), exiftool_path)
     for path in sorted(stale):
         record = records.get(path)
         if record is None or not record.get("raw_metadata"):
             unreadable.append(path)
             continue
         stored = store_photos.row_as_recorded(conn, path)
-        changed, old_captions, _now = differences(conn, path, record, stored)
+        changed, _old_captions, _now = differences(conn, path, record, stored)
         if changed:
             to_write.append(path)
             identities[path] = stored[6]
             fields.update(changed)
-            if "captions" in changed and len(shown) < examples:
-                shown.append((path, old_captions, record["captions"]))
-    return records, to_write, fields, unreadable, shown, identities
-
-
-def _planner(exiftool_path, folder, examples, progress):
-    def plan(library):
-        ids, found = {}, {}
-        conn = db.connect(db.readonly_uri(library.path), uri=True)
-        try:
-            stale = find_stale(conn, folder, ids=ids, found=found)
-            reasons = dict(Counter(r for rs in stale.values() for r in rs).most_common())
-            if progress is not None:
-                progress("found", {"stale": len(stale), "reasons": reasons})
-            records, to_write, fields, unreadable, shown, identities = reread(
-                conn, stale, exiftool_path, examples, progress)
-        finally:
-            conn.close()
-        return maintenance.Plan(
-            size=len(to_write),
-            counts={"stale": len(stale), "reasons": reasons,
-                    "to_write": len(to_write), "fields": dict(fields.most_common()),
-                    "unreadable": len(unreadable)},
-            ids={"stale": [ids[p] for p in sorted(stale)], "to_write": [ids[p] for p in to_write],
-                 "unreadable": [ids[p] for p in unreadable]},
-            reveal={"examples": shown},
-            work=(records, to_write, found, identities, ids))
-    return plan
-
-
-def _edits(planned):
-    return edits_for(*planned.work)
+    return records, to_write, fields, unreadable, identities
 
 
 def edits_for(records, to_write, found, identities, ids):
@@ -180,7 +100,7 @@ def edits_for(records, to_write, found, identities, ids):
     something newer, and writing the older read over it would take the save back. That
     row is skipped (the edits are skippable) and reported, and the rest are written: the
     rows do not depend on each other, and refusing the whole change for one save threw
-    away minutes of reading, on a library in use perhaps every time. The next run reads
+    away minutes of reading, on a library in use perhaps every time. The next sync reads
     the skipped row again. The DocumentID is recorded only where the row has none, as the
     indexer does.
     """
@@ -196,20 +116,3 @@ def edits_for(records, to_write, found, identities, ids):
             expect["document_id"] = None
         edits.append(journal.update("photos", (ids[path],), expect, values, kind="from_files", skippable=True))
     return edits
-
-
-def refresh_rows(library, exiftool_path, apply=False, folder=None, examples=5, progress=None):
-    """Plan, and with `apply` make, the refresh of every row of `library` (or of those
-    under `folder`) that no longer describes its file, reading the files with ExifTool at
-    `exiftool_path`. A Result, on the maintenance scaffold: `changed` is rows changed,
-    from their files (details["changed"]["from_files"]). Applied
-    as one change of the journal, undoable, of the rows written; a row changed after this
-    run read it is left as it is and listed in `skipped`.
-
-    `examples` caps the captions shown under details["reveal"]["examples"]. `progress`,
-    if given, is called progress(stage, counts): "found" once the rows are sorted, with
-    counts of what was found, then "read" after each batch of files, with "done" and
-    "total".
-    """
-    return maintenance.run(library, "refresh_rows", _planner(exiftool_path, folder, examples, progress),
-                           _edits, apply=apply, kinds=("from_files",))

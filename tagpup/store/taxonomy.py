@@ -353,11 +353,6 @@ def tags(conn):
     return [tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy") if tag]
 
 
-def node_ids(conn):
-    """{tag: id} of every node."""
-    return {tag: node_id for node_id, tag in conn.execute("SELECT id, tag FROM tag_taxonomy") if tag}
-
-
 def _release(conn, ids, force):
     """Before nodes `ids` go: the faces that name any of them. None, nothing to do; else PersonInUse unless `force`, which
     unnames those faces (faces.unname_person) in this transaction."""

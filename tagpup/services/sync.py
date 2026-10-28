@@ -11,7 +11,7 @@ folder scan's rule), and sorts what differs:
   queue the caller hands over (tagpup.jobs.indexing, which runs the CLI's `index`), not
   indexed here;
 - changed files -- a row whose stamp no longer describes its file: the row re-read from
-  the file, as refresh_rows does (refresh_rows.reread, edits_for);
+  the file (refresh_rows.reread, edits_for);
 - moved files -- a row whose file is gone, and a new file that is the same photo: the
   row follows the file, and its faces with it, as relink does (relink_photos.edits_for).
   Most rows hold no DocumentID, so a file is first matched by its name, size and
@@ -387,13 +387,12 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                                                           on_disk[paths.key(move["to"])][1:]))
         new = {key: stamp for key, stamp in new.items() if key not in moved_to}
 
-        # Changed: re-read as the refresh re-reads, each row held to what it was when read.
+        # Changed: re-read, each row held to what it was when read.
         found = {}
         for path in changed:
             tags, _people, captions, raw, mtime, size, _doc = store_photos.row_as_recorded(conn, path)
             found[path] = {"mtime": mtime, "size": size, "tags": tags, "captions": captions, "raw_metadata": raw}
-        records, to_write, fields, unreadable, _shown, identities = refresh_rows.reread(
-            conn, {path: ["mtime/size"] for path in changed}, exiftool_path)
+        records, to_write, fields, unreadable, identities = refresh_rows.reread(conn, changed, exiftool_path)
     finally:
         conn.close()
 

@@ -14,13 +14,10 @@ An operation hands `run` two functions:
 - `edits(planned)` turns the plan into the rows it writes (tagpup.store.journal.Edit),
   each carrying what the plan read of it.
 
-and, optionally, `remaining(library)`: counts re-read once the write is done, where the
-operation can re-read cheaply.
-
 Applying records the edits as one change of the library's journal (phase 7.5) instead of
 copying the library first: applied only where every row is still what the plan read --
 otherwise the whole change is refused, naming the rows -- and undoable afterwards on the
-same terms (tagpup.services.journal). An edit marked skippable (a refresh's) whose row
+same terms (tagpup.services.journal). An edit marked skippable (a sync's re-read row) whose row
 changed since is left out instead, and listed in the Result's `skipped`. A dry run is the rehearsal: the change applied and
 undone inside a transaction that is rolled back, which says whether the undo restored
 every row exactly. Nothing is written by it -- nor by a dry run on a library behind this
@@ -36,7 +33,6 @@ The Result's details, in every operation:
     ids        {what: [id]}: photo, face or tag-node ids, safe to show anyone
     reveal     paths, names, captions: the library is photographs of real people, many
                of them minors, so a tool shows these only when asked (reveal=True)
-    remaining  {what: how many} re-read after the write, where the operation offers it
     behind     of a dry run on a library behind this version: the migrations it lacks,
                and no rehearsal (the rehearsal runs once an app has opened it)
 """
@@ -63,7 +59,7 @@ class Plan:
     summary: Dict[str, Any] = field(default_factory=dict)
 
 
-def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
+def run(library, operation, plan, edits, apply=False, kinds=()):
     """Plan an operation on `library`, and rehearse it, or with `apply` record and write
     it as one change named `operation`. Returns a Result (see the module's docstring):
     `changed` is the rows the change changed, read from the writes, not the plan's size.
@@ -120,8 +116,6 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
     if not applied.settled:
         result.fail("the people and dates of the photos it touched",
                     "not rebuilt yet; they are, the next time the library is opened")
-    if remaining is not None:
-        result.details["remaining"] = remaining(library)
     return result
 
 
