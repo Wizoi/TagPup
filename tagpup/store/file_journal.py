@@ -370,8 +370,9 @@ def newer_overlapping(conn, change_id):
     file it wrote: the same photo, or the same file by its path -- one a rename left
     under its new name included. An undo of `change_id` would take back part of a file
     the newer change planned from, as an undo of rows would rows a newer change wrote
-    over (tagpup.store.journal). The caller's connection. An internal change (INTERNAL) is none: it is no
-    operation, and a later bake is written over the file again by the next index."""
+    over (tagpup.store.journal). The caller's connection. An internal change (INTERNAL) is one only while it has
+    the file `writing` -- one writer of a file at a time, across processes (the undo is refused "being written now");
+    once done it is none: it is no operation, and a later bake is written over the file again by the next index."""
     internal, params = not_internal("c.operation")
     return conn.execute(
         "SELECT DISTINCT c.id, c.operation FROM change_files mine"
@@ -379,8 +380,8 @@ def newer_overlapping(conn, change_id):
         " AND (theirs.photo_id = mine.photo_id OR theirs.path = mine.path OR theirs.path = mine.new_path)"
         " JOIN changes c ON c.id = theirs.change_id"
         " WHERE mine.change_id = ? AND mine.state = 'done' AND theirs.state IN ('writing', 'done')"
-        " AND c.undone IS NULL AND c.status IN ('planned', 'applied') AND " + internal
-        + " ORDER BY c.id", (change_id,) + params).fetchall()
+        " AND c.undone IS NULL AND c.status IN ('planned', 'applied') AND (theirs.state = 'writing' OR " + internal
+        + ") ORDER BY c.id", (change_id,) + params).fetchall()
 
 
 def counts(conn, change_ids):

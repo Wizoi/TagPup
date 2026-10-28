@@ -743,6 +743,10 @@ def _newer_overlapping(conn, change_id):
 FILE_WRITTEN_SINCE = ("change %(other)d (%(operation)s) wrote the files of %(photos)d of its photos after it: their rows say"
                       " what the files hold now, not what change %(change)d left, and undoing change %(other)d does not"
                       " put them back")
+#: A change of photo files met by an internal one (file_journal.INTERNAL: the index's bake) writing one of its files:
+#: one writer of a file at a time; the bake finishes in a moment, or one a stop left is settled at the next start.
+FILE_BEING_WRITTEN = ("change %(change)d: one of its photo files is being written now; try again in a moment (one a"
+                      " stopped app left part-written is settled when it starts again)")
 #: ... or renamed it: the row has the file's new name (store_photos.MOVED), until the rename is undone.
 FILE_RENAMED_SINCE = ("change %(other)d (%(operation)s), applied after it, renamed the files of %(photos)d of its photos:"
                       " undo it first")
@@ -1129,7 +1133,8 @@ def refusal(conn, change_id):
     if status != "applied":
         return ["change %d is %s" % (change_id, status)]
     if files:
-        return ["change %d (%s), applied after it, wrote the same photo files: undo it first" % (other, name)
+        return [FILE_BEING_WRITTEN % {"change": change_id} if name in file_journal.INTERNAL else
+                "change %d (%s), applied after it, wrote the same photo files: undo it first" % (other, name)
                 for other, name in file_journal.newer_overlapping(conn, change_id)]
     current = schema.version(conn)
     if version != current:

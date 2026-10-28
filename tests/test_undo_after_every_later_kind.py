@@ -438,10 +438,11 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                 listed, rehearsed, undone = self.undo_from_history(library, synced)
                 self.assertEqual((said, said), (rehearsed.refused, undone.refused))
 
-    def test_a_save_is_undone_past_the_index_bake_a_crash_left_under_way(self):
-        """The owner saves a photo; the index's bake (baking.INDEX_OPERATION, internal) writes the photo after it and
-        the process is killed with the file written and not yet recorded. History lists no bake, and offers the save's
-        Undo: the rehearsal and the undo do not refuse, the bake under way being no change of the owner's."""
+    def test_a_save_is_undone_once_the_index_bake_writing_its_photo_is_finished(self):
+        """The owner saves a photo; the index's bake (baking.INDEX_OPERATION, internal) has the photo's file `writing`
+        after it -- another process under way, or one killed with the file written and not yet recorded. History lists
+        no bake; the save's Undo is refused "being written now" while the file is `writing` (one writer of a file at a
+        time), and once the bake is finished (settled at the next start) it is undone past it."""
         self.put_files_back("base")
         library = self.copy(self.base, "save_then_crashed_bake")
         saved = a_save(self, library)
@@ -454,6 +455,13 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertEqual([baking.INDEX_OPERATION], [each.operation for each in file_journal.unfinished(library.path)])
         self.assertEqual([], [entry for entry in journal_service.history(library, limit=1000)["changes"]
                               if entry["operation"] == baking.INDEX_OPERATION])
+        said = journal.FILE_BEING_WRITTEN % {"change": saved}
+        listed, rehearsed, undone = self.undo_from_history(library, saved)
+        self.assertIn(said, listed or "")
+        self.assertIn(said, rehearsed.refused or "")
+        self.assertIn(said, undone.refused or "")
+        file_changes.settle(library, EXIFTOOL)
+        self.assertEqual([], file_journal.unfinished(library.path))
         listed, rehearsed, undone = self.undo_from_history(library, saved)
         self.assertEqual((None, None, None), (listed, rehearsed.refused, undone.refused))
         self.assertEqual("undone", journal.history(library.path, change_id=saved)[0]["status"])
