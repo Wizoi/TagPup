@@ -78,7 +78,7 @@ Stores details of faces detected within photos, including face crop coordinates,
 | `photo_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The photo the face is in. References `photos(id)` with `ON DELETE CASCADE`; the store deletes faces explicitly too, since most connections leave foreign keys off. A face found in a photo never indexed -- the suggester records the faces it detects -- first gets its photo a row holding only the path (`photos.ensure_row`), its `mtime` and `size` empty so the scan reads the file: only in a folder the library holds a photo directly in, or one it was asked to add (`added_folders`, through `tagpup.services.libraries.add` and the indexer); in any other folder `ensure_row` raises `NotHeld` and makes nothing. |
 | `box` | TEXT | | JSON-serialized bounding box coordinates `[x1, y1, x2, y2]`. |
 | `name` | TEXT | INDEXED (first of `idx_faces_person`, with `tag_id`) | The person's name, a CACHE of their node's leaf (`tag_taxonomy.name`), kept in step with `tag_id` by every writer and by a rename in the tree (stage 2, part B); `NULL` if unmatched. A face with a `name` and no `tag_id` is a row from before names had ids: no writer makes one now (DECISIONS 2026-10-11, identity is the id only), it is not counted as a person, and the doctor lists it. |
-| `prob` | REAL | | Detection confidence/probability score from MTCNN. |
+| `prob` | REAL | | The detector's confidence score (SCRFD's). |
 | `name_source` | TEXT | | Who decided `name`. `'manual'` marks a decision made by a person in TagTuner — including a deliberate unmatch, which is stored as `name = NULL` with this column set. `cluster-faces` re-derives every other name from scratch but preserves manual rows and uses them as anchors. `NULL` means the name was assigned automatically and may be revised. |
 | `excluded` | INTEGER | DEFAULT 0 | `1` marks a face as not-a-person: a passer-by in a crowd shot, or a detection that is not a face at all. Excluded faces are dropped before identity resolution runs, and are hidden from match suggestions and the Identify Faces queue, so they cannot cluster, vote, or pull a person's centroid around. Reversible. |
 | `excluded_reason` | TEXT | | Free text recorded alongside `excluded`, e.g. `stranger`, `bad crop`. |
@@ -229,7 +229,7 @@ The library's settings (`tagpup.store.settings`, `tagpup.services.settings`, in 
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
-| `key` | TEXT | PRIMARY KEY, NOT NULL | The setting, `<section>.<key>` as config.ini named it: `model.name`, `faces.min_face_size`, `candidates.tags`, `renaming.format`, `paths.exiftool`, `library.roots`, `library.ignored` ... A name, not an id: a row put back under it is that setting again (`journal.NAMED`). |
+| `key` | TEXT | PRIMARY KEY, NOT NULL | The setting, `<section>.<key>` as config.ini named it: `model.name`, `faces.model`, `candidates.tags`, `renaming.format`, `paths.exiftool`, `library.roots`, `library.ignored` ... A name, not an id: a row put back under it is that setting again (`journal.NAMED`). |
 | `value` | TEXT | NOT NULL | Its value as text, as the validator reads it (`true`/`false`, `0.85`, `0.6, 0.7, 0.7`). An empty `paths.exiftool` is the machine's ExifTool; an empty `model.force_image_size` the model's own size. `library.roots` and `library.ignored` are folders, one a line; in a library that holds a root (`roots`) a folder under it is held as its row, `@pictures/2024` (and so are the old and new values of the journaled change), and read and shown as this machine's path. A stamp writes every setting but `library.roots`: a library has no roots until the owner sets them. Setting the roots adds the folders under a new root holding photos and no indexed photo to `library.ignored` in the same change. A row whose key is no longer declared (`library.reread_resized_pictures`, until 2026-10-10) is kept and ignored. |
 
 ### 14. `change_files` Table
@@ -342,7 +342,7 @@ The photos whose faces were detected (`tagpup.store.faces_detected`; findings #7
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `photo_id` | INTEGER | PRIMARY KEY | The photo (`photos.id`). No foreign key: a row whose photo is gone is read as none. |
-| `detector` | TEXT | NOT NULL | The detector that ran: its settings as JSON with sorted keys (`min_face_size`, `confidence_threshold`, `mtcnn_thresholds`, and `detect_max_side` only when the library caps the picture the detector looks at: with no cap the name is the one every row was written under before the cap existed, so nothing is detected again). |
+| `detector` | TEXT | NOT NULL | The detector that ran: its settings as JSON with sorted keys, the face model's key alone (`{"model": "scrfd-adaface"}`, `tagpup.core.validation.face_detector`). The rows under MTCNN's settings were deleted 2026-10-28 (`delete-old-detector-rows`, changes 4871 / 371 / 1235). |
 | `mtime` | REAL | | The file's modified time when it was recorded. Kept, not compared: a metadata write changes it and not the picture. |
 | `size` | INTEGER | | The file's size then, in bytes. |
 | `found` | INTEGER | NOT NULL | How many faces it found. |
@@ -354,8 +354,8 @@ Each face's vector, one per face model (migration 33, DECISIONS 2026-10-16 and 2
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `face_id` | INTEGER | PRIMARY KEY (with `model`), → `faces.id` ON DELETE CASCADE | The face. |
-| `model` | TEXT | PRIMARY KEY (with `face_id`) | The face model's key: `mtcnn-facenet` or `scrfd-adaface` (`tagpup.core.validation`). Vectors compare only under one key. |
-| `vector` | BLOB | NOT NULL | float32 bytes (FaceNet's: 512, 2,048 bytes). |
+| `model` | TEXT | PRIMARY KEY (with `face_id`) | The face model's key: `scrfd-adaface` (`tagpup.core.validation`; `mtcnn-facenet`'s vectors were retired 2026-10-25). Vectors compare only under one key. |
+| `vector` | BLOB | NOT NULL | float32 bytes (AdaFace's: 512, 2,048 bytes). |
 
 ### 28. `photo_fingerprints` Table
 The fingerprint of each photo's picture (migration 34; `tagpup.store.photo_fingerprints`; docs/PHASE6_DESIGN.md, section 7): one row for each photo, the key of the way it was taken and the hash, which a bake writes into the file and the read side compares (phase 6). A fact about the picture, not a decision and not a copy of the file's fields: not journaled, not a derived table, and nothing an undo of a file change restores. A rotation takes the row away beside the photo's vectors (`tagpup.services.rotation`), in the transaction that marks the file done: the upright decode it hashed has turned. No foreign key and no trigger, as `faces_detected`: a row whose photo is gone is read as none, a photo's id never being handed out again. No doctor check, as `faces_detected`. Written by the index, with the photo's row in the transaction that records it (`search.PhotoIndex.build_or_update`, the fingerprint of the decode the run made), and by a bake (`tagpup.services.baking`); taken away by the rotation's `forget`. Read by the one rule of whether a photo's vector is still its picture's (`photo_fingerprints.same_picture`): a vector whose stamp no longer describes its file is kept, and stamped again, when the file's decode hashes to this row; with no row it is worked out again.

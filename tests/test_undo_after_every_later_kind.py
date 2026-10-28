@@ -235,8 +235,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         """harbour: six photos (real JPEGs, their keywords written
         by ExifTool), faces as the pass left them -- matched faces holding FaceNet's vector and the new model's, faces
         the old detector alone found holding FaceNet's, one alone in the sixth photo -- named automatically, by hand,
-        nobody, excluded or undecided; the pass one change; switched to the new model after it. Stamped on FaceNet, as
-        the live libraries were before the new model: no faces.model row, which the switch inserts."""
+        nobody, excluded or undecided; the pass one change; switched to the new model after it. Stamped as the live
+        libraries were before the face model was a setting: no faces.model row, which the switch inserts."""
         from PIL import Image
 
         before_the_face_model(library.path)

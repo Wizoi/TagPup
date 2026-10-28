@@ -77,7 +77,7 @@ run.bat index "D:\Photos\Tagged_Archive" --force-reembed
 run.bat index "D:\Photos\Tagged_Archive" --reset
 ```
 * **Smart Skipping (Incremental Indexing)**: The tool automatically compares the size and modification time of each file in your folders with what is already saved in the database. If a file hasn't changed, it skips ExifTool metadata reading and CLIP re-embedding entirely, making incremental runs lightning-fast.
-* **What happens**: The tool extracts existing keywords/people/captions from new or changed files, runs them through the CLIP model to produce vectors, runs MTCNN to detect and extract face vectors (unless `--skip-faces` is specified), and commits everything to the SQLite database.
+* **What happens**: The tool extracts existing keywords/people/captions from new or changed files, runs them through the CLIP model to produce vectors, runs SCRFD and AdaFace to find faces and make their vectors (unless `--skip-faces` is specified), and commits everything to the SQLite database.
 
 ---
 

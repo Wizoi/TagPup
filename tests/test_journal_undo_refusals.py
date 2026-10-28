@@ -16,6 +16,9 @@
 - A face pass recorded before a retiring of the old detector's faces is not undone while the retiring stands: its faces
   stand in for the old faces the retiring deleted, and the retiring is never undone (#1979; each live library holds one,
   photo_index 3247 after 2,499 kept passes, counted 2026-10-26).
+- The deletion of the old detector's rows (MTCNN's settings and its detection records) is not undone from History: the
+  command is deleted with the model, and undone it would put back settings no validation knows any more (one applied
+  change in each live journal: photo_index 4871, kr-track 371, renton_parkrun 1235, counted read-only 2026-10-28).
 """
 import json
 import os
@@ -33,7 +36,7 @@ from journal_library import MODEL, JournalLibrary, vector  # noqa: E402
 from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as library_journal  # noqa: E402
-from tagpup.store import db, journal  # noqa: E402
+from tagpup.store import db, faces_detected, journal  # noqa: E402
 
 SECRETS = ("Rowan Thackeray", "Imogen Vale", "Maren Oakhollow", "regatta_00")
 
@@ -253,6 +256,51 @@ class AFacePassBeforeARetiring(Checked):
         passed = self.face_pass()
         self.assertIsNone(library_journal.refusals(self.library, [{"id": passed}])[passed])
         self.assertFalse(library_journal.undo(self.library, passed, apply=True).refused)
+
+
+class TheOldDetectorsRowsDeletion(Checked):
+    """The owner opens History on a library where the deleted `delete-old-detector-rows` ran, and the change offers no
+    Undo; the rehearsal and the undo say why, and write nothing."""
+
+    #: The change's name as the live journals hold it (a command since deleted, which no code makes any more).
+    OPERATION = "delete old detector rows (mtcnn)"
+    #: MTCNN's detector name as the index recorded it: its settings, sorted.
+    MTCNN = faces_detected.detector({"confidence_threshold": 0.85, "min_face_size": 20, "mtcnn_thresholds": [0.6, 0.7, 0.7]})
+
+    def deletion(self):
+        """The change as the command made it: one of MTCNN's settings rows, as the old stamp wrote it, and a photo's
+        detection record under MTCNN's name, as the index wrote it, each deleted and recorded whole."""
+        record = {"detector": self.MTCNN, "mtime": 1.0, "size": 10, "found": 0, "at": "2026-10-01 10:00:00"}
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("INSERT INTO settings (key, value) VALUES ('faces.min_face_size', '20')")
+            conn.execute("INSERT INTO faces_detected (photo_id, detector, mtime, size, found, at) VALUES (?, ?, ?, ?, ?, ?)",
+                         (self.ids["prize"],) + tuple(record.values()))
+            conn.commit()
+        finally:
+            conn.close()
+        return journal.apply(self.db_path, self.OPERATION, [
+            journal.delete("settings", ("faces.min_face_size",), {"value": "20"}, kind="settings"),
+            journal.delete("faces_detected", (self.ids["prize"],), record, kind="faces_detected")]).change_id
+
+    def left(self):
+        return (self.query("SELECT key FROM settings WHERE key = 'faces.min_face_size'"),
+                self.query("SELECT photo_id FROM faces_detected"), self.dump(), self.changes())
+
+    def test_its_undo_is_refused_and_nothing_is_written(self):
+        deleted = self.deletion()
+        before = self.left()
+        self.assertEqual(([], []), before[:2])
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                result = library_journal.undo(self.library, deleted, apply=apply)
+                self.assertIsNotNone(result.refused, "the undo would put back settings no validation knows")
+                self.assertIn("change %d (%s)" % (deleted, self.OPERATION), result.refused)
+                self.assertIn("are not put back", result.refused)
+                self.assertEqual(before, self.left(), "a refused undo wrote")
+        said = library_journal.undo(self.library, deleted).refused
+        self.assertEqual(said, self.refused(lambda: library_journal.undo_rows(self.library, deleted)))
+        self.assertEqual(said, library_journal.refusals(self.library, [{"id": deleted}])[deleted], "History offers its undo")
 
 
 class SkippableEdits(JournalLibrary):

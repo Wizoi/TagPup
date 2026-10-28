@@ -27,7 +27,7 @@ record of phases 0 to 3's slices.
 Status (2026-10-17): **phase 0 done** (measured, section 7); the plan below is reordered by what it showed (owner
 accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 2026-10-16: 223 vectors made again; deleted 2026-10-24 by phase 5) and
 2a (`cluster-faces` 2,113 s to 202 s, names unchanged). **Built, off:** 1a (the detector downscale, the setting
-`faces.detect_max_side`, measured below; turning it on is the owner's). **Built:** 1b (the index reads the next photos
+`faces.detect_max_side`, measured below; turning it on is the owner's; deleted with MTCNN 2026-10-28). **Built:** 1b (the index reads the next photos
 ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Measured:** phase 3's speed check (2026-10-18,
 section 7: SCRFD 10g in torch and AdaFace IR-101, about 1.8 hours for photo_index against 9.3, no second runtime;
 chosen by the owner, DECISIONS 2026-10-18). **Built (2026-10-18):** the model module (merge 2a), the
@@ -169,7 +169,8 @@ same scripts.
   back. Judged by counts on the phase 0 sample: faces found per stratum, and which named faces would be lost
   (expected none). It also lowers the card's peak memory (9,982 MiB today). Off by default; turned on only on the
   owner's word, once the counts are shown.
-  *Built 2026-10-16, off.* The setting `faces.detect_max_side` (Face detection, "Look at most"; empty is off): the
+  *Deleted 2026-10-28 with MTCNN (DECISIONS 2026-10-28, THE OLD MODELS ARE DELETED): the setting, the cap's chain and
+  its part of the detector name went; what follows is the record.* *Built 2026-10-16, off.* The setting `faces.detect_max_side` (Face detection, "Look at most"; empty is off): the
   detector looks at the picture scaled to the cap, the boxes are scaled back, crops and vectors come from the full
   picture. The cap is an argument of each detection (`LibrarySettings.detect_max_side`), not a setting of the face
   models: libraries differing only in it share one set, and a Suggest in one is not refused beside a run in the other.
@@ -350,7 +351,7 @@ file. Size: three merges (migration and readers; detector and recogniser behind 
 
 **Merge 2b, as built (2026-10-18).** The setting `faces.model` (`scrfd-adaface`, the default of every new library since cut A1, or `mtcnn-facenet`, the default when this was built;
 locked, in its own group "face-model", "The face model", whose consequences say what switching does -- the face
-detection group's are MTCNN's; the dialog offers it as a list of the rule's choices; a library holding no value reads as
+detection group's were MTCNN's (deleted 2026-10-28); the dialog offers it as a list of the rule's choices; a library holding no value reads as
 the default). A library set to a model whose vectors it
 cannot keep (`tagpup.services.settings.KEPT_FACE_MODELS`, FaceNet's alone) is refused every write of faces with one
 sentence (`FACE_MODEL_NOT_KEPT`): Add in TagPup and TagTuner (`tagpup.services.libraries.add`) before the folder is
@@ -370,10 +371,12 @@ FaceNet refused; the look went with the face pass, 2026-10-27).
   pass), as built in item 3 below. (`ScrfdAdaFace.faces_in`, which gave no crop, is gone.)
 - The name a detection is recorded under (`tagpup.services.faces.detector_of`, `faces_detected`) is the model's own
   (`detector(max_side)`): `{"model": "scrfd-adaface"}` for the new model, and MTCNN's settings spelled as before, so the
-  names every stored MTCNN detection was written under stand (item 3 below).
+  names every stored MTCNN detection was written under stood (item 3 below) until those records were deleted
+  (`delete-old-detector-rows`, 2026-10-28; `detector()` takes no cap since).
 - Read-ahead: the pass hands the model the bytes it has read ahead (as the index's read-ahead does for MTCNN), or it
   reads one photo at a time; the model does not read ahead of its own.
-- `faces.detect_max_side` does not apply to the new model: it fits each photo into its two squares itself.
+- `faces.detect_max_side` does not apply to the new model: it fits each photo into its two squares itself (the setting
+  deleted 2026-10-28).
 - The new model's vectors go only to `face_embeddings`, under its model key; never to `faces.embedding`.
 - The pass extends `KEPT_FACE_MODELS` (and with it what `faces.model` can be written under), not migration 33
   (DECISIONS 2026-10-18, "AFTER MIGRATION 33"): until the pass, the refusal above stands.
@@ -541,10 +544,11 @@ hold two models' vectors, counted read-only 2026-10-28); the readings below are 
   reserves), `detect_and_embed(picture)` (the card's half), `new_faces(detected, picture)` (of what it found, the faces a
   detection makes new where no old face takes them, each with its crop), `detect_and_embed_faces(path, max_side=)` (the
   three in one, Suggest's) and `detector(max_side)` (the name its detections are recorded under). The library's cap
-  (`faces.detect_max_side`) is MTCNN's: the new model takes it and does not use it, its two squares being its own.
+  (`faces.detect_max_side`) was MTCNN's: the new model took it and did not use it, its two squares being its own; the
+  cap and every `max_side` above were deleted with MTCNN, 2026-10-28.
 - The floor of a new face has one owner, `scrfd_adaface.NEW_FACE_FLOOR` (40 px on the shorter side), applied by the
   model's `new_faces` wherever a detection makes a face: the index, Suggest, and the pass for a detection no old face
-  takes. FaceModel's `new_faces` makes every face it found, as before.
+  takes. FaceModel's `new_faces` made every face it found, as before (FaceModel deleted 2026-10-28).
 - Scenario P10, `tests/test_a_library_indexes_and_suggests_with_its_face_model.py` (until 2026-10-28
   `test_a_switched_library_indexes_and_suggests_with_its_model.py`, whose library was switched from FaceNet; since then
   a library on its face model, FaceNet's cuts being deleted): Name faces from tags reads the vectors by AdaFace's cuts; a new photo is indexed through the CLI (the face

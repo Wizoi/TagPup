@@ -23,7 +23,7 @@ Suggest makes vectors of photos it never detected faces in).
 No foreign key and no trigger -- a row whose photo is gone is read as
 none, a photo's id never being handed out again -- so deleting a photo takes nothing the
 journal must account for; not journaled when written, as indexing is not. The one change that deleted rows (the old
-detector's, tagpup.services.journal.RETIRED) recorded them (tagpup.store.journal.KEYS), so its undo puts them back.
+detector's, tagpup.services.journal.RETIRED) recorded them (tagpup.store.journal.KEYS); its undo is refused.
 """
 import json
 import time
