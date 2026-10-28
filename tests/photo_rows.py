@@ -11,9 +11,11 @@ marks the file done (store.photos.follow_fields, move_rows_in).
 A photo row made by a bare statement of the test's own makes no folder row, so the folders reader finds the photo in no folder: a new test uses add_read.
 tests/test_fixtures_make_photo_rows_like_the_indexer.py lists the files that still do, and only lets that list shrink.
 """
+import hashlib
 import os
 
-from tagpup.core import fields
+from tagpup.core import fields, paths
+from tagpup.files import images
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.store import added_folders, db, embeddings, faces_detected, photos
 
@@ -41,19 +43,36 @@ def add_read(conn, photo_path, fields, people=None):
     return photos.ensure_row(conn, photo_path)
 
 
+#: images.opened and images.fingerprint as this module was imported: fingerprint_of's, beyond a test's mock of either.
+_OPENED, _FINGERPRINT = images.opened, images.fingerprint
+
 #: The vector add_indexed keeps: its value matters to no test that asks whether the index owes the photo work.
 VECTOR = b"\x00\x00\x80\x3f\x00\x00\x00\x00"
 
 
+def fingerprint_of(photo_path):
+    """The fingerprint the index records with a vector it makes of `photo_path` (images.FINGERPRINT_KEY, the digest of
+    its upright decode); for a fixture's file that does not decode, or no file -- which no index makes a vector of -- a
+    digest of its path, distinct for each photo and equal to no decode. Decoded through the functions as imported, so a
+    test that refuses every decode of the code under test (sync decodes nothing) can still seed its rows."""
+    try:
+        digest = _FINGERPRINT(_OPENED(photo_path, upright=True))
+    except OSError:
+        digest = hashlib.sha256(paths.key(photo_path).encode("utf-8")).digest()
+    return images.FINGERPRINT_KEY, digest
+
+
 def add_indexed(conn, photo_path, fields, people=None):
     """Record `photo_path` as a whole index leaves it, and return its id: the read of `fields` (add_read), a vector
-    under the library's photo model stamped with the file as read, and a look for faces by the library's detector that
-    found none -- the index owes it nothing (photo_fingerprints.owed) while its file is as read. The caller commits."""
+    under the library's photo model stamped with the file as read, with its picture's fingerprint row (fingerprint_of),
+    and a look for faces by the library's detector that found none -- the index owes it nothing
+    (photo_fingerprints.owed) while its file is as read. The caller commits."""
     from tagpup.services import faces, settings
     record = as_read(photo_path, fields, people)
     photo_id = add_read(conn, photo_path, fields, people)
     held = settings.on(conn)
-    embeddings.put(conn, photo_path, settings.photo_key_on(conn), record["mtime"], record["size"], VECTOR, None)
+    embeddings.put(conn, photo_path, settings.photo_key_on(conn), record["mtime"], record["size"], VECTOR,
+                   fingerprint_of(photo_path))
     faces_detected.record(conn, photo_path, faces.detector_named(held.faces),
                           (record["mtime"], record["size"]), 0)
     return photo_id

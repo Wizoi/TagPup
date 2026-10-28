@@ -17,18 +17,34 @@ Each file is read again just before its write (write_fields with no `held`): one
 never overwritten. A read or a write ExifTool does not answer in its deadline (a share gone away) ends the run at that
 folder; the folders after it are baked by the next index. One snapshot of the library is taken before the first write
 (snapshots.before_a_long_write: none when today's stands); if it fails nothing is written.
+
+The one rule of a photo's fingerprint row here: a photo the run is handed -- one the index recorded this run (`handed`),
+or one with no row (photo_fingerprints.NO_FINGERPRINT: what sync owes the index for a current vector whose picture was
+never fingerprinted) -- holds a row after it only when its file was written (the row follows the write, in the
+transaction that marks it done: baking.follower), was planned holding the library's current bake already, or failed its
+write on a file marked read-only (file_changes' `read_only`, the one failure no retry changes); the last two are given
+the decode's (_adopt, photo_fingerprints.adopt), so sync does not queue their folder again for a write that cannot
+change. To hold it, the rows the index recorded this run are taken away before the first folder is planned (_owe_first):
+a row comes back only by one of those three. Every other photo has none and the next sync owes its folder to the index
+again, however the run went: a write that failed otherwise (a file another program holds open; a packet ExifTool refuses
+even with -m, which has no live instance since DECISIONS 2026-10-27 and is retried at each sync), a conflict, a photo not
+answered (a share that stopped answering while its folder was read or written), a folder not reached (asked to stop, the
+roots changed, an exception, a Ctrl+C), and a process killed or a power cut part-way. Left, the index's row would keep a
+new photo's unbaked file from being owed until something else in its folder changed.
 """
 import collections
 import dataclasses
+import logging
 import os
 
 from tagpup.core import paths
 from tagpup.files import bake, exiftool_session, field_values, images, shares
-from tagpup.services import baking, file_changes
+from tagpup.services import baking, file_changes, settings
 from tagpup.services import snapshots as snapshot_service
-from tagpup.store import db, inspection
+from tagpup.store import db, inspection, photo_fingerprints
 from tagpup.store import roots as store_roots
 
+logger = logging.getLogger(__name__)
 
 #: The start of each line the index's bake says (Baked.said, and the CLI's when it stops): the index queue keeps it in
 #: the job's message (tagpup.services.indexing).
@@ -48,6 +64,7 @@ class Baked:
     planned: int = 0
     written: int = 0
     current: int = 0
+    adopted: int = 0
     conflicts: int = 0
     failed: int = 0
     not_answered: int = 0
@@ -59,7 +76,8 @@ class Baked:
     def said(self):
         """The run in one line, counts only (the paths name people)."""
         line = SAID + "%d file(s) written, %d already held it" % (self.written, self.current)
-        more = [("%d conflict(s), left as they are" % self.conflicts) if self.conflicts else "",
+        more = [("%d fingerprint(s) recorded with no write" % self.adopted) if self.adopted else "",
+                ("%d conflict(s), left as they are" % self.conflicts) if self.conflicts else "",
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",
                 ", ".join("%d %s" % (n, kind) for kind, n in sorted(self.cannot.items())),
@@ -76,18 +94,22 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
-    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did."""
+    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did.
+    A handed photo keeps its row only when its file is written, holds the current bake or is read-only (_owe_first)."""
     baked, snapshot, walk = Baked(), [], baking.walk(stop)
+    _owe_first(library, folders, handed)
     with field_values.session(exiftool_path) as session:
         et = exiftool_session.StaysDead(session)
         for folder in folders:
             if stop is not None and stop():
                 break
-            to_bake, stored = _planned(library, et, detector, folder, handed, baked, walk)
+            to_bake, stored, unfingerprinted = _planned(library, et, detector, folder, handed, baked, walk)
+            written = None
             if to_bake and not baked.stalled:
                 if not snapshot:
                     snapshot.append(snapshot_service.before_a_long_write(library))
-                _write(library, exiftool_path, et, stored, to_bake, baked)
+                written = _write(library, exiftool_path, et, stored, to_bake, baked)
+            _adopt(library, unfingerprinted, to_bake, written, handed, baked)
             if baked.stalled or et.dead:
                 baked.stalled = True
                 break
@@ -98,22 +120,46 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
     return baked
 
 
+def _owe_first(library, folders, handed):
+    """Take away the fingerprint rows the index recorded this run (`handed`'s photos, directly in `folders`) before the
+    bake plans anything: each is then planned as a photo with no row, and has one again only by its file's write
+    (baking.follower) or _adopt. Whatever ends the run -- a stop, a share away, an exception, a process killed -- the
+    photos it did not bake are owed (NO_FINGERPRINT) and the next index bakes them, the index's decode lost (one decode
+    each). Deleting a row only makes a photo owed: a writer racing it loses nothing."""
+    if not handed:
+        return
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        ids = [photo_id for folder in folders for photo_id, path in inspection.under(conn, folder)
+               if paths.key(path) in handed and paths.key(os.path.dirname(path)) == paths.key(folder)]
+    finally:
+        conn.close()
+    if ids:
+        db.write_with_connection(library.path, lambda conn: photo_fingerprints.forget_photos(conn, ids),
+                                 label="the fingerprints the index recorded of the photos its bake is to write")
+
+
 def _planned(library, et, detector, folder, handed, baked, walk):
-    """({paths.key(path): (path, values)} of the photos of `folder` to bake, the folder as the library stores it),
-    counting into `baked` the photos current, not answered and that cannot be planned."""
+    """({paths.key(path): (path, values)} of the photos of `folder` to bake, the folder as the library stores it, and
+    {paths.key(path): (photo id, _Decode)} of those planned that have no fingerprint row, current or to bake), counting
+    into `baked` the photos current, not answered and that cannot be planned."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         keys = baking.keys(conn, detector)
         stored = store_roots.to_row(conn, folder)
-        group = [path for _id, path in inspection.under(conn, folder)
+        group = [(photo_id, path) for photo_id, path in inspection.under(conn, folder)
                  if paths.key(os.path.dirname(path)) == paths.key(folder)]
-        read = baking.FolderRead(et, group)
-        to_bake = {}
-        for path in group:
-            photo = baking.PhotoAt(path, read, walk)
+        fingerprinted = photo_fingerprints.fingerprinted(conn, [photo_id for photo_id, _path in group])
+        read = baking.FolderRead(et, [path for _id, path in group])
+        to_bake, unfingerprinted = {}, {}
+        for photo_id, path in group:
+            photo, decode = baking.PhotoAt(path, read, walk), _Decode(path, handed)
             plan = photo.plan(conn, keys)
-            if isinstance(plan, baking.ToBake):
-                plan = photo.plan(conn, keys, _fingerprint(path, handed))
+            if isinstance(plan, baking.ToBake) or (isinstance(plan, baking.Current) and photo_id not in fingerprinted):
+                plan = photo.plan(conn, keys, decode)
+            if photo_id not in fingerprinted and decode.digest is not None and isinstance(
+                    plan, (baking.ToBake, baking.Current)):
+                unfingerprinted[paths.key(path)] = (photo_id, decode)
             if isinstance(plan, baking.ToBake):
                 to_bake[paths.key(path)] = (path, plan.values)
             elif isinstance(plan, baking.Current):
@@ -125,18 +171,46 @@ def _planned(library, et, detector, folder, handed, baked, walk):
     finally:
         conn.close()
     baked.stalled = baked.stalled or read.stalled
-    return to_bake, stored
+    return to_bake, stored, unfingerprinted
 
 
-def _fingerprint(path, handed):
-    """The digest of the photo's upright decode: the index's, handed over, while the file is at the stamp the index
-    recorded it under (a file changed since holds another picture, perhaps); or decoded now."""
-    def fingerprint():
-        stamp, digest = handed.get(paths.key(path), (None, None))
-        if digest is not None and shares.stamp_of(path) == stamp:
-            return digest
-        return images.fingerprint(images.opened(path, upright=True))
-    return fingerprint
+class _Decode:
+    """The digest of the photo's upright decode, as plan_photo asks it: the index's, handed over, while the file is at
+    the stamp the index recorded it under (a file changed since holds another picture, perhaps); or decoded now. Keeps
+    the digest and the stamp of the file it was taken of (`digest`, `stamp`; None until asked)."""
+
+    def __init__(self, path, handed):
+        self.path, self.handed, self.digest, self.stamp = path, handed, None, None
+
+    def __call__(self):
+        stamp, digest = self.handed.get(paths.key(self.path), (None, None))
+        now = shares.stamp_of(self.path)
+        if digest is None or now != stamp:
+            digest = images.fingerprint(images.opened(self.path, upright=True))
+        self.stamp, self.digest = now, digest
+        return digest
+
+
+def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
+    """Give its decode's fingerprint row (photo_fingerprints.adopt) to each photo of `unfingerprinted` (_planned's: the
+    index's this run among them, _owe_first) whose file holds the library's current bake -- planned Current, not in
+    `to_bake` -- or whose write failed on a file marked read-only (`written`, the folder's write's Result, file_changes'
+    `read_only`; None when no write ran). Nothing else: a written file's row followed its write, and a photo not written
+    for any other reason stays owed. Counted in `baked.adopted`, but for `handed`'s: the index recorded theirs this
+    run, and given back it is nothing new to say."""
+    read_only = {paths.key(path) for path in (written.details.get("read_only", []) if written is not None else [])}
+    unfingerprinted = {key: found for key, found in unfingerprinted.items() if key not in to_bake or key in read_only}
+    # A file whose look did not answer when it was decoded has no stamp to hold the vector's against: no row.
+    unfingerprinted = {key: found for key, found in unfingerprinted.items() if isinstance(found[1].stamp, tuple)}
+    if not unfingerprinted:
+        return
+
+    def adopt(conn):
+        photo_key = settings.photo_key_on(conn)
+        return sum(photo_fingerprints.adopt(conn, photo_id, photo_key, decode.stamp,
+                                            (images.FINGERPRINT_KEY, decode.digest)) and key not in handed
+                   for key, (photo_id, decode) in unfingerprinted.items())
+    baked.adopted += db.write_with_connection(library.path, adopt, label="the fingerprints of the photos whose files hold their bake")
 
 
 def _write(library, exiftool_path, et, stored, to_bake, baked):

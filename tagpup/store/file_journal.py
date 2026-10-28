@@ -88,6 +88,9 @@ class FileRow:
     faces_left: int = 0
     #: Not stored: a forward write found the file holding what it was to hold before writing it (tagpup.services.file_changes).
     found_holding: bool = False
+    #: Not stored: a forward write failed and the file is marked read-only, which no retry of the write changes
+    #: (tagpup.services.file_changes._after_failure; the one failure a write tells from a passing one).
+    read_only: bool = False
     #: Not stored: the file's fingerprint just before this process wrote it (tagpup.services.file_changes._fingerprint),
     #: by which a rename that left it under this name knows it (follow_renamed).
     known_as: Optional[dict] = None

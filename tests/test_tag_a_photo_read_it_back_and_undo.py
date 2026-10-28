@@ -202,6 +202,20 @@ class TaggingAPhoto(ReadFilesCase):
             self.assertEqual(["Beach"], keywords_of(path))
             self.assertEqual(["Beach"], self.indexed(path))
 
+    def test_a_selection_that_stops_at_its_first_error_stops_at_a_read_only_file(self):
+        """change_tags' default (Apply All, a tag added to a selection): a read-only file is a write error, and the run
+        stops there, the photos after it not written."""
+        a, b, c = self.make_read("a.jpg"), self.make_read("b.jpg"), self.make_read("c.jpg")
+        os.chmod(b, stat.S_IREAD)
+        self.addCleanup(self.writable_again)
+
+        result = tagging.change_tags(self.library, [a, b, c], ["Activity/Rowing"], [], EXIFTOOL)
+
+        self.assertEqual((1, [b]), (result.changed, [path for path, _why in result.errors]), result.message())
+        self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(a))
+        self.assertEqual(["Beach"], keywords_of(c), "a photo after the read-only file was written")
+        self.assertEqual(["Beach"], self.indexed(c))
+
     def writable_again(self):
         """ExifTool's temporary file of a failed write carries the photo's read-only attribute: the home goes after."""
         for name in os.listdir(self.folder):

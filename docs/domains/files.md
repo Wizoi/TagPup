@@ -66,6 +66,13 @@ exceptions, each unjournaled by decision:
   It is never written into a photo whose picture did not decode.
 - **Just look**: `services/file_only.py`, the files of a folder the library does not hold (#527).
 
+Every photo's file is baked with no command (owner, 2026-10-28): a current vector with no fingerprint row
+(`photo_fingerprints.NO_FINGERPRINT`: Suggest's or a re-embedding pass's) is work sync owes the index, whose bake after
+the index writes the file with no model (the row follows the write) or, for a file holding its bake or one marked
+read-only (`file_changes`' `read_only`, the one failure no retry changes), records the decode's row
+(`photo_fingerprints.adopt`); any other photo stays owed: the bake takes away the index's rows of this run's photos
+before it plans, so only those three give one back, however the run ends (`tests/test_the_index_writes_the_bake.py`).
+
 ## Roots and machines: a share away
 
 - `tagpup/files/shares.py` is the one owner of a share being away and back: `away_since` (when it stopped answering),
