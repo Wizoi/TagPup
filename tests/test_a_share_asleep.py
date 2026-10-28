@@ -715,6 +715,13 @@ class ABakeOnAShareSlowToWake(unittest.TestCase):
         self.assertEqual((2, 0, 0), (baked.written, baked.not_answered, sum(baked.cannot.values())), baked.said())
         self.assertFalse(baked.stalled)
 
+    def test_a_share_that_answers_late_is_asked_again_when_its_look_ends_not_when_the_away_window_does(self):
+        # The first answer takes 0.3 s against a moment of 0.1 s and an away window of 6 s: the bake asks again at 0.3 s.
+        with mock.patch.object(shares, "AWAY_SECONDS", 6.0), self.share(lambda n: 0.3 if n == 0 else 0):
+            baked, took = self.bake()
+        self.assertEqual((2, 0, 0), (baked.written, baked.not_answered, sum(baked.cannot.values())), baked.said())
+        self.assertLess(took, 3.0, "the look's own length, not the 6 s window the share was taken as away for")
+
     def test_a_share_that_stays_away_is_counted_not_answered_after_one_bounded_wait_and_its_files_are_untouched(self):
         with self.share(lambda n: 5.0):
             baked, took = self.bake()
@@ -724,6 +731,33 @@ class ABakeOnAShareSlowToWake(unittest.TestCase):
         self.assertLess(took, 3.0, "one wait of the away and one moment, not one for each photo")
         self.asleep.set()
         self.assertEqual(self.stamps, {path: os.stat(path).st_mtime_ns for path in self.photos})
+
+
+class AShareThatHangsAgain(unittest.TestCase):
+    """A share that hung, was let alone for its away window, and hangs again is away again from the new look: the pages
+    that ask of it next are answered at once, not each held for a full moment on the thread that still hangs."""
+
+    def test_after_its_window_ran_out_one_more_wait_then_every_ask_is_answered_at_once(self):
+        photo = "//server/share/a.jpg"
+        release = threading.Event()
+        self.addCleanup(release.set)
+        self.addCleanup(shares.forget)
+        shares.forget()
+        real = os.stat
+
+        def stat(path, *args, **kwargs):
+            if str(path) == photo:
+                release.wait(30)
+            return real(path, *args, **kwargs)
+        with mock.patch.object(shares, "SHARE_WAIT", 0.2), mock.patch.object(shares, "AWAY_SECONDS", 0.5), \
+                mock.patch.object(os, "stat", stat):
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(photo))
+            time.sleep(0.55)   # the first mark has expired; the look still hangs
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(photo))
+            for _ in range(3):
+                started = time.monotonic()
+                self.assertIs(shares.UNANSWERED, shares.stamp_of(photo))
+                self.assertLess(time.monotonic() - started, 0.1, "answered from the new mark, not joined for a moment")
 
 
 if __name__ == "__main__":

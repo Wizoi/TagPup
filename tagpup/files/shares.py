@@ -58,6 +58,12 @@ def forget():
         _reading.clear()
 
 
+def _left_of_away(since, away_seconds):
+    """Seconds left of the window a share found away at `since` (time.monotonic) is taken as away; 0 or less when over.
+    The one statement of the window, for bounded (still taken as away) and wait_out (how long to wait)."""
+    return since + away_seconds - time.monotonic()
+
+
 def bounded(location, call, seconds, away_seconds=None):
     """("ok", what `call()` returned) | ("error", the OSError it raised) | ("away", None): `call` on a
     thread of its own, waited for `seconds`. A share already taken as away answers "away" at once, and
@@ -68,13 +74,13 @@ def bounded(location, call, seconds, away_seconds=None):
     with _guard:
         since = _away.get(share)
         still = _reading.get(share)
-    if since is not None and time.monotonic() - since < away_seconds:
+    if since is not None and _left_of_away(since, away_seconds) > 0:
         return "away", None
     if still is not None and still.is_alive():
         still.join(seconds)
         if still.is_alive():
             with _guard:
-                _away.setdefault(share, time.monotonic())
+                _away[share] = time.monotonic()   # hung again: away from now, not from an old mark that ran out
             return "away", None
     box = {}
 
@@ -187,16 +193,25 @@ STOP_EVERY = 0.5
 
 
 def wait_out(share, stop=None):
-    """Wait until `share` (share_of) is no longer taken as away -- at most AWAY_SECONDS from when it was found away --
-    asking `stop()` every STOP_EVERY seconds: False when it said stop, else True."""
+    """Wait until `share` (share_of) is no longer taken as away -- at most AWAY_SECONDS from when it was found away, or
+    until the look that timed out has finished (it answered late, 1.3 s for a 1.0 s deadline: the share is awake, so the
+    mark is cleared and the next ask is a fresh bounded look) -- asking `stop()` every STOP_EVERY seconds: False when it
+    said stop, else True. A share found away by a quick "not found" has no look to wait for: the window is waited out."""
     with _guard:
         since = _away.get(share)
     if since is None:
         return True
     while True:
-        left = since + AWAY_SECONDS - time.monotonic()
+        left = _left_of_away(since, AWAY_SECONDS)
         if left <= 0:
             return True
+        with _guard:
+            late = _reading.get(share)
+            if late is not None and not late.is_alive():
+                if _away.get(share) == since:
+                    del _away[share]
+                del _reading[share]
+                return True
         if stop is not None and stop():
             return False
         time.sleep(min(left, STOP_EVERY))
