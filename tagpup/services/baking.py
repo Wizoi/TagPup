@@ -5,7 +5,8 @@ section 9), and the fingerprint row a bake's write leaves behind it.
 then the file: the fields it holds (read as write_fields reads them: field_values.read of bake.WRITTEN's fields) and its
 shape, and the fingerprint of its upright decode (the costliest read), each handed in as a function the library's
 checks must pass before it is called. It says one of: ToBake (the values a write is to leave), Current (the file holds
-them already), Cannot (why the library cannot say what the file is to hold, in a plain sentence). Nothing here writes a
+them already, or holds a bake under the library's keys of the picture as it is now, which is never rewritten: owner,
+DECISIONS 2026-10-27), Cannot (why the library cannot say what the file is to hold, in a plain sentence). Nothing here writes a
 file or a row of the library but `follower`: the write is tagpup.services.file_changes.write_fields's, which imports this
 module for the follower, so this one never imports it.
 
@@ -131,9 +132,29 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None, stamp_of=s
     compared = dict(made)
     if digest is None:
         del compared[bake.WRITTEN[bake.FINGERPRINT]]
-    if fields.reads_same(file_holds, compared):
+    if fields.reads_same(file_holds, compared) or _current_bake(file_holds, keys, digest):
         return Current()
     return ToBake(made if digest is not None else None)
+
+
+def _current_bake(file_holds, keys, digest):
+    """Does the file hold a bake under this library's keys of the picture whose decode is `digest`? Then it is current
+    and never rewritten, whatever faces or photo vector it holds beside this library's rows (owner, DECISIONS
+    2026-10-27): two libraries over one folder adopt each other's bake (the index reads it: bake_reading), and a GPU's
+    vector and a CPU's do not rewrite each other. With no `digest` (a run planning without a decode) it is not decided
+    here: a file differing from the rows is ToBake(None), and the run that decodes it decides."""
+    if digest is None:
+        return False
+    if not all(fields.same_read(bake.WRITTEN[field], file_holds.get(bake.WRITTEN[field]), [key])
+               for field, key in ((bake.PHOTO_MODEL, keys.photo), (bake.FACE_MODEL, keys.face))):
+        return False
+    texts = file_holds.get(bake.WRITTEN[bake.FINGERPRINT])
+    if not isinstance(texts, list) or len(texts) != 1 or not isinstance(texts[0], str):
+        return False
+    try:
+        return bake.fingerprint_of(texts[0]) == (images.FINGERPRINT_KEY, bytes(digest))
+    except ValueError:
+        return False   # not a Fingerprint of ours: no bake of ours
 
 
 class ReadStopped(Exception):

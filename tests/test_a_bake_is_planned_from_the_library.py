@@ -180,18 +180,27 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
                                      (16, 12), images.fingerprint(images.opened(a, upright=True)), photo_key, FACES),
                          plan.values, "the lower id first")
 
-    def test_a_stale_bake_plans_again(self):
+    def test_a_bake_under_the_librarys_keys_of_the_picture_is_left_alone_and_any_other_plans_again(self):
+        # Owner, DECISIONS 2026-10-27: a bake whose PhotoModel and FaceModel are the library's and whose Fingerprint is
+        # the picture's is current, whatever faces it holds beside the library's rows (another library's bake, adopted).
         a = self.photo("a.jpg", faces=2)
         self.bake([a], self.plan(a).values)
         self.detect(a, 3)
-        again = self.plan(a)
-        self.assertIsInstance(again, baking.ToBake, "a face more in the library than in the file")
-        self.assertEqual(self.expected(a, [box(0), box(1), box(2)]), again.values)
+        self.assertIsInstance(self.plan(a), baking.Current, "a face more in the library than in the file: left alone")
+        self.assertIsInstance(self.plan(a, fingerprint=False), baking.ToBake,
+                              "a rehearsal that decodes nothing does not decide it: the run that decodes it does")
+        self.assertIsNone(self.plan(a, fingerprint=False).values)
 
         b = self.photo("b.jpg", faces=1)
         other = dict(self.plan(b).values, **{bake.WRITTEN[bake.FACE_MODEL]: ["facenet-vggface2"]})
         self.bake([b], other)   # journaled, so its photo vector is restamped over the write
         self.assertIsInstance(self.plan(b), baking.ToBake, "a file baked under another face model")
+
+        c = self.photo("c.jpg", faces=1)
+        another_picture = dict(self.plan(c).values,
+                               **{bake.WRITTEN[bake.FINGERPRINT]: ["%s:%s" % (images.FINGERPRINT_KEY, "ab" * 32)]})
+        self.bake([c], another_picture)
+        self.assertIsInstance(self.plan(c), baking.ToBake, "a file whose Fingerprint is another picture's")
 
     def test_what_cannot_be_baked_says_why(self):
         a = self.photo("a.jpg", faces=1)
@@ -315,16 +324,15 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
             self.assertEqual(self.expected(b, [], applied=size), plan.values, "only small faces: a photo with no face, examined")
             self.assertEqual(["0"], plan.values[bake.WRITTEN[bake.FACES_FOUND]])
 
-            # A file baked with its small face, before the floor, no longer reads current: it plans to be baked again.
+            # A file baked with its small face, before the floor, is a bake under the library's keys of the picture:
+            # current, never rewritten for its small face (owner, DECISIONS 2026-10-27).
             c = self.photo("c.jpg", size=size)
             faces(c, (large, "Tamsin Okoro"), (small, "Odile Farrant"))
             with mock.patch.object(images, "NEW_FACE_FLOOR", 1):
                 old = self.plan(c)
             self.assertEqual((1, []), (lambda result: (result.changed, result.errors))(self.bake([c], old.values)))
             self.assertEqual(2, len(self.bake_of(c).faces))
-            again = self.plan(c)
-            self.assertIsInstance(again, baking.ToBake)
-            self.assertEqual(self.expected(c, [large], applied=size), again.values)
+            self.assertIsInstance(self.plan(c), baking.Current)
 
 
 if __name__ == "__main__":

@@ -9,9 +9,9 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
   finished record is gone;
 - the index's own decode of a photo is its fingerprint: the bake decodes no photo again;
 - a share stops answering part-way through the bake: what it says names no change in History to undo;
-- a face deleted in TagPup is gone from the file at the folder's next index, and does not come back. One of a photo's two:
-  deleting a photo's only face forgets its detection (faces_detected.forget_faceless, #779), and the next index looks
-  for its faces again, as it did before the bake.
+- a face deleted from the library (one of a photo's two) is left in the file: a bake under the library's keys of the
+  picture is never rewritten (owner, DECISIONS 2026-10-27), the file's mtime does not move, and the face does not come
+  back in the library (the index takes faces from a bake only for a photo with no vector or never examined).
 """
 import json
 import os
@@ -140,14 +140,13 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertNoBakeListed()
 
     def test_history_lists_no_bake_and_a_save_before_one_is_undone_past_it(self):
-        self.two_faces_in_a()
         a = self.picture("a.jpg", (200, 40, 40))
-        self.index()
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            self.index()   # indexed, not baked yet
         saved = tagging.save_photo(self.library, a, "Ferry at the quay", ["Harbour/Ferry"], None, EXIFTOOL, "")
         self.assertTrue(saved.changed, saved.refused)
-        self.delete_the_second_face(a)
         self.picture("b.jpg", (40, 200, 40))
-        self.index()   # the folder's bake writes a.jpg again, after the save
+        self.index()   # the folder's bake writes a.jpg, after the save
         self.assertBaked(a, 1)
         self.assertNoBakeListed()
         self.assertIsNone(journal_service.history(self.library, change_id=saved.details["change"])["changes"][0]["why_not"])
@@ -265,19 +264,21 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertNotIn("undone", said)
         self.assertNoBakeListed()
 
-    def test_a_face_deleted_in_tagpup_is_gone_from_the_file_at_the_folders_next_index_and_does_not_return(self):
+    def test_a_face_missing_from_the_rows_but_held_by_a_current_bake_is_left_alone_and_does_not_return(self):
         self.two_faces_in_a()
         a = self.picture("a.jpg", (200, 40, 40))
         self.index()
         self.assertBaked(a, 2)
+        stamp = os.stat(a).st_mtime_ns
         self.delete_the_second_face(a)
-        self.picture("b.jpg", (40, 200, 40))   # the folder recorded again (a deletion alone does not: findings)
-        self.index()
-        self.assertBaked(a, 1)
-        self.picture("c.jpg", (40, 40, 200))
-        self.index()
-        self.assertEqual([FACE], self.boxes(a), "the file's old bake gave the face back")
-        self.assertBaked(a, 1)
+        for held, (name, colour) in enumerate((("b.jpg", (40, 200, 40)), ("c.jpg", (40, 40, 200))), start=1):
+            self.picture(name, colour)   # the folder indexed and baked again
+            result = self.index()
+            self.assertIn("1 file(s) written, %d already held it." % held, " ".join(result.output.split()))
+            self.assertIsInstance(baked_files.plan(self.db_path, a, DETECTOR), baking.Current)
+            self.assertEqual(2, len(baked_files.held(a).faces), "the file keeps the bake it holds")
+            self.assertEqual(stamp, os.stat(a).st_mtime_ns, "a current bake was rewritten")
+            self.assertEqual([FACE], self.boxes(a), "the file's bake gave the face back")
 
 
 if __name__ == "__main__":
