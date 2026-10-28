@@ -361,7 +361,8 @@ Suggest's are (`tagpup.jobs.suggestions.REFUSALS`). Identify reads the faces the
 it compares them by the library's model's vectors alone, so none until the pass gives them the new model's). A look that
 writes nothing builds the new model, and only it, by `Runtime.look_at_faces`: held as a run is (a Suggest on the other set is refused
 beside it, and it beside one), the card taken once at its first use and let go, the model with it, at `end()`.
-Scenario V11, `tests/test_switching_a_librarys_face_model.py`.
+Scenario V11, `tests/test_switching_a_librarys_face_model.py` (since 2026-10-28 a library staying on the new model,
+FaceNet refused; the look went with the face pass, 2026-10-27).
 
 **Merge 3 brief (the pass; after migration 33).**
 - The crop is cut upright, from the picture as shown (`ScrfdPicture.upright`), by the face's box (kept in stored pixels)
@@ -515,23 +516,25 @@ takes no turn of the card.
   `like_them_enough_to_offer` (were `like_them_from_0.80`, `like_them_from_0.70_to_0.80`).
 - `KEPT_FACE_MODELS` holds both models (and with it, removed with the last merge of phase 3, the refusal of a model a
   library cannot keep: `face_model_refusal`, `FACE_MODEL_NOT_KEPT`, `FaceModelNotReady`, the CLI's exit 78, had no
-  instance once both models were kept and the rule refuses any other value). `settings.change` refuses a switch of `faces.model` to the new model while more
-  than `UNPASSED_SHARE_ALLOWED` (5%, the owner's to change) of the library's faces are in photos none of whose faces
-  holds its vector (the pass has not reached them, or found no face in them: the rows do not tell which), before the
-  consequences are asked; refused or not it says how many faces hold a vector under the model, how
-  many named faces hold none (they leave the gallery of named faces until the pass reaches them) and how many are in
-  photos not passed (`details["face_vectors"]`, from `store.faces.vector_counts` and `pass_counts`, read-only). A library
-  with no faces switches; switching back to FaceNet is never refused, reads no pass count (`not_passed` 0) and says
-  only how many faces hold no FaceNet vector (those the new model made meanwhile), when any do. An undo in History that would put the new model
-  back (the undo of a switch back to FaceNet) is refused by the same check, with the same sentence and counts
-  (`settings.undo_check`, asked by `services.journal.why_not` over `UNDO_CHECKS`); undoing the switch to the new model
-  is never refused by it. Counted 2026-10-20, read-only: kr-track 11,457
+  instance once both models were kept and the rule refuses any other value). As built (2026-10-20), `settings.change`
+  refused a switch of `faces.model` to the new model while more than `UNPASSED_SHARE_ALLOWED` (5%) of the library's
+  faces were in photos none of whose faces held its vector (the pass had not reached them), and let a switch back to
+  FaceNet through. **Superseded 2026-10-28 (owner; DECISIONS 2026-10-28):** with the face pass deleted nothing could
+  meet that share, and no library is switched to FaceNet. `settings.switch_on` refuses a switch to `mtcnn-facenet` for
+  every library, empty or not, with one sentence and nothing counted (`settings.NOT_FACENET`, `face_model_refusal`); a
+  switch to the new model is not refused by it and says, for a library with faces, how many hold a vector under the
+  model and how many named faces hold none and take no part in Identify (`details["face_vectors"]`, from
+  `store.faces.vector_counts`, read-only). An undo in History that would put FaceNet back (among them each live
+  library's first switch, which inserted its `faces.model` row) is refused by the same rule and sentence
+  (`settings.undo_check`, asked by `services.journal.why_not` over `UNDO_CHECKS`). Counted 2026-10-20, read-only,
+  when the share was the rule: kr-track 11,457
   faces, 10,246 with the new vector, 3 named without, 16 in photos not passed (0.14%: allowed); renton_parkrun 3,644,
   3,315, 0, 7 (0.19%: allowed); photo_index 187,784, none, 55,298, all (refused). The unmatched old faces of a passed
   photo (1,195 on kr-track) keep FaceNet's vector alone, by design: they are not counted against the switch.
 - Left for items 3 and 4: the index and Suggest writing faces with the new model (`ScrfdAdaFace` answers neither the
   index's `picture(path, max_side=...)` nor Suggest's `detect_and_embed_faces` yet), and the switch's own scenario end
-  to end. Scenario V11, `tests/test_switching_a_librarys_face_model.py`, is the switch now.
+  to end. Scenario V11, `tests/test_switching_a_librarys_face_model.py`, is the switch now (since 2026-10-28 the
+  refusal of FaceNet; the switch to the new model is P10's).
 
 **Merge 3, item 3, as built (2026-10-20): the index, Suggest and the pass write faces with the library's model, whichever.**
 - One surface, answered by `tagpup.ml.faces.FaceModel` and `tagpup.ml.scrfd_adaface.ScrfdAdaFace` alike, built by
@@ -548,7 +551,8 @@ takes no turn of the card.
   switched; Name faces from tags reads the new vectors by AdaFace's cuts; a new photo is indexed through the CLI (the face
   under the floor not made, the one made holding the new model's vector alone, a crop, and `{"model": "scrfd-adaface"}`
   as its detector name); Suggest detects with the new model and offers a person at 0.45, which FaceNet's cuts would not;
-  switched back, FaceNet reads its own vectors again and neither switch wrote one.
+  switched back, FaceNet reads its own vectors again and neither switch wrote one. (The switch back went 2026-10-28:
+  P10 now ends on the switch's undo refused, `settings.NOT_FACENET`.)
 
 **Merge 3, item 4, as built (2026-10-20): the switch end to end.**
 - A face's offer has one owner, the face model's cut (`clustering.cuts_of(model).is_offered`): the panel, Apply All and
@@ -559,14 +563,16 @@ takes no turn of the card.
   dialog's reply carries what the faces hold under the model switched to (`face_vectors`, its sentence shown before the
   page reloads). A running server reads the model at each read: the faces fingerprint holds the model, so Identify's
   cached grids are read again; a Suggest run or an index begun before the switch keeps the model it began with to its
-  end, and the next one reads the library's. Scenario P10 switches in the dialog and undoes the switch in History.
+  end, and the next one reads the library's. Scenario P10 switches in the dialog and undid the switch in History
+  (since 2026-10-28 it finds that undo refused: it would put FaceNet back).
 - As built (2026-10-20, the key travels with the vectors): every `store.faces` reader of vectors takes its key; a
   decision (cluster-faces, automatch and Re-examine, the details panel, Identify's requests, a Suggest run, name faces
   from tags) reads the key once and its vectors and cuts by it, and the named and decided faces kept between requests
   carry theirs (`clustering.FaceRows.key`), compared only with vectors of that key (`FaceRows.under`: none otherwise,
   for that one request; the next reads them again, the fingerprint holding the model). Scenario P10: a switch
   committed while cluster-faces runs leaves it deciding FaceNet's vectors by FaceNet's cuts. The undo of a switch back
-  to FaceNet is refused by the switch's own check (79c4fd75).
+  to FaceNet is refused by the switch's own check (79c4fd75); since 2026-10-28 the switch back itself is refused
+  (`settings.NOT_FACENET`).
 
 **Retiring the old model's faces and vectors (2026-10-22 and 2026-10-23; DECISIONS 2026-10-22, 2026-10-23 and
 2026-10-25).** Two commands ran once on each library: `retire-faces` (every face holding no vector under the
