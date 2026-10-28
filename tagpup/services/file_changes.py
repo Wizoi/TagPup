@@ -251,7 +251,8 @@ def _pinned(function):
                 said += " Before it stopped %d file(s) were written%s." % (
                     result.changed, _kept_as(getattr(_running, "internal", False), result.details.get("change")))
             result.refuse(said)
-            result.details["roots_stopped"] = True     # a run of many writes ends here (bake_after_index)
+            if isinstance(stop, roots_service.RootsChanged):
+                result.details["roots_stopped"] = True     # a run of many writes ends here (bake_after_index)
             _settle_stopped(library, result.details.get("change"))
             return _nothing_more(result)
     return held
