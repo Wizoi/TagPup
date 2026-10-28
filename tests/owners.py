@@ -107,7 +107,7 @@ _SCENARIO_FILES = {
         "test_an_index_reads_a_bake "
         "test_the_index_writes_the_bake"
     ),
-    "F4": "test_folder_watcher test_sync",
+    "F4": "test_folder_watcher test_one_walk_of_a_library_at_a_time test_sync",
     "F5": "test_scenario_two_libraries_share_a_folder",
     "F6": "test_index_progress_end_to_end test_partial_writes_leave_rows_unread test_refresh_rows",
     "F7": "test_a_share_asleep test_a_share_that_wakes",

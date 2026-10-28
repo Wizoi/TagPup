@@ -695,17 +695,19 @@ def watch_folders(library, roots=()):
 
 
 def synced_whole_within(library, seconds):
-    """Did a sync of the whole of `library` finish in the last `seconds`? (Its record is
-    kept only for a sync that wrote what it found.)"""
+    """Did a sync of the whole of `library` that left it in step finish in the last `seconds`? (Its record is kept only
+    for a sync that wrote what it found.) One that could not look at every folder -- a share that did not answer --
+    does not count: the watcher's catch-up at start is skipped only for a library in step (#2109: photo_index's run 92,
+    a server restarted within the hour after it would have left the library not in step until the daily job)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        newest = job_runs.newest_sync(conn, whole=True)
+        finished = job_runs.last_in_step(conn)
     finally:
         conn.close()
-    if not newest:
+    if not finished:
         return False
     try:
-        at = time.mktime(time.strptime(newest["finished"], job_runs.TIME))
+        at = time.mktime(time.strptime(finished, job_runs.TIME))
     except (TypeError, ValueError):
         return False
     return time.time() - at < seconds

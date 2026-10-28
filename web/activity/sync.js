@@ -39,11 +39,17 @@ function syncLine(label, record) {
     ]);
 }
 
+// Since when, to the minute (away_since is "YYYY-MM-DD HH:MM:SS"). Null when the share answered between the root's look
+// and the question since when (a look elsewhere heard it wake): it is then said without a time.
+function notAnswering(root) {
+    return root.away_since ? 'share not answering since ' + root.away_since.slice(11, 16) : 'share not answering';
+}
+
 function librarySync(library) {
     const roots = (library.roots || []).map(root => buildElement('li', {}, [
         buildElement('span', { className: 'path', text: root.path }),
         root.there ? badge('on disk', 'ok')
-            : root.answering === false ? badge('share not answering', 'busy') : badge('missing', 'bad'),
+            : root.answering === false ? badge(notAnswering(root), 'busy') : badge('missing', 'bad'),
         badge(root.watched ? 'watched' : 'not watched', root.watched ? 'ok' : 'quiet'),
     ]));
     const watcher = library.watcher;

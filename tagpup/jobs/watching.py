@@ -29,9 +29,15 @@ Notifications can be missed, so the whole library is synced
   again then too (a root folder added in the settings is watched within RECHECK). One on a
   share that did not answer is looked for again as soon as the share answers (shares.on_back,
   through sync.watch_states: a tick, not RECHECK, #2101); RECHECK stays the safety net for a
-  share that never says so. A library whose whole sync, started after the folder went away,
-  looked at every folder (it waited for the share, sync.FOLDER_WAIT) is not synced whole again.
+  share that never says so.
 The daily `sync` job stays as the safety net (tagpup.jobs.recurring).
+
+One walk of a library at a time (#2102): a whole sync is handed to `whole(library, call, noted)`, which the server
+wires to recurring.sync_whole -- a run of the daily `sync` job, claimed as the runner's are. It is not run when a run
+that ended done started since `noted`, when it was first wanted (time.time()); refused "running" while the runner walks
+the library, it is asked again RECHECK later, still wanted since then. A folder back from a share that did not answer
+is wanted since the share was first found not answering, so the catch-up that waited for it (sync.FOLDER_WAIT) and
+looked at every folder covers it; one back from gone is wanted from now, since a sync that found it gone ended done.
 
 `busy()` is true while a sync it started runs: an update waits for it
 (tagpup.web.lifecycle). stop() stops the watches and waits for that sync to end; start()
@@ -131,12 +137,15 @@ class _ParentHandler(FileSystemEventHandler):
 class Watcher:
     """Watches the folders of `libraries()` -- `folders(library)` for each, the topmost
     folders to watch -- and calls `sync(library, folder)` for a folder whose notifications
-    have settled, or `sync(library, None)` for the whole library. `concerns(path)` says
-    whether a file matters (a photo). The rest are the timings above, a test's shorter."""
+    have settled, or `sync(library, None)` for the whole library, through `whole(library, call, noted)` when given
+    (recurring.sync_whole: its Outcome; see above). `concerns(path)` says whether a file matters (a photo). The rest
+    are the timings above, a test's shorter."""
 
     def __init__(self, libraries, folders, sync, concerns, debounce=DEBOUNCE, recheck=RECHECK, tick=TICK,
-                 clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES, recent=None):
+                 clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES, recent=None, whole=None):
         self._libraries, self._folders, self._sync, self._concerns = libraries, folders, sync, concerns
+        #: whole(library, call, noted) -> an Outcome: the whole library's sync, claimed (None: call() at once).
+        self._whole = whole
         #: recent(library): was it synced whole lately? The catch-up at start is skipped
         #: for one that was -- a crash restart or an update need not walk it again.
         self._recent = recent or (lambda library: False)
@@ -149,7 +158,8 @@ class Watcher:
         #: subfolders, since a watch on a folder sees nothing of the folder's own rename.
         self._parents = {}
         self._parents_limited = False
-        #: library key -> {"library", "folders": {key: [folder, last noticed]}, "whole": time or None}.
+        #: library key -> {"library", "folders": {key: [folder, last noticed]}, "whole": time or None,
+        #: "noted": since when (time.time()) the whole sync is wanted, or None}.
         self._pending = {}
         self._syncing = 0
         self._stop = threading.Event()
@@ -166,9 +176,6 @@ class Watcher:
         self._last_sync = {}
         #: Set when a share that did not answer answers again (_heard_back): the thread looks at the folders at its next tick.
         self._look_soon = threading.Event()
-        #: library key -> when (clock) the newest whole sync that looked at every folder started: a folder back after its
-        #: start is synced whole again, one away before it was looked at by it.
-        self._whole_looked = {}
 
     # ---- The background task -----------------------------------------------------------
 
@@ -304,27 +311,38 @@ class Watcher:
         if not folders:
             return
         now = self._clock()
-        heard = _now()
+        heard, wall = _now(), time.time()
         with self._lock:
             for library in libraries:
                 pending = self._pending_for(library)
                 self._last_event[library.key] = heard
                 for folder in folders:
                     pending["folders"][paths.key(folder)] = [paths.stored(folder), now]
+                if pending["noted"] is not None:
+                    # Left to the whole sync that waits (_due): one that started before this change did not see it.
+                    pending["noted"] = max(pending["noted"], wall)
 
     def _pending_for(self, library):
         """Under the lock."""
-        return self._pending.setdefault(library.key, {"library": library, "folders": {}, "whole": None})
+        return self._pending.setdefault(library.key, {"library": library, "folders": {}, "whole": None, "noted": None})
 
-    def _note_whole(self, libraries):
-        now = self._clock()
+    def _note_whole(self, libraries, noted=None, at=None):
+        """Sync `libraries` whole once DEBOUNCE has passed since `at` (the clock; now when None), wanted since `noted`
+        (time.time(); now when None). Wanted twice before it runs, it is wanted since the later: a sync that started
+        between the two did not see what the second says."""
+        when = self._clock() if at is None else at
+        since = time.time() if noted is None else noted
         with self._lock:
             for library in libraries:
-                self._pending_for(library)["whole"] = now
+                pending = self._pending_for(library)
+                if at is None or pending["whole"] is None:
+                    pending["whole"] = when
+                pending["noted"] = since if pending["noted"] is None else max(pending["noted"], since)
 
     def _due(self):
-        """[(library, folder or None)] whose notifications have settled, taken off the
-        list: the whole library, or each folder no pending folder of it is under."""
+        """[(library, folder or None, noted)] whose notifications have settled, taken off the
+        list: the whole library (since when it is wanted), or each folder no pending folder of
+        it is under (noted None)."""
         now = self._clock()
         due = []
         with self._lock:
@@ -332,8 +350,8 @@ class Watcher:
                 library = pending["library"]
                 if pending["whole"] is not None:
                     if now - pending["whole"] >= self.debounce:
-                        due.append((library, None))
-                        pending["whole"] = None
+                        due.append((library, None, pending["noted"]))
+                        pending["whole"] = pending["noted"] = None
                         pending["folders"].clear()
                     continue
                 folders = pending["folders"]
@@ -351,7 +369,7 @@ class Watcher:
                     if folder in taken or any(paths.is_under(folder, parent) for parent in taken):
                         del folders[key]
                 for folder in taken:
-                    due.append((library, folder))
+                    due.append((library, folder, None))
         return due
 
     # ---- The watcher's thread ------------------------------------------------------------
@@ -370,11 +388,11 @@ class Watcher:
                 except Exception:
                     logger.exception("Looking at the folders to watch failed")
                 next_look = self._clock() + self.recheck
-            for library, folder in self._due():
+            for library, folder, noted in self._due():
                 if stop.is_set():
                     # Not synced now: the catch-up at the next start finds it.
                     break
-                self._run(library, folder)
+                self._run(library, folder, noted)
 
     def _heard_back(self, share):
         """A share a folder is on answers again (shares.on_back, on the thread of the look that heard it): look at the
@@ -382,14 +400,21 @@ class Watcher:
         logger.info("%s answers again; looking at the folders on it now.", share)
         self._look_soon.set()
 
-    def _run(self, library, folder):
+    def _run(self, library, folder, noted=None):
         with self._lock:
             self._syncing += 1
             self._current = {"library": library.name, "folder": folder, "started": _now()}
-        result = None
-        began = self._clock()
+        result, ran = None, True
         try:
-            result = self._sync(library, folder)
+            if folder is None and self._whole is not None:
+                outcome = self._whole(library, lambda: self._sync(library, None), noted)
+                if not outcome.ran:
+                    ran = False
+                    self._not_run(library, outcome.why, noted)
+                    return
+                result = outcome.result
+            else:
+                result = self._sync(library, folder)
             what = folder if folder else "every folder"
             if result is None:
                 return
@@ -398,9 +423,6 @@ class Watcher:
                 return
             details = getattr(result, "details", {}) or {}
             counts = details.get("counts", {})
-            if folder is None and counts and not (counts.get("folders_not_looked_at") or counts.get("roots_gone")):
-                with self._lock:
-                    self._whole_looked[library.key] = began
             if result.changed or details.get("queued") or counts.get("missing"):
                 logger.info("Synced %s in %s: %d row(s) changed, %d folder(s) queued to index, %d missing.",
                             what, library.name, result.changed, details.get("queued", 0), counts.get("missing", 0))
@@ -412,10 +434,24 @@ class Watcher:
                 started = (self._current or {}).get("started")
                 self._current = None
                 details = getattr(result, "details", None) or {}
-                self._last_sync[library.key] = {
-                    "folder": folder, "started": started, "finished": _now(),
-                    "changed": getattr(result, "changed", 0) or 0, "queued": details.get("queued", 0),
-                    "refused": bool(getattr(result, "refused", None)), "failed": result is None}
+                if ran:
+                    self._last_sync[library.key] = {
+                        "folder": folder, "started": started, "finished": _now(),
+                        "changed": getattr(result, "changed", 0) or 0, "queued": details.get("queued", 0),
+                        "refused": bool(getattr(result, "refused", None)), "failed": result is None}
+
+    def _not_run(self, library, why, noted):
+        """The whole sync of `library` was not run, `why` (recurring.Outcome.why): "not due", a run since it was wanted
+        looked at every folder; "running", another (the daily job) walks it now, and it is asked again RECHECK later,
+        wanted since the same time; anything else (the claim could not be written) is logged and not asked again: the
+        daily job is the safety net."""
+        if why == "not due":
+            logger.info("%s was synced whole since it was wanted; not walked again.", library.name)
+        elif why == "running":
+            logger.info("%s is being synced whole by another run; asking again in %d s.", library.name, self.recheck)
+            self._note_whole([library], noted=noted, at=self._clock() + self.recheck - self.debounce)
+        else:
+            logger.warning("The whole sync of %s was not run (%s); the daily sync job will.", library.name, why)
 
     def _look(self, observer, catch_up=False):
         """Read the libraries and their folders again; watch what is wanted and there, stop
@@ -469,6 +505,13 @@ class Watcher:
         for key, root in roots:
             state = states[paths.key(root["path"])]
             there = state == "there"
+            with self._lock:
+                # Since when its share has not answered (time.time()): what a whole sync on its return must have started
+                # after. A root found gone forgets it: a sync that found it gone ended done, and must not cover its return.
+                if state == "unanswered":
+                    root.setdefault("away_at", time.time())
+                elif state == "gone":
+                    root.pop("away_at", None)
             watch = root["watch"]
             if watch is not None and (state == "gone" or not _emitter_alive(observer, watch)):
                 with self._lock:
@@ -487,17 +530,19 @@ class Watcher:
                 with self._lock:
                     root["watch"] = watch
                     came_back, root["absent"] = root["absent"], False
-                    away_at = root.pop("absent_at", None)
-                    behind = [library for key, library in root["libraries"].items()
-                              if came_back and self._whole_looked.get(key, float("-inf")) < (away_at or 0)]
-                if behind:
+                    away_at = root.pop("away_at", None)
+                    libraries = list(root["libraries"].values())
+                if came_back:
                     logger.info("%s is back; syncing its libraries whole.", root["path"])
-                    self._note_whole(behind)
+                    self._note_whole(libraries, noted=away_at)
             elif root["watch"] is None and not there and not root["absent"]:
                 logger.info("%s is not there or does not answer (a drive unplugged?); watching it when it is back.",
                             root["path"])
                 with self._lock:
-                    root["absent"], root["absent_at"] = True, self._clock()
+                    root["absent"] = True
+            if there:
+                with self._lock:
+                    root.pop("away_at", None)
         self._watch_parents(observer)
 
     def _watch_parents(self, observer):
