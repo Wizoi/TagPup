@@ -28,7 +28,12 @@ a thread of its own (Runner.start), stopped at shutdown (owner, 2026-09-26). The
 lists them and runs one by hand; neither the CLI nor the MCP server
 runs what is due as it starts. No Windows Task Scheduler. A server the tests started
 runs none, unless a test asks (tagpup.runtime.runs_recurring_jobs).
+
+The folder watcher's sync of a whole library is a run of the `sync` job too (sync_whole), claimed
+and ended as this runner's are (run_claimed): one walk of a library at a time, whichever of the two
+wants it (#2102), and a whole sync by either counts as the daily one.
 """
+import contextlib
 import logging
 import threading
 import time
@@ -150,7 +155,11 @@ def _snapshots(library, run):
     return snapshot_service.take(library, now=run.now, force=run.forced)
 
 
-@JOBS.job("sync", DAILY, reason=CATCH_UP, failed=sync_service.could_not_look)
+#: The daily catch-up sync, and the job the folder watcher's sync of a whole library is claimed as (sync_whole).
+SYNC = "sync"
+
+
+@JOBS.job(SYNC, DAILY, reason=CATCH_UP, failed=sync_service.could_not_look)
 def _sync(library, run):
     """The whole library brought in step with its folders, applied (tagpup.services.sync,
     through the process's Runtime: the library's ExifTool and its index queue). A catch-up
@@ -258,6 +267,61 @@ class Outcome:
         return self.run_id is not None
 
 
+def run_claimed(job, where, run_for, call, clock=time.time, due=None, started=None):
+    """Run `job` once for `run_for` (a library's name; None for a job not run per library), its run recorded in the
+    library `where`: claimed first -- refused while a live process holds a run of it, or when `due(last, now)`, asked
+    with the last run that ended, says no -- then `call(now)`, which returns the Result, and ended: done, or failed when
+    the call raised, its Result is not ok, or `job.failed` says why it did not do its work. `started(outcome, now)`, a
+    context manager, is entered once the run is claimed and held while it runs. An Outcome. The one claim and end of a
+    job's run: the runner's (Runner.run_job) and the folder watcher's sync of a whole library (sync_whole)."""
+    now = clock()
+    try:
+        claim = job_runs.claim(where, job.name, run_for, now, None if due is None else (lambda last: due(last, now)))
+    except Exception as e:
+        logger.error("Could not claim the job %s in %s: %s", job.name, where.name, e)
+        return Outcome(job.name, run_for, why="unclaimed", error=e)
+    if not claim:
+        return Outcome(job.name, run_for, why=claim.why)
+    outcome = Outcome(job.name, run_for, run_id=claim.run_id)
+    logger.info("Running the job %s for %s", job.name, run_for or "every library")
+    with (started or _nothing)(outcome, now):
+        try:
+            # Every line the run logs carries its tag: the Activity page's "Logs for this run".
+            with runs.running(runs.job_tag(run_for, claim.run_id)):
+                outcome.result = call(now)
+        except Exception as e:
+            logger.exception("The job %s for %s failed", job.name, run_for or "every library")
+            outcome.error = e
+    try:
+        failed = job.failed(outcome.result) if job.failed is not None and outcome.result is not None else None
+        ended = job_runs.finish(where, claim.run_id, clock(), outcome.result, outcome.error, failed)
+        if not ended:
+            logger.warning("The run %d of %s was no longer this process's to end", claim.run_id, job.name)
+    except Exception as e:
+        logger.error("Could not record the end of the job %s for %s: %s", job.name, run_for, e)
+    return outcome
+
+
+def _nothing(outcome, now):
+    return contextlib.nullcontext()
+
+
+def covered_since(noted):
+    """due(last, now) for a sync wanted at `noted` (time.time()): due unless the last run that ended was done and started
+    since -- it looked at every folder after it was wanted (a run that could not ends failed, Job.failed). A run's
+    start is kept to the second, so one that started in the second it was wanted covers it."""
+    return lambda last, now: last is None or last.outcome != job_runs.DONE or last.started_at < int(noted)
+
+
+def sync_whole(library, call, noted):
+    """The folder watcher's sync of the whole of `library`: `call()`, its Result, as a run of the `sync` job, claimed
+    and ended as the runner's, so the watcher and the runner never walk one library at once (#2102: photo_index's
+    runs 94 and 95, two walks of the share at once). Not run when a run of it that ended done started since `noted`,
+    when the watcher wanted it (covered_since); refused "running" while another holds it: the watcher asks again
+    later. A run of it is the job's daily run."""
+    return run_claimed(JOBS.get(SYNC), library, library.name, lambda now: call(), due=covered_since(noted))
+
+
 class Runner:
     """Runs what is due of `registry` over the libraries `libraries()` returns, read at
     each look (a library made meanwhile is found), at the times `clock()` says. `given`
@@ -294,44 +358,27 @@ class Runner:
         if where is None:
             told(Outcome(job.name, run_for, why="no library"))
             return Outcome(job.name, run_for, why="no library")
-        now = self._clock()
-        try:
-            claim = job_runs.claim(where, job.name, run_for, now,
-                                   None if force else (lambda last: is_due(job, last, now)))
-        except Exception as e:
-            logger.error("Could not claim the job %s in %s: %s", job.name, where.name, e)
-            told(Outcome(job.name, run_for, why="unclaimed", error=e))
-            return Outcome(job.name, run_for, why="unclaimed", error=e)
-        if not claim:
-            told(Outcome(job.name, run_for, why=claim.why))
-            return Outcome(job.name, run_for, why=claim.why)
-        outcome = Outcome(job.name, run_for, run_id=claim.run_id)
-        logger.info("Running the job %s for %s", job.name, run_for or "every library")
-        run = Run(now=now, forced=force, given=self._given)
-        with self._running_lock:
-            self._running += 1
-            self._current[claim.run_id] = {"job": job.name, "library": run_for, "run_id": claim.run_id,
-                                           "started": job_runs.stamp(now), "forced": force,
-                                           "run": runs.job_tag(run_for, claim.run_id)}
-        told(outcome)
-        try:
-            # Every line the run logs carries its tag: the Activity page's "Logs for this run".
-            with runs.running(runs.job_tag(run_for, claim.run_id)):
-                outcome.result = job.call(library if job.per_library else libraries, run)
-        except Exception as e:
-            logger.exception("The job %s for %s failed", job.name, run_for or "every library")
-            outcome.error = e
-        finally:
+        target = library if job.per_library else libraries
+
+        @contextlib.contextmanager
+        def under_way(outcome, now):
             with self._running_lock:
-                self._running -= 1
-                self._current.pop(claim.run_id, None)
-        try:
-            failed = job.failed(outcome.result) if job.failed is not None and outcome.result is not None else None
-            ended = job_runs.finish(where, claim.run_id, self._clock(), outcome.result, outcome.error, failed)
-            if not ended:
-                logger.warning("The run %d of %s was no longer this process's to end", claim.run_id, job.name)
-        except Exception as e:
-            logger.error("Could not record the end of the job %s for %s: %s", job.name, run_for, e)
+                self._running += 1
+                self._current[outcome.run_id] = {"job": job.name, "library": run_for, "run_id": outcome.run_id,
+                                                 "started": job_runs.stamp(now), "forced": force,
+                                                 "run": runs.job_tag(run_for, outcome.run_id)}
+            told(outcome)
+            try:
+                yield
+            finally:
+                with self._running_lock:
+                    self._running -= 1
+                    self._current.pop(outcome.run_id, None)
+        outcome = run_claimed(job, where, run_for,
+                              lambda now: job.call(target, Run(now=now, forced=force, given=self._given)),
+                              self._clock, None if force else (lambda last, now: is_due(job, last, now)), under_way)
+        if not outcome.ran:
+            told(outcome)
         return outcome
 
     def run(self, name, library=None, force=True):
