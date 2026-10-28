@@ -110,10 +110,10 @@ class _Library(unittest.TestCase):
                 Image.new("RGB", (48, 32), (5 * n % 255, 90, 140)).save(path, "JPEG")
                 photo_id = photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put_by_id(conn, photo_id, OLD_KEY, mtime, size, vector(OLD_DIM, n))
-                store_embeddings.put_by_id(conn, photo_id, NEW_KEY, mtime, size, vector(NEW_DIM, n))
+                store_embeddings.put_by_id(conn, photo_id, OLD_KEY, mtime, size, vector(OLD_DIM, n), None)
+                store_embeddings.put_by_id(conn, photo_id, NEW_KEY, mtime, size, vector(NEW_DIM, n), None)
                 if n < 3:
-                    store_embeddings.put_by_id(conn, photo_id, THIRD_KEY, mtime, size, vector(512, n))
+                    store_embeddings.put_by_id(conn, photo_id, THIRD_KEY, mtime, size, vector(512, n), None)
                 self.photos.append(path)
             for word in ("Heron", "Harbour"):
                 for prompt in ("a photo of %s" % word, "a %s, 1998" % word):

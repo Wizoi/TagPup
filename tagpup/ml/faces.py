@@ -29,12 +29,6 @@ logger = logging.getLogger("tagpup_cli.faces")
 #: model found it (this one and tagpup.ml.scrfd_adaface).
 SMALLEST_FACE = 15
 
-#: What MTCNN's detections are told apart by (tagpup.store.faces_detected): the settings it is made from, the keys of
-#: tagpup.services.settings.LibrarySettings.faces but `model` (tests/test_service_faces.py holds them equal), and the cap
-#: on the picture it looks at (LibrarySettings.detect_max_side), part of the name only when there is one, so a library that
-#: sets none keeps every photo recorded as detected under the name it had (docs/AI_PIPELINE.md, phase 1a).
-DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
-DETECTOR_CAP = "detect_max_side"
 
 def detection_picture(img, max_side):
     """(the picture the detector is handed, (x, y) scale from it back to `img`): `img` itself and (1, 1) when there is
@@ -144,11 +138,9 @@ class FaceModel:
 
     def detector(self, max_side):
         """The settings its detections at the cap `max_side` are recorded under (tagpup.services.faces.detector_of):
-        DETECTOR_SETTINGS, and the cap only when there is one."""
-        values = {key: getattr(self, key) for key in DETECTOR_SETTINGS}
-        if max_side is not None:
-            values[DETECTOR_CAP] = max_side
-        return {key: list(value) if isinstance(value, tuple) else value for key, value in values.items()}
+        validation.face_detector's, of the settings it was made from."""
+        return validation.face_detector(
+            dict({"model": self.key}, **{key: getattr(self, key) for key in validation.MTCNN_DETECTOR_SETTINGS}), max_side)
 
     def new_faces(self, detected, picture):
         """Of the faces detect_and_embed found in `picture`, those a detection makes a face of where the photo has none

@@ -66,7 +66,7 @@ class TheFaceBoxesTurnWithTheFile(RotationCase):
         face = self.face(path, name="Rowan Thackeray")
         self.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face, b"crop"))
         stat = os.stat(path)
-        self.execute_with(lambda conn: embeddings.put(conn, path, MODEL, stat.st_mtime, stat.st_size, b"\x00\x00\x80\x3f" * 4))
+        self.execute_with(lambda conn: embeddings.put(conn, path, MODEL, stat.st_mtime, stat.st_size, b"\x00\x00\x80\x3f" * 4, None))
         change = self.crash("file written", path, "left")
         # The file is turned; its rows are not: the change says so, and is not finished.
         self.assertEqual((self.orientation(path), self.states(change), self.boxes()), (8, ["writing"], [BOX]))

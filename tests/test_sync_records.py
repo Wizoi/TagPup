@@ -152,11 +152,11 @@ class WhichFolderSyncsAreRecorded(SyncTestCase):
         self.assertEqual([(job_runs.SYNC_FOLDER,)], self.recorded())
         self.assertEqual(1, sync.last(self.library)["last_run"]["found"]["new"])
 
-    def test_a_folder_that_changed_a_row_is_recorded_though_it_left_the_library_in_step(self):
+    def test_a_folder_that_changed_a_row_is_recorded(self):
         self.photo(self.meet, "IMG_0001.jpg", body=b"jpeg, edited", **{"XMP:Subject": ["Weather/Rain"]})
         result = self.run_sync(apply=True, folder=self.meet)
-        self.assertTrue(result.details["in_step"], result.details)
-        self.assertEqual(1, result.changed)
+        # An edit elsewhere also leaves the photo's vector stamped with the file before it: the index owes it a look.
+        self.assertEqual((1, 1, False), (result.changed, result.details["counts"]["owed_stale"], result.details["in_step"]))
         self.assertEqual([(job_runs.SYNC_FOLDER,)], self.recorded())
 
     def test_a_folder_in_step_again_is_recorded_when_the_newest_record_says_it_was_not(self):

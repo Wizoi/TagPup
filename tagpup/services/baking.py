@@ -38,8 +38,11 @@ GONE = "gone"
 UNREADABLE = "unreadable"
 NEVER_EXAMINED = "never examined"
 NO_VECTOR = "no photo vector"
-CHANGED = "changed"
 FACES_WITHOUT_VECTORS = "faces without vectors"
+
+
+#: Why a photo whose vector is not of its picture as it is now (photo_fingerprints.same_picture) cannot be baked.
+NOT_NOW = "It has no photo vector of its picture as it is now."
 
 
 @dataclasses.dataclass(frozen=True)
@@ -71,11 +74,16 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     """ToBake, Current or Cannot for the photo at `photo_path`. `held()`, the fields its file holds (field_values.read of
     bake.WRITTEN's values), or the Exception that read gave (returned or raised); `shape()`, (stored width, stored height,
     turn) as images.shown_shape gives them, or raising (the picture cannot be opened). None of the three is called for a photo the
-    library refuses (GONE, NO_VECTOR, CHANGED, NEVER_EXAMINED, FACES_WITHOUT_VECTORS) or cannot reach (UNREADABLE: a file
+    library refuses (GONE, NO_VECTOR, NEVER_EXAMINED, FACES_WITHOUT_VECTORS) or cannot reach (UNREADABLE: a file
     deleted outside the app, a drive or share away; shares.stamp_of is the one bounded look): its file is not opened for nothing.
     `fingerprint()`, the digest of its upright decode (images.fingerprint), called last, only for a photo that reaches the
     file; or None for the function: then nothing is planned to be written (ToBake.values None) and the Fingerprint the
-    file holds is not compared. It may raise as `shape` does: the photo is UNREADABLE."""
+    file holds is not compared. It may raise as `shape` does: the photo is UNREADABLE.
+
+    Whether the vector is of the picture the file holds now is photo_fingerprints.same_picture's (the one rule): its
+    stamp describing the file, or else the decode's fingerprint equal to the photo's fingerprint row. With no row, or a
+    decode that differs, it is NO_VECTOR (the index computes it again); with a row and no `fingerprint`, undecided, and
+    planned as ToBake(None) or Current."""
     if not store_roots.photo_ids_at(conn, [photo_path]):
         return Cannot(GONE, "It is no longer in the library.")
     stored = embeddings.get(conn, photo_path, keys.photo)
@@ -84,8 +92,11 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     stamp = shares.stamp_of(photo_path)   # bounded: a share that is away is asked once, within a second
     if stamp is None or stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
         return Cannot(UNREADABLE, "Its file could not be reached.")
-    if (stored.mtime, stored.size) != stamp:
-        return Cannot(CHANGED, "Its file changed since its photo vector was made: index it again first.")
+    row = photo_fingerprints.NOT_READ
+    if photo_fingerprints.same_picture((stored.mtime, stored.size), stamp) != photo_fingerprints.STAMPED:
+        row = photo_fingerprints.of_path(conn, photo_path)
+        if photo_fingerprints.same_picture((stored.mtime, stored.size), stamp, row) == photo_fingerprints.CHANGED:
+            return Cannot(NO_VECTOR, NOT_NOW)
     rows = store_faces.in_photo_with_names(conn, photo_path, keys.face)
     if not rows and not faces_detected.detected(conn, photo_path, keys.detector):
         return Cannot(NEVER_EXAMINED, "Its faces were never looked for by the library's face detector.")
@@ -102,6 +113,9 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
         file_holds = error
     if isinstance(file_holds, Exception):
         return Cannot(UNREADABLE, "Its file could not be read: %s" % file_holds)
+    if digest is not None and photo_fingerprints.same_picture(
+            (stored.mtime, stored.size), stamp, row, (images.FINGERPRINT_KEY, digest)) == photo_fingerprints.CHANGED:
+        return Cannot(NO_VECTOR, NOT_NOW)
     applied = orientation.upright_size(stored_w, stored_h, turn)
     upright = [(face_id, orientation.to_upright(images.parse_box(box), stored_w, stored_h, turn), vector)
                for face_id, box, _ref, vector, _excluded in rows]

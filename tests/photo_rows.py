@@ -15,7 +15,7 @@ import os
 
 from tagpup.core import fields
 from tagpup.files.metadata import MetadataExtractor
-from tagpup.store import added_folders, db, photos
+from tagpup.store import added_folders, db, embeddings, faces_detected, photos
 
 
 def stamp_of(photo_path):
@@ -35,10 +35,28 @@ def as_read(photo_path, fields, people=None):
 
 
 def add_read(conn, photo_path, fields, people=None):
-    """Record `photo_path` as the indexer does after reading `fields` from it, and
-    return its id. The caller commits."""
+    """Record the read of `fields` from `photo_path` as the indexer records it, and return its id: the row alone, no
+    vector and no look for faces -- what the index still owes work (photo_fingerprints.owed). The caller commits."""
     photos.record_indexed(conn, photo_path, as_read(photo_path, fields, people))
     return photos.ensure_row(conn, photo_path)
+
+
+#: The vector add_indexed keeps: its value matters to no test that asks whether the index owes the photo work.
+VECTOR = b"\x00\x00\x80\x3f\x00\x00\x00\x00"
+
+
+def add_indexed(conn, photo_path, fields, people=None):
+    """Record `photo_path` as a whole index leaves it, and return its id: the read of `fields` (add_read), a vector
+    under the library's photo model stamped with the file as read, and a look for faces by the library's detector that
+    found none -- the index owes it nothing (photo_fingerprints.owed) while its file is as read. The caller commits."""
+    from tagpup.services import faces, settings
+    record = as_read(photo_path, fields, people)
+    photo_id = add_read(conn, photo_path, fields, people)
+    held = settings.on(conn)
+    embeddings.put(conn, photo_path, settings.photo_key_on(conn), record["mtime"], record["size"], VECTOR, None)
+    faces_detected.record(conn, photo_path, faces.detector_named(held.faces, held.detect_max_side),
+                          (record["mtime"], record["size"]), 0)
+    return photo_id
 
 
 def add_unread(conn, photo_path):

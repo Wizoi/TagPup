@@ -44,7 +44,7 @@ class Vectors(unittest.TestCase):
     def keep(self, model, mtime, size, photo=None, vector=VECTOR):
         conn = db.connect(self.lib.library.path)
         try:
-            embeddings.put(conn, photo or self.photo, model, mtime, size, vector)
+            embeddings.put(conn, photo or self.photo, model, mtime, size, vector, None)
             conn.commit()
         finally:
             conn.close()
@@ -150,7 +150,7 @@ class Vectors(unittest.TestCase):
         conn = db.connect(self.lib.library.path)
         try:
             other_photo = self.lib.photo("dunes.jpg")
-            embeddings.put(conn, other_photo, OTHER, 1.0, 1, VECTOR)
+            embeddings.put(conn, other_photo, OTHER, 1.0, 1, VECTOR, None)
             conn.commit()
             vectors = dict(photos.vectors(conn, MODEL))
             (photo_id,), (other_id,) = store_roots.photo_ids_at(conn, [self.photo]), store_roots.photo_ids_at(conn, [other_photo])

@@ -279,9 +279,9 @@ class ScrfdAdaFace:
         return new_faces(detected, picture)
 
     def detector(self, max_side):
-        """The settings its detections are recorded under (tagpup.services.faces.detector_of): its key alone, the cap not
-        being used, so no MTCNN detection's name is ever this one."""
-        return {"model": self.key}
+        """The settings its detections are recorded under (tagpup.services.faces.detector_of): validation.face_detector's,
+        its key alone."""
+        return validation.face_detector({"model": self.key}, max_side)
 
     def picture(self, img_path, *, max_side):
         """The photo made ready for the detector, on the processor alone (ScrfdPicture): decoded upright, as a person

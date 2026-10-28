@@ -54,7 +54,7 @@ class Base(unittest.TestCase):
         try:
             photo_rows.add_read(conn, path, fields)
             if vector is not None:
-                store_embeddings.put(conn, path, MODEL, 1.0, 1, np.asarray(vector, dtype=np.float32).tobytes())
+                store_embeddings.put(conn, path, MODEL, 1.0, 1, np.asarray(vector, dtype=np.float32).tobytes(), None)
             conn.commit()
         finally:
             conn.close()

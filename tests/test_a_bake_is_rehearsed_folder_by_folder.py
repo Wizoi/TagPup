@@ -75,7 +75,7 @@ class ALibraryToBake(BakeCase):
             conn.close()
         stamp = embeddings.stamp_of(path)
         self.write(lambda conn: embeddings.put(conn, path, photo_key, stamp[0], stamp[1],
-                                               baked_files.unit(bake.PHOTO_DIM, 1).tobytes()))
+                                               baked_files.unit(bake.PHOTO_DIM, 1).tobytes(), None))
         if faces is not None:
             found = [{"box": [n % 8 * 2, n // 8 * 1.5, n % 8 * 2 + 1.5, n // 8 * 1.5 + 1.25],
                       "embedding": baked_files.unit(bake.FACE_DIM, 10 + n).tolist(), "prob": 0.9} for n in range(faces)]
@@ -153,7 +153,7 @@ class ABakeIsRehearsedFolderByFolder(ALibraryToBake):
         self.assertNotIn("XMP", out, "Extended XMP is ExifTool's detail, not the owner's (2026-10-25)")
         for said in ("1 never examined by the face model: run face-pass on its folder first",
                      "1 with a face holding no vector under the face model: run face-pass on its folder",
-                     "1 whose file changed since its photo vector was made: index it again",
+                     "1 with no photo vector of its picture as it is now under the photo model: index its folder (sync queues it)",
                      "1 whose file could not be reached or read: the file or the share did not answer: run again when it does"):
             self.assertIn("Cannot be baked: %s" % said, total)
         self.assertNotIn("none found", out.lower())

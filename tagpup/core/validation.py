@@ -93,6 +93,27 @@ MTCNN_FACENET = "mtcnn-facenet"
 SCRFD_ADAFACE = "scrfd-adaface"
 FACE_MODELS = (SCRFD_ADAFACE, MTCNN_FACENET)
 
+#: What MTCNN's detections are told apart by (tagpup.store.faces_detected): the settings it is made from, the keys of
+#: tagpup.services.settings.LibrarySettings.faces but `model` (tests/test_service_faces.py holds them equal), and the cap
+#: on the picture it looks at (LibrarySettings.detect_max_side), part of the name only when there is one, so a library that
+#: sets none keeps every photo recorded as detected under the name it had (docs/AI_PIPELINE.md, phase 1a).
+MTCNN_DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
+MTCNN_DETECTOR_CAP = "detect_max_side"
+
+
+def face_detector(faces, max_side):
+    """The settings the detections of the face model that `faces` names (LibrarySettings.faces: "model" and, for MTCNN,
+    MTCNN_DETECTOR_SETTINGS) at the cap `max_side` are recorded under: SCRFD's key alone, the cap not being used (so no
+    MTCNN detection's name is ever this one); MTCNN's settings, and the cap only when there is one. The one rule of it:
+    each face model's `detector` asks it, and so does the index with no model made (tagpup.services.faces.detector_named:
+    a run with nothing to do imports no model's library, #1089)."""
+    if faces["model"] == SCRFD_ADAFACE:
+        return {"model": SCRFD_ADAFACE}
+    values = {key: faces[key] for key in MTCNN_DETECTOR_SETTINGS}
+    if max_side is not None:
+        values[MTCNN_DETECTOR_CAP] = max_side
+    return {key: list(value) if isinstance(value, tuple) else value for key, value in values.items()}
+
 #: The face model of a library that holds settings and no faces.model row: one stamped before the face model was a
 #: setting (migration 33), every one of which was on FaceNet. Not a new library's (it is stamped with the setting's
 #: default, the new model): what store.settings.face_model and services.settings read for a missing row. The three live

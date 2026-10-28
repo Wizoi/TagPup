@@ -33,7 +33,7 @@ class AWriteACrashStopped(ReadFilesCase):
         self.before = (stat.st_mtime, stat.st_size)
         conn = db.connect(self.library.path)
         try:
-            embeddings.put(conn, self.a, MODEL, stat.st_mtime, stat.st_size, VECTOR)
+            embeddings.put(conn, self.a, MODEL, stat.st_mtime, stat.st_size, VECTOR, None)
             conn.commit()
         finally:
             conn.close()

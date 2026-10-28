@@ -90,7 +90,7 @@ class Case(unittest.TestCase):
             photo_rows.hold(conn, folder)
             photo_rows.add_read(conn, self.photo, {})
             store_embeddings.put(conn, self.photo, self.model_key, stamp[0], stamp[1],
-                                 np.array(self.vector, dtype=np.float32).tobytes())
+                                 np.array(self.vector, dtype=np.float32).tobytes(), None)
             conn.commit()
         finally:
             conn.close()

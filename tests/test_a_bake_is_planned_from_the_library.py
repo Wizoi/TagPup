@@ -5,7 +5,9 @@ The owner runs a bake over a folder: each photo plans to be baked, already holds
 and why. A photo baked and written through the one writer then plans current, and its fingerprint row is put in the
 transaction that marks the write done; an undo of the bake leaves the row (the picture is the one it was, #1894). A face
 holding only another model's vector refuses the whole photo; a photo whose detector never looked is "never examined",
-never "none found"; a turned photo's regions are upright.
+never "none found"; a turned photo's regions are upright. A file written outside the app after its vector was made is
+baked from that vector only when its decode's fingerprint equals its fingerprint row (photo_fingerprints.same_picture):
+another program's metadata write is the same picture; a cropped one, or one with no row, has no vector of its picture.
 
 Real ExifTool, on JPEGs made here, in a home of the test's own; rows as the indexer stores them (photo_rows.add_read,
 embeddings.put with the file's stamp, faces through services.faces.record_batch with the detector that ran).
@@ -84,7 +86,7 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
 
         def seed(conn):
             stamp = embeddings.stamp_of(path)
-            embeddings.put(conn, path, photo_key, stamp[0], stamp[1], baked_files.unit(bake.PHOTO_DIM, 1).tobytes())
+            embeddings.put(conn, path, photo_key, stamp[0], stamp[1], baked_files.unit(bake.PHOTO_DIM, 1).tobytes(), None)
         if vector:
             self.write(seed)
         if faces is not None:
@@ -194,7 +196,8 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
     def test_what_cannot_be_baked_says_why(self):
         a = self.photo("a.jpg", faces=1)
         self.outside(a, "-XMP:Description=Harbour at dusk")
-        self.assertEqual(baking.CHANGED, self.plan(a).kind, "the file changed since its vector was made")
+        self.assertEqual((baking.NO_VECTOR, baking.NOT_NOW), (lambda plan: (plan.kind, plan.reason))(self.plan(a)),
+                         "written outside, and no fingerprint row to tell the same picture by")
         b = self.photo("b.jpg", faces=1, vector=False)
         self.assertEqual(baking.NO_VECTOR, self.plan(b).kind)
         gone = self.make("gone.jpg", row=False)
@@ -202,8 +205,8 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         away = self.photo("away.jpg", faces=1)
         os.remove(away)
         plan = self.plan_without_opening(away)
-        self.assertEqual(baking.UNREADABLE, plan.kind, "a file that cannot be reached is not one that changed")
-        self.assertNotIn("index it again", plan.reason)
+        self.assertEqual((baking.UNREADABLE, False), (plan.kind, baking.NOT_NOW in plan.reason),
+                         "a file that cannot be reached is not one that changed")
 
         c = self.photo("c.jpg", faces=1)
         keys = self.read(lambda conn: baking.keys(conn, DETECTOR))
@@ -230,11 +233,33 @@ class ABakeIsPlannedFromTheLibrary(BakeCase):
         gone = self.make("gone.jpg", row=False)
         for path, kind in ((self.photo("never.jpg"), baking.NEVER_EXAMINED),
                            (self.photo("novector.jpg", faces=1, vector=False), baking.NO_VECTOR),
-                           (stale, baking.CHANGED), (mixed, baking.FACES_WITHOUT_VECTORS), (gone, baking.GONE)):
+                           (stale, baking.NO_VECTOR), (mixed, baking.FACES_WITHOUT_VECTORS), (gone, baking.GONE)):
             self.assertEqual(kind, self.plan_without_opening(path).kind)
         away = self.photo("away.jpg", faces=1)
         os.remove(away)
         self.assertEqual(baking.UNREADABLE, self.plan_without_opening(away).kind, "a file that cannot be reached")
+
+    def test_another_programs_metadata_write_is_the_same_picture_and_a_crop_is_not(self):
+        # Owner, DECISIONS 2026-10-27: a metadata write never stales a vector; the fingerprint row tells the picture.
+        def indexed(path):
+            # The index puts the fingerprint of its decode as it saves the photo (tagpup.services.search).
+            digest = images.fingerprint(images.opened(path, upright=True))
+            self.write(lambda conn: photo_fingerprints.put(conn, store_roots.photo_ids_at(conn, [path])[0],
+                                                           images.FINGERPRINT_KEY, digest))
+        tagged = self.photo("tagged.jpg", faces=1)
+        indexed(tagged)
+        self.outside(tagged, "-XMP:Description=Harbour at dusk")
+        plan = self.plan(tagged)
+        self.assertIsInstance(plan, baking.ToBake, "the same picture: baked from the vector it has")
+        self.assertEqual(self.expected(tagged, [box(0)]), plan.values)
+        self.assertIsInstance(self.plan(tagged, fingerprint=False), baking.ToBake,
+                              "a rehearsal that decodes nothing is undecided: planned, not refused")
+
+        cropped = self.photo("cropped.jpg", faces=1)
+        indexed(cropped)
+        from PIL import Image
+        Image.new("RGB", (14, 10), (200, 40, 40)).save(cropped, "JPEG")
+        self.assertEqual(baking.NO_VECTOR, self.plan(cropped).kind, "another picture: its vector is the old one's")
 
     def test_a_face_with_another_models_vector_refuses_the_whole_photo(self):
         a = self.photo("a.jpg", faces=2)

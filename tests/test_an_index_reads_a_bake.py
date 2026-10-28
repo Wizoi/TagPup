@@ -19,14 +19,38 @@ What the owner lives through, adding a folder whose photos were baked:
 * an index killed part-way leaves every row whole and the next run completes the folder;
 * the index's read (`-struct`) answers every field of METADATA_FIELDS as the plain read does;
 * a photo baked as a bake run bakes it (planned from the library, written through file_changes.write_fields), then tagged
-  in the app, is still current: the write restamps its vector; then edited outside, it plans CHANGED (its vector's stamp,
-  not its fingerprint, is what the planner compares) until indexed again: an edit of its metadata alone leaves the bake
-  its picture's (read again, no card, current again), an edit of its pixels makes it stale (worked out, to bake again);
+  in the app, is still current: the write restamps its vector; then edited outside: an edit of its metadata alone
+  leaves the bake its picture's (its decode's fingerprint equals its row: current with no index; read again, no card),
+  an edit of its pixels has no vector of its picture until indexed again (worked out, to bake again);
 * a folder baked on the desktop and copied by hand to the server (each copy a new mtime) is read there under the
   server library's keys, no card asked; a copy baked under another photo model gives its faces and not its vector, and a
   copy whose picture was repainted is not trusted (PHASE6_DESIGN, sections 5 and 6).
 * a library made before the fingerprints' table (at 33, as the three live libraries are) is brought to 34 as the index
   opens it, and the baked photo's fingerprint is recorded.
+
+What the owner lives through when a photo's file changes after it was indexed, no bake in it
+(photo_fingerprints.same_picture, the one rule; the index's closing line, tagpup_cli.KEPT_LINE, counts each):
+
+* another program writes a caption into one photo and crops another: the caption's photo keeps its vector and faces,
+  no model asked, its vector stamped again with the file; the cropped one is worked out again; the next run has nothing
+  to do;
+* a turned photo (Orientation 6) whose vector is current and that was never examined for faces (no face row, no record
+  of a look: 223 such in photo_index, 2026-10-27) is looked at for faces, its vector kept, and its fingerprint row with
+  it;
+* a photo whose stamp describes its file but that has no fingerprint row (every photo indexed before 34) is left
+  alone; once its file changes it is worked out again, nothing to compare its decode with;
+* a photo replaced while the run waits for the card (behind Suggest), after the check that kept it by its fingerprint
+  decoded it: worked out again from the new picture, its old vector never recorded as the new picture's;
+* an index that stops as it records the batch leaves the stamp stale; the next run restamps it with no model;
+* a watcher's sync after another program wrote keywords into a folder: every photo is kept by its fingerprint, so the
+  index builds no model, imports no torch and takes no turn on the graphics card (it never waits behind Suggest or
+  another index for it), and still stamps each again with its fingerprint row; a run with one photo cropped takes the
+  turn once;
+* a photo cropped outside and then Suggested (Suggest keeps the cropped picture's vector), then restored from a copy: the
+  index works it out again, and its fingerprint row is the restored picture's -- Suggest's vector forgot the row of the
+  picture before the crop, which told the index the cropped picture's vector was the restored one's;
+* --force-reembed works the photo out again, its vector and its faces;
+* on a machine whose models run on the processor, the bake line says so.
 
 CLIP and the face model are stood in for (tests/test_no_test_loads_a_model.py); a stand-in asked while `refused` raises
 and is noted. Pillow and ExifTool are real; the bakes are written through the one writer (tests/baked_files.py, or
@@ -52,18 +76,20 @@ import own_home  # noqa: E402
 from stand_in_models import NewFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
-from tagpup.core import fields, orientation, paths, validation  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
+from tagpup.core import fields, orientation, paths, processes, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
+from tagpup.ml.clip import ClipModel  # noqa: E402
 from tagpup.ml.faces import NotDetected  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
-from tagpup.services import bake_reading, baking, file_changes, file_only, indexing, tagging  # noqa: E402
+from tagpup.services import bake_reading, baking, file_changes, file_only, indexing, search, tagging  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
@@ -124,6 +150,8 @@ class AnIndexReadsABake(unittest.TestCase):
         self.db_path = self.made("harbour.db")
         self.photo_key = store_embeddings.model_key(**library_settings.read(Library(self.db_path)).embedder)
         self.refused, self.on_card = False, []
+        #: What each turn on the graphics card was asked for, and each build of the face model: counted, not refused.
+        self.turns, self.face_models = [], []
         self.computed = baked_files.unit(bake.PHOTO_DIM, 99).tolist()
 
         def card(what, value=None):
@@ -137,8 +165,12 @@ class AnIndexReadsABake(unittest.TestCase):
         for patcher in (mock.patch.object(clip.ClipModel, "_init_model", side_effect=card("load")),
                         mock.patch.object(clip.ClipModel, "picture_input", side_effect=card("input", "input")),
                         mock.patch.object(clip.ClipModel, "embed_input", side_effect=card("embed", self.computed)),
-                        mock.patch.object(Runtime, "gpu_turn", lambda *args, **kwargs: _Hold()),
-                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None: self.detector)):
+                        mock.patch.object(Runtime, "gpu_turn",
+                                          lambda runtime, what, *args, **kwargs: self.turns.append(what) or _Hold()),
+                        # The models are taken to be on the graphics card, whatever this machine has.
+                        mock.patch.object(runtimes, "on_the_card", return_value=True),
+                        mock.patch.object(Runtime, "faces", lambda runtime, library, settings=None:
+                                          self.face_models.append(library) or self.detector)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -206,10 +238,22 @@ class AnIndexReadsABake(unittest.TestCase):
             xmp = held.info["xmp"]
         Image.new("RGB", SIZE, colour).save(path, "JPEG", xmp=xmp)
 
-    def index(self, folder):
-        result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder])
+    def crop(self, path):
+        """An editor's crop of the picture, saved over the file."""
+        with Image.open(path) as held:
+            cut = held.crop((0, 0, SIZE[0] // 2, SIZE[1] // 2))
+        cut.save(path, "JPEG")
+
+    def index(self, folder, *options):
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", *options, folder])
         self.assertEqual(0, result.exit_code, result.output)
         return result
+
+    def kept_line(self, result, stamp, same, baked, made, examined):
+        """The index's closing line: its first four counts add up to the photos the library holds (each test's run
+        indexes every photo of its library, or found it current)."""
+        self.assertIn(tagpup_cli.KEPT_LINE % (stamp, same, baked, made, examined), " ".join(result.output.split()))
+        self.assertEqual(self.query("SELECT COUNT(*) FROM photos")[0][0], stamp + same + baked + made, result.output)
 
     # ---- what the library holds ----------------------------------------------------------------------------------------
 
@@ -233,6 +277,40 @@ class AnIndexReadsABake(unittest.TestCase):
                           "SELECT p.path, f.box, v.vector, f.name, f.excluded FROM faces f JOIN photos p ON p.id = "
                           "f.photo_id LEFT JOIN face_embeddings v ON v.face_id = f.id AND v.model = ?", (FACES,))
                       if paths.key(path_of) == paths.key(path))
+
+    def stamp(self, path):
+        """The (mtime, size) the photo's vector is stamped with."""
+        (found,) = [(mtime, size) for path_of, mtime, size in self.query(
+            "SELECT p.path, e.mtime, e.size FROM embeddings e JOIN photos p ON p.id = e.photo_id WHERE e.model = ?",
+            (self.photo_key,)) if paths.key(path_of) == paths.key(path)]
+        return found
+
+    def file_stamp(self, path):
+        stat = os.stat(path)
+        return stat.st_mtime, stat.st_size
+
+    def boxes(self, path):
+        return [box for box, *_ in self.faces(path)]
+
+    def fingerprint(self, path):
+        """[(key, hash)] of the photo's fingerprint row (none, or one)."""
+        return [(key, bytes(hash)) for path_of, key, hash in self.query(
+            "SELECT p.path, f.key, f.hash FROM photo_fingerprints f JOIN photos p ON p.id = f.photo_id")
+            if paths.key(path_of) == paths.key(path)]
+
+    def decoded(self, path):
+        """The (key, hash) of the file's picture now, as the index takes it."""
+        return images.FINGERPRINT_KEY, bytes(images.fingerprint(images.opened(path, upright=True)))
+
+    def suggested(self, path):
+        """Suggest asks the photo's vector (PhotoEmbeddings.of): not current, it is made and kept."""
+        settings = library_settings.read(Library(self.db_path)).embedder
+        index = search.PhotoIndex(self.db_path, self.photo_key)
+        index.open()
+        try:
+            return search.PhotoEmbeddings(ClipModel(**settings, device="cpu"), index).of(path)
+        finally:
+            index.close()
 
     def detected(self, path):
         return [(detector, found) for path_of, detector, found in self.query(
@@ -282,6 +360,7 @@ class AnIndexReadsABake(unittest.TestCase):
         for path, size in ((two, SIZE), (tiff, SIZE), (crowd, (1600, 1200)), (empty, SIZE)):
             self.assertHoldsTheBake(path, held[path], size)
         self.assertEqual(60, len(self.faces(crowd)))
+        self.kept_line(result, 0, 0, 4, 0, 0)
         self.assertIn("Baked into the files: 4 photo(s) read from their file, 0 worked out on the graphics card; 0 bake(s) "
                       "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 4 photo(s) "
                       "needed no graphics card.",
@@ -372,17 +451,20 @@ class AnIndexReadsABake(unittest.TestCase):
             self.assertIsInstance(self.plan(path), baking.Current, path)
             self.assertEqual(1, len(baked_files.held(path).faces))
 
-        # Then edits each outside: one's caption, the other's pixels. Both plan CHANGED until indexed again: the planner
-        # compares the vector's stamp (mtime, size), not the fingerprint.
+        # Then edits each outside: one's caption, the other's pixels. The caption's photo is the same picture (its
+        # decode's fingerprint equals its row: photo_fingerprints.same_picture), the repainted one has no vector of its
+        # picture until indexed again.
         self.outside(kept, "-XMP:Description=Boats at dusk")
         self.repaint(edited, "maroon")
-        for path in (kept, edited):
-            self.assertEqual(baking.CHANGED, self.plan(path).kind, path)
+        self.assertIsInstance(self.plan(kept), baking.Current)
+        self.assertEqual(baking.NO_VECTOR, self.plan(edited).kind)
         del self.detector.asked[:], self.on_card[:]
-        said = self.said(self.index(folder))
-        self.assertEqual(["Baked into the files: 1 photo(s) read from their file, 1 worked out on the graphics card; 1 bake(s) "
-                          "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 1 "
-                          "photo(s) needed no graphics card."], said)
+        result = self.index(folder)
+        # The caption's photo keeps its vector by its fingerprint: no bake read, no model run, stamped again.
+        self.assertEqual(["Baked into the files: 0 photo(s) read from their file, 1 worked out on the graphics card; 1 bake(s) "
+                          "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 0 "
+                          "photo(s) needed no graphics card."], self.said(result))
+        self.kept_line(result, 0, 1, 0, 1, 0)
         self.assertEqual(["edited.jpg"], self.detector.asked, "the repainted photo's faces are looked for again")
         self.assertEqual(1, self.on_card.count("embed"))
         # The caption's edit left the bake its picture's: read again, it is current. The repainted one is to bake again,
@@ -393,6 +475,252 @@ class AnIndexReadsABake(unittest.TestCase):
         digest = images.fingerprint(images.opened(edited, upright=True))
         self.assertEqual(digest, bake.fingerprint_of(again.values[bake.WRITTEN[bake.FINGERPRINT]][0])[1])
         self.assertNotEqual(digest, baked_files.held(edited).fingerprint)
+
+    def test_an_unbaked_photo_captioned_outside_keeps_its_vector_and_a_cropped_one_is_worked_out_again(self):
+        folder = self.folder("Harbour Unbaked Edits")
+        captioned = self.picture(folder, "captioned.jpg", "navy")
+        cropped = self.picture(folder, "cropped.jpg", "teal")
+        self.detector.found = {"captioned.jpg": [([300, 200, 400, 330], 0.99, 1)],
+                               "cropped.jpg": [([100, 50, 200, 180], 0.99, 2)]}
+        self.index(folder)
+        vector, boxes = self.vector(captioned), self.boxes(captioned)
+        self.outside(captioned, "-XMP:Description=Boats at dusk")
+        self.crop(cropped)
+        self.assertNotEqual(self.file_stamp(captioned), self.stamp(captioned))
+        del self.detector.asked[:], self.on_card[:]
+        self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 98).tolist()
+        del self.turns[:]
+        result = self.index(folder)
+        self.assertEqual(1, len(self.turns), "the cropped photo needs the models: one turn, for the run")
+        # The caption's photo: the same picture (its decode's fingerprint is its row's), its vector and faces kept, no
+        # model asked, its vector stamped with the file as it is now.
+        self.assertEqual(["cropped.jpg"], self.detector.asked, result.output)
+        self.assertEqual(1, self.on_card.count("embed"), "the cropped photo's vector alone")
+        self.assertTrue(np.allclose(vector, self.vector(captioned)))
+        self.assertEqual(boxes, self.boxes(captioned))
+        self.assertEqual(self.file_stamp(captioned), self.stamp(captioned))
+        self.assertTrue(np.allclose(self.computed, self.vector(cropped)))
+        self.assertEqual([], self.said(result), "no photo held a bake")
+        self.kept_line(result, 0, 1, 0, 1, 0)
+        # Both stamps now describe their files: nothing to do.
+        self.refused = self.detector.refused = True
+        self.assertIn("All images are up to date!", self.index(folder).output)
+
+    def test_a_turned_photo_never_examined_for_faces_is_looked_at_and_its_vector_kept(self):
+        folder = self.folder("Harbour Never Examined")
+        turned = self.picture(folder, "turned.jpg", "navy", turned=6)
+        failing = self.picture(folder, "failing.jpg", "olive")
+        upright = orientation.to_upright([100, 50, 200, 180], *SIZE, 6)
+        self.detector.found = {"turned.jpg": [(upright, 0.99, 1)]}
+        self.index(folder)
+        vector, boxes, stamp = self.vector(turned), self.boxes(turned), self.stamp(turned)
+        self.assertEqual(1, len(boxes))
+        # Never examined: no face row, no record of a look (as a photo indexed with faces skipped is).
+        conn = db.connect(self.db_path, foreign_keys=True)
+        try:
+            conn.execute("DELETE FROM faces")
+            conn.execute("DELETE FROM faces_detected")
+            conn.commit()
+        finally:
+            conn.close()
+        del self.detector.asked[:], self.on_card[:]
+        self.refused = True
+        # The other's detection fails this time (NotDetected): it records nothing, is not counted as looked at, and is
+        # owed still.
+        self.detector.found["failing.jpg"] = None
+        result = self.index(folder)
+        self.assertEqual(["failing.jpg", "turned.jpg"], sorted(self.detector.asked), result.output)
+        self.assertEqual([], self.detected(failing))
+        self.assertEqual([], self.on_card, "its vector is current: CLIP is not asked")
+        self.assertEqual(boxes, self.boxes(turned), "the faces of the picture as shown")
+        self.assertEqual(1, len(self.detected(turned)))
+        self.assertTrue(np.allclose(vector, self.vector(turned)))
+        self.assertEqual(stamp, self.stamp(turned))
+        self.assertEqual([self.decoded(turned)], self.fingerprint(turned), "kept by its stamp, with its fingerprint row")
+        self.kept_line(result, 2, 0, 0, 0, 1)
+        self.detector.found["failing.jpg"] = []
+        self.kept_line(self.index(folder), 2, 0, 0, 0, 1)
+        self.detector.refused = True
+        self.assertIn("All images are up to date!", self.index(folder).output)
+
+    def test_a_matching_stamp_with_no_fingerprint_row_is_left_alone_and_a_changed_file_with_none_worked_out(self):
+        folder = self.folder("Harbour Before Fingerprints")
+        path = self.picture(folder, "quay.jpg", "navy")
+        self.detector.found = {"quay.jpg": [([300, 200, 400, 330], 0.99, 1)]}
+        self.index(folder)
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("DELETE FROM photo_fingerprints")
+            conn.commit()
+        finally:
+            conn.close()
+        del self.detector.asked[:], self.on_card[:]
+        self.refused = self.detector.refused = True
+        self.assertIn("All images are up to date!", self.index(folder).output)
+        self.assertEqual(0, self.query("SELECT COUNT(*) FROM photo_fingerprints")[0][0])
+        # Its file then changes: with no row to compare a decode with, the photo is worked out again.
+        self.outside(path, "-XMP:Description=Boats at dusk")
+        self.refused = self.detector.refused = False
+        result = self.index(folder)
+        self.assertEqual(1, self.on_card.count("embed"))
+        self.assertEqual(["quay.jpg"], self.detector.asked)
+        self.assertEqual(self.file_stamp(path), self.stamp(path))
+        self.assertEqual(1, self.query("SELECT COUNT(*) FROM photo_fingerprints")[0][0])
+        self.kept_line(result, 0, 0, 0, 1, 0)
+
+    def test_a_photo_suggested_while_cropped_and_then_restored_is_worked_out_again_not_kept_from_the_crop(self):
+        folder = self.folder("Harbour Restored")
+        path = self.picture(folder, "quay.jpg", "navy")
+        self.detector.found = {"quay.jpg": [([300, 200, 400, 330], 0.99, 1)]}
+        self.index(folder)
+        original = os.path.join(self.home.root, "quay before the crop.jpg")
+        shutil.copyfile(path, original)
+        first = self.decoded(path)
+        self.assertEqual([first], self.fingerprint(path))
+        # Cropped in an editor, then Suggest asked of it: its vector is not current, so Suggest makes the cropped
+        # picture's and keeps it.
+        self.crop(path)
+        self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 97).tolist()
+        self.suggested(path)
+        self.assertTrue(np.allclose(self.computed, self.vector(path)))
+        self.assertEqual([], self.fingerprint(path), "a vector of the crop beside the row of the picture before it")
+        # Restored from the copy (a new mtime): the picture is the first one again; the vector is the crop's.
+        shutil.copyfile(original, path)
+        self.assertEqual(first, self.decoded(path))
+        del self.detector.asked[:], self.on_card[:]
+        self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 96).tolist()
+        result = self.index(folder)
+        self.assertEqual(1, self.on_card.count("embed"), "the crop's vector was kept for the restored picture")
+        self.assertTrue(np.allclose(self.computed, self.vector(path)))
+        self.assertEqual(self.file_stamp(path), self.stamp(path))
+        self.assertEqual([first], self.fingerprint(path))
+        self.kept_line(result, 0, 0, 0, 1, 0)
+
+    def test_an_index_stopped_as_it_records_leaves_the_stamp_stale_and_the_next_restamps_with_no_model(self):
+        folder = self.folder("Harbour Stopped")
+        path = self.picture(folder, "quay.jpg", "navy")
+        self.detector.found = {"quay.jpg": [([300, 200, 400, 330], 0.99, 1)]}
+        self.index(folder)
+        vector, stale = self.vector(path), self.stamp(path)
+        self.outside(path, "-XMP:Description=Boats at dusk")
+        del self.detector.asked[:], self.on_card[:]
+        self.refused = self.detector.refused = True
+
+        def stops(index, *args, **kwargs):
+            raise OSError("the share stopped answering")
+        with mock.patch.object(search.PhotoIndex, "build_or_update", stops):
+            stopped = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder])
+        self.assertNotEqual(0, stopped.exit_code, stopped.output)
+        self.assertEqual(stale, self.stamp(path), "nothing recorded")
+        del self.turns[:], self.face_models[:]
+        result = self.index(folder)
+        self.assertEqual(([], []), (self.on_card, self.detector.asked), result.output)
+        self.assertEqual(([], []), (self.turns, self.face_models), "restamped with no model and no turn")
+        self.assertEqual(self.file_stamp(path), self.stamp(path))
+        self.assertTrue(np.allclose(vector, self.vector(path)))
+        self.kept_line(result, 0, 1, 0, 0, 0)
+
+    def test_keywords_written_into_a_folder_outside_are_restamped_with_no_model_no_torch_and_no_turn(self):
+        folder = self.folder("Harbour Keywords Outside")
+        first = self.picture(folder, "first.jpg", "navy")
+        second = self.picture(folder, "second.jpg", "teal")
+        self.detector.found = {"first.jpg": [([300, 200, 400, 330], 0.99, 1)],
+                               "second.jpg": [([100, 50, 200, 180], 0.99, 2)]}
+        self.index(folder)
+        before = {path: (self.vector(path), self.boxes(path), self.fingerprint(path)) for path in (first, second)}
+        # Another program writes a keyword into each: the watcher's sync queues the folder.
+        for path in (first, second):
+            self.outside(path, "-XMP:Subject+=Places/Harbour")
+        del self.turns[:], self.face_models[:], self.on_card[:]
+        self.refused = self.detector.refused = True
+        result = self.index(folder)
+        self.assertEqual(([], [], []), (self.turns, self.face_models, self.on_card), result.output)
+        self.assertNotIn("graphics card", result.output)
+        for path in (first, second):
+            vector, boxes, fingerprint = before[path]
+            self.assertTrue(np.allclose(vector, self.vector(path)), path)
+            self.assertEqual(boxes, self.boxes(path), path)
+            self.assertEqual(self.file_stamp(path), self.stamp(path), "stamped again with the file as it is")
+            self.assertEqual(fingerprint, self.fingerprint(path), "its fingerprint row recorded again")
+            self.assertIn("Places/Harbour", self.row(path, "tags") or "", "its row read again")
+        self.kept_line(result, 0, 2, 0, 0, 0)
+        self.assertIn("All images are up to date!", self.index(folder).output)
+
+        # Run as the server's queue runs it, in a process of its own: no model's library is imported (#1089).
+        for path in (first, second):
+            self.outside(path, "-XMP:Description=Boats at dusk")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        probe = ("import sys\n"
+                 "import tagpup_cli\n"
+                 "try:\n"
+                 "    tagpup_cli.cli(sys.argv[1:], standalone_mode=False)\n"
+                 "finally:\n"
+                 "    print('LOADED=' + ','.join(m for m in ('open_clip', 'torch') if m in sys.modules))\n")
+        done = processes.run([sys.executable, "-c", probe, "--db", self.db_path, "index", folder], cwd=root,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertIn(tagpup_cli.KEPT_LINE % (0, 2, 0, 0, 0), " ".join(done.stdout.split()))
+        self.assertEqual("LOADED=", [line for line in done.stdout.splitlines() if line.startswith("LOADED=")][-1])
+        for path in (first, second):
+            self.assertEqual(self.file_stamp(path), self.stamp(path))
+
+    def test_a_photo_replaced_while_the_run_waits_for_the_card_is_worked_out_again_not_kept_from_the_old_decode(self):
+        folder = self.folder("Harbour Replaced While Waiting")
+        first = self.picture(folder, "a first.jpg", "navy")
+        second = self.picture(folder, "b second.jpg", "teal")
+        self.detector.found = {"a first.jpg": [([300, 200, 400, 330], 0.99, 1)],
+                               "b second.jpg": [([100, 50, 200, 180], 0.99, 2)]}
+        self.index(folder)
+        # Keywords written outside the first (kept by its fingerprint, decoded by the no-model check), the second cropped
+        # (the run needs a model, so the card's turn is waited for).
+        self.outside(first, "-XMP:Subject+=Places/Harbour")
+        self.crop(second)
+        old_vector = self.vector(first)
+
+        def waits(runtime, what, *args, **kwargs):
+            # While the run waits behind Suggest, an editor saves other pixels (a larger file) over the first photo.
+            self.turns.append(what)
+            Image.new("RGB", (SIZE[0] + 40, SIZE[1]), "gold").save(first, "JPEG")
+            return _Hold()
+        del self.detector.asked[:], self.on_card[:], self.turns[:]
+        self.computed[:] = baked_files.unit(bake.PHOTO_DIM, 95).tolist()
+        with mock.patch.object(Runtime, "gpu_turn", waits):
+            result = self.index(folder)
+        self.assertEqual(1, len(self.turns), result.output)
+        with open(first, "rb") as held:
+            as_saved = held.read()
+        self.assertFalse(np.allclose(old_vector, self.computed))
+        # The first photo's vector is worked out from the picture now in the file, and its row is that picture's.
+        self.assertTrue(np.allclose(self.computed, self.vector(first)), "the old picture's vector was kept")
+        self.assertEqual([self.decoded(first)], self.fingerprint(first))
+        self.assertEqual(2, self.on_card.count("embed"), "both photos worked out")
+        self.assertEqual(["a first.jpg", "b second.jpg"], sorted(self.detector.asked))
+        self.kept_line(result, 0, 0, 0, 2, 0)
+        with open(first, "rb") as held:
+            self.assertEqual(as_saved, held.read(), "nothing written into the replaced file")
+
+    def test_force_reembed_works_out_a_photo_again_and_the_line_says_the_processor_on_a_machine_with_no_card(self):
+        folder = self.folder("Harbour Forced")
+        path = self.picture(folder, "quay.jpg", "navy")
+        self.detector.found = {"quay.jpg": [([300, 200, 400, 330], 0.99, 1)]}
+        self.index(folder)
+        del self.detector.asked[:], self.on_card[:]
+        result = self.index(folder, "--force-reembed")
+        self.assertEqual(["quay.jpg"], self.detector.asked)
+        self.assertEqual(1, self.on_card.count("embed"))
+        self.kept_line(result, 0, 0, 0, 1, 0)
+        self.assertEqual(self.file_stamp(path), self.stamp(path))
+
+        # On the processor: one photo read from its bake, one worked out there.
+        folder = self.folder("Harbour On The Processor")
+        baked = self.picture(folder, "baked.jpg", "teal")
+        self.bake(baked, [baked_files.area(0)])
+        self.picture(folder, "unbaked.jpg", "olive")
+        with mock.patch.object(runtimes, "on_the_card", return_value=False):
+            said = self.said(self.index(folder))
+        self.assertEqual(["Baked into the files: 1 photo(s) read from their file, 1 worked out on the processor; 0 bake(s) "
+                          "stale (the picture changed after it was baked), 0 unreadable, 0 made under other models; 1 "
+                          "photo(s) needed no model."], said)
 
     def test_a_folder_baked_on_the_desktop_and_copied_to_the_server_is_read_there_without_the_card(self):
         # Owner, 2026-10-24: bake on the desktop, copy by hand; the server's library reads the bake with no card.

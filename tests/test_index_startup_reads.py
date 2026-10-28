@@ -24,13 +24,15 @@ from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import tagpup_cli  # noqa: E402
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import search  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, faces_detected  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
+from tagpup.store import photo_fingerprints  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
 MODEL = "ViT-B-32|openai|cropped|2.0|native"
@@ -39,6 +41,14 @@ DIM = 8
 
 class Reached(Exception):
     """The files were about to be read: the run decided to index something."""
+
+
+def examined(conn, db_path, path):
+    """Record the photo looked at for faces by the library's face model, none found, as the indexer records it
+    (faces.record_batch): a photo with neither this nor a face is the index's work whatever its vector."""
+    settings = library_settings.of(Library(db_path))
+    faces_detected.record(conn, path, face_service.detector_named(settings.faces, settings.detect_max_side),
+                          photo_rows.stamp_of(path), 0)
 
 
 class Harbour(unittest.TestCase):
@@ -62,10 +72,11 @@ class Harbour(unittest.TestCase):
         conn = db.connect(self.db_path)
         try:
             photo_rows.add_read(conn, path, {"XMP:Subject": ["Boats/Dinghy"]})
+            examined(conn, self.db_path, path)
             if vector:
                 stat = os.stat(path)
                 store_embeddings.put(conn, path, MODEL, stat.st_mtime, stat.st_size,
-                                     np.arange(1, DIM + 1, dtype=np.float32).tobytes())
+                                     np.arange(1, DIM + 1, dtype=np.float32).tobytes(), None)
             conn.commit()
         finally:
             conn.close()
@@ -98,6 +109,73 @@ class TheStore(Harbour):
         self.assertEqual((stat.st_mtime, stat.st_size, True), found[self.path])
         self.assertEqual(False, found[self.bare][2])
         self.assertEqual(3, len(found), "the held row, the two photos")
+        with_stamps = {path: vector for _id, path, _m, _s, vector in store_photos.stamps(conn, vector_stamps=MODEL)}
+        self.assertEqual(((stat.st_mtime, stat.st_size), None), (with_stamps[self.path], with_stamps[self.bare]),
+                         "the vector's stamp, or None for a photo with no vector")
+
+    def test_a_photo_with_no_face_row_and_no_record_of_the_detector_is_unexamined(self):
+        detector = faces_detected.detector({"min_face_size": 20})
+        conn = db.connect(self.db_path)
+        self.addCleanup(conn.close)
+        ids = dict((path, photo_id) for photo_id, path, _m, _s in store_photos.stamps(conn))
+        conn.execute("DELETE FROM faces_detected")
+        self.assertTrue({ids[self.path], ids[self.bare]} <= faces_detected.unexamined(conn, detector))
+        faces_detected.record(conn, self.path, faces_detected.detector({"min_face_size": 40}), None, 0)
+        self.assertIn(ids[self.path], faces_detected.unexamined(conn, detector), "another detector's record is not one")
+        faces_detected.record(conn, self.path, detector, None, 0)
+        self.assertNotIn(ids[self.path], faces_detected.unexamined(conn, detector), "looked at, none found")
+
+
+class TheWorkTheIndexOwes(Harbour):
+    """photo_fingerprints.owed, asked through PhotoIndex.owed: the index's start and sync's look give one answer to which
+    photos the index owes work, and why. Before it, the index asked current() and unexamined() and sync asked the
+    vectors' stamps alone: sync said "In step" over photos the index would have worked on."""
+
+    def setUp(self):
+        super().setUp()
+        self.done = self.photo("done.jpg")
+        self.bare = self.photo("bare.jpg", vector=False)
+        self.edited = self.photo("edited.jpg")
+        self.unlooked = self.photo("unlooked.jpg")
+        with open(self.edited, "ab") as handle:   # written elsewhere after its vector was made
+            handle.write(b"\0")
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("DELETE FROM faces_detected WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
+                         (self.unlooked,))
+            conn.commit()
+        finally:
+            conn.close()
+        self.index = search.PhotoIndex(self.db_path, model=MODEL)
+        self.addCleanup(self.index.close)
+        self.assertTrue(self.index.open())
+        settings = library_settings.of(Library(self.db_path))
+        self.detector = face_service.detector_named(settings.faces, settings.detect_max_side)
+
+    def on_disk(self, *photos):
+        return {paths.key(path): (path, os.stat(path).st_mtime, os.stat(path).st_size) for path in photos}
+
+    def test_each_photo_is_owed_for_its_reasons_and_a_photo_done_is_current(self):
+        on_disk = self.on_disk(self.done, self.bare, self.edited, self.unlooked)
+        owed = self.index.owed(on_disk, self.detector)
+        self.assertEqual({paths.key(self.bare): (photo_fingerprints.NO_VECTOR,),
+                          paths.key(self.edited): (photo_fingerprints.STALE,),
+                          paths.key(self.unlooked): (photo_fingerprints.UNEXAMINED,)}, owed)
+        self.assertEqual({paths.key(self.done)}, self.index.current(on_disk, owed))
+
+    def test_faces_not_asked_owe_no_look_and_a_file_not_on_disk_is_not_asked(self):
+        owed = self.index.owed(self.on_disk(self.done, self.unlooked, self.edited), None)
+        self.assertEqual({paths.key(self.edited): (photo_fingerprints.STALE,)}, owed)
+
+    def test_a_photo_never_looked_at_with_no_vector_owes_both(self):
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("DELETE FROM faces_detected WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (self.bare,))
+            conn.commit()
+        finally:
+            conn.close()
+        owed = self.index.owed(self.on_disk(self.bare), self.detector)
+        self.assertEqual({paths.key(self.bare): (photo_fingerprints.NO_VECTOR, photo_fingerprints.UNEXAMINED)}, owed)
 
 
 class OpeningTheIndex(Harbour):
@@ -159,6 +237,21 @@ class TheIndexCommand(Harbour):
         result, read = self.index()
         self.assertTrue(read, result.output)
 
+    def test_a_row_a_sync_read_again_whose_vector_is_stamped_before_is_read_again(self):
+        # The shape of photo_index's 74 (2026-10-27): a file written outside, its row read again by a sync (stamped as
+        # the file is), its vector stamped as the file was. Its row describes its file; its vector's stamp does not.
+        with open(self.path, "ab") as handle:
+            handle.write(b"\0")
+        stat = os.stat(self.path)
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("UPDATE photos SET mtime = ?, size = ? WHERE path = ?", (stat.st_mtime, stat.st_size, self.path))
+            conn.commit()
+        finally:
+            conn.close()
+        result, read = self.index()
+        self.assertTrue(read, result.output)
+
     def test_a_photo_with_no_vector_is_read(self):
         self.photo("bare.jpg", vector=False)
         result, read = self.index()
@@ -193,10 +286,11 @@ class AnIndexWithNothingToDo(Harbour):
         conn = db.connect(self.db_path)
         try:
             photo_rows.add_read(conn, path, {"XMP:Subject": ["Boats/Dinghy"]})
+            examined(conn, self.db_path, path)
             stat = os.stat(path)
             # Its vector under the library's model's key.
             store_embeddings.put(conn, path, store_embeddings.model_key(**embedder), stat.st_mtime, stat.st_size,
-                                 np.ones(DIM, dtype=np.float32).tobytes())
+                                 np.ones(DIM, dtype=np.float32).tobytes(), None)
             conn.commit()
         finally:
             conn.close()

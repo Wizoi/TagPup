@@ -12,7 +12,8 @@ test declares in the table of photo models (stand_in_models.OTHER_PHOTO_MODEL). 
   (one connection, one take of the write lock, one commit), the others of it kept (#1839).
 - A file that does not decode is counted, and tried again by the next run.
 - A photo the owner edits while it is embedded keeps a vector stamped with the file as it was opened, so the next look
-  at it (Suggest, the index) finds the vector stale and makes it again (#1840).
+  at it (Suggest, the index) finds the vector stale and makes it again (#1840); no photo the run gave a vector keeps a
+  fingerprint row, which would say what picture the new vector was made of without the run having taken one.
 - Two libraries holding one folder: each is embedded by its own run, and neither run writes the other library (#1840).
 - The drive is not connected (every file not found): the run stops past 1% (and 20) with one sentence asking whether
   the drive or share is connected, exits 1, and what an earlier run kept stays kept; one file really gone of a hundred
@@ -59,6 +60,7 @@ from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import suggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
+from tagpup.store import photo_fingerprints  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
@@ -160,7 +162,7 @@ class _Library(unittest.TestCase):
                 Image.new("RGB", (48, 32), (5 * n % 255, 90, 140)).save(path, "JPEG")
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, n).tobytes())
+                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, n).tobytes(), None)
                 self.photos.append(path)
             conn.commit()
         finally:
@@ -171,7 +173,7 @@ class _Library(unittest.TestCase):
         try:
             for path in photos:
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put(conn, path, NEW_KEY, mtime, size, vector(NEW_DIM, 7).tobytes())
+                store_embeddings.put(conn, path, NEW_KEY, mtime, size, vector(NEW_DIM, 7).tobytes(), None)
             conn.commit()
         finally:
             conn.close()
@@ -318,8 +320,18 @@ class APhotoEditedWhileItIsEmbedded(_Library):
                 os.utime(edited, (opened[0] + 60, opened[0] + 60))
 
         self.runtime.clip(None, wanted).on_read = the_owner_edits_it
+        conn = db.connect(self.library.path)
+        try:
+            for path in (edited, self.photos[4]):   # as the index records each with its vector
+                photo_fingerprints.put(conn, store_photos_id(self.library.path, path), images.FINGERPRINT_KEY,
+                                       images.fingerprint(images.opened(path, upright=True)))
+            conn.commit()
+        finally:
+            conn.close()
         counts = self.embed()
         self.assertEqual((10, 10), (counts["embedded"], counts["kept"]))
+        self.assertEqual([(0,)], read(self.library.path, "SELECT COUNT(*) FROM photo_fingerprints"),
+                         "a row of the picture before the edit beside the vector the run made")
         held = read(self.library.path, "SELECT e.mtime, e.size FROM embeddings e JOIN photos p ON p.id = e.photo_id"
                     " WHERE p.id = ? AND e.model = ?", (store_photos_id(self.library.path, edited), NEW_KEY))
         self.assertEqual([opened], held, "the vector was not stamped with the file as it was opened")
@@ -345,7 +357,7 @@ class TwoLibrariesHoldingOneFolder(_Library):
             for n, path in enumerate(self.photos):
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
                 mtime, size = store_embeddings.stamp_of(path)
-                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, n).tobytes())
+                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, n).tobytes(), None)
             conn.commit()
         finally:
             conn.close()

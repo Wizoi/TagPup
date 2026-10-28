@@ -85,7 +85,7 @@ from tagpup.core.result import NotFound
 from tagpup.services import maintenance
 from tagpup.services import refresh_rows
 from tagpup.jobs import indexing as indexing_jobs
-from tagpup.services.search import PhotoIndex
+from tagpup.services.search import PhotoEmbeddings, PhotoIndex
 from tagpup.store.locks import PathLocker
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.files import images as image_files
@@ -120,6 +120,49 @@ def read_ahead_bytes(width, height, clip=None, faces=None, max_side=None):
     if clip is not None:
         halves.append(clip.input_bytes(width, height))
     return max(halves, default=0)
+
+
+def _kept_with_no_model(metas, embeddings, unexamined):
+    """What the index keeps of each of `metas` [records of MetadataExtractor.batch_read] with no model, asked before any
+    model is built or the graphics card's turn taken: (looked, complete). `looked` is {paths.key: {"vector", "stale",
+    "decoded"}}: the vector kept by its stamp, or the Stale one (PhotoEmbeddings.kept), and of a stale one its decode,
+    (stamp, fingerprint, zero tail) -- or what the decode raised -- which the index's read uses and never decodes again.
+    `complete` is True when every photo is kept by its stamp or by its fingerprint (photo_fingerprints.same_picture: only
+    its metadata changed): none is in `unexamined`, none holds a bake to read, none has no vector. Then the index builds
+    no model, imports no torch and takes no turn: the photos are stamped again with what they are. Asked in order and
+    stopped at the first photo that needs a model: its decode, and those read ahead of it, are made again by the index.
+
+    `embeddings` is the library's (PhotoEmbeddings, its model None). The stale photos are decoded on the read-ahead's
+    threads, within its bound."""
+    looked = {}
+    for meta in metas:
+        key = paths.key(meta["path"])
+        if key in unexamined or bake_reading.holds(bake_reading.parsed(meta)):
+            return looked, False
+        kept, stale = embeddings.kept(meta["path"])
+        if kept is None and stale is None:
+            return looked, False
+        looked[key] = {"vector": kept, "stale": stale, "decoded": None}
+
+    def read(meta, begun, reserve):
+        width, height = image_files.picture_size(meta["path"])
+        reserve(width * height * 3)
+        stamp, upright = embeddings.opened(meta["path"])
+        return stamp, image_files.fingerprint(upright), upright.info.get(image_files.ZERO_TAIL_INFO, 0)
+    stale = [meta for meta in metas if looked[paths.key(meta["path"])]["stale"] is not None]
+    with read_ahead.ReadAhead(stale, lambda meta: looked[paths.key(meta["path"])], read, threads=READ_THREADS,
+                              ahead=READ_AHEAD, budget=READ_AHEAD_BYTES) as decodes:
+        for meta, begun, result in decodes:
+            try:
+                decoded = result.result()
+            except Exception as error:
+                # The index's read raises it again, in the photo's turn: said as the index says it, and no model asked.
+                begun["decoded"] = error
+                continue
+            if not begun["stale"].same(decoded[1]):
+                return looked, False
+            begun["decoded"] = decoded
+    return looked, True
 
 
 def get_exiftool_path(db_path, read_only=False) -> str:
@@ -214,6 +257,14 @@ def _holds_the_roots(command):
     return run
 
 
+#: The line an index ends with, counts only: what became of each photo's vector (photo_fingerprints.same_picture), the
+#: four adding up to the photos the run indexed; and the photos never examined for faces whose detection ran (one that
+#: failed, NotDetected, records nothing and is owed still).
+KEPT_LINE = ("Photo vectors: %d kept (the file as it was), %d kept with the picture unchanged (only the file's metadata "
+             "changed: stamped again, no model run), %d read from a bake, %d worked out; %d photo(s) never examined for "
+             "faces looked at.")
+
+
 @cli.command()
 @click.argument("directories", nargs=-1, required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--force-reembed", is_flag=True, help="Force recreation of embeddings.")
@@ -288,10 +339,21 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # the same photos, and keyed by the raw string every one of them was re-embedded
     # and given a second row.
     # The stamps alone: no photo's JSON is read to learn whether its file changed.
+    # A photo never examined for faces by the library's face model (no face row, no record of a look) is the index's work
+    # even when its vector is current: its faces are detected on the picture as shown, its vector kept. Asked by the
+    # model's name, no model made (a run with nothing to do imports none, #1089). Not with --skip-faces; --force-reembed
+    # works every photo again.
+    # The library's cap on the picture the detector looks at, as the run began: one argument of each detection, not
+    # part of the model (two libraries differing only in it share one).
+    detect_max_side = settings.detect_max_side
     if force_reembed:
-        images_to_process = all_images
+        images_to_process, unexamined = all_images, set()
     else:
-        current = photo_index.current(on_disk)
+        # The work the index owes (photo_fingerprints.owed, sync's answer too): no vector, a stale stamp, never examined.
+        owed = photo_index.owed(on_disk, None if skip_faces else
+                                face_records.detector_named(settings.faces, detect_max_side))
+        unexamined = {key for key, reasons in owed.items() if PhotoIndex.UNEXAMINED in reasons}
+        current = photo_index.current(on_disk, owed)
         images_to_process = [path for path in all_images if paths.key(path) not in current]
     skipped_count = len(all_images) - len(images_to_process)
 
@@ -309,10 +371,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         photo_index.close()
         return
 
-    # Only now that a photo is to be embedded: the CLIP model's library (open_clip, torch) takes seconds to import,
-    # and a run that finds nothing to index -- every sync, every watcher run -- needs none of it (docs/findings.md, #1089).
-    # A model's vectors are kept under its own key (tagpup.store.embeddings.model_key): another model's are never compared.
-    embeddings = runtime.embeddings(Library(db_path), photo_index)
+    # The vectors kept, under the library's model's key (tagpup.store.embeddings.model_key: another model's are never
+    # compared), read with no model: a model is built below only when a photo needs one.
+    embeddings = PhotoEmbeddings(None, photo_index, model_key=runtime.model_key(Library(db_path), settings))
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")
@@ -366,13 +427,22 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         photo_index.close()
         return
 
+    # Whether any photo needs a model, decided before one is built: a run where every photo is kept, by its stamp or by
+    # its fingerprint (another program wrote its metadata: a watcher's sync queues its folder), stamps them again with no
+    # model -- CLIP's library and the face model's (open_clip, torch) take seconds to import (#1089) -- and takes no turn
+    # on the graphics card, so it never waits behind Suggest or another index for it. Each stale photo's decode is kept
+    # for the read below, which does not decode it again.
+    looked, complete = ({}, False) if force_reembed else _kept_with_no_model(
+        to_index_meta, embeddings, set() if skip_faces else unexamined)
+    early = {key: answer["decoded"] for key, answer in looked.items() if answer["decoded"] is not None}
+    face_processor = None
+    if not complete:
+        embeddings = runtime.embeddings(Library(db_path), photo_index)
+        face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
+
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
-    face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
-    # The library's cap on the picture the detector looks at, as the run began: one argument of each detection, not
-    # part of the model (two libraries differing only in it share one).
-    detect_max_side = settings.detect_max_side
     # The indexer records what it reads, so it may give a photo its identity -- after the
     # photo's picture has decoded in full, never before (IdentityWriter).
     identity_writer = IdentityWriter(exiftool_path)
@@ -395,10 +465,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             waited.append(line)
             console.print(line, markup=False, soft_wrap=True)
         try:
-            turn = runtime.gpu_turn("indexing %s (%s)" % (names, Library(db_path).name),
-                                    (embeddings.clip, face_processor),
-                                    cancelled=lambda: bool(stop_file) and os.path.exists(stop_file),
-                                    report=say_waiting)
+            # Not taken when every photo is kept with no model (`complete`).
+            turn = None if complete else runtime.gpu_turn(
+                "indexing %s (%s)" % (names, Library(db_path).name), (embeddings.clip, face_processor),
+                cancelled=lambda: bool(stop_file) and os.path.exists(stop_file), report=say_waiting)
         except gpu_turns.Cancelled:
             console.print(indexing_service.CANCELLED_WAITING, markup=False, soft_wrap=True)
             raise SystemExit(indexing_service.EXIT_CANCELLED) from None
@@ -423,7 +493,12 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # model's, and the face model's, the one the runtime hands for the library's setting (Runtime.faces).
         photo_key = embeddings.model_key
         face_key = face_processor.key if face_processor else None
-        tally = bake_reading.Tally()
+        tally = bake_reading.Tally(card=runtimes.on_the_card((embeddings.clip, face_processor)))
+        # What became of each photo's vector, counted as its batch is recorded (a run killed before then recorded
+        # nothing): kept by its stamp, kept by its fingerprint (the picture unchanged: stamped again, no model run),
+        # worked out; and the photos never examined for faces that were looked at.
+        vectors, batch_vectors = Counter(), Counter()
+        vectors["stamp"] = skipped_count
 
         def begin(meta):
             """As a photo enters the read-ahead, in this thread: its lock, the vector the library keeps of it, and its
@@ -434,21 +509,43 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             if not locker.acquire(path):
                 locked_out.append(path)
                 return None
-            kept = None if force_reembed else embeddings.cached(path)
+            # A vector whose stamp no longer describes the file is `stale`: kept if the decode's fingerprint is its
+            # row's (photo_fingerprints.same_picture), else worked out. A run that built no model keeps what it read
+            # before (_kept_with_no_model): read again, it could ask for a model this run does not have.
+            if complete:
+                kept, stale = looked[paths.key(path)]["vector"], looked[paths.key(path)]["stale"]
+            else:
+                kept, stale = (None, None) if force_reembed else embeddings.kept(path)
             # --force-reembed works every photo out again: no bake is read.
             found = bake_reading.parsed({} if force_reembed else meta)
-            loads = kept is None and not bake_reading.gives_vector(found, photo_key)
+            loads = kept is None and stale is None and not bake_reading.gives_vector(found, photo_key)
             if loads:
                 # Loaded here, on the thread that has the graphics card: a read makes CLIP's input with the loaded
-                # model's preprocessing. Not for a photo whose bake may give its vector.
+                # model's preprocessing. Not for a photo whose bake, or whose fingerprint, may give its vector.
                 embeddings.clip.load()
-            return {"vector": kept, "bake": found, "clip": loads}
+            return {"vector": kept, "stale": stale, "examine": paths.key(path) in unexamined, "bake": found,
+                    "clip": loads}
 
         def read(meta, begun, reserve):
             """On a thread of the read-ahead: the photo decoded and made ready for the models, its bake weighed against
             the picture's fingerprint, nothing written and nothing on the graphics card. A picture that does not decode
             raises images.Unreadable, handed to the loop below in the photo's turn."""
             path = meta["path"]
+            decoded = early.get(paths.key(path)) if begun["stale"] is not None else None
+            if isinstance(decoded, Exception):
+                raise decoded
+            if (decoded is not None and tuple(decoded[0]) == tuple(begun["stale"].file_stamp)
+                    and begun["stale"].same(decoded[1])):
+                # Decoded as the run began (_kept_with_no_model), of the file as `begin` found it, its picture the
+                # vector's: not decoded again. A file replaced since (the wait for the graphics card can be long behind
+                # Suggest) has another stamp: decoded below, its old vector never recorded as the new picture's.
+                picture = None
+                if face_processor and begun["examine"]:
+                    width, height = image_files.picture_size(path)
+                    reserve(read_ahead_bytes(width, height, None, face_processor, detect_max_side))
+                    picture = face_processor.picture(path, max_side=detect_max_side)
+                return None, decoded[2], picture, {"stamp": decoded[0], "upright": None, "fingerprint": decoded[1],
+                                                   "took": bake_reading.Taken(), "same": True}
             width, height = image_files.picture_size(path)
             decodes = begun["vector"] is None or bake_reading.holds(begun["bake"])
             reserve(read_ahead_bytes(width, height, embeddings.clip if decodes else None,
@@ -462,7 +559,17 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 zeros = upright.info.get(image_files.ZERO_TAIL_INFO, 0)
             else:
                 zeros = image_files.zero_tail_of(path)
-            picture = face_processor.picture(path, max_side=detect_max_side) if face_processor else None
+            # Faces are looked for when the vector is worked out, or the photo was never examined; a kept vector's are
+            # its photo's already.
+            looks = begun["vector"] is None or begun["examine"]
+            if begun["stale"] is not None and begun["stale"].same(fingerprint):
+                # The picture is the vector's: only the file's metadata changed. Nothing for CLIP, no bake read, and
+                # no face picture but a never-examined photo's.
+                picture = (face_processor.picture(path, max_side=detect_max_side)
+                           if face_processor and begun["examine"] else None)
+                return None, zeros, picture, {"stamp": stamp, "upright": None, "fingerprint": fingerprint,
+                                              "took": bake_reading.Taken(), "same": True}
+            picture = face_processor.picture(path, max_side=detect_max_side) if face_processor and looks else None
             took = bake_reading.taken(begun["bake"], meta, fingerprint, picture, photo_key=photo_key, face_key=face_key)
             if begun["vector"] is None and took.vector is None and begun["clip"]:
                 # Never loading CLIP: it was loaded in begin, on the thread that has the card, and a read still under
@@ -471,7 +578,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             if begun["vector"] is not None or took.vector is not None or prepared is not None:
                 upright = None
             return prepared, zeros, picture, {"stamp": stamp, "upright": upright, "fingerprint": fingerprint,
-                                              "took": took}
+                                              "took": took, "same": False}
 
         # The photos are read ahead and handed back in their order; the graphics card, the identity written into a
         # file and every write of the library stay on this thread, one photo after the other, as before.
@@ -494,14 +601,17 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     logger.info(f"Not indexed, and not written to: {path} does not decode: {damaged}")
                     locker.release(path)
                     continue
-                took, on_card = decoded["took"], False
+                took, on_card, kind, examined = decoded["took"], False, None, False
                 if took.verdict == bake_reading.UNREADABLE:
                     logger.info(f"Its bake is not read, and it is worked out: {path}: {begun['bake'].reason}")
                 if begun["vector"] is not None:
-                    emb = begun["vector"]
+                    emb, kind = begun["vector"], "stamp"
+                elif decoded["same"]:
+                    # Kept, and stamped again with the file as this run read it, as its row is recorded (record_indexed).
+                    emb, kind = begun["stale"].vector, "same"
                 elif took.vector is not None:
                     # As a vector worked out is kept: stamped with the file as it was opened.
-                    emb = took.vector
+                    emb, kind = took.vector, "baked"
                     embeddings.keep(path, emb, decoded["stamp"])
                 else:
                     if prepared is None:
@@ -509,9 +619,14 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                         # CLIP is loaded here, on the thread that has the card.
                         embeddings.clip.load()
                         prepared = embeddings.prepared_from(decoded["stamp"], decoded["upright"])
-                    emb, on_card = embeddings.made(path, prepared), True
+                    emb, on_card, kind = embeddings.made(path, prepared), True, "made"
                 if decoded["fingerprint"] is not None:
                     meta["fingerprint"] = (image_files.FINGERPRINT_KEY, decoded["fingerprint"])
+                else:
+                    # Not decoded: its vector was kept by its stamp, and is recorded again with the fingerprint row it
+                    # has (store.embeddings.put records or forgets one with every vector) -- stamped again, as its row
+                    # is, after an identity written into the file.
+                    meta["fingerprint"] = embeddings.fingerprint_of(path)
                 if zeros >= image_files.ZERO_TAIL:
                     # It decodes, perhaps grey below a line: indexed, and left as it is.
                     incomplete.append((path, zeros))
@@ -523,15 +638,20 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     if identity_writer.give(meta, decoded=True):
                         given.add(path)
 
-                # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
-                if face_processor:
+                # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved): of a
+                # photo whose vector was worked out, or one never examined; a kept vector's photo keeps its faces.
+                if face_processor and (begun["examine"] or not (begun["vector"] is not None or decoded["same"])):
                     detected = took.detected
                     if detected is None:
                         detected = face_processor.detect_and_embed(picture)
                         on_card = on_card or face_records.ran(detected)
                     faces = face_processor.new_faces(detected, picture)
                     batch_faces[path] = faces
-                tally.add(took.verdict, from_file=took.vector is not None or took.detected is not None, on_card=on_card)
+                    # Looked at only when the detection ran: one that failed records nothing (_record_detection).
+                    examined = begun["examine"] and face_records.ran(detected)
+                if not decoded["same"]:
+                    tally.add(took.verdict, from_file=took.vector is not None or took.detected is not None,
+                              on_card=on_card)
 
                 # A photo already indexed is not removed first: build_or_update
                 # updates its row in place. Deleting the row cascaded to its faces
@@ -539,6 +659,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
                 batch_embeddings.append(emb)
                 batch_metas.append(meta)
+                batch_vectors[kind] += 1
+                batch_vectors["examined"] += examined
 
                 # The nodes of the tags and people a photo names are made where the batch is recorded
                 # (derived.make_nodes, taxonomy.ensure_node): the one writer of them.
@@ -562,6 +684,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                         locker.release(saved_meta["path"])
 
                     total_new_indexed += len(batch_embeddings)
+                    vectors.update(batch_vectors)
+                    batch_vectors.clear()
                     batch_embeddings = []
                     batch_metas = []
             except Exception as e:
@@ -587,6 +711,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             for saved_meta in batch_metas:
                 locker.release(saved_meta["path"])
             total_new_indexed += len(batch_embeddings)
+            vectors.update(batch_vectors)
+            batch_vectors.clear()
         upto = face_records.newest_face(Library(db_path))
 
         if locked_out:
@@ -611,6 +737,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             console.print("[yellow]No new embeddings generated.[/yellow]")
         if tally.said():
             console.print(tally.said(), markup=False, soft_wrap=True, highlight=False)
+        console.print(KEPT_LINE % (vectors["stamp"], vectors["same"], vectors["baked"], vectors["made"],
+                                   vectors["examined"]),
+                      markup=False, soft_wrap=True, highlight=False)
         if unreadable:
             console.print(
                 f"[bold yellow]{len(unreadable)} photo(s) could not be read: the file is damaged.[/bold yellow] "
@@ -828,6 +957,15 @@ def _not_looked_at(counts):
             " not in step until a sync looks at them." % (counts["folders_not_looked_at"], counts["not_looked_at"]))
 
 
+#: What `sync` says of the work the index owes (photo_fingerprints.owed), counts only: a photo may owe two (a stale
+#: vector, and never examined).
+OWED_LINE = ("%d photo(s) in %d folder(s) the index owes work: %d with no photo vector, %d whose file changed since its "
+             "vector was made (the index keeps a vector whose picture is the same), %d never examined for faces. Their "
+             "folders go to the index.")
+#: Said after OWED_LINE of the folders among them sync holds back.
+OWED_HELD_BACK = (" %d of those folder(s) are held back: a new file in each may be a copy of a missing photo; settle that"
+                  " first.")
+
 #: What `sync` says of each thing it counts.
 SYNC_FOUND = (("new", "new file(s), in %d folder(s)", "new_folders"), ("changed", "changed file(s)", None),
               ("moved", "moved file(s)", None), ("missing", "missing file(s), in %d folder(s)", "missing_folders"))
@@ -868,9 +1006,11 @@ def sync(ctx, folder, apply_):
                           "by hand.")
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
-    if counts.get("size_changed"):
-        console.print("  %d of the changed file(s) changed SIZE: their vectors and face boxes may be of an older picture "
-                      "(a keyword write changes the size too); they are left as they are." % counts["size_changed"])
+    if counts.get("to_check"):
+        console.print(OWED_LINE % (counts["to_check"], counts["owed_folders"], counts["owed_no_vector"],
+                                   counts["owed_stale"], counts["owed_unexamined"])
+                      + (OWED_HELD_BACK % counts["owed_held_back"] if counts["owed_held_back"] else ""),
+                      markup=False, soft_wrap=True)
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         console.print("In step." if result.details["in_step"] else
@@ -884,7 +1024,7 @@ def sync(ctx, folder, apply_):
     for line in maintenance.skipped(result) + maintenance.failed(result) + result.details["warnings"]:
         console.print(line, markup=False, soft_wrap=True)
     if result.details["queued"]:
-        console.print("Indexing %d folder(s) with new files, one at a time..." % result.details["queued"])
+        console.print("Indexing %d folder(s) with new files or work owed, one at a time..." % result.details["queued"])
         queue = indexing_jobs.queue_for(library)
         queue.wait()
         for folder_path in result.details["reveal"]["new_folders"]:
@@ -1397,8 +1537,8 @@ BAKE_WAY_BACK = ("`undo <change> --apply` takes a folder's bake back. A later wr
 CANNOT_BAKE = {
     baking.NEVER_EXAMINED: ("never examined by the face model", "run face-pass on its folder first"),
     baking.FACES_WITHOUT_VECTORS: ("with a face holding no vector under the face model", "run face-pass on its folder"),
-    baking.NO_VECTOR: ("with no photo vector under the photo model", "index it (it has no photo embedding to write)"),
-    baking.CHANGED: ("whose file changed since its photo vector was made", "index it again"),
+    baking.NO_VECTOR: ("with no photo vector of its picture as it is now under the photo model",
+                       "index its folder (sync queues it)"),
     baking.UNREADABLE: ("whose file could not be reached or read",
                         "the file or the share did not answer: run again when it does"),
     baking.GONE: ("gone from the library during the run", "run it again"),

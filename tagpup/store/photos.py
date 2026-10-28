@@ -441,8 +441,9 @@ def stored_spelling(conn, photo_path):
 
 def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
-    raw_metadata (as values), embedding (bytes) and document_id; the embedding is kept
-    under `model`, stamped with the row's mtime and size, and the photo's people are
+    raw_metadata (as values), embedding (bytes), fingerprint and document_id; the embedding is kept
+    under `model`, stamped with the row's mtime and size, with the fingerprint, the (key, hash) of the picture it was
+    made of, or none (embeddings.put: a row with no fingerprint forgets the photo's), and the photo's people are
     rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits. Returns the row's id.
 
     A photo indexed before is updated in place, under the spelling its row already has.
@@ -486,7 +487,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
             raise ValueError("An embedding is kept under the model that made it; none was named.")
-        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"])
+        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"], row.get("fingerprint"))
     return photo_id
 
 
@@ -627,21 +628,29 @@ def rows_to_check(conn, folder=None):
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 0, raw=(5,))
 
 
-def stamps(conn, folder=None, with_vectors=None):
+def stamps(conn, folder=None, with_vectors=None, vector_stamps=None):
     """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what sync
     (tagpup.services.sync) and the indexer (services.search.PhotoIndex) compare with the disk. With
-    `with_vectors`, a model's name, each also says whether the photo holds a vector under it. Nothing else
-    of the row is read, none of its JSON."""
-    columns, params = "p.id, p.path, p.mtime, p.size", []
+    `with_vectors`, a model's name, each also says whether the photo holds a vector under it; with `vector_stamps`, a
+    model's name, each also gives its vector's (mtime, size), or None when it holds none: what
+    photo_fingerprints.same_picture is asked with. Nothing else of the row is read, none of its JSON, no vector."""
+    columns, joined, params = "p.id, p.path, p.mtime, p.size", "", []
     if with_vectors is not None:
         columns += ", EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
         params.append(with_vectors)
-    query = "SELECT " + columns + " FROM photos p"
+    if vector_stamps is not None:
+        columns += ", e.photo_id IS NOT NULL, e.mtime, e.size"
+        joined = " LEFT JOIN embeddings e ON e.photo_id = p.id AND e.model = ?"
+        params.append(vector_stamps)
+    query = "SELECT " + columns + " FROM photos p" + joined
     if folder:
         where, under = store_roots.sql_under(conn, "p.path", folder)
         query += " WHERE " + where
         params += list(under)
-    return store_roots.natives(conn, conn.execute(query, params).fetchall(), 1)
+    rows = store_roots.natives(conn, conn.execute(query, params).fetchall(), 1)
+    if vector_stamps is None:
+        return rows
+    return [row[:-3] + ((row[-2], row[-1]) if row[-3] else None,) for row in rows]
 
 
 def row_as_recorded(conn, stored_path):
