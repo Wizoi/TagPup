@@ -20,7 +20,8 @@ import dataclasses
 import numpy as np
 
 from tagpup.core import fields, orientation
-from tagpup.files import bake, images, shares
+from tagpup.core import paths
+from tagpup.files import bake, field_values, images, shares
 from tagpup.services import settings
 from tagpup.store import embeddings, faces_detected, file_journal, photo_fingerprints
 from tagpup.store import faces as store_faces
@@ -132,6 +133,70 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None):
     if fields.reads_same(file_holds, compared):
         return Current()
     return ToBake(made if digest is not None else None)
+
+
+class ReadStopped(Exception):
+    """A run was asked to stop while a folder's files were read: a photo the read did not reach was not asked of its
+    share, and is counted nowhere."""
+
+
+class FolderRead:
+    """The bake fields of a folder's files (field_values.read of bake.WRITTEN's), read in one ExifTool read the first
+    time a photo of it asks: the one read a folder is planned from, by the bake's dry run (baking_report) and the index's
+    bake (bake_after_index). `stop`, an Event the read stops at (None: the folder is read whole)."""
+
+    def __init__(self, et, photo_paths, stop=None):
+        self.et, self.photo_paths, self.stop, self.found = et, photo_paths, stop, None
+
+    def of(self, photo_path):
+        """What field_values.read gave for `photo_path`: its fields, or the Exception its read gave (NotAnswered for a
+        photo the read did not reach, ReadStopped for one a stop left unread)."""
+        if self.found is None:
+            self.found = field_values.read(self.et, self.photo_paths, list(bake.WRITTEN.values()), stop=self.stop)
+        held = self.found.get(paths.key(photo_path))
+        if held:
+            return held
+        if self.stop is not None and self.stop.is_set():
+            return ReadStopped("Its file was not read: the run was stopped.")
+        return field_values.NotAnswered("Its file was not read.")
+
+    @property
+    def stalled(self):
+        """Did ExifTool not answer the read in its deadline (field_values.read's NotAnswered)?"""
+        return any(isinstance(held, field_values.NotAnswered) for held in (self.found or {}).values())
+
+
+class PhotoAt:
+    """One photo of a FolderRead as plan_photo asks it: its fields from the folder's read (`given`, each answer, the last
+    its latest plan's; empty when no plan reached its file), its shape from its header, read once however often it is
+    planned."""
+
+    def __init__(self, path, read):
+        self.path, self.read, self.given, self._shaped = path, read, [], None
+
+    def held(self):
+        self.given.append(self.read.of(self.path))
+        return self.given[-1]
+
+    def shape(self):
+        if self._shaped is None:
+            width, height, _oriented, turn = images.shown_shape(self.path)
+            self._shaped = (width, height, turn)
+        return self._shaped
+
+    def plan(self, conn, keys, fingerprint=None):
+        """plan_photo of the photo, `fingerprint` as plan_photo takes it."""
+        return plan_photo(conn, self.path, keys, self.held, self.shape, fingerprint)
+
+    @property
+    def not_answered(self):
+        """Did the folder's read not reach its file (a share that did not answer)?"""
+        return bool(self.given) and isinstance(self.given[-1], field_values.NotAnswered)
+
+    @property
+    def stopped(self):
+        """Did a stop leave its file unread?"""
+        return bool(self.given) and isinstance(self.given[-1], ReadStopped)
 
 
 def _area(box):

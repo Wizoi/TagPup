@@ -372,7 +372,7 @@ class Walk:
 
     def _folder(self, group):
         name = os.path.dirname(group[0][1])
-        read = _FolderRead(self.et, [path for _id, path in group], None if self.whole_folders else self.stop)
+        read = baking.FolderRead(self.et, [path for _id, path in group], None if self.whole_folders else self.stop)
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
             folder = FolderPlan(name, store_roots.to_row(conn, name), [])
@@ -390,59 +390,20 @@ class Walk:
         """Plan the photo at `path` into `folder`. A photo whose file ExifTool did not answer for is counted apart, not
         as unreadable: nothing is known of its file, not even that it cannot be read. A photo is decoded only when its
         plan asks (plan_photo, after the library's checks and the file's read)."""
-        given, decoded, shaped = [], [], []
-
-        def held():
-            given.append(read.of(path))
-            return given[-1]
-
-        def shape():
-            if not shaped:
-                width, height, _oriented, turn = images.shown_shape(path)
-                shaped.append((width, height, turn))
-            return shaped[0]
+        photo, decoded = baking.PhotoAt(path, read), []
 
         def fingerprint():
             decoded.append(images.fingerprint(images.opened(path, upright=True)))
             return decoded[-1]
         sampled = photo_id in self.sampled
-        plan = baking.plan_photo(conn, path, self.keys, held, shape, fingerprint if sampled else None)
+        plan = photo.plan(conn, self.keys, fingerprint if sampled else None)
         if self.values and isinstance(plan, baking.ToBake):
-            plan = baking.plan_photo(conn, path, self.keys, held, shape, fingerprint)
-        if given and isinstance(given[-1], _Stopped):
+            plan = photo.plan(conn, self.keys, fingerprint)
+        if photo.stopped:
             return
-        if isinstance(plan, baking.Cannot) and given and isinstance(given[-1], field_values.NotAnswered):
+        if isinstance(plan, baking.Cannot) and photo.not_answered:
             folder.not_answered += 1
             return
         digest = decoded[-1] if decoded else None
         row = photo_fingerprints.get(conn, photo_id) if sampled and decoded else None
         folder.photos.append(Planned(photo_id, path, plan, digest, row, sampled and bool(decoded)))
-
-
-class _Stopped(Exception):
-    """The run was asked to stop while a folder's files were read: a photo the read did not reach was not asked of the share,
-    and is counted nowhere."""
-
-
-class _FolderRead:
-    """The bake fields of a folder's files, read in one ExifTool read the first time a photo of it asks."""
-
-    def __init__(self, et, photo_paths, stop):
-        self.et, self.photo_paths, self.stop, self.found = et, photo_paths, stop, None
-
-    def of(self, photo_path):
-        """What field_values.read gave for `photo_path`: its fields, or the Exception its read gave (NotAnswered for a
-        photo the read did not reach, _Stopped for one a stop left unread)."""
-        if self.found is None:
-            self.found = field_values.read(self.et, self.photo_paths, list(bake.WRITTEN.values()), stop=self.stop)
-        held = self.found.get(paths.key(photo_path))
-        if held:
-            return held
-        if self.stop is not None and self.stop.is_set():
-            return _Stopped("Its file was not read: the run was stopped.")
-        return field_values.NotAnswered("Its file was not read.")
-
-    @property
-    def stalled(self):
-        """Did ExifTool not answer the read in its deadline (field_values.read's NotAnswered)?"""
-        return any(isinstance(held, field_values.NotAnswered) for held in (self.found or {}).values())

@@ -101,17 +101,18 @@ def _planned(library, et, detector, folder, handed, baked):
         stored = store_roots.to_row(conn, folder)
         group = [path for _id, path in inspection.under(conn, folder)
                  if paths.key(os.path.dirname(path)) == paths.key(folder)]
-        read = _FolderRead(et, group)
+        read = baking.FolderRead(et, group)
         to_bake = {}
         for path in group:
-            plan, given = _plan(conn, path, keys, read, None)
+            photo = baking.PhotoAt(path, read)
+            plan = photo.plan(conn, keys)
             if isinstance(plan, baking.ToBake):
-                plan, given = _plan(conn, path, keys, read, _fingerprint(path, handed))
+                plan = photo.plan(conn, keys, _fingerprint(path, handed))
             if isinstance(plan, baking.ToBake):
                 to_bake[paths.key(path)] = (path, plan.values)
             elif isinstance(plan, baking.Current):
                 baked.current += 1
-            elif given and isinstance(given[-1], field_values.NotAnswered):
+            elif photo.not_answered:
                 baked.not_answered += 1
             else:
                 baked.cannot[plan.kind] += 1
@@ -119,21 +120,6 @@ def _planned(library, et, detector, folder, handed, baked):
         conn.close()
     baked.stalled = baked.stalled or read.stalled
     return to_bake, stored
-
-
-def _plan(conn, path, keys, read, fingerprint):
-    """baking.plan_photo of the photo at `path`, its fields from `read` and its shape from its header: (plan, the fields
-    it was given, [] when its plan did not reach its file)."""
-    given = []
-
-    def held():
-        given.append(read.of(path))
-        return given[-1]
-
-    def shape():
-        width, height, _oriented, turn = images.shown_shape(path)
-        return width, height, turn
-    return baking.plan_photo(conn, path, keys, held, shape, fingerprint), given
 
 
 def _fingerprint(path, handed):
@@ -170,21 +156,3 @@ def _write(library, exiftool_path, et, stored, to_bake, baked):
     elif result.refused:
         baked.refused[result.refused] += 1     # its sentences give counts, never a path (file_changes.too_many, batches.claim)
     return result
-
-
-class _FolderRead:
-    """The bake fields of a folder's files, read in one ExifTool read the first time a photo of it asks
-    (field_values.read; NotAnswered for a photo the read did not reach)."""
-
-    def __init__(self, et, photo_paths):
-        self.et, self.photo_paths, self.found = et, photo_paths, None
-
-    def of(self, photo_path):
-        if self.found is None:
-            self.found = field_values.read(self.et, self.photo_paths, list(bake.WRITTEN.values()))
-        return self.found.get(paths.key(photo_path)) or field_values.NotAnswered("Its file was not read.")
-
-    @property
-    def stalled(self):
-        """Did ExifTool not answer the read in its deadline?"""
-        return any(isinstance(held, field_values.NotAnswered) for held in (self.found or {}).values())
