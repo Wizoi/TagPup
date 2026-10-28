@@ -35,7 +35,8 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
-from tagpup.services import bake_after_index, baking, duplicate_faces, file_changes, tagging  # noqa: E402
+from tagpup.services import bake_after_index, baking, batches, duplicate_faces, file_changes, tagging  # noqa: E402
+from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -215,6 +216,36 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertEqual(0, baked.written)
         self.assertEqual({baking.NO_VECTOR: 1}, dict(baked.cannot))
         self.assertIsNone(getattr(baked_files.held(a), "fingerprint", None), "the old picture's bake was written into the new one")
+
+    def test_a_refused_folder_is_said_and_roots_changed_ends_the_run(self):
+        quay = paths.stored(os.path.join(self.home.root, "Quay"))
+        os.makedirs(quay)
+        for folder in (self.folder, quay):
+            for name, colour in (("a.jpg", (200, 40, 40)), ("b.jpg", (40, 200, 40))):
+                Image.new("RGB", SIZE, colour).save(os.path.join(folder, name), "JPEG")
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder, quay])
+        self.assertEqual(0, result.exit_code, result.output)
+
+        said = []
+        with mock.patch.object(batches, "MAX_BATCH", 1):
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {}, told=said.append)
+        self.assertEqual((0, {"Select up to 1 photos at a time (2 were named)": 2}),
+                         (baked.written, {why.rstrip("."): n for why, n in baked.refused.items()}))
+        self.assertIn("2 folder(s) refused: Select up to 1 photos at a time (2 were named)", said[0])
+
+        planned = []
+        real_planned = bake_after_index._planned
+
+        def planning(library, et, detector, folder, *args):
+            planned.append(folder)
+            return real_planned(library, et, detector, folder, *args)
+        with mock.patch.object(file_changes.roots_service, "pinned", side_effect=roots_service.RootsChanged("moved")), \
+                mock.patch.object(bake_after_index, "_planned", side_effect=planning):
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {}, told=said.append)
+        self.assertEqual([self.folder], planned, "the run went on after the roots changed")
+        self.assertTrue(baked.roots_changed)
+        self.assertIn("1 folder(s) refused: %s" % bake_after_index.ROOTS_CHANGED, said[1])
 
     def test_a_share_that_stops_answering_in_the_bake_names_no_change_to_undo(self):
         photos = [self.picture(name, colour) for name, colour in (("a.jpg", (200, 40, 40)), ("b.jpg", (40, 200, 40)),

@@ -28,11 +28,17 @@ from tagpup.store import db, inspection
 from tagpup.store import roots as store_roots
 
 
+#: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
+ROOTS_CHANGED = "the library's roots were changed by another process"
+
+
 @dataclasses.dataclass
 class Baked:
     """What a run did, counted from what each write reported: photos planned to bake, files written, found holding
     their bake already (planned or at the write's read), conflicts, failed, not answered (a share away), and the photos
-    the library cannot plan, by baking's kind of Cannot; `stalled`, a share stopped answering and ended the run."""
+    the library cannot plan, by baking's kind of Cannot; `refused`, the folders whose write was refused, by its sentence
+    (counts only: too many photos, a batch ahead, the roots changed); `stalled`, a share stopped answering and ended the
+    run; `roots_changed`, the library's roots were changed by another process and ended it."""
     planned: int = 0
     written: int = 0
     current: int = 0
@@ -40,7 +46,9 @@ class Baked:
     failed: int = 0
     not_answered: int = 0
     cannot: collections.Counter = dataclasses.field(default_factory=collections.Counter)
+    refused: collections.Counter = dataclasses.field(default_factory=collections.Counter)
     stalled: bool = False
+    roots_changed: bool = False
 
     def said(self):
         """The run in one line, counts only (the paths name people)."""
@@ -48,10 +56,13 @@ class Baked:
         more = [("%d conflict(s), left as they are" % self.conflicts) if self.conflicts else "",
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",
-                ", ".join("%d %s" % (n, kind) for kind, n in sorted(self.cannot.items()))]
+                ", ".join("%d %s" % (n, kind) for kind, n in sorted(self.cannot.items())),
+                ", ".join("%d folder(s) refused: %s" % (n, why.rstrip(".")) for why, n in sorted(self.refused.items()))]
         line += "".join("; " + each for each in more if each)
         if self.stalled:
             line += "; ended at a folder whose share stopped answering, the rest are baked by the next index"
+        if self.roots_changed:
+            line += "; ended where the library's roots changed, the rest are baked by the next index"
         return line + "."
 
 
@@ -73,6 +84,8 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
                 _write(library, exiftool_path, et, stored, to_bake, baked)
             if baked.stalled or et.dead:
                 baked.stalled = True
+                break
+            if baked.roots_changed:
                 break
     if told is not None:
         told(baked.said())
@@ -151,6 +164,11 @@ def _write(library, exiftool_path, et, stored, to_bake, baked):
     baked.failed += max(0, len({paths.key(path) for path, _why in result.errors} - unanswered) - conflicts)
     if (result.details.get("stopped") or {}).get("share"):
         baked.stalled = True
+    elif result.details.get("roots_stopped"):
+        baked.roots_changed = True
+        baked.refused[ROOTS_CHANGED] += 1
+    elif result.refused:
+        baked.refused[result.refused] += 1     # its sentences give counts, never a path (file_changes.too_many, batches.claim)
     return result
 
 
