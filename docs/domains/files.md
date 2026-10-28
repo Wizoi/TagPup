@@ -99,8 +99,8 @@ exceptions, each unjournaled by decision:
   Orientation in the three libraries (counted 2026-10-15) and nothing has been reported.
 - **#1216**: a TIFF's box turn needs Pillow and the mirrored values are untested; the sideways-photo face-box
   redesign is tabled (DECISIONS 2026-10-07). Since DECISIONS 2026-10-27 faces are detected on the picture as shown, boxes kept stored (#1975).
-- **#1384**: a walk that hangs part-way. No hang mid-walk has been seen, and bounding each listing costs a thread per
-  folder. A listing that fails or drops is "not looked at" (#1356).
+- **#1384**: a walk that hangs part-way: closed by #2104, each listing is bounded (`shares.listing`). A listing that fails or
+  drops is "not looked at" (#1356).
 - **#1444**: the watcher across a share's outage. No case has been seen; the one network root holds 1,309 rows.
 - **#1419**: an ExifTool refusal names no photo, by rule
   (`tests/test_exiftool_says_why.py`, `test_the_error_says_what_exiftool_said_and_names_no_photo`). The log names it.

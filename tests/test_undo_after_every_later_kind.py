@@ -209,10 +209,14 @@ EXPECTED_REFUSED = {
     ("bake", "smart rename"): "applied after it, wrote the same photo files: undo it first",
     # The sync's row of the photo the bake then wrote: the row says what the file holds now (journal.refusal, #1951).
     ("sync", "bake"): sentence(journal.FILE_WRITTEN_SINCE),
+    ("refresh", "bake"): sentence(journal.FILE_WRITTEN_SINCE),
+    # A bake and a save of one photo, either way round: the same rule as the rename's.
+    ("save photo", "bake"): "applied after it, wrote the same photo files: undo it first",
+    ("bake", "save photo"): "applied after it, wrote the same photo files: undo it first",
 }
 #: (earlier, later) whose refusal undoing the later change first does not lift: the later write's undo stamps the sync's
 #: row again (History refusing it too, with the same sentence; #1951, decided).
-NOT_LIFTED_IN_ORDER = {("sync", "bake")}
+NOT_LIFTED_IN_ORDER = {("sync", "bake"), ("refresh", "bake")}
 
 
 def entered(*kinds):
@@ -419,8 +423,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         # 2026-10-27; the switch back went, 2026-10-28).
         self.assertEqual(len(earlier) * len(later) - len(later), len(made), "the pairs a library can hold were not made")
         self.assertEqual(99, len(made))
-        self.assertEqual(2, ordered, "the pairs undone in order: a bake and the rename after it, a rename and the bake "
-                                     "after it")
+        self.assertEqual(4, ordered, "the pairs undone in order: a bake and the rename or the save after it, a rename "
+                                     "or a save and the bake after it")
         # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.
 
     def test_a_sync_is_not_offered_once_a_save_wrote_its_photo(self):

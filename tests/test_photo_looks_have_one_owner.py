@@ -9,7 +9,6 @@ A call to one of LOOKS in tagpup/ fails unless it is
   operation whose look is part of it (a write, a delete, a read that follows), each with its reason;
 - at a library's database by name (`library.path`, `db_path`, `self.db_path`): never a photo;
 - on a line that says why it is not bounded, `# unbounded: <reason>`.
-NOT_MOVED_YET counts the looks left in each module the moves have not reached yet; it can only go down.
 """
 import ast
 import os
@@ -30,7 +29,7 @@ DATABASE = re.compile(r"^(self\.)?(\w+_)?db_path$|^(\w+\.)?library\.path$")
 #: module (a path, or a folder ending in os.sep) -> why its looks are not shares'.
 OWNERS = {
     os.path.join("tagpup", "store") + os.sep: "the database layer: libraries, their snapshots and locks; it may not "
-                                              "import tagpup.files, and holds no photo look but NOT_MOVED_YET's",
+                                              "import tagpup.files",
     os.path.join("tagpup", "ml") + os.sep: "model weights and the graphics card's tickets, on this PC",
     os.path.join("tagpup", "config.py"): "the home, its settings file and the data folder",
     os.path.join("tagpup", "launcher.py"): "the installed copy, its versions and its log",
@@ -50,14 +49,6 @@ OWNERS = {
     os.path.join("tagpup", "files", "recycle_bin.py"): "a delete: the copy to the bin and its check",
 }
 
-#: {module: looks at a photo path not moved onto shares yet}: the vectors' stamp in store (embeddings.stamp_of), whose
-#: one caller left is services/faces.py's record of a detection (shares.known_stamp replaces it). The pages and the jobs
-#: look through tagpup.services.photos (file_stamp, folder_state, subfolders). The count can only go down.
-NOT_MOVED_YET = {
-    os.path.join("tagpup", "store", "embeddings.py"): 1,
-}
-
-
 def _name(node):
     if isinstance(node, ast.Attribute):
         inner = _name(node.value)
@@ -71,7 +62,7 @@ def _owned(relative, table):
 
 
 def looks(relative):
-    """[(line, call)] of the looks in a module of tagpup/ none of the exemptions but OWNERS' and NOT_MOVED_YET's covers."""
+    """[(line, call)] of the looks in a module of tagpup/ none of the exemptions but OWNERS' covers."""
     with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
         return looks_in(handle.read())
 
@@ -104,19 +95,15 @@ class PhotoLooksHaveOneOwner(unittest.TestCase):
 
     def test_no_look_at_a_photo_path_outside_shares(self):
         stray = ["%s:%d %s" % (relative, line, call) for relative, calls in sorted(self.found.items())
-                 if not _owned(relative, OWNERS) and relative not in NOT_MOVED_YET for line, call in calls]
+                 if not _owned(relative, OWNERS) for line, call in calls]
         self.assertEqual([], stray, "a look at a photo path goes through tagpup.files.shares (stamp_of, there, "
                                     "known_stamp, folder_state, listing); one that is not at a photo says why on its "
                                     "line, '%s <reason>'" % MARKER)
 
-    def test_the_looks_not_moved_yet_only_go_down(self):
-        counted = {relative: len(self.found.get(relative, ())) for relative in NOT_MOVED_YET}
-        self.assertEqual(NOT_MOVED_YET, counted, "lower NOT_MOVED_YET to what is left (and drop a module at 0)")
-
     def test_every_owner_still_looks(self):
         """No stale entry: each module (or folder) of OWNERS still makes a look the list excuses."""
         stale = [module for module in OWNERS
-                 if not any(calls and _owned(relative, {module: None}) and relative not in NOT_MOVED_YET
+                 if not any(calls and _owned(relative, {module: None})
                             for relative, calls in self.found.items())]
         self.assertEqual([], stale)
 

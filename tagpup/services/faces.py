@@ -19,13 +19,13 @@ import os
 import numpy as np
 
 from tagpup.core import clustering, orientation, paths, validation
+from tagpup.files import shares
 from tagpup.core.result import Conflict, NotFound, Refused, Result
 from tagpup.services import identify
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_files
 from tagpup.services import thumbnails
 from tagpup.store import db, face_tags, faces, faces_detected, person_ids, photos, removals
-from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -672,7 +672,7 @@ def _record_detection(conn, photo_path, detector, detected):
     caller commits."""
     if detector is None or not ran(detected):
         return 0
-    return faces_detected.record(conn, photo_path, detector, store_embeddings.stamp_of(photo_path), len(detected))
+    return faces_detected.record(conn, photo_path, detector, shares.read_stamp(photo_path), len(detected))
 
 
 def record_detected(db_path, photo_path, detected, *, model, detector=None):

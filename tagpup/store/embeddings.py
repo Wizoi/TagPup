@@ -16,7 +16,6 @@ that changes how the photo looks takes the vector away (`forget`). A file change
 other way no longer matches its stamp, and is embedded again.
 """
 import collections
-import os
 
 from tagpup.core import paths
 from tagpup.store import roots as store_roots
@@ -88,16 +87,6 @@ def stamps_by_path(conn, photo_paths):
         if stamps:
             found[paths.key(photo_path)] = stamps
     return found
-
-
-def stamp_of(photo_path):
-    """(mtime, size) of the file now, or None when it cannot be read: what a writer takes
-    just before it writes, to carry the photo's vectors over its write."""
-    try:
-        stat = os.stat(photo_path)
-    except OSError:
-        return None
-    return (stat.st_mtime, stat.st_size)
 
 
 def restamp(conn, photo_id, before, after):
