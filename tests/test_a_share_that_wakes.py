@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 
+from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images, shares  # noqa: E402
@@ -134,9 +135,18 @@ class AShareAsleep(unittest.TestCase):
         return Library(db_path)
 
     def watcher(self, libraries, folders, synced, **timings):
+        """A watcher of stand-ins: `folders(library)` watched, each sync `synced(library, folder)` at once."""
         options = dict(debounce=0.2, recheck=30.0, tick=0.05, observer=FakeObserver)
         options.update(timings)
         watcher = watching.Watcher(lambda: libraries, folders, synced, images.is_photo, **options)
+        self.addCleanup(watcher.stop, 10)
+        return watcher
+
+    def servers_watcher(self, libraries, synced):
+        """The watcher the server makes of real libraries (runtime.folder_watcher): a whole sync claimed as a run of the
+        daily `sync` job (recurring.sync_whole)."""
+        watcher = runtimes.folder_watcher(lambda: libraries, sync_with=synced, debounce=0.2, recheck=30.0, tick=0.05,
+                                          observer=FakeObserver)
         self.addCleanup(watcher.stop, 10)
         return watcher
 
@@ -148,14 +158,16 @@ class AShareAsleep(unittest.TestCase):
 
     def test_the_server_starts_with_the_share_asleep_and_the_catch_up_waits_for_it_and_finds_the_library_in_step(self):
         """Runs 92/83/67 of 2026-10-28 08:33. Break: sync._scan asking shares.folder_state (the memo answers "away" at
-        once), or the watcher syncing whole again when the share is back although its catch-up looked at it."""
-        regatta = self.library("regatta.db", os.path.join(self.share, "2019 Regatta"))
+        once), or the watcher syncing whole again when the share is back although its catch-up looked at it (the
+        folder's return wanted since now, not since the share was found not answering: recurring.covered_since)."""
+        held = os.path.join(self.share, "2019 Regatta")
+        regatta = self.library("regatta.db", held)
         results = []
 
         def synced(library, folder):
             results.append(sync.sync(library, folder=folder, apply=True, roots=[self.share]))
             return results[-1]
-        watcher = self.watcher([regatta], lambda library: [self.share], synced)
+        watcher = self.servers_watcher([regatta], synced)
         self.wake_in(0.6)   # after the watcher's moment and the catch-up's start, well within FOLDER_WAIT
         watcher.start()
         self.wait_until(lambda: results)
@@ -163,7 +175,7 @@ class AShareAsleep(unittest.TestCase):
         self.assertEqual((0, 0, 1), (counts["not_looked_at"], counts["folders_not_looked_at"], counts["folders_walked"]))
         self.assertTrue(results[0].details["in_step"], "the catch-up did not wait for the share")
         self.assertIsNotNone(sync.last(regatta)["last_in_step"])
-        self.wait_until(lambda: watcher.watched() == [paths.stored(self.share)])
+        self.wait_until(lambda: watcher.watched() == [paths.stored(held)])
         time.sleep(0.6)
         self.assertEqual(1, len(results), "synced whole again although the catch-up looked at every folder")
 

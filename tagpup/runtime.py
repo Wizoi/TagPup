@@ -216,9 +216,19 @@ def _folder_watcher_task(runtime):
     NO_JOBS means no watcher either."""
     if not runs_recurring_jobs():
         return None
-    return watching.Watcher(home_libraries, watch_folders,
-                            lambda library, folder: sync(library, folder=folder, apply=True), images.is_photo,
-                            recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP))
+    return folder_watcher()
+
+
+def folder_watcher(libraries=home_libraries, sync_with=None, **timings):
+    """The folder watcher (tagpup.jobs.watching.Watcher) over `libraries()`, each folder synced by `sync_with(library,
+    folder)` -- this module's sync, applied, by default -- and a whole library's sync claimed as a run of the daily
+    `sync` job (recurring.sync_whole), so the watcher and the recurring runner never walk one library at once (#2102).
+    The catch-up at start is skipped for a library in step within CATCH_UP_SKIP. `timings`: the Watcher's own (a
+    test's shorter ones, its observer and clock)."""
+    sync_with = sync_with or (lambda library, folder: sync(library, folder=folder, apply=True))
+    return watching.Watcher(libraries, watch_folders, sync_with, images.is_photo,
+                            recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP),
+                            whole=recurring.sync_whole, **timings)
 
 
 def watch_folders(library):

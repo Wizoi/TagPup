@@ -219,7 +219,8 @@ def latest(db_path):
 #
 # A sync of the library (tagpup.services.sync) is a finished run of the job "sync-whole" or, of one folder, "sync-folder": the
 # record the pages' "last in step" and the Activity page read. Not the recurring job "sync", which is the daily catch-up claimed
-# and ended like any job, so a manual or a watcher's sync never makes the catch-up not due. A run's `changed` holds
+# and ended like any job: a manual sync never makes the catch-up not due, but the watcher's sync of a whole library is a run
+# of that job (recurring.sync_whole: one walk of a library at a time, #2102), and one that ends done does. A run's `changed` holds
 # {"in_step": 0 or 1, "change": the journal's change, if it wrote one, "found_<what>": counts of what it found, <what>: counts of
 # what it changed}; counts and ids, never a path or a name. Whether it was of the whole library is the job's name.
 # Migration 32 folded the table `sync_runs` into these.
