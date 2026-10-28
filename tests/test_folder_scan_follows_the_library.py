@@ -1,7 +1,7 @@
 """The page's cached scan of a folder is read again once the library's photos changed, whoever changed them.
 
 The server keeps what the page was last shown of a folder (tagpup.web.tagpup_routes.FolderCache) and was told
-of its own writes only. A CLI `sync --apply`, an MCP undo or a snapshot restore in another process rewrote the
+of its own writes only. A CLI `sync --apply` or `undo`, or a snapshot restore in another process rewrote the
 photos' rows and the open page's next scan still described them as they had been. The cache is kept with the
 library's photos counter as it was before the scan, which the triggers move for a write from any process
 (tagpup.store.generations), and handed back only while it has not moved.

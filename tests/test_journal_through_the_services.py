@@ -1,7 +1,7 @@
 """The maintenance services journal what they apply, and the CLI's `history` and `undo`
 take it back (docs/ARCHITECTURE.md, phase 7.5).
 
-End to end: each service run as the MCP server runs it, a dry run and then apply, and the
+End to end: each service run as the CLI runs it, a dry run and then apply, and the
 change it records undone through `tagpup_cli.py undo`. The refresh is run the same way by
 tests/test_refresh_rows.py.
 """
