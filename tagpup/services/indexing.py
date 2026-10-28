@@ -17,7 +17,7 @@ from tagpup.core import processes
 from tagpup.core import runs
 from tagpup.core import validation
 from tagpup.core.result import Result
-from tagpup.services import bake_reading
+from tagpup.services import bake_after_index, bake_reading
 from tagpup.services import roots as roots_service
 
 #: Where faces are named from the photos' tags: the button of both apps, whose label this is (tests/test_indexing_names_a_real_control.py holds the messages and the pages together). The messages named
@@ -127,7 +127,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     The CLI runs in a process of its own, from `code_folder` -- the code this program
     runs, which the caller has from tagpup.config -- so the GPU work stays out of the
     server. It reads the library's settings itself (tagpup.runtime). What the CLI says of the faces it made (NEW_FACES)
-    ends the message, and after it what it read from the photos' bakes (bake_reading.SAID), each read whole.
+    ends the message, and after it what it read from the photos' bakes (bake_reading.SAID) and what its bake wrote
+    (bake_after_index.SAID), each read whole.
 
     `report(message, percent)` hears progress as it comes, the percent of each of the CLI's bars.
 
@@ -166,7 +167,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     if hasattr(report, "stop_file"):
         report.stop_file = stop_file
 
-    said, baked = [], []
+    said, baked, wrote = [], [], []
 
     def run(args):
         proc = processes.start(
@@ -182,6 +183,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                     said.append(whole[len(NEW_FACES):])
                 elif whole.startswith(bake_reading.SAID):
                     baked.append(whole)
+                elif whole.startswith(bake_after_index.SAID):
+                    wrote.append(whole)
                 clean = summarize_indexer_line(line)
                 if clean:
                     match = re.search(r"(\d+)%", clean)
@@ -216,6 +219,6 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
 
     result.changed = 1
     result.details.update(percent=100, message=(
-        " ".join(["Folder indexed. " + said[-1]] + baked[-1:]) if said
+        " ".join(["Folder indexed. " + said[-1]] + baked[-1:] + wrote[-1:]) if said
         else "Folder indexed: no photo was added or read again."))
     return result

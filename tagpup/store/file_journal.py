@@ -20,6 +20,11 @@ could put back is. `changes.owner` names the process carrying a change out, so a
 another live process is writing is not taken for one a crash left (tagpup.services.
 file_changes.settle).
 
+A change of an INTERNAL operation (the index's bake) is the record a crash needs and no
+more: it is erased, its files and itself, when it finishes forward; no history lists it,
+and no undo check meets it, but while one of its files is `writing` (newer_overlapping:
+one writer of a file at a time).
+
 A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}, and
 the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
 vectors (migration 12); a rename keeps the file's old and new path, and its size, modified time and file id, which a
@@ -44,6 +49,20 @@ TIME = "%Y-%m-%d %H:%M:%S"
 
 #: How many ids one query asks for.
 CHUNK = 500
+
+#: The operation of a bake the index writes after it records a folder (tagpup.services.bake_after_index): the index's
+#: values stamped on the file, never an operation the owner sees or undoes (owner, docs/PLAN_KEEP_IN_STEP.md, decision 2).
+#: Its change is the crash record a write needs while it is under way (settled at the next start by what each file
+#: holds), and once finished it is erased (finish). Spelt here, the lowest layer that tells it apart; tagpup.services.
+#: baking names it INDEX_OPERATION. The 'bake photos' changes of the backfill are not internal and stay as they are.
+INDEX_BAKE = "index bake"
+#: The operations whose changes are internal: listed by no history, met by no undo's check of newer changes.
+INTERNAL = (INDEX_BAKE,)
+
+
+def not_internal(column):
+    """(SQL, params): `column`, an operation, is none of INTERNAL."""
+    return "%s NOT IN (%s)" % (column, ", ".join("?" * len(INTERNAL))), INTERNAL
 
 
 @dataclass
@@ -356,15 +375,18 @@ def newer_overlapping(conn, change_id):
     file it wrote: the same photo, or the same file by its path -- one a rename left
     under its new name included. An undo of `change_id` would take back part of a file
     the newer change planned from, as an undo of rows would rows a newer change wrote
-    over (tagpup.store.journal). The caller's connection."""
+    over (tagpup.store.journal). The caller's connection. An internal change (INTERNAL) is one only while it has
+    the file `writing` -- one writer of a file at a time, across processes (the undo is refused "being written now");
+    once done it is none: it is no operation, and a later bake is written over the file again by the next index."""
+    internal, params = not_internal("c.operation")
     return conn.execute(
         "SELECT DISTINCT c.id, c.operation FROM change_files mine"
         " JOIN change_files theirs ON theirs.change_id > mine.change_id"
         " AND (theirs.photo_id = mine.photo_id OR theirs.path = mine.path OR theirs.path = mine.new_path)"
         " JOIN changes c ON c.id = theirs.change_id"
         " WHERE mine.change_id = ? AND mine.state = 'done' AND theirs.state IN ('writing', 'done')"
-        " AND c.undone IS NULL AND c.status IN ('planned', 'applied')"
-        " ORDER BY c.id", (change_id,)).fetchall()
+        " AND c.undone IS NULL AND c.status IN ('planned', 'applied') AND (theirs.state = 'writing' OR " + internal
+        + ") ORDER BY c.id", (change_id,) + params).fetchall()
 
 
 def counts(conn, change_ids):
@@ -386,7 +408,10 @@ def finish(db_path, change_id, also=None):
     every file was taken out of again wrote nothing, and is `failed`. Returns the counts,
     or None when files are left to write. `also(conn, change id)` runs in the same
     transaction when a forward change finishes (the records of faces whose photo was never written go:
-    tagpup.store.face_batches.tidy); an undo keeps everything the change recorded."""
+    tagpup.store.face_batches.tidy); an undo keeps everything the change recorded.
+
+    An internal change (INTERNAL) that finishes forward is erased in the same transaction, its files and itself: it was
+    the record a crash needed, and it is done (an id is never used again: changes.id is AUTOINCREMENT)."""
     def work(conn):
         states = counts(conn, [change_id]).get(change_id, {})
         undoing = conn.execute("SELECT undone FROM changes WHERE id = ?", (change_id,)).fetchone()[0] is not None
@@ -398,7 +423,11 @@ def finish(db_path, change_id, also=None):
         summary = json.loads(conn.execute("SELECT summary FROM changes WHERE id = ?",
                                           (change_id,)).fetchone()[0] or "{}")
         summary["undone_files" if undoing else "files"] = dict(sorted(states.items()))
-        if not states:
+        operation = conn.execute("SELECT operation FROM changes WHERE id = ?", (change_id,)).fetchone()[0]
+        if operation in INTERNAL and not undoing:
+            conn.execute("DELETE FROM change_files WHERE change_id = ?", (change_id,))
+            conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
+        elif not states:
             # Every file was taken out again: nothing was written.
             conn.execute("UPDATE changes SET status = 'failed', owner = NULL, summary = ? WHERE id = ?",
                          (json.dumps(summary, sort_keys=True), change_id))

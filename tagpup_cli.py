@@ -68,7 +68,7 @@ from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import bake_reading
-from tagpup.services import baking, baking_report
+from tagpup.services import bake_after_index, baking, baking_report
 from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
@@ -453,6 +453,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     turn = photos = bar = None
     total_new_indexed = 0
     after = upto = 0
+    # The folders a recorded batch held a photo of, in order, and the fingerprint of each recorded photo's picture the
+    # index knows, with the stamp it was recorded under (_recorded): what the bake after the index writes, and the decodes
+    # it takes again for none of the photos whose file is as the index recorded it.
+    touched, handed = {}, {}
     try:
         # One process at a time has a model on the graphics card (tagpup.ml.gpu): its turn is
         # taken before the first photo, waited for in order -- each change of who has it said
@@ -683,6 +687,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 if len(batch_embeddings) >= 100:
                     _read_again(photo_index.conn, batch_metas, given, exiftool_path)
                     photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
+                    _recorded(batch_metas, touched, handed)
 
                     # Save faces for the batch in a single transaction
                     if batch_faces:
@@ -715,7 +720,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             # Not reloaded: nothing below searches this index, and a reload reads every vector again.
             _read_again(photo_index.conn, batch_metas, given, exiftool_path)
             photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
-            
+            _recorded(batch_metas, touched, handed)
+
             # Save the remaining face embeddings
             if batch_faces:
                 face_records.record_batch(photo_index.conn, batch_faces, model=face_processor.key, overwrite=force_reembed,
@@ -792,9 +798,43 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # An index is followed by matching the faces it made (owner, DECISIONS 2026-10-23), here, so that every way of
     # indexing -- both apps' queue and sync's, which run this command, and this command by hand -- does it alike. Only
     # after a run that recorded a photo: one that recorded none made no face. The card's turn was let go above: the
-    # matching is the processor's work, and writes nothing.
+    # matching is the processor's work, and writes nothing. Before the bake: a bake stopped by a Ctrl+C, or a slow one,
+    # does not leave this run's faces unmatched.
     if total_new_indexed:
         _match_new_faces(db_path, after, upto)
+
+    # The files of the folders it recorded are written from the library (docs/PLAN_KEEP_IN_STEP.md, cut 2), the card let
+    # go above: every way of indexing does it, and the owner runs no bake. Not with --skip-faces: no face was looked for.
+    if touched and not skip_faces:
+        _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces, detect_max_side),
+                          list(touched.values()), handed, stop_file)
+
+
+def _recorded(metas, touched, handed):
+    """A batch of `metas` was recorded: its folders join `touched` ({paths.key: native folder}), and the fingerprint of
+    each photo's picture the index holds joins `handed` ({paths.key(path): ((mtime, size), digest)}), with the stamp its
+    row was recorded under: its decode's, or the row a vector kept by its stamp was recorded again with (the picture its
+    stamp still describes). Another key's row is not. The bake uses a digest only while the file is at that stamp."""
+    for meta in metas:
+        folder = os.path.dirname(meta["path"])
+        touched.setdefault(paths.key(folder), folder)
+        found = meta.get("fingerprint")
+        if found is not None and found[0] == image_files.FINGERPRINT_KEY:
+            handed[paths.key(meta["path"])] = ((meta["mtime"], meta["size"]), found[1])
+
+
+def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_file):
+    """The bake after an index (tagpup.services.bake_after_index), its line said in counts. One that fails is logged
+    and said, and the index stands: the next index of the folder bakes it. A Ctrl+C keeps what was written."""
+    def say(line):
+        console.print(line, markup=False, soft_wrap=True, highlight=False)
+    try:
+        bake_after_index.bake_folders(library, exiftool_path, detector, folders, handed,
+                                      stop=lambda: bool(stop_file) and os.path.exists(stop_file), told=say)
+    except Exception as error:
+        logger.exception("The bake after the index stopped")
+        say(bake_after_index.SAID + "stopped (%s); the photos are indexed, and the next index of their folders "
+            "writes it." % type(error).__name__)
 
 
 def _read_again(conn, metas, given, exiftool_path):

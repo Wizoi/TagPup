@@ -96,6 +96,8 @@ UNDO_CHECKS = {
     tags_from_faces.OPERATION: None,
     # A folder's bake: the journal puts back what each file held; the fingerprint rows stay (baking.follower, #1894).
     baking.OPERATION: None,
+    # The index's bake (file_journal.INTERNAL): no operation; listed nowhere, and erased once it finishes.
+    baking.INDEX_OPERATION: "change %(change)d (%(operation)s): a bake the index wrote is not an operation; it is not undone",
     sync.OPERATION: None,
     "save photo": None,
     "apply all suggestions": None,

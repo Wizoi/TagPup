@@ -37,6 +37,7 @@ import migration_names  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import FACENET, on_facenet, person_of  # noqa: E402
+from test_file_journal import Crash, crash_at  # noqa: E402
 
 import numpy as np  # noqa: E402
 
@@ -44,12 +45,12 @@ from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import baking_report, face_pass, refresh_rows, sync, tagging  # noqa: E402
+from tagpup.services import baking, baking_report, face_pass, file_changes, refresh_rows, sync, tagging  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
-from tagpup.store import db, embeddings, generations, inspection, journal, schema  # noqa: E402
+from tagpup.store import db, embeddings, file_journal, generations, inspection, journal, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -436,6 +437,34 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                 self.assertEqual(said, entry["why_not"], "History offers the sync's Undo")
                 listed, rehearsed, undone = self.undo_from_history(library, synced)
                 self.assertEqual((said, said), (rehearsed.refused, undone.refused))
+
+    def test_a_save_is_undone_once_the_index_bake_writing_its_photo_is_finished(self):
+        """The owner saves a photo; the index's bake (baking.INDEX_OPERATION, internal) has the photo's file `writing`
+        after it -- another process under way, or one killed with the file written and not yet recorded. History lists
+        no bake; the save's Undo is refused "being written now" while the file is `writing` (one writer of a file at a
+        time), and once the bake is finished (settled at the next start) it is undone past it."""
+        self.put_files_back("base")
+        library = self.copy(self.base, "save_then_crashed_bake")
+        saved = a_save(self, library)
+        self.assertIsNotNone(saved)
+        found = bake.WRITTEN[bake.FACES_FOUND]
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written")):
+            with self.assertRaises(Crash):
+                file_changes.write_fields(library, baking.INDEX_OPERATION, EXIFTOOL, [self.photo[2]], [found],
+                                          lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
+        self.assertEqual([baking.INDEX_OPERATION], [each.operation for each in file_journal.unfinished(library.path)])
+        self.assertEqual([], [entry for entry in journal_service.history(library, limit=1000)["changes"]
+                              if entry["operation"] == baking.INDEX_OPERATION])
+        said = journal.FILE_BEING_WRITTEN % {"change": saved}
+        listed, rehearsed, undone = self.undo_from_history(library, saved)
+        self.assertIn(said, listed or "")
+        self.assertIn(said, rehearsed.refused or "")
+        self.assertIn(said, undone.refused or "")
+        file_changes.settle(library, EXIFTOOL)
+        self.assertEqual([], file_journal.unfinished(library.path))
+        listed, rehearsed, undone = self.undo_from_history(library, saved)
+        self.assertEqual((None, None, None), (listed, rehearsed.refused, undone.refused))
+        self.assertEqual("undone", journal.history(library.path, change_id=saved)[0]["status"])
 
     def test_a_sync_is_offered_again_once_the_rename_after_it_is_undone(self):
         """Smart Rename names a photo (its first name kept in the file); the owner moves it into a folder inside, in

@@ -188,6 +188,14 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
             result = indexing.index_folder(self.library, self.folder, self.home.root)
         self.assertEqual("Folder indexed. " + MATCHED, result.details["message"])
 
+    def test_what_the_index_bake_wrote_ends_the_message(self):
+        for line in ("Bake: 2 file(s) written, 1 already held it.",
+                     "Bake: stopped (OSError); the photos are indexed, and the next index of their folders writes it."):
+            with self.subTest(line=line), mock.patch("subprocess.Popen", side_effect=_TheCli(
+                    [indexing.NEW_FACES + MATCHED + "\n", line + "\n"])):
+                result = indexing.index_folder(self.library, self.folder, self.home.root)
+            self.assertEqual("Folder indexed. " + MATCHED + " " + line, result.details["message"])
+
 
 class _Hold:
     """The CLI's turn on the graphics card, as the runtime hands it (tagpup.ml.gpu.Hold)."""

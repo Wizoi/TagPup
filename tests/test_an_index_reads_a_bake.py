@@ -88,7 +88,7 @@ from tagpup.ml.clip import ClipModel  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
-from tagpup.services import bake_reading, baking, file_changes, file_only, indexing, search, tagging  # noqa: E402
+from tagpup.services import bake_after_index, bake_reading, baking, file_changes, file_only, indexing, search, tagging  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
@@ -142,7 +142,10 @@ class AnIndexReadsABake(unittest.TestCase):
                 return value
             return asked
         self.detector = _faces()
-        for patcher in (mock.patch.object(clip.ClipModel, "_init_model", side_effect=card("load")),
+        for patcher in (# The bake the index writes after it records (tests/test_the_index_writes_the_bake.py) is left out:
+                        # each case here makes its folder's bakes itself, and reads what the next index takes of them.
+                        mock.patch.object(bake_after_index, "bake_folders"),
+                        mock.patch.object(clip.ClipModel, "_init_model", side_effect=card("load")),
                         mock.patch.object(clip.ClipModel, "picture_input", side_effect=card("input", "input")),
                         mock.patch.object(clip.ClipModel, "embed_input", side_effect=card("embed", self.computed)),
                         mock.patch.object(Runtime, "gpu_turn",
