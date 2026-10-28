@@ -116,7 +116,7 @@ def folders(library, reveal=False, limit=LIMIT):
     order = sorted(counted, key=lambda k: (-counted[k], k))
     shown = []
     for number, key in enumerate(order[:max(0, limit)], 1):
-        entry = {"folder": number, "photos": counted[key], "on_disk": os.path.isdir(spelled[key])}
+        entry = {"folder": number, "photos": counted[key], "on_disk": shares.folder_state(spelled[key]) == "there"}
         if reveal:
             entry["path"] = spelled[key]
         shown.append(entry)
@@ -193,7 +193,7 @@ def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
         row = _row(conn, photo_id)
         known = taxonomy.read_people_vocabulary(conn)
         keyword_people = [name for name, source in inspection.people_of(conn, photo_id) if source == "keyword"]
-    answer = {"photo": photo_id, "file_exists": os.path.exists(row["path"])}
+    answer = {"photo": photo_id, "file_exists": shares.there(row["path"])}
     if reveal:
         answer["path"] = row["path"]
     if not answer["file_exists"]:

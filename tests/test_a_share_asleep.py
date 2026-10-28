@@ -82,8 +82,7 @@ class ASleepingShare(unittest.TestCase):
         for patcher in (mock.patch.object(os, "stat", hang(os.stat, not_found)),
                         mock.patch.object(os.path, "isdir", hang(os.path.isdir, lambda: False)),
                         mock.patch.object(shares, "on_a_network_drive", lambda path: True),
-                        mock.patch.object(shares, "SHARE_WAIT", 0.05),
-                        mock.patch.object(library_actions, "MEMBERSHIP_SHARE_WAIT", 0.05)):
+                        mock.patch.object(shares, "SHARE_WAIT", 0.05)):
             patcher.start()
             self.addCleanup(patcher.stop)
 

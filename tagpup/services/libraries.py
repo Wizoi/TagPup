@@ -253,10 +253,8 @@ def membership(library, folder, roots=(), ignored=()):
     }
 
 
-#: How long a membership walk may take before the answer is "could not check", in seconds, and how long a folder on a
-#: network share gets to say it is there at all (shares.bounded).
+#: How long a membership walk may take before the answer is "could not check", in seconds.
 MEMBERSHIP_DEADLINE = 12.0
-MEMBERSHIP_SHARE_WAIT = 1.0
 
 _walks = {}                  # {(library key, folder key): the _Walk under way}
 _walks_guard = threading.Lock()
@@ -286,17 +284,17 @@ def membership_checked(library, folder, roots=(), ignored=(), deadline=None):
     """membership, for a page's request (phase 9c, findings #568): the walk is made on a thread of its own and waited for
     `deadline` seconds, and a second request for the same folder while one walk is under way is answered by it -- never a
     second walk of one folder, however often the view is opened. A folder on a network share (a UNC path or a mapped
-    drive) must first say it is there within a second (tagpup.files.shares.bounded), else the answer is
+    drive) must first say it is there within a second (tagpup.files.shares.folder_state), else the answer is
     could_not_check("the network share is away") and no thread is left walking it. A walk that outlives the deadline
     answers could_not_check("it took too long") and goes on; a request while it still runs is answered by it, one after it ends makes a new walk. A
     walk that raised raises here."""
     folder = paths.stored(folder)
     waited = MEMBERSHIP_DEADLINE if deadline is None else deadline
     if shares.on_a_network_drive(folder):
-        state, there = shares.bounded(folder, lambda: os.path.isdir(folder), MEMBERSHIP_SHARE_WAIT)
-        if state == "away":
+        state = shares.folder_state(folder)
+        if state == "unanswered":
             return could_not_check(folder, "the network share is away")
-        if state == "error" or not there:
+        if state != "there":
             return could_not_check(folder, "the folder could not be reached")
     key = (library.key, paths.key(folder))
     with _walks_guard:
@@ -369,7 +367,8 @@ def record_added(library, folders, subfolders=True):
     a photo it keeps something of, the indexer as it reads each. Returns how many were not
     added before."""
     wanted = [paths.stored(folder) for folder in folders
-              if isinstance(folder, str) and not validation.problem("folder", folder) and os.path.isdir(folder)]
+              if isinstance(folder, str) and not validation.problem("folder", folder)
+              and shares.folder_state(folder) == "there"]
     if not wanted:
         return 0
     return db.write_with_connection(

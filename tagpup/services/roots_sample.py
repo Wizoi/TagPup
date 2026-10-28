@@ -87,9 +87,9 @@ def _probe(location):
     spelled = paths.stored(location)
     drive = os.path.splitdrive(spelled)[0]
     top = drive + os.sep if drive else os.sep
-    if not os.path.isdir(top):
+    if not os.path.isdir(top):   # unbounded: _probe is the call shares.bounded waits for (_bounded)
         return "anchor"
-    return "ok" if os.path.isdir(spelled) else "folder"
+    return "ok" if os.path.isdir(spelled) else "folder"   # unbounded: the same bounded call
 
 
 def reach(location, seconds=None):

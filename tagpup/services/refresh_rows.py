@@ -19,10 +19,10 @@ on the maintenance scaffold (tagpup.services.maintenance). Planning reads the fi
 a dry run takes as long as the reading.
 """
 import json
-import os
 from collections import Counter
 
 from tagpup.core.vocabulary import people_in_photo
+from tagpup.files import shares
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import maintenance
 from tagpup.store import db, journal
@@ -38,11 +38,10 @@ def why_stale(row):
     """The reasons a row may not describe its file, [] if it looks right, or None if its
     file is gone."""
     path, mtime, size = row[:3]
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return None   # file gone: a job for sync or remove, not this
-    return [] if store_photos.describes(mtime, size, (stat.st_mtime, stat.st_size)) else ["mtime/size"]
+    stamp = shares.known_stamp(path)
+    if stamp is None:
+        return None   # file gone, or its share not answering: a job for sync, not this
+    return [] if store_photos.describes(mtime, size, stamp) else ["mtime/size"]
 
 
 def find_stale(conn, folder=None, seen=None, ids=None, found=None):

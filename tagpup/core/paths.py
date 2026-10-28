@@ -113,7 +113,7 @@ def spelled_as(path):
     folder's listing says which one a rename left (docs/findings.md, #283)."""
     folder, name = os.path.split(stored(path))
     try:
-        return name in os.listdir(folder)
+        return name in os.listdir(folder)   # unbounded: a rename's look (file_changes), which the rename holds anyway
     except OSError:
         return False
 
