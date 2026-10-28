@@ -73,6 +73,7 @@ from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import thumbnails
+from tagpup.services import photos as photo_actions
 from tagpup.services import photo_reembed
 from tagpup.services import retire_photo_vectors
 from tagpup import launcher
@@ -263,8 +264,19 @@ KEPT_LINE = ("Photo vectors: %d kept (the file as it was), %d kept with the pict
              "faces looked at.")
 
 
+def _folders_now(ctx, param, directories):
+    """Each DIRECTORY, refused unless it is a folder now, with the one sentence of why (photos.folder_refusal): a folder
+    on a network share that did not answer says the share is not answering, within a moment, not after Windows's wait
+    and not as a folder that does not exist (#2129)."""
+    for directory in directories:
+        refusal = photo_actions.folder_refusal(directory)
+        if refusal:
+            raise click.BadParameter(refusal.refused, ctx=ctx, param=param)
+    return directories
+
+
 @cli.command()
-@click.argument("directories", nargs=-1, required=True, type=click.Path(exists=True, file_okay=False))
+@click.argument("directories", nargs=-1, required=True, type=click.Path(file_okay=False), callback=_folders_now)
 @click.option("--force-reembed", is_flag=True, help="Force recreation of embeddings.")
 @click.option("--reset", is_flag=True, help="Delete existing index and taxonomy to start fresh.")
 @click.option("--skip-faces", is_flag=True, help="Skip face detection during indexing.")

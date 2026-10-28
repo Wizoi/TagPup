@@ -488,11 +488,9 @@ def include(library, folder, roots, queue, ignored=()):
         result.refuse(problem)
         return result
     folder = paths.stored(folder)
-    state = shares.folder_state(folder)
-    if state != "there":
-        result.refuse("That folder is not on disk." if state == "gone" else
-                      "That folder's share is not answering: try again when it is.")
-        return result
+    refusal = shares.folder_refusal(folder)
+    if refusal:
+        return refusal
     if ignored and _under_any(folder, {paths.key(f): paths.stored(f) for f in ignored}):
         result.refuse("That folder is one the library ignores (or under one).")
         return result

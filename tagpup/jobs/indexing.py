@@ -139,10 +139,14 @@ class IndexQueue:
         folders were read by the run that just ended, so they are not asked of the disk again
         (the caller holds the lock, and a share that is waking would hold it with the call)."""
         result = Result(attempted=len(folders))
-        valid, invalid, seen = [], [], set()
+        valid, invalid, away, seen = [], [], [], set()
         for folder in folders:
-            if not folder or not isinstance(folder, str) or not (looked or photo_actions.folder_state(folder) == "there"):
+            state = None if not folder or not isinstance(folder, str) else (
+                "there" if looked else photo_actions.folder_state(folder))
+            if state != "there":
                 invalid.append(str(folder))
+                if state == "unanswered":
+                    away.append(folder)
                 continue
             key = paths.key(folder)
             if key not in seen:
@@ -176,7 +180,12 @@ class IndexQueue:
                 self._ensure_runner()
             pending = len(self._pending)
 
-        if not valid:
+        if not valid and away:
+            # None to queue, and a share did not answer: the share's sentence, a 503 (#2129), not "no valid folder".
+            refusal = photo_actions.folder_refusal(away[0], "unanswered")
+            result.refuse(refusal.refused)
+            result.details.update(refusal.details)
+        elif not valid:
             result.refuse("No valid folder path" + (": %s" % ", ".join(invalid[:3]) if invalid else ""))
         result.changed = len(queued)
         result.details.update(queued=queued, already_queued=already, invalid=invalid, pending=pending)

@@ -69,6 +69,12 @@ def folder_state(folder):
     return shares.folder_state(folder)
 
 
+def folder_refusal(folder, state=None):
+    """None when `folder` is a folder now; else a Result refused with the one sentence of why, 503's for a share that did
+    not answer (tagpup.files.shares.folder_refusal): the refusal of a folder for the pages, the jobs and the CLI."""
+    return shares.folder_refusal(folder, state)
+
+
 def subfolders(folder):
     """The names of the folders `folder` holds, in its listing's order (tagpup.files.shares.listing, waited for on a
     share); None when its share did not answer. Raises the listing's OSError. What the folder pickers list."""

@@ -8,7 +8,7 @@ import logging
 
 from flask import Response, abort, jsonify
 
-from tagpup.core.result import CHANGED_ON_DISK, NotFound, Refused
+from tagpup.core.result import CHANGED_ON_DISK, SHARE_AWAY, NotFound, Refused
 from tagpup.services import photos as photo_actions
 
 logger = logging.getLogger(__name__)
@@ -24,10 +24,20 @@ def error(status, message, **extra):
 
 def refused(result, **extra):
     """A refused Result's JSON error: 409 when the file is no longer the one the page built its record from
-    (CHANGED_ON_DISK), else 400."""
+    (CHANGED_ON_DISK), 503 when a folder's network share did not answer (SHARE_AWAY: try again later), else 400."""
     if result.details.get(CHANGED_ON_DISK):
         return error(409, result.refused, changed_on_disk=True, **extra)
+    if result.details.get(SHARE_AWAY):
+        return error(503, result.refused, **extra)
     return error(400, result.refused, **extra)
+
+
+def folder_refused(folder):
+    """None when `folder`, as a request sent it, is a folder now; else the reply that refuses it: 503 with the share's
+    sentence when its network share did not answer, 400 when it is not there (tagpup.services.photos.folder_refusal).
+    The one check of the routes that act on a folder."""
+    refusal = photo_actions.folder_refusal(folder)
+    return refused(refusal) if refusal else None
 
 
 def image(content, content_type, cache_seconds=None):

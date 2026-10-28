@@ -81,7 +81,7 @@ def sync_review_include():
     body = request.get_json(silent=True) or {}
     result = runtimes.include(library, body.get("folder"))
     if result.refused:
-        return responses.error(400, result.refused)
+        return responses.refused(result)
     return jsonify({"success": True, "queued": result.changed})
 
 
