@@ -18,7 +18,7 @@ holds a duplicate face or a bare person tag, counted 2026-10-24), the bulk edits
 change of photo files or of faces whose way back is the journal's alone, None in UNDO_CHECKS, as Save's is).
 
 Lifted (each scenario a pair here, their tests deleted): test_history_routes' listing agreeing with the rehearsal; test_journal's migration never undone; test_journal_through_the_services' refused undo writing
-nothing; test_a_switched_library_indexes_and_suggests_with_its_model's refusals of the switch.
+nothing; the refusals of the face model's switch of P10 (now tests/test_a_library_indexes_and_suggests_with_its_face_model.py).
 
 One library is built (harbour: six photos read by the index, faces as the old detector and the new model's pass left
 them, switched to the new model), copied after each earlier change, and the copy taken again for each later one, with

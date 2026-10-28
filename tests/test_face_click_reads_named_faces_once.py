@@ -107,7 +107,7 @@ class FaceClickReadsNamedFacesOnce(unittest.TestCase):
         matrix = np.eye(4, dtype=np.float32)
         rows = clustering.FaceRows([11, 12, 13, 14], [Ref(2, "Wren Halloway"), Ref(1, "Rowan Thackeray"),
                                                       Ref(2, "Wren Halloway"), Ref(1, "Rowan Thackeray")], matrix,
-                                       validation.MTCNN_FACENET)
+                                       validation.SCRFD_ADAFACE)
         ids, people, kept = rows
         self.assertEqual([12, 14, 11, 13], ids)
         self.assertEqual([1, 1, 2, 2], [person.id for person in people])

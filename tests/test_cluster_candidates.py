@@ -26,12 +26,11 @@ sys.path.insert(0, WORKSPACE_DIR)
 from tagpup.core import clustering, validation  # noqa: E402
 from tagpup.ml import grouping  # noqa: E402
 
-FACENET = clustering.cuts_of(validation.MTCNN_FACENET)
 ADAFACE = clustering.cuts_of(validation.SCRFD_ADAFACE)
 
 
-def cluster_candidates(embeddings, cuts=FACENET, on_progress=None):
-    """Identify's grouping, by FaceNet's cuts unless a test asks another model's."""
+def cluster_candidates(embeddings, cuts=ADAFACE, on_progress=None):
+    """Identify's grouping, by the face model's cuts (AdaFace's)."""
     return grouping.cluster_candidates(embeddings, cuts, on_progress=on_progress)
 
 
@@ -48,7 +47,7 @@ def partition(labels):
     return {frozenset(members) for members in groups.values()}
 
 
-def reference(embeddings, cuts=FACENET):
+def reference(embeddings, cuts=ADAFACE):
     """The call cluster_candidates replaced."""
     return DBSCAN(eps=cuts.group_distance, min_samples=2, metric="euclidean",
                   n_jobs=-1).fit_predict(embeddings)
@@ -120,10 +119,10 @@ class TestItIsTheSameClustering(unittest.TestCase):
         self.assertEqual(partition(reference(pool)), partition(blocked))
 
 
-class TestEachFaceModelGroupsAtItsOwnRadius(unittest.TestCase):
-    """A library switched to the new face model groups its faces by that model's radius: AdaFace's likenesses of one
-    person sit far lower than FaceNet's, and at FaceNet's 0.885 Identify's groups and cluster-faces' votes would gather
-    far fewer faces (the radius moved into the face model's cuts, 2026-10-20)."""
+class TestTheFaceModelGroupsAtItsOwnRadius(unittest.TestCase):
+    """A library groups its faces by its face model's radius: AdaFace's likenesses of one person sit far lower than the
+    old model's, whose 0.885 would have Identify's groups and cluster-faces' votes gather far fewer faces (the radius moved
+    into the face model's cuts, 2026-10-20)."""
 
     def two_faces_alike(self, likeness):
         rng = np.random.default_rng(11)
@@ -135,10 +134,11 @@ class TestEachFaceModelGroupsAtItsOwnRadius(unittest.TestCase):
         self.assertAlmostEqual(likeness, float(pair[0] @ pair[1]), places=5)
         return pair
 
-    def test_two_faces_at_0_82_group_under_adaface_and_not_under_facenet(self):
+    def test_two_faces_at_0_82_group_and_at_0_78_do_not(self):
         pair = self.two_faces_alike(0.82)
         self.assertEqual(1, len(partition(cluster_candidates(pair, ADAFACE))), "AdaFace's 0.82 is one person")
-        self.assertEqual(0, len(partition(cluster_candidates(pair, FACENET))), "FaceNet's 0.82 groups no one")
+        self.assertEqual(0, len(partition(cluster_candidates(self.two_faces_alike(0.78), ADAFACE))),
+                         "below AdaFace's 0.80 two faces group no one")
         self.assertEqual(partition(reference(pair, ADAFACE)), partition(cluster_candidates(pair, ADAFACE)))
 
 

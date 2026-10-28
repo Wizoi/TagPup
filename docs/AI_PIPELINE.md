@@ -547,8 +547,9 @@ takes no turn of the card.
 - The floor of a new face has one owner, `scrfd_adaface.NEW_FACE_FLOOR` (40 px on the shorter side), applied by the
   model's `new_faces` wherever a detection makes a face: the index, Suggest, and the pass for a detection no old face
   takes. FaceModel's `new_faces` makes every face it found, as before.
-- Scenario P10, `tests/test_a_switched_library_indexes_and_suggests_with_its_model.py`: a library its pass reached is
-  switched; Name faces from tags reads the new vectors by AdaFace's cuts; a new photo is indexed through the CLI (the face
+- Scenario P10, `tests/test_a_library_indexes_and_suggests_with_its_face_model.py` (until 2026-10-28
+  `test_a_switched_library_indexes_and_suggests_with_its_model.py`, whose library was switched from FaceNet; since then
+  a library on its face model, FaceNet's cuts being deleted): Name faces from tags reads the vectors by AdaFace's cuts; a new photo is indexed through the CLI (the face
   under the floor not made, the one made holding the new model's vector alone, a crop, and `{"model": "scrfd-adaface"}`
   as its detector name); Suggest detects with the new model and offers a person at 0.45, which FaceNet's cuts would not;
   switched back, FaceNet reads its own vectors again and neither switch wrote one. (The switch back went 2026-10-28:
@@ -570,7 +571,8 @@ takes no turn of the card.
   from tags) reads the key once and its vectors and cuts by it, and the named and decided faces kept between requests
   carry theirs (`clustering.FaceRows.key`), compared only with vectors of that key (`FaceRows.under`: none otherwise,
   for that one request; the next reads them again, the fingerprint holding the model). Scenario P10: a switch
-  committed while cluster-faces runs leaves it deciding FaceNet's vectors by FaceNet's cuts. The undo of a switch back
+  committed while cluster-faces runs leaves it deciding FaceNet's vectors by FaceNet's cuts (that test went with
+  FaceNet's cuts, 2026-10-28: no library is switched of face model now). The undo of a switch back
   to FaceNet is refused by the switch's own check (79c4fd75); since 2026-10-28 the switch back itself is refused
   (`settings.NOT_FACENET`).
 

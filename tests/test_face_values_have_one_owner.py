@@ -20,7 +20,7 @@ from tagpup.core.vocabulary import Ref
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import ROOT, python_sources  # noqa: E402
 
-KEY = validation.MTCNN_FACENET
+KEY = validation.SCRFD_ADAFACE
 
 
 def face(*values):

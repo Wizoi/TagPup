@@ -315,32 +315,29 @@ class TheOwnersValues(unittest.TestCase):
                               if re.search(r"[\"'](Unknown Camera|All Cameras)[\"']|get\([\"']EXIF:Model", read(p))])
 
     def test_the_decisions_about_a_face(self):
-        """The likeness and the margin over the next person each a gate (owner, 2026-09-24 and 2026-10-17): for FaceNet's
-        vectors 0.70 and 0.02 to offer, 0.80 and 0.04 to name unasked, 0.70 and 0.04 when the photo's keywords name the
-        person; AdaFace's read off the phase 3 gate, naming at 0.99 and offering at 0.98 (owner, 2026-10-20)."""
+        """The likeness and the margin over the next person each a gate (owner, 2026-09-24 and 2026-10-17), at AdaFace's
+        values read off the phase 3 gate, naming at 0.99 and offering at 0.98 (owner, 2026-10-20): 0.310 and 0.090 to
+        offer, 0.520 and 0.205 to name unasked, 0.310 and 0.205 when the photo's keywords name the person."""
         import math
         from tagpup.core import clustering, validation
-        facenet = clustering.cuts_of(validation.MTCNN_FACENET)
-        self.assertEqual((True, False, False, True, False, False, True, False),
-                         (facenet.is_offered(0.70, 0.02), facenet.is_offered(0.69, 1), facenet.is_offered(0.9, 0.019),
-                          facenet.names_unasked(0.80, 0.04), facenet.names_unasked(0.79, 1),
-                          facenet.names_unasked(0.9, 0.039), facenet.looks_wrong(0.69), facenet.looks_wrong(0.70)))
-        self.assertEqual((True, False, False), (facenet.names_from_the_tag(0.70, 0.04), facenet.names_from_the_tag(0.69, 1),
-                                                facenet.names_from_the_tag(0.9, 0.03)))
-        self.assertEqual(("likely", "possible", "possible", "possible", None, None, None),
-                         tuple(facenet.band(v, m) for v, m in ((0.80, 0.04), (0.79, 1), (0.70, 0.02), (0.9, 0.03),
-                                                                (0.69, 1), (0.9, 0.01), (None, None))))
-        self.assertTrue(facenet.names_unasked(0.80, math.inf))   # a name carried is asked no margin
-        self.assertEqual(0.885, facenet.group_at)
-        self.assertAlmostEqual(0.48, facenet.group_distance, places=2)
-        self.assertEqual((True, False, False), (facenet.gathers_for_a_new_person(0.80, 0.02),
-                                                facenet.gathers_for_a_new_person(0.79, 1),
-                                                facenet.gathers_for_a_new_person(0.9, 0.019)))
+        from tagpup.services import settings
         adaface = clustering.cuts_of(validation.SCRFD_ADAFACE)
         self.assertEqual((0.310, 0.520, 0.205, 0.090, 0.80), (adaface.offer_a_name, adaface.name_without_asking,
                                                                 adaface.name_margin, adaface.offer_margin, adaface.group_at))
+        self.assertEqual((True, False, False, True, False, False, True, False),
+                         (adaface.is_offered(0.310, 0.090), adaface.is_offered(0.309, 1), adaface.is_offered(0.9, 0.089),
+                          adaface.names_unasked(0.520, 0.205), adaface.names_unasked(0.519, 1),
+                          adaface.names_unasked(0.9, 0.204), adaface.looks_wrong(0.309), adaface.looks_wrong(0.310)))
+        self.assertEqual((True, False, False), (adaface.names_from_the_tag(0.310, 0.205),
+                                                adaface.names_from_the_tag(0.309, 1), adaface.names_from_the_tag(0.9, 0.204)))
         self.assertEqual(("likely", "possible", None), tuple(adaface.band(v, m) for v, m in ((0.52, 0.205), (0.4, 0.09), (0.4, 0.089))))
-        self.assertEqual(set(validation.FACE_MODELS), set(clustering.CUTS))   # every model a library can be set to has its own
+        self.assertTrue(adaface.names_unasked(0.520, math.inf))   # a name carried is asked no margin
+        self.assertEqual((True, False, False), (adaface.gathers_for_a_new_person(0.520, 0.090),
+                                                adaface.gathers_for_a_new_person(0.519, 1),
+                                                adaface.gathers_for_a_new_person(0.9, 0.089)))
+        # every model a library can be put on has its own cuts
+        self.assertEqual({model for model in validation.FACE_MODELS if settings.face_model_refusal(model) is None},
+                         set(clustering.CUTS))
         for cuts in clustering.CUTS.values():
             for decide in (cuts.is_offered, cuts.names_unasked, cuts.names_from_the_tag, cuts.gathers_for_a_new_person):
                 self.assertFalse(decide(None, None))   # nothing is decided about nothing
