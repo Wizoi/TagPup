@@ -126,9 +126,11 @@ RETIRED = {
     **{stamp: library_settings.NOT_UNDONE for stamp in library_settings.RETIRED_STAMPS},
     # The deletion of the old detector's rows (MTCNN's settings and its detection records), from a command since deleted
     # with the model (2026-10-28): 1 applied in each library (photo_index 4871, kr-track 371, renton_parkrun 1235,
-    # counted read-only 2026-10-28). Recorded whole: the journal's account is the whole; undone, it puts back rows
-    # nothing reads (settings no longer declared, records under a detector name no library is on).
-    "delete old detector rows (mtcnn)": None,
+    # counted read-only 2026-10-28). Never undone: it would put back settings no validation knows any more and records
+    # under a detector no library is on (DECISIONS 2026-10-28, THE OLD MODELS ARE DELETED).
+    "delete old detector rows (mtcnn)": ("change %(change)d (%(operation)s): the old detector's settings and detection "
+                                         "records it deleted are not put back: the old detector and its settings are "
+                                         "deleted, and no library is on it"),
     # The roots' adoption of a folder and repair of a root's address: 1 adopt in each library, 1 repair in renton_parkrun.
     "roots adopt: %s": None,
     "roots repair-address: %s": None,
