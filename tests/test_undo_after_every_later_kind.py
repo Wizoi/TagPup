@@ -4,11 +4,12 @@ library really holds in sequence, each made by its real writer, the History dial
 (tagpup.services.journal.why_not is their one account): the listing offers the Undo button exactly when the rehearsal and
 the undo do not refuse; a refusal writes nothing -- no row, no generation, no change's status, no file; an undo allowed
 is a round trip the rehearsal found exact; and whether it is allowed is what the owner was promised (EXPECTED_REFUSED),
-saying so in the sentence of the check that owns it: a stamp and a migration are never undone; a switch of face model
-not where the switch back would be refused. A refusal that a later change of its own stands in the way of is lifted by
-undoing that one first: undone in that order, both are.
+saying so in the sentence of the check that owns it: a stamp, a migration and the switch to the new face model are never
+undone (the last would put FaceNet back: settings.NOT_FACENET, owner 2026-10-28; a switch back to FaceNet is refused at
+its source, so no library holds one, scenario V11). A refusal that a later change of its own stands in the way of is
+lifted by undoing that one first: undone in that order, both are.
 
-The kinds: a stamp of the settings, a change of the settings, a switch of face model and a switch back, a face pass (by its
+The kinds: a stamp of the settings, a change of the settings, a switch of face model, a face pass (by its
 writer: a kind the live journals hold, its command deleted), a migration's record (a synthetic additive step, tests/migration_names.py), a sync and a refresh of a row re-read from its
 file, Save on a photo, Smart Rename, a rotation (of the photo the later pass gave a face and its crop) and a bake of a
 folder's photos (real ExifTool, changes of photo files; by its writer, as the face pass). Left to the
@@ -70,11 +71,6 @@ def vector(rng):
 
 def a_settings_change(case, library):
     changed = library_settings.change(library, {"candidates.tags": "Heron"})
-    return changed.details.get("change") if changed.changed else None
-
-
-def a_switch_back(case, library):
-    changed = library_settings.change(library, {"faces.model": FACENET}, acknowledged=["face-model"])
     return changed.details.get("change") if changed.changed else None
 
 
@@ -181,7 +177,6 @@ def a_bake(case, library):
 #: The kinds made by a writer here, earlier or later: name -> make.
 WRITERS = {
     "settings": a_settings_change,
-    "switch back": a_switch_back,
     "later pass": a_later_pass,
     "migration": a_migration,
     "sync": a_sync,
@@ -202,12 +197,12 @@ def sentence(template):
     return max(re.split(r"%\(?\w*\)?[sd]", template), key=len).strip()
 
 
-#: Earlier kinds never undone, whatever came after -- a stamp, a migration's record -- and what the refusal says.
-NEVER_UNDONE = {"stamp": library_settings.NOT_UNDONE, "migration": "a migration is not undone"}
+#: Earlier kinds never undone, whatever came after -- a stamp, a migration's record, the switch to the new face model --
+#: and what the refusal says.
+NEVER_UNDONE = {"stamp": library_settings.NOT_UNDONE, "migration": "a migration is not undone",
+                "switch": library_settings.NOT_FACENET}
 #: (earlier, later) whose undo is refused, and what the refusal says: every other pair a library can hold is undone.
 EXPECTED_REFUSED = {
-    # The switch, once a switch back changed its row (the journal).
-    ("switch", "switch back"): "changed the same rows: undo it first",
     # A bake and a rename of one photo file, either way round: the later one first (file_journal.newer_overlapping, #1926).
     ("smart rename", "bake"): "applied after it, wrote the same photo files: undo it first",
     ("bake", "smart rename"): "applied after it, wrote the same photo files: undo it first",
@@ -229,9 +224,6 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.home = own_home.for_class(cls, prefix="undo_matrix_")
-        patched = mock.patch.object(library_settings, "UNPASSED_SHARE_ALLOWED", 0.1)
-        patched.start()
-        cls.addClassCleanup(patched.stop)
         cls.folder = paths.stored(os.path.join(cls.home.root, "Quay"))
         cls.kept = os.path.join(cls.home.root, "kept")
         cls.base = Library(cls.home.library("harbour.db"))
@@ -422,13 +414,13 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertTrue(set(EXPECTED_REFUSED) <= made, "a pair the promise names was not made")
         self.assertEqual(set(), {pair for pair, refused in outcomes.items() if refused is None},
                          "a later kind's writer made nothing after an earlier kind")
-        # Every later kind after every earlier one, the diagonal not generated: 13 earlier by 10 later, less 10 (the
+        # Every later kind after every earlier one, the diagonal not generated: 12 earlier by 9 later, less 9 (the
         # retirings' kinds and Suggest's step left with retire-faces and retire-vectors, 2026-10-25; a rotation came in,
-        # 2026-10-27).
+        # 2026-10-27; the switch back went, 2026-10-28).
         self.assertEqual(len(earlier) * len(later) - len(later), len(made), "the pairs a library can hold were not made")
-        self.assertEqual(120, len(made))
-        self.assertEqual(3, ordered, "the pairs undone in order: the switch, a bake and the rename after it, a rename and "
-                                     "the bake after it")
+        self.assertEqual(99, len(made))
+        self.assertEqual(2, ordered, "the pairs undone in order: a bake and the rename after it, a rename and the bake "
+                                     "after it")
         # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.
 
     def test_a_sync_is_not_offered_once_a_save_wrote_its_photo(self):

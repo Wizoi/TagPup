@@ -69,14 +69,11 @@ NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
 
-#: The share of a library's faces that may be in photos none of whose faces holds the new model's vector -- the pass has
-#: not reached them, or found no face in them (store.faces.pass_counts' not_passed; the rows do not tell which) -- when the
-#: library is switched to it (settings.change refuses a switch above it). Those faces hold no vector under the model switched to, so they
-#: take no part in comparing, clustering or the gallery of named faces until the pass reaches their photos. Not zero:
-#: a pass leaves a few photos it could not read or that were added after it (live, 2026-10-20: 16 of kr-track's 11,457
-#: faces, 7 of renton_parkrun's 3,644, both under 0.2%), and the owner switches with those and finishes them by a pass
-#: again; a library its pass has not walked (photo_index, all of its faces) is far above it. 5% is the default the owner
-#: may change here: a library a twentieth of whose faces would drop out of Identify is one the owner should pass first.
+#: The share of a library's photos that may hold no vector under a photo model's key when the library is switched to it
+#: (photo_switch_on refuses a switch above it; covers) or the other keys' vectors are retired. Those photos take no part
+#: in Suggest or search until their vectors are made. Not zero: a pass leaves a few photos it could not read or that were
+#: added after it, and the owner switches with those and finishes them by a pass again. 5% is the default the owner may
+#: change here (the faces switch's share until 2026-10-20's switches, read on the faces then).
 UNPASSED_SHARE_ALLOWED = 0.05
 
 #: The photo model's settings (LibrarySettings.embedder): together they name the key its vectors are kept under
@@ -95,10 +92,10 @@ UNKNOWN_PHOTO_MODEL = ("Nothing was written: %s (weights %s) is not a photo mode
 NATIVE_SIZE_ONLY = ("Nothing was written: %s (weights %s) is shown photos at its own size only: leave Image size "
                     "empty.")
 
-#: Why a switch back to FaceNet is refused once none of the library's faces holds a vector under it (switch_to).
-NONE_HELD = ("Nothing was written: none of the library's %d faces holds a vector under %s (retired, or never made): "
-             "switched to it, no face would take part in comparing, clustering or the gallery of named faces. The snapshot "
-             "taken before they were retired holds them (TagPup CLI: snapshots list, snapshots restore).")
+#: Why a library is not switched to FaceNet, nor an undo let put it back (owner, 2026-10-28; #1987): the old face model is
+#: retired from every library, empty or not (face_model_refusal).
+NOT_FACENET = ("Nothing was written: a library is no longer switched to %s, the old face model (MTCNN and FaceNet, "
+               "retired); %s is the face model." % (validation.MTCNN_FACENET, validation.SCRFD_ADAFACE))
 
 
 def _asked_of(library, ask, *args):
@@ -111,54 +108,33 @@ def _asked_of(library, ask, *args):
         conn.close()
 
 
+def face_model_refusal(model):
+    """Why a library may not be put on the face model `model`, or None: FaceNet, for every library (NOT_FACENET); the new
+    model, never. The one rule of it: a switch (switch_on) and an undo putting a model back (undo_check) ask it."""
+    return NOT_FACENET if model == validation.MTCNN_FACENET else None
+
+
 def switch_to(library, model):
-    """switch_on, on a read-only connection of `library`'s own: what settings.change and a retiring's plan ask."""
+    """switch_on, on a read-only connection of `library`'s own: what settings.change asks."""
     return _asked_of(library, switch_on, model)
 
 
-def switch_on(conn, model, counted=True):
-    """(refusal or None, what the faces hold under `model`): whether the library may be switched to the face model `model`
-    (UNPASSED_SHARE_ALLOWED), and one sentence saying how many of its faces hold a vector under it and how many named
-    faces hold none, said either way. FaceNet, which made every face the libraries hold before the new model's pass, is refused only
-    when none of the library's faces holds a vector under it (NONE_HELD: its vectors retired), and its pass's count is not read for it (not_passed 0: a face in a photo the new model's pass has not
-    reached is no part of a switch back); its sentence says only how many faces hold no FaceNet vector (those the new model
-    made while the library was on it), and is left out when none do. A library with no faces is not refused. Read-only, by
-    tagpup.store.faces.vector_counts and, for a switch to another model, pass_counts. Whether a face holds a FaceNet vector
-    is asked first (holds_vectors_under, 0.02 s on photo_index against vector_counts' 0.35 s, 2026-10-23): with
-    `counted` False (the undo's check, which says only the refusal) a switch back it allows reads no count and
-    returns {} for what the faces hold. The caller's connection: an undo asks it (undo_check) on a read-only
-    connection, before it writes."""
-    back = model == validation.MTCNN_FACENET
-    holds = back and store_faces.holds_vectors_under(conn, model)
-    if holds and not counted:
-        return None, {}
+def switch_on(conn, model):
+    """(refusal or None, what the faces hold under `model` or None): a switch to FaceNet is refused, nothing counted
+    (face_model_refusal); a switch to the new model is not, and says, for a library with faces, how many hold a vector
+    under it and how many named faces hold none and take no part in Identify. Read-only, by
+    tagpup.store.faces.vector_counts on the caller's connection."""
+    refusal = face_model_refusal(model)
+    if refusal:
+        return refusal, None
     held = store_faces.vector_counts(conn, model)
-    passed = held["faces"] and not back
-    not_passed = store_faces.pass_counts(conn, validation.MTCNN_FACENET, model)["not_passed"] if passed else 0
-    held["not_passed"] = not_passed
-    if not held["faces"]:
-        return None, held
-    if back:
-        if not holds:
-            return NONE_HELD % (held["faces"], model), held
-        if held["without"]:
-            held["said"] = ("%d of the library's %d faces hold%s no vector under %s and take%s no part in comparing, "
-                            "clustering or the gallery of named faces while the library is on it." % (
-                                held["without"], held["faces"], "s" if held["without"] == 1 else "", model,
-                                "s" if held["without"] == 1 else ""))
-        return None, held
-    said = ("%d of the library's %d faces hold a vector under %s; %d named face%s hold%s none, and would leave the named "
-            "faces Identify compares with until the pass reaches %s; %d face%s %s in photos where no face holds one (the pass "
-            "has not reached them, or found no face in them)." % (
-                held["faces"] - held["without"], held["faces"], model, held["named_without"],
-                "" if held["named_without"] == 1 else "s", "s" if held["named_without"] == 1 else "",
-                "it" if held["named_without"] == 1 else "them", not_passed, "" if not_passed == 1 else "s",
-                "is" if not_passed == 1 else "are"))
-    held["said"] = said
-    if not_passed <= UNPASSED_SHARE_ALLOWED * held["faces"]:
-        return None, held
-    return ("Nothing was written: %s A switch allows at most %d%% of the faces in such photos." % (
-                said, round(UNPASSED_SHARE_ALLOWED * 100))), held
+    if held["faces"]:
+        held["said"] = ("%d of the library's %d faces hold a vector under %s; %d named face%s hold%s none and take%s no "
+                        "part in Identify." % (
+                            held["faces"] - held["without"], held["faces"], model, held["named_without"],
+                            "" if held["named_without"] == 1 else "s", "s" if held["named_without"] == 1 else "",
+                            "s" if held["named_without"] == 1 else ""))
+    return None, held
 
 
 def photo_model_refusal(name, pretrained, size=None):
@@ -225,15 +201,11 @@ def photo_key_on(conn):
 
 def undo_check(conn, change_id, _operation, _summary):
     """Why change `change_id` of the settings (CHANGE) is not undone now, or None: its undo would put back a face model
-    (faces.model) the library may not be switched to now -- the way forward's own check (switch_on), asked of the model
-    the way back puts back: an undo of a switch back to FaceNet, once faces were added that hold FaceNet's vector alone;
-    an undo putting FaceNet back once no face holds its vector (its vectors retired). A change that inserted the
-    faces.model row (a library stamped before it was a setting: photo_index's switch, change 3244, kr-track's 342,
-    renton_parkrun's 1221) puts FaceNet back, undone (validation.BEFORE_FACE_MODELS, not a new library's default): the row
-    goes. The refusal is the switch's own sentence and counts. Asked by tagpup.services.journal.why_not
-    (UNDO_CHECKS) on a read-only connection, before an undo writes; reads the journal's old value and inserted key by
-    the change's rows' index, and a switch back to FaceNet a face holds a vector under one row of the key's index
-    (switch_on(counted=False); refused, the faces are counted for the sentence)."""
+    (faces.model) no library is put on (face_model_refusal, the switch's own rule and sentence): FaceNet. A change that
+    inserted the faces.model row (a library stamped before it was a setting: photo_index's switch, change 3244,
+    kr-track's 342, renton_parkrun's 1221) puts FaceNet back, undone (validation.BEFORE_FACE_MODELS, not a new library's
+    default): the row goes. Asked by tagpup.services.journal.why_not (UNDO_CHECKS) on a read-only connection, before an
+    undo writes; reads the journal's old value and inserted key by the change's rows' index, and counts no face."""
     # One read of the journal for the face model and the five of the photo model.
     old = journal.old_values(conn, [change_id], store_settings.TABLE, [(key,) for key in (FACE_MODEL,) + PHOTO_MODEL],
                              "value").get(change_id, {})
@@ -241,7 +213,7 @@ def undo_check(conn, change_id, _operation, _summary):
     if FACE_MODEL in journal.recorded_values(conn, [change_id], store_settings.TABLE, "insert", "key").get(change_id, ()):
         model = validation.BEFORE_FACE_MODELS
     if model is not None:
-        refusal = switch_on(conn, _trim(model), counted=False)[0]
+        refusal = face_model_refusal(_trim(model))
         if refusal:
             return refusal
     # The photo model's settings the undo puts back (photo_switch_on): a switch undone is a switch, held to the same
@@ -498,13 +470,11 @@ def change(library, values, acknowledged=(), apply=True):
     to a locked setting whose group (validation.SETTING_GROUPS: "clip", "face-model",
     "faces", "exiftool") `acknowledged` does not name: the refusal lists each such group and what
     changing it means, and details["unacknowledged"] holds them. A change of the face model
-    (faces.model) to one whose pass has not reached more than UNPASSED_SHARE_ALLOWED of the
-    library's faces is refused first; so is a switch of photo model (PHOTO_MODEL) more than that share of whose
-    photos hold no vector under its new key, or one forcing an image size on a model that takes none
-    (photo_switch_on; details["photo_vectors"]: the new key, how many photos hold a vector under it and how many none,
-    and its sentence). For the face model, details["face_vectors"] holds what its faces
-    hold under the model switched to, and, for a library with faces, its sentence ("said"; for a switch back to
-    FaceNet, only when a face holds no FaceNet vector, and refused when none holds one: switch_to). Every caller -- the
+    (faces.model) to FaceNet is refused first (NOT_FACENET, switch_to); so is a switch of photo model (PHOTO_MODEL)
+    more than UNPASSED_SHARE_ALLOWED of whose photos hold no vector under its new key, or one forcing an image size on a
+    model that takes none (photo_switch_on; details["photo_vectors"]: the new key, how many photos hold a vector under it
+    and how many none, and its sentence). For a switch to the new face model, details["face_vectors"] holds what its
+    faces hold under it, and, for a library with faces, its sentence ("said"; None for a switch refused). Every caller -- the
     dialog, the CLI, a tool -- names what it acknowledges, as the dialog asks the owner
     to tick each consequence. `changed` is the settings whose value changed;
     details["locked"] says whether any was a locked one, after which what the models
@@ -568,7 +538,7 @@ def change(library, values, acknowledged=(), apply=True):
             result.refuse(refusal)
             return result
     if FACE_MODEL in changed:
-        # Before the consequences are asked for: ticking them cannot make a library its pass has not reached switchable.
+        # Before the consequences are asked for: ticking them cannot put a library on FaceNet.
         refusal, result.details["face_vectors"] = switch_to(library, _trim(wanted[FACE_MODEL]))
         if refusal:
             result.refuse(refusal)

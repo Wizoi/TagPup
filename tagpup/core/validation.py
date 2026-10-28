@@ -287,9 +287,8 @@ SETTING_GROUPS = {
         "consequences": [
             "Set to %s, Identify, cluster-faces, New Person and Suggest compare faces by the new model's vectors, "
             "with its own cuts for naming and offering a person; photos indexed after it find faces with the new "
-            "model. A face the pass has not given a new vector takes no part, and a named one leaves the named "
-            "faces compared with, until the pass reaches its photo." % SCRFD_ADAFACE,
-            "FaceNet's vectors stay and nothing is deleted: set back to %s, everything compares by them as before."
+            "model. A face holding no vector under it takes no part." % SCRFD_ADAFACE,
+            "A library is not switched to %s, the old model, nor a switch to the new one undone: it is retired."
             % MTCNN_FACENET,
         ],
     },
@@ -366,10 +365,9 @@ SETTINGS = {
         "The models indexing and Suggest find faces and make their vectors with: %s (SCRFD and AdaFace, every "
         "library's since phase 3) or %s (MTCNN and FaceNet, which made the libraries' first face vectors, retired). "
         "The %s settings are MTCNN's. Every reader "
-        "compares a face by its vector under this model, so switching to %s waits until "
-        "the library's faces hold their vectors under it: a switch is refused, with the counts, while too many faces are in photos "
-        "where no face holds its vector (the pass has not reached them, or found no face in them). Switching back is always allowed (docs/AI_PIPELINE.md, phase 3)." % (
-            SCRFD_ADAFACE, MTCNN_FACENET, SETTING_GROUPS["faces"]["title"], SCRFD_ADAFACE),
+        "compares a face by its vector under this model. A switch to %s is refused: the old model is retired "
+        "(docs/AI_PIPELINE.md, phase 3)." % (
+            SCRFD_ADAFACE, MTCNN_FACENET, SETTING_GROUPS["faces"]["title"], MTCNN_FACENET),
         [{"rule": "one_of", "choices": list(FACE_MODELS),
           "message": "The face model is one of %s." % ", ".join(FACE_MODELS)}]),
     "faces.min_face_size": _setting(
