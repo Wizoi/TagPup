@@ -92,15 +92,6 @@ class TheRuntimeKeysModelsBySettings(ALibrary):
         self.assertEqual(FACES, self.runtime.faces(self.meadow).settings)
         self.assertNotEqual(self.runtime.model_key(self.harbour), self.runtime.model_key(self.meadow))
 
-    def test_a_look_with_the_new_face_model_and_a_library_switched_to_it_share_one_model(self):
-        # orchard on the new model, as made; harbour looked at with it by a face pass.
-        new = validation.SCRFD_ADAFACE
-        switched = self.runtime.faces(self.orchard)
-        look = self.runtime.look_at_faces(self.harbour)
-        look.end()
-        self.assertEqual([switched], [model for model in self.built["faces"] if model.settings.get("model") == new],
-                         "the look built the new model again")
-
     def test_a_changed_setting_is_seen_by_the_next_ask(self):
         self.runtime.clip(self.harbour)
         settings.change(self.harbour, ON_THE_OTHER, acknowledged=["clip"])

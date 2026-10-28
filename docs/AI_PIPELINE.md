@@ -31,7 +31,7 @@ accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 
 ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Measured:** phase 3's speed check (2026-10-18,
 section 7: SCRFD 10g in torch and AdaFace IR-101, about 1.8 hours for photo_index against 9.3, no second runtime;
 chosen by the owner, DECISIONS 2026-10-18). **Built (2026-10-18):** the model module (merge 2a), the
-`faces.model` setting with its one refusal and `Runtime.look_at_faces` (merge 2b), and migration 33 (pulled forward:
+`faces.model` setting with its one refusal and `Runtime.look_at_faces` (merge 2b; deleted 2026-10-27 with the pass), and migration 33 (pulled forward:
 each face's vector in `face_embeddings` under its model's key, every reader keyed by the library's `faces.model`);
 **installed on all three libraries on 2026-10-18** (schema 33; vectors checked byte for byte against the backups,
 named counts unchanged). **Merge 3, the pass:** slice A1 merged (one pairing rule, Suggest and a face with no vector,

@@ -254,8 +254,8 @@ def undo_check(conn, change_id, _operation, _summary):
 
 def model_alone(model):
     """The face models' settings (LibrarySettings.faces) of `model`, a model that takes none of MTCNN's arguments
-    (tagpup.ml.scrfd_adaface): `model` alone. The one maker of them, so a library switched to it and a face pass's look
-    (tagpup.runtime.Runtime.look_at_faces) name one set, and share one model built."""
+    (tagpup.ml.scrfd_adaface): `model` alone. The one maker of them, so every library on it names one set, and
+    shares one model built."""
     return {"model": model}
 
 
