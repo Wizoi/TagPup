@@ -40,7 +40,7 @@ import photo_rows  # noqa: E402
 from tagpup.core import fields, orientation  # noqa: E402
 from tagpup.files import bake, field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import baking, file_changes, tagging  # noqa: E402
+from tagpup.services import file_changes, tagging  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 #: 98 bytes, longer than the 64 IPTC:Keywords keeps.
@@ -238,9 +238,7 @@ class BakeCase(KeptCase):
                            (16, 12), baked_files.DIGEST, baked_files.PHOTO_MODEL, baked_files.FACE_MODEL)
 
     def bake(self, photo_paths, values):
-        """A bake as bake-photos --apply writes it: a change in History, undone by these cases (the index's own bake,
-        baking.INDEX_OPERATION, is internal and erased once finished)."""
-        return file_changes.write_fields(self.library, baking.OPERATION, EXIFTOOL, photo_paths, list(values),
+        return file_changes.write_fields(self.library, "bake", EXIFTOOL, photo_paths, list(values),
                                          lambda path, held: file_changes.Plan(after=values))
 
     def crash(self, step, photo_paths, values):
@@ -388,7 +386,7 @@ class ABakeIsWritten(BakeCase):
         # ExifTool writes the rest of the structure, warns, and succeeds: a write recorded it as made (#1881).
         a = self.make_read("a.jpg")
         text = bake.region_text({"RegionList": [{"Type": "Face", "Bogus": "1"}]})
-        result = file_changes.write_fields(self.library, baking.OPERATION, EXIFTOOL, [a], [fields.REGION_INFO],
+        result = file_changes.write_fields(self.library, "bake", EXIFTOOL, [a], [fields.REGION_INFO],
                                            lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
         self.assertEqual(0, result.changed)
         self.assertIn("is not a field of", str(result.errors))

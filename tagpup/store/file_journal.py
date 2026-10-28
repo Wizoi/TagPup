@@ -50,7 +50,7 @@ CHUNK = 500
 #: Its change is the crash record a write needs while it is under way (settled at the next start by what each file
 #: holds), and once finished it is erased (finish). Spelt here, the lowest layer that tells it apart; tagpup.services.
 #: baking names it INDEX_OPERATION. The 'bake photos' changes of the backfill are not internal and stay as they are.
-INDEX_BAKE = "bake"
+INDEX_BAKE = "index bake"
 #: The operations whose changes are internal: listed by no history, met by no undo's check of newer changes.
 INTERNAL = (INDEX_BAKE,)
 
