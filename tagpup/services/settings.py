@@ -157,8 +157,7 @@ def switch_on(conn, model, counted=True):
     held["said"] = said
     if not_passed <= UNPASSED_SHARE_ALLOWED * held["faces"]:
         return None, held
-    return ("Nothing was written: %s A switch allows at most %d%% of the faces in such photos: "
-            "finish the pass first (TagPup CLI: face-pass <folder> --apply, for each folder of the library)." % (
+    return ("Nothing was written: %s A switch allows at most %d%% of the faces in such photos." % (
                 said, round(UNPASSED_SHARE_ALLOWED * 100))), held
 
 

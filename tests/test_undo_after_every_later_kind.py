@@ -8,10 +8,10 @@ saying so in the sentence of the check that owns it: a stamp and a migration are
 not where the switch back would be refused. A refusal that a later change of its own stands in the way of is lifted by
 undoing that one first: undone in that order, both are.
 
-The kinds: a stamp of the settings, a change of the settings, a switch of face model and a switch back, a face pass, a
-migration's record (a synthetic additive step, tests/migration_names.py), a sync and a refresh of a row re-read from its
+The kinds: a stamp of the settings, a change of the settings, a switch of face model and a switch back, a face pass (by its
+writer: a kind the live journals hold, its command deleted), a migration's record (a synthetic additive step, tests/migration_names.py), a sync and a refresh of a row re-read from its
 file, Save on a photo, Smart Rename, a rotation (of the photo the later pass gave a face and its crop) and a bake of a
-folder's photos (real ExifTool, changes of photo files). Left to the
+folder's photos (real ExifTool, changes of photo files; by its writer, as the face pass). Left to the
 guard (tests/test_every_change_kind_has_an_undo_check.py): dedupe_faces and merge_duplicate_person_tags (no live library
 holds a duplicate face or a bare person tag, counted 2026-10-24), the bulk edits, tag renames and face namings (each a
 change of photo files or of faces whose way back is the journal's alone, None in UNDO_CHECKS, as Save's is).
@@ -38,6 +38,7 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import FACENET, on_facenet, person_of  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
+import baked_files  # noqa: E402
 
 import numpy as np  # noqa: E402
 
@@ -45,7 +46,7 @@ from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import baking, baking_report, file_changes, refresh_rows, sync, tagging  # noqa: E402
+from tagpup.services import baking, file_changes, refresh_rows, sync, tagging  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -143,9 +144,10 @@ def a_smart_rename(case, library):
 
 
 def a_bake(case, library):
-    """bake-photos --apply over the library's folder: each photo is given its photo vector first, stamped as its file is
-    now, as the indexer stores it (the library as built holds none); the photos whose faces all hold the new model's
-    vector are baked, one change, after the run's snapshot."""
+    """A folder's bake as the deleted `bake-photos --apply` recorded it, a kind the live journals hold
+    (tagpup.services.journal.RETIRED): each photo is given its photo vector first, stamped as its file is now, as the
+    indexer stores it (the library as built holds none); the photos of the first photo's folder the bake plans to bake
+    (baking.plan_photo) are written as one change under baking.OPERATION by the writer it used, file_changes.write_fields."""
     conn = db.connect(library.path)
     try:
         key = library_settings.photo_key_on(conn)
@@ -156,11 +158,23 @@ def a_bake(case, library):
                 mtime, size = embeddings.stamp_of(path)
                 embeddings.put(conn, path, key, mtime, size, (found / np.linalg.norm(found)).tobytes(), None)
         conn.commit()
+        folder = os.path.dirname(case.photo[1])
+        stored = store_roots.to_row(conn, folder)
+        group = [path for _photo_id, path in inspection.ids_and_paths(conn)
+                 if os.path.exists(path) and paths.key(os.path.dirname(path)) == paths.key(folder)]
     finally:
         conn.close()
-    run = baking_report.apply(library, EXIFTOOL, "the detector of the new model")
-    changes = [folder.change for folder in run.folders if folder.change]
-    return changes[0] if changes else None
+    planned = {}
+    for path in group:
+        plan = baked_files.plan(library.path, path, "the detector of the new model")
+        if isinstance(plan, baking.ToBake):
+            planned[paths.key(path)] = (path, plan.values)
+    if not planned:
+        return None
+    written = file_changes.write_fields(
+        library, baking.OPERATION, EXIFTOOL, [path for path, _values in planned.values()], list(bake.WRITTEN.values()),
+        lambda path, _held: file_changes.Plan(after=planned[paths.key(path)][1]), summary={"folder": stored})
+    return written.details.get("change")
 
 
 #: The kinds made by a writer here, earlier or later: name -> make.

@@ -51,8 +51,8 @@ logger = logging.getLogger(__name__)
 #: (RETIRED), which a face pass's undo still asks of (pass_check).
 RETIRED_FACES = "retire faces (%s)"
 
-#: The new face model's pass over a folder, by its operation's name with the model key: the journal's kind, which the
-#: face gate reads the passes by and pass_check matches.
+#: The new face model's pass over a folder, by its operation's name with the model key: a kind no code makes any more
+#: (RETIRED), which the face gate reads the passes by and pass_check matches.
 FACE_PASS = "face pass (%s)"
 
 #: Why an undo of a face pass's change is refused while a retiring after it stands (pass_check).
@@ -88,7 +88,6 @@ UNDO_CHECKS = {
     **{stamp: library_settings.NOT_UNDONE for stamp in library_settings.STAMPS - library_settings.RETIRED_STAMPS},
     library_settings.CHANGE: library_settings.undo_check,
     "migration %d: %s": "change %(change)d (%(operation)s): a migration is not undone",
-    FACE_PASS: pass_check,
     retire_photo_vectors.VECTORS_OPERATION: retire_photo_vectors.vectors_check,
     face_people.UNNAMED: None,
     face_people.ADDED: None,
@@ -97,8 +96,6 @@ UNDO_CHECKS = {
     journal.PERSON_MERGED: None,
     tagging.ADD_TO_ALL: None,
     tags_from_faces.OPERATION: None,
-    # A folder's bake: the journal puts back what each file held; the fingerprint rows stay (baking.follower, #1894).
-    baking.OPERATION: None,
     # The index's bake (file_journal.INTERNAL): no operation; listed nowhere, and erased once it finishes.
     baking.INDEX_OPERATION: "change %(change)d (%(operation)s): a bake the index wrote is not an operation; it is not undone",
     sync.OPERATION: None,
@@ -133,6 +130,14 @@ RETIRED = {
     # The roots' adoption of a folder and repair of a root's address: 1 adopt in each library, 1 repair in renton_parkrun.
     "roots adopt: %s": None,
     "roots repair-address: %s": None,
+    # The new face model's pass over a folder, from a command since deleted: photo_index 2,500 applied, kr-track 20
+    # applied and 1 undone, renton_parkrun 8 applied (counted 2026-10-27). Undone while a later retiring stands, it would
+    # take the new faces from photos whose old faces are gone (pass_check).
+    FACE_PASS: pass_check,
+    # A folder's bake, from a command since deleted (the index bakes now, baking.INDEX_OPERATION): photo_index 2,845
+    # applied and 6 failed, kr-track 41, renton_parkrun 16 (counted 2026-10-27). The journal puts back what each file
+    # held; the fingerprint rows stay (baking.follower, #1894).
+    baking.OPERATION: None,
     # The relink of renamed photos' rows: renton_parkrun 1.
     "relink_renamed_photos": None,
     # A bulk edit run as a job, before bulk edits were named by their edit: renton_parkrun 1 each.

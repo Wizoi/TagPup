@@ -5,7 +5,7 @@ with that model (Runtime.look_at_faces) is held as a run is. What the owner live
 - (s) The owner picks FaceNet, the old model, for a library made on the new one, its faces found by the new model: it is
   refused and nothing is written, nor in a dry run; the library stays on its model.
 - (f) The face pass's look with the new model (Runtime.look_at_faces), which writes nothing to the library (the pass writes
-  with it: tests/test_the_face_pass.py, tests/test_a_face_pass_from_the_command_line.py): refused beside a Suggest
+  with it: a command since deleted): refused beside a Suggest
   holding another set of models (a library on another photo model), a Suggest on that set refused beside it; it takes the
   graphics card once, and lets go of the card and the model at end(), after a failure too.
 

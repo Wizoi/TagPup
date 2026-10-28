@@ -268,7 +268,7 @@ class EveryChangeKindHasAnUndoCheck(unittest.TestCase):
 
     def test_the_writers_are_found(self):
         # The scan finds the writers it exists for: were it to find none, it would pass with nothing checked.
-        for name in ("change settings", "face pass (%s)", "retire vectors (%s)", "migration %d: %s",
+        for name in ("change settings", "rotate", "retire vectors (%s)", "migration %d: %s",
                      "stamp settings with the defaults", "stamp settings from the library it replaced", "sync"):
             self.assertIn(name, self.made)
 

@@ -32,7 +32,8 @@ from tagpup.store import roots as store_roots
 #: (tagpup.services.faces.detector_of, handed in: the ml layer is not read here).
 Keys = collections.namedtuple("Keys", "photo face detector")
 
-#: The operation a bake's change of a folder is recorded under in History (tagpup.services.baking_report.apply).
+#: The operation a folder's bake was recorded under in History, by a command since deleted: a kind the live journals
+#: hold (tagpup.services.journal.RETIRED).
 OPERATION = "bake photos"
 #: The operation of the bake the index writes after each folder (tagpup.services.bake_after_index): internal, in no
 #: History and never undone (file_journal.INTERNAL).
@@ -109,7 +110,7 @@ def plan_photo(conn, photo_path, keys, held, shape, fingerprint=None, stamp_of=s
     rows = [row for row in rows if images.is_big_enough(images.parse_box(row[1]))]   # a small face is not baked (#1973)
     missing = sum(vector is None for _id, _box, _ref, vector, _excluded in rows)
     if missing:
-        return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model: run face-pass on its folder first "
+        return Cannot(FACES_WITHOUT_VECTORS, "%d face(s) hold no vector under the face model "
                       "(a re-index gives a face it holds already no vector)." % missing)
     try:
         stored_w, stored_h, turn = shape()
@@ -164,7 +165,7 @@ class ReadStopped(Exception):
 
 class FolderRead:
     """The bake fields of a folder's files (field_values.read of bake.WRITTEN's), read in one ExifTool read the first
-    time a photo of it asks: the one read a folder is planned from, by the bake's dry run (baking_report) and the index's
+    time a photo of it asks: the one read a folder is planned from, by the index's
     bake (bake_after_index). `stop`, an Event the read stops at (None: the folder is read whole)."""
 
     def __init__(self, et, photo_paths, stop=None):

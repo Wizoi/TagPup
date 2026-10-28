@@ -366,8 +366,8 @@ SETTINGS = {
         "The models indexing and Suggest find faces and make their vectors with: %s (SCRFD and AdaFace, every "
         "library's since phase 3) or %s (MTCNN and FaceNet, which made the libraries' first face vectors, retired). "
         "The %s settings are MTCNN's. Every reader "
-        "compares a face by its vector under this model, so switching to %s waits for its pass (face-pass) to give "
-        "the library's faces their new vectors: a switch is refused, with the counts, while too many faces are in photos "
+        "compares a face by its vector under this model, so switching to %s waits until "
+        "the library's faces hold their vectors under it: a switch is refused, with the counts, while too many faces are in photos "
         "where no face holds its vector (the pass has not reached them, or found no face in them). Switching back is always allowed (docs/AI_PIPELINE.md, phase 3)." % (
             SCRFD_ADAFACE, MTCNN_FACENET, SETTING_GROUPS["faces"]["title"], SCRFD_ADAFACE),
         [{"rule": "one_of", "choices": list(FACE_MODELS),

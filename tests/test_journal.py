@@ -252,7 +252,7 @@ class AFacePassFolderUndone(JournalLibrary):
     model's key and no other, as ONE journaled change, through its own writer (tagpup.store.faces.give_vectors: the rows
     written, then recorded as stored by journal.record_inserted). A row of another change under such a face (a vector a
     later run added under another model) refuses the undo, and says so; its own crop and vector stand in no way. The
-    folder undone, and written again, is scenario P8 (tests/test_the_face_pass.py)."""
+    folder undone, and written again, was scenario P8, whose command is deleted."""
     NEW_MODEL = FACE_MODEL
 
     def the_pass_gives_a_face(self):

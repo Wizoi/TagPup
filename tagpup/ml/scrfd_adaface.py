@@ -306,7 +306,7 @@ class ScrfdAdaFace:
     def picture_bytes(width, height, *, max_side):
         """The bytes `picture` holds for a photo of `width` x `height`, at most: the picture upright (RGB), and for each
         square its canvas and the picture scaled into it, `max_side` not used (picture). What the read-ahead of the index
-        and of the face pass reserves (tagpup_cli.read_ahead_bytes, tagpup.services.face_pass); said here, beside what it
+        reserves (tagpup_cli.read_ahead_bytes); said here, beside what it
         counts."""
         return 3 * width * height + sum(2 * 3 * side * side for side in SCALES)
 
