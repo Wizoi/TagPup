@@ -22,11 +22,12 @@ folder scan's rule), and sorts what differs:
   the PreservedFileName) read from those new files alone (relink_photos.claims_of, pair);
 - work the index owes -- a photo with no vector under the library's photo model, one whose vector's stamp no longer
   describes its file (photo_fingerprints.same_picture, the one rule; owner, DECISIONS 2026-10-27), whether or not its
-  row does (a row an earlier sync re-read keeps the vector's old stamp), and one never examined for faces by the
-  library's detector: photo_fingerprints.owed, the one answer the index asks too. Its folder is queued for the index
-  as a new file's is (`to_check`, counted by reason: `owed_no_vector`, `owed_stale`, `owed_unexamined`), and the index
-  tells a metadata write (the same picture: the vector kept) from an edited picture (computed again). Sync decodes
-  nothing and leaves the vector and the faces as they are;
+  row does (a row an earlier sync re-read keeps the vector's old stamp), one never examined for faces by the
+  library's detector, and one whose current vector's picture was never fingerprinted, whose file the index's bake
+  writes from the library: photo_fingerprints.owed, the one answer the index asks too. Its folder is queued for the
+  index as a new file's is (`to_check`, counted by reason: `owed_no_vector`, `owed_stale`, `owed_unexamined`,
+  `owed_no_fingerprint`), and the index tells a metadata write (the same picture: the vector kept) from an edited
+  picture (computed again). Sync decodes nothing and leaves the vector, the faces and the file as they are;
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
   removed. A folder renamed in Explorer looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
@@ -423,6 +424,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "changed": len(changed), "never_stamped": never_stamped, "to_write": len(to_write),
                 "to_check": len(to_check), "owed_no_vector": owed_by[photo_fingerprints.NO_VECTOR],
                 "owed_stale": owed_by[photo_fingerprints.STALE], "owed_unexamined": owed_by[photo_fingerprints.UNEXAMINED],
+                "owed_no_fingerprint": owed_by[photo_fingerprints.NO_FINGERPRINT],
                 "owed_folders": len({paths.key(os.path.dirname(path)) for path in to_check}),
                 "owed_held_back": len({paths.key(os.path.dirname(path)) for path in to_check} & held),
                 "fields": dict(fields.most_common()), "unreadable": len(unreadable),

@@ -26,7 +26,12 @@ changes the stamp and never the picture, so it never makes a vector stale. Sync 
 current) and baking (what is to be baked) each ask it.
 
 Which photos the index owes work is `owed`'s, the one answer sync (what to queue) and the index (what is current) ask:
-a photo with no vector, one whose vector's stamp does not describe its file, and one never examined for faces.
+a photo with no vector, one whose vector's stamp does not describe its file, one never examined for faces, and one whose
+vector is current by its stamp and whose picture was never fingerprinted (Suggest's vector, a re-embedding pass, a photo
+indexed before migration 34): the bake after the index decodes it, writes its file from the library and the row follows
+the write (tagpup.services.baking.follower), or, its file holding a current bake already, the row is taken from the
+decode with no write (`adopt`). Every write of a file's bake records the row, so a photo whose file was baked by this
+library is never owed for this reason (owner, 2026-10-28: every photo baked, with no command).
 """
 import collections
 
@@ -71,8 +76,9 @@ def same_picture(vector_stamp, file_stamp, row=NOT_READ, decoded=None):
 #: Why the index owes a photo work (owed). NO_VECTOR: it holds no vector under the library's photo model. STALE: its
 #: vector's stamp does not describe its file (same_picture not STAMPED): the index's decode tells a metadata write (kept)
 #: from another picture (worked out). UNEXAMINED: never examined for faces by the library's detector
-#: (faces_detected.unexamined): no face row and no record of a look.
-NO_VECTOR, STALE, UNEXAMINED = "no vector", "stale", "unexamined"
+#: (faces_detected.unexamined): no face row and no record of a look. NO_FINGERPRINT: its vector's stamp describes its
+#: file and it has no row here: its file is the bake's to write (no model, no card), the row following the write.
+NO_VECTOR, STALE, UNEXAMINED, NO_FINGERPRINT = "no vector", "stale", "unexamined", "no fingerprint"
 
 #: A photo the index owes work: its path as the walk spelled it, and why (a tuple of NO_VECTOR or STALE, and UNEXAMINED).
 Owed = collections.namedtuple("Owed", "path reasons")
@@ -81,12 +87,15 @@ Owed = collections.namedtuple("Owed", "path reasons")
 def owed(conn, photo_key, detector, on_disk, folder=None):
     """{photo id: Owed} of the photos (under `folder`, or every one) whose file is among `on_disk` ({paths.key: (path,
     mtime, size)}: the files as a walk found them) and that the index owes work: no vector under `photo_key` (an
-    embeddings.model_key), a vector whose stamp does not describe the file, or -- `detector` a faces_detected name, None
-    when faces are not asked (--skip-faces) -- never examined for faces. A row whose stamp does not describe its file is
-    sync's to read again (store.photos.describes), not a reason here. Nothing decoded, nothing written: one read of the
-    rows' stamps with their vectors' (store.photos.stamps) and one of the never-examined (0.03 s warm on photo_index's
-    59,524 photos)."""
+    embeddings.model_key), a vector whose stamp does not describe the file, a current vector with no fingerprint row
+    (NO_FINGERPRINT), or -- `detector` a faces_detected name, None when faces are not asked (--skip-faces) -- never
+    examined for faces. A row whose stamp does not describe its file is sync's to read again (store.photos.describes),
+    not a reason here. Nothing decoded, nothing written: one read of the rows' stamps with their vectors'
+    (store.photos.stamps), one of the never-examined and one of the ids holding a fingerprint (a scan of this table's
+    keys: 0.11 s on a process's first ask, 0.02 s warm; the whole answer 0.48 s, faces not asked, on photo_index's
+    59,524 photos, 2026-10-28)."""
     unexamined = faces_detected.unexamined(conn, detector) if detector is not None else set()
+    fingerprinted = {photo_id for (photo_id,) in conn.execute("SELECT photo_id FROM photo_fingerprints")}
     found = {}
     for photo_id, path, _mtime, _size, vector in store_photos.stamps(conn, folder, vector_stamps=photo_key):
         disk = on_disk.get(paths.key(path))
@@ -97,6 +106,8 @@ def owed(conn, photo_key, detector, on_disk, folder=None):
             reasons = (NO_VECTOR,)
         elif same_picture(vector, disk[1:]) != STAMPED:
             reasons = (STALE,)
+        elif photo_id not in fingerprinted:
+            reasons = (NO_FINGERPRINT,)
         if photo_id in unexamined:
             reasons += (UNEXAMINED,)
         if reasons:
@@ -111,6 +122,17 @@ def get(conn, photo_id):
     return Fingerprint(*row) if row else None
 
 
+def fingerprinted(conn, photo_ids):
+    """The ids among `photo_ids` that have a row: one read of the key, no hash."""
+    found = set()
+    photo_ids = list(photo_ids)
+    for start in range(0, len(photo_ids), 500):
+        chunk = photo_ids[start:start + 500]
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT photo_id FROM photo_fingerprints WHERE photo_id IN (%s)" % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
 def of_path(conn, photo_path):
     """The Fingerprint of the photo at `photo_path`, or None: none recorded, or no such photo."""
     where, params = store_roots.sql_equals(conn, "p.path", photo_path)
@@ -123,6 +145,25 @@ def put(conn, photo_id, key, hash):
     """Record the fingerprint of the photo with id `photo_id`, in place of any it had. The caller commits."""
     conn.execute("INSERT OR REPLACE INTO photo_fingerprints (photo_id, key, hash) VALUES (?, ?, ?)",
                  (photo_id, key, bytes(hash)))
+
+
+def adopt(conn, photo_id, photo_key, stamp, fingerprint):
+    """Record `fingerprint`, the (key, hash) of the decode of the photo's file taken at `stamp` (its (mtime, size)), as
+    the row of the photo with id `photo_id`, when it has none and its vector under `photo_key` is stamped describing that
+    file still (same_picture STAMPED): the picture the vector was made of. Nothing when a row came meanwhile (its writer
+    knew the picture) or the vector was made again or went: a row of another picture beside a new vector would keep that
+    vector past a crop (follows). True when it was recorded. The caller commits.
+
+    Its instances (the bake after the index, tests/test_the_index_writes_the_bake.py): another program writes the
+    keywords of a baked file, a sync reads its row again and Suggest, finding the vector stale, keeps a new one with no
+    fingerprint (its file holds a current bake: nothing to write); and a file ExifTool cannot write (read-only), whose
+    row is recorded so sync does not queue its folder again for a write that cannot change."""
+    vector = conn.execute("SELECT mtime, size FROM embeddings WHERE photo_id = ? AND model = ?",
+                          (photo_id, photo_key)).fetchone()
+    if vector is None or same_picture(tuple(vector), stamp) != STAMPED:
+        return False
+    return conn.execute("INSERT OR IGNORE INTO photo_fingerprints (photo_id, key, hash) VALUES (?, ?, ?)",
+                        (photo_id, fingerprint[0], bytes(fingerprint[1]))).rowcount == 1
 
 
 def follows(conn, photo_id, fingerprint):

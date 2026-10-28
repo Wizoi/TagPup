@@ -76,7 +76,7 @@ class Harbour(unittest.TestCase):
             if vector:
                 stat = os.stat(path)
                 store_embeddings.put(conn, path, MODEL, stat.st_mtime, stat.st_size,
-                                     np.arange(1, DIM + 1, dtype=np.float32).tobytes(), None)
+                                     np.arange(1, DIM + 1, dtype=np.float32).tobytes(), photo_rows.fingerprint_of(path))
             conn.commit()
         finally:
             conn.close()
@@ -290,7 +290,7 @@ class AnIndexWithNothingToDo(Harbour):
             stat = os.stat(path)
             # Its vector under the library's model's key.
             store_embeddings.put(conn, path, store_embeddings.model_key(**embedder), stat.st_mtime, stat.st_size,
-                                 np.ones(DIM, dtype=np.float32).tobytes(), None)
+                                 np.ones(DIM, dtype=np.float32).tobytes(), photo_rows.fingerprint_of(path))
             conn.commit()
         finally:
             conn.close()
