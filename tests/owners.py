@@ -121,7 +121,7 @@ _SCENARIO_FILES = {
     "F10": "test_one_photo_whatever_its_spelling",
     "F11": (
         "test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead "
-        "test_an_index_reads_a_bake"
+        "test_an_index_reads_a_bake test_a_machine_without_a_card"
     ),
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
