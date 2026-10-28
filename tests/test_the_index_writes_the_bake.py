@@ -14,13 +14,18 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
   back in the library (the index takes faces from a bake only for a photo with no vector or never examined);
 - a PNG is baked as a JPEG is;
 - the owner turns a photo in the app between the bake's plan of its folder and its file's write (#1925): the bake
-  describes the picture as planned, which the photo's decode now tells apart, so the read side rejects it.
+  describes the picture as planned, which the photo's decode now tells apart, so the read side rejects it;
+- a photo whose vector Suggest kept (no fingerprint taken: its row forgotten) was never baked (9,882 such in
+  photo_index, 2026-10-28): sync owes its folder to the index, which bakes its file with no model and no GPU turn and
+  records its row; a file holding its bake already, or one ExifTool cannot write (read-only), is given its row with no
+  write, so sync is quiet after; a share that stops answering in the second of two folders leaves only that one owed.
 
 Lifted: the deleted `bake-photos` command's tests of a PNG and of a turn between the plan and the write
 (test_a_bake_is_written_folder_by_folder), now of the index's bake.
 """
 import json
 import os
+import stat
 import sys
 import unittest
 from unittest import mock
@@ -36,7 +41,7 @@ from test_file_journal import Crash, crash_at  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
-from tagpup.core import paths  # noqa: E402
+from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
@@ -47,6 +52,8 @@ from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_service  # noqa: E402
+from tagpup.services import search, sync  # noqa: E402
+from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -82,8 +89,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
         Image.new("RGB", SIZE, colour).save(path, "JPEG")
         return path
 
-    def index(self):
-        result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder])
+    def index(self, *folders):
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", *(folders or (self.folder,))])
         if isinstance(result.exception, BaseException) and not isinstance(result.exception, SystemExit):
             raise result.exception
         self.assertEqual(0, result.exit_code, result.output)
@@ -313,6 +320,111 @@ class TheIndexWritesTheBake(unittest.TestCase):
             self.assertEqual(2, len(baked_files.held(a).faces), "the file keeps the bake it holds")
             self.assertEqual(stamp, os.stat(a).st_mtime_ns, "a current bake was rewritten")
             self.assertEqual([FACE], self.boxes(a), "the file's bake gave the face back")
+
+    def suggest_keeps_a_vector(self, *photo_paths):
+        """Suggest keeps a vector of each photo through its own writer (PhotoEmbeddings.keep): stamped with the file as it
+        is, no fingerprint taken, so the photo's fingerprint row is forgotten (photo_fingerprints.follows)."""
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            key = library_settings.photo_key_on(conn)
+        finally:
+            conn.close()
+        index = search.PhotoIndex(self.db_path, key)
+        self.assertTrue(index.open())
+        try:
+            kept = search.PhotoEmbeddings(None, index, model_key=key)
+            for path in photo_paths:
+                self.assertTrue(kept.keep(path, baked_files.unit(1152, 7).tolist()), path)
+        finally:
+            index.close()
+        for path in photo_paths:
+            self.assertEqual([], self.fingerprint_row(path))
+
+    def looked(self):
+        """What a dry run of sync finds: (photos owed only their bake, folders owed, in step)."""
+        found = sync.sync(self.library, apply=False, exiftool_path=EXIFTOOL)
+        counts = found.details["counts"]
+        return counts.get("owed_no_fingerprint"), counts["owed_folders"], found.details["in_step"]
+
+    def index_with_no_model(self, *folders):
+        """The index, failing if it takes a turn of the graphics card or makes a vector."""
+        with mock.patch.object(Runtime, "gpu_turn", side_effect=AssertionError("a GPU turn was taken")), \
+                mock.patch.object(clip.ClipModel, "embed_input", side_effect=AssertionError("a vector was made")):
+            return " ".join(self.index(*folders).output.split())
+
+    def test_a_photo_whose_vector_suggest_kept_is_baked_by_the_next_index_with_no_model(self):
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            self.index()   # indexed, not baked
+        self.assertEqual([None, None], [getattr(baked_files.held(path), "fingerprint", None) for path in (a, b)])
+        self.suggest_keeps_a_vector(a, b)
+        self.assertEqual((2, 1, False), self.looked(), "a photo never baked is work the index owes")
+
+        said = self.index_with_no_model()
+        self.assertIn("2 photo(s) in 1 folder(s) hold a current vector whose picture was never fingerprinted", said)
+        self.assertIn("Bake: 2 file(s) written, 0 already held it.", said)
+        self.assertBaked(a, 1)
+        self.assertBaked(b, 0)
+        self.assertNoBakeListed()
+        self.assertEqual((0, 0, True), self.looked())
+
+        stamps = {path: os.stat(path).st_mtime_ns for path in (a, b)}
+        self.assertNotIn("Bake:", self.index_with_no_model(), "nothing owed: no bake run")
+        self.assertEqual(stamps, {path: os.stat(path).st_mtime_ns for path in (a, b)})
+
+        # Another program writes a keyword into a baked file, a sync reads its row again, and Suggest, finding its
+        # vector stale, keeps a new one: the user action that leaves a file holding its bake with no fingerprint row
+        # (photo_fingerprints.adopt's instance).
+        done = processes.run([EXIFTOOL, "-overwrite_original", "-XMP-dc:Subject+=Harbour/Pier", a],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(1, sync.sync(self.library, apply=True, exiftool_path=EXIFTOOL).details["changed"]["from_files"])
+        self.suggest_keeps_a_vector(a)
+        stamp = os.stat(a).st_mtime_ns
+        said = self.index_with_no_model()
+        self.assertIn("Bake: 0 file(s) written, 2 already held it; 1 fingerprint(s) recorded with no write", said)
+        self.assertEqual(stamp, os.stat(a).st_mtime_ns, "a file holding its bake was written")
+        self.assertBaked(a, 1)
+        self.assertEqual((0, 0, True), self.looked())
+
+    def test_a_file_that_cannot_be_written_is_said_and_given_its_row_so_sync_is_quiet(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            self.index()
+        self.suggest_keeps_a_vector(a)
+        os.chmod(a, stat.S_IREAD)
+        self.addCleanup(os.chmod, a, stat.S_IREAD | stat.S_IWRITE)
+        said = self.index_with_no_model()
+        self.assertIn("Bake: 0 file(s) written, 0 already held it; 1 fingerprint(s) recorded with no write; 1 failed", said)
+        self.assertIsNone(getattr(baked_files.held(a), "fingerprint", None))
+        self.assertEqual(1, len(self.fingerprint_row(a)), "a refused write left its photo owed: sync queues it forever")
+        self.assertEqual((0, 0, True), self.looked())
+
+    def test_a_share_that_stops_answering_in_the_second_folder_leaves_only_that_one_owed(self):
+        quay = paths.stored(os.path.join(self.home.root, "Quay"))
+        os.makedirs(quay)
+        made = {folder: [os.path.join(folder, name) for name in ("a.jpg", "b.jpg")] for folder in (self.folder, quay)}
+        for folder_paths in made.values():
+            for path, colour in zip(folder_paths, ((200, 40, 40), (40, 200, 40))):
+                Image.new("RGB", SIZE, colour).save(path, "JPEG")
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            self.index(self.folder, quay)
+        self.suggest_keeps_a_vector(*made[self.folder], *made[quay])
+        self.assertEqual((4, 2, False), self.looked())
+        real = field_values.read_one
+
+        def read_one(et, path, *args, **kwargs):
+            if paths.key(os.path.dirname(path)) == paths.key(quay):
+                raise field_values.NotAnswered("ExifTool did not answer in 300 s")
+            return real(et, path, *args, **kwargs)
+        with mock.patch.object(file_changes.field_values, "read_one", side_effect=read_one):
+            said = self.index_with_no_model(self.folder, quay)
+        self.assertIn("Bake: 2 file(s) written", said)
+        for path in made[self.folder]:
+            self.assertBaked(path, 1 if os.path.basename(path) == "a.jpg" else 0)
+        for path in made[quay]:
+            self.assertEqual([], self.fingerprint_row(path), "a file not written was given a row")
+        self.assertEqual((2, 1, False), self.looked(), "the folder the share did not answer for is owed again")
 
 
 if __name__ == "__main__":

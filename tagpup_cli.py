@@ -341,15 +341,27 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # even when its vector is current: its faces are detected on the picture as shown, its vector kept. Asked by the
     # model's name, no model made (a run with nothing to do imports none, #1089). Not with --skip-faces; --force-reembed
     # works every photo again.
+    # A photo owed only its fingerprint (its vector current by its stamp, its picture never fingerprinted) is not indexed
+    # again: its folder goes to the bake after the index (`bake_only`), which decodes it on the processor and writes its
+    # file from the library, the fingerprint row following the write (photo_fingerprints.NO_FINGERPRINT).
+    bake_only = {}
     if force_reembed:
         images_to_process, unexamined = all_images, set()
     else:
-        # The work the index owes (photo_fingerprints.owed, sync's answer too): no vector, a stale stamp, never examined.
+        # The work the index owes (photo_fingerprints.owed, sync's answer too): no vector, a stale stamp, never examined,
+        # no fingerprint.
         owed = photo_index.owed(on_disk, None if skip_faces else
                                 face_records.detector_named(settings.faces))
         unexamined = {key for key, reasons in owed.items() if PhotoIndex.UNEXAMINED in reasons}
-        current = photo_index.current(on_disk, owed)
+        for key, reasons in owed.items():
+            if reasons == (PhotoIndex.NO_FINGERPRINT,):
+                bake_only.setdefault(paths.key(os.path.dirname(on_disk[key][0])), os.path.dirname(on_disk[key][0]))
+        current = photo_index.current(on_disk, {key: reasons for key, reasons in owed.items()
+                                                if reasons != (PhotoIndex.NO_FINGERPRINT,)})
         images_to_process = [path for path in all_images if paths.key(path) not in current]
+        if bake_only and not skip_faces:
+            unbaked = sum(1 for reasons in owed.values() if reasons == (PhotoIndex.NO_FINGERPRINT,))
+            console.print(BAKE_ONLY_LINE % (unbaked, len(bake_only)), markup=False, soft_wrap=True, highlight=False)
     skipped_count = len(all_images) - len(images_to_process)
 
     if skipped_count > 0:
@@ -364,6 +376,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             for root, count in sorted(roots.items(), key=lambda x: -x[1]):
                 console.print(f"  • {root}: {count} path(s)")
         photo_index.close()
+        if bake_only and not skip_faces:
+            _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
+                              list(bake_only.values()), {}, os.environ.get(indexing_service.STOP_FILE))
         return
 
     # The vectors kept, under the library's model's key (tagpup.store.embeddings.model_key: another model's are never
@@ -420,6 +435,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         else:
             console.print("[yellow]No photos found to index.[/yellow]")
         photo_index.close()
+        if bake_only and not skip_faces:
+            _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
+                              list(bake_only.values()), {}, os.environ.get(indexing_service.STOP_FILE))
         return
 
     # Whether any photo needs a model, decided before one is built: a run where every photo is kept, by its stamp or by
@@ -451,7 +469,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # The folders a recorded batch held a photo of, in order, and the fingerprint of each recorded photo's picture the
     # index knows, with the stamp it was recorded under (_recorded): what the bake after the index writes, and the decodes
     # it takes again for none of the photos whose file is as the index recorded it.
-    touched, handed = {}, {}
+    touched, handed = dict(bake_only), {}
     try:
         # One process at a time has a model on the graphics card (tagpup.ml.gpu): its turn is
         # taken before the first photo, waited for in order -- each change of who has it said
@@ -807,6 +825,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                           list(touched.values()), handed, stop_file)
 
 
+#: What the index says of the photos it owes only their files' bake (photo_fingerprints.NO_FINGERPRINT), counts only.
+BAKE_ONLY_LINE = ("%d photo(s) in %d folder(s) hold a current vector whose picture was never fingerprinted: their files "
+                  "are baked from the library after the index, on the processor.")
+
+
 def _recorded(metas, touched, handed):
     """A batch of `metas` was recorded: its folders join `touched` ({paths.key: native folder}), and the fingerprint of
     each photo's picture the index holds joins `handed` ({paths.key(path): ((mtime, size), digest)}), with the stamp its
@@ -1011,8 +1034,8 @@ def _not_looked_at(counts):
 #: What `sync` says of the work the index owes (photo_fingerprints.owed), counts only: a photo may owe two (a stale
 #: vector, and never examined).
 OWED_LINE = ("%d photo(s) in %d folder(s) the index owes work: %d with no photo vector, %d whose file changed since its "
-             "vector was made (the index keeps a vector whose picture is the same), %d never examined for faces. Their "
-             "folders go to the index.")
+             "vector was made (the index keeps a vector whose picture is the same), %d never examined for faces, %d whose "
+             "file the index's bake writes (its picture never fingerprinted). Their folders go to the index.")
 #: Said after OWED_LINE of the folders among them sync holds back.
 OWED_HELD_BACK = (" %d of those folder(s) are held back: a new file in each may be a copy of a missing photo; settle that"
                   " first.")
@@ -1059,7 +1082,7 @@ def sync(ctx, folder, apply_):
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
     if counts.get("to_check"):
         console.print(OWED_LINE % (counts["to_check"], counts["owed_folders"], counts["owed_no_vector"],
-                                   counts["owed_stale"], counts["owed_unexamined"])
+                                   counts["owed_stale"], counts["owed_unexamined"], counts["owed_no_fingerprint"])
                       + (OWED_HELD_BACK % counts["owed_held_back"] if counts["owed_held_back"] else ""),
                       markup=False, soft_wrap=True)
     if not apply_:

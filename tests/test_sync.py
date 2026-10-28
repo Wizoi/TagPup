@@ -566,7 +566,7 @@ class APictureToCheck(SyncTestCase):
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=Reads(self.truth).session):
             said = CliRunner().invoke(cli, ["--db", self.db_path, "sync"])
         from tagpup_cli import OWED_LINE
-        self.assertIn(OWED_LINE % (1, 1, 0, 1, 0), said.output)
+        self.assertIn(OWED_LINE % (1, 1, 0, 1, 0, 0), said.output)
 
     def said(self):
         """What the CLI's `sync` (a dry run) tells the owner."""
@@ -614,7 +614,7 @@ class APictureToCheck(SyncTestCase):
         self.assertFalse(sync.last(self.library)["last_run"]["in_step"])
         from tagpup_cli import OWED_LINE
         said = self.said()
-        self.assertIn(OWED_LINE % (2, 1, 1, 0, 1), said)
+        self.assertIn(OWED_LINE % (2, 1, 1, 0, 1, 0), said)
         self.assertNotIn("In step.", said)
         self.assertNotIn("IMG_000", said, "counts, never a file")
 
@@ -634,7 +634,7 @@ class APictureToCheck(SyncTestCase):
         self.assertEqual((2, 1, 1), (counts["to_check"], counts["owed_folders"], counts["owed_held_back"]))
         self.assertNotIn(regatta, [folder for folders in asked for folder in folders], "a held-back folder was indexed")
         from tagpup_cli import OWED_HELD_BACK, OWED_LINE
-        self.assertIn(OWED_LINE % (2, 1, 1, 0, 1) + OWED_HELD_BACK % 1, self.said())
+        self.assertIn(OWED_LINE % (2, 1, 1, 0, 1, 0) + OWED_HELD_BACK % 1, self.said())
 
     def test_a_photo_model_switched_owes_the_photos_its_pass_did_not_reach(self):
         """A switch of photo model (a journaled settings change, allowed once all but UNPASSED_SHARE_ALLOWED of the photos
@@ -653,23 +653,28 @@ class APictureToCheck(SyncTestCase):
         new_key = library_settings.change(self.library, switch, acknowledged=["clip"], apply=False)
         new_key = new_key.details["photo_vectors"]["key"]
         conn = db.connect(self.db_path)
-        try:   # the new model's pass: every photo but the one in the pier's folder, and the two photos set up
+        try:   # the new model's pass (its keep_batch: no fingerprint taken, the row forgotten): every photo but the
+            # one in the pier's folder, and the two photos set up
             for path in photos[:-1] + [self.path, self.other]:
                 stat = os.stat(path)
                 embeddings.put(conn, path, new_key, stat.st_mtime, stat.st_size, photo_rows.VECTOR, None)
             conn.commit()
         finally:
             conn.close()
-        asked, queue = self.queue()
-        self.assertTrue(self.run_sync(apply=True, queue=queue).details["in_step"], "the index owes nothing yet")
+        before = self.run_sync().details["counts"]
+        self.assertEqual((0, 0, 0), (before["owed_no_vector"], before["owed_stale"], before["owed_unexamined"]),
+                         "the new model's vectors are no work of the index's yet")
         switched = library_settings.change(self.library, switch, acknowledged=["clip"])
         self.assertTrue(switched.ok, switched.message())
 
+        asked, queue = self.queue()
         result = self.run_sync(apply=True, queue=queue)
         counts = result.details["counts"]
-        self.assertEqual((1, 1, 0, 0, 1), (counts["to_check"], counts["owed_no_vector"], counts["owed_stale"],
-                                           counts["owed_unexamined"], counts["owed_folders"]))
-        self.assertEqual([[pier]], asked)
+        # The pier's photo has no vector under the new key; each of the 22 the pass reached owes its file a bake under it.
+        self.assertEqual((23, 1, 0, 0, 22, 4), (counts["to_check"], counts["owed_no_vector"], counts["owed_stale"],
+                                                counts["owed_unexamined"], counts["owed_no_fingerprint"],
+                                                counts["owed_folders"]))
+        self.assertEqual([sorted([regatta, pier, self.meet, self.trip])], [sorted(folders) for folders in asked])
         self.assertEqual(([], False), (self.reads.read, result.details["in_step"]))
 
     def test_a_cropped_picture_is_queued_the_same_way(self):
@@ -679,12 +684,17 @@ class APictureToCheck(SyncTestCase):
         self.assertEqual((1, [[self.meet]]), (result.details["counts"]["to_check"], asked))
         self.assertEqual((1, 1, 1, "Rowan Thackeray"), self.held(self.path)[:4], "never thrown away by sync")
 
-    def test_a_photo_whose_vector_stamp_describes_its_file_is_left_alone_with_no_fingerprint_row(self):
-        # 10,724 of photo_index's vectors have no fingerprint row (2026-10-27): their stamps are trusted.
-        self.assertEqual([], self.query("SELECT * FROM photo_fingerprints"))
+    def test_a_current_vector_with_no_fingerprint_row_owes_its_file_a_bake_and_sync_decodes_nothing(self):
+        """9,882 of photo_index's vectors are current by their stamps and have no fingerprint row (2026-10-28): made by
+        Suggest's keep or a re-embedding pass, which take no fingerprint. Their stamps are trusted (no vector made
+        again); their files were never baked, so sync queues their folders for the index's bake and is not in step."""
+        self.query_write("DELETE FROM photo_fingerprints")
         asked, queue = self.queue()
         result = self.run_sync(apply=True, queue=queue)
-        self.assertEqual((0, True, []), (result.details["counts"]["to_check"], result.details["in_step"], asked))
+        counts = result.details["counts"]
+        self.assertEqual((2, 2, 0, 0, False), (counts["to_check"], counts["owed_no_fingerprint"], counts["owed_no_vector"],
+                                               counts["owed_stale"], result.details["in_step"]))
+        self.assertEqual(sorted([self.meet, self.trip]), sorted(folder for folders in asked for folder in folders))
         self.assertEqual([], self.reads.read)
 
     def test_a_write_that_kept_the_size_is_checked_and_a_file_exiftool_cannot_read_is_still_queued(self):

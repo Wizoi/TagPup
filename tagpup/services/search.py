@@ -296,12 +296,15 @@ class PhotoIndex:
     #: The reason `owed` gives for a photo never examined for faces (photo_fingerprints.UNEXAMINED), for a program that
     #: reaches the store only through this service.
     UNEXAMINED = photo_fingerprints.UNEXAMINED
+    #: The reason it gives for a photo whose current vector's picture was never fingerprinted
+    #: (photo_fingerprints.NO_FINGERPRINT): the bake after the index writes its file, and its row follows.
+    NO_FINGERPRINT = photo_fingerprints.NO_FINGERPRINT
 
     def owed(self, on_disk, detector):
         """{paths.key: reasons} of the photos of `on_disk` ({key: (path, mtime, size)}: the files as they are) the index
         owes work (photo_fingerprints.owed, the one answer sync gives too): no vector under this index's model, a vector
-        whose stamp does not describe its file, or never examined for faces by `detector` (None: not asked). {} when not
-        connected."""
+        whose stamp does not describe its file, a current vector with no fingerprint row, or never examined for faces by
+        `detector` (None: not asked). {} when not connected."""
         if self.conn is None:
             return {}
         with self._read_lock:
