@@ -22,7 +22,7 @@ import numpy as np
 from tagpup.core import fields, orientation
 from tagpup.files import bake, images, shares
 from tagpup.services import settings
-from tagpup.store import embeddings, faces_detected, photo_fingerprints
+from tagpup.store import embeddings, faces_detected, file_journal, photo_fingerprints
 from tagpup.store import faces as store_faces
 from tagpup.store import roots as store_roots
 
@@ -32,6 +32,9 @@ Keys = collections.namedtuple("Keys", "photo face detector")
 
 #: The operation a bake's change of a folder is recorded under in History (tagpup.services.baking_report.apply).
 OPERATION = "bake photos"
+#: The operation of the bake the index writes after each folder (tagpup.services.bake_after_index): internal, in no
+#: History and never undone (file_journal.INTERNAL).
+INDEX_OPERATION = file_journal.INDEX_BAKE
 
 #: The kinds of Cannot.
 GONE = "gone"

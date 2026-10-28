@@ -758,17 +758,19 @@ def _files_since(conn, change_id):
     files records its row in change_files' transaction, not in change_rows, so _newer_overlapping does not see it. A write
     of fields counts done or undone (its undo stamps the row again), a rename until it is undone; a file still `writing`
     may be written. Driven by the later change_files rows (idx_change_files_change), each looked up in change_rows by its
-    photo's key (idx_change_rows_row; the key spelt as schema.row_key spells it)."""
+    photo's key (idx_change_rows_row; the key spelt as schema.row_key spells it). An internal change
+    (file_journal.INTERNAL: the index's bake) is none: the next index writes the file from the rows again."""
     return conn.execute(
         "SELECT f.change_id, c.operation, f.new_path IS NOT NULL, COUNT(DISTINCT f.photo_id) FROM change_files f"
         " JOIN changes c ON c.id = f.change_id"
-        " WHERE f.change_id > ? AND f.photo_id IS NOT NULL"
+        " WHERE f.change_id > ? AND f.photo_id IS NOT NULL AND c.operation NOT IN (%s)"
         " AND f.state IN ('writing', 'done', 'undone') AND (f.new_path IS NULL OR f.state != 'undone')"
         " AND EXISTS (SELECT 1 FROM change_rows r WHERE r.table_name = 'photos'"
         " AND r.row_key = '[' || f.photo_id || ']' AND r.change_id = ?"
         " AND CASE WHEN f.new_path IS NULL THEN r.column_name IN (%s) ELSE r.column_name IN (%s) END)"
         " GROUP BY f.change_id, c.operation, f.new_path IS NOT NULL ORDER BY f.change_id"
-        % (_listed(store_photos.FOLLOWED), _listed(store_photos.MOVED)), (change_id, change_id)).fetchall()
+        % (_listed(file_journal.INTERNAL), _listed(store_photos.FOLLOWED), _listed(store_photos.MOVED)),
+        (change_id, change_id)).fetchall()
 
 
 # ---- Derived data ------------------------------------------------------------------------
@@ -1410,14 +1412,17 @@ def history(db_path, limit=20, change_id=None, values=False):
     of each table it inserted, updated and deleted, and how many photo files it planned
     in each state (tagpup.store.file_journal). One change also lists its row keys,
     and with `values` each column's old and new value (a BLOB by its size): these can
-    hold names."""
+    hold names. An internal change (file_journal.INTERNAL: the index's bake, while it is under way) is not
+    listed: it is no operation of the owner's."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        query = ("SELECT id, operation, status, schema_version, created, applied, undone, summary FROM changes")
+        internal, params = file_journal.not_internal("operation")
+        query = ("SELECT id, operation, status, schema_version, created, applied, undone, summary FROM changes"
+                 " WHERE " + internal)
         if change_id is None:
-            found = conn.execute(query + " ORDER BY id DESC LIMIT ?", (max(0, limit),)).fetchall()
+            found = conn.execute(query + " ORDER BY id DESC LIMIT ?", params + (max(0, limit),)).fetchall()
         else:
-            found = conn.execute(query + " WHERE id = ?", (change_id,)).fetchall()
+            found = conn.execute(query + " AND id = ?", params + (change_id,)).fetchall()
         entries = []
         for cid, operation, status, version, created, applied, undone, summary in found:
             entries.append({"id": cid, "operation": operation, "status": status, "schema_version": version,
