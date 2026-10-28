@@ -175,7 +175,7 @@ class Side:
             # Faces on some of them, decided by hand and not.
             for number, path in enumerate(self.real + self.rows_only[:5]):
                 add_face(conn, path, [1, 2, 11, 12], name="Rowan Thackeray" if number % 2 == 0 else None,
-                         name_source="manual" if number % 2 == 0 else None, embedding=b"\x00" * 16)
+                         name_source="manual" if number % 2 == 0 else None)
             conn.commit()
             # What Suggest offered a photo, with the paths its output carries.
             neighbour = (self.rows_only or self.real)[0]

@@ -140,7 +140,7 @@ class CrossDatabaseReadIsolationMixin:
             ),
         )
         add_people(conn, f"C:/{marker}.jpg", [marker])
-        add_face(conn, f"C:/{marker}.jpg", box="[]", embedding=b"", name=marker)
+        add_face(conn, f"C:/{marker}.jpg", box="[]", name=marker)
         conn.commit()
         conn.close()
 

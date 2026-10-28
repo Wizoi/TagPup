@@ -100,7 +100,7 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
                 (f"C:/{person}.jpg", 1.0, 1, json.dumps([])),
             )
             add_people(conn, f"C:/{person}.jpg", [person])
-            add_face(conn, f"C:/{person}.jpg", box="[]", embedding=b"", name=person)
+            add_face(conn, f"C:/{person}.jpg", box="[]", name=person)
             conn.commit()
             conn.close()
 

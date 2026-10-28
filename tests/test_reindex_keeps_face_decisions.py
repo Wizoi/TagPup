@@ -93,8 +93,7 @@ class FaceDecisionCase(unittest.TestCase):
         index.build_or_update([[0.1] * expected_dim()], [meta], dim=expected_dim())
         ids = {}
         for box, name, source, excluded, reason in CURATED:
-            ids[str(box)] = add_face(index.conn, paths.stored(stored_as), box=str(box),
-                                     embedding=bytes(4 * 512), name=name, name_source=source,
+            ids[str(box)] = add_face(index.conn, paths.stored(stored_as), box=str(box), name=name, name_source=source,
                                      excluded=excluded, excluded_reason=reason)
         index.conn.commit()
         index.close()
