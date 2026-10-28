@@ -45,6 +45,7 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
@@ -197,7 +198,7 @@ class Base(unittest.TestCase):
         try:
             for path in self.held:
                 photo_rows.add_read(conn, path, {"XMP:Subject": ["Trips/Regatta"]})
-                stamp = store_embeddings.stamp_of(path)
+                stamp = shares.read_stamp(path)
                 store_embeddings.put(conn, path, model, stamp[0], stamp[1],
                                      np.array(vector_of(path), dtype=np.float32).tobytes(), None)
             store_taxonomy.add_node(conn, "Trips/Regatta")

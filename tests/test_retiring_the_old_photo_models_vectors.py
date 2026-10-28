@@ -45,6 +45,7 @@ from tagpup.services import retire_photo_vectors  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
@@ -109,7 +110,7 @@ class _Library(unittest.TestCase):
                 path = os.path.join(self.folder, "heron %02d.jpg" % n)
                 Image.new("RGB", (48, 32), (5 * n % 255, 90, 140)).save(path, "JPEG")
                 photo_id = photo_rows.add_read(conn, path, {"XMP:Subject": ["Birds/Heron"]})
-                mtime, size = store_embeddings.stamp_of(path)
+                mtime, size = shares.read_stamp(path)
                 store_embeddings.put_by_id(conn, photo_id, OLD_KEY, mtime, size, vector(OLD_DIM, n), None)
                 store_embeddings.put_by_id(conn, photo_id, NEW_KEY, mtime, size, vector(NEW_DIM, n), None)
                 if n < 3:

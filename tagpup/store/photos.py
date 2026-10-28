@@ -75,7 +75,7 @@ def _describes_before(row_mtime, row_size, before):
     """May a row be stamped with what a write of the app's own left on part of its file
     -- its keywords, a caption, its Orientation -- as describing the file? Only where
     the row described the file just before the write: `before`, the file's stamp then
-    (embeddings.stamp_of). Then the row holds everything else the file holds.
+    (shares.read_stamp). Then the row holds everything else the file holds.
 
     Suggest makes a row for a photo the index never read (ensure_row): the path alone,
     mtime and size empty. A tag write stamped it, and the row -- the keyword fields and

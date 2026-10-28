@@ -26,6 +26,7 @@ from service_fixture import TempLibrary  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
 from tagpup.store import db, embeddings, photos  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 MODEL = embeddings.model_key("ViT-T", "tiny", True, 1.4, 512)
@@ -63,7 +64,7 @@ class Vectors(unittest.TestCase):
 
     def written_by_the_app(self):
         """(stamp before, stat after) of a metadata write of the app's own."""
-        before = embeddings.stamp_of(self.photo)
+        before = shares.read_stamp(self.photo)
         return before, self.change_the_file()
 
     def test_a_keyword_write_keeps_the_vector_for_the_file_it_leaves(self):
@@ -174,7 +175,7 @@ class AnEmbedding(unittest.TestCase):
         photo = os.path.join(lib.photos, "turned.jpg")
         Image.new("RGB", (8, 8)).save(photo)
         lib.add_folder(photo)
-        opened = embeddings.stamp_of(photo)
+        opened = shares.read_stamp(photo)
         index = mock.Mock(conn=True, write_on_own_connection=lambda op, label: db.write_with_connection(
             lib.library.path, op, label=label))
         embedder = ClipModel(model_name="ViT-T", pretrained="tiny", preserve_full_frame=True,
@@ -198,7 +199,7 @@ class AnEmbedding(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(opened, stored[:2])
-        self.assertNotEqual(embeddings.stamp_of(photo), stored[:2])
+        self.assertNotEqual(shares.read_stamp(photo), stored[:2])
 
 
 if __name__ == "__main__":

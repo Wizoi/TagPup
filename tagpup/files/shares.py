@@ -9,7 +9,8 @@ its folders was asked -- and no other look at it is started, on another thread, 
 waits. A share that answered is not away. Two callers used to keep a cache each (the damaged photos'
 lists, and Roots' Verify), one of them unable to say away from missing; this is the one. `stamp_of` is the look at one
 file that a page of cards, a thumbnail and a bulk edit's chunk make; `folder_state` the look at a folder; `listing` the
-look at what a folder holds, which every walk of photo folders makes (tagpup.files.images.photo_entries).
+look at what a folder holds, which every walk of photo folders makes (tagpup.files.images.photo_entries); `read_stamp` the
+stamp a reader takes before its own read, which is not bounded since the read is not.
 
 Every look at a photo or a photo's folder outside this module goes through one of them, or is the reader's or writer's
 own, named in the guard's list (tests/test_photo_looks_have_one_owner.py).
@@ -334,6 +335,18 @@ def known_stamp(photo_path):
     did not answer. What a row's stamp or a vector's is taken from, where "not known" is stored as nothing."""
     stamp = stamp_of(photo_path)
     return stamp if isinstance(stamp, tuple) else None
+
+
+def read_stamp(photo_path):
+    """(mtime, size) of the file now, or None when it cannot be read: the stamp a reader takes just before it reads the
+    file (the indexer's decode, Suggest's), recorded with what it read. Not bounded, by design: the read that follows has
+    no deadline either (docs/INVARIANTS.md, "The indexer's per-photo reads have no deadline"), and a stamp given up on a
+    share slow to answer would cost the photo the vector made of it. Every other look at one file asks stamp_of."""
+    try:
+        stat = os.stat(photo_path)
+    except OSError:
+        return None
+    return (stat.st_mtime, stat.st_size)
 
 
 class Walk:
