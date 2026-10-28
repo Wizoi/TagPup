@@ -23,8 +23,9 @@ vectors kept between reads carries its key (`clustering.FaceRows.key`, `identify
 with vectors of the same key (`FaceRows.under`), so a switch committed meanwhile never sets one model's vectors beside the
 other's, nor reads them by the other's cuts. The join with a vector
 (`store.faces.WITH_VECTOR`, `HAS_VECTOR`) is the one place that leaves a face without one out of what compares faces:
-clustering, New Person's pool, the Identify queue and grid. Asked who such a face resembles, Identify answers one
-sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how many faces took no part.
+clustering, New Person's pool, the Identify queue and grid. No face of the three libraries lacks one (counted
+read-only 2026-10-28) and no writer files a face without its vector, so nothing says it: `identify.NO_VECTOR` and
+cluster-faces' "took no part" were deleted 2026-10-28 (Cut B).
 
 ## The seven conditions (2026-10-15)
 
@@ -76,11 +77,10 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   library's model, so a face with no vector under it takes no part, with no sentence of its own in the queue, a person's
   grid or the person page: an old face the deleted pass matched with nothing it found (1,195 of kr-track's, counted
   2026-10-20), and a face of a photo the index has not yet re-embedded under the model. A switch to the new model is
-  not refused and says how many named faces hold no vector under it (`settings.change`, `details["face_vectors"]`); a
-  switch to FaceNet is refused for every library, and so is an undo in History that would put it back, by the same
+  not refused and counts nothing (`settings.change`); a switch to FaceNet is refused for every library, and so is an undo in History that would put it back, by the same
   rule and sentence (`settings.NOT_FACENET`, asked by `settings.undo_check` through `services.journal.why_not`;
   owner, 2026-10-28). The consequence is stated where the owner switches (the settings dialog's face model group,
-  which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
+  which must be acknowledged).
 - **The face pass names nobody (2026-10-18, owner; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY")**: the new face
   model's pass (`services.face_pass`, deleted 2026-10-27 with `face-pass`: the index re-embeds after a switch) made its
   new faces unnamed and left a matched face's name as it was; Name faces from tags named the new faces after the gate.
@@ -130,7 +130,7 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   lookups of a gallery (`FaceRows._where`, `columns`; `FacesByPerson._eras`) are filled without its lock: each is the
   same answer of the same rows, so two Suggest workers that build one at once build it twice and keep either (the
   grouping itself is made under the lock, as it is large). `FacesByPerson.table`'s loop a face at a time is slower for a
-  whole folder held out at once, which only `scripts/measure_face_gate.py` asks. The named matrix is rebuilt after any
+  whole folder held out at once, which nothing asks now (the gate that did was deleted 2026-10-28). The named matrix is rebuilt after any
   photo write (the photos stamp moves on any save): 1.25 s on photo_index, paid by the first boxes request after a tag
   save; by design (measured 2026-10-22).
 

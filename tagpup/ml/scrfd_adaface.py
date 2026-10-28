@@ -70,7 +70,7 @@ CONVERTER = "scripts/make_scrfd_torchscript.py"
 #: made -- the index and Suggest, for a detection no old face takes (owner, 2026-10-18): the detector's own
 #: floor is SMALLEST_FACE, and in one real folder 31 of its 40 new faces were under 40 px, smudges no one can recognise (the
 #: old detector's smallest was 23, its median 64). An old face a detection of any size matches still gets the vector (the
-#: pass). Read in slice C against held-out named faces (tagpup.services.face_gate.FLOORS).
+#: pass).
 NEW_FACE_FLOOR = images.NEW_FACE_FLOOR
 
 

@@ -39,8 +39,8 @@ the undo of a pass's face); slice A2 (the store layer and `tagpup/services/face_
 and reviewed but NOT merged: two blockers to fix first (a photo removed while the pass runs must not be re-made as
 a ghost row; the change's name must not carry the folder) and two owner decisions taken (named old faces are
 paired first; new faces stay unnamed). **Slice B** (the `face-pass` command) is built (deleted 2026-10-27 by docs/PLAN_KEEP_IN_STEP.md cut 3: the index keeps the files and the library in step). **Slice C** (the gate's scoring,
-`scripts/measure_face_gate.py`, read-only) is built on `feature/gate-scoring`, as built below; the owner picks the naming
-precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); **Step 2a (2026-10-24) is built:** the loader (`tagpup/ml/photo_models.py`, SigLIP 2 through `runtime.clip`), the tokenizer (`tokenizers` alone) and the readiness gate on a photo-model switch; **Step 2b (2026-10-24) is built:** `embed-photos` (the new model's vectors made beside the old, `tagpup/services/photo_reembed.py`) and `set-photo-model` (the switch as one gated journaled change); `repair-vectors` deleted. The live run and switch are the main session's, then retiring the old vectors. Suggest's recalibration is not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
+`scripts/measure_face_gate.py`, read-only) was built and read, as below, and the owner picked the naming precision from
+its numbers; it was deleted 2026-10-28 (Cut B, docs/OLD_MODEL_VESTIGES.md row 10: no face holds two models' vectors). **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); **Step 2a (2026-10-24) is built:** the loader (`tagpup/ml/photo_models.py`, SigLIP 2 through `runtime.clip`), the tokenizer (`tokenizers` alone) and the readiness gate on a photo-model switch; **Step 2b (2026-10-24) is built:** `embed-photos` (the new model's vectors made beside the old, `tagpup/services/photo_reembed.py`) and `set-photo-model` (the switch as one gated journaled change); `repair-vectors` deleted. The live run and switch are the main session's, then retiring the old vectors. Suggest's recalibration is not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
 here when it merges.
 
 ## 1. Where this comes from
@@ -447,13 +447,12 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
 - The weight files are not in the checkpoints folder of this machine yet (counted 2026-10-18): the command refuses with
   the sentence of `missing_weights` before anything is done.
 
-**Merge 3, slice C, as built (2026-10-20): the gate's scoring, read-only.** What it is: `tagpup/core/holdout.py` (the
-hold-out and the curve, moved out of the phase 0 script), `tagpup.store.faces.under_each` (the named and unnamed faces
-holding a vector under each model given) and `pass_counts`, `tagpup/services/face_gate.py` (the scoring), `scripts/measure_face_gate.py`
-(the program), scenario P9 (`tests/test_the_gate_reads_by_year_gap.py` since 2026-10-26: the by-year reading of the library's own model; the two-model tests went with the old model). It opens each library read-only, loads no model and
-takes no turn of the card.
-- Run: `.venv/Scripts/python.exe scripts/measure_face_gate.py --source data/kr-track.db --source data/renton_parkrun.db
-  [--precision 0.95 ...] [--out <folder outside the repo>]`; about 1 s.
+**Merge 3, slice C, as built (2026-10-20; deleted 2026-10-28): the gate's scoring, read-only.** What it was:
+`tagpup/core/holdout.py` (the hold-out and the curve, moved out of the phase 0 script; it keeps phase 0's hold-out alone),
+`tagpup.store.faces.under_each` (the named and unnamed faces holding a vector under each model given) and `pass_counts`,
+`tagpup/services/face_gate.py` (the scoring), `scripts/measure_face_gate.py` (the program) and scenario P9. All of it but
+the hold-out was deleted with the old model (Cut B, docs/OLD_MODEL_VESTIGES.md row 10; 0 faces of the three libraries
+hold two models' vectors, counted read-only 2026-10-28); the readings below are the evidence for the new model's cuts.
 - Method (as section 7): the named faces, held out by folder, each person by their closest face; both models on the same
   faces, the ones holding both vectors; the cut read on a 0.005 grid of likeness and of margin, each 0 to 1, from the top.
   A row is "too thin" when fewer than 100 faces were evaluated or fewer than 4p/(1-p) named at the cut; a size band too.
@@ -522,9 +521,8 @@ takes no turn of the card.
   FaceNet through. **Superseded 2026-10-28 (owner; DECISIONS 2026-10-28):** with the face pass deleted nothing could
   meet that share, and no library is switched to FaceNet. `settings.switch_on` refuses a switch to `mtcnn-facenet` for
   every library, empty or not, with one sentence and nothing counted (`settings.NOT_FACENET`, `face_model_refusal`); a
-  switch to the new model is not refused by it and says, for a library with faces, how many hold a vector under the
-  model and how many named faces hold none and take no part in Identify (`details["face_vectors"]`, from
-  `store.faces.vector_counts`, read-only). An undo in History that would put FaceNet back (among them each live
+  switch to the new model is not refused and counts nothing (its `face_vectors` reply, how many faces held its vector,
+  was deleted 2026-10-28 in Cut B: every library is on it, and no face lacks its vector). An undo in History that would put FaceNet back (among them each live
   library's first switch, which inserted its `faces.model` row) is refused by the same rule and sentence
   (`settings.undo_check`, asked by `services.journal.why_not` over `UNDO_CHECKS`). Counted 2026-10-20, read-only,
   when the share was the rule: kr-track 11,457
@@ -560,9 +558,7 @@ takes no turn of the card.
   the writers show a person a face offered whatever its score (`SuggestionModel.offered`; owner and main session,
   2026-10-20); `suggesting.OFFER_A_TAG` (0.60) is the floor of a tag alone. FaceNet's offers are from 0.70, so nothing
   it shows changed; the new model's from 0.310 are shown now.
-- The switch is a journaled change of the settings (`change settings`): History shows it and Undo takes it back. The
-  dialog's reply carries what the faces hold under the model switched to (`face_vectors`, its sentence shown before the
-  page reloads). A running server reads the model at each read: the faces fingerprint holds the model, so Identify's
+- The switch is a journaled change of the settings (`change settings`): History shows it and Undo takes it back. A running server reads the model at each read: the faces fingerprint holds the model, so Identify's
   cached grids are read again; a Suggest run or an index begun before the switch keeps the model it began with to its
   end, and the next one reads the library's. Scenario P10 switches in the dialog and undid the switch in History
   (since 2026-10-28 it finds that undo refused: it would put FaceNet back).
