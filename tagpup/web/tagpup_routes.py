@@ -198,6 +198,18 @@ def _wanted_path():
     return request.args.get("path") or None
 
 
+def _a_folder(folder):
+    """Is `folder`, as a request sent it, a folder now? Through photos.folder_state, which waits a moment on a network
+    share: one that does not answer is not a folder to act on. The one check of the routes that act on a folder."""
+    return isinstance(folder, str) and bool(folder) and photo_actions.folder_state(folder) == "there"
+
+
+def _a_file(path):
+    """Is there a file (or a folder) at `path`, as a request sent it? Through photos.file_stamp, which waits a moment on
+    a network share. The one check of the routes that act on one photo."""
+    return isinstance(path, str) and bool(path) and photo_actions.file_stamp(path) is not None
+
+
 def _sorted(photos):
     """A folder's records in the order the page shows them."""
     return sorted(photos.values(), key=photo_actions.taken_order)
@@ -225,7 +237,7 @@ def autocomplete_folder():
 
 def _folder_suggestions(typed):
     if not typed:
-        return [letter + ":\\" for letter in string.ascii_uppercase if os.path.exists(letter + ":\\")]
+        return [letter + ":\\" for letter in string.ascii_uppercase if _a_file(letter + ":\\")]
     typed = os.path.expandvars(typed)
     if re.match(r"^[a-zA-Z]$", typed):
         return [typed.upper() + ":\\"]
@@ -238,11 +250,10 @@ def _folder_suggestions(typed):
         base_dir, prefix = os.path.dirname(norm), os.path.basename(norm).lower()
     found = []
     try:
-        if os.path.isdir(base_dir):
-            for name in os.listdir(base_dir):
-                full = os.path.join(base_dir, name)
-                if os.path.isdir(full) and (not prefix or name.lower().startswith(prefix)):
-                    found.append(full)
+        if _a_folder(base_dir):
+            for name in photo_actions.subfolders(base_dir) or ():
+                if not prefix or name.lower().startswith(prefix):
+                    found.append(os.path.join(base_dir, name))
     except Exception:
         pass
     return found[:AUTOCOMPLETE_LIMIT]
@@ -255,7 +266,7 @@ def folder_scan():
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
     force = (request.args.get("force") or "false").lower() == "true"
-    if not os.path.isdir(folder):
+    if not _a_folder(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     return jsonify(_sorted(_folder_photos(library, paths.stored(folder), force)))
 
@@ -269,9 +280,8 @@ def folder_membership():
     folder = _wanted_path()
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
-    # A folder on a network share is looked at by membership_checked, on a thread that is waited for: isdir of a share
-    # that has stopped answering would hold this one.
-    if not library_actions.on_a_network_drive(folder) and not os.path.isdir(folder):
+    # A folder on a network share is looked at by membership_checked, which tells a share away from a folder gone.
+    if not library_actions.on_a_network_drive(folder) and not _a_folder(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     settings = runtimes.peek_settings(library)
     # Bounded, and one walk of a folder at a time (findings #568): a page asks it of a library view's folder too.
@@ -310,7 +320,7 @@ def folder_add():
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
-    if not folder or not isinstance(folder, str) or not os.path.isdir(folder):
+    if not _a_folder(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
     result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
         folders, runtimes.index_folder(library)))
@@ -338,7 +348,7 @@ def folder_suggest_start():
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
-    if not folder or not os.path.isdir(folder):
+    if not _a_folder(folder):
         return responses.error(400, "Invalid folder path")
     folder = paths.stored(folder)
     # In a folder the library holds, Suggest keeps what it finds as rows -- faces, vectors,
@@ -387,7 +397,7 @@ def folder_auto_apply():
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
-    if not folder or not os.path.isdir(folder):
+    if not _a_folder(folder):
         return responses.error(400, "Invalid folder path")
     suggestions = suggestion_jobs.runs_for(library).suggestions(folder)
     if suggestions is None:
@@ -423,7 +433,7 @@ def folder_time_shift():
     folder = body.get("folder_path")
     camera_model = body.get("camera_model")
     shift_minutes = body.get("shift_minutes", 0)
-    if not folder or not os.path.isdir(folder):
+    if not _a_folder(folder):
         return responses.error(400, "Invalid folder path")
     if shift_minutes == 0:
         return jsonify({"success": True, "message": "No shift applied (0 minutes)"})
@@ -470,7 +480,7 @@ def folder_rename_photos():
     photo_paths = [paths.stored(p) for p in body.get("photo_paths", [])]
     grouping = (body.get("grouping") or "").strip()
     folder = paths.stored(folder) if folder else folder
-    if not folder or not os.path.exists(folder):
+    if not _a_folder(folder):
         return responses.error(400, "Invalid folder path")
     if not photo_paths:
         return responses.error(400, "No photos selected for renaming")
@@ -486,10 +496,8 @@ def folder_rename_photos():
             record = known.get(paths.key(photo_path))
             if record:
                 return photo_actions.taken_order(record)
-            try:
-                return "mtime_%s" % os.path.getmtime(photo_path)
-            except OSError:
-                return "9999"
+            stamp = photo_actions.file_stamp(photo_path)
+            return "mtime_%s" % stamp[0] if stamp else "9999"
 
         result = photo_actions.smart_rename(
             library, sorted(photo_paths, key=taken), grouping, state.rename_format(library),
@@ -809,7 +817,7 @@ def photo_thumb():
 def photo_open_explorer():
     body = request.get_json(silent=True) or {}
     photo_path = body.get("path")
-    if not photo_path or not os.path.exists(photo_path):
+    if not _a_file(photo_path):
         return responses.error(400, "Invalid file path")
     try:
         desktop.show_in_explorer(photo_path)
@@ -840,7 +848,7 @@ def photo_rotate():
     body = request.get_json(silent=True) or {}
     photo_path = body.get("path")
     direction = body.get("direction")
-    if not photo_path or not os.path.exists(photo_path):
+    if not _a_file(photo_path):
         return responses.error(400, "Invalid file path")
     photo_path = paths.stored(photo_path)
     try:
@@ -868,7 +876,7 @@ def photo_delete():
     library = state.require()
     body = request.get_json(silent=True) or {}
     photo_path = body.get("path")
-    if not photo_path or not os.path.exists(photo_path):
+    if not _a_file(photo_path):
         return responses.error(400, "Invalid file path")
     try:
         result = photo_actions.delete(library, photo_path)
@@ -935,7 +943,7 @@ def photo_save_metadata():
     title = body.get("title")
     tags = body.get("tags", [])
     date_taken = body.get("date_taken")
-    if not photo_path or not os.path.exists(photo_path):
+    if not _a_file(photo_path):
         return responses.error(400, "Invalid file path")
     photo_path = paths.stored(photo_path)
     stamp, why = _stamp_of(body.get("stamp"))

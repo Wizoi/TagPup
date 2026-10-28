@@ -20,6 +20,7 @@ import time
 
 from tagpup.core import gpu_turns, paths, runs
 from tagpup.core.result import Result
+from tagpup.services import photos as photo_actions
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ class IndexQueue:
         result = Result(attempted=len(folders))
         valid, invalid, seen = [], [], set()
         for folder in folders:
-            if not folder or not isinstance(folder, str) or not (looked or os.path.isdir(folder)):
+            if not folder or not isinstance(folder, str) or not (looked or photo_actions.folder_state(folder) == "there"):
                 invalid.append(str(folder))
                 continue
             key = paths.key(folder)

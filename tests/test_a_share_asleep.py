@@ -4,7 +4,8 @@ Windows reports a sleeping server, a share name that is not there and an unplugg
 it uses for a deleted file, at once; a share that merely hangs holds the thread that asks. A photo called missing is left
 out of a bulk write and made read-only in the page, a folder view that waits on the share holds a request's thread, so the
 owner's NAS asleep must be told as "away" (nothing is called missing, nothing is removed) in every place that looks:
-the folder view (membership), a page of cards, a bulk write, a sync. Every look goes through shares.bounded. Stand-ins for
+the folder view (membership), a page's look at a folder or a photo it names, a page of cards, a bulk write, a sync.
+Every look goes through shares.bounded. Stand-ins for
 the share only, the library is the one the indexer makes; fictional names.
 
 A sync that cannot look at a folder -- a root on a share asleep, a folder whose listing fails or drops part-way -- counts
@@ -597,7 +598,7 @@ class TheFolderViewsRoute(unittest.TestCase):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
 
-    def test_a_folder_not_there_is_a_400_one_that_cannot_be_checked_a_200_and_a_share_is_not_looked_at_by_the_route(self):
+    def test_a_folder_not_there_is_a_400_and_one_that_cannot_be_checked_a_200(self):
         url = "/library/api/folder/membership"
         self.assertEqual(400, self.client.get(url, query_string={"path": os.path.join(self.home.root, "nowhere")}).status_code)
         there = os.path.join(self.home.root, "there")
@@ -606,11 +607,104 @@ class TheFolderViewsRoute(unittest.TestCase):
         with mock.patch.object(library_actions, "membership_checked", return_value=gone):
             reply = self.client.get(url, query_string={"path": there})
         self.assertEqual((200, gone), (reply.status_code, reply.get_json()))
-        # isdir of a share that has stopped answering would hold the request's thread: the bounded walk looks, not the route.
-        with mock.patch.object(library_actions, "on_a_network_drive", return_value=True), \
-                mock.patch("tagpup.web.tagpup_routes.os.path.isdir", side_effect=AssertionError("isdir on a share")), \
-                mock.patch.object(library_actions, "membership_checked", return_value=gone):
-            self.assertEqual(200, self.client.get(url, query_string={"path": "//server/share/photos"}).status_code)
+
+
+#: How long a share that has stopped answering holds a look before Windows gives up on it, in the test: far beyond the
+#: moment a page waits for it.
+WINDOWS_WAIT = 3.0
+
+
+class APageAskingOfAShareThatHangs(unittest.TestCase):
+    """The owner picks a folder on the NAS, or opens one, while it has stopped answering: every look a page's request
+    makes at it -- the folder's check, the folder box's listing, the folder picker's subfolders, a photo's check before a
+    rotate -- is made on a thread that is waited for a moment (tagpup.services.photos, the pages' door to
+    tagpup.files.shares), so the request answers within that moment, not after Windows's wait.
+    Break: any route looking itself (os.path.isdir, os.listdir, os.path.exists on the request's thread, as before the
+    looks moved) holds the request for WINDOWS_WAIT and makes a look off a ShareLook thread."""
+
+    def setUp(self):
+        shares.forget()
+        self.addCleanup(shares.forget)
+        self.released = threading.Event()
+        self.addCleanup(self.released.set)
+        self.looked_from = []
+        self.share = None
+        for patcher in (mock.patch.object(shares, "SHARE_WAIT", 0.2), mock.patch.object(shares, "LISTING_WAIT", 0.2),
+                        mock.patch.object(shares, "on_a_network_drive", self.on_the_share)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def on_the_share(self, path):
+        return self.share is not None and os.path.normcase(str(path)).startswith(os.path.normcase(self.share))
+
+    def the_share_hangs(self):
+        """Every look under the share holds its thread for WINDOWS_WAIT, then fails as Windows says the network name is
+        no longer available; a look anywhere else is the disk's."""
+        def hanging(real, failed):
+            def look(path, *args, **kwargs):
+                if isinstance(path, str) and self.on_the_share(path):
+                    self.looked_from.append(threading.current_thread().name)
+                    self.released.wait(WINDOWS_WAIT)
+                    if failed is OSError:
+                        raise OSError(64, "The specified network name is no longer available")
+                    return failed
+                return real(path, *args, **kwargs)
+            return look
+        for name, failed in (("stat", OSError), ("scandir", OSError), ("listdir", OSError)):
+            patcher = mock.patch.object(os, name, hanging(getattr(os, name), failed))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for name in ("isdir", "isfile", "exists"):
+            patcher = mock.patch.object(os.path, name, hanging(getattr(os.path, name), False))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def app(self, kind):
+        app, home = web_client.app_for(self, kind)
+        self.share = os.path.join(home.root, "NAS", "Pictures")
+        self.folder = os.path.join(self.share, "2021 Coast")
+        os.makedirs(os.path.join(self.folder, "Dunes"))
+        self.photo = os.path.join(self.folder, "IMG_0001.jpg")
+        Image.new("RGB", (8, 8)).save(self.photo, "JPEG")
+        return app.test_client()
+
+    def answered(self, ask):
+        """(the reply, seconds it took) of `ask()`, with the share hanging."""
+        began = time.monotonic()
+        reply = ask()
+        return reply, time.monotonic() - began
+
+    def assert_within_the_moment(self, took):
+        self.assertLess(took, WINDOWS_WAIT / 2, "the request waited on the share as long as Windows does")
+        self.assertEqual([], [name for name in self.looked_from if name != "ShareLook"],
+                         "a look at the share was made on the request's own thread")
+
+    def test_opening_typing_and_picking_a_folder_on_it_answer_within_the_moment(self):
+        client = self.app("tagpup")
+        self.the_share_hangs()
+        for ask, status in ((lambda: client.get("/library/api/folder/scan", query_string={"path": self.folder}), 400),
+                            (lambda: client.get("/library/api/folder/membership", query_string={"path": self.folder}),
+                             200),
+                            (lambda: client.get("/library/api/autocomplete-folder",
+                                                query_string={"path": os.path.join(self.folder, "Du")}), 200),
+                            (lambda: client.post("/library/api/photo/rotate",
+                                                 json={"path": self.photo, "direction": "left"}), 400)):
+            shares.forget()   # each request meets the share hanging, not one already taken as away
+            reply, took = self.answered(ask)
+            self.assertEqual(status, reply.status_code, reply.data)
+            self.assert_within_the_moment(took)
+        self.assertTrue(self.looked_from, "the share was looked at")
+        self.assertEqual(True, client.get("/library/api/folder/membership",
+                                          query_string={"path": self.folder}).get_json()["could_not_check"])
+
+    def test_the_folder_pickers_subfolders_on_it_answer_within_the_moment(self):
+        client = self.app("tuner")
+        self.the_share_hangs()
+        reply, took = self.answered(lambda: client.get("/library/api/folder/subfolders",
+                                                       query_string={"path": self.share}))
+        self.assertEqual(400, reply.status_code, reply.data)
+        self.assert_within_the_moment(took)
+        self.assertTrue(self.looked_from, "the share was looked at")
 
 
 class TheCardStatsHaveABudget(unittest.TestCase):

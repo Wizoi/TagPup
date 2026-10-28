@@ -51,6 +51,7 @@ import time
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
 from tagpup.core import paths
+from tagpup.services import photos as photo_actions
 from tagpup.services import sync as sync_service
 
 logger = logging.getLogger(__name__)
@@ -306,7 +307,7 @@ class Watcher:
                     return
                 folders.append(os.path.dirname(event.src_path))
             dest = getattr(event, "dest_path", "")
-            if event.event_type == "moved" and dest and os.path.isdir(dest):
+            if event.event_type == "moved" and dest and photo_actions.folder_state(dest) == "there":
                 folders.append(os.path.dirname(dest))
         if not folders:
             return

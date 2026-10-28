@@ -601,12 +601,15 @@ def folder_subfolders():
     # Stored form before anything is joined onto it: a parent typed with forward
     # slashes otherwise yields children spelled with both separators at once.
     parent = paths.stored(wanted)
-    if not os.path.isdir(parent):
+    if photo_actions.folder_state(parent) != "there":
         _refuse(400, "Not a folder: %s" % parent)
     try:
-        entries = sorted(e for e in os.listdir(parent) if os.path.isdir(os.path.join(parent, e)))
+        entries = photo_actions.subfolders(parent)
     except OSError as e:
         _refuse(500, "Could not read %s: %s" % (parent, e))
+    if entries is None:
+        _refuse(500, "Could not read %s: its network share did not answer" % parent)
+    entries = sorted(entries)
 
     indexed_by_folder = photo_actions.indexed_by_folder(library)
     folders = []

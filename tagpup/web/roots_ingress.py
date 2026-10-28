@@ -28,6 +28,7 @@ from flask import g, request
 from werkzeug.datastructures import MultiDict
 
 from tagpup import config as tagpup_config
+from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.web import responses, state
 
@@ -55,7 +56,7 @@ _guard = threading.Lock()
 
 def _stamp():
     try:
-        found = os.stat(tagpup_config.machine_roots_path())
+        found = os.stat(tagpup_config.machine_roots_path())  # unbounded: the machine's roots file, in the data folder
     except OSError:
         return None
     return (found.st_mtime_ns, found.st_size)
@@ -134,6 +135,6 @@ def guard():
         g.roots_moved = found[0] if found else "?"
     if moved and request.path in ADDING:
         for original, found in moved:
-            if not os.path.isdir(found):
+            if photo_actions.folder_state(found) == "gone":
                 return responses.error(400, roots_service.old_place_sentence(library, original, found))
     return None

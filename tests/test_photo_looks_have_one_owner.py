@@ -50,16 +50,11 @@ OWNERS = {
     os.path.join("tagpup", "files", "recycle_bin.py"): "a delete: the copy to the bin and its check",
 }
 
-#: {module: looks at a photo path not moved onto shares yet}: the next cut's (the pages and jobs, through a services
-#: door, as they may not import tagpup.files; the vectors' stamp in store). The count can only go down.
+#: {module: looks at a photo path not moved onto shares yet}: the vectors' stamp in store (embeddings.stamp_of), whose
+#: one caller left is services/faces.py's record of a detection (shares.known_stamp replaces it). The pages and the jobs
+#: look through tagpup.services.photos (file_stamp, folder_state, subfolders). The count can only go down.
 NOT_MOVED_YET = {
     os.path.join("tagpup", "store", "embeddings.py"): 1,
-    os.path.join("tagpup", "jobs", "indexing.py"): 1,
-    os.path.join("tagpup", "jobs", "watching.py"): 1,
-    os.path.join("tagpup", "web", "desktop.py"): 1,
-    os.path.join("tagpup", "web", "roots_ingress.py"): 2,
-    os.path.join("tagpup", "web", "tagpup_routes.py"): 16,
-    os.path.join("tagpup", "web", "tuner_routes.py"): 3,
 }
 
 
