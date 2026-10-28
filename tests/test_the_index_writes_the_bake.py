@@ -540,6 +540,18 @@ class TheIndexWritesTheBake(unittest.TestCase):
             self.assertBaked(path, 1 if os.path.basename(path) == "a.jpg" else 0)
         self.assertEqual((0, 0, True), self.looked())
 
+    def test_a_ctrl_c_between_the_index_and_its_bake_leaves_the_recorded_photos_owed_and_the_next_index_bakes_them(self):
+        """The index records a photo's row as each batch is saved; a Ctrl+C before the bake starts (here while the faces it
+        made are matched) used to leave the photo in step with an unbaked file."""
+        a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
+        with mock.patch.object(tagpup_cli, "_match_new_faces", side_effect=KeyboardInterrupt):
+            interrupted = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", self.folder])
+        self.assertEqual(1, interrupted.exit_code, interrupted.output)
+        self.assertEqual([[], []], [self.fingerprint_row(path) for path in (a, b)])
+        self.assertEqual((2, 1, False), self.looked())
+        self.assertIn("Bake: 2 file(s) written", self.index_with_no_model(self.folder))
+        self.assertEqual((0, 0, True), self.looked())
+
     def test_a_new_folders_share_that_stops_answering_while_the_bake_reads_it_leaves_its_photos_owed(self):
         a, b = self.picture("a.jpg", (200, 40, 40)), self.picture("b.jpg", (40, 200, 40))
         real_read, real_bake = field_values.read, bake_after_index.bake_folders

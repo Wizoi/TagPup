@@ -792,6 +792,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 console.print(f"  [yellow]-[/yellow] {p}: the last {zeros:,} bytes are zeros")
             if len(incomplete) > 5:
                 console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
+    except (Exception, KeyboardInterrupt):
+        _owe_the_recorded(db_path, touched, handed)
+        raise
     finally:
         if bar is not None:
             bar.close()
@@ -816,7 +819,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # matching is the processor's work, and writes nothing. Before the bake: a bake stopped by a Ctrl+C, or a slow one,
     # does not leave this run's faces unmatched.
     if total_new_indexed:
-        _match_new_faces(db_path, after, upto)
+        try:
+            _match_new_faces(db_path, after, upto)
+        except (Exception, KeyboardInterrupt):
+            _owe_the_recorded(db_path, touched, handed)
+            raise
 
     # The files of the folders it recorded are written from the library (docs/PLAN_KEEP_IN_STEP.md, cut 2), the card let
     # go above: every way of indexing does it, and the owner runs no bake. Not with --skip-faces: no face was looked for.
@@ -841,6 +848,16 @@ def _recorded(metas, touched, handed):
         found = meta.get("fingerprint")
         if found is not None and found[0] == image_files.FINGERPRINT_KEY:
             handed[paths.key(meta["path"])] = ((meta["mtime"], meta["size"]), found[1])
+
+
+def _owe_the_recorded(db_path, touched, handed):
+    """The index ended (an error, a Ctrl+C) before its bake took the rows of the photos it recorded away: take them away
+    now, so those photos are owed their files' bake and the next index writes it. A killed process runs nothing, and
+    leaves them in step with an unbaked file (0 instances; the bake itself covers every end from its start)."""
+    try:
+        bake_after_index.owe_first(Library(db_path), list(touched.values()), handed)
+    except Exception:
+        logger.exception("The fingerprints the index recorded could not be taken away")
 
 
 def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_file):

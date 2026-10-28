@@ -24,13 +24,15 @@ never fingerprinted) -- holds a row after it only when its file was written (the
 transaction that marks it done: baking.follower), was planned holding the library's current bake already, or failed its
 write on a file marked read-only (file_changes' `read_only`, the one failure no retry changes); the last two are given
 the decode's (_adopt, photo_fingerprints.adopt), so sync does not queue their folder again for a write that cannot
-change. To hold it, the rows the index recorded this run are taken away before the first folder is planned (_owe_first):
+change. To hold it, the rows the index recorded this run are taken away before the first folder is planned (owe_first):
 a row comes back only by one of those three. Every other photo has none and the next sync owes its folder to the index
 again, however the run went: a write that failed otherwise (a file another program holds open; a packet ExifTool refuses
 even with -m, which has no live instance since DECISIONS 2026-10-27 and is retried at each sync), a conflict, a photo not
 answered (a share that stopped answering while its folder was read or written), a folder not reached (asked to stop, the
-roots changed, an exception, a Ctrl+C), and a process killed or a power cut part-way. Left, the index's row would keep a
-new photo's unbaked file from being owed until something else in its folder changed.
+roots changed, an exception, a Ctrl+C), and a process killed or a power cut once the bake has begun. An index that ends
+before the bake begins (an error, a Ctrl+C: tagpup_cli._owe_the_recorded) does the same; a process killed before it
+begins leaves the index's rows, by design (0 instances). Left, the index's row would keep a new photo's unbaked file
+from being owed until something else in its folder changed.
 """
 import collections
 import dataclasses
@@ -95,9 +97,9 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
     the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did.
-    A handed photo keeps its row only when its file is written, holds the current bake or is read-only (_owe_first)."""
+    A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first)."""
     baked, snapshot, walk = Baked(), [], baking.walk(stop)
-    _owe_first(library, folders, handed)
+    owe_first(library, folders, handed)
     with field_values.session(exiftool_path) as session:
         et = exiftool_session.StaysDead(session)
         for folder in folders:
@@ -120,10 +122,10 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
     return baked
 
 
-def _owe_first(library, folders, handed):
+def owe_first(library, folders, handed):
     """Take away the fingerprint rows the index recorded this run (`handed`'s photos, directly in `folders`) before the
     bake plans anything: each is then planned as a photo with no row, and has one again only by its file's write
-    (baking.follower) or _adopt. Whatever ends the run -- a stop, a share away, an exception, a process killed -- the
+    (baking.follower) or _adopt. Whatever ends the run after this -- a stop, a share away, an exception, a process killed -- the
     photos it did not bake are owed (NO_FINGERPRINT) and the next index bakes them, the index's decode lost (one decode
     each). Deleting a row only makes a photo owed: a writer racing it loses nothing."""
     if not handed:
@@ -193,7 +195,7 @@ class _Decode:
 
 def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
     """Give its decode's fingerprint row (photo_fingerprints.adopt) to each photo of `unfingerprinted` (_planned's: the
-    index's this run among them, _owe_first) whose file holds the library's current bake -- planned Current, not in
+    index's this run among them, owe_first) whose file holds the library's current bake -- planned Current, not in
     `to_bake` -- or whose write failed on a file marked read-only (`written`, the folder's write's Result, file_changes'
     `read_only`; None when no write ran). Nothing else: a written file's row followed its write, and a photo not written
     for any other reason stays owed. Counted in `baked.adopted`, but for `handed`'s: the index recorded theirs this

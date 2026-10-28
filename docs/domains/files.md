@@ -71,7 +71,7 @@ Every photo's file is baked with no command (owner, 2026-10-28): a current vecto
 the index writes the file with no model (the row follows the write) or, for a file holding its bake or one marked
 read-only (`file_changes`' `read_only`, the one failure no retry changes), records the decode's row
 (`photo_fingerprints.adopt`); any other photo stays owed: the bake takes away the index's rows of this run's photos
-before it plans, so only those three give one back, however the run ends (`tests/test_the_index_writes_the_bake.py`).
+before it plans, so only those three give one back, however the bake ends; an index that ends before its bake (an error, a Ctrl+C) takes them away too (`tests/test_the_index_writes_the_bake.py`).
 
 ## Roots and machines: a share away
 
