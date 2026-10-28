@@ -111,7 +111,7 @@ _SCENARIO_FILES = {
     "F4": "test_folder_watcher test_sync",
     "F5": "test_scenario_two_libraries_share_a_folder",
     "F6": "test_index_progress_end_to_end test_partial_writes_leave_rows_unread test_refresh_rows",
-    "F7": "test_a_share_asleep",
+    "F7": "test_a_share_asleep test_a_share_that_wakes",
     "F8": (
         "test_bulk_delete test_delete_a_photo test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules "
         "test_just_look_edits"

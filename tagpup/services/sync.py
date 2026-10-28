@@ -84,7 +84,9 @@ OPERATION = "sync"
 KINDS = ("from_files", "relinked")
 
 #: How long a sync waits to hear whether a root, or a missing row's folder, on a network share is there, in seconds:
-#: a job, not a page, so longer than shares.SHARE_WAIT; one that does not answer in it is not looked at.
+#: a job, not a page, so longer than shares.SHARE_WAIT; one that does not answer in it is not looked at. A root's share
+#: taken as away when the sync starts (the watcher's look as the server started did not answer in its moment) is waited
+#: for this long to be back (shares.Walk, patient), once a share, before its roots are not looked at (#2101).
 FOLDER_WAIT = 10.0
 
 
@@ -160,11 +162,17 @@ def _under_any(folder, folders):
     return False
 
 
-def watch_states(folders):
+def watch_states(folders, on_back=None):
     """{paths.key(folder): "there", "gone" or "unanswered"} of the folders the watcher watches or would (shares.folder_state,
     each within its SHARE_WAIT): what it asks before it watches under one, a share that does not answer being neither there
-    nor gone. The jobs layer asks sync, not tagpup.files (tests/test_layers.py)."""
-    return {paths.key(folder): shares.folder_state(folder) for folder in folders}
+    nor gone. `on_back(share)` is told, once, when the share of a folder that did not answer answers again (shares.on_back):
+    the watcher looks again then, not at its next RECHECK. The jobs layer asks sync, not tagpup.files (tests/test_layers.py)."""
+    states = {}
+    for folder in folders:
+        states[paths.key(folder)] = state = shares.folder_state(folder)
+        if state == "unanswered" and on_back is not None:
+            shares.on_back(shares.share_of(folder), on_back)
+    return states
 
 
 def _scan(conn, folder, roots, library_folders):
@@ -173,14 +181,16 @@ def _scan(conn, folder, roots, library_folders):
     those that did not answer, and those under them that would not list).
     The whole library walks every root and every folder of the library's
     (`library_folders`, tagpup.store.folders: those with rows, and those added), each once
-    from the topmost; a folder, that folder alone. Each is asked through shares.folder_state."""
+    from the topmost; a folder, that folder alone. Each is asked through one patient shares.Walk: a share taken as away
+    as the sync starts is waited for, once, up to FOLDER_WAIT, to be back (#2101)."""
     by_key = {}
     for photo_id, path, mtime, size in store_photos.stamps(conn, folder):
         by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
     walked = [paths.stored(folder)] if folder else walk_roots(set(roots) | set(library_folders.walked()))
     on_disk, gone, unanswered, unlisted = {}, [], [], []
+    walk = shares.Walk(patient=True, wait=FOLDER_WAIT)
     for root in walked:
-        state = shares.folder_state(root, FOLDER_WAIT)
+        state = walk.folder_state(root, FOLDER_WAIT)
         if state == "there":
             on_disk.update(images.stamps_under(root, unlisted))
         elif state == "gone":

@@ -26,7 +26,11 @@ Notifications can be missed, so the whole library is synced
 - when Windows says its buffer overflowed, or a watch fails;
 - when a folder that was not there -- a drive unplugged -- is back. A folder that is not
   there is looked for again every RECHECK, and the libraries and their folders are read
-  again then too (a root folder added in the settings is watched within RECHECK).
+  again then too (a root folder added in the settings is watched within RECHECK). One on a
+  share that did not answer is looked for again as soon as the share answers (shares.on_back,
+  through sync.watch_states: a tick, not RECHECK, #2101); RECHECK stays the safety net for a
+  share that never says so. A library whose whole sync, started after the folder went away,
+  looked at every folder (it waited for the share, sync.FOLDER_WAIT) is not synced whole again.
 The daily `sync` job stays as the safety net (tagpup.jobs.recurring).
 
 `busy()` is true while a sync it started runs: an update waits for it
@@ -160,6 +164,11 @@ class Watcher:
         self._last_event = {}
         self._current = None
         self._last_sync = {}
+        #: Set when a share that did not answer answers again (_heard_back): the thread looks at the folders at its next tick.
+        self._look_soon = threading.Event()
+        #: library key -> when (clock) the newest whole sync that looked at every folder started: a folder back after its
+        #: start is synced whole again, one away before it was looked at by it.
+        self._whole_looked = {}
 
     # ---- The background task -----------------------------------------------------------
 
@@ -354,7 +363,8 @@ class Watcher:
             logger.exception("Looking at the folders to watch failed")
         next_look = self._clock() + self.recheck
         while not stop.wait(self.tick):
-            if self._clock() >= next_look:
+            if self._clock() >= next_look or self._look_soon.is_set():
+                self._look_soon.clear()
                 try:
                     self._look(observer)
                 except Exception:
@@ -366,11 +376,18 @@ class Watcher:
                     break
                 self._run(library, folder)
 
+    def _heard_back(self, share):
+        """A share a folder is on answers again (shares.on_back, on the thread of the look that heard it): look at the
+        folders at the next tick."""
+        logger.info("%s answers again; looking at the folders on it now.", share)
+        self._look_soon.set()
+
     def _run(self, library, folder):
         with self._lock:
             self._syncing += 1
             self._current = {"library": library.name, "folder": folder, "started": _now()}
         result = None
+        began = self._clock()
         try:
             result = self._sync(library, folder)
             what = folder if folder else "every folder"
@@ -381,6 +398,9 @@ class Watcher:
                 return
             details = getattr(result, "details", {}) or {}
             counts = details.get("counts", {})
+            if folder is None and counts and not (counts.get("folders_not_looked_at") or counts.get("roots_gone")):
+                with self._lock:
+                    self._whole_looked[library.key] = began
             if result.changed or details.get("queued") or counts.get("missing"):
                 logger.info("Synced %s in %s: %d row(s) changed, %d folder(s) queued to index, %d missing.",
                             what, library.name, result.changed, details.get("queued", 0), counts.get("missing", 0))
@@ -445,7 +465,7 @@ class Watcher:
 
         # A share that does not answer is neither there nor gone (sync.watch_states): a watch on it is
         # kept while its emitter lives, and none is made until it answers.
-        states = sync_service.watch_states([root["path"] for _key, root in roots])
+        states = sync_service.watch_states([root["path"] for _key, root in roots], on_back=self._heard_back)
         for key, root in roots:
             state = states[paths.key(root["path"])]
             there = state == "there"
@@ -467,14 +487,17 @@ class Watcher:
                 with self._lock:
                     root["watch"] = watch
                     came_back, root["absent"] = root["absent"], False
-                if came_back:
+                    away_at = root.pop("absent_at", None)
+                    behind = [library for key, library in root["libraries"].items()
+                              if came_back and self._whole_looked.get(key, float("-inf")) < (away_at or 0)]
+                if behind:
                     logger.info("%s is back; syncing its libraries whole.", root["path"])
-                    self._note_whole(list(root["libraries"].values()))
+                    self._note_whole(behind)
             elif root["watch"] is None and not there and not root["absent"]:
                 logger.info("%s is not there or does not answer (a drive unplugged?); watching it when it is back.",
                             root["path"])
                 with self._lock:
-                    root["absent"] = True
+                    root["absent"], root["absent_at"] = True, self._clock()
         self._watch_parents(observer)
 
     def _watch_parents(self, observer):
@@ -502,7 +525,7 @@ class Watcher:
                 - sum(1 for parent in self._parents.values() if parent["watch"] is not None)
         for watch in dead_watches:
             self._unschedule(observer, watch)
-        states = sync_service.watch_states([wanted[key] for key in died if key in wanted])
+        states = sync_service.watch_states([wanted[key] for key in died if key in wanted], on_back=self._heard_back)
         for key in died:
             if key in wanted and states[paths.key(wanted[key])] == "there":
                 logger.warning("The watch on %s failed; watching it again and syncing its libraries whole.", wanted[key])
