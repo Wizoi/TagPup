@@ -51,7 +51,7 @@ here when it merges.
 | [DECISIONS.md](DECISIONS.md) 2026-10-07 (row 47) and [history/ARCHITECTURE_faces_and_naming.md](history/ARCHITECTURE_faces_and_naming.md), "The owner's decisions for the three big projects" | The owner's choices: plumbing first, replace the face models (licence accepted), replace CLIP with SigLIP 2, search by what is in the picture, bake the current model's vectors and face regions into the file. | Decisions. Not reopened without a new fact. |
 | [reports/Project health review 2026-10-09.md](../reports/Project%20health%20review%202026-10-09.md), 9.1 and 9.2 | Start only the plumbing slice; the model swap waits; baking vectors into files is its own project. | Advice, adopted below. |
 | [DECISIONS.md](DECISIONS.md) 2026-10-16, "THE FACE VECTOR GETS A MODEL KEY" | The schema: a `face_embeddings` table, migration 33, not before about 2026-11-15. | Decision. |
-| The phase 0 measurements (`scripts/measure_pipeline_stages.py`, `measure_pipeline_holdouts.py`; findings #1526 to #1533) | The numbers of section 7. | Evidence. |
+| The phase 0 measurements (`scripts/measure_pipeline_stages.py`, deleted 2026-10-28 with the old models; `measure_pipeline_holdouts.py`; findings #1526 to #1533) | The numbers of section 7. | Evidence. |
 
 ## 2. Goals, and what is not a goal
 
@@ -722,7 +722,7 @@ worker that ran it. The column "After" is filled as each phase merges.
 **The index rows are the index alone.** From 2026-10-16 to 2026-10-23 `index` clustered the whole library's faces after
 an index that recorded a photo (DECISIONS 2026-10-16, #1544; 202 s on photo_index); since 2026-10-23 it matches only
 the faces it made, read-only (DECISIONS 2026-10-23; the CLI's `_match_new_faces`). `scripts/measure_pipeline_stages.py`
-times that matching apart in `stages` (a timer on `_match_new_faces`), so the rows below are the index alone; the
+(deleted 2026-10-28 with the old models) timed that matching apart in `stages` (a timer on `_match_new_faces`), so the rows below are the index alone; the
 clustering's own row is `cluster-faces`.
 
 | Measure | Today | After | Notes |

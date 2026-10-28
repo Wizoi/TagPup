@@ -123,6 +123,13 @@ def photo_model_refusal(name, pretrained, size=None):
     return None
 
 
+def photo_word_cut(name, pretrained):
+    """The least cosine a zero-shot word must reach under the photo model `name` with weights `pretrained`, a pair the
+    table holds (tagpup.ml.photo_models; photo_model_refusal says why another is not): the cut a program that scores
+    models (scripts/measure_pipeline_holdouts.py, which may not import tagpup.ml) compares the candidates at."""
+    return photo_models.word_cut(name, pretrained)
+
+
 def photo_switch_on(conn, held, putting):
     """(refusal or None, what the photos hold or None): whether the library holding the settings `held` ({key: value})
     may be given `putting` ({key: value}) for its photo model's settings (PHOTO_MODEL). None, None when the key its

@@ -260,7 +260,7 @@ HELPERS = {
     "code_snapshot": "the code, as the installer and the measurement sandbox copy it",
     "sandbox": "a private copy of a library, a free port and a clean-up that tells, which the measurement "
                "scripts share (measure_identify_faces, measure_suggest_folder, measure_select_list, "
-               "measure_pipeline_stages, measure_pipeline_holdouts)",
+               "measure_pipeline_holdouts)",
     "reloader": "the development auto-reloader tagpup_web.py starts",
 }
 #: A script that uses another program's code. None may be added.
