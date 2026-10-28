@@ -198,21 +198,17 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_a_root_on_a_share_asleep_is_not_looked_at_and_a_second_library_on_it_is_answered_at_once(self):
+    def test_a_root_on_a_share_asleep_is_not_looked_at_and_the_library_is_not_recorded_in_step(self):
+        """The second library on the same share is answered at once: TwoLibrariesSyncedOnAShareAsleep."""
         share = os.path.join(self.home.root, "NAS", "Pictures")
         taken = [self.photo(os.path.join(share, "2019 Regatta"), "IMG_%04d.jpg" % n) for n in range(3)]
-        regatta, crew = self.library("regatta.db", taken), self.library("crew.db", taken)
+        regatta = self.library("regatta.db", taken)
         self.asleep(share)
         first = sync.sync(regatta, apply=True, roots=[share])
         self.assert_not_looked_at(first, 3, 1)
         self.assertEqual(0, first.details["counts"]["folders_walked"])
         self.assertIsNone(sync.last(regatta)["last_in_step"], "a sync that could not look recorded the library in step")
-        waits, counting = share_waits.counted()
-        with counting:
-            second = sync.sync(crew, apply=True, roots=[share])
-        self.assert_not_looked_at(second, 3, 1)
-        self.assertEqual([], waits, "the share taken as away is answered at once for the second library")
-        self.assertEqual((sorted(taken), sorted(taken)), (self.paths_of(regatta), self.paths_of(crew)))
+        self.assertEqual(sorted(taken), self.paths_of(regatta))
 
     def a_drive_not_connected(self):
         """A local drive letter this machine has nothing on: where the photos of a drive unplugged are spelled."""
