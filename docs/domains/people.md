@@ -74,16 +74,17 @@ sentence (`identify.NO_VECTOR`, 400), shown by the pages; cluster-faces says how
   index or cluster-faces reads them again.
 - **Identify on a library switched to the new face model (2026-10-18; 2026-10-20)**: every reader compares faces under the
   library's model, so a face with no vector under it takes no part, with no sentence of its own in the queue, a person's
-  grid or the person page: an old face the pass matched with nothing it found (1,195 of kr-track's, counted 2026-10-20),
-  and a face in a photo the pass has not reached. A switch is refused while the latter are more than 5% of the faces
-  (`services.settings.UNPASSED_SHARE_ALLOWED`) -- an undo in History that would put the new model back too, by the
-  same check (`settings.undo_check`, asked by `services.journal.why_not`) -- and says either way how many named faces would leave the gallery
-  (`settings.change`, `details["face_vectors"]`); the consequence is stated where the owner switches (the settings
-  dialog's face model group, which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
+  grid or the person page: an old face the deleted pass matched with nothing it found (1,195 of kr-track's, counted
+  2026-10-20), and a face of a photo the index has not yet re-embedded under the model. A switch to the new model is
+  not refused and says how many named faces hold no vector under it (`settings.change`, `details["face_vectors"]`); a
+  switch to FaceNet is refused for every library, and so is an undo in History that would put it back, by the same
+  rule and sentence (`settings.NOT_FACENET`, asked by `settings.undo_check` through `services.journal.why_not`;
+  owner, 2026-10-28). The consequence is stated where the owner switches (the settings dialog's face model group,
+  which must be acknowledged); a face asked about directly says why (`identify.NO_VECTOR`).
 - **The face pass names nobody (2026-10-18, owner; DECISIONS 2026-10-18 "THE FACE PASS NAMES NOBODY")**: the new face
-  model's pass (`services.face_pass`, deleted 2026-10-27 with `face-pass`: the index re-embeds after a switch) made its new faces unnamed and left a matched face's name as it was; Name faces
-  from tags names the new faces after the gate. A photo's named faces pair first, so a named face keeps its person
-  beside an unnamed duplicate of it.
+  model's pass (`services.face_pass`, deleted 2026-10-27 with `face-pass`: the index re-embeds after a switch) made its
+  new faces unnamed and left a matched face's name as it was; Name faces from tags named the new faces after the gate.
+  A photo's named faces paired first, so a named face kept its person beside an unnamed duplicate of it.
 
 - **Retiring the old detector's faces (2026-10-22; DECISIONS 2026-10-22 and 2026-10-25)**: run once on each
   library (photo_index change 3247, kr-track 347, renton_parkrun 1225, counted read-only 2026-10-25): the faces

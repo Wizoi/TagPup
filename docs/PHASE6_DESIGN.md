@@ -122,7 +122,7 @@ side exists, so its column must be the read side's, not a guess for cut 3.
   line is retired.
 - **A stale bake** is found by parsing the file's own bake and comparing it with what would be written now (keys,
   fingerprint, regions): the file is the digest; no column.
-- **Dry run writes nothing** (not a rolled-back write): no fingerprint row, no snapshot, no migration. CLI `bake-photos`
+- **Dry run writes nothing** (not a rolled-back write): no fingerprint row, no snapshot, no migration. CLI `bake-photos` (deleted 2026-10-27, cut 3)
   (`@_holds_the_roots`, `--apply` refusing with one sentence this cut). It reports per library and folder: photos to bake,
   already current (skipped, so `--apply` resumes), cannot be baked and why, and by format (17 TIFF and 2 PNG). No byte
   estimate and no Extended XMP count (owner, 2026-10-25: ExifTool's detail): a bake measured 6,355 bytes of main packet
