@@ -336,7 +336,9 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
                                       (os.path.join("C:" + os.sep, "ab"), os.path.join("C:" + os.sep, "a"), False)):
             self.assertEqual(answer, sync._under_any(folder, {paths.key(under): under}), (folder, under))
 
-    def test_a_listing_that_drops_part_way_leaves_the_photos_it_did_not_reach_not_looked_at(self):
+    def test_a_listing_that_drops_part_way_leaves_the_whole_folder_not_looked_at(self):
+        """A folder's listing is one answer (shares.listing): one that failed part-way is not an answer, and none of the
+        folder's photos is looked at -- the one listed before the drop neither."""
         pictures = os.path.join(self.home.root, "Pictures")
         harbour = os.path.join(pictures, "2020 Harbour")
         taken = [self.photo(harbour, "IMG_%04d.jpg" % n) for n in range(1, 4)]
@@ -363,7 +365,7 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
             return Dropping(listing) if os.path.normcase(str(path)) == os.path.normcase(harbour) else listing
         with mock.patch.object(os, "scandir", scandir):
             result = sync.sync(library, apply=True, roots=[pictures])
-        self.assert_not_looked_at(result, 2, 1)
+        self.assert_not_looked_at(result, 3, 1)
         self.assertEqual(sorted(taken), self.paths_of(library))
 
 

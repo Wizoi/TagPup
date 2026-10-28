@@ -8,7 +8,11 @@ daemon), takes the share as AWAY for AWAY_SECONDS -- by its drive, or its server
 its folders was asked -- and no other look at it is started, on another thread, while the first still
 waits. A share that answered is not away. Two callers used to keep a cache each (the damaged photos'
 lists, and Roots' Verify), one of them unable to say away from missing; this is the one. `stamp_of` is the look at one
-file that a page of cards, a thumbnail and a bulk edit's chunk make.
+file that a page of cards, a thumbnail and a bulk edit's chunk make; `folder_state` the look at a folder; `listing` the
+look at what a folder holds, which every walk of photo folders makes (tagpup.files.images.photo_entries).
+
+Every look at a photo or a photo's folder outside this module goes through one of them, or is the reader's or writer's
+own, named in the guard's list (tests/test_photo_looks_have_one_owner.py).
 
 It owns "back" as well as "away": the look that did not answer in time is left running, and when it ends with an answer
 the share is awake -- its mark is cleared at once, whoever waits for it (`wait_back`) is woken, and whoever asked to be
@@ -282,6 +286,54 @@ def wait_back(share, seconds, stop=None):
         if left <= 0 or (stop is not None and stop()):
             return False
         event.wait(min(left, left_away, STOP_EVERY))
+
+
+#: How long the listing of one folder on a network share is waited for, in seconds: longer than SHARE_WAIT, since a folder
+#: of thousands of photos is one answer of many parts; a share that has not given it in this long has stopped answering,
+#: and the walk goes on without that folder (#2104). Windows itself waits minutes.
+LISTING_WAIT = 10.0
+
+
+def _list(folder, on_a_share):
+    """The entries of `folder`, read to the end; UNANSWERED for a share that says "not found" and does not answer
+    (_share_answers), as folder_state learns it."""
+    try:
+        with os.scandir(folder) as found:
+            return list(found)
+    except (FileNotFoundError, NotADirectoryError):
+        if on_a_share and not _share_answers(folder):
+            return UNANSWERED
+        raise
+
+
+def listing(folder):
+    """What `folder` holds: its os.DirEntry each, read to the end (on Windows each carries its kind and stamp, so asking
+    an entry `is_dir()` or `stat()` asks the disk nothing more). Raises the OSError the listing raised (a folder not there,
+    one that cannot be read, a listing that failed part-way). UNANSWERED when the folder is on a network share (UNC, or a
+    mapped network drive) that did not give the listing within LISTING_WAIT, or is taken as away: what was not listed was
+    not looked at, which is not "not there" (#1356). A listing that does not answer leaves its thread to end and takes the
+    share as away, so a walk's next folder on it is answered at once (bounded)."""
+    folder = paths.stored(folder)
+    if not on_a_network_drive(folder):
+        return _list(folder, False)
+    state, found = bounded(folder, lambda: _list(folder, True), LISTING_WAIT)
+    if state == "error":
+        raise found
+    return found if state == "ok" else UNANSWERED
+
+
+def there(path):
+    """Is there a file or a folder at `path` that the look could see (stamp_of gave its stamp)? False for one not there,
+    one that cannot be read, and one on a share that does not answer: what a check before a write or an open asks, which
+    os.path.exists answered after Windows's wait on a share that dropped."""
+    return isinstance(stamp_of(path), tuple)
+
+
+def known_stamp(photo_path):
+    """(mtime, size) of the file now (stamp_of), or None when it is not known: not there, not readable, or on a share that
+    did not answer. What a row's stamp or a vector's is taken from, where "not known" is stored as nothing."""
+    stamp = stamp_of(photo_path)
+    return stamp if isinstance(stamp, tuple) else None
 
 
 class Walk:
