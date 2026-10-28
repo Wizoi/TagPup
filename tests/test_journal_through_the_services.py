@@ -3,7 +3,7 @@ take it back (docs/ARCHITECTURE.md, phase 7.5).
 
 End to end: each service run as the MCP server runs it, a dry run and then apply, and the
 change it records undone through `tagpup_cli.py undo`. The refresh is run the same way by
-tests/test_refresh_rows.py; the MCP tools by tests/test_mcp_write_tools.py.
+tests/test_refresh_rows.py.
 """
 import os
 import sys

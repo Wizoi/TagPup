@@ -132,8 +132,8 @@ Tags and captions are written back using ExifTool:
 
   This matters because indexing runs repeatedly: the kr-track taxonomy had been cleaned
   from 51 such duplicates to zero once before, and the next index run recreated them
-  all. The MCP tool `merge_duplicate_person_tags` merges any that already exist (a rehearsal
-  unless `apply`); it removed 53 across 129 photos here.
+  all. `tagpup.services.person_tags.merge_duplicate_person_tags` merged any that already
+  existed; it removed 53 across 129 photos here (it was the MCP server's tool until 2026-10-28).
 - **Per-Photo Locking**:A photo is locked for the duration of its processing by creating a
   file in `data/locks/`, named for the MD5 of its absolute path -- exclusive creation makes this
   atomic between processes. The lock records the holding process's pid, host and acquisition
@@ -232,7 +232,7 @@ back.
 Says how much of the library's file holds nothing: pages left free by deleted rows and dropped columns, which SQLite keeps until the file is rewritten. With `--apply`, backs the library up (`db.backup`, into `backups/`), then rewrites it without them (`VACUUM`, `db.compact`) and says the size before and after. The rewrite needs the file to itself; close the apps first. After phase 4's migrations photo_index holds about 1 GB free of 4 GB.
 
 ### `history [--change ID] [--limit N] [--reveal]`
-The library's journal (`tagpup.services.journal`): the changes the maintenance scripts and the MCP server's write tools applied, newest first -- each one's id, operation, status (`applied`, `derived_pending`, `undone`), when it was made and undone, the schema version it was made at, and how many rows of each table it inserted, updated and deleted. `--change ID` shows that change alone with the keys (ids) of every row it wrote; with `--reveal` too, each column's value before and after, a BLOB by its size. Values can name people, so they are shown only when asked.
+The library's journal (`tagpup.services.journal`): the changes the maintenance operations, the pages and the CLI applied, newest first -- each one's id, operation, status (`applied`, `derived_pending`, `undone`), when it was made and undone, the schema version it was made at, and how many rows of each table it inserted, updated and deleted. `--change ID` shows that change alone with the keys (ids) of every row it wrote; with `--reveal` too, each column's value before and after, a BLOB by its size. Values can name people, so they are shown only when asked.
 
 ### `undo ID [--apply]`
 Undoes change ID of the journal. Without `--apply` it rehearses: undoes the change and applies it again inside a transaction rolled back, and says whether that restored every row exactly. With `--apply` it writes the old values back, only where every row is still what the change left. Refused, with nothing written and exit status 1, when a row has changed since, when a newer change touched the same rows (named), or when the library's schema has moved on since the change was made -- and for a stamp of the library's settings, its first settings, which are changed rather than undone, and for a change whose undo would put back FaceNet (`faces.model` `mtcnn-facenet`, to which no library is switched: the switch's own rule and sentence, `settings.NOT_FACENET`, asked by `tagpup.services.settings.undo_check`; each live library's first switch, which inserted the row, among them) -- the one account of `tagpup.services.journal.why_not` over `UNDO_CHECKS`, whose every reason SPEC_TAGPUP_GUI.md lists (`/api/history`, `why_not`).

@@ -3,9 +3,8 @@
 The maintenance scripts in scripts/ each carried their own copy of the same steps --
 work out what would change, print it, and only with --apply back the library up, write
 and say what was written -- and they got them wrong one at a time: one printed what it
-had planned as what it had removed, six wrote without a backup. The MCP server's write
-tools make the same operations (docs/ARCHITECTURE.md, phase 7), so the steps live here,
-once, and a script and a tool call the same service.
+had planned as what it had removed, six wrote without a backup. So the steps live here,
+once, and every operation calls the same scaffold.
 
 An operation hands `run` two functions:
 

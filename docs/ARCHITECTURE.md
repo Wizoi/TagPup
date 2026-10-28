@@ -193,7 +193,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        naming_faces, identify, watching, recurring
   web/                 one Flask app per page from one factory (app.py), *_routes.py by concern, security,
                        lifecycle, libraries, state, responses
-  cli.py (tagpup_cli.py at the root is its launcher)    mcp/ (the MCP server, one tool per read, four maintenance operations)
+  cli.py (tagpup_cli.py at the root is its launcher)    mcp/ (the MCP server, one tool per read; it writes nothing)
 web/                   the pages (ES modules, no build step): common/ (api, paths, vocabulary, validate, dom,
                        dialog, tag-editor, settings, history), tagpup/, tuner/, activity/
 scripts/               programs to run (install_app, startup, measure_*, maintenance scripts); nothing imports from it
@@ -212,7 +212,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
   PC only (127.0.0.1 and ::1) until phase 10 adds logins. Also served: the Activity page (`/activity/`, the
   background work of every library, loopback only). The **CLI**
   (`tagpup_cli.py`: index, sync, history, undo, jobs, roots, embed-photos, ...) and the **MCP
-  server** (`python -m tagpup.mcp`, for Claude: reads give counts and ids, names and paths only with
+  server** (`python -m tagpup.mcp`, for Claude: reads only, counts and ids, names and paths only with
   `reveal=true`) are the other entry points. All build one `Runtime` and call services.
 - **One composition root** (`tagpup.runtime.Runtime`): models built once from the library's own settings (the
   one other: `embed-photos`'s new photo model, `photo_reembed.run`, writing under a key the library does not read
@@ -275,7 +275,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 row: what it found and what it left, applied only where the rows are still what the plan read, rehearsed by
 a dry run that applies and undoes inside a rolled-back transaction, undoable on the same terms. A bulk edit that writes photo files marks each file `writing`, then `done` in the same transaction
 that records its row; a crash is settled at the next start by what the file holds. Keys the journal can
-restore are AUTOINCREMENT (never reused). `History`/`undo` are in the CLI, the MCP server and the pages' gear.
+restore are AUTOINCREMENT (never reused). `History`/`undo` are in the CLI and the pages' gear; the MCP server has `history`.
 
 **One batch model** (`tagpup/services/batches.py`, `file_changes.write_fields`; owner, 2026-10-11). A batch of photo files -- more
 than 25 -- is the journaled change `write_fields` plans: its files' states in `change_files` are its progress, there is no table and

@@ -2,8 +2,9 @@
 records one change in the library's journal, copies nothing, writes what the plan said
 only while every row is what the plan read, and counts what the writes changed.
 
-tagpup.services.maintenance is what the CLI and the MCP server's write tools run on
-(docs/ARCHITECTURE.md, phase 7). Each operation is tested here through its service:
+tagpup.services.maintenance is what the maintenance operations run on (docs/ARCHITECTURE.md,
+phase 7): the scripts it replaced printed what they planned as what they had removed, and six
+wrote without a backup (#54). Each operation is tested here through its service:
 removing duplicate faces and merging duplicate person tags (re-reading rows from their
 files: tests/test_refresh_rows.py).
 """

@@ -283,7 +283,7 @@ _FILES = {
             "test_inspect_reads_only_the_photos_asked_about test_inspect_uses_the_stores_mtime_rule "
             "test_library "
             "test_library_registry_race test_local_server_socket test_log_runs test_logs "
-            "test_mcp_config_resolves test_mcp_write_tools "
+            "test_mcp_config_resolves "
             "test_patch_tool test_photo_open test_recurring_jobs test_result "
             "test_roots_ingress_keys_cover_the_routes test_roots_map "
             "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library test_tagpup_routes "

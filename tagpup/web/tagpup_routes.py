@@ -68,7 +68,7 @@ class FolderCache:
     (`stamp`, tagpup.services.photos.scan_stamp), and `get` hands it back only while they are
     where they were. That is the one way a scan goes stale (contract table row 11): every write
     of a held photo's row moves the photos counter, whoever makes it -- this server's writes,
-    the tag tree's rewrites, an undo, a sync, the indexer, a CLI or MCP write, a snapshot restore
+    the tag tree's rewrites, an undo, a sync, the indexer, a CLI write, a snapshot restore
     -- a move of a root moves it too (its salt), and an edit of the tree moves the taxonomy one.
     The scan after one is read again from the library's rows, at the cost of a stat of each file.
     `peek` is `get` without that check, for a caller that wants the scan's spellings and not its
