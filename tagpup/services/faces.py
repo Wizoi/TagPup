@@ -734,6 +734,29 @@ def record_detected(db_path, photo_path, detected, *, model, detector=None):
         )
         return 0
 
+def forget_for_new_picture(db_path, photo_path):
+    """Forget the faces of a photo whose picture changed -- a crop, any edit of its pixels, told by its decode's
+    fingerprint differing from its fingerprint row (photo_fingerprints.same_picture): their crops and vectors and every
+    record of a detector's look at it, as a quarter turn forgets them (tagpup.services.rotation), and here their rows
+    too -- a turn keeps its rows and turns their boxes, but these boxes are another picture's, never kept on the new one
+    (owner, 2026-10-27; docs/PLAN_KEEP_IN_STEP.md, scenario 4).
+
+    The fingerprint's key (images.FINGERPRINT_KEY) is one today: a change of it makes every stale photo's decode
+    another picture, and forgets its faces, so a key change must come with a migration decision (the owner's).
+
+    In a write of its own, before its new vector is kept (and so before the new picture is detected, or with no
+    face pass at all, --skip-faces): a run stopped at any point after it, or a batch whose write fails, leaves the photo
+    never examined, which the next index detects (photo_fingerprints.owed), and its batch's record_batch records the
+    new faces as a photo with none. Kept first, a stop before this write would leave a current vector on the old
+    faces, never owed again. Its person tags name them again (#788); a name or
+    an exclusion given by hand goes with its face (accepted, owner 2026-10-27). Returns the face rows removed."""
+    def forget(conn):
+        removed = faces.remove_for_photo(conn, photo_path)
+        faces_detected.forget(conn, photo_path)
+        return removed
+    return db.write_with_connection(db_path, forget, label="faces of the new picture of %s" % os.path.basename(photo_path))
+
+
 def record_batch(conn, batch, *, model, overwrite=False, detector=None):
     """Record the faces found in a batch of photos ({path: faces}) in one transaction, their vectors under `model`, the key
     of the face model that found them (tagpup.ml.faces.FaceModel.key).

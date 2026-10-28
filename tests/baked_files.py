@@ -27,6 +27,11 @@ def unit(dim, seed):
     return vector / np.linalg.norm(vector)
 
 
+def face_vector(seed):
+    """A face vector as long as the face model's (a bake holds no other), the same for the same `seed`."""
+    return unit(bake.FACE_DIM, seed).tolist()
+
+
 def area(n):
     return (0.2 + 0.1 * n, 0.4, 0.125, 0.25)
 
