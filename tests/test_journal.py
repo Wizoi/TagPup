@@ -12,11 +12,12 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import face_rows  # noqa: E402
 from face_rows import FACE_MODEL, FACENET  # noqa: E402
 import migration_names  # noqa: E402
 from journal_library import JournalLibrary, jpeg, vector  # noqa: E402
 
-from tagpup.store import db, faces, journal, schema  # noqa: E402
+from tagpup.store import db, journal, schema  # noqa: E402
 
 
 class Crash(BaseException):
@@ -249,8 +250,8 @@ class Refusals(JournalLibrary):
 
 class AFacePassFolderUndone(JournalLibrary):
     """The new face model's pass gives a folder's photos new faces, each with its crop and its vector under the new
-    model's key and no other, as ONE journaled change, through its own writer (tagpup.store.faces.give_vectors: the rows
-    written, then recorded as stored by journal.record_inserted). A row of another change under such a face (a vector a
+    model's key and no other, as ONE journaled change, recorded as its deleted writer recorded it
+    (face_rows.as_a_face_pass_gave: the rows written, then recorded as stored). A row of another change under such a face (a vector a
     later run added under another model) refuses the undo, and says so; its own crop and vector stand in no way. The
     folder undone, and written again, was scenario P8, whose command is deleted."""
     NEW_MODEL = FACE_MODEL
@@ -262,8 +263,8 @@ class AFacePassFolderUndone(JournalLibrary):
         def work(conn):
             db.begin(conn, immediate=True)
             change_id = journal.record(conn, "face pass (%s)" % self.NEW_MODEL, [], {"folder": "Harbour Regatta"})
-            (face,) = faces.give_vectors(conn, change_id, photo, self.NEW_MODEL, [],
-                                         [([40, 40, 140, 160], 0.93, vector(7), jpeg(7))], {"new": 1})
+            (face,) = face_rows.as_a_face_pass_gave(conn, change_id, photo, self.NEW_MODEL, [],
+                                                    [([40, 40, 140, 160], 0.93, vector(7), jpeg(7))], {"new": 1})
             return change_id, face
         return db.write_with_connection(self.db_path, work)
 

@@ -31,14 +31,14 @@ accepted, 2026-10-16). **Merged:** 1f (`repair-vectors`, applied on photo_index 
 ahead: 1.94 to 1.68 s a photo on an event folder, measured below). **Measured, not built:** 1c (after 1b the card waits for its next photo 1.6% of the index on the many-face sample, 0.2% on the event folder). **Built:** 2b (a name on likeness alone needs a margin over the next person, 0.04 to name and 0.02 to offer; names given from now on only, DECISIONS 2026-10-17). **Built:** 2c (density measured, no change; the cluster-of-one vote gated). **Measured:** phase 3's speed check (2026-10-18,
 section 7: SCRFD 10g in torch and AdaFace IR-101, about 1.8 hours for photo_index against 9.3, no second runtime;
 chosen by the owner, DECISIONS 2026-10-18). **Built (2026-10-18):** the model module (merge 2a), the
-`faces.model` setting with its one refusal and `Runtime.look_at_faces` (merge 2b), and migration 33 (pulled forward:
+`faces.model` setting with its one refusal and `Runtime.look_at_faces` (merge 2b; deleted 2026-10-27 with the pass), and migration 33 (pulled forward:
 each face's vector in `face_embeddings` under its model's key, every reader keyed by the library's `faces.model`);
 **installed on all three libraries on 2026-10-18** (schema 33; vectors checked byte for byte against the backups,
 named counts unchanged). **Merge 3, the pass:** slice A1 merged (one pairing rule, Suggest and a face with no vector,
-the undo of a pass's face); slice A2 (the store layer and `tagpup/services/face_pass.py`, the model injected) is built
+the undo of a pass's face); slice A2 (the store layer and `tagpup/services/face_pass.py`, the model injected; deleted 2026-10-27, cut 3) is built
 and reviewed but NOT merged: two blockers to fix first (a photo removed while the pass runs must not be re-made as
 a ghost row; the change's name must not carry the folder) and two owner decisions taken (named old faces are
-paired first; new faces stay unnamed). **Slice B** (the `face-pass` command) is built. **Slice C** (the gate's scoring,
+paired first; new faces stay unnamed). **Slice B** (the `face-pass` command) is built (deleted 2026-10-27 by docs/PLAN_KEEP_IN_STEP.md cut 3: the index keeps the files and the library in step). **Slice C** (the gate's scoring,
 `scripts/measure_face_gate.py`, read-only) is built on `feature/gate-scoring`, as built below; the owner picks the naming
 precision from its numbers. **Phase 5 step 1 (2026-10-24):** the photo-model spike is measured (section 7) and is the evidence for choosing ViT-SO400M-14-SigLIP2 (main session, 2026-10-24); **Step 2a (2026-10-24) is built:** the loader (`tagpup/ml/photo_models.py`, SigLIP 2 through `runtime.clip`), the tokenizer (`tokenizers` alone) and the readiness gate on a photo-model switch; **Step 2b (2026-10-24) is built:** `embed-photos` (the new model's vectors made beside the old, `tagpup/services/photo_reembed.py`) and `set-photo-model` (the switch as one gated journaled change); `repair-vectors` deleted. The live run and switch are the main session's, then retiring the old vectors. Suggest's recalibration is not built. **Next:** merge slice C, a run on a copy, a small real folder the owner checks. Update a phase's status
 here when it merges.
@@ -302,6 +302,8 @@ Size: one or two branches.
 
 ### Phase 3: Faces, one pass: the detector and the recogniser (the schema, migration 33)
 
+> **Retired by cut 3 (2026-10-27, docs/PLAN_KEEP_IN_STEP.md):** `bake-photos` and `face-pass` are gone; the index keeps the files and the library in step on its own. What follows is the design log as built; the command, `services/face_pass.py` and their tests named in it no longer exist.
+
 The report planned a recogniser-only swap first. Phase 0 showed why that is not cheap: the alignment the new
 recognisers need takes the five landmarks, which are not stored, so a "keep every box" swap runs the detector over
 every photo anyway (about 0.78 s a photo with MTCNN, about 13 hours for photo_index). So the detector and the
@@ -386,7 +388,7 @@ Scenario V11, `tests/test_switching_a_librarys_face_model.py`.
   before it runs in the server.
 
 **Merge 3, slice A2, as built (2026-10-18): the pass's store and service, the model handed in.** `tagpup.services.face_pass.run`
-(People's; the model Views-AI's), scenario P8 (`tests/test_the_face_pass.py`, the model stood in for by
+(People's; the model Views-AI's), scenario P8 (`tests/test_the_face_pass.py`, deleted with the pass 2026-10-27; the model stood in for by
 `tests/stand_in_models.NewFaces`). The store's part is `tagpup.store.faces`: `vectors_under(conn, key, photo_ids)` (the reader
 with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, which records every row it adds as stored
 (`journal.record_inserted`). `KEPT_FACE_MODELS` is not extended here; no CLI yet (slice B).
@@ -421,7 +423,7 @@ with an explicit key), `boxes_of`, `pass_photos` and the writer `give_vectors`, 
 - Slice B: the CLI, its `undo` output naming the first ten reasons a folder's undo is refused, the card's turn, read-ahead.
 
 **Merge 3, slice B, as built (2026-10-18): the `face-pass` command.** `tagpup_cli.py face-pass DIRECTORY... [--apply]
-[--reveal]` (docs/SPEC_TAGPUP_CLI.md), scenario P8 from the command line (`tests/test_a_face_pass_from_the_command_line.py`).
+[--reveal]` (docs/SPEC_TAGPUP_CLI.md), scenario P8 from the command line (`tests/test_a_face_pass_from_the_command_line.py`, deleted 2026-10-27).
 - A process of its own: the model from `Runtime.look_at_faces`, the card taken at the first photo the model is asked about
   and let go at `end()`; not in `tagpup.web.lifecycle.under_way`, as the brief above chose.
 - Read-ahead: `face_pass.run(..., reading=...)` reads the photos ahead with `tagpup.core.read_ahead`, the CLI giving it the
@@ -650,6 +652,8 @@ owner what exists today before scoping it, and plan it only as the reading of th
 Owner: Views-AI. Size: two merges (setting and model loader; re-embed and recalibration).
 
 ### Phase 6: Bake into the photo files (its own project, last, one pass)
+
+> **Retired by cut 3 (2026-10-27, docs/PLAN_KEEP_IN_STEP.md):** `bake-photos` and `face-pass` are gone; the index keeps the files and the library in step on its own. What follows is the design log as built; the command, `services/face_pass.py` and their tests named in it no longer exist.
 
 Decided 2026-10-07 (the current model's vectors and every detected face's region into the file's XMP), advised against
 starting in October (health review 9.2). **Owner, 2026-10-16: do it after the final design and research are all

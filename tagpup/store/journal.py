@@ -30,9 +30,10 @@ each with what the plan read of the row (`expect`). Then:
 
 A change whose rows its writer writes itself is recorded instead (`record`), applied, in
 the writer's transaction. One may be added to in later transactions of its own
-(`record_inserted`, while `kept`): the face pass opens a folder's change at its first
-photo and adds each photo's rows, and counts, in that photo's transaction, so a change
-stopped part-way holds exactly what was committed and is undone as that.
+(`add_counts`, while `kept`): a retiring of vectors continues its change and adds each
+piece's counts in that piece's transaction, so a change stopped part-way says what was
+committed. (The face pass, deleted 2026-10-27, added each photo's rows so; its changes
+stay in the journals and are undone as recorded.)
 
 Either way a write is refused, before anything is written, when it would leave a row
 naming a row that is not there -- a face put back on a photo deleted since, a node under
@@ -926,15 +927,6 @@ def record_rows(conn, change_id, changes):
     _record(conn, change_id, changes)
 
 
-def record_inserted(conn, change_id, rows, counts=None):
-    """Add to change `change_id` the rows the caller has just inserted, [(table, key)] of tables in KEYS, each read back
-    whole as stored, so that an undo deletes exactly them and a rehearsal puts them back byte for byte; and add `counts`
-    to the change's summary, in the same transaction, so a change whose rows come a piece at a time (the face pass:
-    tagpup.store.faces.give_vectors) says what was committed, never what was planned."""
-    _record(conn, change_id, _inserted(conn, rows))
-    add_counts(conn, change_id, counts)
-
-
 def _recordable(tables):
     """Refuse a table a change does not record (KEYS)."""
     unknown = sorted(set(tables) - set(KEYS))
@@ -942,18 +934,9 @@ def _recordable(tables):
         raise ValueError("%s is not a table a change records" % unknown[0])
 
 
-def _inserted(conn, rows):
-    """[RowChange] of `rows`, [(table, key)] of tables in KEYS just inserted, each read back whole as stored."""
-    tables = {table for table, _key in rows}
-    _recordable(tables)
-    columns = {table: schema.table_columns(conn, table) for table in tables}
-    return [RowChange("insert", table, tuple(key), None, _read(conn, table, tuple(key), columns[table]))
-            for table, key in rows]
-
-
 def add_counts(conn, change_id, counts):
     """Add `counts` to the summary of change `change_id`, in the caller's transaction: the one way a change added to a
-    piece at a time keeps its counts at what was committed (record_inserted; a retiring of vectors, after its write)."""
+    piece at a time keeps its counts at what was committed (a retiring of vectors, after its write)."""
     if not counts:
         return
     (text,) = conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()

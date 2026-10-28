@@ -37,7 +37,7 @@ planned below and not built in this branch.
 | 9 | `ml/photo_models.py` row `("ViT-H-14", "laion2b_s32b_b79k")`, listed first | ViT-H's word cut 0.23 and its forced size | 0 vectors, 0 libraries | Order now (Cut A); DELETE the row in Cut B. The undo of 3249/343/1222 stays refused (UNKNOWN_PHOTO_MODEL instead of TOO_FEW) |
 | 10 | `services/face_gate.py` (235), `scripts/measure_face_gate.py` (192), the two-model tests of scenario P9 (deleted 2026-10-26: `tests/test_the_gate_reads_by_year_gap.py` keeps `--alone`'s by-year reading on the new model), the gate section of `store/faces.py` (`pass_counts`' gate half), `core/holdout.py` for its gate use | Phase 3's gate: old against new on faces holding both vectors | 0 faces hold both | DELETE (Cut B; a deletion; scenario P9 leaves `tests/owners.py`) |
 | 11 | `retire-faces`, `retire-vectors` (CLI), `services/retire_faces.py` (531), `OLD = MTCNN_FACENET`, and its tests (895 lines) | Retires the old detector's faces and FaceNet's vectors | Applied once in each library; 0 left to retire | DONE (cut B1, 2026-10-25): the commands, service and tests deleted; `retire faces (%s)` is in `journal.RETIRED` until the baseline migration, `retire vectors (%s)` refused by `retire_photo_vectors.vectors_check`, and a face pass recorded before a standing `retire faces` change refused by `journal.pass_check` (2026-10-26), until the same migration. The generic "retire the old model's data" step is the seam's (Cut C) |
-| 12 | `face-pass` (`services/face_pass.py`, 260), `pass_counts(conn, MTCNN_FACENET, model)` in `switch_on` | Re-embeds faces and carries names by overlap from the old faces to the new ones | 0 libraries need it now | CONVERT in Cut C: "old" becomes the library's current model, not FaceNet. This is the flow's re-embed and naming-again step |
+| 12 | `face-pass` (`services/face_pass.py`, 260), `pass_counts(conn, MTCNN_FACENET, model)` in `switch_on` | Re-embeds faces and carries names by overlap from the old faces to the new ones | 0 libraries need it now | DONE in part (2026-10-27, docs/PLAN_KEEP_IN_STEP.md cut 3): `face-pass` and `services/face_pass.py` deleted; a face-model switch re-embeds through the index (the photos never examined under the new model are its work). Left: `pass_counts` in `switch_on`, whose refusal no command can now pass (the owner's to decide) |
 | 13 | `embed-photos`, `set-photo-model`, `retire-photo-vectors`, `services/photo_reembed.py`, `retire_photo_vectors.py`, `settings.photo_switch_on` / `covers` | Re-embed, declare, retire, for any photo key | Generic | KEEP as the photo half of the flow. The 5% gate (`covers`) is the check that the re-embed was done. Nothing in it is ViT-H's |
 | 14 | `cluster-faces`, `tags-from-faces`, automatch | Naming again after a new model | Generic | KEEP: the flow's naming step |
 | 15 | `faces_detected` rows under MTCNN's detector name | A record of "looked at" that no library on the new model reads | 0 / 175 / 139 (2026-10-26) | DELETE: `delete-old-detector-rows`, with row 4's settings, one journaled change (`faces_detected` in `journal.KEYS`), undone from History (owner, 2026-10-26; DECISIONS 2026-10-26) |
@@ -55,10 +55,10 @@ KEEP 7 (13, 14, 15, 16, 17, 18, INVARIANTS' history line).
 ## The switch machinery against the one flow
 
 The flow is: declare the new model, re-embed, name again, retire the old model's data. **The flow itself:**
-embed-photos, set-photo-model, retire-photo-vectors, face-pass (re-embed and carry names), cluster-faces / tags-from-faces
+embed-photos, set-photo-model, retire-photo-vectors, the index after a face-model switch (re-embed; face-pass deleted 2026-10-27), cluster-faces / tags-from-faces
 / automatch (name again), the switch's coverage gate. **Extra**, kept only so FaceNet could stay a choice: the switch back
 and NONE_HELD (7), FaceNet's cuts (8), MTCNN's settings (4), the gate between models (10), retire-faces and retire-vectors
-as written for FaceNet alone (11), and face-pass's FaceNet-as-old (12).
+as written for FaceNet alone (11), and face-pass's FaceNet-as-old (12, the command deleted 2026-10-27).
 
 ## The cuts (none of them writes the live libraries)
 
@@ -78,6 +78,6 @@ as written for FaceNet alone (11), and face-pass's FaceNet-as-old (12).
 - **Cut C, the seam** (about 500 to 700 lines): one module declares each model kind (photo: key spelling, loader,
   dimensions, word cut, sizes; face: key, loader, vector dimension, the detector record's spelling, the floor). Runtime,
   settings (`embedder`, `faces`), validation's choices, bake (`PHOTO_DIM`, `FACE_DIM`), clustering's cuts and the switch
-  ask it. face-pass and retire are one flow with "old" = the library's current model. `photo_models.py` folds into it.
+  ask it. The re-embed (the index, face-pass being deleted) and retire are one flow with "old" = the library's current model. `photo_models.py` folds into it.
 - **The owner's**: deleting the unread MTCNN settings rows and `faces_detected` rows from the live libraries (a
   journaled write).

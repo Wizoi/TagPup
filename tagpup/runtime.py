@@ -42,7 +42,6 @@ import logging
 import os
 import threading
 import time
-import types
 
 from tagpup import config as tagpup_config
 from tagpup.core import gpu_turns, validation
@@ -639,7 +638,7 @@ class Runtime:
 
         Every write of faces gets its face models here (the CLI's index, Suggest's begin, Just look included, the
         warm-up), whichever the library names: each answers the same calls (tagpup.ml.faces.FaceModel,
-        tagpup.ml.scrfd_adaface.ScrfdAdaFace). A look that writes nothing builds its model by look_at_faces."""
+        tagpup.ml.scrfd_adaface.ScrfdAdaFace)."""
         settings = settings or self.settings(library)
         self.idle.used(MODELS)
         with self._lock:
@@ -961,40 +960,6 @@ class Runtime:
             end()
             raise
         return RunModel(model, end)
-
-    def look_at_faces(self, library, what=None, cancelled=None, report=None):
-        """The new face model (validation.SCRFD_ADAFACE) for a look that writes nothing -- phase 3's pass reading what
-        it finds, beside the faces a library holds, before any library is switched to it (docs/AI_PIPELINE.md, phase 3):
-        a RunModel whose `picture` and `detect_and_embed` give a photo's faces as the model finds them, and `end()`, which the caller
-        calls in a finally. The model is the new one, not the library's (`library` gives the CLIP part of the set held,
-        and its name to a run refused beside it), so a library refused its face model (Runtime.faces) can still be
-        looked at. Reads the library's settings without stamping it (peek_settings) and writes nothing to it. The new
-        model alone: the library's own faces are read where they are kept.
-
-        Held as a run is (begin): its set -- the library's CLIP model's settings and {"model": SCRFD_ADAFACE} -- under a
-        _Lease, so
-        a Suggest on another set is refused while it holds it, and it is refused (gpu_turns.OtherModelsInUse, nothing
-        begun) while a run on another set is under way; the graphics card taken on its first use (_RunTurn) and let go
-        at end(), the model with it when no library uses it. A weight file missing raises its sentence on first use
-        (tagpup.ml.scrfd_adaface.missing_weights): the face models of the libraries are not touched."""
-        model = validation.SCRFD_ADAFACE
-        looked = types.SimpleNamespace(embedder=peek_settings(library).embedder,
-                                       faces=library_settings_service.model_alone(model))
-        what = what or "Looking at the faces in %s with %s" % (library.name, model)
-        self.idle.used(MODELS)
-        with self._lock:
-            self._refuse_another_set(library, looked)
-            built = self._model(self._face_models, self._build_faces, looked.faces)
-            lease = _Lease(None, what, looked)
-            self._leases.append(lease)
-            dropped = self._drop_other_sets(lease.models)
-        _unload(dropped)
-        turn = _RunTurn(self.card, what, (built,), cancelled, report)
-
-        def end():
-            turn.close()
-            self._end(lease)
-        return RunModel(_OnTheCard(built, turn), end)
 
     def _another_set(self, models):
         """The run under way (its _Lease) holding other models than `models`, or None: this process holds one set at a

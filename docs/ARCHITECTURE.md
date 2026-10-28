@@ -182,7 +182,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        added_folders, faces_detected, photo_fingerprints, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
                        thumbs, names, shares, lock_owners, recycle_bin
-  ml/                  models: clip, faces, scrfd_adaface (phase 3's: built for a look, Runtime.look_at_faces, and for a library set to it, faces.model, which a switch allows once the pass has reached its faces), vector_index, grouping, and gpu (the card's turn)
+  ml/                  models: clip, faces, scrfd_adaface (phase 3's: built for a library set to it, faces.model), vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
                        roots*, settings, journal, file_changes, batches, bulk_edit, selection,
@@ -215,8 +215,8 @@ programs only. A moved module takes every importer with it and leaves nothing at
   server** (`python -m tagpup.mcp`, for Claude: reads give counts and ids, names and paths only with
   `reveal=true`) are the other entry points. All build one `Runtime` and call services.
 - **One composition root** (`tagpup.runtime.Runtime`): models built once from the library's own settings (the
-  two others: the face pass's new face model, `look_at_faces`, and `embed-photos`'s new photo model, `photo_reembed.run`,
-  each writing under a key the library does not read until its switch),
+  one other: `embed-photos`'s new photo model, `photo_reembed.run`, writing under a key the library does not read
+  until its switch),
   warmed on a thread, released after an idle period; each library's job runners; `begin`/`gpu_turn` take the
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child

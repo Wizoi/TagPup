@@ -3,6 +3,8 @@
 Status: DRAFT 2026-10-24, from the three owners' read-only sweeps (Files, People, Integration). Nothing is built; no
 file is written. Parent plan: [AI_PIPELINE.md](AI_PIPELINE.md) "Phase 6". Counts below were made this session.
 
+> **Retired by cut 3 (2026-10-27, docs/PLAN_KEEP_IN_STEP.md):** `bake-photos` and `face-pass` are gone; the index keeps the files and the library in step on its own. The `bake-photos` command this design names is deleted; the index writes the bake (cut 2).
+
 ## 1. Live shape
 
 | Library | Photos | Faces | Extensions |

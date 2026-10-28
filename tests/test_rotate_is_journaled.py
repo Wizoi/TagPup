@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import face_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, crash_at, requires_exiftool  # noqa: E402
 
@@ -38,7 +39,6 @@ from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import duplicate_faces, file_changes, journal as journal_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, embeddings, faces_detected, journal, photo_fingerprints, schema  # noqa: E402
-from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 MODEL = embeddings.model_key("ViT-T", "tiny", True, 1.4, 512)
@@ -248,12 +248,13 @@ class TheFacesOfATurnedPhoto(RotationCase):
                           for column, value in (("face_id", face_id), ("jpeg", crop))])
 
     def a_pass(self, path, shape):
-        """A face pass that finds one new face, with its crop, in the photo at `path`, through the pass's writer."""
+        """A face pass that finds one new face, with its crop, in the photo at `path`, as the deleted pass recorded it."""
         def work(conn):
             change_id = journal.record(conn, journal_service.FACE_PASS % self.KEY, [],
                                        {"folder": store_roots.to_row(conn, os.path.dirname(path)), "matched": 0, "new": 0})
-            (face_id,) = store_faces.give_vectors(conn, change_id, path, self.KEY, [],
-                                                  [(list(BOX), 0.99, self.VECTOR, self.CROP)], {"matched": 0, "new": 1})
+            (face_id,) = face_rows.as_a_face_pass_gave(conn, change_id, path, self.KEY, [],
+                                                       [(list(BOX), 0.99, self.VECTOR, self.CROP)],
+                                                       {"matched": 0, "new": 1})
             if shape != self.SHAPES[0]:
                 self.crop_recorded(conn, change_id, "insert", face_id, self.CROP)
             return change_id
