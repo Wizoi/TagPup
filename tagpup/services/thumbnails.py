@@ -243,7 +243,7 @@ def sweep(library):
     of every photo's id and path. Returns {"removed", "bytes", "temporaries"}; zeros for a cache that is
     not there."""
     root = library.thumbs
-    if not os.path.isdir(root):
+    if not os.path.isdir(root):   # unbounded: the thumbnail cache, a folder of this PC's
         return {"removed": 0, "bytes": 0, "temporaries": 0}
     conn = _look(library)
     try:
@@ -271,7 +271,7 @@ def clear(library):
     """Delete the whole cache of `library`: it has been deleted, or made again from nothing. Returns whether
     a cache was there."""
     root = library.thumbs
-    if not os.path.isdir(root):
+    if not os.path.isdir(root):   # unbounded: the thumbnail cache, a folder of this PC's
         return False
     shutil.rmtree(root, ignore_errors=True)
     return True
@@ -323,7 +323,7 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                         counts["missing"] += 1
                         continue
                     path_hash = _hash_of(row_path)
-                    if os.path.isfile(thumbs.entry_path(root, photo_id, path_hash, *stamp)):
+                    if os.path.isfile(thumbs.entry_path(root, photo_id, path_hash, *stamp)):   # unbounded: the cache
                         counts["present"] += 1
                         continue
                     counts["to_make"] += 1

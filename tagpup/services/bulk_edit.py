@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import recycle_bin
+from tagpup.files import recycle_bin, shares
 from tagpup.services import batches, file_changes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -226,10 +226,10 @@ def _cannot_keep(present):
         if folder not in bins:
             bins[folder] = recycle_bin.no_bin_reason(path)
         if bins[folder]:
-            try:
-                size = os.path.getsize(path)
-            except OSError:
+            stamp = shares.known_stamp(path)
+            if stamp is None:
                 continue
+            size = stamp[1]
             through.append((photo_id, size))
             largest = max(largest, size)
     if not through:

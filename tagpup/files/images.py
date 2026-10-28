@@ -13,6 +13,7 @@ import stat
 from PIL import Image, ImageDraw, ImageOps
 
 from tagpup.core import orientation, paths
+from tagpup.files import shares
 
 #: Pillow refuses a picture over about 179 million pixels as a possible decompression
 #: bomb; a stitched panorama is larger. The photos are the owner's own. Four modules
@@ -167,7 +168,7 @@ def tail_check(photo_path):
     photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode. It cannot see
     damage in the middle of a picture, which the indexer's full decode (`opened`) does. No write asks
     it (DECISIONS 2026-10-15)."""
-    if os.path.getsize(photo_path) == 0:
+    if os.path.getsize(photo_path) == 0:   # unbounded: the read of the photo's end, next, has no deadline (by design)
         raise Unreadable("empty", "the file is empty")
     return zero_tail_of(photo_path)
 
@@ -234,34 +235,42 @@ def walks_into(entry):
 def photo_entries(folder, unlisted=None):
     """Each photo under `folder`, at any depth, as its folder's listing entry, in the
     order os.walk gives: a folder's photos, then each subfolder in turn. Walked from
-    paths.stored(folder); a folder that cannot be listed, or whose listing fails part-way
-    (a share dropping), is passed over and, when `unlisted` (a list) is given, appended to
-    it: what it holds was not looked at, which is not the same as not there (#1356)."""
+    paths.stored(folder), each folder listed through shares.listing; a folder that cannot be
+    listed, whose listing fails part-way, or on a share that does not answer within its wait
+    (a share dropping mid-walk, #2104), is passed over and, when `unlisted` (a list) is given,
+    appended to it: what it holds was not looked at, which is not the same as not there (#1356)."""
     pending = [paths.stored(folder)]
     while pending:
         current = pending.pop()
         try:
-            listing = os.scandir(current)
+            listing = shares.listing(current)
         except OSError:
+            listing = shares.UNANSWERED
+        if listing is shares.UNANSWERED:
             if unlisted is not None:
                 unlisted.append(current)
             continue
         subfolders = []
-        with listing:
-            try:
-                for entry in listing:
-                    if walks_into(entry):
-                        subfolders.append(entry.path)
-                    elif is_photo(entry.name):
-                        try:
-                            if not entry.is_dir():
-                                yield entry
-                        except OSError:
-                            continue
-            except OSError:
-                if unlisted is not None:
-                    unlisted.append(current)
+        for entry in listing:
+            if walks_into(entry):
+                subfolders.append(entry.path)
+            elif is_photo(entry.name):
+                try:
+                    if not entry.is_dir():
+                        yield entry
+                except OSError:
+                    continue
         pending.extend(reversed(subfolders))
+
+
+def _listing(folder):
+    """shares.listing(folder), or [] when it cannot be listed or does not answer: what the one-folder looks below take
+    a folder they cannot look at for."""
+    try:
+        found = shares.listing(folder)
+    except OSError:
+        return []
+    return [] if found is shares.UNANSWERED else found
 
 
 def photos_under(folder):
@@ -274,43 +283,36 @@ def photos_under(folder):
 
 def has_subfolders(folder):
     """Does `folder` hold a folder the walk would go into (walks_into): not a link or a
-    junction? False for one that cannot be listed."""
-    try:
-        with os.scandir(paths.stored(folder)) as listing:
-            return any(walks_into(entry) for entry in listing)
-    except OSError:
-        return False
+    junction? False for one that cannot be listed, or on a share that does not answer."""
+    return any(walks_into(entry) for entry in _listing(folder))
 
 
 def photos_in(folder):
     """The photos directly in `folder`, not in its subfolders, in the form the index stores:
     what indexing a folder alone reads (sync's new files in a folder the library holds)."""
-    folder = paths.stored(folder)
-    try:
-        with os.scandir(folder) as listing:
-            return [entry.path for entry in listing if is_photo(entry.name) and not walks_into(entry)
-                    and not entry.is_dir()]
-    except OSError:
-        return []
+    found = []
+    for entry in _listing(folder):
+        try:
+            if is_photo(entry.name) and not walks_into(entry) and not entry.is_dir():
+                found.append(entry.path)
+        except OSError:
+            continue
+    return found
 
 
 def stamps_in(folder):
     """{paths.key: (path as stored, mtime, size)} of the photos directly in `folder`, not in its subfolders:
     photos_in, each with the stamp its listing gives, as stamps_under does for a folder and all below it."""
     found = {}
-    try:
-        with os.scandir(paths.stored(folder)) as listing:
-            for entry in listing:
-                if is_photo(entry.name) and not walks_into(entry):
-                    try:
-                        if entry.is_dir():
-                            continue
-                        stat_of = entry.stat()
-                    except OSError:
-                        continue
-                    found[paths.key(entry.path)] = (entry.path, stat_of.st_mtime, stat_of.st_size)
-    except OSError:
-        pass
+    for entry in _listing(folder):
+        if is_photo(entry.name) and not walks_into(entry):
+            try:
+                if entry.is_dir():
+                    continue
+                stat_of = entry.stat()
+            except OSError:
+                continue
+            found[paths.key(entry.path)] = (entry.path, stat_of.st_mtime, stat_of.st_size)
     return found
 
 

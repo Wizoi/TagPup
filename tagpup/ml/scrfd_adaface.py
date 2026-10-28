@@ -30,7 +30,7 @@ from PIL import Image
 from torchvision.ops import nms
 
 from tagpup.core import orientation, validation
-from tagpup.files import images
+from tagpup.files import images, shares
 from tagpup.ml import free_device_memory, gpu, refuse_in_tests
 
 logger = logging.getLogger("tagpup_cli.faces")
@@ -295,7 +295,7 @@ class ScrfdAdaFace:
         sees it (its faces' boxes kept in the picture as stored: kept), and fitted into each square: the squares are
         this detector's cap.
         NotDetected when the file is gone or its picture does not decode."""
-        if not os.path.exists(img_path):
+        if not shares.there(img_path):
             return NotDetected()
         try:
             img = images.opened(img_path, upright=True)

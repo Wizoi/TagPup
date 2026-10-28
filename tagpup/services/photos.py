@@ -57,12 +57,9 @@ def page_record(path, meta, mtime=0.0, size=0):
 
 
 def file_stamp(path):
-    """(mtime, size) of the file at `path` as it is now, or None when there is none or it cannot be read."""
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return None
-    return (stat.st_mtime, stat.st_size)
+    """(mtime, size) of the file at `path` as it is now, or None when there is none, it cannot be read, or its share does
+    not answer (tagpup.files.shares.known_stamp): the look for the pages, which may not import tagpup.files."""
+    return shares.known_stamp(path)
 
 
 def changed_on_disk(path, stamp):
@@ -114,8 +111,8 @@ def scan_folder(library, folder, exiftool_path):
     server's scan used the default face roots alone.
     """
     folder = paths.stored(folder)
-    image_files = images.photos_under(folder)
-    if not image_files:
+    listed = images.stamps_under(folder)
+    if not listed:
         return {}
 
     known = {}
@@ -136,16 +133,12 @@ def scan_folder(library, folder, exiftool_path):
         logger.warning("Failed to query index DB for folder scan cache: %s", e)
 
     found, to_read = {}, []
-    for file in image_files:
-        try:
-            stat = os.stat(file)
-        except OSError:
-            continue
-        row = known.get(paths.key(file))
-        if row and photos.describes(row["mtime"], row["size"], (stat.st_mtime, stat.st_size)):
-            found[paths.key(file)] = page_record(row["path"], row, stat.st_mtime, stat.st_size)
+    for key, (file, mtime, size) in listed.items():   # the stamps the listing gave: no look at each file (#2104)
+        row = known.get(key)
+        if row and photos.describes(row["mtime"], row["size"], (mtime, size)):
+            found[key] = page_record(row["path"], row, mtime, size)
         else:
-            to_read.append((file, stat.st_mtime, stat.st_size))
+            to_read.append((file, mtime, size))
 
     if to_read:
         logger.info("Scan found %d new/modified files in %s. Running ExifTool...", len(to_read), folder)
@@ -212,7 +205,7 @@ def page_copy(photo_path, max_size=None, upright=True):
     """
     if not images.is_servable(photo_path):
         raise Refused("Forbidden: Invalid file type requested")
-    if not os.path.exists(photo_path):
+    if not shares.there(photo_path):
         raise NotFound("Photo file not found: %s" % photo_path)
     if max_size:
         try:
@@ -272,7 +265,7 @@ def face_crop(library, face_id):
     photo_path, box, crop = found
     if crop:
         return crop
-    if not photo_path or not os.path.exists(photo_path):
+    if not photo_path or not shares.there(photo_path):
         raise NotFound("Original photo not found")
     box = images.parse_box(box)
     if len(box) < 4:
@@ -365,7 +358,7 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     held_keys = {paths.key(p) for p in held}
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
-    present = [p for p in photo_paths if os.path.exists(p)]
+    present = [p for p in photo_paths if shares.there(p)]
     captions = names.read_for_renaming(exiftool_path, present)
     kept = preserve_names(library, present, exiftool_path, split=(held, loose))
     if kept.refused:
@@ -611,9 +604,9 @@ def rotate(library, photo_path, direction, exiftool_path):
     if turned is None:
         result.fail(photo_path, "; ".join(why for _what, why in result.skipped) or "it was not turned")
         return result
-    stat = os.stat(photo_path)
+    mtime, size = shares.known_stamp(photo_path) or (None, None)
     result.details.update(turned)
-    result.details.update(mtime=stat.st_mtime, size=stat.st_size)
+    result.details.update(mtime=mtime, size=size)
     return result
 
 
@@ -628,10 +621,11 @@ def count_photos(folder, recursive=True):
             count = sum(1 for _entry in images.photo_entries(folder))
             has_subdirs = images.has_subfolders(folder)
         else:
-            for entry in os.listdir(folder):
-                if os.path.isdir(os.path.join(folder, entry)):
+            listed = shares.listing(folder)
+            for entry in () if listed is shares.UNANSWERED else listed:
+                if entry.is_dir():
                     has_subdirs = True
-                elif images.is_photo(entry):
+                elif images.is_photo(entry.name):
                     count += 1
     except OSError:
         pass
@@ -683,7 +677,7 @@ def indexed_folders(library):
             entry = listed.setdefault(paths.key(current), [current, 0, 0])
             entry[1] += count
             current = parent
-    return [{"path": folder, "photos": under, "own_photos": own, "on_disk": os.path.isdir(folder)}
+    return [{"path": folder, "photos": under, "own_photos": own, "on_disk": shares.folder_state(folder) == "there"}
             for _key, (folder, under, own) in sorted(listed.items())]
 
 

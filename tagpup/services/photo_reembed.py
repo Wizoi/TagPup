@@ -21,6 +21,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from tagpup.files import shares
 from tagpup.ml import photo_models
 from tagpup.services import search
 from tagpup.services import settings as library_settings
@@ -135,7 +136,7 @@ def plan(library, runtime, model):
     "gone" (of those, the file is not there), "seconds" (the estimate)}. ValueError for a model not to be made."""
     _settings, key = _key_of(runtime, library, model)
     todo, held = _rows(library, key)
-    gone = sum(1 for _photo_id, path in todo if not os.path.exists(path))
+    gone = sum(1 for _photo_id, path in todo if shares.stamp_of(path) is None)   # not a share that does not answer
     return {"key": key, "photos": len(todo) + held, "held": held, "to_embed": len(todo), "gone": gone,
             "seconds": (len(todo) - gone) * SECONDS_A_PHOTO}
 
@@ -185,7 +186,7 @@ def embed_pass(clip, todo, keep, progress=None, should_stop=None, workers=6, bat
     waiting = []
 
     def read(item):
-        stat = os.stat(item[0])
+        stat = os.stat(item[0])   # unbounded: the read of the photo's picture, next, has no deadline (by design)
         return item, (stat.st_mtime, stat.st_size), clip.input_of(item[0], load=False)
 
     def missed(problem=None):

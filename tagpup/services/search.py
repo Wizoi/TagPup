@@ -18,7 +18,7 @@ import numpy as np
 
 from tagpup.core import paths
 from tagpup.core.fields import read_document_id
-from tagpup.files import images
+from tagpup.files import images, shares
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
 from tagpup.store import derived as store_derived
@@ -66,14 +66,14 @@ class PhotoEmbeddings:
         photo_fingerprints.same_picture: (the vector, None) when its stamp describes the file (nothing decoded);
         (None, Stale) when it does not and, with `compare`, the photo has a fingerprint row a decode of the file is to be
         compared with (Stale.same); else (None, None) -- no vector, no row, no file, no library: it is worked out."""
-        if not os.path.exists(file_path) or not self._library():
+        file_stamp = shares.known_stamp(file_path)
+        if file_stamp is None or not self._library():
             return None, None
         try:
-            stat = os.stat(file_path)
             row = store_embeddings.get(self.photo_index.conn, file_path, self.model_key)
             if row is None:
                 return None, None
-            vector_stamp, file_stamp = (row.mtime, row.size), (stat.st_mtime, stat.st_size)
+            vector_stamp = (row.mtime, row.size)
             answer = photo_fingerprints.same_picture(vector_stamp, file_stamp)
             if answer == photo_fingerprints.STAMPED:
                 return np.frombuffer(row.vector, dtype=np.float32).tolist(), None
