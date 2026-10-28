@@ -760,17 +760,18 @@ def _files_since(conn, change_id):
     may be written. Driven by the later change_files rows (idx_change_files_change), each looked up in change_rows by its
     photo's key (idx_change_rows_row; the key spelt as schema.row_key spells it). An internal change
     (file_journal.INTERNAL: the index's bake) is none: the next index writes the file from the rows again."""
+    internal, params = file_journal.not_internal("c.operation")
     return conn.execute(
         "SELECT f.change_id, c.operation, f.new_path IS NOT NULL, COUNT(DISTINCT f.photo_id) FROM change_files f"
         " JOIN changes c ON c.id = f.change_id"
-        " WHERE f.change_id > ? AND f.photo_id IS NOT NULL AND c.operation NOT IN (%s)"
+        " WHERE f.change_id > ? AND f.photo_id IS NOT NULL AND %s"
         " AND f.state IN ('writing', 'done', 'undone') AND (f.new_path IS NULL OR f.state != 'undone')"
         " AND EXISTS (SELECT 1 FROM change_rows r WHERE r.table_name = 'photos'"
         " AND r.row_key = '[' || f.photo_id || ']' AND r.change_id = ?"
         " AND CASE WHEN f.new_path IS NULL THEN r.column_name IN (%s) ELSE r.column_name IN (%s) END)"
         " GROUP BY f.change_id, c.operation, f.new_path IS NOT NULL ORDER BY f.change_id"
-        % (_listed(file_journal.INTERNAL), _listed(store_photos.FOLLOWED), _listed(store_photos.MOVED)),
-        (change_id, change_id)).fetchall()
+        % (internal, _listed(store_photos.FOLLOWED), _listed(store_photos.MOVED)),
+        (change_id, *params, change_id)).fetchall()
 
 
 # ---- Derived data ------------------------------------------------------------------------
