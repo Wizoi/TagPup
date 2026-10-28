@@ -63,6 +63,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from stat import S_IWRITE
 from typing import Any, Dict, Optional
 
 from tagpup.core import fields, paths
@@ -328,7 +329,9 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     A Result: `changed` the files written, errors the photos that failed and the
     conflicts. details: `change` (its id, or None when nothing was written), `written`
     {path: detail} of each photo written or already holding it, `conflicts` the photos,
-    named by id, found changed outside since they were read.
+    named by id, found changed outside since they were read; `read_only`, when one failed so, the paths of the photos
+    whose write failed and whose file is marked read-only: a failure no retry changes, where every other (a file held
+    open by another program, lock_owners) may pass the next time.
 
     `alongside` (tagpup.services.face_batch.Work): rows the change writes beside the files, recorded in the plan's transaction and
     written in the one that marks each file `done` (a bulk assignment's faces); a photo it names is in the change even when its
@@ -488,6 +491,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.fail(path, why)
             if outcome == "conflict":
                 result.details["conflicts"].append(row.named())
+            elif row.read_only:
+                result.details.setdefault("read_only", []).append(path)
             elif stop_at_first_error:
                 file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
                 break
@@ -825,8 +830,10 @@ def _record_held(library, row, now, target, finished, stamp, stat):
 
 
 def _after_failure(et, library, row, origin, target, finished, on_failure, error, stall_stops=False):
-    """A write that raised: settled by what the file holds after it."""
+    """A write that raised: settled by what the file holds after it. `row.read_only`: the file is marked read-only
+    (its stat after the failure), the one failure told from one that may pass the next time."""
     seen = _stat(row.path)
+    row.read_only = seen is not None and not seen.st_mode & S_IWRITE
     try:
         now = _read_now(et, row, target, stall_stops)
     except field_values.Unreadable:
