@@ -343,9 +343,9 @@ class TheOtherChecks(unittest.TestCase):
     def test_a_candidate_is_model_weights_and_size(self):
         self.assertEqual({"name": "ViT-B-16-SigLIP2", "pretrained": "webli", "size": None},
                          holdouts.candidate("ViT-B-16-SigLIP2:webli:"))
-        self.assertEqual(224, holdouts.candidate("ViT-H-14:laion2b_s32b_b79k:224")["size"])
+        self.assertEqual(224, holdouts.candidate("ViT-A-14:one:224")["size"])
         with self.assertRaises(ValueError):
-            holdouts.candidate("ViT-H-14:224")
+            holdouts.candidate("ViT-A-14:224")
 
     def test_a_pool_holds_the_held_out_photos_and_neighbours_up_to_its_size(self):
         rows = [{"id": n} for n in range(100)]
@@ -441,7 +441,8 @@ class ACopyThatAPassChangedIsNotTrustedAgain(unittest.TestCase):
         self.ready = os.path.join(self.folder, "copy-is-ready")
         with open(self.ready, "w", encoding="utf-8"):
             pass
-        self.models = [holdouts.candidate(text) for text in holdouts.CANDIDATES[:3]]
+        # Three candidates, whatever the table holds: run_each runs what it is given.
+        self.models = [holdouts.candidate(text) for text in ("ViT-A-14:one:", "ViT-A-14:one:224", "ViT-B-14:two:")]
 
     def test_a_changed_copy_loses_its_mark_and_stops_the_run(self):
         ran = []

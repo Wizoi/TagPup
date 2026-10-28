@@ -4,8 +4,8 @@ choosing (model.force_image_size) or only at its own. No torch: the settings' ga
 model (tagpup.ml.clip loads one).
 
 The numbers are the phase 5 spike's (docs/AI_PIPELINE.md, section 7, "Phase 5 model spike (2026-10-24)"): SigLIP's
-cosines are lower than ViT-H's, so the word cut a word must reach is 0.11 under SO400M against 0.23 under the baseline;
-the neighbour cut (0.35) and the panel's floor (0.60) hold under both, and are not here.
+cosines are lower than the first model's (OpenCLIP ViT-H-14, deleted 2026-10-28: no library holds its vectors), so the
+word cut a word must reach is 0.11 under SO400M; the neighbour cut (0.35) and the panel's floor (0.60) are not here.
 """
 
 #: (model name, weights): {"word_cut": the least cosine a zero-shot word keeps, "sizes": whether the library may force
@@ -13,7 +13,6 @@ the neighbour cut (0.35) and the panel's floor (0.60) hold under both, and are n
 #: position embedding for that size).
 MODELS = {
     ("ViT-SO400M-14-SigLIP2", "webli"): {"word_cut": 0.11, "sizes": False},
-    ("ViT-H-14", "laion2b_s32b_b79k"): {"word_cut": 0.23, "sizes": True},
 }
 
 def holds(name, pretrained):
@@ -23,7 +22,7 @@ def holds(name, pretrained):
 
 
 def listing():
-    """The pairs the table holds, spelled for a sentence: "ViT-H-14 (laion2b_s32b_b79k), ..."."""
+    """The pairs the table holds, spelled for a sentence: "ViT-SO400M-14-SigLIP2 (webli), ..."."""
     return ", ".join("%s (%s)" % pair for pair in MODELS)
 
 

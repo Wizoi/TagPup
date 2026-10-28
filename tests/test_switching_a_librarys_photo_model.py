@@ -20,7 +20,7 @@ face model's switch (tests/test_switching_a_librarys_face_model.py). What the ow
   other), never the other's; a switch while a Suggest holds its index leaves the run on the model it began with, and
   the next ask is on the new one.
 - (t) SigLIP 2's tokenizer is read from its tokenizer.json; one not in the cache, with no network, is one sentence;
-  ViT-H-14's is still open_clip's own.
+  open_clip's own tokenizer reads the rest.
 
 The word cut each model's words are held to is the suggester's (tests/test_suggester_scoring.py). Fictional names;
 libraries in a home of the test's own; rows as the indexer stores them; stand-in models, no weights.
@@ -209,8 +209,8 @@ class TheSwitchWaitsForTheVectors(_Libraries):
             result = switch(harbour, {"model.name": sibling[0], "model.pretrained": sibling[1],
                                       "model.force_image_size": ""}, apply=apply)
             self.assertEqual("Nothing was written: ViT-SO400M-14-SigLIP2-378 (weights webli) is not a photo model TagPup "
-                             "holds the word cut of. It holds: ViT-SO400M-14-SigLIP2 (webli), ViT-H-14 "
-                             "(laion2b_s32b_b79k), ViT-Other-14 (other-weights).", result.refused)
+                             "holds the word cut of. It holds: ViT-SO400M-14-SigLIP2 (webli), "
+                             "ViT-Other-14 (other-weights).", result.refused)
             self.assertEqual(before, rows_of(harbour.path))
 
     def test_the_page_is_told_the_counts_of_a_switch_it_is_allowed(self):
@@ -260,6 +260,30 @@ class TheUndoOfASwitchIsASwitch(_Libraries):
         settings_now = held(self.harbour)
         self.assertEqual((OLD[0], OLD[1], ""), (settings_now["model.name"], settings_now["model.pretrained"],
                                                  settings_now["model.force_image_size"]))
+
+
+class TheUndoOfASwitchFromADeletedModelStaysRefused(_Libraries):
+    """(u) A library switched from a photo model TagPup no longer holds (the first, ViT-H-14, deleted 2026-10-28; the live
+    switches 3249 / 343 / 1222 came from it) and clicks Undo on the switch in History: refused, saying the model is not one
+    TagPup holds, in the listing, the rehearsal and the undo alike, nothing written. Played with the other model, switched
+    from and then dropped from the table."""
+
+    def test_refused_saying_the_model_is_not_held(self):
+        harbour = self.library("harbour.db", "Heronry", 30)
+        harbour_old = harbour.photos
+        self.give(harbour, harbour_old, NEW)
+        self.assertFalse(switch(harbour).refused)
+        self.assertFalse(switch(harbour, {"model.name": OLD[0], "model.pretrained": OLD[1]}).refused)
+        change = journal_service.history(harbour, limit=1)["changes"][0]["id"]
+        with mock.patch.dict(library_settings.photo_models.MODELS):
+            del library_settings.photo_models.MODELS[NEW]
+            said = library_settings.UNKNOWN_PHOTO_MODEL % (NEW[0], NEW[1], library_settings.photo_models.listing())
+            before = rows_of(harbour.path)
+            self.assertEqual(said, journal_service.history(harbour, change_id=change)["changes"][0]["why_not"])
+            self.assertEqual(said, journal_service.rehearse(harbour, change).refused)
+            self.assertEqual(said, journal_service.undo(harbour, change, apply=True).refused)
+            self.assertEqual(before, rows_of(harbour.path), "a refused undo wrote")
+        self.assertIn("is not a photo model TagPup holds", said)
 
 
 class _Clip:

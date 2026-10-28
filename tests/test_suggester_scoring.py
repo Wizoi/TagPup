@@ -7,7 +7,7 @@ previously exercised only through one end-to-end CLI test with the models mocked
 Everything here runs against fakes: a stub index that returns canned neighbours and a
 stub embedder that returns fixed vectors, so the arithmetic is deterministic and no
 model is ever loaded. The constants asserted (5-year half-life, +0.20 path boost,
-0.40/0.20/0.10 consensus bands, the zero-shot word cut of ViT-H-14, the stub embedder's model, which
+0.40/0.20/0.10 consensus bands, the zero-shot word cut of the stub embedder's model, the stub embedder's model, which
 tagpup.ml.photo_models holds for each model) are the ones documented in docs/SPEC_TAGPUP_CLI.md section 5.
 """
 import os
@@ -63,8 +63,7 @@ class StubIndex:
 class StubEmbedder:
     """Records the prompts it is asked to embed, and returns an orthogonal vector."""
 
-    model_name = "ViT-H-14"
-    pretrained = "laion2b_s32b_b79k"
+    model_name, pretrained = stand_in_models.OTHER_PHOTO_MODEL
 
     def __init__(self):
         self.prompts = []
@@ -94,6 +93,10 @@ def photo_meta(path, tags=(), year=None, people=()):
 
 
 class SuggesterTestBase(unittest.TestCase):
+    def setUp(self):
+        # The stub embedder's model, whose word cut is 0.2 (stand_in_models).
+        stand_in_models.declare_other_photo_model(self)
+
     def make_suggester(self, neighbors=(), taxonomy_paths=(), candidates=None, embedder=None,
                        face_roots=()):
         """`face_roots`: the roots the library's tree flags as holding faces, the only
@@ -418,16 +421,16 @@ class TestZeroShotCandidates(SuggesterTestBase):
         self.assertAlmostEqual(scores["Sunset"], 1.0, places=2)
 
     def test_a_candidate_below_the_threshold_is_dropped(self):
-        # cos = 0.2, just under the documented 0.23 floor.
-        s = self._suggester_with_candidate([0.2, math.sqrt(1 - 0.04), 0.0])
+        # cos = 0.15, under the stub embedder's model's word cut of 0.2.
+        s = self._suggester_with_candidate([0.15, math.sqrt(1 - 0.0225), 0.0])
         result = s.suggest_for_photo("/nowhere/target.jpg", [1.0, 0.0, 0.0])
         self.assertNotIn("Sunset", self.scores(result))
 
     def test_each_photo_model_holds_its_words_to_its_own_cut(self):
-        # cos = 0.15: over SigLIP 2 SO400M's 0.11, under ViT-H-14's 0.23 (tagpup.ml.photo_models; a library switched
-        # to SO400M kept none of its words while the cut was ViT-H's).
+        # cos = 0.15: over SigLIP 2 SO400M's 0.11, under the other model's 0.2 (tagpup.ml.photo_models; a library
+        # switched to SO400M kept none of its words while the cut was the first model's).
         word = [0.15, math.sqrt(1 - 0.0225), 0.0]
-        for model, kept in ((("ViT-SO400M-14-SigLIP2", "webli"), True), (("ViT-H-14", "laion2b_s32b_b79k"), False)):
+        for model, kept in ((("ViT-SO400M-14-SigLIP2", "webli"), True), (stand_in_models.OTHER_PHOTO_MODEL, False)):
             s = self._suggester_with_candidate(word, model)
             result = s.suggest_for_photo("/nowhere/target.jpg", [1.0, 0.0, 0.0])
             self.assertEqual(kept, "Sunset" in self.scores(result), model)

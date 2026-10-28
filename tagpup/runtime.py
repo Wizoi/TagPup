@@ -487,7 +487,7 @@ class _Lease:
 
 
 def _clip_name(embedder):
-    """A CLIP model as the owner chose it: "ViT-H-14 (laion2b_s32b_b79k)"."""
+    """A CLIP model as the owner chose it: "ViT-SO400M-14-SigLIP2 (webli)"."""
     embedder = embedder or {}
     return "%s (%s)" % (embedder.get("model_name"), embedder.get("pretrained"))
 
