@@ -66,6 +66,21 @@ exceptions, each unjournaled by decision:
   It is never written into a photo whose picture did not decode.
 - **Just look**: `services/file_only.py`, the files of a folder the library does not hold (#527).
 
+## Roots and machines: a share away
+
+- `tagpup/files/shares.py` is the one owner of a share being away and back: `away_since` (when it stopped answering),
+  `on_back` (a callback on the look that hears it answer), `wait_back` (the one patient wait, up to a time or a stop).
+- The catch-up sync (`sync._scan`) waits once for a root's share, up to `FOLDER_WAIT`; a root still away is not looked
+  at, and nothing under it is called missing.
+- The watcher resumes a share within a tick of its being heard back (`watching._heard_back`); its 30 s `RECHECK` is the
+  safety net. A folder back is wanted since the share was first found not answering (`away_at`).
+- One walker per library: the watcher's whole sync goes through the job claim (`recurring.run_claimed`, `sync_whole`), so
+  the daily job and the watcher never walk one library together.
+- A sync that could not look at its roots ends failed (`Job.failed`, `sync.could_not_look`) and is retried in an hour,
+  not a day later.
+- The Activity page shows a root on such a share as "share not answering since hh:mm".
+- Tests: `tests/test_a_share_asleep.py`, `tests/test_a_share_that_wakes.py`, `tests/test_one_walk_of_a_library_at_a_time.py`.
+
 ## By design (each row closed `decided:`)
 
 - **The indexer's per-photo reads have no deadline** (the header for the read-ahead's estimate, the decodes, the stamp,
