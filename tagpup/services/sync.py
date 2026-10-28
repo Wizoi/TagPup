@@ -532,6 +532,17 @@ def in_step(counts, result=None):
     return result.ok and not result.skipped
 
 
+def could_not_look(result):
+    """Why a sync whose Result is ok did not do its work: the folders it could not look at (a share that did not answer,
+    a folder that would not list), as a sentence naming no folder, or None when it looked at every one. What ends the
+    daily `sync` job's run failed, so it is tried again in an hour, not a day later (tagpup.jobs.recurring, #2103)."""
+    folders = ((result.details or {}).get("counts") or {}).get("folders_not_looked_at") or 0
+    if not folders:
+        return None
+    return ("%d folder%s could not be looked at (a share that did not answer, or a folder that would not list): "
+            "the library is not in step." % (folders, "" if folders == 1 else "s"))
+
+
 @roots_service.canonical_args("folder")
 def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, roots=(), ignored=()):
     """Bring `library` in step with its folders (or with `folder`), reading changed files

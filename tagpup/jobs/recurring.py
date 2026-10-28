@@ -2,7 +2,8 @@
 inside whatever TagPup process is up (docs/ARCHITECTURE.md, phase 8, "Recurring jobs").
 
 Each job declares its name, its period, why it is scheduled at all, whether it runs per
-library, and the service it calls; registering one is one line:
+library, the service it calls and, when a Result that is ok can still mean the run did not
+do its work, how to tell (`failed`); registering one is one line:
 
     @JOBS.job("sync", DAILY, reason=CATCH_UP)
     def _sync(library, run):
@@ -38,6 +39,7 @@ from tagpup.core import runs
 from tagpup.core.result import Result
 from tagpup.services import job_runs
 from tagpup.services import snapshots as snapshot_service
+from tagpup.services import sync as sync_service
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +95,9 @@ class Job:
     #: call(library, run) -> Result; for a job not run per library, call(libraries, run).
     call: Callable
     about: str = ""
+    #: failed(result) -> why the run did not do its work although its Result is ok (a sentence: the run's note), or
+    #: None when it did: such a run ends failed, and is tried again RETRY_AFTER later, not a period later.
+    failed: Optional[Callable] = None
 
 
 @dataclass
@@ -110,9 +115,9 @@ class Registry:
     def __init__(self):
         self._jobs = {}
 
-    def job(self, name, period, reason=None, per_library=True, about=""):
+    def job(self, name, period, reason=None, per_library=True, about="", failed=None):
         """Register the function it decorates as the job `name`, scheduled for `reason`,
-        one of REASONS: ValueError for none, or another."""
+        one of REASONS: ValueError for none, or another. `failed`: Job.failed."""
         if reason not in REASONS:
             raise ValueError("the job %r says no reason it is scheduled (%s), and what an event announces is"
                              " done when it happens, not on a schedule" % (name, ", ".join(REASONS)))
@@ -120,7 +125,8 @@ class Registry:
         def register(call):
             if name in self._jobs:
                 raise ValueError("a job named %r is registered already" % name)
-            self._jobs[name] = Job(name, period, reason, per_library, call, about or (call.__doc__ or "").strip())
+            self._jobs[name] = Job(name, period, reason, per_library, call, about or (call.__doc__ or "").strip(),
+                                   failed)
             return call
         return register
 
@@ -144,13 +150,14 @@ def _snapshots(library, run):
     return snapshot_service.take(library, now=run.now, force=run.forced)
 
 
-@JOBS.job("sync", DAILY, reason=CATCH_UP)
+@JOBS.job("sync", DAILY, reason=CATCH_UP, failed=sync_service.could_not_look)
 def _sync(library, run):
     """The whole library brought in step with its folders, applied (tagpup.services.sync,
     through the process's Runtime: the library's ExifTool and its index queue). A catch-up
     check: the watcher syncs each folder as it changes (owner, 2026-09-26), and this finds
     what a missed notification left. The Runtime is the entry point's to give; a runner
-    given none cannot sync."""
+    given none cannot sync. A sync that could not look at a folder (a share that did not
+    answer) ends failed, and is tried again in an hour (#2103)."""
     runtime = run.given.get("runtime")
     if runtime is None:
         raise RuntimeError("the sync job needs the process's Runtime, which this runner was not given")
@@ -319,7 +326,8 @@ class Runner:
                 self._running -= 1
                 self._current.pop(claim.run_id, None)
         try:
-            ended = job_runs.finish(where, claim.run_id, self._clock(), outcome.result, outcome.error)
+            failed = job.failed(outcome.result) if job.failed is not None and outcome.result is not None else None
+            ended = job_runs.finish(where, claim.run_id, self._clock(), outcome.result, outcome.error, failed)
             if not ended:
                 logger.warning("The run %d of %s was no longer this process's to end", claim.run_id, job.name)
         except Exception as e:

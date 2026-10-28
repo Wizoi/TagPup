@@ -7,6 +7,9 @@ answered 30 s later and nothing looked again until the watcher's next RECHECK. N
 walk (shares.Walk), which waits for the share to be back, and the watcher is told when it is (shares.on_back) and looks
 at once. A share that never answers leaves the sync honestly not in step, and the watcher's RECHECK stays its safety net.
 
+The daily `sync` job that could not look at its roots ended done, so it was tried again 23 h later (#2103): it now ends
+failed, saying why, and is tried again in an hour.
+
 The share is a folder of the test's own home taken for a network share: its folder looks wait until the test wakes it.
 The libraries are made as the indexer leaves them; fictional names.
 """
@@ -24,9 +27,10 @@ import photo_rows  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images, shares  # noqa: E402
-from tagpup.jobs import watching  # noqa: E402
+from tagpup.jobs import recurring, watching  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
+from tagpup.store import job_runs  # noqa: E402
 
 THEN = 1_700_000_000
 
@@ -60,6 +64,16 @@ class FakeObserver:
 
     def unschedule(self, watch):
         self.emitters = [e for e in self.emitters if e.watch != watch]
+
+
+class Clock:
+    """The recurring runner's clock, moved by the test."""
+
+    def __init__(self, now):
+        self.now = now
+
+    def __call__(self):
+        return self.now
 
 
 class Stand:
@@ -178,6 +192,33 @@ class AShareAsleep(unittest.TestCase):
         self.assertIsNone(sync.last(regatta)["last_in_step"])
         self.assertEqual([], watcher.watched())
         self.assertEqual(1, len(self.looks), "a look at the share while it was away started a thread of its own")
+
+    def test_the_daily_sync_that_could_not_look_at_the_share_says_so_and_is_tried_again_in_an_hour_not_a_day(self):
+        """#2103: runs 92/83/41/42/67 could not look at their roots and ended done, so the next try was 23 h later.
+        Break: recurring.Runner ending the run without asking Job.failed (sync.could_not_look), or job_runs.finish
+        ending it done all the same."""
+        regatta = self.library("regatta.db", os.path.join(self.share, "2019 Regatta"))
+        walks, share = [], self.share
+
+        class Runtime:
+            def sync(self, library, folder=None, apply=False):
+                walks.append(folder)
+                return sync.sync(library, folder=folder, apply=apply, roots=[share])
+        clock = Clock(THEN)
+        runner = recurring.Runner(lambda: [regatta], clock=clock, given={"runtime": Runtime()})
+        job = recurring.JOBS.get("sync")
+        with mock.patch.object(sync, "FOLDER_WAIT", 0.2):
+            self.assertTrue(runner.run_job(job, regatta).ran)
+            (entry,) = [each for each in recurring.overview(regatta, now=THEN) if each["name"] == "sync"]
+            run = entry["runs"][0]
+            self.assertEqual(("failed", True), (run["outcome"], entry["failing"]), "the Activity page shows it failing")
+            self.assertTrue(run["error"].startswith("1 folder could not be looked at"), run["error"])
+            self.assertEqual(job_runs.stamp(THEN + recurring.RETRY_AFTER), entry["next_due"])
+            clock.now = THEN + recurring.RETRY_AFTER - 60
+            self.assertEqual("not due", runner.run_job(job, regatta).why)
+            clock.now = THEN + recurring.RETRY_AFTER
+            self.assertTrue(runner.run_job(job, regatta).ran, "not tried again an hour later")
+        self.assertEqual([None, None], walks)
 
     def test_the_share_wakes_and_the_watcher_watches_it_and_syncs_whole_within_a_tick_not_its_recheck(self):
         """Break: the watcher not asking shares.on_back (sync.watch_states) or not looking when told: it looks again only
