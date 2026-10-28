@@ -4,8 +4,7 @@ A drain sees only its own process's work, so these are the owner's days a test o
 index or `sync --apply` is writing; a look from Claude (MCP) at a library the server has not migrated yet; the CLI's sync and the
 server's sync (the watcher's, the recurring job's, the page's) over one drift. Real processes through tagpup.core.processes, in a
 home of their own with ports of their own; the writer in the first test is a process holding the store's own writer open, as a
-CLI index does, since a real index cannot be held part-way without the card. A real `bake-photos --apply` (BAKER), held
-after its first file is written: an update while it writes, and a second CLI window's bake of the same library at once.
+CLI index does, since a real index cannot be held part-way without the card.
 
 Lifted: test_sync_entry_points' TheCli.test_a_dry_run_says_what_it_found_and_changes_nothing (the dry run of the real CLI is the
 first step of the sync test here). Broken in a scratch copy and this file fails: runtime.sync applying on a dry run (the
@@ -31,20 +30,16 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from free_port import free_port  # noqa: E402
 import migration_names  # noqa: E402
-import baked_files  # noqa: E402
-from test_a_bake_is_rehearsed_folder_by_folder import DETECTOR, ALibraryToBake  # noqa: E402
 
 import tagpup_web  # noqa: E402
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
-import tagpup_cli  # noqa: E402
 from tagpup import launcher, runtime  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import baking  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
-from tagpup.store import db, file_journal, schema  # noqa: E402
+from tagpup.store import db, schema  # noqa: E402
 
 THEN = 1_700_000_000
 NEW = "20261004-110000-bbbbbbb"
@@ -65,38 +60,6 @@ def write(conn):
     photo_rows.add_read(conn, "C:/Cli Index/two.jpg", {})
 db.write_with_connection(%(path)r, write)
 """
-
-#: A CLI's `bake-photos --apply`, the face model a stand-in; with `hold`, held once its first file is written (before the
-#: journal records it) until the test's go-ahead. Each file it writes is logged with its name: which program wrote what.
-BAKER = """
-import os, sys, time
-sys.path[:0] = [%(root)r, %(tests)r]
-from unittest import mock
-from stand_in_models import NewFaces
-import tagpup_cli
-from tagpup.files import field_values, images
-from tagpup.runtime import Runtime
-from tagpup.services import file_changes
-hold, mid, go, log, name = %(hold)r, %(mid)r, %(go)r, %(log)r, %(name)r
-real_write = field_values.write
-def write(et, path, *args, **kwargs):
-    done = real_write(et, path, *args, **kwargs)
-    with open(log, "a", encoding="utf-8") as handle:
-        print(name, path, file=handle)
-    return done
-def reached(step):
-    if hold and step == "file written" and not os.path.exists(mid):
-        open(mid, "w").close()
-        while not os.path.exists(go):
-            time.sleep(0.05)
-runtime = Runtime(build_clip=lambda settings: None, build_faces=lambda settings: NewFaces())
-# The test pictures are 16 x 12: the floor of a baked face (#1973) is one pixel here, as in the process that plans.
-with mock.patch.object(file_changes, "_reached", reached), mock.patch.object(field_values, "write", write), \
-        mock.patch.object(images, "NEW_FACE_FLOOR", 1):
-    with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime):
-        tagpup_cli.cli(["--db", %(path)r, "bake-photos", "--apply"], standalone_mode=False)
-"""
-
 
 class Waits:
     @staticmethod
@@ -155,8 +118,8 @@ class OneLibrary(Waits, unittest.TestCase):
 
         self.assertEqual(launcher.SERVE, way[0], said)
         self.assertIsNotNone(old.wait(timeout=60), "the old server still runs")
-        self.assertTrue(any("finish a cli write -- index, sync --apply, face-pass, embed-photos, "
-                                "retire-photo-vectors, bake-photos --apply -- or an mcp write before updating" in line.lower()
+        self.assertTrue(any("finish a cli write -- index, sync --apply, embed-photos, "
+                                "retire-photo-vectors -- or an mcp write before updating" in line.lower()
                                 for line in said),
                         said)
         self.assertIsNone(writer.poll(), "the update ended the CLI's write")
@@ -233,107 +196,6 @@ class OneLibrary(Waits, unittest.TestCase):
         self.assertEqual([("sync",)], self.rows("SELECT operation FROM changes WHERE operation = 'sync'"), "one change, not two")
         self.assertEqual([(moved,)], [(path,) for (path,) in self.rows("SELECT path FROM photos")], "the row follows its file, once")
         self.assertIn("In step", self.cli("sync"))
-
-
-class ABakeBesideTheOtherPrograms(Waits, ALibraryToBake):
-    """`bake-photos --apply` in a CLI window, real processes: an update of the app while it writes, and a second CLI
-    window's bake of the same library at once (#1937)."""
-
-    def setUp(self):
-        super().setUp()
-        self.addCleanup(own_home.end_processes, self.home.root)
-        self.log = os.path.join(self.home.root, "written.log")
-
-    def baker(self, name, hold=False):
-        """A bake process (BAKER) named `name`: (it, its mid-file, its go-file, the file it says its lines in)."""
-        mid, go, out = (os.path.join(self.home.root, name + end) for end in (".mid", ".go", ".out"))
-        script = BAKER % {"root": WORKSPACE_DIR, "tests": os.path.dirname(os.path.abspath(__file__)), "hold": hold,
-                          "mid": mid, "go": go, "log": self.log, "name": name, "path": self.library.path}
-        env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1", PYTHONIOENCODING="utf-8")
-        with open(out, "w", encoding="utf-8") as said:
-            started = processes.start([sys.executable, "-c", script], env=env, cwd=self.home.root,
-                                      stdin=subprocess.DEVNULL, stdout=said, stderr=subprocess.STDOUT)
-        self.addCleanup(lambda: started.poll() is None and processes.kill_tree(started.pid))
-        return started, mid, go, out
-
-    @staticmethod
-    def said(out):
-        with open(out, encoding="utf-8") as handle:
-            return handle.read()
-
-    def written(self):
-        """[(program, path)] of each file write, in order."""
-        with open(self.log, encoding="utf-8") as handle:
-            return [tuple(line.rstrip().split(" ", 1)) for line in handle if line.strip()]
-
-    def whole(self, photo_paths, writers):
-        """Every photo baked, its bake written once (by one of `writers`), and the journal done with: one done row a file."""
-        self.assertEqual([], file_journal.unfinished(self.library.path))
-        written = self.written()
-        self.assertEqual(sorted(paths.key(path) for path in photo_paths), sorted(paths.key(path) for _who, path in written),
-                         "each file's bake written once")
-        self.assertLessEqual({who for who, _path in written}, set(writers))
-        done = self.rows("SELECT path, COUNT(*) FROM change_files WHERE state = 'done' GROUP BY path")
-        self.assertEqual(sorted(paths.key(path) for path in photo_paths), sorted(paths.key(path) for path, _n in done))
-        self.assertEqual([1] * len(photo_paths), [n for _path, n in done], "one done row a file, in one change")
-        for path in photo_paths:
-            self.assertIsInstance(self.plan_of(path), baking.Current)
-        self.assertEqual([("ok",)], self.rows("PRAGMA integrity_check"))
-
-    def plan_of(self, path):
-        return baked_files.plan(self.library.path, path, DETECTOR)
-
-    def test_an_update_while_a_bake_is_under_way_neither_waits_for_it_nor_breaks_it(self):
-        trip = self.three_to_bake()
-        env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1", TAGPUP_WEB_NO_WARMUP="1", TAGPUP_WEB_RELOADED="1")
-        ports = [free_port(), free_port()]
-        old = processes.start([sys.executable, os.path.join(WORKSPACE_DIR, "tagpup_web.py"), "--tagpup-port", str(ports[0]),
-                               "--tuner-port", str(ports[1])], env=env, cwd=self.home.root, stdin=subprocess.DEVNULL,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.addCleanup(lambda: old.poll() is None and processes.kill_tree(old.pid))
-        self.wait_until(lambda: self.serving(ports[0]), "the server never answered")
-        bake, mid, go, out = self.baker("bake", hold=True)
-        self.wait_until(lambda: os.path.exists(mid), "the bake never wrote its first file")
-
-        said = []
-        with mock.patch.object(launcher, "QUIET", 0):
-            way = launcher.make_way(ports[0], NEW, say=said.append, open_page=lambda: None, answering=tagpup_web.answering)
-
-        self.assertEqual(launcher.SERVE, way[0], said)
-        self.assertIsNotNone(old.wait(timeout=60), "the old server still runs")
-        self.assertIsNone(bake.poll(), "the update ended the bake")
-        open(go, "w").close()
-        self.assertEqual(0, bake.wait(timeout=120), self.said(out))
-        (change,) = [change for (change,) in self.rows("SELECT id FROM changes WHERE operation = ?", (baking.OPERATION,))]
-        self.assertEqual([("done",)] * 3, self.rows("SELECT state FROM change_files WHERE change_id = ?", (change,)),
-                         "the change applied whole")
-        self.assertIn(tagpup_cli._bake_written(3, [change]), self.said(out))
-        self.whole(trip, ["bake"])
-
-    def test_two_bakes_at_once_bake_each_photo_once_and_the_second_leaves_the_firsts_change(self):
-        trip = self.three_to_bake()
-        first, mid, go, first_out = self.baker("first", hold=True)
-        self.wait_until(lambda: os.path.exists(mid), "the first bake never wrote its first file")
-        (change,) = [each.id for each in file_journal.unfinished(self.library.path)]
-
-        second, _mid, _go, second_out = self.baker("second")
-        self.assertEqual(0, second.wait(timeout=120), self.said(second_out))
-        self.assertIn("Change %d (%s) is being written by another program still running: it is left to it."
-                      % (change, baking.OPERATION), self.said(second_out))
-        self.assertEqual([change], [each.id for each in file_journal.unfinished(self.library.path)],
-                         "the first's change is left to it")
-        open(go, "w").close()
-        self.assertEqual(0, first.wait(timeout=120), self.said(first_out))
-        self.whole(trip, ["first", "second"])
-        self.assertIn(tagpup_cli._bake_written(1, [change]), self.said(first_out),
-                      "the first says the one file it wrote, not the two the second wrote since its plan")
-        (other,) = [each for (each,) in self.rows("SELECT id FROM changes WHERE operation = ?", (baking.OPERATION,))
-                    if each != change]
-        self.assertIn(tagpup_cli._bake_written(2, [other]), self.said(second_out))
-
-    def three_to_bake(self):
-        os.makedirs(os.path.join(self.folder, "Trip"), exist_ok=True)
-        return [self.photo(os.path.join("Trip", name), faces=1) for name in ("x.jpg", "y.jpg", "z.jpg")]
 
 
 if __name__ == "__main__":

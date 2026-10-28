@@ -32,7 +32,6 @@ from journal_library import MODEL, JournalLibrary, vector  # noqa: E402
 
 from tagpup.core import validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import face_pass  # noqa: E402
 from tagpup.services import journal as library_journal  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
 
@@ -220,7 +219,7 @@ class AFacePassBeforeARetiring(Checked):
 
     def face_pass(self):
         """A face pass's change: a new face in a photo, as the pass journals one."""
-        return journal.apply(self.db_path, face_pass.OPERATION % FACE_MODEL, [journal.insert("faces", {
+        return journal.apply(self.db_path, library_journal.FACE_PASS % FACE_MODEL, [journal.insert("faces", {
             "photo_id": self.ids["prize"], "box": "[10, 20, 110, 140]", "name_source": None, "excluded": 0})]).change_id
 
     def retiring(self):

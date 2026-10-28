@@ -30,13 +30,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
-from stand_in_models import NewFaces  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, crash_at, requires_exiftool  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import duplicate_faces, face_pass, file_changes, journal as journal_service  # noqa: E402
+from tagpup.services import duplicate_faces, file_changes, journal as journal_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, embeddings, faces_detected, journal, photo_fingerprints, schema  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -251,7 +250,7 @@ class TheFacesOfATurnedPhoto(RotationCase):
     def a_pass(self, path, shape):
         """A face pass that finds one new face, with its crop, in the photo at `path`, through the pass's writer."""
         def work(conn):
-            change_id = journal.record(conn, face_pass.OPERATION % self.KEY, [],
+            change_id = journal.record(conn, journal_service.FACE_PASS % self.KEY, [],
                                        {"folder": store_roots.to_row(conn, os.path.dirname(path)), "matched": 0, "new": 0})
             (face_id,) = store_faces.give_vectors(conn, change_id, path, self.KEY, [],
                                                   [(list(BOX), 0.99, self.VECTOR, self.CROP)], {"matched": 0, "new": 1})
@@ -306,50 +305,6 @@ class TheFacesOfATurnedPhoto(RotationCase):
                 self.assertEqual(self.rows("SELECT id FROM faces WHERE id = ?", (copy,)), [(copy,)])
                 self.assertEqual(self.rows("SELECT COUNT(*) FROM face_crops WHERE face_id = ?", (copy,)), [(0,)])
                 self.assertEqual(self.crop_size(copy), (8, 10))   # cut again, upright for the turned photo
-
-
-class APassBesideATurn(RotationCase):
-    """The owner turns a photo while the face pass has read its picture and not yet written what it found in it: the
-    turn's done transaction stamps the row's (mtime, size) (store.photos.follow_fields), which the pass read before the
-    picture, so its write finds the photo not as read and writes nothing -- no face from the old picture, no record of a
-    photo looked at that the turn just forgot -- and the photo is failed, looked at again next run, as turned."""
-
-    def a_photo(self, name):
-        """A photo big enough for a face over the floor, in a folder of its own, and its row as the indexer leaves it."""
-        from PIL import Image
-        folder = os.path.join(self.folder, os.path.splitext(name)[0])
-        os.makedirs(folder)
-        path = os.path.join(folder, name)
-        Image.new("RGB", (300, 200), (90, 110, 130)).save(path, "JPEG")
-        self.execute_with(lambda conn: photo_rows.add_read(conn, path, {}))
-        return folder, path, self.rows("SELECT MAX(id) FROM photos")[0][0]
-
-    def turning(self, found):
-        """The model, which the owner's click turns the photo beside: after it has read the picture, before the write."""
-        library = self.library
-
-        class Turning(NewFaces):
-            def detect_and_embed(model, picture):
-                detected = NewFaces.detect_and_embed(model, picture)
-                turned = photo_actions.rotate_photos(library, [picture.path], "left", EXIFTOOL)
-                assert turned.changed == 1, turned.message()
-                return detected
-
-        return Turning(found)
-
-    def test_the_photo_is_failed_and_nothing_of_the_old_picture_is_written(self):
-        for name, found in (("faces.jpg", [((100, 50, 200, 170), 0.9, 5)]), ("faceless.jpg", [])):
-            with self.subTest(name):
-                folder, path, photo_id = self.a_photo(name)
-                (passed,) = face_pass.run(self.library.path, self.turning({name: found}), folder, apply=True)
-                self.assertEqual((passed.failed, passed.new, passed.none_found), ([(photo_id, face_pass.CHANGED)], 0, 0))
-                self.assertEqual(self.orientation(path), 8)
-                self.assertEqual(self.rows("SELECT (SELECT COUNT(*) FROM faces), (SELECT COUNT(*) FROM faces_detected)"),
-                                 [(0, 0)])
-                (again,) = face_pass.run(self.library.path, NewFaces({name: found}), folder, apply=True)
-                self.assertEqual((again.failed, again.new, again.none_found), ([], len(found), 1 - len(found)))
-                self.execute("DELETE FROM faces")
-                self.execute("DELETE FROM faces_detected")
 
 
 class WhereTheLibraryDoesNotHoldTheFolder(RotationCase):

@@ -46,7 +46,6 @@ SCENARIOS = {
     "P6": ("people", "Two cousins called alike under two groups are named by id; a typed bare name that fits both is refused, naming both paths."),
     "P7": ("people", "Identify Faces: ignore, assign, restore and undo, against the real server."),
     "P9": ("people", "The face model's precision by year, read-only: the library's own model's best match by the years to the face matched, at its naming cuts, a year the photo's Date Taken never a folder's name, a clock past the era and a photo never read undated, nothing written."),
-    "P8": ("people", "The new face model's pass over a folder: names kept by overlap, new faces, the unmatched listed, a run stopped and resumed, undone from History, a dry run."),
     "P10": ("people", "A library its pass reached is switched to the new face model: a new photo is indexed and Suggested by it, Name faces from tags reads its vectors by its own cuts, and switched back FaceNet reads its own again."),
     "P11": ("people", "The same face gets the same nearest person in Suggest, Identify, the strip, the boxes and Name faces from tags, a person who changed over the years by the faces of the face's own years, an undated face by every year."),
     "F1": ("files", "A photo write is journaled, one at a time, read back; a click three times writes once."),
@@ -106,7 +105,7 @@ _SCENARIO_FILES = {
     "F3": (
         "test_batches test_bulk_edits test_bulk_edits_real_exiftool test_bulk_edits_stalled_exiftool "
         "test_bulk_writes_start_from_the_file test_a_bake_is_planned_from_the_library "
-        "test_a_bake_is_rehearsed_folder_by_folder test_a_bake_is_written_folder_by_folder test_an_index_reads_a_bake "
+        "test_an_index_reads_a_bake "
         "test_the_index_writes_the_bake"
     ),
     "F4": "test_folder_watcher test_sync",
@@ -144,7 +143,6 @@ _SCENARIO_FILES = {
     "P5": "test_tag_tree_edits_are_batches test_taxonomy_lifecycle",
     "P6": "test_two_cousins_called_alike",
     "P7": "test_identify_ignore_assign_restore_undo",
-    "P8": "test_the_face_pass test_a_face_pass_from_the_command_line",
     "P9": "test_the_gate_reads_by_year_gap",
     "P10": "test_a_switched_library_indexes_and_suggests_with_its_model",
     "P11": "test_a_face_gets_one_nearest_person_everywhere",

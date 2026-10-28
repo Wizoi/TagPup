@@ -35,8 +35,6 @@ SCENARIO = frozenset({
     "test_bulk_edits_real_exiftool",
     "test_bulk_writes_start_from_the_file",
     "test_a_bake_is_planned_from_the_library",
-    "test_a_bake_is_rehearsed_folder_by_folder",
-    "test_a_bake_is_written_folder_by_folder",
     # The file journal and the writes it covers.
     "test_file_journal",
     "test_time_shift",
@@ -68,8 +66,6 @@ SCENARIO = frozenset({
     # Two real processes on one library, and folders renamed or marked on disk.
     "test_people_by_id_at_once",
     "test_two_cousins_called_alike",
-    "test_the_face_pass",
-    "test_a_face_pass_from_the_command_line",
     # Undo of every change kind after every later kind, real writers and real ExifTool (#1805).
     "test_undo_after_every_later_kind",
     "test_the_gate_reads_by_year_gap",

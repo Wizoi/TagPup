@@ -66,7 +66,7 @@ def lines(name, reading, answer):
     counts = answer["pass"]
     out = ["%s: %d of %d photos passed; faces: %d matched, %d unmatched (%d named: the pass's review list), %d new, "
            "%d in photos not passed; the journal: %d changes, %d matched, %d new. Skipped, too small and failed are not "
-           "kept by the library: the face-pass run's own line says them." % (
+           "kept by the library." % (
                name, counts["photos_passed"], counts["photos"], counts["matched"], counts["unmatched"],
                counts["unmatched_named"], counts["new"], counts["not_passed"], counts["changes"],
                counts["journal_matched"], counts["journal_new"])]

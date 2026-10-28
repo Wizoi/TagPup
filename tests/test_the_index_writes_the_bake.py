@@ -11,7 +11,13 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
 - a share stops answering part-way through the bake: what it says names no change in History to undo;
 - a face deleted from the library (one of a photo's two) is left in the file: a bake under the library's keys of the
   picture is never rewritten (owner, DECISIONS 2026-10-27), the file's mtime does not move, and the face does not come
-  back in the library (the index takes faces from a bake only for a photo with no vector or never examined).
+  back in the library (the index takes faces from a bake only for a photo with no vector or never examined);
+- a PNG is baked as a JPEG is;
+- the owner turns a photo in the app between the bake's plan of its folder and its file's write (#1925): the bake
+  describes the picture as planned, which the photo's decode now tells apart, so the read side rejects it.
+
+Lifted: the deleted `bake-photos` command's tests of a PNG and of a turn between the plan and the write
+(test_a_bake_is_written_folder_by_folder), now of the index's bake.
 """
 import json
 import os
@@ -40,6 +46,7 @@ from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import photos as photo_service  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -199,6 +206,33 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertEqual(1, len(matched), "the run's new faces were not matched")
         after, upto = matched[0]
         self.assertTrue(after < face_id <= upto, matched)
+
+    def test_a_png_is_indexed_and_baked(self):
+        path = os.path.join(self.folder, "harbour.png")
+        Image.new("RGB", SIZE, (40, 120, 200)).save(path, "PNG")
+        self.detector.found["harbour.png"] = [(FACE, 0.99, 1)]
+        self.index()
+        self.assertBaked(path, 1)
+        self.assertNoBakeListed()
+
+    def test_a_photo_turned_between_the_bakes_plan_and_its_write_is_baked_as_planned_and_told_apart(self):
+        a = self.picture("a.jpg", (200, 40, 40))
+        before = images.fingerprint(images.opened(a, upright=True))
+        real = file_changes.write_fields
+
+        def turn_first(library, operation, *args, **kwargs):
+            if operation == baking.INDEX_OPERATION:
+                # The owner clicks Rotate in the app while the bake has planned the folder: the turn's own write first.
+                turn = photo_service.rotate(library, a, "left", EXIFTOOL)
+                self.assertEqual((None, []), (turn.refused, turn.errors))
+            return real(library, operation, *args, **kwargs)
+        with mock.patch.object(file_changes, "write_fields", side_effect=turn_first):
+            self.index()
+        held = baked_files.held(a)
+        now = images.fingerprint(images.opened(a, upright=True))
+        self.assertNotEqual(now, before)
+        self.assertEqual(before, held.fingerprint, "the bake describes the picture as planned...")
+        self.assertNotEqual(now, held.fingerprint, "...which its decode now tells apart: the read side rejects it")
 
     def test_a_file_changed_between_the_index_and_the_bake_is_decoded_and_not_baked_with_the_old_picture(self):
         a = self.picture("a.jpg", (200, 40, 40))
