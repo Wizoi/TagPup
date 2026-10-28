@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import migration_names  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import face_rows  # noqa: E402
 from face_rows import FACENET, on_facenet, person_of  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 import baked_files  # noqa: E402
@@ -78,15 +79,15 @@ def a_switch_back(case, library):
 
 
 def a_later_pass(case, library):
-    """A pass under the new model that finds a face in the sixth photo: its own change, by the pass's writer."""
+    """A pass under the new model that finds a face in the sixth photo: its own change, as the deleted pass recorded it."""
     path = case.photo[6]
     conn = db.connect(library.path)
     try:
         change_id = journal.record(conn, journal_service.FACE_PASS % NEW, [],
                                    {"folder": store_roots.to_row(conn, os.path.dirname(path)), "matched": 0, "new": 0})
-        store_faces.give_vectors(conn, change_id, path, NEW, [],
-                                 [([7, 7, 27, 27], 0.99, vector(np.random.default_rng(8)), bytes([7]) * 64)],
-                                 {"matched": 0, "new": 1})
+        face_rows.as_a_face_pass_gave(conn, change_id, path, NEW, [],
+                                      [([7, 7, 27, 27], 0.99, vector(np.random.default_rng(8)), bytes([7]) * 64)],
+                                      {"matched": 0, "new": 1})
         conn.commit()
     finally:
         conn.close()
@@ -293,8 +294,8 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
                                              {"folder": store_roots.to_row(conn, cls.folder), "matched": 0, "new": 0})
             for n, matched in matched_in.items():
                 if matched:
-                    store_faces.give_vectors(conn, cls.pass_change, cls.photo[n], NEW, matched, [],
-                                             {"matched": len(matched), "new": 0})
+                    face_rows.as_a_face_pass_gave(conn, cls.pass_change, cls.photo[n], NEW, matched, [],
+                                                  {"matched": len(matched), "new": 0})
             conn.commit()
         finally:
             conn.close()

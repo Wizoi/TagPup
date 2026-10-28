@@ -338,30 +338,6 @@ def insert(conn, photo_path, box, embedding, *, model, name=None, crop=None, pro
     return face_id
 
 
-# ---- The new face model's pass (a command since deleted): its journal's shape, and its counts -------------------
-
-def give_vectors(conn, change_id, photo_path, key, matched, new, counts):
-    """Write one photo's part of the face pass and record every row it adds as rows of change `change_id`, byte for byte as
-    stored, with `counts` added to the change's summary (tagpup.store.journal.record_inserted), in the caller's
-    transaction: `matched`, [(face id, vector)], each an existing face's vector under `key`, the face's name, box, crop
-    and decisions untouched; `new`, [(box, prob, vector, crop)], each a new face, unnamed and not excluded, with its crop
-    and a vector under `key` alone (insert, unnamed), in the photo at `photo_path`. Vectors are float32 bytes. The crop is
-    kept and not recorded: a cache (journal.CACHES), which the undo's delete of its face takes. No face is named, so no
-    photo's people move. Returns the new faces' ids. The caller commits."""
-    from tagpup.store import journal   # journal imports the photos store, which imports this module
-    rows = []
-    for face_id, vector in matched:
-        conn.execute("INSERT INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)", (face_id, key, vector))
-        rows.append(("face_embeddings", (face_id, key)))
-    added = []
-    for box, prob, vector, crop in new:
-        face_id = insert(conn, photo_path, box, vector, model=key, crop=crop, prob=prob)
-        added.append(face_id)
-        rows += [("faces", (face_id,)), ("face_embeddings", (face_id, key))]
-    journal.record_inserted(conn, change_id, rows, counts)
-    return added
-
-
 # ---- The gate: two models' vectors of the same faces (tagpup.services.face_gate) -------------------------------------
 
 def under_each(conn, keys, named):

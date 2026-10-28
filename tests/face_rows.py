@@ -150,3 +150,32 @@ def add_vector_of_face(conn, face_id, vector, model=FACE_MODEL):
     """Keep `vector` (float32 bytes) as the face's under `model`, the library's (FACE_MODEL) unless given, replacing one
     it had. The caller commits."""
     conn.execute("INSERT OR REPLACE INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)", (face_id, model, vector))
+
+
+def as_a_face_pass_gave(conn, change_id, photo_path, key, matched, new, counts):
+    """The rows the deleted face pass (`face-pass`, deleted 2026-10-27) gave one photo, recorded in change `change_id` as it
+    recorded them: `matched`, [(face id, vector)], a vector under `key` for an existing face; `new`, [(box, prob, vector,
+    crop)], a new face, unnamed, with its crop and a vector under `key` alone; each row recorded as an insert, read back
+    whole as stored, its crop not (a cache, journal.CACHES), and `counts` added to the change's summary. The three live
+    journals hold 2,528 such changes (counted read-only 2026-10-28), each one History may undo: the tests of that undo make
+    one here, the pass being gone. Returns the new faces' ids. The caller commits."""
+    from tagpup.store import faces as store_faces, journal, schema
+    rows = []
+    for face_id, vector in matched:
+        conn.execute("INSERT INTO face_embeddings (face_id, model, vector) VALUES (?, ?, ?)", (face_id, key, vector))
+        rows.append(("face_embeddings", (face_id, key)))
+    added = []
+    for box, prob, vector, crop in new:
+        face_id = store_faces.insert(conn, photo_path, box, vector, model=key, crop=crop, prob=prob)
+        added.append(face_id)
+        rows += [("faces", (face_id,)), ("face_embeddings", (face_id, key))]
+    stored = []
+    for table, row_key in rows:
+        columns = schema.table_columns(conn, table)
+        values = conn.execute('SELECT %s FROM "%s" WHERE %s' % (
+            ", ".join('"%s"' % column for column in columns), table,
+            " AND ".join('"%s" = ?' % column for column in journal.KEYS[table])), row_key).fetchone()
+        stored.append(journal.RowChange("insert", table, tuple(row_key), None, dict(zip(columns, values))))
+    journal.record_rows(conn, change_id, stored)
+    journal.add_counts(conn, change_id, counts)
+    return added
