@@ -97,7 +97,7 @@ cluster-faces' "took no part" were deleted 2026-10-28 (Cut B).
   2026-10-26); both checks stay until the baseline migration removes them.
 - **The margin (2026-10-17, phase 2b; DECISIONS 2026-10-17)**: `looks_wrong` asks none -- a name already given is neither
   taken away nor questioned by it (owner's scope) and the person page reads one person's faces only; `face_tags._matched`
-  keeps "exactly one person reaches 0.80" (FaceNet's naming likeness; each model's own since 2026-10-20) beside it, since the margin alone would name a face two people reach 0.04 apart, a
+  keeps "exactly one person reaches 0.80" (FaceNet's naming likeness then; each model's own since 2026-10-20, AdaFace's 0.520) beside it, since the margin alone would name a face two people reach 0.04 apart, a
   name the old rule never gave (phase 2's gate), and leaves out the people the photo's other faces hold, as the pairing does.
   The photo with one face and one person is asked no margin at a save, where cluster-faces' last pass asks 0.04 over the
   library: a save is the owner's own act on that photo's tag, and the tag says whose its one face is; the last pass guesses
