@@ -32,12 +32,15 @@ def claim(library, job, run_for, now, due=None):
     return job_runs.claim(library.path, job, run_for, now, due)
 
 
-def finish(library, run_id, now, result=None, error=None):
+def finish(library, run_id, now, result=None, error=None, failed=None):
     """End run `run_id` with the `result` its service returned, or the `error` it raised:
-    done when the Result is ok, else failed. False when it was no longer this process's
-    to end."""
+    done when the Result is ok, else failed -- and failed, with `failed` its note, when the
+    job says why an ok Result did not do its work (recurring.Job.failed). False when it was
+    no longer this process's to end."""
     if error is not None:
         return job_runs.finish(library.path, run_id, FAILED, now, {"errors": 1}, "%s: %s" % (type(error).__name__, error))
+    if failed:
+        return job_runs.finish(library.path, run_id, FAILED, now, counts(result), failed)
     outcome = DONE if result.ok else FAILED
     return job_runs.finish(library.path, run_id, outcome, now, counts(result), result.message() or None)
 
