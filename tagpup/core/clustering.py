@@ -50,6 +50,10 @@ So a name resting on likeness alone needs both: the likeness, and the margin ove
 (`margins`). It gates the names given from now on and the names offered; it never takes away a name a face carries
 or one given by hand (owner, 2026-10-17: applied to the names already given it would unname about 18,500 of
 photo_index's 55,088).
+
+Those readings were FaceNet's, the old face model's; its cuts went with it (2026-10-28, docs/OLD_MODEL_VESTIGES.md row
+8). The rules they chose -- the closest face of the era, the likeness and the margin -- are AdaFace's too, at its own
+values (ADAFACE_CUTS).
 """
 import math
 import threading
@@ -132,24 +136,6 @@ class Cuts:
         return similarity is not None and similarity < self.offer_a_name
 
 
-#: FaceNet's (MTCNN and FaceNet's vectors). The likenesses the owner chose on kr-track (2026-09-24): at 0.70 one
-#: stranger in twenty reaches a face named and nearly all of the owner's people do; at 0.80 four strangers in a thousand
-#: and four in five of the owner's people, rightly. The margins the owner chose (2026-10-17, phase 2b): precision 99.83%
-#: at 0.04 and 99.54% at 0.02 on photo_index's named faces, against 98.46% by the likeness alone.
-#: The grouping radius, measured on kr-track (2026-09-24), each hand-named face against the nearest face of its own
-#: person, of anyone else, and of a stranger, never one of its own photo:
-#:
-#:     similarity   own person's reaches   someone else's   a stranger's
-#:       0.80              81%                  3.4%             0.6%
-#:       0.85              63%                  1.8%             0.1%
-#:       0.885             46%                  0.6%             0.0%
-#:       0.90              38%                  0.5%             0.0%
-#:
-#: Grouping chains faces, so each that reaches someone else can pull two people into one group; naming, from anchors
-#: and keywords, does the rest. It was 0.48 as a distance in two places. The owner kept 0.885 (2026-09-24).
-FACENET_CUTS = Cuts(offer_a_name=0.70, name_without_asking=0.80, name_margin=0.04, offer_margin=0.02, group_at=0.885,
-                    source="owner, 2026-09-24 (likeness, grouping) and 2026-10-17 (margin, phase 2b)")
-
 #: AdaFace's (SCRFD and AdaFace's vectors). Read off the phase 3 gate (docs/AI_PIPELINE.md, merge 3 slice C,
 #: 2026-10-20): kr-track and renton_parkrun pooled, the open set (a face alone in its folder counted, every name it is
 #: given wrong), at the precision the owner chose, 0.99 (2026-10-20): a margin of 0.205 and a likeness of 0.520 to name
@@ -165,9 +151,9 @@ ADAFACE_CUTS = Cuts(offer_a_name=0.310, name_without_asking=0.520, name_margin=0
                     source="the phase 3 gate, open set, pooled (2026-10-20): naming at precision 0.99, offering at 0.98;"
                            " grouping at FaceNet's impurity on 2,849 named faces (2026-10-20)")
 
-#: Each face model's cuts, by its key (tagpup.core.validation.FACE_MODELS): every model a library can be set to has
-#: its own.
-CUTS = {validation.MTCNN_FACENET: FACENET_CUTS, validation.SCRFD_ADAFACE: ADAFACE_CUTS}
+#: Each face model's cuts, by its key (tagpup.core.validation.FACE_MODELS): every model a library can be put on has
+#: its own (a library is not put on FaceNet: tagpup.services.settings.face_model_refusal).
+CUTS = {validation.SCRFD_ADAFACE: ADAFACE_CUTS}
 
 
 def cuts_of(model):
