@@ -386,12 +386,6 @@ def photos_of(conn, after, upto):
         "SELECT DISTINCT photo_id FROM faces WHERE id > ? AND id <= ?", (after, upto))]
 
 
-def holds_vectors_under(conn, key):
-    """Does any face hold a vector under `key`? The first row of the key's (sqlite_autoindex_face_embeddings_1, covering;
-    a key the library holds none of is the whole index, 0.02 s on photo_index, 2026-10-23)."""
-    return conn.execute("SELECT 1 FROM face_embeddings WHERE model = ? LIMIT 1", (key,)).fetchone() is not None
-
-
 def manual_names(conn):
     """face id -> Ref for every face a person decided by hand. A None is a
     deliberate "this is nobody", as binding as a person."""

@@ -165,7 +165,7 @@ describe("the settings dialog", () => {
     const said = "2 of the library's 2 faces hold a vector under mtcnn-facenet.";
     const { window, field, save, changeButton, boxes, posted } = await tunerWithSettings(t, { saved: {
       success: true, changed: 1, settings: ["faces.model"], locked: true, change: 9,
-      face_vectors: { faces: 2, without: 0, named_without: 0, not_passed: 0, said } } });
+      face_vectors: { faces: 2, without: 0, named_without: 0, said } } });
     const shown = [];
     window.alert = (text) => shown.push(text);
     const declared = PUBLISHED_RULES.kinds["setting faces.model"];
