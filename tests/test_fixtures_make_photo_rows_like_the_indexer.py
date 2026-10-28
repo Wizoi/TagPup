@@ -26,7 +26,7 @@ STILL_BARE = {
     "test_face_click_reads_named_faces_once.py": 1, "test_identify_cache_keeps_others_writes.py": 1,
     "test_identify_cache_sees_every_change.py": 1, "test_inspect_uses_the_stores_mtime_rule.py": 1,
     "test_journal_undo_refusals.py": 1, "test_maintenance.py": 3, "test_mcp_photo_against_file.py": 4,
-    "test_mcp_server.py": 2, "test_mcp_write_tools.py": 3, "test_partial_writes_leave_rows_unread.py": 1,
+    "test_mcp_server.py": 2, "test_partial_writes_leave_rows_unread.py": 1,
     "test_paths.py": 1, "test_paths_roots.py": 1, "test_person_rename_reaches_the_files.py": 1, "test_refresh_rows.py": 1,
     "test_relink_checks_the_destination.py": 1, "test_roots_at_scale.py": 1, "test_roots_sample.py": 1, "test_schema.py": 2,
     "test_snapshots.py": 1, "test_suggest_index_stays_current.py": 1, "test_suggest_reads_people_once.py": 1,

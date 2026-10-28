@@ -1,5 +1,5 @@
 """Sync from each place it is asked for: the route both apps serve (/api/sync), the CLI's
-`sync`, and the MCP server's `sync` and `sync_state` (tagpup.runtime.sync over
+`sync`, and the MCP server's `sync_state`, which reads the record (tagpup.runtime.sync over
 tagpup.services.sync; docs/ARCHITECTURE.md, phase 8).
 
 Each is a dry run unless told to apply, answers counts -- never a path, since folders
@@ -262,26 +262,13 @@ class TheTools(Drifted, unittest.TestCase):
         self.assert_no_path(result.content[0].text)
         return json.loads(result.content[0].text)
 
-    def test_sync_counts_and_queues_nothing_and_sync_state_reads_the_record(self):
+    def test_sync_state_reads_what_the_clis_apply_recorded_and_names_nothing(self):
         self.assertEqual({"last_run": None, "last_in_step": None}, self.call("sync_state"))
-        with open(self.db_path, "rb") as handle:
-            before = handle.read()
-        dry = self.call("sync")
-        with open(self.db_path, "rb") as handle:
-            self.assertEqual(before, handle.read(), "a dry run changed the library")
-        self.assertEqual((True, 1, False), (dry["dry_run"], dry["counts"]["new"], dry["in_step"]))
-        applied = self.call("sync", apply=True)
-        self.assertEqual((False, 0), (applied["dry_run"], applied["changed"]))
-        self.assertEqual([], self.indexed, "the tool indexes nothing; it counts the new files")
+        applied = CliRunner().invoke(cli, ["--db", self.db_path, "sync", "--apply"])
+        self.assertEqual(0, applied.exit_code, applied.output + repr(applied.exception))
+        indexing_jobs.forget(Library(self.db_path))
         state = self.call("sync_state")
-        self.assertEqual((1, 0), (state["last_run"]["found"]["new"], state["last_run"]["changed"]["queued_folders"]))
-        revealed = asyncio.run(self._revealed())
-        self.assertIn(self.new, revealed)
-
-    async def _revealed(self):
-        async with create_connected_server_and_client_session(server.build()) as client:
-            result = await client.call_tool("sync", {"library": "harbour", "reveal": True})
-        return json.loads(result.content[0].text)["reveal"]["new"]
+        self.assertEqual((1, 1), (state["last_run"]["found"]["new"], state["last_run"]["changed"]["queued_folders"]))
 
 
 class FakeWatcher:

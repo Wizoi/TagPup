@@ -11,10 +11,9 @@ its other photos were indexed, and their Family/Work tags grew kr-track's tag tr
 Now ensure_row makes a row only in a folder the library holds, or when the folder is
 being added (tagpup.services.libraries.add, and the indexer). Every entry point that
 could make one is asked here: the Suggest route (409, naming the folder and the
-library), the MCP server's write tools, and the adding routes of
+library), the CLI's `sync --apply`, and the adding routes of
 both apps, which make the rows at once and queue the index.
 """
-import asyncio
 import os
 import sys
 import unittest
@@ -26,14 +25,12 @@ from face_rows import FACE_MODEL  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
-from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Conflict, Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
-from tagpup.mcp import server  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import suggester  # noqa: E402
@@ -249,9 +246,10 @@ class TagTunersAddFolder(Folders, unittest.TestCase):
         self.assertEqual([self.lighthouse], indexed.folders)
 
 
-class TheMcpWriteTools(Folders, unittest.TestCase):
-    """The MCP server's write tools keep rows in step; none makes one in a folder the
-    library does not hold."""
+class TheClisSync(Folders, unittest.TestCase):
+    """The CLI's `sync --apply` keeps rows in step and makes none in a folder the library
+    does not hold: a folder it holds nothing under is refused, and only the library's own
+    folder is indexed."""
 
     def setUp(self):
         self.home = own_home.for_test(self)
@@ -259,19 +257,25 @@ class TheMcpWriteTools(Folders, unittest.TestCase):
         library_actions.create(self.db_path)
         self.make(self.home.root, self.db_path)
 
-    def call(self, tool, arguments):
-        async def run():
-            async with create_connected_server_and_client_session(server.build()) as client:
-                return await client.call_tool(tool, dict(arguments, library="harbour"))
-        return asyncio.run(run())
+    def test_sync_applied_leaves_the_other_folder_alone(self):
+        from click.testing import CliRunner
+        from tagpup_cli import cli
+        indexed = []
 
-    def test_sync_and_refresh_applied_leave_the_other_folder_alone(self):
-        with mock.patch("tagpup.runtime.index_folder", side_effect=AssertionError("nothing is indexed")):
-            for tool, arguments in (("sync", {"apply": True}), ("refresh", {"apply": True}),
-                                    ("sync", {"apply": True, "folder": self.lighthouse})):
-                with self.subTest(tool=tool, arguments=arguments):
-                    self.call(tool, arguments)
+        def index_folder(library, subfolders=True):
+            def index(folders, report):
+                indexed.extend([folders] if isinstance(folders, str) else folders)
+                return Result(attempted=1, changed=1)
+            return index
+
+        with mock.patch("tagpup.runtime.index_folder", side_effect=index_folder):
+            for arguments, exit_code in ((["--apply"], 0), (["--apply", "--folder", self.lighthouse], 1)):
+                with self.subTest(arguments=arguments):
+                    done = CliRunner().invoke(cli, ["--db", self.db_path, "sync"] + arguments)
+                    self.assertEqual(exit_code, done.exit_code, done.output)
                     self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
+        indexing_jobs.forget(Library(self.db_path))
+        self.assertEqual([self.regatta], indexed, "only the library's own folder is indexed")
         self.assertEqual({paths.key(self.held[0])}, {paths.key(p) for p in self.rows()})
 
     def rows(self):

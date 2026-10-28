@@ -325,9 +325,8 @@ copying the library: applied only where every row is still what the plan read, e
 refused whole, naming the rows. It returns a `Result` whose `changed` is what the write
 changed, read from the database, not what was planned, and whose `details["change"]`
 is the change's id. `tagpup_cli.py history` lists the changes, `undo <id>` rehearses
-taking one back and `undo <id> --apply` does. The MCP server (`tagpup.mcp`) calls the same
-services as write tools, and has `history` and `undo` too, each a dry run unless called with
-`apply=true`, showing paths and names only with `reveal=true`.
+taking one back and `undo <id> --apply` does. The MCP server (`tagpup.mcp`) only reads: its
+`history` lists the changes, showing paths and names only with `reveal=true`.
 
 The two scripts not on the scaffold still back the database up first through
 `db.backup()`: SQLite's backup API, into `backups/` beside the library

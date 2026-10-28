@@ -313,14 +313,14 @@ def sync(library, folder=None, apply=False, index_new=True):
     new files go on this process's index queue for the library (tagpup.jobs.indexing),
     unless not `index_new`; they are indexed one at a time, after the sync returns.
 
-    What the entry points call -- the CLI's `sync`, the MCP server's tool, the route --
+    What the entry points call -- the CLI's `sync`, the route --
     and what a recurring job calls as sync(library, apply=True), and the folder watcher.
 
     An applied sync is refused, nothing read or written, while "Name faces from tags" writes names in THIS process
     (naming_faces.writing): a sync that deletes, re-points or
     adds photos beside it changes what it read. Here, not in a route, so the run-now, the scheduled job and the watcher are
     closed alike whatever library the request named. The watcher's folder is brought in by its next notification or the daily
-    catch-up. Another process's apply (the CLI, the MCP server) cannot see this process's job."""
+    catch-up. Another process's apply (the CLI) cannot see this process's job."""
     if apply and naming_faces.writing(library):
         return sync_service.not_run(NAMING_SAYS, apply)
     settings = library_settings(library) if apply else peek_settings(library)

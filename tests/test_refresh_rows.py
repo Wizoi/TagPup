@@ -130,7 +130,7 @@ class RefreshRows(RefreshFixture):
         # And a second run finds nothing left to do.
         self.assertEqual(0, self.refresh().details["counts"]["stale"])
 
-    def test_a_row_never_read_is_read_and_dated(self):
+    def test_a_row_never_read_is_read_and_dated(self):   # #250: a row holding no raw_metadata was never read
         self.refresh(apply=True)
         conn = db.connect(db.readonly_uri(self.db), uri=True)
         try:

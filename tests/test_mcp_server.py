@@ -39,17 +39,9 @@ LIBRARY = "harbour"
 SECRETS = ("Rowan Thackeray", "Maren Oakhollow", "Pell Quarrington", "Tamsin Ferrow", "Quayside Rowers",
            "Harbourview", "Lindqvist", "regatta_", "camp_", "Sailing", "Dinghy")
 
-READ_TOOLS = {"libraries", "summary", "folders", "photos", "photo_against_file", "faces_in_photo",
-              "check", "checks", "missing_files", "query_plan", "history", "sync_state"}
-
-#: The maintenance operations (tests/test_mcp_write_tools.py applies them).
-MAINTENANCE_TOOLS = {"refresh_rows", "sync", "merge_duplicate_person_tags", "dedupe_faces"}
-
-#: What writes: the maintenance operations, and undoing
-#: (tests/test_journal_through_the_tools.py).
-WRITE_TOOLS = MAINTENANCE_TOOLS | {"undo"}
-
-TOOLS = READ_TOOLS | WRITE_TOOLS
+#: Every tool: each reads, none writes (a write is the CLI's or the pages').
+TOOLS = {"libraries", "summary", "folders", "photos", "photo_against_file", "faces_in_photo",
+         "check", "checks", "missing_files", "query_plan", "history", "sync_state"}
 
 
 def _tree(conn):
@@ -177,19 +169,12 @@ class McpServer(unittest.TestCase):
 
     # ---- The tools -----------------------------------------------------------------------
 
-    def test_every_tool_is_listed_and_says_whether_it_writes(self):
+    def test_every_tool_is_listed_and_only_reads(self):
         listed = self.session(lambda client: client.list_tools()).tools
         self.assertEqual({t.name for t in listed}, TOOLS)
         for t in listed:
-            self.assertEqual(t.annotations.readOnlyHint, t.name in READ_TOOLS, t.name)
-            if t.name in WRITE_TOOLS:
-                self.assertIn("dry run", t.description, t.name)
-                for copying in ("backup", "backs the library up"):
-                    self.assertNotIn(copying, t.description, "%s: no tool copies the library" % t.name)
-                self.assertIs(t.inputSchema["properties"]["apply"]["default"], False, t.name)
-            if t.name in MAINTENANCE_TOOLS:
-                self.assertIn("rehearses", t.description, t.name)
-                self.assertIn("journal", t.description, t.name)
+            self.assertTrue(t.annotations.readOnlyHint, t.name)
+            self.assertNotIn("apply", t.inputSchema["properties"], t.name)
             if "reveal" in t.inputSchema["properties"]:
                 self.assertIn("reveal", t.description, t.name)
             if t.name != "libraries":
@@ -202,8 +187,7 @@ class McpServer(unittest.TestCase):
     def test_a_library_that_is_not_there_is_refused_and_not_made(self):
         """Selecting a library that does not exist created it (#16); a tool never does."""
         for tool in TOOLS - {"libraries"}:
-            arguments = {"library": "harbor", "photo_id": 1, "name": "orphan_nodes", "sql": "SELECT 1",
-                         "folder": self.here, "change": 1}
+            arguments = {"library": "harbor", "photo_id": 1, "name": "orphan_nodes", "sql": "SELECT 1"}
             schema_of = {t.name: t for t in self.session(lambda client: client.list_tools()).tools}[tool]
             arguments = {k: v for k, v in arguments.items() if k in schema_of.inputSchema["properties"]}
             self.assertIn("no library called", self.refused(tool, **arguments))
@@ -343,15 +327,13 @@ class McpServer(unittest.TestCase):
                  ("faces_in_photo", {"photo_id": ids["sailing"]}), ("faces_in_photo", {"photo_id": ids["camp2"]}),
                  ("checks", {}), ("missing_files", {}),
                  ("query_plan", {"sql": "SELECT path FROM photos WHERE path = 'Harbourview'"})]
-        # The write tools as dry runs: tearDown holds the library to being unchanged.
-        calls += [(tool, {}) for tool in sorted(MAINTENANCE_TOOLS)]
-        calls += [("history", {}), ("undo", {"change": 1}), ("sync_state", {})]
+        calls += [("history", {}), ("sync_state", {})]
         calls += [("check", {"name": rule.__name__}) for rule in checks.RULES]
         self.assertEqual({tool for tool, _ in calls}, TOOLS)
         for tool, arguments in calls:
             if tool != "libraries":
                 arguments = dict(arguments, library=LIBRARY)
-                if tool not in ("summary", "query_plan", "undo", "sync_state"):
+                if tool not in ("summary", "query_plan", "sync_state"):
                     arguments["reveal"] = reveal
             result = self.result(tool, **arguments)
             texts.append((tool, " ".join(c.text for c in result.content) + json.dumps(result.structuredContent)))

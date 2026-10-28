@@ -4,7 +4,7 @@
 Stage 2 turned the id/name direction round, so a version of the app from before it that opened a migrated library would
 write names without ids and read ids it does not know. `schema.ensure` refuses a library whose schema is newer than the
 app's `LATEST` -- NewerLibrary, a sentence naming the library and what to start -- and every entry point shows that sentence,
-not a traceback: the server (409 under the library's address, the picker's Create 400), the CLI, the MCP, the doctor, and a
+not a traceback: the server (409 under the library's address, the picker's Create 400), the CLI, the doctor, and a
 snapshot restore. The recovery tools of an older checkout (the snapshots, the journal's read, the doctor's report, the MCP's
 reads) still work on it, as it is. None of this needs a real migration: a library newer than the code is made by writing a
 version the code does not know, or by giving the code a synthetic step the other copy lacks (tests/migration_names.py).
@@ -164,15 +164,6 @@ class EveryEntryPointSaysItInWords(unittest.TestCase):
         result = CliRunner().invoke(cli, ["--db", missing, "history"])
         self.assertNotIn("newer version", result.output)
 
-    def test_the_mcp_refuses_to_name_it(self):
-        from mcp.server.fastmcp.exceptions import ToolError
-        from tagpup.mcp import server
-        with mock.patch.object(server.config, "data_dir", return_value=os.path.dirname(self.path)), \
-                mock.patch.object(server.config, "library_path", side_effect=lambda f: os.path.join(os.path.dirname(self.path), f)):
-            with self.assertRaises(ToolError) as refused:
-                server.find_library("library", writes=True)
-        self.assertEqual(self.sentence, str(refused.exception))
-
     def test_the_doctor_says_it_in_both_its_modes(self):
         import doctor
         for run in (lambda: doctor.rebuild_derived(self.path), lambda: doctor.rebuild_derived(self.path, apply=True)):
@@ -257,40 +248,6 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
             self.addCleanup(each.stop)
         tools = server.build()
         return lambda name, **arguments: asyncio.run(tools.call_tool(name, arguments))
-
-    def test_each_mcp_writing_tool_is_refused_and_writes_nothing(self):
-        from mcp.server.fastmcp.exceptions import ToolError
-        call = self.mcp()
-        before = fingerprint(self.path)
-        for name, arguments in (("refresh_rows", {"apply": True}), ("sync", {"apply": True}), ("sync", {}),
-                                ("merge_duplicate_person_tags", {"apply": True}), ("dedupe_faces", {"apply": True}),
-                                ("undo", {"change": 1, "apply": True})):
-            with self.subTest(tool=name, arguments=arguments):
-                with self.assertRaises(ToolError) as refused:
-                    call(name, library="library", **arguments)
-                self.assertIn("backups", str(refused.exception))
-        self.assertEqual(before, fingerprint(self.path))
-
-    def test_a_writing_tool_is_never_inside_reading_newer_even_when_the_library_turns_newer_after_the_check(self):
-        # An update migrates the library while a long sync(apply) runs: find_library's check was passed, so the
-        # last guard is `ensure`, and it must not be switched off around a writer.
-        from mcp.server.fastmcp.exceptions import ToolError
-        from tagpup.mcp import server
-        call = self.mcp()
-        before = fingerprint(self.path)
-        refused = []
-        with mock.patch.object(server, "find_library", side_effect=lambda *a, **k: Library(self.path)):
-            for name, arguments in (("sync", {"apply": True}), ("refresh_rows", {"apply": True}),
-                                    ("merge_duplicate_person_tags", {"apply": True}), ("dedupe_faces", {"apply": True}),
-                                    ("undo", {"change": 1, "apply": True})):
-                with self.subTest(tool=name):
-                    try:
-                        call(name, library="library", **arguments)
-                    except ToolError:
-                        refused.append(name)
-        self.assertIn("sync", refused, "the one that writes the library's last sync is stopped by ensure")
-        self.assertEqual(before, fingerprint(self.path), "nothing written into the newer library")
-        self.assertEqual([(0,)], look(self.path, "SELECT COUNT(*) FROM job_runs WHERE job IN ('sync-whole', 'sync-folder')"))
 
     def test_the_mcp_read_tools_answer_with_the_note(self):
         call = self.mcp()

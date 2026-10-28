@@ -14,8 +14,9 @@ in raw_metadata, a row no read ever made, a caption listed twice -- are not look
 here: none exists in the three libraries (counted 2026-10-10), and if one appears the owner
 fixes it by hand (the doctor does not look for these; its checks are in tagpup.store.checks).
 
-The MCP server's tool calls `refresh_rows`,
-on the maintenance scaffold (tagpup.services.maintenance). Planning reads the files, so
+`refresh_rows` runs on the maintenance scaffold (tagpup.services.maintenance).
+No entry point runs it since the MCP server's write tools were deleted (2026-10-28): only its tests do.
+`sync` reads a changed file's row again through `reread` and `edits_for`. Planning reads the files, so
 a dry run takes as long as the reading.
 """
 import json

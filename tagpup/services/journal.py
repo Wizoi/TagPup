@@ -1,4 +1,4 @@
-"""A library's journal, as the CLI and the MCP server use it: what was changed, and undoing a
+"""A library's journal, as the CLI, the pages and the MCP server's `history` use it: what was changed, and undoing a
 change (tagpup.store.journal; docs/ARCHITECTURE.md, phase
 7.5).
 
