@@ -20,6 +20,11 @@ could put back is. `changes.owner` names the process carrying a change out, so a
 another live process is writing is not taken for one a crash left (tagpup.services.
 file_changes.settle).
 
+A change of an INTERNAL operation (the index's bake) is the record a crash needs and no
+more: it is erased, its files and itself, when it finishes forward; no history lists it,
+and no undo check meets it, but while one of its files is `writing` (newer_overlapping:
+one writer of a file at a time).
+
 A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}, and
 the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
 vectors (migration 12); a rename keeps the file's old and new path, and its size, modified time and file id, which a
