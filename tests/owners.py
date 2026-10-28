@@ -243,6 +243,7 @@ _FILES = {
             "test_when_a_photo_was_taken_is_kept test_xmp_census tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
+        "guard": "test_photo_looks_have_one_owner",
     },
     "views": {
         "unit": (
