@@ -59,6 +59,7 @@ section h2 { font-size: 16px; margin: 0 0 10px; border-bottom: 1px solid var(--b
 .fact .label { min-width: 170px; color: var(--muted); }
 .activity progress { width: 160px; }
 .activity .percent { font-variant-numeric: tabular-nums; }
+#now-summary { margin: 4px 0 8px; }
 .activity.at .detail { overflow-wrap: anywhere; }
 .what { font-weight: 600; }
 .path { font-family: Consolas, monospace; font-size: 12px; }

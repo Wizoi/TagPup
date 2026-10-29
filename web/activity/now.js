@@ -8,7 +8,7 @@ import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { ago, duration, secondsBetween } from './format.js';
-import { badge, fill, none, runLinks } from './view.js';
+import { badge, fill, runLinks } from './view.js';
 
 /** Ask what runs now, and show it. */
 export function loadNow() {
@@ -59,6 +59,11 @@ function timing(started, progressed) {
     if (ran !== null) parts.push(`running ${duration(ran)}`);
     if (still !== null) parts.push(`last progress ${duration(still)} ago`);
     return parts.join(', ');
+}
+
+/** A count as the owner reads one: 20,417. */
+function count(value) {
+    return Number(value || 0).toLocaleString('en-US');
 }
 
 /** The phase a message of the indexer names: its words before the first number or colon ("Bake folder", "Metadata"). */
@@ -127,7 +132,7 @@ function serverLines(data) {
     if (data.syncing) {
         const progress = data.syncing.progress || {};
         const walked = progress.phase
-            ? `${progress.phase}: ${progress.folders} folder(s), ${progress.files} photo file(s)` : 'starting';
+            ? `${progress.phase}: ${count(progress.folders)} folder(s), ${count(progress.files)} photo file(s)` : 'starting';
         lines.push(buildElement('div', { className: 'activity' }, [
             badge('syncing', 'busy'),
             buildElement('span', { className: 'what', text: data.syncing.library }),
@@ -181,6 +186,7 @@ export function renderNow() {
         blocks.push(buildElement('div', { className: 'card' }, [
             buildElement('h3', { text: library.name }), ...lines]));
     }
-    fill(document.getElementById('now-body'), ...(blocks.length ? blocks : [none('Nothing is running.')]));
+    // Nothing running is said once, by the line above (#now-summary).
+    fill(document.getElementById('now-body'), ...blocks);
     say(data);
 }

@@ -276,7 +276,7 @@ describe("Now says how far a long run has got, and how long since it moved", () 
     await flush(window, 6);
     const now = document.getElementById("now-body");
     assert.match(now.textContent, /every folder/);
-    assert.match(now.textContent, /walking the folders: 812 folder\(s\), 20417 photo file\(s\)/);
+    assert.match(now.textContent, /walking the folders: 812 folder\(s\), 20,417 photo file\(s\)/);
     assert.match(now.textContent, /at \\\\nas\\Pictures\\2019\\Regatta/);
     assert.match(now.textContent, /running 12 min 3 s, last progress 5 s ago/);
     // The index beside it: how long it has run, since it last moved, and its percent in words beside the bar.
@@ -325,6 +325,7 @@ describe("Now says how far a long run has got, and how long since it moved", () 
     answer = { ...NOW, syncing: null, libraries: [] };
     await again();
     assert.equal(line.textContent, "Nothing is running.");
+    assert.equal(document.getElementById("now-body").textContent, "", "said once, by the line above");
   });
 });
 
