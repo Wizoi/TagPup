@@ -290,6 +290,9 @@ class AnIndexThatDoesNotFinishIsRecordedSo(_Indexing):
         self.assertEqual((job_runs.FAILED, "failed"), (run.outcome, status["status"]))
         self.assertEqual((status["message"], runs_service.ERROR), (run.note, runs_service.kind_of(run)))
         self.assertIn("exit code 1", run.note)
+        (group,) = activity.needs_you([self.library])
+        self.assertEqual([(runs_service.INDEX, 1, run.changed["run"])],
+                         [(each["job"], each["count"], each["run"]) for each in group["items"]])
 
 
 class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):

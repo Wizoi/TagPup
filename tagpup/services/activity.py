@@ -11,13 +11,20 @@ Counts, times and run tags (tagpup.core.runs), from the library's own records: `
 is given as its `error`: the page that asks answers this PC alone (tagpup.web.
 activity_routes), and says what went wrong, which a count cannot. A library behind this
 version's schema reads as holding none of what it lacks; nothing is migrated by a look.
+
+Needs you is each job whose last run that ended failed asking the owner to act (tagpup.services.job_runs.needs_you),
+said with what its kind means and the next step (job_runs.FAILURES), grouped by kind across the libraries.
 """
+import logging
 import numbers
 import time
 
 from tagpup.core import runs
 from tagpup.files import shares
+from tagpup.services import job_runs as runs_service
 from tagpup.store import db, job_runs, journal, snapshots
+
+logger = logging.getLogger(__name__)
 
 #: The most entries a timeline gathers from each record.
 MOST = 500
@@ -200,3 +207,28 @@ def timeline_and_children(library, limit=50):
                         "id": change["id"], "run": None, "error": None})
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
     return entries[:limit], index_runs_under(library, indexes)
+
+
+def needs_you(libraries):
+    """What the owner must act on in `libraries`, grouped by kind in the order of job_runs.FAILURES: [{"kind", "means",
+    "next_step", "items": [{"library", "job", "sentence", "count", "since", "last", "run"}]}], each item a job of a
+    library whose failed runs since its last done one ask him to act (runs_service.needs_you): the newest's sentence
+    (its note, which can name a folder: for the page that answers this PC alone) and tag, how many failed, when the
+    first started and the newest finished. A library that cannot be read is logged and left out; the others are said."""
+    found = {}
+    for library in libraries:
+        try:
+            for (job, name), (_last, ended) in sorted(job_runs.latest(library.path).items(),
+                                                      key=lambda each: (each[0][0], each[0][1] or "")):
+                if ended is None or ended.outcome != job_runs.FAILED:
+                    continue
+                failed = runs_service.needs_you([run for run in job_runs.runs(library.path, job, job_runs.KEEP_RUNS)
+                                                 if run.library == name])
+                if failed:
+                    found.setdefault(runs_service.kind_of(failed[0]), []).append({
+                        "library": library.name, "job": job, "sentence": failed[0].note, "count": len(failed),
+                        "since": failed[-1].started, "last": failed[0].finished, "run": _tag(failed[0])})
+        except Exception as e:
+            logger.warning("Could not read what needs you in %s: %s", library.name, e)
+    return [{"kind": kind, "means": means, "next_step": next_step, "items": found[kind]}
+            for kind, (means, next_step, _asks) in runs_service.FAILURES.items() if kind in found]

@@ -228,10 +228,10 @@ def status(library, registry=JOBS, now=None):
 def overview(library, registry=JOBS, now=None, limit=10):
     """What the Activity page shows of each job for `library`: status()'s entry, with its
     last `limit` runs for the library, newest first -- {"id", "started", "finished",
-    "seconds", "outcome", "changed", "error", "run"} (`error`, the note a failed or
-    abandoned run left, which can name a path: for the page that answers this PC alone) --
-    and `failing`: its newest run that ended did not end done. It stays so until a later
-    run is done."""
+    "seconds", "outcome", "changed", "error", "failure", "run"} (`error`, the note a failed or
+    abandoned run left, which can name a path: for the page that answers this PC alone; `failure`, a failed run's kind,
+    job_runs.FAILURES) -- and `failing`: it is one of Needs you (job_runs.needs_you: its newest run that ended failed,
+    asking the owner to act; an abandoned one neither adds nor settles). It stays so until a later run is done."""
     listed = status(library, registry, now)
     for entry in listed:
         job = registry.get(entry["name"])
@@ -242,9 +242,8 @@ def overview(library, registry=JOBS, now=None, limit=10):
                           "seconds": (int(max(0, job_runs.seconds(run.finished) - job_runs.seconds(run.started)))
                                       if run.finished else None),
                           "outcome": run.outcome, "changed": run.changed, "error": run.note,
-                          "run": runs.job_tag(run.library, run.id)} for run in found]
-        ended = [run for run in found if run.outcome != job_runs.RUNNING]
-        entry["failing"] = bool(ended) and ended[0].outcome != job_runs.DONE
+                          "failure": job_runs.kind_of(run), "run": runs.job_tag(run.library, run.id)} for run in found]
+        entry["failing"] = bool(job_runs.needs_you(found))
     return listed
 
 

@@ -86,6 +86,20 @@ def kind_of(run):
     return run.changed.get(FAILURE, ERROR) if run.outcome == FAILED else None
 
 
+def needs_you(runs):
+    """The failed runs of one job and library since its last done one, newest first, when the newest's kind asks the
+    owner to act (FAILURES), else []: `runs` its runs, newest first. A run abandoned or still running neither adds nor
+    settles, as `latest`'s last that ended. What makes a job `failing` (recurring.overview) and one of Needs you
+    (tagpup.services.activity.needs_you)."""
+    failed = []
+    for run in runs:
+        if run.outcome == DONE:
+            break
+        if run.outcome == FAILED:
+            failed.append(run)
+    return failed if failed and FAILURES[kind_of(failed[0])][2] else []
+
+
 def counts(result):
     """What a Result says was changed, as counts."""
     found = {"attempted": result.attempted, "changed": result.changed,
