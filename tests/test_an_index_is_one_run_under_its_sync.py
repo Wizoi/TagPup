@@ -271,6 +271,25 @@ class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):
                          [(run.outcome, run.note if run.id == said[0] else None) for run in found])
         self.assertEqual([], roots_location._running_here(self.library))
 
+    def test_an_end_that_fails_twice_is_still_written_when_later_runs_are_claimed(self):
+        """#2199: one slot held the pending end, and a later run's end cleared it: the first run stayed `running`, this live
+        server's, until a restart, and a root move was refused."""
+        real_end, tried = runs_service.end, []
+
+        def end_unwritable_twice(*args, **kwargs):
+            tried.append(args[1])
+            if len(tried) <= 2:
+                raise OSError("the library cannot be written just now")
+            return real_end(*args, **kwargs)
+        with mock.patch.object(runs_service, "end", side_effect=end_unwritable_twice):
+            first = self.queued([self.folder("Regatta")], self.code(bars(1)))
+            self.queued([self.folder("Lighthouse")], self.code(bars(1)))
+            self.queued([self.folder("Quay")], self.code(bars(1)))
+        found = self.runs()
+        self.assertEqual([job_runs.DONE] * 3, [run.outcome for run in found])
+        self.assertEqual(first["message"], [run.note for run in found if run.id == tried[0]][0])
+        self.assertEqual([], roots_location._running_here(self.library))
+
     def test_a_library_behind_the_schema_is_indexed_and_never_written_a_run(self):
         behind = self.made("breakwater", at=35)
         status = self.queued([self.folder("Regatta")], self.code(bars(1) + bake([self.folder("Regatta")])),

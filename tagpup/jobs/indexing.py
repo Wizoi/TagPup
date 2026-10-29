@@ -16,8 +16,9 @@ HISTORY runs, for the Activity page -- in this process, as the queue itself is.
 Each run of the indexer is a run of the job `index` (job_runs.INDEX) in the library's `job_runs` too (DECISIONS 2026-10-28, ACTIVITY REWORK),
 claimed by this process as it takes the job -- under the run that queued it (a sync's), from the tags it was queued under
 -- told how far it got from the indexer's lines (tagpup.services.job_runs.tell, through index_folder), and ended with its
-counts and its message -- an end that could not be written is written as the queue's next index of the library is
-claimed, so a live server holds no run of its own `running` that is not; its row holds the run's tag (`changed["run"]`), which the indexer's own log is named by. Only
+counts and its message -- every end that could not be written is tried again as the queue's next index of the library is
+claimed, and stays to be tried at each after (so a run of this live server stays `running` only while the library cannot be
+written); its row holds the run's tag (`changed["run"]`), which the indexer's own log is named by. Only
 the claiming process writes a run's row: the indexer the queue starts claims none. A row that
 cannot be written -- the library behind this version's schema, being written, gone -- is logged, and the index runs as
 it would have.
@@ -111,9 +112,10 @@ class IndexQueue:
         #: The Library its runs of the indexer are recorded in (job_runs.INDEX); None for a queue made without one -- the tests of
         #: its scheduling alone -- which records none.
         self._recorded_in = recorded_in
-        #: The end of this queue's last run that could not be written -- (run id, when, counts, failed, note) -- written
-        #: as the next is claimed; None when there is none. Only the worker reads it, one at a time.
-        self._unended = None
+        #: The ends of this queue's runs that could not be written -- {run id: (run id, when, counts, failed, note)} --
+        #: each tried again as the next is claimed and dropped only when its own is written (or its row is gone). Only
+        #: the worker reads it, one at a time; it grows by a run whose end failed, which needs a library unwritable.
+        self._unended = {}
         self._lock = threading.RLock()
         #: {"folder", "index"}, in the order they were asked for.
         self._pending = []
@@ -456,9 +458,9 @@ class IndexQueue:
         where = self._recorded_in
         if where is None:
             return None
-        if self._unended is not None:
+        for unended in list(self._unended.values()):
             # Its row is still `running`, this live process's: no one else ends it.
-            self._write_end(*self._unended)
+            self._write_end(*unended)
         try:
             claim = job_runs.claim(where, job_runs.INDEX, where.name, time.time(), changed={"run": run})
         except Exception as e:
@@ -494,16 +496,16 @@ class IndexQueue:
 
     def _write_end(self, run_id, when, counts, failed, note):
         """Write the end of run `run_id` as it ended `when`; kept in _unended, to be written as the next run is claimed,
-        when it cannot be."""
+        when it cannot be (and again, if that fails too): it leaves _unended only once written or found gone."""
         where = self._recorded_in
         try:
             ended = job_runs.end(where, run_id, when, counts, failed=failed, note=note)
         except Exception as e:
-            self._unended = (run_id, when, counts, failed, note)
+            self._unended[run_id] = (run_id, when, counts, failed, note)
             logger.warning("Could not record the end of the index of %s (run %d), written as its next index begins: %s",
                            where.name, run_id, e)
             return
-        self._unended = None
+        self._unended.pop(run_id, None)
         if not ended:
             logger.info("The run %d of the index of %s was no longer this process's to end.", run_id, where.name)
 
