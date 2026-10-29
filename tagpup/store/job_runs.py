@@ -120,8 +120,8 @@ def abandon(conn, note, at=None, run_ids=None):
 
 
 def _owners_alive(rows):
-    """{owner: whether its process lives} of the (id, owner) `rows`: asked before the write lock is taken -- it may start
-    tasklist, seconds on a busy machine, which every writer of the library waited for."""
+    """{owner: whether its process lives} of the (id, owner) `rows`: asked before the write lock is taken -- it may read
+    the process list, seconds on a busy machine, which every writer of the library waited for."""
     return {owner: file_journal.owner_alive(owner) for owner in {owner for _, owner in rows if owner}}
 
 
