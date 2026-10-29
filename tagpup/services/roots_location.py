@@ -26,8 +26,10 @@ moving files under it is told, not left to find out. Two requests at once: the c
 change in `job_runs` lets one in and tells the other; a second Confirm after the first, or a tab
 that came second and found the map moved, is told so and nothing is repeated.
 
-**Logged**: each change is a run in `job_runs` -- "moved root pictures from X to Y" -- which the
-Activity page shows with the others. A refused one is not: nothing happened.
+**Logged**: each change is a run in `job_runs` (tagpup.services.job_runs.run) -- "moved root pictures from X to Y" --
+which the Activity page shows with the others. A request refused before the claim is not: nothing happened. One the map
+refuses at the write (moved since the caller looked) ends failed `refused`, and one that raises failed with the kind the
+mapper gives it (job_runs.failure).
 """
 import logging
 import time
@@ -36,6 +38,7 @@ from tagpup.core import paths
 from tagpup.core.result import NotFound, Result
 from tagpup.store import file_journal, job_runs, root_rows
 from tagpup.store import roots as store_roots
+from tagpup.services import job_runs as runs_service
 from tagpup.services import roots_sample
 
 logger = logging.getLogger(__name__)
@@ -231,38 +234,33 @@ def change_location(library, name, location, machine, apply=False, override=Fals
         result.refuse("Not changed: %s. Wait for it to finish or cancel it, then try again. %s" % (
             "; ".join(running), SEES_ONLY_ITS_OWN))
         return result
-    job = MOVE_JOB % name
-    started = now()
-    claim = job_runs.claim(library.path, job, library.name, started)
-    if not claim:
-        result.details["conflict"] = True
-        result.refuse("Not changed: " + (BEHIND if claim.why == "behind" else
-                                         "another change of %s is under way; try again in a moment." % name))
-        return result
-    try:
-        written = machine.set_location(name, location, expected=expected, must_exist=False)
-    except ValueError as problem:
-        job_runs.finish(library.path, claim.run_id, job_runs.FAILED, now(),
-                        {"what": "change of location of root %s refused" % name}, str(problem))
-        result.details["conflict"] = "changed since you looked" in str(problem)
-        result.refuse(str(problem))
-        return result
-    except BaseException as problem:
-        job_runs.finish(library.path, claim.run_id, job_runs.FAILED, now(), {}, "%s: %s" % (type(problem).__name__, problem))
-        raise
-    result.attempted = 1
-    result.details["places"] = written["places"]
-    if not written["changed"]:
-        job_runs.finish(library.path, claim.run_id, job_runs.DONE, now(),
-                        {"what": "change of location of root %s: it was at %s already" % (name, location)})
-        result.details["unchanged"] = True
-        result.details["message"] = "%s is at %s already; nothing to change." % (name, location)
-        return result
-    before = written["previous"][0] if written["previous"] else None
-    what = "moved root %s to %s%s" % (name, written["places"][0], " (was %s)" % before if before else "")
-    job_runs.finish(library.path, claim.run_id, job_runs.DONE, now(),
-                    {"what": what, "rows": checked["rows"], "checked": checked["checked"], "missing": checked["missing"],
-                     "override": int(bool(override and checked["poor"]))})
+    with runs_service.run(library, MOVE_JOB % name, library.name, now) as run:
+        if not run:
+            if run.error is not None:
+                raise run.error
+            result.details["conflict"] = True
+            result.refuse("Not changed: " + (BEHIND if run.why == "behind" else
+                                             "another change of %s is under way; try again in a moment." % name))
+            return result
+        try:
+            written = machine.set_location(name, location, expected=expected, must_exist=False)
+        except ValueError as problem:
+            run.ends(failed=runs_service.Failure(runs_service.REFUSED, str(problem)),
+                     counts={"what": "change of location of root %s refused" % name})
+            result.details["conflict"] = "changed since you looked" in str(problem)
+            result.refuse(str(problem))
+            return result
+        result.attempted = 1
+        result.details["places"] = written["places"]
+        if not written["changed"]:
+            run.ends(counts={"what": "change of location of root %s: it was at %s already" % (name, location)})
+            result.details["unchanged"] = True
+            result.details["message"] = "%s is at %s already; nothing to change." % (name, location)
+            return result
+        before = written["previous"][0] if written["previous"] else None
+        what = "moved root %s to %s%s" % (name, written["places"][0], " (was %s)" % before if before else "")
+        run.ends(counts={"what": what, "rows": checked["rows"], "checked": checked["checked"],
+                         "missing": checked["missing"], "override": int(bool(override and checked["poor"]))})
     result.changed = 1
     logger.info("%s in %s", what, library.name)
     result.details["message"] = what
