@@ -477,8 +477,10 @@ class TagPupsOwnWrites(Base):
         self.results.append(result)
 
     def watching(self, *libraries):
+        # Half the server's DEBOUNCE: a pause longer than it between a file written and its row recorded (a loaded
+        # machine) is a sync, rightly -- the row did not yet describe the file -- but not what these tests ask.
         watcher = runtimes.folder_watcher(libraries=lambda: list(libraries), sync_with=self.record,
-                                          debounce=0.5, recheck=0.5, tick=0.05)
+                                          debounce=1.5, recheck=0.5, tick=0.05)
         self.addCleanup(watcher.stop, 20)
         watcher.start()
         self.wait_until(lambda: watcher.watched() == [paths.stored(self.regatta)])
