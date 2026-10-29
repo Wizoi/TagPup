@@ -210,7 +210,8 @@ programs only. A moved module takes every importer with it and leaves nothing at
   one Waitress process: TagPup (browse, tag, the library views, search) on port 8090 and TagTuner (Identify
   Faces, the tag tree, settings, roots, history) on 8080. The library comes from the URL. It listens on this
   PC only (127.0.0.1 and ::1) until phase 10 adds logins. Also served: the Activity page (`/activity/`, the
-  background work of every library, loopback only; why a run failed is one Failure, a kind and its sentence, of
+  background work of every library, loopback only; every run's lifecycle -- its claim, progress, failure and end -- is
+  `services/job_runs.run`; why a run failed is one Failure, a kind and its sentence, of
   `services/job_runs.failure`, written in its row, and Needs you, `services/activity.needs_you`, reads the rows). The **CLI**
   (`tagpup_cli.py`: index, sync, history, undo, jobs, roots, embed-photos, ...) and the **MCP
   server** (`python -m tagpup.mcp`, for Claude: reads only, counts and ids, names and paths only with
@@ -226,7 +227,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
   (`tagpup.jobs.recurring`: snapshots, sync) are run by the web server only; the
   folder **watcher** syncs a folder when it changes -- not when its notifications named only photos the library's rows
   already describe, TagPup's own writes from any process (`sync.followed`) -- and its whole sync is a run of the `sync` job
-  (`recurring.run_claimed`), so one walker per library; how far its walk got is that run's row (`job_runs.tell`, counts
+  (`recurring.run_claimed`, through `job_runs.run`), so one walker per library; how far its walk got is that run's row (`job_runs.tell`, counts
   only), the folder it is at alone kept in the walking process's memory (`sync.walking_at_into`, Now's live line).
   Event-driven first: a schedule is only for safety.
 - **The graphics card**: one process at a time on the machine has a model on it (`tagpup.ml.gpu.Card`, a byte
