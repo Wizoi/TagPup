@@ -287,7 +287,7 @@ describe("the other sections", () => {
     click(window, sync.querySelector('tr.job[data-library="harbour"] button.fold'));
     const unfolded = jobs.querySelectorAll('.job-card[data-job="sync"] tr.run');
     assert.equal(unfolded.length, 2);
-    assert.match(unfolded[0].textContent, /new 812/);
+    assert.match(unfolded[0].textContent, /done/);
     // A sync job's run names its sync's record, which pairs the two in What happened: an id, never said as a count.
     assert.doesNotMatch(jobs.textContent, /record \d/, "a record's id is no count");
   });
@@ -330,7 +330,8 @@ describe("the other sections", () => {
     assert.match(top[0].textContent, /pier.*Could not read what was done in this library: file is not a database/);
     // The daily sync is one line, never its job's row and its record's both; the index its job queued is beneath it.
     assert.deepEqual(top.slice(1, 8).map((li) => `${li.dataset.kind} ${li.dataset.library}`),
-                     ["job jetty", "sync breakwater", "sync jetty", "index harbour", "job harbour", "index lighthouse", "sync harbour"]);
+                     ["job jetty", "sync breakwater", "sync jetty", "index harbour", "sync harbour", "index lighthouse", "sync harbour"]);
+    // The watcher's long sync, ended as the sync job ends it: its run and its record one line, its index beneath it.
     const beneath = [...top[5].querySelectorAll(":scope > ul.run-tree > li.entry")];
     assert.deepEqual(beneath.map((li) => li.dataset.kind), ["index"], "the index the sync job queued, under it");
     assert.ok(beneath[0].querySelector('button.run-logs[data-run="index:harbour:20260921T152320-4242-1"]'));
@@ -342,7 +343,8 @@ describe("the other sections", () => {
     assert.match(top[6].querySelector(".error").textContent, /The indexer stopped answering; its process was ended\./);
     assert.equal(top[3].querySelector(".badge").textContent, "in step");
     assert.equal(top[3].querySelector(".error"), null);
-    assert.match(top[5].querySelector(":scope > .run-line").textContent, /new 812/);
+    assert.equal(top[5].querySelector(":scope > .run-line .badge").textContent, "in step");
+    assert.match(top[5].querySelector(":scope > .run-line").textContent, /sync of the whole library/);
     assert.match(top[5].querySelector(":scope > .run-line .took").textContent, /^took \d+ (s|min)$/);
     assert.doesNotMatch(body.textContent, /record \d/, "a record's id is no count");
     const more = document.getElementById("timeline-more");

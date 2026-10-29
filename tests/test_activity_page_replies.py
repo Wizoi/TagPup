@@ -39,7 +39,7 @@ from tagpup.core import dates, runs  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
-from tagpup.services import activity, bake_after_index, indexing, job_runs  # noqa: E402
+from tagpup.services import activity, bake_after_index, indexing, job_runs, sync  # noqa: E402
 from tagpup.store import file_journal, journal  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
@@ -211,11 +211,14 @@ class RepliesForTheActivityPage(_Libraries):
 
         # The morning after: the long sync and its index ended, the stuck index failed; breakwater's share dropped in
         # the night, jetty's server was killed mid-sync, and pier is no library. Harbour's index is ended by its queue,
-        # and the folder waiting behind it indexed after it.
+        # and the folder waiting behind it indexed after it. The long sync ends as the sync job ends it: its sync's
+        # record written, the run's counts the Result's (job_runs.counts), which name the record it pairs with.
         self.clock.now = at + 20 * MINUTE
         release()
         indexing_jobs.forget(harbour)
-        job_runs.end(harbour, sync_id, at + 25 * MINUTE, {"new": 812})
+        walked = sync.sync(harbour, apply=True, roots=[os.path.join(self.pictures, "harbour")])
+        self.assertIn(sync.RECORD, walked.details, "the long sync wrote no record")
+        job_runs.end(harbour, sync_id, at + 25 * MINUTE, job_runs.counts(walked))
         job_runs.end(lighthouse, cli.run_id, at + 30 * MINUTE, dict({"errors": 1}, **cli_held),
                      failed=job_runs.Failure(job_runs.ERROR, "The indexer stopped answering; its process was ended."))
         night = started + 6 * HOUR
@@ -241,6 +244,10 @@ class RepliesForTheActivityPage(_Libraries):
         self.assertIn("abandoned", {each["outcome"] for each in morning["timeline"]["entries"]})
         (index,) = [each for each in morning["timeline"]["entries"] if each["kind"] == "index" and each["parent"]]
         self.assertEqual(sync_id, index["parent"])
+        # The long sync is one entry, its run and its record together, and its index nests beneath it by the run's id.
+        (long,) = [each for each in morning["timeline"]["entries"]
+                   if each["kind"] == "sync" and each["library"] == harbour.name and each["id"] == sync_id]
+        self.assertNotIn(sync.RECORD, long["counts"])
         self.assertTrue(index["logs"], "an ended index names its log")
         (long_harbour,) = [each for each in found["long_sync"]["now"]["libraries"] if each["name"] == "harbour"]
         # This process's own index is its queue's, once, with its row's id, its parent's and its phase in words.
