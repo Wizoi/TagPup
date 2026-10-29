@@ -54,9 +54,9 @@ class Run:
     owner: Optional[str] = None
     #: Why it failed or was abandoned; can name a path, so never sent to a page.
     note: Optional[str] = None
-    #: The run that queued this one (migration 36), its id; None for one nothing queued. The readers here leave it, and the
-    #: two below, None: they select the columns a library at 35 has, which the MCP server and the Activity page's look read
-    #: without migrating it.
+    #: The run that queued this one (migration 36), its id; None for one nothing queued. Only `tree` reads it, and the two
+    #: below; the other readers leave them None: they select the columns a library at 35 has, which the MCP server and the
+    #: Activity page's look read without migrating it.
     parent: Optional[int] = None
     #: When it last said how far it got, a run's time (`stamp`), and what it said: {"phase": .., "counts": {..}} (progress).
     heartbeat: Optional[str] = None
@@ -355,5 +355,45 @@ def runs(db_path, job=None, limit=20, exclude=()):
             found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job = ? ORDER BY id DESC LIMIT ?",
                                  (job, limit))
         return [_run(row) for row in found.fetchall()]
+    finally:
+        conn.close()
+
+
+#: A top run: one nothing queued, or whose parent is gone -- pruned, or not in a snapshot a restore put back.
+_TOPS = ("SELECT id FROM job_runs AS r WHERE r.parent IS NULL"
+         " OR NOT EXISTS (SELECT 1 FROM job_runs AS p WHERE p.id = r.parent) ORDER BY r.id DESC LIMIT ?")
+
+#: The top runs and every run under them. A child is claimed after its parent, so its id is greater; asking for that
+#: also ends the walk whatever the rows say.
+_TREE = ("WITH RECURSIVE tops(id) AS (" + _TOPS + "),"
+         " tree(id) AS (SELECT id FROM tops UNION ALL"
+         " SELECT c.id FROM job_runs AS c JOIN tree ON c.parent = tree.id AND c.id > tree.id)"
+         " SELECT " + _COLUMNS + ", parent, heartbeat, progress FROM job_runs WHERE id IN (SELECT id FROM tree)"
+         " ORDER BY id DESC")
+
+
+def _has_parents(conn):
+    """Has the library open on `conn` had migration 36 (job_runs.parent, heartbeat, progress)?"""
+    return any(column[1] == "parent" for column in conn.execute("PRAGMA table_info(job_runs)"))
+
+
+def tree(db_path, limit=20):
+    """The newest `limit` top runs of the library -- those nothing queued, or whose parent is gone -- and every run under
+    them, newest first, each with its `parent`, `heartbeat` and `progress` (parsed): the one reader of the columns of
+    migration 36. A library not yet at 36 (one the Activity page's look reads without migrating it) has no parents: its
+    newest `limit` runs, each a top run. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        limit = max(0, int(limit))
+        if not _has_parents(conn):
+            return [_run(row) for row in conn.execute("SELECT " + _COLUMNS + " FROM job_runs ORDER BY id DESC LIMIT ?",
+                                                      (limit,))]
+        found = []
+        for row in conn.execute(_TREE, (limit,)):
+            run = _run(row[:-3])
+            run.parent, run.heartbeat = row[-3], row[-2]
+            run.progress = json.loads(row[-1]) if row[-1] else None
+            found.append(run)
+        return found
     finally:
         conn.close()

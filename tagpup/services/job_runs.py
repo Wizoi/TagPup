@@ -141,3 +141,9 @@ def latest(library):
 def runs(library, job=None, limit=20):
     """`library`'s runs, newest first, of `job` or of every job."""
     return job_runs.runs(library.path, job, limit)
+
+
+def tree(library, limit=20):
+    """`library`'s newest `limit` top runs and every run under them, newest first, with their parent and progress
+    (tagpup.store.job_runs.tree)."""
+    return job_runs.tree(library.path, limit)

@@ -9,6 +9,10 @@ A run says how far it got (`services.job_runs.progress`): a phase and counts, ne
 the phase changes, skipped -- not waited for -- while the library is being written, by this process or another; a run that
 is gone, or a library a restore has put back at 35 and not yet migrated, is not written and nothing raises. Libraries are
 made in homes of their own; the names are fictional.
+
+The runs are read as trees (`services.job_runs.tree`): the newest top runs -- nothing queued them, or their parent is gone,
+pruned or not in a snapshot a restore put back -- and every run under them; a library a restore put back at 35 reads as
+its newest runs, each a top run.
 """
 import json
 import os
@@ -16,6 +20,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -24,7 +29,7 @@ import migration_names  # noqa: E402
 from tagpup.core import runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
-from tagpup.store import db, file_journal, job_runs, schema  # noqa: E402
+from tagpup.store import db, file_journal, job_runs, schema, snapshots  # noqa: E402
 
 NOW = 1790000000.0
 
@@ -204,6 +209,83 @@ class ARunSaysHowFarItGot(unittest.TestCase):
         finally:
             conn.close()
         self.assertFalse(runs_service.progress(at_35, run_id, {"photos_done": 1}, "faces", now=NOW))
+        self.assertEqual([(35,)], rows(at_35.path, "SELECT MAX(version) FROM schema_version"))
+
+
+class TheRunsAreReadAsTrees(unittest.TestCase):
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.library = Library(self.home.library("harbour.db"))
+        schema.ensure(self.library.path)
+
+    def claim(self, job, at, under=None):
+        """A run of `job` claimed at `at`, under the run `under` as the queue's thread holds it."""
+        if under is None:
+            return runs_service.claim(self.library, job, self.library.name, at).run_id
+        with runs.running(runs.job_tag(self.library.name, under)):
+            return runs_service.claim(self.library, job, self.library.name, at).run_id
+
+    def shape(self, limit=20):
+        return [(run.id, run.job, run.parent) for run in runs_service.tree(self.library, limit)]
+
+    def test_a_sync_its_index_and_the_index_s_bake_read_as_one_tree_with_their_progress(self):
+        sync = self.claim("sync", NOW)
+        index = self.claim("index", NOW + 1, under=sync)
+        bake = self.claim("bake", NOW + 2, under=index)
+        self.assertTrue(runs_service.progress(self.library, bake, {"folders_done": 2, "folders": 5}, "bake", now=NOW + 3))
+        self.assertEqual([(bake, "bake", index), (index, "index", sync), (sync, "sync", None)], self.shape())
+        said = runs_service.tree(self.library)[0]
+        self.assertEqual((job_runs.stamp(NOW + 3), {"phase": "bake", "counts": {"folders": 5, "folders_done": 2}}),
+                         (said.heartbeat, said.progress))
+
+    def test_a_run_whose_parent_was_pruned_is_a_top_run(self):
+        with mock.patch.object(job_runs, "KEEP_RUNS", 1):
+            sync = self.claim("sync", NOW)
+            index = self.claim("index", NOW + 1, under=sync)
+            self.assertTrue(runs_service.end(self.library, sync, NOW + 2, {}))
+            later = self.claim("sync", NOW + 3)
+            self.assertTrue(runs_service.end(self.library, later, NOW + 4, {}))
+        self.assertEqual([], rows(self.library.path, "SELECT id FROM job_runs WHERE id = ?", (sync,)))
+        self.assertEqual([(later, "sync", None), (index, "index", sync)], self.shape())
+
+    def test_two_trees_newest_first_and_the_limit_counts_top_runs_with_their_children(self):
+        first = self.claim("sync", NOW)
+        first_index = self.claim("index", NOW + 1, under=first)
+        for each in (first_index, first):
+            self.assertTrue(runs_service.end(self.library, each, NOW + 2, {}))
+        second = self.claim("sync", NOW + 3)
+        second_index = self.claim("index", NOW + 4, under=second)
+        self.assertEqual([(second_index, "index", second), (second, "sync", None), (first_index, "index", first),
+                          (first, "sync", None)], self.shape())
+        self.assertEqual([(second_index, "index", second), (second, "sync", None)], self.shape(limit=1))
+        self.assertEqual([], self.shape(limit=0))
+
+    def test_after_a_restore_the_snapshot_s_tree_is_read_its_runs_under_way_abandoned(self):
+        sync = self.claim("sync", NOW)
+        index = self.claim("index", NOW + 1, under=sync)
+        taken, _ = snapshots.take_one(self.library.path, snapshots.DAILY, NOW + 2)
+        self.claim("snapshots", NOW + 3)
+        snapshots.restore(self.library.path, taken.path)
+        found = runs_service.tree(self.library)
+        self.assertEqual([(index, "index", sync), (sync, "sync", None)], [(r.id, r.job, r.parent) for r in found])
+        self.assertEqual({job_runs.ABANDONED}, {run.outcome for run in found})
+
+    def test_a_library_at_35_reads_as_its_newest_runs_each_a_top_run(self):
+        """The Activity page's look reads a library the server has not migrated: nothing raises."""
+        at_35 = Library(self.home.library("breakwater.db"))
+        with migration_names.up_to(35):
+            schema.ensure(at_35.path)
+        schema.forget()
+        conn = db.connect(at_35.path)
+        try:
+            for job in ("sync", "index", "bake"):
+                conn.execute("INSERT INTO job_runs (job, library, started, finished, outcome, changed)"
+                             " VALUES (?, ?, ?, ?, 'done', '{}')", (job, at_35.name, job_runs.stamp(NOW), job_runs.stamp(NOW)))
+            conn.commit()
+        finally:
+            conn.close()
+        found = runs_service.tree(at_35, limit=2)
+        self.assertEqual([("bake", None, None), ("index", None, None)], [(r.job, r.parent, r.progress) for r in found])
         self.assertEqual([(35,)], rows(at_35.path, "SELECT MAX(version) FROM schema_version"))
 
 
