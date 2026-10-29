@@ -278,7 +278,8 @@ class AnIndexThatDoesNotFinishIsRecordedSo(_Indexing):
     def test_an_index_that_does_not_run_to_its_end_ends_failed_with_a_sentence_however_it_stopped(self):
         """Three queued runs: the indexer never started (WinError 206: a command line past 32,767 characters, #2149),
         the indexer exited badly, and the thread stopped by something that is not an Exception. Each row says why, and
-        none is done (a run whose thread stopped read done with one error)."""
+        none is done (a run whose thread stopped read done with one error), and the folder of the stopped one reads
+        failed with the same sentence, not indexing for ever."""
         folder = [self.folder("Regatta")]
         with mock.patch.object(processes, "start", side_effect=OSError(206, "The filename or extension is too long")):
             status = self.queued(folder, self.code(bars(1)))
@@ -312,6 +313,9 @@ class AnIndexThatDoesNotFinishIsRecordedSo(_Indexing):
         (stopped,) = [each for each in self.runs() if each.job == runs_service.INDEX and each.id not in known]
         self.assertEqual((job_runs.FAILED, indexing_jobs.STOPPED, runs_service.ERROR),
                          (stopped.outcome, stopped.note, runs_service.kind_of(stopped)))
+        said = queue.status(folder[0])
+        self.assertEqual(("failed", indexing_jobs.STOPPED), (said["status"], said["message"]))
+        self.assertEqual([], queue.active()["active"])
 
 
 class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):
