@@ -29,7 +29,7 @@ from face_rows import add_vector  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.paths import key as paths_key  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.files import images  # noqa: E402
+from tagpup.files import images, shares  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
@@ -997,6 +997,79 @@ class MissingFiles(SyncTestCase):
         self.assertTrue(result.ok, result.message())
         self.assertEqual((1, 0), (result.details["counts"]["missing"], result.details["counts"]["to_remove"]))
         self.assertEqual(set(ids.values()), self.held_ids())
+
+    def walks(self, **kwargs):
+        """A whole applied sync under the root, counting its walks of the library: (Result, walks)."""
+        with mock.patch.object(sync, "_scan", wraps=sync._scan) as scan:
+            result = self.run_sync(apply=True, roots=[self.pictures], **kwargs)
+        return result, scan.call_count
+
+    def test_a_library_with_nothing_to_remove_is_walked_once(self):
+        self.rooted(self.photo(self.meet, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg"))
+        result, walks = self.walks()
+        self.assertTrue(result.details["in_step"], result.details["counts"])
+        self.assertEqual(1, walks, "a library in step was walked a second time")
+
+    def test_a_file_gone_in_both_walks_is_removed(self):
+        gone = self.photo(self.meet, "IMG_0001.jpg")
+        ids = self.rooted(gone, self.photo(self.meet, "IMG_0002.jpg"))
+        os.remove(gone)
+        result, walks = self.walks()
+        self.assertEqual(2, walks)
+        self.assertEqual(1, result.details["changed"]["removed"])
+        self.assertNotIn(ids[gone], self.held_ids())
+
+    def test_a_file_moved_between_folders_during_the_walk_keeps_its_row_and_its_named_face(self):
+        """Dragged in Explorer from a folder the walk had not listed yet into one it had: in neither listing of the
+        first walk, so a whole sync took it for a file deleted. The second walk finds it, paired as a move, and the
+        row is kept (missing, not removed); the next sync moves it with its faces."""
+        moving = self.photo(self.trip, "IMG_0001.jpg")
+        ids = self.rooted(moving, self.photo(self.trip, "IMG_0002.jpg"), self.photo(self.meet, "IMG_0003.jpg"),
+                          named=[moving])
+        moved = os.path.join(self.meet, "IMG_0001.jpg")
+        real, listed = shares.listing, []
+
+        def listing(folder):
+            found = real(folder)
+            if not listed and paths_key(folder) == paths_key(self.meet):
+                listed.append(folder)
+                os.rename(moving, moved)     # the meet folder is listed already, the trip folder not yet
+            return found
+
+        with mock.patch.object(shares, "listing", side_effect=listing):
+            result, walks = self.walks(queue=lambda folders: self.fail("nothing is new: it moved"))
+        self.assertTrue(result.ok, result.message())
+        self.assertIn(ids[moving], self.held_ids(), "the row of a file moved during the walk was removed")
+        self.assertEqual((1, 0), (result.details["counts"]["missing"], result.details["counts"]["to_remove"]))
+        self.assertEqual(0, result.details["changed"]["removed"])
+        self.assertEqual(2, walks)
+        after = self.run_sync(apply=True, roots=[self.pictures], queue=lambda folders: self.fail("it moved"))
+        self.assertEqual(1, after.details["counts"]["moved"])
+        self.assertEqual([ids[moving]], [row[0] for path, row in self.rows().items()
+                                         if 'Invitational' in path and path.endswith('IMG_0001.jpg')])
+        self.assertEqual([("Rowan Thackeray",)], self.query(
+            "SELECT name FROM faces WHERE photo_id = ? AND name IS NOT NULL", (ids[moving],)))
+
+    def test_a_share_that_drops_in_the_second_walk_removes_nothing(self):
+        gone = self.photo(self.meet, "IMG_0001.jpg")
+        ids = self.rooted(gone, self.photo(self.meet, "IMG_0002.jpg"), self.photo(self.trip, "IMG_0003.jpg"))
+        os.remove(gone)
+        real, called = images.stamps_under, []
+
+        def drops_the_second_time(folder, unlisted):
+            called.append(folder)
+            found = real(folder, unlisted)
+            if len(called) > 1:
+                unlisted.append(self.trip)     # the share stopped answering as the second walk listed it
+                return {key: stamp for key, stamp in found.items() if not key.startswith(paths_key(self.trip) + os.sep)}
+            return found
+
+        with mock.patch.object(images, "stamps_under", side_effect=drops_the_second_time):
+            result, walks = self.walks()
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual(set(ids.values()), self.held_ids(), "a row was removed though the second walk did not look")
+        self.assertEqual((1, 0), (result.details["counts"]["missing"], result.details["counts"]["to_remove"]))
+        self.assertEqual(2, walks)
 
     def taken_meanwhile(self, between):
         """A whole sync whose plan is read, then `between()` runs before it writes: the row it planned to remove is

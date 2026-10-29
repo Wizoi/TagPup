@@ -36,7 +36,12 @@ folder scan's rule), and sorts what differs:
   under (for a library with no roots, the topmost folder walked above it) is a folder
   (shares.folder_state) and the walk found a file of that root's rows. So an unplugged
   drive, a root gone, or a root repointed at an empty folder removes nothing, and a folder
-  wholly gone under a root that is there is removed with its rows. A folder renamed in
+  wholly gone under a root that is there is removed with its rows. Two looks: when the walk
+  leaves a row to remove, the whole library is walked a second time, and a row is removed only
+  when that walk too looked at every folder, did not find its file, paired it with no file as a
+  move nor held it back, and confirmed its root -- a file dragged from a folder the first walk
+  had not listed yet into one it had is in neither of that walk's listings, and is found by the
+  second (#2153). A library with nothing to remove is walked once. A folder renamed in
   Explorer is paired as a move where its files' stamps or identities match; what is left
   unmatched is removed. A sync of one folder never removes: a file moved out of it may not
   have been looked for where it went. The removal is a skippable delete of the change
@@ -274,6 +279,26 @@ def _removable(conn, candidates, by_key, on_disk, walked):
     return sorted(removable)
 
 
+def _gone_again(conn, candidates, roots, library_folders, exiftool_path):
+    """The `candidates` [(photo_id, path)] -- rows the first walk of a whole sync would remove -- that a second walk of
+    the whole library also looked for and did not find: not on disk, not paired with a new file as a move nor held
+    back as a possible copy (_pair_moves, the one pairing), and its root confirmed there by this walk (_removable). A
+    file moved between two folders while the first walk ran is in neither of its listings; this walk finds it (#2153).
+    None when this walk could not look at every folder."""
+    by_key, on_disk, walked, _gone, unanswered, unlisted = _scan(conn, None, roots, library_folders)
+    if unanswered or unlisted:
+        return []
+    missing, _unseen_ids = _unseen(by_key, on_disk, ())
+    new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
+    settled = set()
+    if missing and new:
+        pairs, ambiguous_rows, _files = _pair_moves(conn, by_key, missing, new, exiftool_path)
+        settled = {paths.key(old) for old, _new in pairs} | {paths.key(path) for path in ambiguous_rows}
+    still = {photo_id for photo_id, path, _m, _s in missing if paths.key(path) not in settled}
+    return _removable(conn, [(photo_id, path) for photo_id, path in candidates if photo_id in still],
+                      by_key, on_disk, walked)
+
+
 def _missing_elsewhere(conn, by_key, new):
     """The rows outside a folder-limited sync that a new file in it may have moved from:
     another folder's row with the new file's name and size whose file is gone, as
@@ -446,12 +471,15 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
         new = {key: stamp for key, stamp in new.items() if key not in moved_to}
 
         # Removed: a missing row the walk looked for and did not find, its root confirmed there -- only in a sync of
-        # the whole library that looked at every folder (a file moved out of one folder is looked for in the others).
+        # the whole library that looked at every folder (a file moved out of one folder is looked for in the others),
+        # and only when a second walk, made only then, finds it gone too (_gone_again: a file moved mid-walk).
         to_remove = []
         if folder is None and not not_looked_at:
             held_rows = {paths.key(path) for path in ambiguous_rows}
             to_remove = _removable(conn, [(photo_id, path) for photo_id, path in missing
                                           if paths.key(path) not in held_rows], by_key, on_disk, walked)
+            if to_remove:
+                to_remove = _gone_again(conn, to_remove, roots, library_folders, exiftool_path)
         removing = {photo_id: (0, 0) for photo_id, _path in to_remove}
         removing.update(store_faces.counts_by_photo(conn, list(removing)) if removing else {})
 
