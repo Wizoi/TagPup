@@ -111,8 +111,11 @@ def _running(conn, job, library):
 #: Why a run a claim found `running`, its process ended, is marked abandoned.
 ENDED = "its process ended before it finished"
 
-#: Why a run the server's start found `running`, its process ended, is marked abandoned.
-STOPPED = "its process stopped while it ran; what it wrote is kept; the next run finishes it"
+#: Why a run the server's start found `running`, its process ended, is marked abandoned: only what is known of every such
+#: run -- an index's indexer, a process of its own, may have finished its work, or be finishing it, after the server that
+#: started it stopped (#2195).
+STOPPED = ("the process that started it stopped before it could record its end; its work may have finished or may"
+           " still be finishing; what was written is kept")
 
 
 def abandon(conn, note, at=None, run_ids=None):
