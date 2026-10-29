@@ -222,7 +222,8 @@ programs only. A moved module takes every importer with it and leaves nothing at
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
   process, via the CLI's `index`), Suggest runs, Name faces from tags, Identify caches. **Recurring jobs**
   (`tagpup.jobs.recurring`: snapshots, sync) are run by the web server only; the
-  folder **watcher** syncs a folder when it changes, and its whole sync is a run of the `sync` job
+  folder **watcher** syncs a folder when it changes -- not when its notifications named only photos the library's rows
+  already describe, TagPup's own writes from any process (`sync.followed`) -- and its whole sync is a run of the `sync` job
   (`recurring.run_claimed`), so one walker per library. Event-driven first: a schedule is only for safety.
 - **The graphics card**: one process at a time on the machine has a model on it (`tagpup.ml.gpu.Card`, a byte
   lock in the user's own folder, waiters queued and named on the Activity page).

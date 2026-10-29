@@ -15,9 +15,17 @@ sync, which walks it too.
 Only photos matter (`concerns`, the photo extensions): a notification for any other file
 made or changed is dropped. A folder deleted or moved is synced from its parent -- and so
 is any other name deleted or moved away, since Windows reports a folder gone as a file
-gone (watchdog 6 cannot ask what a name that no longer exists was). The app's own writes
-are notified too, and cost a sync that finds the rows already describe their files: one
-walk of the folder, no file read.
+gone (watchdog 6 cannot ask what a name that no longer exists was).
+
+TagPup's own writes are notified too -- the index's bake, an identity minted, a save, a
+rename -- from whichever process made them: ExifTool writes beside a photo and renames its
+file over it. A folder whose notifications named only photos (at most NAMED_MOST), and none
+of them a folder, is first asked `followed(library, photos)` (tagpup.services.sync.followed):
+when the library's rows already describe each as it is now, which every TagPup write leaves
+so, it is not synced. A bake of photo_index synced its folder once for each file it wrote, 7
+or 8 times a minute (2026-10-28). Anything else -- a photo added, edited, renamed or deleted
+elsewhere, in the same folder at the same moment included -- is not described, and the folder
+is synced as before. A name renamed onto a photo's was a file, never a folder.
 
 Notifications can be missed, so the whole library is synced
 - when the watcher first starts (a catch-up for what happened while the process was
@@ -67,6 +75,12 @@ RECHECK = 30.0
 
 #: How often the watcher's thread looks for a folder whose notifications have settled.
 TICK = 0.25
+
+#: The most photos a folder's notifications may name for the watcher to ask whether they were TagPup's own writes
+#: (followed): each is a look at its file, over a share a round trip. The look ends at the first photo not described, so a
+#: long list costs only when every one was TagPup's own; the bake's largest write of one folder of photo_index wrote 312
+#: files (2026-10-28), and a page's batch is at most batches.MAX_BATCH.
+NAMED_MOST = 500
 
 #: A library watched by more folders than this is not watched: without root folders set,
 #: a library holding photos in thousands of folders would take a thread and a handle for
@@ -139,12 +153,15 @@ class Watcher:
     """Watches the folders of `libraries()` -- `folders(library)` for each, the topmost
     folders to watch -- and calls `sync(library, folder)` for a folder whose notifications
     have settled, or `sync(library, None)` for the whole library, through `whole(library, call, noted)` when given
-    (recurring.sync_whole: its Outcome; see above). `concerns(path)` says whether a file matters (a photo). The rest
-    are the timings above, a test's shorter."""
+    (recurring.sync_whole: its Outcome; see above). `concerns(path)` says whether a file matters (a photo);
+    `followed(library, photos)` whether the library's rows already describe the photos a folder's notifications named
+    (sync.followed: then the folder is not synced). The rest are the timings above, a test's shorter."""
 
     def __init__(self, libraries, folders, sync, concerns, debounce=DEBOUNCE, recheck=RECHECK, tick=TICK,
-                 clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES, recent=None, whole=None):
+                 clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES, recent=None, whole=None,
+                 followed=None):
         self._libraries, self._folders, self._sync, self._concerns = libraries, folders, sync, concerns
+        self._followed = followed or (lambda library, photos: False)
         #: whole(library, call, noted) -> an Outcome: the whole library's sync, claimed (None: call() at once).
         self._whole = whole
         #: recent(library): was it synced whole lately? The catch-up at start is skipped
@@ -159,8 +176,9 @@ class Watcher:
         #: subfolders, since a watch on a folder sees nothing of the folder's own rename.
         self._parents = {}
         self._parents_limited = False
-        #: library key -> {"library", "folders": {key: [folder, last noticed]}, "whole": time or None,
-        #: "noted": since when (time.time()) the whole sync is wanted, or None}.
+        #: library key -> {"library", "folders": {key: [folder, last noticed, named]}, "whole": time or None,
+        #: "noted": since when (time.time()) the whole sync is wanted, or None}; `named` is {key: path} of the photos
+        #: its notifications named, or None when one named a folder, or more than NAMED_MOST photos (_named).
         self._pending = {}
         self._syncing = 0
         self._stop = threading.Event()
@@ -281,6 +299,7 @@ class Watcher:
                            "syncing its libraries whole.")
             self._note_whole(libraries)
             return
+        # (folder, the photo in it the notification named, or None: what changed in it is the folder's walk to find)
         folders = []
         if event.is_directory:
             if event.event_type not in ("deleted", "moved"):
@@ -291,24 +310,26 @@ class Watcher:
                 # The watched folder itself is gone: its rows are missing now.
                 self._note_whole(libraries)
                 return
-            folders.append(os.path.dirname(event.src_path))
+            folders.append((os.path.dirname(event.src_path), None))
             if event.event_type == "moved" and event.dest_path:
-                folders.append(os.path.dirname(event.dest_path))
+                folders.append((os.path.dirname(event.dest_path), None))
         else:
-            for path in (event.src_path, getattr(event, "dest_path", "")):
+            dest = getattr(event, "dest_path", "")
+            for path in (event.src_path, dest):
                 if path and self._concerns(path):
-                    folders.append(os.path.dirname(path))
-            if event.event_type in ("deleted", "moved") and not self._concerns(event.src_path):
+                    folders.append((os.path.dirname(path), path))
+            # Renamed onto a photo's name, it was a file: ExifTool's own beside the photo it wrote, never a folder.
+            onto_a_photo = event.event_type == "moved" and dest and self._concerns(dest)
+            if event.event_type in ("deleted", "moved") and not self._concerns(event.src_path) and not onto_a_photo:
                 # Windows cannot say what a name that is gone was: a folder deleted or
                 # moved out comes as a file deleted. Its photos' rows are its parent's
                 # sync's to find missing (or moved).
                 if paths.key(event.src_path) == root_key:
                     self._note_whole(libraries)
                     return
-                folders.append(os.path.dirname(event.src_path))
-            dest = getattr(event, "dest_path", "")
-            if event.event_type == "moved" and dest and photo_actions.folder_state(dest) == "there":
-                folders.append(os.path.dirname(dest))
+                folders.append((os.path.dirname(event.src_path), None))
+            if event.event_type == "moved" and dest and not onto_a_photo and photo_actions.folder_state(dest) == "there":
+                folders.append((os.path.dirname(dest), None))
         if not folders:
             return
         now = self._clock()
@@ -317,8 +338,12 @@ class Watcher:
             for library in libraries:
                 pending = self._pending_for(library)
                 self._last_event[library.key] = heard
-                for folder in folders:
-                    pending["folders"][paths.key(folder)] = [paths.stored(folder), now]
+                for folder, photo in folders:
+                    key = paths.key(folder)
+                    held = pending["folders"].get(key)
+                    pending["folders"][key] = [paths.stored(folder), now,
+                                               _named({} if held is None else held[2], {} if photo is None else
+                                                      {paths.key(photo): paths.stored(photo)}, photo is None)]
                 if pending["noted"] is not None:
                     # Left to the whole sync that waits (_due): one that started before this change did not see it.
                     pending["noted"] = max(pending["noted"], wall)
@@ -341,9 +366,10 @@ class Watcher:
                 pending["noted"] = since if pending["noted"] is None else max(pending["noted"], since)
 
     def _due(self):
-        """[(library, folder or None, noted)] whose notifications have settled, taken off the
-        list: the whole library (since when it is wanted), or each folder no pending folder of
-        it is under (noted None)."""
+        """[(library, folder or None, noted, named)] whose notifications have settled, taken off the
+        list: the whole library (since when it is wanted; named None), or each folder no pending folder of
+        it is under (noted None; named, the photos the notifications of it and of the folders under it named,
+        or None: _named)."""
         now = self._clock()
         due = []
         with self._lock:
@@ -351,26 +377,30 @@ class Watcher:
                 library = pending["library"]
                 if pending["whole"] is not None:
                     if now - pending["whole"] >= self.debounce:
-                        due.append((library, None, pending["noted"]))
+                        due.append((library, None, pending["noted"], None))
                         pending["whole"] = pending["noted"] = None
                         pending["folders"].clear()
                     continue
                 folders = pending["folders"]
                 taken = []
-                for key, (folder, last) in sorted(folders.items()):
+                for key, (folder, last, _its) in sorted(folders.items()):
                     if now - last < self.debounce:
                         continue
-                    if any(paths.is_under(folder, other) for other_key, (other, _l) in folders.items()
+                    if any(paths.is_under(folder, other) for other_key, (other, _l, _n) in folders.items()
                            if other_key != key):
                         continue   # a folder it is under waits too, and its sync walks this one
                     taken.append(folder)
-                # Taken, and whatever waits under them: their syncs walk it.
+                # Taken, and whatever waits under them: their syncs walk it, and what they named is the taken one's.
+                named = {paths.key(folder): {} for folder in taken}
                 for key in list(folders):
-                    folder = folders[key][0]
-                    if folder in taken or any(paths.is_under(folder, parent) for parent in taken):
+                    folder, _last, its = folders[key]
+                    into = [parent for parent in taken if folder == parent or paths.is_under(folder, parent)]
+                    if into:
+                        held = named[paths.key(into[0])]
+                        named[paths.key(into[0])] = _named(held, its or {}, its is None)
                         del folders[key]
                 for folder in taken:
-                    due.append((library, folder, None))
+                    due.append((library, folder, None, named[paths.key(folder)]))
         return due
 
     # ---- The watcher's thread ------------------------------------------------------------
@@ -389,11 +419,27 @@ class Watcher:
                 except Exception:
                     logger.exception("Looking at the folders to watch failed")
                 next_look = self._clock() + self.recheck
-            for library, folder, noted in self._due():
+            for library, folder, noted, named in self._due():
                 if stop.is_set():
                     # Not synced now: the catch-up at the next start finds it.
                     break
+                if folder is not None and named and self._own(library, folder, named):
+                    continue
                 self._run(library, folder, noted)
+
+    def _own(self, library, folder, named):
+        """Were the notifications of `folder` TagPup's own writes, the photos they `named` described by `library`'s rows
+        as they are now (followed)? A look that fails is no: the folder is synced."""
+        try:
+            own = self._followed(library, list(named.values()))
+        except Exception as e:
+            logger.warning("Could not tell whether the change of %s in %s was TagPup's own (%s); syncing it.",
+                           folder, library.name, e)
+            return False
+        if own:
+            logger.debug("The change of %d photo(s) in %s in %s was TagPup's own write; not synced.",
+                         len(named), folder, library.name)
+        return own
 
     def _heard_back(self, share):
         """A share a folder is on answers again (shares.on_back, on the thread of the look that heard it): look at the
@@ -612,6 +658,17 @@ class Watcher:
                 observer.unschedule(watch)
             except Exception:
                 pass
+
+
+def _named(held, more, a_folder):
+    """What a pending folder's notifications named, `held`, with `more` ({key: photo}) added: None when either is None
+    or `a_folder` (a notification of a folder, or of a name that may have been one), or once past NAMED_MOST photos:
+    the folder is walked."""
+    if held is None or more is None or a_folder:
+        return None
+    merged = dict(held)
+    merged.update(more)
+    return merged if len(merged) <= NAMED_MOST else None
 
 
 def _now():
