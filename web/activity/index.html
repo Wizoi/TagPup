@@ -6,12 +6,18 @@
     <title>TagPup - Activity</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="common/dark-select.css">
+    <link rel="stylesheet" href="common/roots-banner.css">
 </head>
 <body>
+    <div id="roots-banner" class="roots-banner hidden" role="alert">
+        <strong>This computer does not know where this library keeps its photos.</strong>
+        <span class="roots-banner-message"></span>
+    </div>
     <header class="top">
         <h1>Activity</h1>
         <nav aria-label="Sections">
             <a href="#now">Now</a>
+            <a href="#needs">Needs you</a>
             <a href="#jobs">Scheduled jobs</a>
             <a href="#sync">Sync &amp; watcher</a>
             <a href="#snapshots">Snapshots</a>
@@ -26,6 +32,10 @@
             <h2 id="now-title">Now</h2>
             <p id="now-summary" class="summary" aria-live="polite"></p>
             <div id="now-body" class="body"><p class="none">Asking...</p></div>
+        </section>
+        <section id="needs" aria-labelledby="needs-title">
+            <h2 id="needs-title">Needs you</h2>
+            <div id="needs-body" class="body" aria-live="polite"><p class="none">Asking...</p></div>
         </section>
         <section id="jobs" aria-labelledby="jobs-title">
             <h2 id="jobs-title">Scheduled jobs</h2>
@@ -62,9 +72,11 @@
                 <a id="log-download" class="btn" href="#" download>Download</a>
                 <span id="log-status" class="status"></span>
             </div>
-            <table class="log-table">
-                <tbody id="log-records"></tbody>
-            </table>
+            <div class="table-wrap">
+                <table class="log-table">
+                    <tbody id="log-records"></tbody>
+                </table>
+            </div>
         </section>
     </main>
     <script type="module" src="main.js"></script>

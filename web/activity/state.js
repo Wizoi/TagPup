@@ -16,15 +16,18 @@ export const state = {
     unloading: false,
     unloaded: null,
     timeline: { limit: 50, entries: [], more: false },
-    //: The Run now asked and waiting for its confirmation: { job, library } or null.
+    //: The Run now asked and waiting for its confirmation: { job, library, where } or null; `where` is the section
+    //: whose button was clicked ('jobs' or 'needs'), the only one that shows it.
     confirming: null,
-    //: The last Run now's answer, shown beside the job: { job, library, text, ok }.
+    //: The last Run now's answer, shown beside the button clicked: { job, library, where, text, ok }.
     ranNow: null,
     //: The Run now whose POST is on its way: "job|library" -> true. Its button is
     //: disabled, and a second click -- a double click on Run -- sends nothing.
     asking: {},
     //: Which jobs have their last runs unfolded: "job|library" -> true.
     unfolded: {},
+    //: What Needs you last drew (its groups and the Run now state, as JSON): drawn again only when it changes.
+    needsDrawn: '',
     logs: {
         files: [],
         //: The web server's own log, as the server names it: the tab chosen first.

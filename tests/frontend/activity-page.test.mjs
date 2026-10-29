@@ -1,68 +1,20 @@
 /**
- * The Activity page (web/activity/; docs/ARCHITECTURE.md, phase 8.5): each section drawn from
- * what the server answers, Now asked again while the page is in view and not while it is
- * hidden, Run now asked first, "Logs for this run" reading that run's lines, and every
- * request sent under no library, through api.js's form for what covers every library.
+ * The Activity page (web/activity/; docs/ARCHITECTURE.md, phase 8.5): each section drawn from what the server answers,
+ * Now asked again while the page is in view and not while it is hidden, Run now asked first, "Logs for this run" reading
+ * that run's lines, and every request sent under no library, through api.js's form for what covers every library.
+ *
+ * Now, Needs you, Scheduled jobs and Recent activity answer from fixtures/activity.json: the real routes' replies on
+ * libraries seeded through the real writers (tests/test_activity_page_replies.py), one morning the owner opens the page
+ * on a scenario -- quiet, long_sync, stuck, morning.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { loadApp, FakeServer, flush, closeAllApps, click } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
-const NOW = {
-  at: "2026-09-26 10:00:03",
-  libraries: [
-    {
-      name: "harbour",
-      indexing: {
-        running: { run: "index:harbour:20260926T095900-1", started: "2026-09-26 09:59:00", folders: 2,
-                   name: "Regatta 2019", percent: 40, message: "Indexing: 40% (4/10)", progressed: "2026-09-26 09:59:58",
-                   logs: ["indexer-harbour-20260926T095900-4242-1.log", "tagpup_web.log"] },
-        queued: [{ name: "Harbour Walk", folders: 1 }],
-      },
-      suggesting: [{ library: "harbour", folder: "Lakes", status: "running", completed: 3, total: 9 }],
-      jobs: [],
-      batches: [
-        { ticket: 3, id: 41, operation: "bulk tags", library: "harbour", photos: 60, done: 25, conflict: 1, planned: 34,
-          started: 1, state: "running", position: 0, here: true },
-        { ticket: 4, id: null, operation: "bulk people", library: "harbour", photos: 40, done: 0, conflict: 0, planned: 0,
-          started: null, state: "queued", position: 1, here: true },
-        { ticket: null, id: 42, operation: "bulk tags", library: "harbour", photos: 30, done: 2, conflict: 0, planned: 28,
-          started: null, state: "running", position: 0, here: false },
-      ],
-    },
-    { name: "regatta", indexing: { running: null, queued: [] }, suggesting: [],
-      jobs: [{ job: "snapshots", run_id: 12, started: "2026-09-26 09:58:00", run: "job:regatta:12",
-               logs: ["tagpup_web.log"] }] },
-  ],
-  syncing: { library: "harbour", folder: "D:\\Photos\\Regatta", started: "2026-09-26 10:00:01", progress: null },
-  watching: true,
-  server: { version: "20260926-090000-abc1234", taking_work: true, requests: 1, busy: [] },
-};
-
-function job(name, reason, runs, extra = {}) {
-  return { name, period: "daily", reason, per_library: true, about: `What ${name} does.`, last: null,
-           running: false, next_due: "2026-09-27 09:00:00", failing: false, runs, ...extra };
-}
-
-const JOBS = {
-  runs_jobs: true,
-  check_every: 600,
-  running_here: [],
-  libraries: [
-    { name: "harbour", jobs: [
-      job("snapshots", "safety", [
-        { id: 9, started: "2026-09-26 09:00:00", finished: "2026-09-26 09:00:11", seconds: 11, outcome: "failed",
-          changed: { errors: 1 }, error: "OSError: the disk is full", run: "job:harbour:9", logs: ["tagpup_web.log"] },
-        { id: 7, started: "2026-09-25 09:00:00", finished: "2026-09-25 09:00:12", seconds: 12, outcome: "done",
-          changed: { changed: 1 }, error: null, run: "job:harbour:7", logs: ["tagpup_web.log"] },
-      ], { failing: true }),
-      job("sync", "catch-up", []),
-    ] },
-    { name: "regatta", jobs: [job("snapshots", "safety", []), job("sync", "catch-up", [])] },
-  ],
-};
+const SERVED = JSON.parse(fs.readFileSync(new URL("./fixtures/activity.json", import.meta.url), "utf8"));
 
 const SYNC = {
   watching: true,
@@ -95,29 +47,14 @@ const SERVER = {
   pid: 4242, background: ["recurring jobs", "folder watcher"],
 };
 
-const TIMELINE = {
-  limit: 50, more: true,
-  entries: [
-    { kind: "change", library: "regatta", time: "2026-09-26 09:30:00", finished: "2026-09-26 09:30:00", seconds: null,
-      what: "change settings", outcome: "applied", counts: { rows: 1, files: 0 }, id: 5, run: null, error: null,
-      logs: [] },
-    { kind: "index", library: "harbour", time: "2026-09-26 09:10:00", finished: "2026-09-26 09:20:00", seconds: 600,
-      what: "index of Regatta 2019", outcome: "completed", counts: { folders: 1 }, id: null,
-      run: "index:harbour:20260926T091000-1", error: null, logs: ["indexer-harbour.log", "tagpup_web.log"] },
-    { kind: "job", library: "harbour", time: "2026-09-26 09:00:00", finished: "2026-09-26 09:00:11", seconds: 11,
-      what: "snapshots", outcome: "failed", counts: { errors: 1 }, id: 9, run: "job:harbour:9", error: "OSError: full",
-      logs: ["tagpup_web.log"] },
-  ],
-};
-
 const LOG_FILES = {
   folder: "D:\\TagPup\\data\\logs",
   server: "tagpup_web.log",
   levels: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
   logs: [
     { name: "tagpup_web.log", program: "tagpup_web", source: "Web server", bytes: 20480, modified: 1, rotated: [] },
-    { name: "indexer-harbour.log", program: "indexer-harbour", source: "Indexer (harbour)", bytes: 1024, modified: 0,
-      rotated: [] },
+    { name: "indexer-harbour-20260921T152320-4242-1.log", program: "indexer-harbour", source: "Indexer (harbour)",
+      bytes: 1024, modified: 0, rotated: [] },
   ],
 };
 
@@ -129,17 +66,19 @@ function records(messages, run = null) {
   };
 }
 
-function server(overrides = {}) {
+/** A server answering `scenario`'s Now, jobs and timeline; `first` routes answered ahead of them. */
+function server(scenario = "morning", overrides = {}) {
   const fake = new FakeServer();
   if (overrides.first) for (const [match, body] of overrides.first) fake.on(match, body);
+  const served = SERVED[scenario];
   return fake
-    .on("/api/activity/now", NOW)
-    .on("/api/activity/jobs/run", { success: true, started: true, run_id: 13, run: "job:harbour:13" })
-    .on("/api/activity/jobs", JOBS)
+    .on("/api/activity/now", served.now)
+    .on("/api/activity/jobs/run", { success: true, started: true, run_id: 13, run: "job:breakwater:13" })
+    .on("/api/activity/jobs", served.jobs)
     .on("/api/activity/sync", SYNC)
     .on("/api/activity/snapshots", SNAPSHOTS)
     .on("/api/activity/server", SERVER)
-    .on("/api/activity/timeline", TIMELINE)
+    .on("/api/activity/timeline", served.timeline)
     .on("/api/activity/logs/", (url) => records(url.includes("run=") ? ["the run's line"] : ["slow: GET /api/tags took 1.20s"]))
     .on("/api/activity/logs", LOG_FILES);
 }
@@ -148,32 +87,101 @@ function open(t, fake = server(), every = 5000) {
   return loadApp("activity", { t, server: fake, url: `http://localhost:8090/activity/?every=${every}` });
 }
 
-describe("the Activity page draws each section from what the server says", () => {
-  test("Now: indexing, Suggest, a job, the watcher's sync and the server", async (t) => {
-    const { document, window } = await open(t);
-    await flush(window, 6);
-    const now = document.getElementById("now-body");
-    assert.match(now.textContent, /Regatta 2019 and 1 more folder\(s\)/);
-    assert.equal(now.querySelector("progress").getAttribute("value"), "40");
-    assert.match(now.textContent, /1 waiting/);
-    assert.match(now.textContent, /Harbour Walk/);
-    assert.match(now.textContent, /Lakes/);
-    assert.match(now.textContent, /running, 3 of 9/);
-    assert.match(now.textContent, /snapshots/);
-    assert.match(now.textContent, /D:\\Photos\\Regatta/);
-    assert.doesNotMatch(now.textContent, /starting/, "a sync of one folder says no progress, and is not starting");
-    assert.equal(document.getElementById("updated").textContent, "Updated 10:00:03");
+const card = (document, library) => document.querySelector(`#now-body .now-library[data-library="${library}"]`);
+const asked = (fake, route) => fake.urls().filter((url) => url === route).length;
+
+/** Until the page has asked `route` `times` more times, and drawn the answer. */
+async function polled(window, fake, route, times = 2) {
+  const from = asked(fake, route);
+  while (asked(fake, route) < from + times) await new Promise((resolve) => setTimeout(resolve, 10));
+  await flush(window, 4);
+}
+
+describe("Now: a card a library, its runs as a tree, in the server's words", () => {
+  test("the watcher's whole sync is one line with the library's sync row, at its folder, this process's index beneath it", async (t) => {
+    const { document, window } = await open(t, server("long_sync"));
+    await flush(window, 8);
+    const harbour = card(document, "harbour");
+    const top = [...harbour.querySelectorAll(":scope > ul.run-tree > li.run")];
+    assert.deepEqual(top.map((li) => li.dataset.label), ["sync (folder watcher)"], "one line for the sync, not two");
+    assert.match(top[0].textContent, /walking the folders again/);
+    assert.match(top[0].textContent, /812 folders, 20,417 photo files/);
+    assert.match(top[0].textContent, /at D:\\TagPup\\Pictures\\harbour\\2019\\Regatta/);
+    assert.match(top[0].textContent, /running 14 min, last progress 5 s ago/);
+    // This process's own index (its queue's) nests by its row's parent, as every run does, its phase in the server's words.
+    const beneath = [...top[0].querySelectorAll(":scope > ul.run-tree > li.run")];
+    assert.deepEqual(beneath.map((li) => li.dataset.label), ["index of Regatta 2019"], "the index it queued is under it");
+    assert.match(beneath[0].querySelector(".phase").textContent, /^reading metadata$/);
+    assert.equal(beneath[0].querySelector("progress").getAttribute("aria-valuetext"), "15%, reading metadata");
+    assert.match(beneath[0].textContent, /running 4 min, last progress 3 s ago/);
+    // The library with nothing running says so, and what finished in it last.
+    assert.match(card(document, "lighthouse").textContent, /^lighthouseNothing is running\. The last, .+, finished .+ ago\.$/);
+    assert.equal(document.getElementById("updated").textContent, "Updated 15:27:20");
   });
 
-  test("Now: batches of photo files, running and waiting, with Cancel for this server's own", async (t) => {
-    const fake = server().on("/api/activity/batches/cancel", { success: true });
+  test("a run is stuck only when its last progress is over five minutes old; one that said none is not", async (t) => {
+    const stuck = SERVED.stuck.now;
+    const [harbourNow, lighthouseNow] = stuck.libraries;
+    const running = { ...harbourNow.indexing.running, progressed: null, said: null };
+    const silent = { ...stuck, libraries: [{ ...harbourNow, indexing: { ...harbourNow.indexing, running } }, lighthouseNow] };
+    const { document, window } = await open(t, server("stuck", { first: [["/api/activity/now", silent]] }));
+    await flush(window, 8);
+    const lighthouse = card(document, "lighthouse");
+    assert.match(lighthouse.textContent, /stuck/);
+    assert.match(lighthouse.textContent, /writing the tags into the files/);
+    assert.match(lighthouse.textContent, /2 of 9 folders done, 14 written, 40 already current/);
+    assert.match(lighthouse.textContent, /no progress for 12 min; the share may be away/);
+    const harbour = card(document, "harbour");
+    assert.equal(harbour.querySelector(".run-line.stuck"), null);
+    assert.match(harbour.querySelector('li.run[data-label="index of Regatta 2019"]').textContent, /no progress said yet/);
+  });
+
+  test("this process's own index: its queue's words and bar, the folder waiting behind it and Suggest beside", async (t) => {
+    const long = SERVED.long_sync.now;
+    const harbour = { ...long.libraries[0],
+      suggesting: [{ library: "harbour", folder: "Lakes", status: "running", completed: 3, total: 9 }] };
+    const { document, window } = await open(t, server("long_sync", { first: [["/api/activity/now", { ...long, libraries: [harbour] }]] }));
+    await flush(window, 8);
+    const sync = card(document, "harbour").querySelector('li.run[data-label="sync (folder watcher)"]');
+    const index = sync.querySelector('li.run[data-label="index of Regatta 2019"]');
+    assert.ok(index, card(document, "harbour").textContent);
+    assert.equal(index.querySelector("progress").getAttribute("value"), "15");
+    assert.match(index.textContent, /Reading metadata: 15% \(120\/800\)/, "the queue's own message: the graphics card's wait is said there");
+    assert.match(card(document, "harbour").textContent, /1 waiting.*Harbour Walk/);
+    assert.match(card(document, "harbour").textContent, /Lakes.*running, 3 of 9/);
+  });
+
+  test("a library with nothing running says what finished in it last, whatever the timeline of every library holds", async (t) => {
+    const cut = { entries: [], more: true, limit: 50 };
+    const { document, window } = await open(t, server("morning", { first: [["/api/activity/timeline", cut]] }));
+    await flush(window, 8);
+    assert.match(card(document, "jetty").textContent, /Nothing is running\. The last, sync, finished 2 h ago\./);
+    // A server before last_finished: nothing said of the last, never a guess.
+    const jobs = { ...SERVED.morning.jobs, libraries: SERVED.morning.jobs.libraries.map(({ last_finished, ...rest }) => rest) };
+    const older = await open(t, server("morning", { first: [["/api/activity/jobs", jobs]] }));
+    await flush(older.window, 8);
+    assert.equal(card(older.document, "jetty").textContent, "jettyNothing is running.");
+  });
+
+  test("batches of photo files, running and waiting, with Cancel for this server's own", async (t) => {
+    const quiet = SERVED.quiet.now;
+    const batches = [
+      { ticket: 3, id: 41, operation: "bulk tags", library: "harbour", photos: 60, done: 25, conflict: 1, planned: 34,
+        started: 1, state: "running", position: 0, here: true },
+      { ticket: 4, id: null, operation: "bulk people", library: "harbour", photos: 40, done: 0, conflict: 0, planned: 0,
+        started: null, state: "queued", position: 1, here: true },
+      { ticket: null, id: 42, operation: "bulk tags", library: "harbour", photos: 30, done: 2, conflict: 0, planned: 28,
+        started: null, state: "running", position: 0, here: false },
+    ];
+    const now = { ...quiet, libraries: [{ ...quiet.libraries[0], batches }, quiet.libraries[1]] };
+    const fake = server("quiet", { first: [["/api/activity/now", now], ["/api/activity/batches/cancel", { success: true }]] });
     const { document, window } = await open(t, fake);
     await flush(window, 6);
-    const now = document.getElementById("now-body");
-    assert.match(now.textContent, /bulk tags.*25 of 60 photos written, 1 changed outside/);
-    assert.match(now.textContent, /bulk people.*40 photos, 1 ahead; a restart drops it before anything is written/);
-    assert.match(now.textContent, /2 of 30 photos written \(another program runs it\)/);
-    const buttons = now.querySelectorAll("button.cancel-batch");
+    const harbour = card(document, "harbour");
+    assert.match(harbour.textContent, /bulk tags.*25 of 60 photos written, 1 changed outside/);
+    assert.match(harbour.textContent, /bulk people.*40 photos, 1 ahead; a restart drops it before anything is written/);
+    assert.match(harbour.textContent, /2 of 30 photos written \(another program runs it\)/);
+    const buttons = harbour.querySelectorAll("button.cancel-batch");
     assert.equal(buttons.length, 2, "another program's batch cannot be cancelled here");
     click(window, buttons[0]);
     await flush(window, 4);
@@ -183,25 +191,103 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.deepEqual(posted[0].body, { library: "harbour", ticket: 3 });
   });
 
-  test("Scheduled jobs: each run with its counts and error, a failure flagged, Run now", async (t) => {
+  test("the line read aloud changes with a phase or a ten of percent, never with each poll", async (t) => {
+    const long = SERVED.long_sync.now;
+    let answer = long;
+    const fake = server("long_sync", { first: [["/api/activity/now", () => answer]] });
+    const { document, window } = await open(t, fake, 20);
+    await flush(window, 8);
+    const line = document.getElementById("now-summary");
+    assert.equal(line.getAttribute("aria-live"), "polite");
+    // Only the line is read aloud: the cards, drawn again at every poll, are not.
+    assert.equal(document.getElementById("now-body").getAttribute("aria-live"), null);
+    assert.equal(line.textContent,
+                 "harbour: sync (folder watcher), walking the folders again. harbour: index of Regatta 2019, reading metadata, 10%.");
+    const said = line.firstChild;
+
+    // Three seconds on, more folders walked: the same words, left as they were.
+    const [harbourNow, lighthouseNow] = long.libraries;
+    const at = (sync, index) => ({ ...long, at: "2026-09-21 15:27:23", libraries: [{ ...harbourNow,
+      jobs: [{ ...harbourNow.jobs[0], progress: { ...harbourNow.jobs[0].progress, ...sync } }],
+      indexing: { ...harbourNow.indexing, running: { ...harbourNow.indexing.running, ...index } } }, lighthouseNow] });
+    answer = at({ counts: { folders: 830, files: 20500 } }, {});
+    await polled(window, fake, "/api/activity/now");
+    assert.match(document.getElementById("now-body").textContent, /830 folders/);
+    assert.equal(line.firstChild, said, "the same words were written again, and read out again");
+
+    // The walk over: said.
+    answer = at({ said: "reading what changed" }, { percent: 25 });
+    await polled(window, fake, "/api/activity/now");
+    assert.equal(line.textContent,
+                 "harbour: sync (folder watcher), reading what changed. harbour: index of Regatta 2019, reading metadata, 20%.");
+
+    answer = SERVED.quiet.now;
+    await polled(window, fake, "/api/activity/now");
+    assert.equal(line.textContent, "Nothing is running.");
+  });
+});
+
+describe("Needs you: what happened, what it means, what to do, how often", () => {
+  test("the share dropped overnight and the stuck index ended, each as the server words it; an unreadable library on its card", async (t) => {
+    const { document, window } = await open(t);
+    await flush(window, 8);
+    const needs = document.getElementById("needs-body");
+    assert.equal(needs.getAttribute("aria-live"), "polite");
+    const blocks = [...needs.querySelectorAll(".need")];
+    assert.deepEqual(blocks.map((each) => `${each.dataset.kind} ${each.dataset.library} ${each.dataset.job}`),
+                     ["share breakwater sync", "error lighthouse index"]);
+    const [share, error] = blocks;
+    const [group] = SERVED.morning.jobs.needs_you;
+    const item = group.items[0];
+    for (const said of [item.sentence, group.means, item.next_step, `once, at ${item.last}`]) {
+      assert.ok(share.textContent.includes(said), `${said} not in ${share.textContent}`);
+    }
+    assert.deepEqual([...share.querySelectorAll("dt")].map((dt) => dt.textContent),
+                     ["What happened", "What it means", "What to do", "How often"]);
+    assert.equal(share.querySelectorAll("button.run-now").length, 1);
+    assert.equal(share.querySelector("button.run-now").textContent, "Run it now");
+    assert.equal(error.querySelector("button.run-now"), null, "an index has no Run it now");
+    assert.match(error.textContent, /The indexer stopped answering; its process was ended\./);
+    // Now: the library that is no library says why on its card; the others are drawn, nothing running in them.
+    assert.match(card(document, "pier").textContent, /Could not read this library: file is not a database/);
+    assert.doesNotMatch(card(document, "pier").textContent, /Nothing is running/, "it cannot know");
+    assert.match(card(document, "jetty").textContent, /Nothing is running\. The last, sync, finished 2 h ago\./);
+  });
+
+  test("drawn again only when what it shows changes; nothing left, it says so", async (t) => {
+    let jobs = SERVED.morning.jobs;
+    const fake = server("morning", { first: [["/api/activity/jobs/run", { success: true, started: true, run_id: 13 }],
+                                              ["/api/activity/jobs", () => jobs]] });
+    const { document, window } = await open(t, fake, 20);
+    await flush(window, 8);
+    const needs = document.getElementById("needs-body");
+    const drawn = needs.firstChild;
+    await polled(window, fake, "/api/activity/jobs");
+    assert.equal(needs.firstChild, drawn, "a poll that read the same drew it again");
+    jobs = { ...jobs, needs_you: [] };
+    await polled(window, fake, "/api/activity/jobs");
+    assert.equal(needs.textContent, "Nothing needs you.");
+  });
+});
+
+describe("the other sections", () => {
+  test("Scheduled jobs: each run with its counts and error, a failure flagged, its runs unfolded", async (t) => {
     const { document, window } = await open(t);
     await flush(window, 6);
     const jobs = document.getElementById("jobs-body");
-    const snapshots = jobs.querySelector('.job-card[data-job="snapshots"]');
-    assert.ok(snapshots, "no card for the snapshots job");
-    assert.match(snapshots.textContent, /safety/);
-    const harbour = snapshots.querySelector('tr.job[data-library="harbour"]');
-    assert.ok(harbour.classList.contains("failing"), "a failed last run is flagged");
-    assert.match(harbour.textContent, /failed last time/);
-    assert.match(harbour.textContent, /OSError: the disk is full/);
-    assert.match(harbour.textContent, /11 s/);
-    assert.ok(!snapshots.querySelector('tr.job[data-library="regatta"]').classList.contains("failing"));
-    assert.equal(snapshots.querySelectorAll("button.run-now").length, 2);
-    // Its last runs, unfolded.
-    click(window, harbour.querySelector("button.fold"));
-    const unfolded = jobs.querySelectorAll('.job-card[data-job="snapshots"] tr.run');
+    const sync = jobs.querySelector('.job-card[data-job="sync"]');
+    assert.match(sync.textContent, /catch-up/);
+    const breakwater = sync.querySelector('tr.job[data-library="breakwater"]');
+    assert.ok(breakwater.classList.contains("failing"), "a failed last run is flagged");
+    assert.match(breakwater.textContent, /failed last time/);
+    assert.match(breakwater.textContent, /The network share C: is not answering just now/);
+    assert.ok(!sync.querySelector('tr.job[data-library="jetty"]').classList.contains("failing"),
+              "an abandoned run is not a failure");
+    assert.equal(sync.querySelectorAll("button.run-now").length, 4);
+    click(window, sync.querySelector('tr.job[data-library="harbour"] button.fold'));
+    const unfolded = jobs.querySelectorAll('.job-card[data-job="sync"] tr.run');
     assert.equal(unfolded.length, 2);
-    assert.match(unfolded[1].textContent, /changed 1/);
+    assert.match(unfolded[0].textContent, /new 812/);
   });
 
   test("Sync & watcher, Snapshots and the server", async (t) => {
@@ -230,12 +316,14 @@ describe("the Activity page draws each section from what the server says", () =>
   });
 
   test("Recent activity, newest first, and More reads further back", async (t) => {
-    const fake = server();
+    const timeline = { ...SERVED.morning.timeline, more: true };
+    const fake = server("morning", { first: [["/api/activity/timeline", timeline]] });
     const { document, window } = await open(t, fake);
     await flush(window, 6);
     const rows = document.querySelectorAll("#timeline-body tr.entry");
-    assert.deepEqual([...rows].map((row) => row.dataset.kind), ["change", "index", "job"]);
-    assert.match(rows[2].textContent, /OSError: full/);
+    assert.equal(rows.length, timeline.entries.length);
+    assert.deepEqual([...rows].slice(0, 3).map((row) => row.dataset.kind), ["job", "sync", "job"]);
+    assert.match(rows[0].textContent, /the process that started it stopped before it could record its end/);
     const more = document.getElementById("timeline-more");
     assert.equal(more.disabled, false);
     click(window, more);
@@ -263,169 +351,119 @@ describe("the Activity page draws each section from what the server says", () =>
   });
 });
 
-describe("Now says how far a long run has got, and how long since it moved", () => {
-  const WALKING = {
-    ...NOW,
-    at: "2026-09-26 10:12:03",
-    syncing: { library: "harbour", folder: null, started: "2026-09-26 10:00:00",
-               progress: { phase: "walking the folders", folders: 812, files: 20417,
-                           folder: "\\\\nas\\Pictures\\2019\\Regatta", progressed: "2026-09-26 10:11:58" } },
-  };
-
-  test("a whole sync over the share: its phase, the folders and files so far, where it is, and its times", async (t) => {
-    const { document, window } = await open(t, server({ first: [["/api/activity/now", WALKING]] }));
-    await flush(window, 6);
-    const now = document.getElementById("now-body");
-    assert.match(now.textContent, /every folder/);
-    assert.match(now.textContent, /walking the folders: 812 folder\(s\), 20,417 photo file\(s\)/);
-    assert.match(now.textContent, /at \\\\nas\\Pictures\\2019\\Regatta/);
-    assert.match(now.textContent, /running 12 min 3 s, last progress 5 s ago/);
-    // The index beside it: how long it has run, since it last moved, and its percent in words beside the bar.
-    assert.match(now.textContent, /running 13 min 3 s, last progress 12 min 5 s ago/);
-    const bar = now.querySelector("progress");
-    assert.equal(bar.getAttribute("aria-valuetext"), "40%, Indexing");
-    assert.equal(bar.nextElementSibling.textContent, "40%");
-  });
-
-  test("the line read aloud changes with the phase or a ten of percent, never with each poll", async (t) => {
-    let answer = WALKING;
-    const fake = server({ first: [["/api/activity/now", () => answer]] });
-    const { document, window } = await open(t, fake, 20);
-    await flush(window, 6);
-    const line = document.getElementById("now-summary");
-    assert.equal(line.getAttribute("aria-live"), "polite");
-    assert.equal(line.textContent,
-                 "harbour: syncing, walking the folders. harbour: indexing Regatta 2019, Indexing, 40%.");
-    const said = line.firstChild;
-    // The next poll's answer drawn (every 20 ms here).
-    const again = async () => {
-      const asked = fake.urls().filter((url) => url === "/api/activity/now").length;
-      while (fake.urls().filter((url) => url === "/api/activity/now").length < asked + 2) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      await flush(window, 4);
-    };
-
-    // Three seconds on: more folders, a later time, 43%: the same words, left as they were.
-    const running = { ...NOW.libraries[0].indexing.running, percent: 43 };
-    answer = { ...WALKING, at: "2026-09-26 10:12:06",
-               syncing: { ...WALKING.syncing, progress: { ...WALKING.syncing.progress, folders: 830 } },
-               libraries: [{ ...NOW.libraries[0], indexing: { ...NOW.libraries[0].indexing, running } }, NOW.libraries[1]] };
-    await again();
-    assert.match(document.getElementById("now-body").textContent, /830 folder/);
-    assert.equal(line.firstChild, said, "the same words were written again, and read out again");
-
-    // The walk over and the index at 51%: said.
-    answer = { ...answer, syncing: { ...answer.syncing, progress: { ...answer.syncing.progress, phase: "reading what changed" } },
-               libraries: [{ ...NOW.libraries[0], indexing: { ...NOW.libraries[0].indexing,
-                                                              running: { ...running, percent: 51 } } }, NOW.libraries[1]] };
-    await again();
-    assert.equal(line.textContent,
-                 "harbour: syncing, reading what changed. harbour: indexing Regatta 2019, Indexing, 50%.");
-
-    answer = { ...NOW, syncing: null, libraries: [] };
-    await again();
-    assert.equal(line.textContent, "Nothing is running.");
-    assert.equal(document.getElementById("now-body").textContent, "", "said once, by the line above");
-  });
-});
-
 describe("Now is asked while the page is in view, and not while it is hidden", () => {
   test("hidden, it asks nothing; back, it asks at once", async (t) => {
     const fake = server();
     const { document, window } = await open(t, fake, 30);
-    const asked = () => fake.urls().filter((url) => url === "/api/activity/now").length;
+    const now = () => asked(fake, "/api/activity/now");
     await new Promise((resolve) => setTimeout(resolve, 200));
-    const visible = asked();
+    const visible = now();
     assert.ok(visible >= 3, `asked ${visible} times in 200 ms at every 30 ms`);
 
     let state = "hidden";
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
     document.dispatchEvent(new window.Event("visibilitychange"));
     await flush(window, 2);
-    const hiddenFrom = asked();
+    const hiddenFrom = now();
     await new Promise((resolve) => setTimeout(resolve, 200));
-    assert.equal(asked(), hiddenFrom, "the page asked while hidden");
+    assert.equal(now(), hiddenFrom, "the page asked while hidden");
 
     state = "visible";
     document.dispatchEvent(new window.Event("visibilitychange"));
     await flush(window, 2);
-    assert.ok(asked() > hiddenFrom, "the page did not ask again once it was back in view");
+    assert.ok(now() > hiddenFrom, "the page did not ask again once it was back in view");
   });
 
   test("a poll waits for the one before it to be answered", async (t) => {
-    const fake = server({ first: [["/api/activity/now", () => new Promise(() => {})]] });
+    const fake = server("morning", { first: [["/api/activity/now", () => new Promise(() => {})]] });
     const { window } = await open(t, fake, 20);
     await new Promise((resolve) => setTimeout(resolve, 150));
     await flush(window, 2);
-    assert.equal(fake.urls().filter((url) => url === "/api/activity/now").length, 1);
+    assert.equal(asked(fake, "/api/activity/now"), 1);
   });
 });
 
-describe("Run now is asked first", () => {
+describe("Run now is asked first, and answered where it was clicked", () => {
+  const posted = (fake) => fake.calls.filter((call) => call.method === "POST");
+  const inJobs = (document, library) =>
+    document.querySelector(`.job-card[data-job="sync"] tr.job[data-library="${library}"] button.run-now`);
+
   test("the first click asks; Cancel sends nothing; Run sends the job and the library", async (t) => {
     const fake = server();
     const { document, window } = await open(t, fake);
     await flush(window, 6);
-    const runNow = () => document.querySelector('.job-card[data-job="sync"] tr.job[data-library="harbour"] button.run-now');
-    const posted = () => fake.calls.filter((call) => call.method === "POST");
 
-    click(window, runNow());
+    click(window, inJobs(document, "harbour"));
     await flush(window, 2);
     const confirm = document.querySelector(".confirm");
     assert.ok(confirm, "Run now did not ask first");
     assert.match(confirm.textContent, /Run sync for harbour now\?/);
-    assert.equal(posted().length, 0, "sent before it was confirmed");
+    assert.equal(posted(fake).length, 0, "sent before it was confirmed");
 
     click(window, confirm.querySelector("button.cancel-run"));
     await flush(window, 2);
     assert.equal(document.querySelector(".confirm"), null);
-    assert.equal(posted().length, 0);
+    assert.equal(posted(fake).length, 0);
 
-    click(window, runNow());
+    click(window, inJobs(document, "harbour"));
     await flush(window, 2);
     click(window, document.querySelector(".confirm button.confirm-run"));
     await flush(window, 6);
-    assert.equal(posted().length, 1);
-    assert.equal(posted()[0].url, "/api/activity/jobs/run");
-    assert.deepEqual(posted()[0].body, { job: "sync", library: "harbour" });
+    assert.equal(posted(fake).length, 1);
+    assert.equal(posted(fake)[0].url, "/api/activity/jobs/run");
+    assert.deepEqual(posted(fake)[0].body, { job: "sync", library: "harbour" });
     assert.match(document.getElementById("jobs-body").textContent, /Started \(run 13\)/);
+    assert.doesNotMatch(document.getElementById("needs-body").textContent, /Started/);
+  });
+
+  test("Run it now in Needs you asks there and answers there, not in Scheduled jobs", async (t) => {
+    const fake = server();
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    const needs = document.getElementById("needs-body");
+    click(window, needs.querySelector('.need[data-library="breakwater"] button.run-now'));
+    await flush(window, 2);
+    assert.ok(needs.querySelector(".confirm"), "Run it now did not ask first");
+    assert.equal(document.querySelector("#jobs-body .confirm"), null, "asked in both places");
+    click(window, needs.querySelector(".confirm button.confirm-run"));
+    await flush(window, 6);
+    assert.deepEqual(posted(fake).map((call) => call.body), [{ job: "sync", library: "breakwater" }]);
+    assert.match(needs.textContent, /Started \(run 13\)/);
+    assert.doesNotMatch(document.getElementById("jobs-body").textContent, /Started/);
   });
 
   test("a second click while the first is on its way sends nothing, and the first answer stays", async (t) => {
     let answer;
     const answered = new Promise((resolve) => { answer = resolve; });
-    const fake = server({ first: [["/api/activity/jobs/run", () => answered]] });
+    const fake = server("morning", { first: [["/api/activity/jobs/run", () => answered]] });
     const { document, window } = await open(t, fake);
     await flush(window, 6);
-    const posted = () => fake.calls.filter((call) => call.method === "POST");
-    const runNowButton = () => document.querySelector('.job-card[data-job="sync"] tr.job[data-library="harbour"] button.run-now');
 
-    click(window, runNowButton());
+    click(window, inJobs(document, "harbour"));
     await flush(window, 2);
     const confirm = document.querySelector(".confirm button.confirm-run");
     click(window, confirm);
     click(window, confirm);   // a double click: the button is gone from the page, not its listener
     await flush(window, 2);
-    assert.equal(posted().length, 1, "Run now was sent twice");
-    assert.equal(runNowButton().disabled, true, "Run now is offered again while its run is being asked for");
-    click(window, runNowButton());
+    assert.equal(posted(fake).length, 1, "Run now was sent twice");
+    assert.equal(inJobs(document, "harbour").disabled, true, "Run now is offered again while its run is being asked for");
+    click(window, inJobs(document, "harbour"));
     await flush(window, 2);
     assert.equal(document.querySelector(".confirm"), null, "a disabled Run now asked again");
 
     answer({ success: true, started: true, run_id: 13, run: "job:harbour:13" });
     await flush(window, 8);
-    assert.equal(posted().length, 1);
+    assert.equal(posted(fake).length, 1);
     assert.match(document.getElementById("jobs-body").textContent, /Started \(run 13\)/);
-    assert.equal(runNowButton().disabled, false);
+    assert.equal(inJobs(document, "harbour").disabled, false);
   });
 
   test("a job not started says why", async (t) => {
-    const fake = server({ first: [["/api/activity/jobs/run", { success: false, started: false, why: "a run of it is under way already",
-                                                                   error: "Not started: a run of it is under way already." }]] });
+    const fake = server("morning", { first: [["/api/activity/jobs/run", { success: false, started: false, why: "a run of it is under way already",
+                                                                           error: "Not started: a run of it is under way already." }]] });
     const { document, window } = await open(t, fake);
     await flush(window, 6);
-    click(window, document.querySelector('.job-card[data-job="sync"] tr.job[data-library="regatta"] button.run-now'));
+    click(window, inJobs(document, "jetty"));
     await flush(window, 2);
     click(window, document.querySelector(".confirm button.confirm-run"));
     await flush(window, 6);
@@ -442,7 +480,7 @@ describe("Unload models now", () => {
 
   test("the line says what is loaded and the button unloads, asking the server once", async (t) => {
     let models = LOADED;
-    const fake = server({ first: [
+    const fake = server("quiet", { first: [
       ["/api/activity/server", () => ({ ...SERVER, models })],
       ["/api/activity/models/unload", () => { models = NONE; return { success: true, unloaded: ["CLIP", "faces"],
                                                                       message: "Unloaded CLIP and faces; the graphics card is free.", models: NONE }; }],
@@ -462,7 +500,7 @@ describe("Unload models now", () => {
   });
 
   test("a refusal under a running Suggest is shown as the server said it", async (t) => {
-    const fake = server({ first: [
+    const fake = server("quiet", { first: [
       ["/api/activity/server", { ...SERVER, models: { ...LOADED, in_use: true } }],
       ["/api/activity/models/unload", { success: false, error: "In use by Suggest Regatta (harbour): they are let go when it ends.", unloaded: [] }],
     ] });
@@ -476,12 +514,15 @@ describe("Unload models now", () => {
 });
 
 describe("Logs", () => {
+  const INDEX_RUN = "index:harbour:20260921T152320-4242-1";
+  const INDEX_LOG = "indexer-harbour-20260921T152320-4242-1.log";
+
   test("a tab for each log, the web server's first, INFO and worse by default", async (t) => {
     const fake = server();
     const { document, window } = await open(t, fake);
     await flush(window, 8);
     const tabs = [...document.querySelectorAll("#log-tabs .tab")];
-    assert.deepEqual(tabs.map((tab) => tab.dataset.log), ["tagpup_web.log", "indexer-harbour.log"]);
+    assert.deepEqual(tabs.map((tab) => tab.dataset.log), ["tagpup_web.log", INDEX_LOG]);
     assert.ok(tabs[0].classList.contains("chosen"));
     const read = fake.urls().find((url) => url.startsWith("/api/activity/logs/tagpup_web.log?"));
     assert.ok(read, fake.urls().join("\n"));
@@ -495,13 +536,13 @@ describe("Logs", () => {
     const fake = server();
     const { document, window } = await open(t, fake);
     await flush(window, 8);
-    const link = document.querySelector('#timeline-body button.run-logs[data-run="index:harbour:20260926T091000-1"][data-log="indexer-harbour.log"]');
+    const link = document.querySelector(`#timeline-body button.run-logs[data-run="${INDEX_RUN}"][data-log="${INDEX_LOG}"]`);
     assert.ok(link, "no Logs for this run beside the run of the indexer");
     click(window, link);
     await flush(window, 6);
-    const read = fake.urls().filter((url) => url.startsWith("/api/activity/logs/indexer-harbour.log?")).at(-1);
+    const read = fake.urls().filter((url) => url.startsWith(`/api/activity/logs/${INDEX_LOG}?`)).at(-1);
     assert.ok(read, fake.urls().join("\n"));
-    assert.match(read, /run=index%3Aharbour%3A20260926T091000-1/);
+    assert.match(read, /run=index%3Aharbour%3A20260921T152320-4242-1/);
     assert.match(read, /level=INFO/);
     assert.equal(document.getElementById("log-run").classList.contains("hidden"), false);
     assert.match(document.getElementById("log-records").textContent, /the run's line/);
@@ -520,7 +561,7 @@ describe("Logs", () => {
         seconds: 600, what: "index of Regatta 2019", outcome: "completed", counts: { folders: 1 }, id: null,
         run: "index:Harbour_Photos:20260926T091000-4242-1", error: null, logs: [named, "tagpup_web.log"] },
     ] };
-    const fake = server({ first: [["/api/activity/timeline", timeline]] });
+    const fake = server("quiet", { first: [["/api/activity/timeline", timeline]] });
     const { document, window } = await open(t, fake);
     await flush(window, 8);
     const links = [...document.querySelectorAll("#timeline-body button.run-logs")];

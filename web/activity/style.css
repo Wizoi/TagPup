@@ -1,4 +1,6 @@
-/* The Activity page: the dark look of the other two pages, plainer, for reading. */
+/* The Activity page: the dark look of the other two pages, plainer, for reading. Dark only; usable at 360 px wide
+   with no sideways scroll of the page (a table scrolls inside its own wrapper); a state is said in words beside its
+   colour. */
 :root {
     --bg: #0f1115;
     --bg-card: #171a21;
@@ -27,7 +29,8 @@ body {
     z-index: 2;
     display: flex;
     align-items: center;
-    gap: 24px;
+    flex-wrap: wrap;
+    gap: 8px 24px;
     padding: 10px 20px;
     background: rgba(15, 17, 21, 0.92);
     border-bottom: 1px solid var(--border);
@@ -49,6 +52,7 @@ section h2 { font-size: 16px; margin: 0 0 10px; border-bottom: 1px solid var(--b
     border-radius: 8px;
     padding: 10px 14px;
     margin-bottom: 10px;
+    overflow-x: auto;
 }
 
 .card h3 { margin: 0 0 6px; font-size: 14px; display: flex; gap: 10px; align-items: center; }
@@ -61,8 +65,20 @@ section h2 { font-size: 16px; margin: 0 0 10px; border-bottom: 1px solid var(--b
 .activity .percent { font-variant-numeric: tabular-nums; }
 #now-summary { margin: 4px 0 8px; }
 .activity.at .detail { overflow-wrap: anywhere; }
+.path, .detail { overflow-wrap: anywhere; min-width: 0; }
 .what { font-weight: 600; }
 .path { font-family: Consolas, monospace; font-size: 12px; }
+.phase { color: var(--text); }
+.run-tree { list-style: none; margin: 0; padding: 0; }
+.run-tree .run-tree { margin-left: 10px; padding-left: 12px; border-left: 1px solid var(--border); }
+.run-tree .activity.at { margin-top: 0; }
+.run-line.stuck .what { color: var(--bad); }
+.activity.unreadable { margin: 4px 0 8px; }
+.need h3 { flex-wrap: wrap; }
+.need-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.need-facts dt { color: var(--muted); }
+.need-facts dd { margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; overflow-wrap: anywhere; min-width: 0; }
+.table-wrap, #timeline-body { overflow-x: auto; }
 .roots { list-style: none; padding: 0; margin: 0 0 6px; }
 .roots li { display: flex; gap: 8px; align-items: center; margin: 2px 0; }
 
@@ -136,3 +152,14 @@ td.actions { white-space: nowrap; }
 .log-table pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
 .record.level-warning td.level { color: var(--busy); }
 .record.level-error td.level, .record.level-critical td.level { color: var(--bad); }
+
+/* A narrow window (a phone, a half screen): less padding, and Needs you's facts one under another. */
+@media (max-width: 600px) {
+    .top { padding: 8px 10px; gap: 6px 14px; }
+    main { padding: 8px 10px 30px; }
+    .card { padding: 8px 10px; }
+    .updated { margin-left: 0; }
+    .need-facts { grid-template-columns: 1fr; }
+    .need-facts dd { margin-bottom: 6px; }
+    .activity progress { width: 100px; }
+}

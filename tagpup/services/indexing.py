@@ -83,6 +83,10 @@ _INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
 #: The phase of an index (job_runs.PHASES) each of the CLI's bars is, by its label.
 _BAR_PHASES = {READING_METADATA: "metadata", GENERATING_EMBEDDINGS: "embeddings"}
 
+#: Each phase of an index (job_runs.PHASES) in the words the Activity page shows it in (tagpup.services.activity.PHASE_SAID).
+PHASE_SAID = {"metadata": "reading metadata", "embeddings": "making each photo's vector",
+              "faces": "matching the new faces with the named ones", "bake": "writing the tags into the files"}
+
 #: Longest message worth putting on a progress bar. Past this it is ellipsised in
 #: the page anyway, so a truncated sentence is all anyone can read.
 _INDEXER_MAX_MESSAGE = 90

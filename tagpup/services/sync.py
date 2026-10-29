@@ -122,9 +122,10 @@ FOLDER_WAIT = 10.0
 #: The phases of a sync its progress names (walked): its walk, the second walk only a removal makes, and what
 #: follows the walk (the changed files read, the change written).
 WALKING, WALKING_AGAIN, AFTER_THE_WALK = "walking the folders", "walking the folders again", "reading what changed"
-#: Each, as the run of a sync job records it (tagpup.services.job_runs.PHASES), and back (walked).
+#: Each, as the run of a sync job records it (tagpup.services.job_runs.PHASES), and back (walked; the words the Activity
+#: page shows a run's phase in, tagpup.services.activity.PHASE_SAID).
 _RUN_PHASES = {WALKING: "walking", WALKING_AGAIN: "walking_again", AFTER_THE_WALK: "after_the_walk"}
-_PHASE_SAID = {recorded: said for said, recorded in _RUN_PHASES.items()}
+PHASE_SAID = {recorded: said for said, recorded in _RUN_PHASES.items()}
 
 #: A walk logs how far it has got every LOG_FOLDERS folders and LOG_SECONDS seconds, whichever is the rarer: on the
 #: share, 2,564 folders in about 12 minutes (photo_index, #1915), never a line a file.
@@ -157,7 +158,7 @@ def walked(progress):
     if not isinstance(progress, dict):
         return None
     counts = progress.get("counts")
-    phase = _PHASE_SAID.get(progress.get("phase"))
+    phase = PHASE_SAID.get(progress.get("phase"))
     if phase is None or not isinstance(counts, dict):
         return None
     folders, files = counts.get("folders"), counts.get("files")
