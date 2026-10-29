@@ -141,6 +141,14 @@ def begin(conn, immediate=False):
     conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
 
 
+def locked(error):
+    """Is `error` SQLite saying the database is locked or busy: another writer held it longer than this one waited?"""
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    message = str(error).lower()
+    return "locked" in message or "busy" in message
+
+
 def retry_when_busy(operation, attempts=4, first_delay=0.25, label="database write"):
     """Run something that writes, waiting out a locked database rather than failing.
 
@@ -152,8 +160,7 @@ def retry_when_busy(operation, attempts=4, first_delay=0.25, label="database wri
         try:
             return operation()
         except sqlite3.OperationalError as e:
-            message = str(e).lower()
-            if "locked" not in message and "busy" not in message:
+            if not locked(e):
                 raise
             if attempt == attempts - 1:
                 raise
@@ -244,8 +251,7 @@ def write_if_free(target, operation, label="database write"):
                 conn.rollback()
             except Exception:
                 pass
-            message = str(e).lower()
-            if "locked" not in message and "busy" not in message:
+            if not locked(e):
                 raise
             logger.debug("%s: skipped, the database is being written by another process", label)
             return BUSY

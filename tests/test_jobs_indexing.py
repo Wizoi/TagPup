@@ -81,7 +81,7 @@ class TheWorker(QueueTest):
         self.queue.start(folders, index)
         self.wait_until_idle()
         self.assertEqual(self.statuses(folders), ["completed", "failed", "completed"])
-        self.assertEqual(self.queue.status(folders[1])["message"], "Error: that folder is unreadable")
+        self.assertEqual(self.queue.status(folders[1])["message"], "RuntimeError: that folder is unreadable")
 
     def test_a_failed_result_is_recorded_with_what_it_said(self):
         folder = self.folders(1)[0]

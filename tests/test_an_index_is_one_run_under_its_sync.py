@@ -281,13 +281,15 @@ class AnIndexThatDoesNotFinishIsRecordedSo(_Indexing):
         self.assertEqual("failed", status["status"])
         run = self.index_run()
         self.assertEqual((job_runs.FAILED, status["message"], 1), (run.outcome, run.note, run.changed["errors"]))
+        self.assertEqual(("OSError", runs_service.ERROR), (run.note.split(":")[0], runs_service.kind_of(run)))
         self.assertIn("too long", run.note)
 
     def test_an_index_that_exits_badly_ends_failed_with_its_sentence(self):
         status = self.queued([self.folder("Regatta")], self.code(bars(1), exit_code=1))
         run = self.index_run()
         self.assertEqual((job_runs.FAILED, "failed"), (run.outcome, status["status"]))
-        self.assertEqual(status["message"], run.note)
+        self.assertEqual((status["message"], runs_service.ERROR), (run.note, runs_service.kind_of(run)))
+        self.assertIn("exit code 1", run.note)
 
 
 class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):

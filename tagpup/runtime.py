@@ -323,7 +323,7 @@ def sync(library, folder=None, apply=False, index_new=True):
     closed alike whatever library the request named. The watcher's folder is brought in by its next notification or the daily
     catch-up. Another process's apply (the CLI) cannot see this process's job."""
     if apply and naming_faces.writing(library):
-        return sync_service.not_run(NAMING_SAYS, apply)
+        return sync_service.not_run(NAMING_SAYS, apply, waited=True)
     settings = library_settings(library) if apply else peek_settings(library)
     queue = None
     if index_new:

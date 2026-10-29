@@ -40,7 +40,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from tagpup.core.result import Result
-from tagpup.store import journal, schema
+from tagpup.services import job_runs
+from tagpup.store import db, journal, schema
 
 
 @dataclass
@@ -106,6 +107,8 @@ def run(library, operation, plan, edits, apply=False, kinds=()):
         return result
     except Exception as e:
         result.fail("the write", "%s: %s" % (type(e).__name__, e))
+        if db.locked(e):
+            result.details[job_runs.FAILURE] = job_runs.LOCKED
         return result
     result.changed = applied.changed
     result.details["change"] = applied.change_id

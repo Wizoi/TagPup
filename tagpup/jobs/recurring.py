@@ -100,8 +100,8 @@ class Job:
     #: call(library, run) -> Result; for a job not run per library, call(libraries, run).
     call: Callable
     about: str = ""
-    #: failed(result) -> why the run did not do its work although its Result is ok (a sentence: the run's note), or
-    #: None when it did: such a run ends failed, and is tried again RETRY_AFTER later, not a period later.
+    #: failed(result) -> why the run did not do its work although its Result is ok (a job_runs.Failure: its sentence the
+    #: run's note), or None when it did: such a run ends failed, and is tried again RETRY_AFTER later, not a period later.
     failed: Optional[Callable] = None
 
 

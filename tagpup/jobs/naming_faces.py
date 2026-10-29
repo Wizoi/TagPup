@@ -200,7 +200,9 @@ class Job:
 
     def _end_run(self, what, failed=False, note=None):
         try:
-            runs_service.end(self.library, self.run_id, time.time(), self.counts(what), failed=failed, note=note)
+            runs_service.end(self.library, self.run_id, time.time(), self.counts(what),
+                             failed=runs_service.Failure(runs_service.ERROR, note) if failed else None,
+                             note=None if failed else note)
         except Exception as problem:
             logger.warning("Could not record the end of name-faces job %s of %s: %s", self.handle, self.library.name, problem)
 
@@ -360,7 +362,7 @@ def _give_back(library, claim):
     try:
         if not runs_service.discard(library, claim.run_id):
             runs_service.end(library, claim.run_id, time.time(), {"what": "name faces from tags not begun", "state": FAILED},
-                             failed=True, note="It was not begun.")
+                             failed=runs_service.Failure(runs_service.ERROR, "It was not begun."))
     except Exception as problem:
         logger.warning("Could not give back the claim of run %s of %s: %s", claim.run_id, library.name, problem)
 

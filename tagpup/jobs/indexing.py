@@ -388,7 +388,7 @@ class IndexQueue:
                         self._statuses[paths.key(each)] = status
                 # Every line the run logs here carries its tag, and the indexer it starts is
                 # told it (tagpup.services.indexing).
-                run_id, result = None, None
+                run_id, result, error = None, None, None
                 # What its row holds from the claim to its end, beside its counts.
                 held = {"run": run, "folders": len(_folders_of(job))}
                 syncs = runs.syncs(self.library, job.get("parents") or ())
@@ -399,11 +399,11 @@ class IndexQueue:
                         # Claimed here, under the tags it was queued under: its parent is the run that queued it.
                         run_id = self._claim(held)
                         with self._recording(run_id):
-                            result = self._index(job, progress)
+                            result, error = self._index(job, progress)
                 finally:
                     with self._lock:
                         self._progress, self._current_folders = None, []
-                    self._end(run_id, held, status, result)
+                    self._end(run_id, held, status, result, error)
                     # Gone from Now only once its row has ended: the page lists the row instead while it runs on.
                     with self._lock:
                         self._current = None
@@ -462,9 +462,10 @@ class IndexQueue:
         """What the run's work is done inside: the run `run_id`, recorded (job_runs.recording), or nothing."""
         return job_runs.recording(self._recorded_in, run_id) if run_id is not None else contextlib.nullcontext()
 
-    def _end(self, run_id, held, status, result):
+    def _end(self, run_id, held, status, result, error=None):
         """End the run's row: done, with its message as the note, when it completed or was cancelled (counted
-        `cancelled`); failed, its message the sentence, when it failed. Its counts are its Result's (job_runs.counts,
+        `cancelled`); failed when it failed, why (job_runs.failure of the `error` it raised or its Result) the sentence
+        its status says. Its counts are its Result's (job_runs.counts,
         what the indexer said it did among them), beside what it held from its claim (`held`); an index that raised counts one
         error. A row that is gone -- pruned, a restore, swept -- is logged; one that cannot be written is logged and
         written as the next run is claimed (_claim)."""
@@ -477,11 +478,11 @@ class IndexQueue:
         counts.update(held)
         if outcome == "cancelled":
             counts["cancelled"] = 1
-        self._write_end(run_id, time.time(), counts, outcome not in ("completed", "cancelled"),
-                        status.get("message") or None)
+        failed = job_runs.failure(error, result) if outcome not in ("completed", "cancelled") else None
+        self._write_end(run_id, time.time(), counts, failed, None if failed else status.get("message") or None)
 
     def _write_end(self, run_id, when, counts, failed, note):
-        """Write the end of run `run_id` as it ended `when`; kept in _unended, to be written as the next run is claimed,
+        """Write the end of run `run_id` as it ended `when`, `failed` a job_runs.Failure or None; kept in _unended, to be written as the next run is claimed,
         when it cannot be (and again, if that fails too): it leaves _unended only once written or found gone."""
         where = self._recorded_in
         try:
@@ -506,14 +507,15 @@ class IndexQueue:
 
     @staticmethod
     def _index(job, report):
-        """Run the job's index, its status said in `report.status`: its Result, or None when it raised."""
+        """Run the job's index, its status said in `report.status`: (its Result, None), or (None, what it raised), the
+        status then saying why as its run does (job_runs.failure)."""
         status = report.status
         try:
             result = job["index"](job["folders"] if "folders" in job else job["folder"], report)
         except Exception as e:
             logger.exception("Indexing %s failed", job["folder"])
-            status.update(status="failed", percent=0, message="Error: %s" % e)
-            return None
+            status.update(status="failed", percent=0, message=job_runs.failure(error=e).sentence)
+            return None, e
         if result.details.get("cancelled"):
             status.update(status="cancelled", percent=0, message=result.details.get("message", "Cancelled."))
         elif result.ok:
@@ -522,4 +524,4 @@ class IndexQueue:
         else:
             status.update(status="failed", percent=result.details.get("percent", 0),
                           message=result.message())
-        return result
+        return result, None

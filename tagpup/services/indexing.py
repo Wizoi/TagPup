@@ -265,7 +265,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         # The indexer holds the library's roots for its whole run (tagpup.services.roots.pinned) and
         # stopped: another process changed them. Said as it is, not as an exit code.
         result.fail(", ".join(folders), roots_service.STOPPED)
-        result.details["percent"] = 0
+        result.details.update({"percent": 0, job_runs.FAILURE: job_runs.WAITED})
         return result
     if code != 0:
         result.fail(", ".join(folders), "Indexing failed with exit code %s." % code)
