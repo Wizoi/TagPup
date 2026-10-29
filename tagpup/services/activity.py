@@ -22,13 +22,19 @@ import time
 
 from tagpup.core import runs
 from tagpup.files import shares
+from tagpup.services import indexing
 from tagpup.services import job_runs as runs_service
+from tagpup.services import sync
 from tagpup.store import db, job_runs, journal, snapshots
 
 logger = logging.getLogger(__name__)
 
 #: The most entries a timeline gathers from each record.
 MOST = 500
+
+#: Each phase a run says it is in (job_runs.PHASES) in the words the page shows: a sync's (sync.PHASE_SAID, the words
+#: its walk logs in) and an index's (indexing.PHASE_SAID). The page holds no copy.
+PHASE_SAID = dict(sync.PHASE_SAID, **indexing.PHASE_SAID)
 
 
 def _look(library):
@@ -69,8 +75,11 @@ def _tag(run):
 
 
 def _progress(run):
-    """How far `run` said it got -- {"phase", "counts", "progressed": when it said so} -- or None before it said."""
-    return dict(run.progress, progressed=run.heartbeat) if run.progress else None
+    """How far `run` said it got -- {"phase", "said": the phase in words (PHASE_SAID; None for one a newer version
+    wrote), "counts", "progressed": when it said so} -- or None before it said."""
+    if not run.progress:
+        return None
+    return dict(run.progress, said=PHASE_SAID.get(run.progress.get("phase")), progressed=run.heartbeat)
 
 
 def index_runs_under(library, indexes=None):
@@ -164,7 +173,8 @@ def timeline_and_children(library, limit=50):
     `library`, newest first, at most `limit` entries: each
     {"kind": "change" | "job" | "index" | "sync", "library", "time", "finished", "seconds",
     "what", "outcome", "counts", "id", "run", "error"}, a job's and an index's also its "parent" and "progress"
-    (under_way). A sync's change of the journal is its sync's entry, not one of its own. An index's run says how many
+    (under_way), an index's also its "syncs" (the tags of the syncs it is part of: a folder sync's index, whose own
+    row has no parent while the sync runs). A sync's change of the journal is its sync's entry, not one of its own. An index's run says how many
     folders it indexed, never which (its row holds no path); its error is its note only when it failed or was abandoned."""
     limit = max(1, min(int(limit), MOST))
     entries = []
@@ -193,7 +203,7 @@ def timeline_and_children(library, limit=50):
                         "run": _tag(run), "error": run.note, "parent": run.parent, "progress": _progress(run)})
         if run.job == job_runs.INDEX:
             entries[-1].update(kind="index", what="index of %d folder(s)" % run.changed.get("folders", 0),
-                               outcome=_index_outcome(run),
+                               outcome=_index_outcome(run), syncs=list(run.changed.get("syncs") or ()),
                                error=run.note if run.outcome in (job_runs.FAILED, job_runs.ABANDONED) else None)
     for change in journal.history(library.path, limit=limit):
         if change["id"] in sync_changes:

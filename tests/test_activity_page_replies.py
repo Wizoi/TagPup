@@ -30,7 +30,7 @@ from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import dates, runs  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
-from tagpup.services import job_runs  # noqa: E402
+from tagpup.services import activity, job_runs  # noqa: E402
 from tagpup.store import file_journal, journal  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
@@ -153,6 +153,10 @@ class RepliesForTheActivityPage(_Libraries):
         (long_harbour,) = [each for each in found["long_sync"]["now"]["libraries"] if each["name"] == "harbour"]
         self.assertEqual(["sync", "index"], [run["job"] for run in long_harbour["jobs"]])
         self.assertEqual(long_harbour["jobs"][0]["run_id"], long_harbour["jobs"][1]["parent"])
+        # The phase is worded by the server, once (the page holds no copy), and every phase has its words.
+        self.assertEqual(["walking the folders again", "reading metadata"],
+                         [run["progress"]["said"] for run in long_harbour["jobs"]])
+        self.assertEqual(set(job_runs.PHASES), set(activity.PHASE_SAID))
         text = "{\n" + ",\n".join("%s: %s" % (json.dumps(key), json.dumps(found[key], sort_keys=True))
                                   for key in sorted(found)) + "\n}\n"
         text = text.replace("-%d-" % os.getpid(), "-4242-").replace("-%d.log" % os.getpid(), "-4242.log")
