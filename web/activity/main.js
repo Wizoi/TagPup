@@ -1,7 +1,7 @@
 // The Activity page: start-up and wiring. Each section is a module beside this one (the folded ones fold.js's), its
 // state in state.js; every request goes through api.js, in its form for what covers every
 // library (api.site: web/common/api.js). Now is asked every few seconds while the page is
-// in view, the rest every half minute, and nothing while the page is hidden (poll.js).
+// in view, the jobs and the rest every half minute, and nothing while the page is hidden (poll.js).
 import { state } from './state.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { wireFolds } from './fold.js';
@@ -29,12 +29,16 @@ document.addEventListener('DOMContentLoaded', () => {
     wireLogs();
     pauseWhenHidden();
 
-    // Now, while the page is in view; the logs followed, when asked; the rest now and then, Now drawn again with them:
+    // Now, while the page is in view; the logs followed, when asked; the rest now and then, Now drawn again with the jobs:
     // it says a library whose jobs could not be read, and what finished in it last (both /api/activity/jobs).
-    poller(loadNow, state.every).start();
-    poller(followLog, state.every).start();
-    poller(() => Promise.all([loadJobs(), loadSync(), loadServer(), loadTimeline()]).then(renderNow),
-           state.slowEvery).start();
-    poller(loadSnapshots, state.slowEvery * 4).start();
+    poller(loadNow, state.every, 'now').start();
+    poller(followLog, state.every, 'follow').start();
+    // The jobs on their own, so Run now's read after its answer is this poll's (soon('jobs'), jobs.js).
+    poller(() => loadJobs().then(data => {
+        renderNow();
+        return data;
+    }), state.slowEvery, 'jobs').start();
+    poller(() => Promise.all([loadSync(), loadServer(), loadTimeline()]), state.slowEvery, 'rest').start();
+    poller(loadSnapshots, state.slowEvery * 4, 'snapshots').start();
     loadLogFiles().then(() => readLog());
 });

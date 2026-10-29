@@ -10,6 +10,7 @@ import { ago, counts, duration } from './format.js';
 import { badge, fill, none, outcomeKind, runLinks } from './view.js';
 import { renderNeeds } from './needs.js';
 import { foldLine } from './fold.js';
+import { soon } from './poll.js';
 
 /** Read each job's runs, and show them. */
 export function loadJobs() {
@@ -28,7 +29,8 @@ function jobKey(job, library) {
 /**
  * Run now, once confirmed: the server answers once the run has started or been refused.
  * Once per click: while its POST is on its way, another for the same job and library sends
- * nothing, and the first answer is what is shown.
+ * nothing, and the first answer is what is shown. The jobs are read again by their poll
+ * (soon): at once, or once the read in flight is answered, never a second beside it.
  */
 export function runNow(job, library, where = 'jobs') {
     const key = jobKey(job, library);
@@ -50,7 +52,7 @@ export function runNow(job, library, where = 'jobs') {
         done();
         state.ranNow = { job, library, where, text, ok: !!(answer && answer.success) };
         renderJobs();
-        return loadJobs().then(() => answer);
+        return soon('jobs').then(() => answer);
     }).catch(err => {
         done();
         state.ranNow = { job, library, where, text: `Could not start it: ${err.message || err}`, ok: false };

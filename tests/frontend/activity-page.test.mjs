@@ -3,7 +3,7 @@
  * Now asked again while the page is in view and not while it is hidden, Run now asked first, "Logs for this run" reading
  * that run's lines (Logs unfolded), every request sent under no library, through api.js's form for what covers every
  * library; Scheduled jobs, Snapshots, Server and Logs folded, each with one line, the open ones remembered where the
- * browser may.
+ * browser may; a server that stops answering asked less and less often, and Run now's read of the jobs the poll's.
  *
  * Now, Needs you, Scheduled jobs and Recent activity answer from fixtures/activity.json: the real routes' replies on
  * libraries seeded through the real writers (tests/test_activity_page_replies.py), one morning the owner opens the page
@@ -91,6 +91,15 @@ function open(t, fake = server(), every = 5000) {
 
 const card = (document, library) => document.querySelector(`#now-body .now-library[data-library="${library}"]`);
 const asked = (fake, route) => fake.urls().filter((url) => url === route).length;
+
+/** Until `done()` holds, failing saying `what` after `ms`: a page that never gets there fails, never hangs the run. */
+async function settled(done, what, ms = 5000) {
+  const end = Date.now() + ms;
+  while (!done()) {
+    if (Date.now() > end) assert.fail(`gave up waiting: ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 /** Until the page has asked `route` `times` more times, and drawn the answer. */
 async function polled(window, fake, route, times = 2) {
@@ -447,6 +456,103 @@ describe("Now is asked while the page is in view, and not while it is hidden", (
     await new Promise((resolve) => setTimeout(resolve, 150));
     await flush(window, 2);
     assert.equal(asked(fake, "/api/activity/now"), 1);
+  });
+});
+
+describe("a server that stops answering: the page asks less and less often, says so, and comes back at once", () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  test("answers saying success: false: each wait twice the last, the top line saying when it asks again; one answer puts it back", async (t) => {
+    let refuse = false;
+    const fake = server("morning", { first: [["/api/activity/now",
+      () => (refuse ? { success: false, error: "database is locked" } : SERVED.morning.now)]] });
+    const { document, window } = await open(t, fake, 20);
+    await wait(100);
+    const updated = document.getElementById("updated");
+    assert.match(updated.textContent, /^Updated /);
+
+    refuse = true;
+    const from = asked(fake, "/api/activity/now");
+    await wait(500);
+    const whileDown = asked(fake, "/api/activity/now") - from;
+    // Every 20 ms that is about 25 asks; waiting 40, 80, 160, 320 ms it is five at most.
+    assert.ok(whileDown >= 2 && whileDown <= 6, `asked ${whileDown} times in 500 ms of no answer`);
+    assert.match(updated.textContent, /^The server did not answer; asking again at \d\d:\d\d:\d\d\.$/);
+
+    refuse = false;
+    await polled(window, fake, "/api/activity/now", 1);
+    assert.match(updated.textContent, /^Updated /, "the line still says the server is not answering");
+    const back = asked(fake, "/api/activity/now");
+    await wait(200);
+    assert.ok(asked(fake, "/api/activity/now") - back >= 4, "one answer did not put it back to every 20 ms");
+  });
+
+  test("no answer at all (api.js asks once more after 1.5 s): the top line says so, and the next answer puts it back", async (t) => {
+    let down = false;
+    const fake = server("morning", { first: [["/api/activity/now",
+      () => (down ? Promise.reject(new TypeError("Failed to fetch")) : SERVED.morning.now)]] });
+    const { document, window } = await open(t, fake, 20);
+    await wait(60);
+    down = true;
+    const updated = document.getElementById("updated");
+    await settled(() => /did not answer/.test(updated.textContent), "the top line to say the server did not answer");
+    down = false;
+    await polled(window, fake, "/api/activity/now", 1);
+    assert.match(updated.textContent, /^Updated /);
+  });
+});
+
+describe("Run now's read of the jobs is the jobs poll's, never a second request beside it", () => {
+  test("two jobs run in quick succession while the jobs are being read: one more read, after the one in flight", async (t) => {
+    let quick = true;
+    let release;
+    let gate = Promise.resolve();
+    let inFlight = 0;
+    let most = 0;
+    const readAt = [];
+    const jobsRead = () => {
+      readAt.push(Date.now());
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      return (quick ? Promise.resolve() : gate).then(() => {
+        inFlight -= 1;
+        return SERVED.morning.jobs;
+      });
+    };
+    const fake = server("morning", { first: [["/api/activity/jobs/run", { success: true, started: true, run_id: 13 }],
+                                              ["/api/activity/jobs", jobsRead]] });
+    // Every 10 ms: the jobs are asked every 100.
+    const { document, window } = await open(t, fake, 10);
+    await flush(window, 6);
+    const reads = () => asked(fake, "/api/activity/jobs");
+
+    // The next poll of the jobs hangs on a slow server.
+    quick = false;
+    gate = new Promise((resolve) => { release = resolve; });
+    const before = reads();
+    await settled(() => reads() > before, "the next poll of the jobs");
+    assert.equal(inFlight, 1);
+    const hanging = reads();
+
+    const runFor = async (library) => {
+      click(window, document.querySelector(`.job-card[data-job="sync"] tr.job[data-library="${library}"] button.run-now`));
+      await flush(window, 1);
+      click(window, document.querySelector("#jobs-body .confirm button.confirm-run"));
+      await flush(window, 4);
+    };
+    await runFor("harbour");
+    await runFor("jetty");
+    assert.deepEqual(fake.calls.filter((call) => call.method === "POST").map((call) => call.body.library), ["harbour", "jetty"]);
+    assert.equal(reads(), hanging, "Run now read the jobs beside the poll in flight");
+
+    quick = true;
+    const released = Date.now();
+    release();
+    await flush(window, 6);
+    assert.equal(most, 1, "two reads of the jobs at once");
+    assert.ok(reads() > hanging, "the jobs were not read again after the runs");
+    assert.ok(readAt[hanging] - released < 100, "the read after the runs waited for the next poll");
+    assert.match(document.getElementById("jobs-body").textContent, /Started \(run 13\)/);
   });
 });
 
