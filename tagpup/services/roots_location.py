@@ -113,15 +113,18 @@ def _places(machine, name):
 
 def _running_here(library):
     """The sentences for what is running in the library according to its own job runs -- any
-    process's -- and not ended: a sync, a scheduled job. A run whose process has ended
-    is not counted (it is abandoned when the next one claims)."""
+    process's -- and not ended: a sync, a scheduled job, an index (of which two processes can each have one, beside a
+    newer one that ended), each job once. A run whose process has ended is not counted (it is abandoned when the next one
+    claims)."""
     said = []
-    for (job, _for), (last, _ended) in job_runs.latest(library.path).items():
-        if last is None or last.outcome != job_runs.RUNNING or job.startswith(MOVE_JOB % ""):
+    for run in job_runs.under_way(library.path):
+        if run.job.startswith(MOVE_JOB % ""):
             continue
-        if last.owner and not file_journal.owner_alive(last.owner):
+        if run.owner and not file_journal.owner_alive(run.owner):
             continue
-        said.append("the %s job is running" % job)
+        sentence = "the %s job is running" % run.job
+        if sentence not in said:
+            said.append(sentence)
     return said
 
 

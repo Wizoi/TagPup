@@ -68,16 +68,41 @@ def folder_said(number, of, baked, folder):
 
 
 def folder_heard(line):
-    """What a line folder_said made says: {"number", "of", "folder", "percent"} -- the percent the folders done before
-    this one are of all -- or None for any other line, and for one that is not whole in that shape (cut short, garbled,
-    a number not within 1..of)."""
+    """What a line folder_said made says: {"number", "of", "written", "current", "conflicts", "folder", "percent"} -- the
+    run's counts so far, and the percent the folders done before this one are of all -- or None for any other line, and
+    for one that is not whole in that shape (cut short, garbled, a number not within 1..of)."""
     found = _FOLDER_LINE.match(line or "")
     if not found:
         return None
     number, of = int(found.group(1)), int(found.group(2))
     if not 1 <= number <= of:
         return None
-    return {"number": number, "of": of, "folder": found.group(6), "percent": (number - 1) * 100 // of}
+    return {"number": number, "of": of, "written": int(found.group(3)), "current": int(found.group(4)),
+            "conflicts": int(found.group(5)), "folder": found.group(6), "percent": (number - 1) * 100 // of}
+
+
+def _heard_as(said):
+    """The pattern that reads what a format made (`said`, with %d for each number): one spelling, said and heard."""
+    return re.escape(said).replace("%d", r"(\d+)")
+
+
+#: The parts of a line Baked.said makes, each a format said with and heard by: the counts every line has, and the
+#: conflicts it adds when there are any.
+_SAID_COUNTS = "%d file(s) written, %d already held it"
+_SAID_CONFLICTS = "%d conflict(s), left as they are"
+_SAID_LINE = re.compile("^" + re.escape(SAID) + _heard_as(_SAID_COUNTS))
+_SAID_CONFLICTS_HEARD = re.compile("; " + _heard_as(_SAID_CONFLICTS))
+
+
+def said_heard(line):
+    """What a line Baked.said made says, as counts: {"written", "current", "conflicts"}; None for any other line (the
+    CLI's line of a bake that stopped among them)."""
+    found = _SAID_LINE.match(line or "")
+    if not found:
+        return None
+    conflicts = _SAID_CONFLICTS_HEARD.search(line)
+    return {"written": int(found.group(1)), "current": int(found.group(2)),
+            "conflicts": int(conflicts.group(1)) if conflicts else 0}
 
 
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
@@ -105,9 +130,9 @@ class Baked:
 
     def said(self):
         """The run in one line, counts only (the paths name people)."""
-        line = SAID + "%d file(s) written, %d already held it" % (self.written, self.current)
+        line = SAID + _SAID_COUNTS % (self.written, self.current)
         more = [("%d fingerprint(s) recorded with no write" % self.adopted) if self.adopted else "",
-                ("%d conflict(s), left as they are" % self.conflicts) if self.conflicts else "",
+                (_SAID_CONFLICTS % self.conflicts) if self.conflicts else "",
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",
                 ", ".join("%d %s" % (n, kind) for kind, n in sorted(self.cannot.items())),

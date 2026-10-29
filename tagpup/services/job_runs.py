@@ -5,9 +5,14 @@ What a run changed is recorded as counts from the Result the job's service retur
 attempted, changed, skipped, errors, and the numbers among its details -- never its
 texts, which can name a path or a person.
 
-How far a run has got while it runs (`progress`) is a phase of PHASES and counts, never a path, written at most once every
-PROGRESS_EVERY seconds a run unless its phase changes, and skipped, not waited for, while the library is being written.
+How far a run has got while it runs (`progress`) is a phase of PHASES and counts, never a path, tried at most once every
+PROGRESS_EVERY seconds a run unless its phase changes, and skipped, not waited for, while the library is being written:
+a write that was skipped or failed waits its PROGRESS_EVERY like one made.
+A service deep in a run says it with `tell`, into the run the code that claimed it holds on the thread (`recording`): the
+sync's walk, the index's phases read from its indexer's lines.
 """
+import contextlib
+import contextvars
 import logging
 import numbers
 import re
@@ -20,6 +25,7 @@ from tagpup.store import db, job_runs
 logger = logging.getLogger(__name__)
 
 DONE, FAILED, RUNNING = job_runs.DONE, job_runs.FAILED, job_runs.RUNNING
+INDEX = job_runs.INDEX
 Run = job_runs.Run
 stamp = job_runs.stamp
 seconds = job_runs.seconds
@@ -35,12 +41,13 @@ def counts(result):
     return found
 
 
-def claim(library, job, run_for, now, due=None):
+def claim(library, job, run_for, now, due=None, changed=None):
     """Begin a run of `job` in `library`, for the library named `run_for` (None for a job
     not run per library), unless a live process has one or `due` says it is not due
-    (tagpup.store.job_runs.claim). Its parent is the run of `library` this thread is part of
-    (tagpup.core.runs.parent_run). A Claim: true with its `run_id` when begun."""
-    return job_runs.claim(library.path, job, run_for, now, due, parent=run_tags.parent_run(library.name))
+    (tagpup.store.job_runs.claim), holding `changed` from the start. Its parent is the run of `library` this thread is
+    part of (tagpup.core.runs.parent_run). A Claim: true with its `run_id` when begun."""
+    return job_runs.claim(library.path, job, run_for, now, due, parent=run_tags.parent_run(library.name),
+                          changed=changed)
 
 
 def sweep_abandoned(library, now=None):
@@ -78,7 +85,8 @@ PROGRESS_EVERY = 10.0
 
 _COUNT_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
-#: {(the library's db.key, run id): (when its progress was last written, its phase then)}; a run's entry goes when it ends.
+#: {(the library's db.key, run id): (when its progress was last tried, written or not, its phase then)}; a run's entry
+#: goes when it ends.
 _written = {}
 _written_lock = threading.Lock()
 
@@ -97,8 +105,9 @@ def _counts_only(counts):
 
 def progress(library, run_id, counts, phase, now=None):
     """Record how far run `run_id` of `library` has got: in `phase`, one of PHASES (anything else is a code's mistake,
-    ValueError), with `counts` ({name: number}; anything else in it is dropped). Written at most once every
-    PROGRESS_EVERY seconds a run unless the phase changed, and not while the library is being written; `now` is seconds
+    ValueError), with `counts` ({name: number}; anything else in it is dropped). Tried at most once every
+    PROGRESS_EVERY seconds a run unless the phase changed -- a try the library was busy for, or that failed, counts --
+    and not written while the library is being written; `now` is seconds
     since the epoch, now by default. True when written; False when not -- too soon, the library busy, the run no longer
     this process's and running, or a library a restore has put back at 35. Never raises for those."""
     if phase not in PHASES:
@@ -109,11 +118,44 @@ def progress(library, run_id, counts, phase, now=None):
         last = _written.get(held)
         if last is not None and last[1] == phase and 0 <= now - last[0] < PROGRESS_EVERY:
             return False
-    written = job_runs.progress(library.path, run_id, phase, _counts_only(counts), now)
-    if written is True:
-        with _written_lock:
-            _written[held] = (now, phase)
-    return written is True
+        # Before the write: one the library is busy for is not tried again at the next line (#2196).
+        _written[held] = (now, phase)
+    return job_runs.progress(library.path, run_id, phase, _counts_only(counts), now) is True
+
+
+#: The run under way on this thread that `tell` records into: [library, run id, whether a failure was said], or None.
+_under_way = contextvars.ContextVar("tagpup_run_under_way", default=None)
+
+
+@contextlib.contextmanager
+def recording(library, run_id):
+    """While the block runs, `tell` on this thread records into run `run_id` of `library`: what the code that claimed a
+    run holds around its work (tagpup.jobs.recurring.run_claimed, tagpup.jobs.indexing). A thread started meanwhile is
+    not in it: a run of the indexer a sync queued is its own run."""
+    token = _under_way.set([library, run_id, False])
+    try:
+        yield
+    finally:
+        _under_way.reset(token)
+
+
+def tell(phase, counts):
+    """Record how far the run under way on this thread (`recording`) has got, through `progress`: nothing when none is.
+    A write that fails -- a library gone, unreadable, its job_runs not there -- is logged, a warning the first time in a
+    run, and the work goes on: True only when written. A phase not in PHASES is a mistake in the code (ValueError)."""
+    held = _under_way.get()
+    if held is None:
+        return False
+    library, run_id, said = held
+    try:
+        return progress(library, run_id, counts, phase)
+    except ValueError:
+        raise
+    except Exception as e:
+        held[2] = True
+        (logger.debug if said else logger.warning)("Could not record how far run %d of %s got: %s", run_id,
+                                                    library.name, e)
+        return False
 
 
 def _forget(library, run_id):

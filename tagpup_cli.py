@@ -432,7 +432,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     all_metadata = []
     
     from tqdm import tqdm
-    for i in tqdm(range(0, len(images_to_process), batch_size), desc="Reading metadata"):
+    for i in tqdm(range(0, len(images_to_process), batch_size), desc=indexing_service.READING_METADATA):
         batch = images_to_process[i:i+batch_size]
         # The bakes in the files are read in the same command (bake_reading).
         batch_meta = extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path), bakes=True)
@@ -640,7 +640,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                                       budget=READ_AHEAD_BYTES)
         # The bar is moved by hand: tqdm iterating `photos` kept the last photo it handed on, and its pictures, while
         # it waited for the next one -- outside what the read-ahead counts.
-        bar = tqdm(total=len(to_index_meta), desc="Generating embeddings")
+        bar = tqdm(total=len(to_index_meta), desc=indexing_service.GENERATING_EMBEDDINGS)
         for meta, begun, result in photos:
             bar.update(1)
             if begun is None:

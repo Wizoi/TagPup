@@ -18,6 +18,7 @@ from tagpup.core import runs
 from tagpup.core import validation
 from tagpup.core.result import Result
 from tagpup.services import bake_after_index, bake_reading
+from tagpup.services import job_runs
 from tagpup.services import roots as roots_service
 
 #: Where faces are named from the photos' tags: the button of both apps, whose label this is (tests/test_indexing_names_a_real_control.py holds the messages and the pages together). The messages named
@@ -56,6 +57,9 @@ NEW_FACES = "New faces: "
 FAILED = "Photos that failed: "
 #: What the CLI's `index` says as it begins matching the faces it made (before NEW_FACES): the faces phase of the live line.
 MATCHING = "Matching the new faces with the named ones..."
+#: The labels of the two bars the CLI's `index` draws (tqdm `desc`), which the live line and a run's phase are read from.
+READING_METADATA = "Reading metadata"
+GENERATING_EMBEDDINGS = "Generating embeddings"
 
 
 def new_faces_said(matched):
@@ -75,6 +79,9 @@ def new_faces_said(matched):
     return said
 
 _INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
+
+#: The phase of an index (job_runs.PHASES) each of the CLI's bars is, by its label.
+_BAR_PHASES = {READING_METADATA: "metadata", GENERATING_EMBEDDINGS: "embeddings"}
 
 #: Longest message worth putting on a progress bar. Past this it is ellipsised in
 #: the page anyway, so a truncated sentence is all anyone can read.
@@ -143,10 +150,14 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     `report(message, percent)` hears progress as it comes, each message naming its phase: the percent of each of the
     CLI's bars (metadata, embeddings), the faces' matching (MATCHING), and each folder of the bake as it begins, whole,
     with the percent of the folders done before it (bake_after_index.folder_heard). A line cut short or garbled is passed
-    over.
+    over. The run under way on this thread, when one is recorded (job_runs.recording: the index queue's), is told the
+    same as a phase and counts, never a path (job_runs.tell): a bar's `done`, `of` and `percent`; a bake folder's
+    `folders_done`, `folders`, `written`, `current`, `conflicts` and `percent`.
 
     details: `message`, what to tell the person; `percent`, where the bar stops;
-    `cancelled`, true when the indexer was stopped while it waited for the graphics card.
+    `cancelled`, true when the indexer was stopped while it waited for the graphics card; and, as counts, what the CLI
+    said it did: `photos_read` (its embeddings bar's total), `baked_written`, `baked_current`, `baked_conflicts` (its
+    bake's line, bake_after_index.said_heard), `failed_photos` (FAILED).
     `folder` may be a list of folders, indexed in one run of the indexer.
 
     A `report` with a `stop_file` attribute (tagpup.jobs.indexing) is told the file that
@@ -183,6 +194,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         report.stop_file = stop_file
 
     said, baked, wrote, failed = [], [], [], []
+    # What the CLI said it did, as counts: the result's details, which the run's row keeps (tagpup.jobs.indexing).
+    counted = {}
 
     def run(args):
         proc = processes.start(
@@ -196,18 +209,33 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                 if whole.startswith(bake_after_index.FOLDER_SAID):
                     heard = bake_after_index.folder_heard(whole)
                     if heard is not None:
+                        job_runs.tell("bake", {"folders_done": heard["number"] - 1, "folders": heard["of"],
+                                               "written": heard["written"], "current": heard["current"],
+                                               "conflicts": heard["conflicts"], "percent": heard["percent"]})
                         # Whole, path and all: the bar's summary would cut it at 90 characters.
                         report(whole, heard["percent"])
                     continue
+                bar = _INDEXER_TQDM.match(whole)
+                if bar and bar.group(1).strip() in _BAR_PHASES:
+                    phase, of = _BAR_PHASES[bar.group(1).strip()], int(bar.group(4))
+                    job_runs.tell(phase, {"done": int(bar.group(3)), "of": of, "percent": int(bar.group(2))})
+                    if phase == "embeddings":
+                        counted["photos_read"] = of
+                elif whole.startswith(MATCHING):
+                    job_runs.tell("faces", {})
                 if whole.startswith(NEW_FACES):
                     # Whole: the bar's summary cuts a line at 90 characters.
                     said.append(whole[len(NEW_FACES):])
                 elif whole.startswith(FAILED):
                     failed.append(whole[len(FAILED):])
+                    if failed[-1].isdigit():
+                        counted["failed_photos"] = int(failed[-1])
                 elif whole.startswith(bake_reading.SAID):
                     baked.append(whole)
                 elif whole.startswith(bake_after_index.SAID):
                     wrote.append(whole)
+                    for name, value in (bake_after_index.said_heard(whole) or {}).items():
+                        counted["baked_" + name] = value
                 clean = summarize_indexer_line(line)
                 if clean:
                     match = re.search(r"(\d+)%", clean)
@@ -228,6 +256,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                 os.remove(made)
             except OSError:
                 pass
+    result.details.update(counted)
     if code == EXIT_CANCELLED:
         result.skip(", ".join(folders), CANCELLED_WAITING)
         result.details.update(percent=0, cancelled=True, message=CANCELLED_WAITING)

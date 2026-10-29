@@ -103,7 +103,8 @@ def timeline(library, limit=50):
     """What was done in `library`, newest first, at most `limit` entries: each
     {"kind": "change" | "job" | "sync", "library", "time", "finished", "seconds",
     "what", "outcome", "counts", "id", "run", "error"}. A sync's change of the journal is its
-    sync's entry, not one of its own."""
+    sync's entry, not one of its own. An index's run (job_runs.INDEX) is not one of them: the Activity page lists the
+    index queue's own (tagpup.web.activity_routes) until it reads the runs."""
     limit = max(1, min(int(limit), MOST))
     entries = []
     conn = _look(library)
@@ -123,7 +124,7 @@ def timeline(library, limit=50):
                         "counts": dict(entry["changed"], **{"found_" + k: v for k, v in entry["found"].items()
                                                             if k in ("new", "missing", "moved", "changed")}),
                         "id": record["id"], "run": entry["run"], "error": None})
-    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS):   # a sync's entry is above
+    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS + (job_runs.INDEX,)):
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
                         "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,
