@@ -91,7 +91,7 @@ import threading
 import time
 
 from tagpup.core import paths, runs, validation
-from tagpup.core.result import Result
+from tagpup.core.result import SHARE_AWAY, Result
 from tagpup.files import images, shares
 from tagpup.services import maintenance, refresh_rows, relink_photos, settings
 from tagpup.services import job_runs as recorded_runs
@@ -745,13 +745,15 @@ def in_step(counts, result=None):
 
 def could_not_look(result):
     """Why a sync whose Result is ok did not do its work: the folders it could not look at (a share that did not answer,
-    a folder that would not list), as a sentence naming no folder, or None when it looked at every one. What ends the
-    daily `sync` job's run failed, so it is tried again in an hour, not a day later (tagpup.jobs.recurring, #2103)."""
+    a folder that would not list), a Failure of the kind SHARE whose sentence names no folder, or None when it looked at
+    every one. What ends the daily `sync` job's run failed, so it is tried again in an hour, not a day later
+    (tagpup.jobs.recurring, #2103)."""
     folders = ((result.details or {}).get("counts") or {}).get("folders_not_looked_at") or 0
     if not folders:
         return None
-    return ("%d folder%s could not be looked at (a share that did not answer, or a folder that would not list): "
-            "the library is not in step." % (folders, "" if folders == 1 else "s"))
+    return recorded_runs.Failure(recorded_runs.SHARE, "%d folder%s could not be looked at (a share that did not answer,"
+                                 " or a folder that would not list): the library is not in step."
+                                 % (folders, "" if folders == 1 else "s"))
 
 
 @roots_service.canonical_args("folder")
@@ -787,17 +789,21 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
 
 
 def _not_run(stop, apply):
-    """A sync that did not run -- the library's roots changed under it, or this machine does
-    not place one: a refused Result with what the callers read of any, and why."""
-    return not_run(roots_service.stopped(stop), apply)
+    """A sync that did not run -- the library's roots changed under it by another process (TagPup's own work, which the
+    next sync settles: waited), or this machine does not place one -- a refused Result with what the callers read of
+    any, and why."""
+    return not_run(roots_service.stopped(stop), apply, waited=isinstance(stop, roots_service.RootsChanged))
 
 
-def not_run(why, apply):
-    """A sync that did not run, `why` said: a refused Result with what the callers read of any."""
+def not_run(why, apply, waited=False):
+    """A sync that did not run, `why` said: a refused Result with what the callers read of any. `waited`: TagPup's own
+    work was in the way, and the next sync settles it (job_runs.WAITED, never one of Needs you)."""
     result = Result()
     result.refuse(why)
     result.details.update(counts={}, in_step=False, changed={what: 0 for what in CHANGED}, queued=0, warnings=[],
                           dry_run=not apply)
+    if waited:
+        result.details[recorded_runs.FAILURE] = recorded_runs.WAITED
     return result
 
 
@@ -841,6 +847,15 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
             queued = outcome.changed
             for what, why in outcome.skipped:
                 result.skip(what, why)
+            if outcome.details.get(SHARE_AWAY):
+                # The share stopped answering between the walk and the queue: the new files are not indexed, and the
+                # sync says so with the share's sentence, not done.
+                result.fail("queueing the new files' folders", outcome.refused)
+                result.details[SHARE_AWAY] = True
+            elif outcome.refused:
+                # The new files' folders were gone between the walk and the queue: skipped, and the next sync removes
+                # their rows.
+                result.skip("queueing the new files' folders", outcome.refused)
         except Exception as e:
             result.fail("queueing the new files' folders", "%s: %s" % (type(e).__name__, e))
     result.details["queued"] = queued

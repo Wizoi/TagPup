@@ -125,15 +125,6 @@ class WhatIsDue(Base):
         self.clock.now += DAY - HOUR - 10 * 60
         self.assertEqual(1, len(self.ran()))
 
-    def test_a_failed_run_is_tried_again_after_an_hour_not_a_period(self):
-        self.service.fail = True
-        outcome = self.ran()[0]
-        self.assertIsNotNone(outcome.error)
-        self.clock.now += 30 * 60
-        self.assertEqual([], self.ran())
-        self.clock.now += 30 * 60
-        self.assertEqual(1, len(self.ran()))
-
     def test_asked_for_now_it_runs_whether_or_not_it_is_due(self):
         self.ran()
         self.clock.now += 60

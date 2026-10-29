@@ -292,14 +292,6 @@ class ScheduledJobs(Base):
         # The other library's runs are its own.
         self.assertEqual([], self.jobs_of(self.get("/api/activity/jobs"), "regatta")["snapshots"]["runs"])
 
-    def test_a_failure_stays_flagged_until_a_later_run_is_done(self):
-        self.ran(self.harbour, "sync", self.NOON, "failed", note="boom")
-        claim = job_runs.claim(self.harbour.path, "sync", "harbour", self.NOON + 7200)
-        self.assertTrue(self.jobs_of(self.get("/api/activity/jobs"), "harbour")["sync"]["failing"],
-                        "a run under way is not yet a success")
-        job_runs.finish(self.harbour.path, claim.run_id, "done", self.NOON + 7300, {"changed": 0})
-        self.assertFalse(self.jobs_of(self.get("/api/activity/jobs"), "harbour")["sync"]["failing"])
-
     def test_how_many_runs_are_listed(self):
         for day in range(4):
             self.ran(self.harbour, "snapshots", self.NOON + day * 86400, "done")

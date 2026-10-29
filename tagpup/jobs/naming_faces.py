@@ -40,7 +40,7 @@ import threading
 import time
 
 from tagpup.core import paths, runs
-from tagpup.core.result import Conflict, NotFound, Refused
+from tagpup.core.result import Conflict, NotFound, Refused, Result
 from tagpup.services import batches
 from tagpup.services import faces as face_service
 from tagpup.services import faces_from_tags, folder_scope
@@ -50,7 +50,7 @@ from tagpup.services import job_runs as runs_service
 logger = logging.getLogger(__name__)
 
 #: The job's name in `job_runs`.
-JOB = "name faces"
+JOB = runs_service.NAME_FACES
 
 PLANNING, ASKING, APPLYING = "planning", "asking", "applying"
 DONE, CANCELLED, FAILED, EXPIRED, ABANDONED = "done", "cancelled", "failed", "expired", "abandoned"
@@ -198,9 +198,10 @@ class Job:
         with self.lock:
             self.stage, self.done, self.total = stage, done, total
 
-    def _end_run(self, what, failed=False, note=None):
+    def _end_run(self, what, failed=None):
+        """End the job's run: done, or failed with `failed`, a job_runs.Failure the mapper made (job_runs.failure)."""
         try:
-            runs_service.end(self.library, self.run_id, time.time(), self.counts(what), failed=failed, note=note)
+            runs_service.end(self.library, self.run_id, time.time(), self.counts(what), failed=failed)
         except Exception as problem:
             logger.warning("Could not record the end of name-faces job %s of %s: %s", self.handle, self.library.name, problem)
 
@@ -211,11 +212,12 @@ class Job:
             logger.warning("Could not record the progress of name-faces job %s of %s: %s", self.handle, self.library.name,
                            problem)
 
-    def _finish(self, state, message, what, failed=False):
+    def _finish(self, state, message, what, failed=None):
+        """End the job in `state`, saying `message`; `failed`, why its run failed (job_runs.failure, said as `message`)."""
         with self.lock:
             self.state, self.message, self.finished = state, message, time.time()
             self.planned = None
-        self._end_run(what, failed=failed, note=message if failed else None)
+        self._end_run(what, failed)
 
     def _library_folder(self):
         """The open folder's named and unnamed faces, or None: not asked, or not readable (logged)."""
@@ -245,7 +247,8 @@ class Job:
                                                **({"folder": self.folder} if self.only_folder else {}))
                 if planned.refused:
                     self.in_folder = None
-                    return self._finish(FAILED, planned.refused, what, failed=True)
+                    return self._finish(FAILED, planned.refused, what,
+                                        runs_service.failure(result=Result(refused=planned.refused)))
                 earlier = faces_from_tags.earlier_apply(self.library)
                 where = faces_from_tags.earlier_sentence(faces_from_tags.earlier_applies(self.library)) if earlier else ""
                 counts = planned.counts
@@ -263,8 +266,8 @@ class Job:
             self._finish(CANCELLED, "Cancelled: nothing was changed.", what)
         except BaseException as problem:   # a thread that raised leaves a job that says why, not one still 'planning'
             logger.exception("Name faces from tags in %s: the plan failed", self.library.name)
-            self._finish(FAILED, "The plan could not be read (%s); the server's log says why. Nothing was changed."
-                         % type(problem).__name__, what, failed=True)
+            said = "The plan could not be read (%s); the server's log says why. Nothing was changed." % type(problem).__name__
+            self._finish(FAILED, said, what, runs_service.failure(error=problem, sentence=said))
 
     def run_apply(self):
         """Phase 2's thread: the change of the names. Writes of faces are refused meanwhile (`writing`)."""
@@ -281,10 +284,12 @@ class Job:
                     if result.refused or result.errors:
                         logger.warning("Name faces from tags in %s: the change was not written: %s", self.library.name,
                                        result.refused or result.errors)
-                        return self._finish(FAILED, APPLIED_MEANWHILE if result.refused.startswith(faces_from_tags.AGAIN) else
-                                            REFUSED_SAYS if result.refused else
-                                            "The change could not be written; the server's log says why. Nothing was written.",
-                                            what, failed=True)
+                        said = (APPLIED_MEANWHILE if result.refused.startswith(faces_from_tags.AGAIN) else
+                                REFUSED_SAYS if result.refused else
+                                "The change could not be written; the server's log says why. Nothing was written.")
+                        # A refusal is the dialog's to ask again (refused), not the next run's (the journal's waited).
+                        return self._finish(FAILED, said, what, runs_service.failure(
+                            result=Result(refused=said) if result.refused else result, sentence=said))
                     written = result.changed
                     with self.lock:
                         self.applied = {"changed": written, "change": result.details.get("change")}
@@ -292,8 +297,8 @@ class Job:
                 self._after(what)
         except BaseException as problem:
             logger.exception("Name faces from tags in %s failed", self.library.name)
-            self._finish(FAILED, "It could not go on (%s); the server's log says why. %s" % (
-                type(problem).__name__, self._said_written("")), what, failed=True)
+            said = "It could not go on (%s); the server's log says why. %s" % (type(problem).__name__, self._said_written(""))
+            self._finish(FAILED, said, what, runs_service.failure(error=problem, sentence=said))
 
     def _said_written(self, then):
         """What was written before the job stopped, then `then`."""
@@ -360,7 +365,7 @@ def _give_back(library, claim):
     try:
         if not runs_service.discard(library, claim.run_id):
             runs_service.end(library, claim.run_id, time.time(), {"what": "name faces from tags not begun", "state": FAILED},
-                             failed=True, note="It was not begun.")
+                             failed=runs_service.failure(result=Result(refused="It was not begun.")))
     except Exception as problem:
         logger.warning("Could not give back the claim of run %s of %s: %s", claim.run_id, library.name, problem)
 

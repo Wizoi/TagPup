@@ -16,7 +16,9 @@ raw, downloaded) show background work. What it asks:
   /api/activity/batches/cancel stops one of this process's at its chunk, or never starts it.
 - GET /api/activity/jobs: each recurring job, why it is scheduled, and for each library
   its last runs, what each changed as counts and why a failed one failed, and when it is
-  due; POST /api/activity/jobs/run runs one now, on the recurring jobs' runner.
+  due; and Needs you (activity.needs_you): each job whose failures ask the owner to act, with
+  what happened and the next step; POST /api/activity/jobs/run runs one now, on the
+  recurring jobs' runner.
 - POST /api/activity/models/unload: Unload models now (the server's section); /server says
   what is loaded.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
@@ -295,7 +297,10 @@ def jobs():
     limit = _int_arg("runs", RUNS, MOST_RUNS)
     runner = _task(runtimes.RECURRING_JOBS)
     listed = []
-    for library in _libraries():
+    libraries = _libraries()
+    # Run now is the recurring runner's (POST /api/activity/jobs/run): an index, say, is not one of its jobs.
+    needs_you = activity.needs_you(libraries, runner.registry.names() if runner is not None else ())
+    for library in libraries:
         try:
             children = activity.index_runs_under(library)
             listed.append({"name": library.name, "jobs": recurring.overview(library, limit=limit)})
@@ -306,7 +311,8 @@ def jobs():
             logger.warning("Could not read the jobs of %s: %s", library.name, e)
             listed.append({"name": library.name, "jobs": [], "error": str(e)})
     return jsonify({"runs_jobs": runner is not None, "check_every": recurring.CHECK_EVERY,
-                    "running_here": runner.status() if runner is not None else [], "libraries": listed})
+                    "running_here": runner.status() if runner is not None else [], "libraries": listed,
+                    "needs_you": needs_you})
 
 
 @routes.post("/api/activity/jobs/run")

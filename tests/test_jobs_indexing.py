@@ -81,22 +81,6 @@ class TheWorker(QueueTest):
         self.queue.start(folders, index)
         self.wait_until_idle()
         self.assertEqual(self.statuses(folders), ["completed", "failed", "completed"])
-        self.assertEqual(self.queue.status(folders[1])["message"], "Error: that folder is unreadable")
-
-    def test_a_failed_result_is_recorded_with_what_it_said(self):
-        folder = self.folders(1)[0]
-
-        def index(folder, report):
-            result = Result(attempted=1)
-            result.fail(folder, "Indexing failed with exit code 3.")
-            result.details["percent"] = 0
-            return result
-
-        self.queue.start([folder], index)
-        self.wait_until_idle()
-        self.assertEqual(self.queue.status(folder), {
-            "status": "failed", "percent": 0, "message": "Indexing failed with exit code 3.",
-            "folder": folder})
 
     def test_a_folder_indexed_says_what_indexing_said(self):
         folder = self.folders(1)[0]

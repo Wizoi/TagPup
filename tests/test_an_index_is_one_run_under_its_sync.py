@@ -19,6 +19,7 @@ homes of their own; the names are fictional.
 import json
 import os
 import sys
+import threading
 import time
 import unittest
 from unittest import mock
@@ -274,20 +275,43 @@ class AnIndexThatDoesNotFinishIsRecordedSo(_Indexing):
         self.assertEqual((job_runs.DONE, indexing.CANCELLED_WAITING, 1), (run.outcome, run.note, run.changed["cancelled"]))
         self.assertEqual([("cancelled", None)], [(entry["outcome"], entry["error"]) for entry in self.timeline("index")])
 
-    def test_an_index_that_fails_to_start_ends_failed_with_the_sentence_the_queue_shows(self):
-        """WinError 206: a command line past 32,767 characters, the indexer never started (#2149)."""
+    def test_an_index_that_does_not_run_to_its_end_ends_failed_with_a_sentence_however_it_stopped(self):
+        """Three queued runs: the indexer never started (WinError 206: a command line past 32,767 characters, #2149),
+        the indexer exited badly, and the thread stopped by something that is not an Exception. Each row says why, and
+        none is done (a run whose thread stopped read done with one error)."""
+        folder = [self.folder("Regatta")]
         with mock.patch.object(processes, "start", side_effect=OSError(206, "The filename or extension is too long")):
-            status = self.queued([self.folder("Regatta")], self.code(bars(1)))
+            status = self.queued(folder, self.code(bars(1)))
         self.assertEqual("failed", status["status"])
         run = self.index_run()
         self.assertEqual((job_runs.FAILED, status["message"], 1), (run.outcome, run.note, run.changed["errors"]))
+        self.assertEqual(("OSError", runs_service.ERROR), (run.note.split(":")[0], runs_service.kind_of(run)))
         self.assertIn("too long", run.note)
 
-    def test_an_index_that_exits_badly_ends_failed_with_its_sentence(self):
-        status = self.queued([self.folder("Regatta")], self.code(bars(1), exit_code=1))
-        run = self.index_run()
-        self.assertEqual((job_runs.FAILED, "failed"), (run.outcome, status["status"]))
-        self.assertEqual(status["message"], run.note)
+        status = self.queued(folder, self.code(bars(1), exit_code=1))
+        exited = [each for each in self.runs() if each.job == runs_service.INDEX and each.id != run.id][0]
+        self.assertEqual((job_runs.FAILED, "failed"), (exited.outcome, status["status"]))
+        self.assertEqual((status["message"], runs_service.ERROR), (exited.note, runs_service.kind_of(exited)))
+        self.assertIn("exit code 1", exited.note)
+        (group,) = activity.needs_you([self.library])
+        self.assertEqual([(runs_service.INDEX, 2)], [(each["job"], each["count"]) for each in group["items"]])
+        (item,) = group["items"]
+        self.assertIn("run a sync of the library", item["next_step"])
+        self.assertEqual((False, exited.changed["run"]), (item["run_now"], item["run"]))
+
+        class Stopped(BaseException):
+            pass
+
+        def stops(folders, told):
+            raise Stopped()
+        queue = indexing_jobs.queue_for(self.library)
+        with mock.patch.object(threading, "excepthook", lambda args: None):
+            self.assertTrue(queue.start(folder, stops, together=True).ok)
+            queue.wait()
+        known = {run.id, exited.id}
+        (stopped,) = [each for each in self.runs() if each.job == runs_service.INDEX and each.id not in known]
+        self.assertEqual((job_runs.FAILED, indexing_jobs.STOPPED, runs_service.ERROR),
+                         (stopped.outcome, stopped.note, runs_service.kind_of(stopped)))
 
 
 class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):

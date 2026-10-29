@@ -245,6 +245,7 @@ class AShareAsleep(unittest.TestCase):
             (entry,) = [each for each in recurring.overview(regatta, now=THEN) if each["name"] == "sync"]
             run = entry["runs"][0]
             self.assertEqual(("failed", True), (run["outcome"], entry["failing"]), "the Activity page shows it failing")
+            self.assertEqual("share", run["failure"])
             self.assertTrue(run["error"].startswith("1 folder could not be looked at"), run["error"])
             self.assertEqual(job_runs.stamp(THEN + recurring.RETRY_AFTER), entry["next_due"])
             clock.now = THEN + recurring.RETRY_AFTER - 60

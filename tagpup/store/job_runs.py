@@ -68,7 +68,8 @@ class Run:
     #: What it changed, as counts: {"changed": 1, "attempted": 1, ...}.
     changed: Dict[str, Any] = field(default_factory=dict)
     owner: Optional[str] = None
-    #: Why it failed or was abandoned; can name a path, so never sent to a page.
+    #: Why it failed or was abandoned; can name a path, so sent only to the Activity page, which answers this PC
+    #: alone.
     note: Optional[str] = None
     #: The run that queued this one (migration 36), its id; None for one nothing queued. `tree`, `runs` and `under_way`
     #: read it and the two below from a library at 36 (_rows); the other readers, and a library at 35 -- which the MCP

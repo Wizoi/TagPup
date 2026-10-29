@@ -56,3 +56,9 @@ condition not met is the domain's queue.
 - 2026-10-15, the domain pass: every page module placed in one Scope (58 had none, #1449); `read_face_ids` public and row
   45 gone; I9's page test; the launcher's dead arms and the runtime's idle getattr gone (#1447); 'the server' in the
   worker's definition (#1448); a library view opened while the real server migrates its library (#1225).
+- 2026-10-29, the failures work of the Activity rework (B3): I10 added (`tests/test_a_failed_run_says_what_to_do.py`,
+  3 tests, mapped to the `apps` owner, so condition 6 holds for it); the branch's tests net -1 (3962 against the trunk's
+  3963 across the fast, scenario and slow tiers, counted by test methods per file, not by the runner's `--fast` 3028):
+  it added 3 and deleted 4 that its scenarios cover. Condition 5: the failure kinds and the unknown-kind rule each have a
+  live or user-made instance (a CLI from the repository beside the installed server writes a newer kind). The Activity
+  page does not yet read `needs_you`: its page test, made from the real reply (row 22), comes with the page.

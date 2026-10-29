@@ -1,0 +1,11 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-10-29 | wrong: a sync whose walk saw the new files' folders but whose index queue then refused them (the share stopped answering between the walk and `IndexQueue.start`: refused with the share's sentence and `SHARE_AWAY`) drops the refusal: `services/sync._sync` reads only `outcome.changed` and `outcome.skipped`, so the run ends `done` (recorded not in step, `queued_folders` 0) and nothing says the share went away; only an exception from `queue` is a failure. | fixed: a refused queue is a failure of the sync carrying `SHARE_AWAY` (`tests/test_a_failed_run_says_what_to_do.py`, failed on the old code: the run ended done) |
+| B-2 | 2026-10-29 | low: two rules of "a job is failing": `recurring.overview`'s `failing` counts an `abandoned` newest run as failing, while what is due (`job_runs.latest`'s "latest that ended", `_last_ended`) reads only `done` and `failed`; the Needs-you list B3 adds must take one of them, and the other then is a rule written twice. | fixed: `failing` and Needs you read one rule, `job_runs.needs_you` (abandoned neither adds nor settles) |
+| B-3 | 2026-10-29 | low: `services/roots_location.py` (the refusal at ~245 and the BaseException at ~251) ends its root-move runs `failed` through `store.job_runs.finish` directly, with no kind, so they read `error` in Needs you, and their `changed` carries text (a root's name, a location path) beside no kind; live failed root-move runs: 0, done ones 1 in each of the three libraries (counted 2026-10-29). Route them through `services/job_runs.end` with a `Failure` (a refusal `refused`, an exception through the mapper) (B3 follow-up, integration owner). | open |
+| B-4 | 2026-10-29 | low: after an index's thread is stopped by a BaseException, its queue status stays `running` (only the run's row is ended `failed`, `jobs/indexing.STOPPED`): `IndexQueue.status` for its folders says running until the process restarts; set the status failed beside the row (B3 follow-up, Files owner). | open |
