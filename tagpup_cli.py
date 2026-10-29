@@ -1132,8 +1132,8 @@ def sync(ctx, folder, apply_):
         console.print("  %d folder(s) wholly gone, %d of them a folder the library holds, not there at all."
                       % (counts["folders_gone"], counts["roots_gone"]), markup=False, soft_wrap=True)
         console.print("  %d of the missing row(s) %s removed, with %d face(s), %d of them named (undoably); the rest"
-                      " are kept: under a root not confirmed there (an unplugged drive), a possible copy, a sync of one"
-                      " folder, or a folder not looked at."
+                      " are kept: on a drive or share not confirmed there (an unplugged drive), a possible copy, a sync of"
+                      " one folder, or a folder not looked at."
                       % (counts["to_remove"], "are" if apply_ else "would be", counts["to_remove_faces"],
                          counts["to_remove_named"]), markup=False, soft_wrap=True)
     if counts["unreadable"]:
