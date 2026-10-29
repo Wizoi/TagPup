@@ -104,6 +104,8 @@ def run(library, operation, plan, edits, apply=False, kinds=()):
         applied = journal.apply(library.path, operation, wanted, summary)
     except journal.Refusal as e:
         result.refuse("Nothing was written: %s" % e)
+        # A row another writer changed between the plan and the write (the bake, a page): the next run plans again.
+        result.details[job_runs.FAILURE] = job_runs.WAITED
         return result
     except Exception as e:
         result.fail("the write", "%s: %s" % (type(e).__name__, e))

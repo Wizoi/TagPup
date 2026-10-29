@@ -231,18 +231,18 @@ def overview(library, registry=JOBS, now=None, limit=10):
     "seconds", "outcome", "changed", "error", "failure", "run"} (`error`, the note a failed or
     abandoned run left, which can name a path: for the page that answers this PC alone; `failure`, a failed run's kind,
     job_runs.FAILURES) -- and `failing`: it is one of Needs you (job_runs.needs_you: its newest run that ended failed,
-    asking the owner to act; an abandoned one neither adds nor settles). It stays so until a later run is done."""
+    asking the owner to act; an abandoned one neither adds nor settles), read from the rows Needs you reads
+    (job_runs.runs_of) whatever `limit` lists. It stays so until a later run is done."""
     listed = status(library, registry, now)
     for entry in listed:
         job = registry.get(entry["name"])
-        wanted = library.name.lower() if job.per_library else None
-        found = [run for run in job_runs.runs(library, job.name, limit * 4)
-                 if (run.library.lower() if run.library else None) == wanted][:limit]
+        found = job_runs.runs_of(library, job.name, library.name if job.per_library else None)
         entry["runs"] = [{"id": run.id, "started": run.started, "finished": run.finished,
                           "seconds": (int(max(0, job_runs.seconds(run.finished) - job_runs.seconds(run.started)))
                                       if run.finished else None),
                           "outcome": run.outcome, "changed": run.changed, "error": run.note,
-                          "failure": job_runs.kind_of(run), "run": runs.job_tag(run.library, run.id)} for run in found]
+                          "failure": job_runs.kind_of(run), "run": runs.job_tag(run.library, run.id)}
+                         for run in found[:limit]]
         entry["failing"] = bool(job_runs.needs_you(found))
     return listed
 

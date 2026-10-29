@@ -4,11 +4,13 @@
 The owner's morning: the share dropped overnight, and he opens Activity. Each failed run's row holds its kind of failure
 and its sentence, written by the one mapper (`job_runs.failure`) from where the knowledge lives: a share that did not
 answer, a library another program held, a refusal, an error -- and TagPup's own work in the way (`waited`), which the
-next run settles and never needs him. The daily sync whose share stopped answering between its walk and its index queue
-fails with the share's sentence (it ended done, in step by nothing, before). The libraries are made as the indexer leaves
-them, in homes of their own; the names are fictional.
+next run settles and never needs him. The next step names how each job is run again, and no button that is not there.
+The daily sync whose share stopped answering between its walk and its index queue fails with the share's sentence; one
+whose new folder was gone by then skips it. The libraries are made as the indexer leaves them, in homes of their own; the
+names are fictional.
 """
 import os
+import shutil
 import sqlite3
 import sys
 import unittest
@@ -20,6 +22,7 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
@@ -29,12 +32,13 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import sync  # noqa: E402
-from tagpup.store import db, file_journal, schema  # noqa: E402
+from tagpup.store import db, file_journal, journal, schema  # noqa: E402
 from tagpup.store import job_runs as stored_runs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 HOUR = 3600
+SNAPSHOTS = "snapshots"
 
 NIGHT = 1_790_000_000
 
@@ -54,10 +58,13 @@ class _Libraries(unittest.TestCase):
         shares.forget()
         self.addCleanup(shares.forget)
 
-    def library(self, name, photos=("IMG_0001.jpg",), new=()):
-        """A library holding `photos` in a folder under a root of its own, each a row as a whole index leaves it, and the
-        `new` files beside them that no index has read yet."""
-        folder = os.path.join(self.pictures, name, name.title() + " Regatta")
+    def folder_of(self, name):
+        return os.path.join(self.pictures, name, name.title() + " Regatta")
+
+    def library(self, name, photos=("IMG_0001.jpg",), new=(), away=()):
+        """A library holding `photos` in a folder under a root of its own, each a row as a whole index leaves it, the
+        `new` files beside them that no index has read yet, and the rows of `away` in a folder of its outside the root."""
+        folder = self.folder_of(name)
         os.makedirs(folder, exist_ok=True)
         db_path = self.home.library(name + ".db")
         library_actions.create(db_path)
@@ -70,12 +77,18 @@ class _Libraries(unittest.TestCase):
                 os.utime(path, (NIGHT, NIGHT))
                 if each in photos:
                     photo_rows.add_indexed(conn, path, {})
+            for each in away:
+                photo_rows.add_indexed(conn, os.path.join(self.away_of(name), each), {})
             conn.commit()
         finally:
             conn.close()
         library = Library(db_path)
         self.addCleanup(indexing_jobs.forget, library)
         return library
+
+    def away_of(self, name):
+        """The folder of `name`'s rows that a share holds, outside its root."""
+        return os.path.join(self.home.root, "Share", name.title() + " Quay")
 
     def nightly_sync(self, library, queue=None, at=NIGHT):
         """The daily `sync` job run on the recurring runner for `library`, its new folders handed to `queue`: its run."""
@@ -97,16 +110,18 @@ class _Libraries(unittest.TestCase):
                 return queue.start(folders, lambda folders, report: None, together=True)
         return queued
 
-    def failing(self, library, at):
-        (entry,) = [each for each in recurring.overview(library, now=at) if each["name"] == recurring.SYNC]
+    def failing(self, library, at, limit=1):
+        """Whether the Activity page lists `library`'s sync failing, its last `limit` runs listed (?runs=)."""
+        (entry,) = [each for each in recurring.overview(library, now=at, limit=limit) if each["name"] == recurring.SYNC]
         return entry["failing"]
 
 
 class AFailedRunRecordsWhatHappened(_Libraries):
-    def test_the_share_drops_between_the_walk_and_the_queue_and_the_sync_fails_with_the_share_s_sentence(self):
-        """The walk saw the new file's folder; the index queue then found the share not answering and refused it. Break:
-        services/sync._sync reading only the queue's changed and skipped -- the run ended done, recorded in step by
-        nothing, and nothing said the share went away."""
+    def test_new_files_whose_share_stops_answering_before_the_queue_fail_the_sync_and_a_folder_gone_is_skipped(self):
+        """The walk saw the new files' folders; the index queue then found one share not answering and the other folder
+        gone. Break: services/sync._sync reading only the queue's changed and skipped (the run ended done, in step by
+        nothing, and nothing said the share went away), or failing the sync for a folder that is gone, which the next
+        sync settles by removing its rows (it read "Something went wrong" and asked the owner to act)."""
         harbour = self.library("harbour", new=("IMG_0002.jpg",))
         run = self.nightly_sync(harbour, self.share_drops(harbour))
         self.assertEqual((job_runs.FAILED, job_runs.SHARE), (run.outcome, job_runs.kind_of(run)))
@@ -114,58 +129,107 @@ class AFailedRunRecordsWhatHappened(_Libraries):
         self.assertFalse(sync.last(harbour)["last_run"]["in_step"])
         self.assertFalse(indexing_jobs.queue_for(harbour).busy(), "a folder of the share away was queued")
 
-    def test_a_write_another_program_held_the_library_for_is_locked_and_says_so(self):
-        harbour = self.library("harbour", photos=("IMG_0001.jpg", "IMG_0002.jpg"))
-        os.remove(os.path.join(self.pictures, "harbour", "Harbour Regatta", "IMG_0002.jpg"))   # a removal: the sync writes
-        with mock.patch.object(maintenance.journal, "apply", side_effect=sqlite3.OperationalError("database is locked")):
-            run = self.nightly_sync(harbour)
-        self.assertEqual((job_runs.FAILED, job_runs.LOCKED), (run.outcome, job_runs.kind_of(run)))
-        self.assertEqual("OperationalError: database is locked", run.note)
+        lighthouse = self.library("lighthouse", new=("IMG_0002.jpg",))
+        queue = indexing_jobs.queue_for(lighthouse)
 
-    def test_roots_changed_by_another_process_is_tagpup_s_own_work_waited_for_not_an_error(self):
-        harbour = self.library("harbour")
-        with mock.patch.object(sync, "_sync", side_effect=roots_service.RootsChanged()):
-            run = self.nightly_sync(harbour)
-        self.assertEqual((job_runs.FAILED, job_runs.WAITED), (run.outcome, job_runs.kind_of(run)))
-        self.assertEqual(roots_service.STOPPED, run.note)
-        self.assertEqual(([], False), (activity.needs_you([harbour]), self.failing(harbour, NIGHT)),
-                         "TagPup's own work in the way asked the owner to act")
+        def gone_first(folders):
+            shutil.rmtree(self.folder_of("lighthouse"))             # moved away between the walk and the queue
+            return queue.start(folders, lambda folders, report: None, together=True)
+        run = self.nightly_sync(lighthouse, gone_first)
+        self.assertEqual((job_runs.DONE, None, 1), (run.outcome, job_runs.kind_of(run), run.changed["skipped"]))
+        self.assertFalse(queue.busy(), "a folder that is gone was queued")
+        self.assertEqual([], activity.needs_you([lighthouse]))
 
 
 class NeedsYouInTheMorning(_Libraries):
     """The share dropped overnight; the owner opens Activity: what happened and the next step, no log read."""
 
-    def test_two_libraries_one_failed_overnight_and_one_unreadable_the_failure_is_said_with_its_next_step(self):
+    def test_three_libraries_failed_three_ways_each_is_said_with_its_next_step_and_the_one_that_waited_is_not(self):
+        """Harbour's share dropped before its index queue; breakwater's write found the library held by another program
+        while a folder of its share did not answer, and a newer TagPup (the CLI from the repository) recorded a failure
+        of a kind this version does not know; jetty's write met a row the bake changed after the plan read it, and the
+        next night its roots changed under it; quay, at 35, failed before kinds were written; pier is unreadable.
+        Break: a Result not ok losing to Job.failed (breakwater read `share`); an unknown kind raising KeyError (the
+        whole of breakwater left out of Needs you, and its jobs `[]` on the page); a journal refusal at the apply read
+        as `refused` (jetty asked the owner to act); "run it now" said where there is no Run now."""
         harbour = self.library("harbour", new=("IMG_0002.jpg",))
-        breakwater = self.library("breakwater")
         self.nightly_sync(harbour, self.share_drops(harbour))
-        self.assertEqual(job_runs.DONE, self.nightly_sync(breakwater).outcome)
-        unreadable = Library(self.home.library("jetty.db"))
-        with open(unreadable.path, "wb") as handle:
+
+        breakwater = self.library("breakwater", photos=("IMG_0001.jpg", "IMG_0002.jpg"))
+        newer = job_runs.claim(breakwater, SNAPSHOTS, breakwater.name, NIGHT - HOUR)
+        stored_runs.finish(breakwater.path, newer.run_id, stored_runs.FAILED, NIGHT - HOUR + 60,
+                           {"errors": 1, job_runs.FAILURE: "quota"}, "QuotaError: the disk allows no more")
+        os.remove(os.path.join(self.folder_of("breakwater"), "IMG_0002.jpg"))   # a removal: the sync writes
+        asleep, real = paths.key(self.away_of("breakwater")), shares.Walk.folder_state
+
+        def walked(walk, folder, *args, **kwargs):
+            return "unanswered" if paths.key(folder) == asleep else real(walk, folder, *args, **kwargs)
+        with mock.patch.object(shares.Walk, "folder_state", walked), \
+                mock.patch.object(maintenance.journal, "apply", side_effect=sqlite3.OperationalError("database is locked")):
+            run = self.nightly_sync(breakwater)
+        self.assertEqual((job_runs.LOCKED, "OperationalError: database is locked"), (job_runs.kind_of(run), run.note))
+
+        jetty = self.library("jetty", photos=("IMG_0001.jpg", "IMG_0002.jpg"))
+        os.remove(os.path.join(self.folder_of("jetty"), "IMG_0002.jpg"))
+        with mock.patch.object(maintenance.journal, "apply", side_effect=journal.Refusal(["photos 2 changed"])):
+            run = self.nightly_sync(jetty)
+        self.assertEqual((job_runs.FAILED, job_runs.WAITED), (run.outcome, job_runs.kind_of(run)))
+        with mock.patch.object(sync, "_sync", side_effect=roots_service.RootsChanged()):
+            run = self.nightly_sync(jetty, at=NIGHT + HOUR)
+        self.assertEqual((job_runs.WAITED, roots_service.STOPPED), (job_runs.kind_of(run), run.note))
+        self.assertFalse(self.failing(jetty, NIGHT + HOUR), "TagPup's own work in the way asked the owner to act")
+
+        quay = Library(self.home.library("quay.db"))
+        with migration_names.up_to(35):
+            schema.ensure(quay.path)
+        schema.forget()
+        conn = db.connect(quay.path)
+        try:
+            old = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES (?, ?, ?, 'running', ?)",
+                               (recurring.SYNC, quay.name, stored_runs.stamp(NIGHT), file_journal.owner())).lastrowid
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertTrue(stored_runs.finish(quay.path, old, stored_runs.FAILED, NIGHT + 60, {"errors": 1},
+                                           "RuntimeError: the walk stopped"))
+        pier = Library(self.home.library("pier.db"))
+        with open(pier.path, "wb") as handle:
             handle.write(b"not a library")
+
         with self.assertLogs("tagpup.services.activity", "WARNING"):
-            (group,) = activity.needs_you([harbour, unreadable, breakwater])
-        means, next_step, _asks = job_runs.FAILURES[job_runs.SHARE]
-        self.assertEqual((job_runs.SHARE, means, next_step), (group["kind"], group["means"], group["next_step"]))
-        (item,) = group["items"]
-        self.assertEqual(("harbour", recurring.SYNC, 1), (item["library"], item["job"], item["count"]))
-        self.assertTrue(item["sentence"].startswith("The network share"), item["sentence"])
-        self.assertEqual(stored_runs.stamp(NIGHT), item["since"])
+            found = activity.needs_you([harbour, pier, breakwater, jetty, quay], recurring.JOBS.names())
+        self.assertEqual([(job_runs.SHARE, [("harbour", recurring.SYNC, 1)]),
+                          (job_runs.LOCKED, [("breakwater", recurring.SYNC, 1)]),
+                          (job_runs.ERROR, [("breakwater", SNAPSHOTS, 1), ("quay", recurring.SYNC, 1)])],
+                         [(group["kind"], [(each["library"], each["job"], each["count"]) for each in group["items"]])
+                          for group in found])
+        self.assertEqual([job_runs.FAILURES[group["kind"]][0] for group in found], [group["means"] for group in found])
+        (shared,), (held,) = found[0]["items"], found[1]["items"]
+        self.assertTrue(shared["sentence"].startswith("The network share"), shared["sentence"])
+        self.assertEqual((stored_runs.stamp(NIGHT), True), (shared["since"], shared["run_now"]))
+        self.assertIn("awake", shared["next_step"])
+        self.assertIn("run it now", held["next_step"])
+        self.assertEqual("RuntimeError: the walk stopped", found[2]["items"][1]["sentence"])
+
         app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background([])))
         app.testing = True
-        reply = app.test_client().get("/api/activity/jobs")
+        reply = app.test_client().get("/api/activity/jobs?runs=1")
         self.assertEqual(200, reply.status_code)
         answered = reply.get_json()
-        self.assertEqual([[("harbour", recurring.SYNC, False)]],
-                         [[(each["library"], each["job"], each["run_now"]) for each in kind["items"]]
-                          for kind in answered["needs_you"]], "this server runs no recurring jobs: no Run now")
-        (harbours,) = [each for each in answered["libraries"] if each["name"] == "harbour"]
-        (sync_job,) = [each for each in harbours["jobs"] if each["name"] == recurring.SYNC]
-        self.assertEqual((job_runs.SHARE, True), (sync_job["runs"][0]["failure"], sync_job["failing"]))
+        items = [each for kind in answered["needs_you"] for each in kind["items"]]
+        self.assertEqual([("harbour", False), ("breakwater", False), ("breakwater", False), ("quay", False)],
+                         [(each["library"], each["run_now"]) for each in items], "this server runs no recurring jobs")
+        self.assertEqual([], [each["next_step"] for each in items if "run it now" in each["next_step"]])
+        jobs = {each["name"]: {job["name"]: job for job in each["jobs"]} for each in answered["libraries"]}
+        self.assertEqual((job_runs.SHARE, True), (jobs["harbour"]["sync"]["runs"][0]["failure"],
+                                                  jobs["harbour"]["sync"]["failing"]))
+        self.assertEqual((job_runs.ERROR, True), (jobs["breakwater"]["snapshots"]["runs"][0]["failure"],
+                                                  jobs["breakwater"]["snapshots"]["failing"]))
 
     def test_failed_abandoned_and_failed_again_is_one_item_of_two_until_a_run_is_done(self):
         """Break: an abandoned run counted as failing or as settling it (recurring.overview's `failing` counted an
-        abandoned newest run as failing, while what is due reads only done and failed)."""
+        abandoned newest run as failing, while what is due reads only done and failed), or `failing` read from fewer
+        rows than Needs you (?runs=1 listing the abandoned run alone said it was not failing)."""
         harbour = self.library("harbour", new=("IMG_0002.jpg",))
         self.nightly_sync(harbour, self.share_drops(harbour))
         claim = job_runs.claim(harbour, recurring.SYNC, harbour.name, NIGHT + HOUR)
@@ -183,26 +247,6 @@ class NeedsYouInTheMorning(_Libraries):
         with mock.patch.object(file_journal, "owner_alive", return_value=False):
             job_runs.sweep_abandoned(harbour, NIGHT + 4 * HOUR + 60)
         self.assertEqual(([], False), (activity.needs_you([harbour]), self.failing(harbour, NIGHT + 4 * HOUR)))
-
-    def test_a_library_at_35_reads_its_failed_run_as_an_error_that_needs_you(self):
-        """A run that failed before kinds were written -- the 12 live rows -- and a library the page's look reads without
-        migrating it."""
-        at_35 = Library(self.home.library("breakwater.db"))
-        with migration_names.up_to(35):
-            schema.ensure(at_35.path)
-        schema.forget()
-        conn = db.connect(at_35.path)
-        try:
-            run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES (?, ?, ?, 'running', ?)",
-                                  (recurring.SYNC, at_35.name, stored_runs.stamp(NIGHT), file_journal.owner())).lastrowid
-            conn.commit()
-        finally:
-            conn.close()
-        self.assertTrue(stored_runs.finish(at_35.path, run_id, stored_runs.FAILED, NIGHT + 60, {"errors": 1},
-                                           "RuntimeError: the walk stopped"))
-        (group,) = activity.needs_you([at_35])
-        self.assertEqual([(job_runs.ERROR, "breakwater", "RuntimeError: the walk stopped")],
-                         [(group["kind"], each["library"], each["sentence"]) for each in group["items"]])
 
 
 if __name__ == "__main__":

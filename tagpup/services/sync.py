@@ -847,12 +847,15 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
             queued = outcome.changed
             for what, why in outcome.skipped:
                 result.skip(what, why)
-            if outcome.refused:
+            if outcome.details.get(SHARE_AWAY):
                 # The share stopped answering between the walk and the queue: the new files are not indexed, and the
-                # sync says so with the share's sentence (SHARE_AWAY), not done.
+                # sync says so with the share's sentence, not done.
                 result.fail("queueing the new files' folders", outcome.refused)
-                if outcome.details.get(SHARE_AWAY):
-                    result.details[SHARE_AWAY] = True
+                result.details[SHARE_AWAY] = True
+            elif outcome.refused:
+                # The new files' folders were gone between the walk and the queue: skipped, and the next sync removes
+                # their rows.
+                result.skip("queueing the new files' folders", outcome.refused)
         except Exception as e:
             result.fail("queueing the new files' folders", "%s: %s" % (type(e).__name__, e))
     result.details["queued"] = queued

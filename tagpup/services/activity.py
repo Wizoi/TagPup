@@ -13,7 +13,8 @@ activity_routes), and says what went wrong, which a count cannot. A library behi
 version's schema reads as holding none of what it lacks; nothing is migrated by a look.
 
 Needs you is each job whose last run that ended failed asking the owner to act (tagpup.services.job_runs.needs_you),
-said with what its kind means and the next step (job_runs.FAILURES), grouped by kind across the libraries.
+said with what its kind means (job_runs.FAILURES) and the next step for its job (job_runs.next_step), grouped by kind
+across the libraries.
 """
 import logging
 import numbers
@@ -209,12 +210,15 @@ def timeline_and_children(library, limit=50):
     return entries[:limit], index_runs_under(library, indexes)
 
 
-def needs_you(libraries):
+def needs_you(libraries, run_now=()):
     """What the owner must act on in `libraries`, grouped by kind in the order of job_runs.FAILURES: [{"kind", "means",
-    "next_step", "items": [{"library", "job", "sentence", "count", "since", "last", "run"}]}], each item a job of a
-    library whose failed runs since its last done one ask him to act (runs_service.needs_you): the newest's sentence
-    (its note, which can name a folder: for the page that answers this PC alone) and tag, how many failed, when the
-    first started and the newest finished. A library that cannot be read is logged and left out; the others are said."""
+    "items": [{"library", "job", "sentence", "count", "since", "last", "run", "run_now", "next_step"}]}], each item a job
+    of a library whose failed runs since its last done one ask him to act (runs_service.needs_you, of the rows
+    runs_service.runs_of reads): the newest's sentence (its note, which can name a folder: for the page that answers this
+    PC alone) and tag, how many failed, when the first started and the newest finished, whether the page's Run now
+    starts it (`run_now`, the jobs this process's recurring runner has) and the next step, naming how the job is run
+    again (runs_service.next_step). A library that cannot be read is logged and left out; the others are said. A kind
+    this version does not know reads as an error (runs_service.kind_of), so no row of a library leaves out the rest."""
     found = {}
     for library in libraries:
         try:
@@ -222,13 +226,14 @@ def needs_you(libraries):
                                                       key=lambda each: (each[0][0], each[0][1] or "")):
                 if ended is None or ended.outcome != job_runs.FAILED:
                     continue
-                failed = runs_service.needs_you([run for run in job_runs.runs(library.path, job, job_runs.KEEP_RUNS)
-                                                 if run.library == name])
+                failed = runs_service.needs_you(runs_service.runs_of(library, job, name))
                 if failed:
-                    found.setdefault(runs_service.kind_of(failed[0]), []).append({
+                    kind, here = runs_service.kind_of(failed[0]), job in run_now
+                    found.setdefault(kind, []).append({
                         "library": library.name, "job": job, "sentence": failed[0].note, "count": len(failed),
-                        "since": failed[-1].started, "last": failed[0].finished, "run": _tag(failed[0])})
+                        "since": failed[-1].started, "last": failed[0].finished, "run": _tag(failed[0]),
+                        "run_now": here, "next_step": runs_service.next_step(kind, job, here)})
         except Exception as e:
             logger.warning("Could not read what needs you in %s: %s", library.name, e)
-    return [{"kind": kind, "means": means, "next_step": next_step, "items": found[kind]}
-            for kind, (means, next_step, _asks) in runs_service.FAILURES.items() if kind in found]
+    return [{"kind": kind, "means": means, "items": found[kind]}
+            for kind, (means, _next_step, _asks) in runs_service.FAILURES.items() if kind in found]

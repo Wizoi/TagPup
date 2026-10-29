@@ -30,7 +30,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images, shares  # noqa: E402
 from tagpup.jobs import recurring, watching  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import activity, sync  # noqa: E402
+from tagpup.services import sync  # noqa: E402
 from tagpup.store import job_runs  # noqa: E402
 
 THEN = 1_700_000_000
@@ -246,12 +246,7 @@ class AShareAsleep(unittest.TestCase):
             run = entry["runs"][0]
             self.assertEqual(("failed", True), (run["outcome"], entry["failing"]), "the Activity page shows it failing")
             self.assertEqual("share", run["failure"])
-            # The owner's morning: Activity says what happened and what to do, with no log to read.
-            (group,) = activity.needs_you([regatta])
-            self.assertEqual([("sync", 1, run["error"])],
-                             [(each["job"], each["count"], each["sentence"]) for each in group["items"]])
             self.assertTrue(run["error"].startswith("1 folder could not be looked at"), run["error"])
-            self.assertIn("awake", group["next_step"])
             self.assertEqual(job_runs.stamp(THEN + recurring.RETRY_AFTER), entry["next_due"])
             clock.now = THEN + recurring.RETRY_AFTER - 60
             self.assertEqual("not due", runner.run_job(job, regatta).why)

@@ -142,11 +142,13 @@ def begin(conn, immediate=False):
 
 
 def locked(error):
-    """Is `error` SQLite saying the database is locked or busy: another writer held it longer than this one waited?"""
+    """Is `error` SQLite saying the database is locked or busy: another writer held it longer than this one waited? Not
+    "database table is locked" or "database schema is locked": a statement of this connection in the way of another, a
+    code's defect that waiting does not settle."""
     if not isinstance(error, sqlite3.OperationalError):
         return False
     message = str(error).lower()
-    return "locked" in message or "busy" in message
+    return "database is locked" in message or "busy" in message
 
 
 def retry_when_busy(operation, attempts=4, first_delay=0.25, label="database write"):

@@ -44,6 +44,9 @@ READY = {"status": "completed", "percent": 100, "message": "Ready"}
 #: What a folder queued once more after a run that began before its files arrived says.
 AGAIN = "Indexing again: files arrived in it while it was being indexed..."
 
+#: What the run of an index whose thread stopped before it said how it ended (a BaseException) says.
+STOPPED = "The index stopped before it ended; the server's log says why."
+
 _queues = {}
 _queues_lock = threading.Lock()
 
@@ -465,7 +468,7 @@ class IndexQueue:
     def _end(self, run_id, held, status, result, error=None):
         """End the run's row: done, with its message as the note, when it completed or was cancelled (counted
         `cancelled`); failed when it failed, why (job_runs.failure of the `error` it raised or its Result) the sentence
-        its status says. Its counts are its Result's (job_runs.counts,
+        its status says, or STOPPED when its thread stopped with neither. Its counts are its Result's (job_runs.counts,
         what the indexer said it did among them), beside what it held from its claim (`held`); an index that raised counts one
         error. A row that is gone -- pruned, a restore, swept -- is logged; one that cannot be written is logged and
         written as the next run is claimed (_claim)."""
@@ -478,12 +481,16 @@ class IndexQueue:
         counts.update(held)
         if outcome == "cancelled":
             counts["cancelled"] = 1
-        failed = job_runs.failure(error, result) if outcome not in ("completed", "cancelled") else None
+        failed = None
+        if outcome not in ("completed", "cancelled"):
+            # Neither a Result nor an Exception: its thread was stopped by something else (a BaseException).
+            failed = job_runs.failure(error, result) or job_runs.Failure(job_runs.ERROR, STOPPED)
         self._write_end(run_id, time.time(), counts, failed, None if failed else status.get("message") or None)
 
     def _write_end(self, run_id, when, counts, failed, note):
-        """Write the end of run `run_id` as it ended `when`, `failed` a job_runs.Failure or None; kept in _unended, to be written as the next run is claimed,
-        when it cannot be (and again, if that fails too): it leaves _unended only once written or found gone."""
+        """Write the end of run `run_id` as it ended `when`, `failed` a job_runs.Failure or None; kept in _unended, to be
+        written as the next run is claimed, when it cannot be (and again, if that fails too): it leaves _unended only once
+        written or found gone."""
         where = self._recorded_in
         try:
             ended = job_runs.end(where, run_id, when, counts, failed=failed, note=note)

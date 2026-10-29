@@ -298,11 +298,8 @@ def jobs():
     runner = _task(runtimes.RECURRING_JOBS)
     listed = []
     libraries = _libraries()
-    needs_you = activity.needs_you(libraries)
-    for group in needs_you:
-        for item in group["items"]:
-            # Run now is the recurring runner's (POST /api/activity/jobs/run): an index, say, is not one of its jobs.
-            item["run_now"] = runner is not None and runner.registry.get(item["job"]) is not None
+    # Run now is the recurring runner's (POST /api/activity/jobs/run): an index, say, is not one of its jobs.
+    needs_you = activity.needs_you(libraries, runner.registry.names() if runner is not None else ())
     for library in libraries:
         try:
             children = activity.index_runs_under(library)

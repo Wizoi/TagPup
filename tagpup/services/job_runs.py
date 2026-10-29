@@ -13,7 +13,8 @@ sync's walk, the index's phases read from its indexer's lines.
 
 Why a run failed is one Failure (`failure`): a kind of FAILURES and the sentence that is the run's note. The kind is
 written in the run's `changed` (FAILURE), a text, so never one of its counts; what it means and the next step are read
-from the kind, never stored. A run that failed before kinds were written reads as ERROR.
+from the kind, never stored (`next_step` names how the job is run again). A run that failed before kinds were written, or
+with a kind this version does not know, reads as ERROR (`kind_of`).
 """
 import contextlib
 import contextvars
@@ -42,20 +43,31 @@ FAILURE = "failure"
 
 SHARE, LOCKED, WAITED, REFUSED, ERROR = "share", "locked", "waited", "refused", "error"
 
-#: The one vocabulary of why a run failed: {kind: (what it means, the next step, whether the owner must act)}. WAITED is
-#: TagPup's own work in the way, which the next run settles: never one of Needs you.
+#: The one vocabulary of why a run failed: {kind: (what it means, the next step, whether the owner must act)}. The next
+#: step's `{again}` is how the job is run again (`next_step`). WAITED is TagPup's own work in the way (the roots changing,
+#: names being given from tags, a row another writer changed between the plan and the write), which the next run settles:
+#: never one of Needs you.
 FAILURES = {
     SHARE: ("A network share did not answer, so not every folder was looked at: the library is not in step.",
-            "Check that the computer sharing the photos is awake and on the network, then run it now; it is tried again"
-            " within the hour.", True),
+            "Check that the computer sharing the photos is awake and on the network, then {again}.", True),
     LOCKED: ("Another program was writing the library for longer than TagPup waits, so nothing was written.",
-             "Let the other program finish (a CLI run, another TagPup), then run it now.", True),
-    WAITED: ("TagPup's own work was in the way (the roots changing, names being given from tags), so it stopped.",
-             "Nothing: the next run does it.", False),
-    REFUSED: ("It was refused before anything was written.", "Do what the sentence says, then run it now.", True),
+             "Let the other program finish (a CLI run, another TagPup), then {again}.", True),
+    WAITED: ("TagPup's own work was in the way (the roots changing, names being given from tags, a row changed by"
+             " another writer), so it stopped.", "Nothing: the next run does it.", False),
+    REFUSED: ("It was refused before anything was written.", "Do what the sentence says, then {again}.", True),
     ERROR: ("Something went wrong that TagPup did not expect.",
-            "Run it now; if it fails again, the log of the run says what happened.", True),
+            "Try once more: {again}. If it fails again, the log of the run says what happened.", True),
 }
+
+#: The job naming faces from their tags records its runs as (tagpup.jobs.naming_faces).
+NAME_FACES = "name faces"
+
+#: How the owner runs a job again where the Activity page has no Run now for it, by job: an index is queued again by a
+#: sync of its library, which finds the files it did not read; a naming from tags is asked again in its dialog.
+AGAIN = {INDEX: "run a sync of the library, which queues its folders again", NAME_FACES: "name faces from tags again"}
+#: How a job the page's Run now starts is run again (the recurring runner's: a failed run is tried again RETRY_AFTER
+#: later), and any other job.
+RUN_NOW, DO_IT_AGAIN = "run it now (it is tried again within the hour)", "do it again"
 
 
 @dataclass(frozen=True)
@@ -65,25 +77,46 @@ class Failure:
     sentence: str
 
 
-def failure(error=None, result=None, failed=None):
-    """Why a run failed, or None when it did not: `failed` as the job gave it (recurring.Job.failed); else the `error` it
-    raised (LOCKED for SQLite's locked or busy, else ERROR, said as its type and text); else, for a Result not ok, the
-    kind its details say (FAILURE, set where it is known), SHARE for a share that did not answer (SHARE_AWAY), REFUSED
-    for a refusal, ERROR for errors, said as the Result says it."""
-    if failed is not None:
-        return failed
+def failure(error=None, result=None, failed=None, sentence=None):
+    """Why a run failed, or None when it did not: the `error` it raised (LOCKED for SQLite's database locked or busy,
+    else ERROR, said as its type and text); else, for a Result not ok, the kind its details say (FAILURE, set where it
+    is known), SHARE for a share that did not answer (SHARE_AWAY), REFUSED for a refusal, ERROR for errors, said as the
+    Result says it; else `failed`, why the job says an ok Result did not do its work (recurring.Job.failed). Said as
+    `sentence` instead when the job says it its own way (the naming dialog's)."""
     if error is not None:
-        return Failure(LOCKED if db.locked(error) else ERROR, "%s: %s" % (type(error).__name__, error))
-    if result is None or result.ok:
-        return None
-    details = result.details or {}
-    kind = details.get(FAILURE) or (SHARE if details.get(SHARE_AWAY) else REFUSED if result.refused else ERROR)
-    return Failure(kind, result.message())
+        found = Failure(LOCKED if db.locked(error) else ERROR, "%s: %s" % (type(error).__name__, error))
+    elif result is not None and not result.ok:
+        details = result.details or {}
+        kind = details.get(FAILURE) or (SHARE if details.get(SHARE_AWAY) else REFUSED if result.refused else ERROR)
+        found = Failure(kind, result.message())
+    else:
+        found = failed
+    return found if found is None or sentence is None else Failure(found.kind, sentence)
 
 
 def kind_of(run):
-    """The kind of failure of `run`, a Run, or None when it did not fail; ERROR for one written before kinds were."""
-    return run.changed.get(FAILURE, ERROR) if run.outcome == FAILED else None
+    """The kind of failure of `run`, a Run, or None when it did not fail; ERROR for one written before kinds were, and
+    for a kind this version does not know (a row a newer TagPup wrote: the CLI run from the repository beside the
+    installed server)."""
+    if run.outcome != FAILED:
+        return None
+    kind = run.changed.get(FAILURE)
+    return kind if kind in FAILURES else ERROR
+
+
+def next_step(kind, job, run_now=False):
+    """The next step after a failed run of `job` of the `kind` (FAILURES), naming how it is run again: Run now when the
+    page has it for the job (`run_now`), else the job's own way (AGAIN) -- never a button that is not there."""
+    return FAILURES[kind][1].format(again=RUN_NOW if run_now else AGAIN.get(job, DO_IT_AGAIN))
+
+
+def runs_of(library, job, run_for):
+    """The runs of `job` in `library` for the library named `run_for` (in any case; None for a job not run per library),
+    newest first, from the job's last KEEP_RUNS: the rows a job's runs and `failing` on the Activity page
+    (recurring.overview) and Needs you (tagpup.services.activity.needs_you) both read."""
+    wanted = run_for.lower() if run_for else None
+    return [run for run in job_runs.runs(library.path, job, job_runs.KEEP_RUNS)
+            if (run.library.lower() if run.library else None) == wanted]
 
 
 def needs_you(runs):
