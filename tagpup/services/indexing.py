@@ -38,6 +38,11 @@ INDEXER_LOG = "indexer"
 STOP_FILE = "TAGPUP_STOP_FILE"
 EXIT_CANCELLED = 76
 
+#: The option that hands the indexer its folders in a file, UTF-8, one a line (the CLI's `index`): on its command line a
+#: sync's few hundred passed Windows's 32,767 characters and the indexer never started (#2149). What its file is called.
+FOLDERS_FILE = "--folders-file"
+_FOLDERS_FILE_NAME = "tagpup-folders-%s.txt"
+
 #: What a run stopped while it waited says.
 CANCELLED_WAITING = "Cancelled while it waited for the graphics card; nothing was indexed."
 
@@ -166,6 +171,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     # line carrying the tags of the run it is part of (tagpup.core.runs).
     runs.child_environment(env, log_to=INDEXER_LOG)
     stop_file = os.path.join(tempfile.gettempdir(), "tagpup-stop-%s" % uuid.uuid4().hex)
+    # Each run its own, like the stop file: two jobs at once (two libraries) do not share one.
+    folders_file = os.path.join(tempfile.gettempdir(), _FOLDERS_FILE_NAME % uuid.uuid4().hex)
     env[STOP_FILE] = stop_file
     if hasattr(report, "stop_file"):
         report.stop_file = stop_file
@@ -197,16 +204,19 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
             proc.wait()
         return proc.returncode
 
-    # The indexer stores the paths it walks as given, so it is handed the stored form.
+    # The indexer stores the paths it walks as given, so it is handed the stored form; in a file, one or four hundred.
     try:
-        code = run(["index"] + [paths.stored(each) for each in folders] + ([] if subfolders else ["--no-subfolders"]))
+        with open(folders_file, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("".join(paths.stored(each) + "\n" for each in folders))
+        code = run(["index", FOLDERS_FILE, folders_file] + ([] if subfolders else ["--no-subfolders"]))
     finally:
         if hasattr(report, "stop_file"):
             report.stop_file = None
-        try:
-            os.remove(stop_file)
-        except OSError:
-            pass
+        for made in (stop_file, folders_file):
+            try:
+                os.remove(made)
+            except OSError:
+                pass
     if code == EXIT_CANCELLED:
         result.skip(", ".join(folders), CANCELLED_WAITING)
         result.details.update(percent=0, cancelled=True, message=CANCELLED_WAITING)

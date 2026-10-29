@@ -51,7 +51,15 @@ class AddingAFolder(unittest.TestCase):
         self.reports = []
 
     def index(self, *processes, folder=None):
-        with patch("subprocess.Popen", side_effect=list(processes)) as popen:
+        self.listed = []
+        started = iter(processes)
+
+        def start(args, **_kwargs):
+            # The folders' list as the child would read it: the file is gone once the run ends.
+            with open(args[args.index(indexing.FOLDERS_FILE) + 1], encoding="utf-8", newline="") as handle:
+                self.listed.append(handle.read())
+            return next(started)
+        with patch("subprocess.Popen", side_effect=start) as popen:
             result = indexing.index_folder(
                 self.library, folder or self.folder, self.code,
                 report=lambda message=None, percent=None: self.reports.append((message, percent)))
@@ -60,15 +68,18 @@ class AddingAFolder(unittest.TestCase):
     def test_the_cli_indexes_the_folder_into_this_library_from_the_code_running(self):
         result, calls = self.index(process())
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].args[0], [sys.executable, "tagpup_cli.py", "index", self.folder])
+        listing = calls[0].args[0][4]
+        self.assertEqual(calls[0].args[0], [sys.executable, "tagpup_cli.py", "index", indexing.FOLDERS_FILE, listing])
+        self.assertEqual([self.folder + "\n"], self.listed)
+        self.assertFalse(os.path.exists(listing), "the list of folders was left behind")
         self.assertEqual(calls[0].kwargs["cwd"], self.code)
         self.assertEqual(calls[0].kwargs["env"]["TAGPUP_DB_PATH"], self.library.path)
         self.assertEqual((result.ok, result.changed, result.details["percent"]), (True, 1, 100))
         self.assertIn("Folder indexed", result.details["message"])
 
     def test_a_typed_folder_is_handed_over_as_stored(self):
-        _, calls = self.index(process(), folder=self.folder.replace(os.sep, "/"))
-        self.assertEqual(calls[0].args[0][3], paths.stored(self.folder))
+        self.index(process(), folder=self.folder.replace(os.sep, "/"))
+        self.assertEqual([paths.stored(self.folder) + "\n"], self.listed)
 
     def test_a_failed_index_is_an_error(self):
         result, calls = self.index(process(2))

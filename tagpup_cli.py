@@ -264,10 +264,34 @@ KEPT_LINE = ("Photo vectors: %d kept (the file as it was), %d kept with the pict
              "faces looked at.")
 
 
+#: Where --folders-file leaves the folders it read, for DIRECTORIES' check to take them with the typed ones.
+_LISTED = "tagpup.folders_file"
+
+
+def _folders_in_file(ctx, param, path):
+    """--folders-file: folders written in a file, UTF-8, one a line, as the server hands them to the indexer
+    (indexing.FOLDERS_FILE): a sync's few hundred on the command line passed Windows's 32,767 characters (#2149). Read
+    before DIRECTORIES is checked (eager); a file that cannot be read is a sentence and exit 2, and nothing is run. Each
+    line is a folder as written, to its last character: only the line's end is taken off."""
+    if path is None:
+        return None
+    try:
+        with open(path, encoding="utf-8", newline="") as handle:
+            lines = handle.read().split("\n")
+    except (OSError, UnicodeDecodeError) as why:
+        raise click.BadParameter("The list of folders could not be read: %s." % (getattr(why, "strerror", None) or why),
+                                 ctx=ctx, param=param) from None
+    ctx.meta[_LISTED] = tuple(line[:-1] if line.endswith("\r") else line for line in lines if line not in ("", "\r"))
+    return path
+
+
 def _folders_now(ctx, param, directories):
-    """Each DIRECTORY, refused unless it is a folder now, with the one sentence of why (photos.folder_refusal): a folder
-    on a network share that did not answer says the share is not answering, within a moment, not after Windows's wait
-    and not as a folder that does not exist (#2129)."""
+    """Each DIRECTORY, and each folder of --folders-file, refused unless it is a folder now, with the one sentence of why
+    (photos.folder_refusal): a folder on a network share that did not answer says the share is not answering, within a
+    moment, not after Windows's wait and not as a folder that does not exist (#2129). Neither given is refused."""
+    directories = tuple(directories) + ctx.meta.pop(_LISTED, ())
+    if not directories:
+        raise click.MissingParameter(ctx=ctx, param=param)
     for directory in directories:
         refusal = photo_actions.folder_refusal(directory)
         if refusal:
@@ -276,7 +300,9 @@ def _folders_now(ctx, param, directories):
 
 
 @cli.command()
-@click.argument("directories", nargs=-1, required=True, type=str, callback=_folders_now)
+@click.argument("directories", nargs=-1, type=str, callback=_folders_now)
+@click.option("--folders-file", type=str, is_eager=True, expose_value=False, callback=_folders_in_file,
+              help="A file of folders to index as well, UTF-8, one a line (how the server hands over a sync's folders).")
 @click.option("--force-reembed", is_flag=True, help="Force recreation of embeddings.")
 @click.option("--reset", is_flag=True, help="Delete existing index and taxonomy to start fresh.")
 @click.option("--skip-faces", is_flag=True, help="Skip face detection during indexing.")
@@ -286,7 +312,7 @@ def _folders_now(ctx, param, directories):
 @_holds_the_roots
 def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
     """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run
-    (sync hands it every folder of new files at once, so one indexer loads the models)."""
+    (sync hands it every folder of new files at once, so one indexer loads the models; the server, in --folders-file)."""
     runtime = get_runtime()
 
     test_mode = ctx.obj.get("test", False)

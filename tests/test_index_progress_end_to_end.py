@@ -17,16 +17,25 @@ again: nothing changed on disk, so the CLI reads no file, says the index is curr
 Lifted: test_functional_cli (which built exiftool.ExifToolHelper and called sqlite3.connect itself, against the rules, and
 tested the same two runs): every photo is indexed, tagged or not (three untagged photos), and an index again reads nothing.
 Mutation proof: tagpup_cli.py's skip rule made `images_to_process = all_images` fails the second half.
+
+A sync that finds many folders queues them as one job, one indexer for them all (#2149: 388 folders on photo_index). On the
+command line they passed Windows's 32,767 characters and the indexer never started; the server hands them over in a file
+(`index --folders-file`), and 400 folders of 120 characters each, some spelled beyond ASCII, reach the indexer whole.
+Failed on the old code: `FileNotFoundError: [WinError 206]` from processes.start.
 """
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
+from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
+import tagpup_cli  # noqa: E402
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -128,6 +137,74 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertTrue(result.ok, result.errors)
         self.assertTrue(result.details["message"].startswith("3 photo(s) failed and were not indexed"),
                         result.details["message"])
+
+
+@unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
+class ASyncOfManyFolders(unittest.TestCase):
+    """#2149: a sync's catch-up of a few hundred folders is one job, one indexer, the models loaded once."""
+
+    def test_four_hundred_long_folders_reach_one_indexer_whole_and_its_list_is_gone_after(self):
+        home = own_home.for_test(self, "index_many_")
+        shim = os.path.join(home.root, "shim")
+        os.makedirs(shim)
+        with open(os.path.join(shim, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(SITECUSTOMIZE % {"root": ROOT})
+        width = 120 - len(home.root) - 1
+        folders = []
+        for number in range(400):
+            # Spelled beyond ASCII in some: the list is UTF-8 both ways. (Within the console's code page: the indexer
+            # prints each folder it scans, and one outside it stops the child before the list is reached; no live folder
+            # is spelled so.)
+            name = ("Regatta heat %03d %s " % (number, "Côte d'Azur" if number % 3 == 0 else "harbour")).ljust(width, "x")
+            folders.append(os.path.join(home.root, name))
+            os.makedirs(folders[-1])
+        self.assertGreater(sum(len(folder) + 3 for folder in folders), 32767, "the command line would have held them")
+        # A photo in the first and the last: the index records its folders as added only when it found a photo.
+        for folder in (folders[0], folders[-1]):
+            Image.new("RGB", (64, 64), "navy").save(os.path.join(folder, "one.jpg"), "JPEG")
+        library = Library(home.library("harbour.db"))
+        lists_before = {name for name in os.listdir(tempfile.gettempdir()) if name.startswith("tagpup-folders-")}
+        saved = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = shim
+        try:
+            result = indexing.index_folder(library, folders, ROOT, report=lambda message=None, percent=None: None,
+                                           subfolders=False)
+        finally:
+            if saved is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = saved
+        self.assertTrue(result.ok, result.errors)
+        conn = db.connect(library.path)
+        try:
+            added = {row[0]: row[1] for row in conn.execute("SELECT path, subfolders FROM added_folders")}
+            self.assertEqual(2, conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0])
+        finally:
+            conn.close()
+        # Every folder, spelled as stored, and the options after the list still heard.
+        self.assertEqual({paths.stored(folder): 0 for folder in folders}, added)
+        lists_after = {name for name in os.listdir(tempfile.gettempdir()) if name.startswith("tagpup-folders-")}
+        self.assertEqual(set(), lists_after - lists_before, "the list of folders was left behind")
+
+    def test_a_list_that_cannot_be_read_is_a_sentence_and_no_index(self):
+        home = own_home.for_test(self, "index_no_list_")
+        library = home.library("harbour.db")
+        missing = os.path.join(home.root, "folders.txt")
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", library, "index", "--folders-file", missing])
+        self.assertEqual(2, result.exit_code, result.output)
+        self.assertIsInstance(result.exception, SystemExit, result.output)
+        self.assertIn("The list of folders could not be read", result.output)
+        self.assertFalse(os.path.exists(library), "an index ran")
+        # Nor a list that is not UTF-8.
+        with open(missing, "wb") as handle:
+            handle.write(b"C:\\Pictures\\R\xe9gate\n")
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", library, "index", "--folders-file", missing])
+        self.assertEqual(2, result.exit_code, result.output)
+        self.assertIn("The list of folders could not be read", result.output)
+        # And no folder at all is refused as before.
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", library, "index"])
+        self.assertEqual(2, result.exit_code, result.output)
+        self.assertIn("Missing argument", result.output)
 
 
 if __name__ == "__main__":
