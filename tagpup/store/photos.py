@@ -615,18 +615,7 @@ def rows_under(conn, folder):
         " p.raw_metadata FROM photos p WHERE " + where, params).fetchall(), 0, raw=(6,))
 
 
-# ---- What refresh_rows_from_files reads and writes --------------------------------------
-
-def rows_to_check(conn, folder=None):
-    """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, id) of every photo, or of those under
-    `folder`: what is compared with the files."""
-    query = "SELECT p.path, p.mtime, p.size, p.tags, p.captions, p.raw_metadata, p.id FROM photos p"
-    params = ()
-    if folder:
-        where, params = store_roots.sql_under(conn, "path", folder)
-        query += " WHERE " + where
-    return store_roots.natives(conn, conn.execute(query, params).fetchall(), 0, raw=(5,))
-
+# ---- What sync and the re-read of a row read --------------------------------------------------
 
 def stamps(conn, folder=None, with_vectors=None, vector_stamps=None):
     """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what sync
@@ -669,16 +658,3 @@ def identities(conn):
     roots = store_roots.roots_for(conn)
     return {paths.from_row(path, roots): str(doc_id).strip() for path, doc_id in conn.execute(
         "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL") if path and doc_id}
-
-
-def tags_by_photo(conn):
-    """(id, path as stored, tags) of each photo; a row whose tags cannot be read is left
-    out."""
-    found = []
-    roots = store_roots.roots_for(conn)
-    for photo_id, path, tags_json in conn.execute("SELECT id, path, tags FROM photos"):
-        try:
-            found.append((photo_id, paths.from_row(path, roots), json.loads(tags_json or "[]")))
-        except (TypeError, ValueError):
-            continue
-    return found

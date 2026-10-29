@@ -116,10 +116,9 @@ class EveryReadAnswersNative(TwoLibraries):
         found = self.same(lambda conn, side: sorted(folders.of(conn).listed()))
         self.assertEqual(5, len(found))
 
-    def test_stamps_and_rows_to_check_and_the_records(self):
+    def test_stamps_and_the_records(self):
         self.same(lambda conn, side: sorted(store_photos.stamps(conn)))
         self.same(lambda conn, side: sorted(store_photos.stamps(conn, os.path.join(side.pictures, "2024 Harbour"))))
-        self.same(lambda conn, side: sorted(store_photos.rows_to_check(conn)))
         self.same(lambda conn, side: sorted(store_photos.records(conn, "a model")))
 
     def test_a_rows_raw_metadata_is_what_its_file_would_say(self):
@@ -158,7 +157,7 @@ class EveryReadAnswersNative(TwoLibraries):
         def ask(conn, side):
             key = faces.model_key(conn)
             return (sorted(faces.for_clustering(conn, key)), sorted(faces.names_by_photo(conn).items(), key=lambda kv: kv[0]),
-                    sorted(faces.decisions(conn)), faces.unnamed(conn, key, folder=side.pictures),
+                    faces.unnamed(conn, key, folder=side.pictures),
                     sorted(faces.unnamed_counts(conn, side.pictures).items()),
                     sorted(faces.identify_candidates(conn)), faces.busiest_photo(conn) is not None,
                     sorted(faces.photos_with_unnamed(conn, every=True)),
@@ -180,7 +179,6 @@ class EveryReadAnswersNative(TwoLibraries):
 
     def test_the_whole_library_read_row_by_row(self):
         self.same(lambda conn, side: sorted(store_photos.identities(conn).items()))
-        self.same(lambda conn, side: sorted(store_photos.tags_by_photo(conn)))
         self.same(lambda conn, side: store_photos.with_tag(conn, "Activity/Sailing"))
         self.same(lambda conn, side: sorted(inspection.ids_and_paths(conn), key=lambda r: r[0]))
         self.same(lambda conn, side: sorted(inspection.photo_files(conn)))
@@ -549,9 +547,9 @@ class TheMapProviderIsNeverForgotten(unittest.TestCase):
         "if script:\n"
         "    __import__(script)\n"
         "before = 'tagpup.config' in sys.modules\n"
-        "from tagpup.store import db, photos\n"
+        "from tagpup.store import db, inspection\n"
         "conn = db.connect(db.readonly_uri(library), uri=True)\n"
-        "print(before, len(photos.tags_by_photo(conn)))\n")
+        "print(before, len(inspection.ids_and_paths(conn)))\n")
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="roots_provider_")

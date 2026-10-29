@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
-from face_rows import add_face  # noqa: E402
+from face_rows import add_face, people_of  # noqa: E402
 
 import numpy as np  # noqa: E402
 from face_rows import add_vector  # noqa: E402
@@ -31,7 +31,7 @@ from tagpup.files import images  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
-from tagpup.store import db, faces_detected, taxonomy  # noqa: E402
+from tagpup.store import db, faces_detected, journal, taxonomy  # noqa: E402
 
 #: When every file was last written, before the test changes any.
 THEN = 1_700_000_000
@@ -349,6 +349,78 @@ class ChangedFiles(SyncTestCase):
         self.assertEqual([], self.reads.read, "the row describes its file again")
         self.assertEqual((0, 1, False), (again.details["counts"]["changed"], again.details["counts"]["to_check"],
                                          again.details["in_step"]))
+
+    def edited_elsewhere(self, name, keywords):
+        """A photo indexed with no keyword, then given `keywords` by another program: its file grows and its time
+        moves. Returns (path, photo id)."""
+        path = self.photo(self.meet, name)
+        (photo_id,) = self.indexed(path)
+        self.photo(self.meet, name, body=b"jpeg, tagged", **{"XMP:Subject": keywords})
+        os.utime(path, (THEN + 60, THEN + 60))
+        return path, photo_id
+
+    def test_a_row_the_app_saves_while_sync_reads_keeps_the_save_and_the_others_are_written(self):
+        """The owner saves a photo in TagPup while an applied sync is reading the changed files: writing the older
+        read over the row would take the save back. That row is skipped and named, the other changed row is written
+        (refusing the whole change for one save threw away the reading, perhaps every time on a library in use), and
+        the next sync reads the saved row again. Undone, the written row goes back and the save stays."""
+        saved, saved_id = self.edited_elsewhere("IMG_0001.jpg", ["Weather/Rain"])
+        other, other_id = self.edited_elsewhere("IMG_0002.jpg", ["Weather/Sun"])
+        before = self.rows()
+        reads = Reads(self.truth)
+
+        def read_then_the_app_saves(extractor, file_paths, people=None):
+            records = reads.batch_read(extractor, file_paths, people)
+            conn = db.connect(self.db_path)
+            try:
+                conn.execute("UPDATE photos SET tags = ?, mtime = ? WHERE id = ?",
+                             (json.dumps(["Activity/Rowing"]), THEN + 120, saved_id))
+                conn.commit()
+            finally:
+                conn.close()
+            return records
+
+        with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
+                        side_effect=read_then_the_app_saves), \
+                mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=reads.session):
+            result = sync.sync(self.library, apply=True, exiftool_path="exiftool")
+        self.assertEqual(sorted([saved, other]), sorted(reads.read))
+        rows = self.rows()
+        self.assertEqual((THEN + 120, ["Activity/Rowing"]), (rows[saved][1], rows[saved][3]),
+                         "the app's save was overwritten with the older read")
+        self.assertEqual([("photos %d" % saved_id, "not what the plan read: mtime, tags changed")], result.skipped)
+        self.assertEqual({"from_files": 1, "relinked": 0}, result.details["changed"])
+        self.assertEqual(["Weather/Sun"], rows[other][3])
+        change = result.details["change"]
+        self.assertEqual([[other_id]], journal.history(self.db_path, change_id=change)[0]["keys"]["photos"])
+
+        journal.undo(self.db_path, change)
+        rows = self.rows()
+        self.assertEqual(before[other], rows[other])
+        self.assertEqual(["Activity/Rowing"], rows[saved][3], "the undo took the save back")
+
+        self.run_sync()
+        self.assertEqual(sorted([saved, other]), sorted(self.reads.read), "the next sync reads the saved row again")
+
+    def test_a_person_named_only_on_a_face_stays_in_the_rows_people_after_the_re_read(self):
+        """The file names nobody in its keywords; the owner named a face in it. Sync reads the edited file again, and
+        the row's people are the keywords' and the named faces', as every writer of them records them: the face's
+        person is not taken off."""
+        path, _photo_id = self.edited_elsewhere("IMG_0001.jpg", ["Weather/Rain"])
+        conn = db.connect(self.db_path)
+        try:
+            add_face(conn, path, name="Rowan Thackeray", name_source="manual")
+            conn.commit()
+        finally:
+            conn.close()
+        result = self.run_sync(apply=True)
+        self.assertEqual({"from_files": 1, "relinked": 0}, result.details["changed"])
+        self.assertEqual(["Weather/Rain"], self.rows()[path][3])
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            self.assertEqual(["Rowan Thackeray"], people_of(conn, path))
+        finally:
+            conn.close()
 
 
 class MovedFiles(SyncTestCase):

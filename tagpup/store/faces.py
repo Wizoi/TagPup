@@ -992,26 +992,6 @@ def counts_on(conn, stored_path):
                         (store_roots.to_row(conn, stored_path),)).fetchone()
 
 
-# ---- What dedupe_faces reads and writes -------------------------------------------------
-
-def decisions(conn):
-    """(id, photo_path, box JSON, Ref or None, name_source, excluded) of every face: what was
-    decided about each, without its embedding or crop."""
-    return [(face_id, photo_path, box, _ref(tag_id, name), source, excluded)
-            for face_id, photo_path, box, tag_id, name, source, excluded in store_roots.natives(conn, conn.execute(
-                "SELECT f.id, p.path, f.box, f.tag_id, f.name, f.name_source, f.excluded FROM faces f" + PHOTO).fetchall(), 1)]
-
-
-def delete(conn, face_ids):
-    """Delete faces by id. Returns rows deleted. The caller commits."""
-    photo_ids = _photos_of(conn, face_ids)
-    removed = sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
-                  for chunk in _chunks(face_ids))
-    if removed:
-        faces_detected.forget_faceless(conn, photo_ids)
-    return _rebuilt(conn, photo_ids, removed)
-
-
 # ---- What verify_workflow reads --------------------------------------------------------
 
 def latest_unnamed_ids(conn, limit):

@@ -22,7 +22,7 @@ import roots_library as rl  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.services import inspect  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, inspection  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -115,7 +115,7 @@ class WithoutTheMap(RootedCase):
         config.add_machine_root("pictures", self.side.pictures)
         conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
         try:
-            self.assertEqual(42 + 2, len(store_photos.tags_by_photo(conn)))
+            self.assertEqual(42 + 2, len(inspection.ids_and_paths(conn)))
         finally:
             conn.close()
 

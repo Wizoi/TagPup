@@ -36,7 +36,7 @@ from test_file_journal import EXIFTOOL, Crash, crash_at, requires_exiftool  # no
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import field_values  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import duplicate_faces, file_changes, journal as journal_service  # noqa: E402
+from tagpup.services import file_changes, journal as journal_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db, embeddings, faces_detected, journal, photo_fingerprints, schema  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
@@ -238,13 +238,12 @@ class TheFacesOfATurnedPhoto(RotationCase):
         self.assertEqual((self.orientations([with_face, faceless]), self.faces(), self.counts()), ([None, None], faces, (0, 0)))
         self.assertEqual(self.crop_size(face), (10, 8))
 
-    def crop_recorded(self, conn, change_id, action, face_id, crop):
-        """The crop's row in change `change_id` exactly as journal._record wrote it before a crop was a cache."""
+    def crop_recorded(self, conn, change_id, face_id, crop):
+        """The crop's insert in change `change_id` exactly as journal._record wrote it before a crop was a cache."""
         key = schema.row_key((face_id,))
         conn.executemany("INSERT INTO change_rows (change_id, action, table_name, row_key, column_name, old, new)"
                          " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         [(change_id, action, "face_crops", key, column,
-                           None if action == "insert" else value, value if action == "insert" else None)
+                         [(change_id, "insert", "face_crops", key, column, None, value)
                           for column, value in (("face_id", face_id), ("jpeg", crop))])
 
     def a_pass(self, path, shape):
@@ -256,7 +255,7 @@ class TheFacesOfATurnedPhoto(RotationCase):
                                                        [(list(BOX), 0.99, self.VECTOR, self.CROP)],
                                                        {"matched": 0, "new": 1})
             if shape != self.SHAPES[0]:
-                self.crop_recorded(conn, change_id, "insert", face_id, self.CROP)
+                self.crop_recorded(conn, change_id, face_id, self.CROP)
             return change_id
         return self.execute_with(work)
 
@@ -288,24 +287,6 @@ class TheFacesOfATurnedPhoto(RotationCase):
                 self.assertEqual((self.orientation(path), self.rows("SELECT COUNT(*) FROM face_crops")[0][0]), (None, 0))
                 self.assertUndone(passed)
                 self.assertEqual(self.rows("SELECT COUNT(*) FROM faces"), [(0,)])
-
-    def test_a_dedupe_undone_after_a_turn_brings_the_face_back_cut_as_the_photo_is_now(self):
-        for n, shape in enumerate(self.SHAPES):
-            with self.subTest(shape):
-                self.execute("DELETE FROM faces")   # the other shape's
-                path = self.make("copies%d.jpg" % n)
-                kept, copy = self.face(path), self.face(path)
-                self.assertEqual((self.crop_size(kept), self.crop_size(copy)), ((10, 8), (10, 8)))   # cut and kept
-                (crop,) = self.rows("SELECT jpeg FROM face_crops WHERE face_id = ?", (copy,))[0]
-                self.assertEqual(duplicate_faces.dedupe_faces(self.library, apply=True).changed, 1)
-                deduped = self.last_change()
-                if shape != self.SHAPES[0]:
-                    self.execute_with(lambda conn: self.crop_recorded(conn, deduped, "delete", copy, crop))
-                photo_actions.rotate_photos(self.library, [path], "left", EXIFTOOL)
-                self.assertUndone(deduped)
-                self.assertEqual(self.rows("SELECT id FROM faces WHERE id = ?", (copy,)), [(copy,)])
-                self.assertEqual(self.rows("SELECT COUNT(*) FROM face_crops WHERE face_id = ?", (copy,)), [(0,)])
-                self.assertEqual(self.crop_size(copy), (8, 10))   # cut again, upright for the turned photo
 
 
 class WhereTheLibraryDoesNotHoldTheFolder(RotationCase):

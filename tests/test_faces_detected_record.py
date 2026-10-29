@@ -169,15 +169,8 @@ class ThePhotoThatLosesItsFaces(unittest.TestCase):
         self.assertEqual(2, self.write(lambda conn: faces.remove_for_photo(conn, self.photo)))
         self.assertFalse(self.recorded())
 
-    def test_a_photo_that_loses_its_last_face_is_detected_again(self):
-        self.write(lambda conn: faces.delete(conn, []))
-        self.write(lambda conn: faces.delete(conn, self.faces[:1]))
-        self.assertTrue(self.recorded(), "a photo that keeps a face keeps its record")
-        self.write(lambda conn: faces.delete(conn, self.faces[1:]))
-        self.assertFalse(self.recorded())
-
     def test_the_journals_delete_of_the_last_face_forgets_it_too_and_its_undo_puts_the_face_back(self):
-        # The journal writes face rows of its own (a duplicate face removed, a photo's rows merged): same rule.
+        # The journal writes face rows of its own (a photo's rows merged): same rule.
         journal.apply(self.db_path, "delete faces", [journal.delete("faces", (face,), {}) for face in self.faces[:1]])
         self.assertTrue(self.recorded(), "a photo that keeps a face keeps its record")
         applied = journal.apply(self.db_path, "delete faces", [journal.delete("faces", (face,), {}) for face in self.faces[1:]])

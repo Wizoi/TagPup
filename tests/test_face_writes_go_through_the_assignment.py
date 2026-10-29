@@ -30,7 +30,6 @@ ALLOWED = {
     "tagpup/services/faces.py": "the faces service itself: the writers",
     "tagpup/services/face_people.py": "one face (or one photo's) with the photo's tag, the tag first or the face first as its docstring says",
     "tagpup/services/face_assignment.py": "the bulk door: the faces that carry no name write no photo (Unmatch, Ignore), the rest are the batch's",
-    "tagpup/services/duplicate_faces.py": "removes the second row of a face detected twice: a journaled change of rows",
     "tagpup/services/identities.py": "clustering gives automatic names, which are guesses with no decider and no tag",
     "tagpup/web/tuner_routes.py": "Restore: a ruled-out face comes back unnamed and unclaimed, which writes no tag",
     "tagpup/store/face_batches.py": "the batch's own follower: faces written in the transaction that marks the photo's file done",
@@ -38,8 +37,7 @@ ALLOWED = {
     "tagpup/store/taxonomy.py": "deleting a person with force unnames their faces, journaled (PERSON_DELETED); their tag goes with the node",
 }
 
-#: Writers that reach faces another way and are not scanned: the naming job (Name faces from tags), the indexer, and the MCP server's
-#: merge_duplicate_person_tags / dedupe_faces write through the journal's rows (tagpup.store.journal) with the tags they were read from.
+#: Writers that reach faces another way and are not scanned: the naming job (Name faces from tags) and the indexer.
 
 #: What is read for each module of the scan: the dotted names it binds to the modules of WRITERS.
 FOLDERS = ("services", "jobs", "web", "store", "mcp", "")

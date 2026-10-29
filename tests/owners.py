@@ -27,6 +27,7 @@ RETIRED = frozenset({
     83,    # migration below the baseline deleted (migration 4 with foreign keys on); its test went with it
     96,    # migration below the baseline deleted (migration 7's saved suggestions under two folders); its test went with it
     753,   # migration below the baseline deleted (migration 24's word index being made, answered 503); its test went with it
+    250,   # refresh_rows' planner reading a row never read: the planner is deleted (DECISIONS 2026-10-28); its test went with it
 })
 
 SCENARIOS = {
@@ -109,7 +110,7 @@ _SCENARIO_FILES = {
     ),
     "F4": "test_folder_watcher test_one_walk_of_a_library_at_a_time test_sync",
     "F5": "test_scenario_two_libraries_share_a_folder",
-    "F6": "test_index_progress_end_to_end test_partial_writes_leave_rows_unread test_refresh_rows",
+    "F6": "test_index_progress_end_to_end test_partial_writes_leave_rows_unread",
     "F7": "test_a_share_asleep test_a_share_that_drops_mid_walk test_a_share_that_wakes",
     "F8": (
         "test_bulk_delete test_delete_a_photo test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules "
@@ -188,7 +189,7 @@ _FILES = {
             "show-matched-toggle tag-editor-in-place tag-order tag-view tag-vocabulary tagpup-people-by-id "
             "tagpup-people-lists-by-id tags-shown-alphabetical "
             "test_answers_carry_their_person test_automatch_references test_automatch_writes_once test_cluster_candidates "
-            "test_clustering_evidence test_dedupe_faces_keeps_decisions test_every_tag_has_an_id "
+            "test_clustering_evidence test_every_tag_has_an_id "
             "test_excluded_faces_stay_unnamed test_face_click_reads_named_faces_once test_face_clustering_rules "
             "test_face_exclusion test_face_roots_are_the_trees "
             "test_faces_from_tags test_folder_scope_roots test_group_tag_is_not_a_person "
@@ -230,7 +231,7 @@ _FILES = {
             "test_keyword_fields test_lock_owners "
             "test_metadata_extraction test_minor_errors_in_a_journaled_write test_one_answer_to_the_librarys_folders "
             "test_paths "
-            "test_paths_roots test_photo_identity test_photo_meta test_refresh_rows_guards "
+            "test_paths_roots test_photo_identity test_photo_meta "
             "test_relink_checks_the_destination test_remove_folder_lists_the_library "
             "test_renaming "
             "test_service_change_tags "

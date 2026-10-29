@@ -4,7 +4,6 @@
   twice, prefixed and bare (`XMP:Subject`, `Subject`), and most stored rows hold the
   prefixed spelling only -- two spellings of one value (findings, phase 7 review).
 - It answered "KeyError" for a file ExifTool could not read.
-- A duplicate face named between the plan and the write was deleted with its name.
 - An apply whose write failed answered with the error's kind alone, not the backup it
   had already taken. Since phase 7.5 an apply takes no backup: it is one transaction,
   so a failed write leaves nothing written and no change recorded.
@@ -21,7 +20,7 @@ import own_home  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
-from tagpup.services import duplicate_faces, inspect, maintenance  # noqa: E402
+from tagpup.services import inspect, maintenance  # noqa: E402
 from tagpup.store import db, journal, schema, taxonomy  # noqa: E402
 
 
@@ -87,27 +86,6 @@ class APhotoAgainstItsFile(ALibrary):
         self.assertTrue(answer["file_exists"])
         self.assertFalse(answer["file_read"])
         self.assertIsNone(answer["stale"])
-
-
-class AFaceNamedBetweenThePlanAndTheWrite(ALibrary):
-    def test_is_not_deleted(self):
-        photo = self.execute("INSERT INTO photos (path) VALUES (?)", (os.path.abspath("D:/Pictures/a.jpg"),))
-        kept = self.execute("INSERT INTO faces (photo_id, box) VALUES (?, '[0, 0, 10, 10]')", (photo,))
-        copy = self.execute("INSERT INTO faces (photo_id, box) VALUES (?, '[0, 0, 10, 10]')", (photo,))
-        real_plan = duplicate_faces._plan
-
-        def named_meanwhile(library):
-            planned = real_plan(library)
-            # What TagTuner could do between the plan and the write.
-            self.execute("UPDATE faces SET name = 'Rowan Thackeray', name_source = 'manual' WHERE id = ?", (copy,))
-            return planned
-
-        with mock.patch.object(duplicate_faces, "_plan", side_effect=named_meanwhile):
-            result = duplicate_faces.dedupe_faces(self.library, apply=True)
-        self.assertEqual(1, result.attempted)
-        self.assertEqual(0, result.changed)
-        self.assertIn("faces %d is not what the plan read: name, name_source changed" % copy, result.refused)
-        self.assertEqual([(kept,), (copy,)], self.rows("SELECT id FROM faces ORDER BY id"))
 
 
 class AnApplyWhoseWriteFails(ALibrary):

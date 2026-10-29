@@ -166,7 +166,6 @@ Python:
 - `test_cluster_candidates`: grouping a block at a time, so the screen can say how far along it is.
 - `test_clustering_evidence`: clustering's evidence is what people wrote, never its own last guess.
 - `test_clustering_keeps_a_name_the_tags_confirm`: a name its photo's keywords confirm is kept below 0.80 (#855).
-- `test_dedupe_faces_keeps_decisions`: a merge of two copies of a face keeps the decided one and every exclusion.
 - `test_every_tag_has_an_id`: a keyword gets its node once; a store face writer refuses a name no node has.
 - `test_excluded_faces_stay_unnamed`: an excluded face is never named, and a write says what it changed.
 - `test_face_click_reads_named_faces_once`: a click on a face card reads the named faces once.
@@ -179,7 +178,7 @@ Python:
 - `test_identify_cache_keeps_others_writes`, `test_identify_cache_sees_every_change`: the grid cache's fingerprint.
 - `test_identify_queries`: what the Identify queries may touch on 225,000 faces.
 - `test_index_resolves_people`: the index resolves people by the library's own tree.
-- `test_journal_through_the_services`: the maintenance services journal what they apply.
+- `test_journal_through_the_services`: the changes of the deleted merge of person tags and refresh of rows, which the live journals hold, list in History; their undo is refused by schema version (the file tests the journal's list and undo of changes of that shape at the current schema).
 - `test_new_person_reads_the_pool_once`: New Person reads the nameless faces once per state (#5).
 - `test_organize_faces`: what the server gives and takes for Organize's face boxes (#791).
 - `test_people_by_id_tree`: rename, move, merge and delete of a person's tag, one transaction each.
