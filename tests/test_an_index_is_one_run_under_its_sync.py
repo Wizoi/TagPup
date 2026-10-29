@@ -34,6 +34,7 @@ from tagpup import logs  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import activity, bake_after_index, indexing  # noqa: E402
@@ -532,6 +533,36 @@ class TheDailySyncSaysHowFarItsWalkGot(_Indexing):
         self.assertEqual(["walking", "after_the_walk"], phases)
         [run] = self.runs()
         self.assertEqual({"phase": "after_the_walk", "counts": {"folders": 4, "files": 3}}, run.progress)
+
+    def test_a_sync_whose_end_cannot_be_written_is_written_as_the_next_one_is_claimed(self):
+        """The recurring runner's run is the same one-place lifecycle as the index's: an end that raised once left the sync
+        `running`, this live server's, so no later sync was recorded."""
+        sync = recurring.JOBS.get(recurring.SYNC)
+        real_end, said = runs_service.end, []
+
+        def end_once_unwritable(*args, **kwargs):
+            if not said:
+                said.append(args[1])
+                raise OSError("the library cannot be written just now")
+            return real_end(*args, **kwargs)
+        with mock.patch.object(runs_service, "end", side_effect=end_once_unwritable):
+            first = recurring.run_claimed(sync, self.library, self.library.name, lambda now: Result(attempted=1))
+            self.assertEqual([job_runs.RUNNING], [run.outcome for run in self.runs()])
+            second = recurring.run_claimed(sync, self.library, self.library.name, lambda now: Result(attempted=2))
+        self.assertTrue(first.ran and second.ran, (first.why, second.why))
+        self.assertEqual([job_runs.DONE, job_runs.DONE], [run.outcome for run in self.runs()])
+        self.assertEqual([first.run_id], said)
+
+    def test_a_recurring_body_stopped_by_more_than_an_exception_ends_its_run_failed(self):
+        class Stopped(BaseException):
+            pass
+
+        def stops(now):
+            raise Stopped()
+        with self.assertRaises(Stopped):
+            recurring.run_claimed(recurring.JOBS.get(recurring.SYNC), self.library, self.library.name, stops)
+        [run] = self.runs()
+        self.assertEqual((job_runs.FAILED, runs_service.ERROR), (run.outcome, runs_service.kind_of(run)))
 
     def test_a_sync_not_run_as_a_job_writes_no_run(self):
         """The watcher's sync of a folder claims none while it runs (its record is written as it ends)."""
