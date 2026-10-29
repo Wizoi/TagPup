@@ -93,6 +93,8 @@ _SCENARIO_FILES = {
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
     "D6": "test_a_librarys_settings_are_its_own",
     "D8": "test_migrations",
+    # test_an_index_is_one_run_under_its_sync is Data's file (D9, the row); its index-queue scenarios (F11) are reviewed by
+    # the Files owner with the integration owner.
     "D9": "test_runs_nest_and_say_how_far_they_got test_an_index_is_one_run_under_its_sync",
     "D7": (
         "test_library_roots test_roots_at_scale test_roots_ingress test_roots_location test_roots_scenarios "
