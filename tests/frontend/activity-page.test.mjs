@@ -36,7 +36,7 @@ const NOW = {
       jobs: [{ job: "snapshots", run_id: 12, started: "2026-09-26 09:58:00", run: "job:regatta:12",
                logs: ["tagpup_web.log"] }] },
   ],
-  syncing: { library: "harbour", folder: "D:\\Photos\\Regatta", started: "2026-09-26 10:00:01" },
+  syncing: { library: "harbour", folder: "D:\\Photos\\Regatta", started: "2026-09-26 10:00:01", progress: null },
   watching: true,
   server: { version: "20260926-090000-abc1234", taking_work: true, requests: 1, busy: [] },
 };
@@ -161,6 +161,7 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(now.textContent, /running, 3 of 9/);
     assert.match(now.textContent, /snapshots/);
     assert.match(now.textContent, /D:\\Photos\\Regatta/);
+    assert.doesNotMatch(now.textContent, /starting/, "a sync of one folder says no progress, and is not starting");
     assert.equal(document.getElementById("updated").textContent, "Updated 10:00:03");
   });
 
