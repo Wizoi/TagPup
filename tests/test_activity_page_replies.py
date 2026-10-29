@@ -62,11 +62,6 @@ class RepliesForTheActivityPage(_Libraries):
                 mock.patch.object(journal, "_now", lambda: dates.recorded(day_before)):
             return super().library(name, **kwargs)
 
-    def nightly_sync(self, library, queue=None, at=NIGHT):
-        """The daily sync's run, at the scenario's clock: the sync's own record reads time.time as it ends."""
-        with mock.patch("time.time", Clock(at)):
-            return super().nightly_sync(library, queue, at)
-
     def replies(self, libraries, at, watcher=None):
         """What the page asks, as the real routes answer it, at the scenario's clock `at`."""
         tasks = [(runtimes.RECURRING_JOBS, recurring.Runner(lambda: libraries, clock=Clock(at)))]
