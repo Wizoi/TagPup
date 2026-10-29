@@ -19,6 +19,17 @@ export function none(text) {
     return buildElement('p', { className: 'none', text });
 }
 
+/**
+ * Runs as a tree, Now's and What happened's: a `ul.run-tree` of `nodes` ([{ children }]), each an `li` built from
+ * `attributes(node)` holding `lines(node)` and, beneath them, its children's tree.
+ */
+export function runTree(nodes, lines, attributes) {
+    return buildElement('ul', { className: 'run-tree' }, nodes.map(node => buildElement('li', attributes(node), [
+        ...lines(node),
+        node.children.length ? runTree(node.children, lines, attributes) : null,
+    ])));
+}
+
 /** How an outcome looks: done is ok, failed and abandoned are bad, running is busy. */
 export function outcomeKind(outcome) {
     if (outcome === 'done' || outcome === 'completed' || outcome === 'in step' || outcome === 'applied'

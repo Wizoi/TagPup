@@ -11,7 +11,7 @@ import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { ago, duration, parseTime, secondsBetween } from './format.js';
-import { badge, fill, none, runLinks } from './view.js';
+import { badge, fill, none, runLinks, runTree } from './view.js';
 
 /** The seconds without progress after which a running run is said to be stuck (docs/PLAN_ACTIVITY.md, "Design"). */
 const STUCK_AFTER = 300;
@@ -162,11 +162,7 @@ function runLine(item, at) {
 }
 
 function treeList(nodes, at) {
-    return buildElement('ul', { className: 'run-tree' }, nodes.map(node => buildElement('li', {
-        className: 'run', data: { label: node.item.label } }, [
-        ...runLine(node.item, at),
-        node.children.length ? treeList(node.children, at) : null,
-    ])));
+    return runTree(nodes, node => runLine(node.item, at), node => ({ className: 'run', data: { label: node.item.label } }));
 }
 
 /** The folders waiting for this process's index, and the library's Suggest runs. */
