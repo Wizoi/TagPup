@@ -425,8 +425,13 @@ class Watcher:
             details = getattr(result, "details", {}) or {}
             counts = details.get("counts", {})
             if result.changed or details.get("queued") or counts.get("missing"):
-                logger.info("Synced %s in %s: %d row(s) changed, %d folder(s) queued to index, %d missing.",
-                            what, library.name, result.changed, details.get("queued", 0), counts.get("missing", 0))
+                # A removal nobody asked for is said here, with the named faces it took, not only in History.
+                removed = details.get("changed") or {}
+                logger.info("Synced %s in %s: %d row(s) changed, %d folder(s) queued to index, %d missing%s.",
+                            what, library.name, result.changed, details.get("queued", 0), counts.get("missing", 0),
+                            "; %d row(s) removed, with %d face(s), %d of them named" % (
+                                removed["removed"], removed.get("removed_faces", 0), removed.get("removed_named", 0))
+                            if removed.get("removed") else "")
         except Exception:
             logger.exception("Syncing %s failed", library.name)
         finally:
