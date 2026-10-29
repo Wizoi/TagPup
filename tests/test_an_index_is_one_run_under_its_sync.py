@@ -27,7 +27,7 @@ from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
-from tagpup.services import bake_after_index, indexing  # noqa: E402
+from tagpup.services import activity, bake_after_index, indexing  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
@@ -134,7 +134,7 @@ class _Indexing(unittest.TestCase):
         return runs_service.tree(library or self.library)
 
     def index_run(self, library=None):
-        [run] = [each for each in self.runs(library) if each.job == indexing_jobs.JOB]
+        [run] = [each for each in self.runs(library) if each.job == runs_service.INDEX]
         return run
 
 
@@ -162,6 +162,14 @@ class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
                                                       "conflicts": 0, "percent": 0}}, run.progress)
         text = rows(self.library.path, "SELECT COALESCE(progress, '') || changed || COALESCE(note, '') FROM job_runs")
         self.assertFalse(any("Regatta" in each[0] or "Pictures" in each[0] for each in text), text)
+        # Its tag, which its indexer's log is named by, is in its row: what the page will find the run's lines by.
+        self.assertTrue(run.changed["run"].startswith("index:harbour:"), run.changed)
+
+    def test_the_timeline_lists_an_index_once_from_the_queue_not_again_as_a_job(self):
+        """#2188: the index's row was listed as a job beside the queue's own entry of it."""
+        self.queued([self.folder("Regatta")], self.code(bars(1)))
+        self.assertEqual("index", self.index_run().job)
+        self.assertEqual([], [entry for entry in activity.timeline(self.library) if entry["kind"] == "job"])
 
     def test_an_index_queued_by_no_run_is_a_top_run_and_the_indexer_it_starts_claims_none(self):
         folder = self.folder("Regatta")

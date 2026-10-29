@@ -24,6 +24,7 @@ from tagpup.store import db, job_runs
 logger = logging.getLogger(__name__)
 
 DONE, FAILED, RUNNING = job_runs.DONE, job_runs.FAILED, job_runs.RUNNING
+INDEX = job_runs.INDEX
 Run = job_runs.Run
 stamp = job_runs.stamp
 seconds = job_runs.seconds
@@ -39,12 +40,13 @@ def counts(result):
     return found
 
 
-def claim(library, job, run_for, now, due=None):
+def claim(library, job, run_for, now, due=None, changed=None):
     """Begin a run of `job` in `library`, for the library named `run_for` (None for a job
     not run per library), unless a live process has one or `due` says it is not due
-    (tagpup.store.job_runs.claim). Its parent is the run of `library` this thread is part of
-    (tagpup.core.runs.parent_run). A Claim: true with its `run_id` when begun."""
-    return job_runs.claim(library.path, job, run_for, now, due, parent=run_tags.parent_run(library.name))
+    (tagpup.store.job_runs.claim), holding `changed` from the start. Its parent is the run of `library` this thread is
+    part of (tagpup.core.runs.parent_run). A Claim: true with its `run_id` when begun."""
+    return job_runs.claim(library.path, job, run_for, now, due, parent=run_tags.parent_run(library.name),
+                          changed=changed)
 
 
 def sweep_abandoned(library, now=None):

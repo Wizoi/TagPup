@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 RUNNING, DONE, FAILED, ABANDONED = "running", "done", "failed", "abandoned"
 OUTCOMES = (RUNNING, DONE, FAILED, ABANDONED)
 
+#: The job a run of the indexer is recorded as (tagpup.jobs.indexing). Its row holds, as `changed["run"]` from the
+#: claim on, the run's tag (tagpup.core.runs.index_tag), which the indexer's own log file is named by (tagpup.logs.run_log).
+INDEX = "index"
+
 #: The runs kept of each job for each library; older ones are deleted as a run finishes.
 KEEP_RUNS = 50
 
@@ -149,10 +153,11 @@ class Claim:
         return self.run_id is not None
 
 
-def claim(db_path, job, library, now, due=None, parent=None):
+def claim(db_path, job, library, now, due=None, parent=None, changed=None):
     """Begin a run of `job` for `library` (a library's name, or None for a job not run per
     library) at `now` (seconds since the epoch), owned by this process, under the run `parent`
-    of the same library (its id) if it was queued by one: unless a process
+    of the same library (its id) if it was queued by one, `changed` what it holds from the start
+    (an index's tag, INDEX): unless a process
     still running holds one, or `due`, called with the last run that ended (Run or None),
     answers False. A run whose process has ended is marked `abandoned` first. A Claim.
 
@@ -179,9 +184,10 @@ def claim(db_path, job, library, now, due=None, parent=None):
             return Claim(why="running", abandoned=abandoned, holder=holder)
         if due is not None and not due(_last_ended(conn, job, library)):
             return Claim(why="not due", abandoned=abandoned)
-        run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner, parent)"
-                              " VALUES (?, ?, ?, 'running', ?, ?)",
-                              (job, library, stamp(now), file_journal.owner(), parent)).lastrowid
+        run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner, parent, changed)"
+                              " VALUES (?, ?, ?, 'running', ?, ?, ?)",
+                              (job, library, stamp(now), file_journal.owner(), parent,
+                               json.dumps(changed, sort_keys=True) if changed else None)).lastrowid
         return Claim(run_id=run_id, abandoned=abandoned)
 
     return db.write_with_connection(db_path, work, label="claim the job %s" % job)
