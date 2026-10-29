@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -24,8 +25,10 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
+from tagpup.services import activity  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
+from tagpup.services import sync as sync_service  # noqa: E402
 from tagpup.store import job_runs, snapshots  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
@@ -169,7 +172,8 @@ class Now(Base):
         self.assertEqual([{"name": "Harbour Walk", "folders": 1}], indexing["queued"])
         self.assertEqual([], by_name["harbour"]["jobs"])
         self.assertEqual([{"job": "snapshots", "run_id": claim.run_id, "started": by_name["regatta"]["jobs"][0]["started"],
-                           "run": "job:regatta:%d" % claim.run_id, "logs": [logs.SERVER_LOG]}],
+                           "run": "job:regatta:%d" % claim.run_id, "parent": None, "progress": None,
+                           "logs": [logs.SERVER_LOG]}],
                          by_name["regatta"]["jobs"])
         self.assertEqual([logs.run_log("indexer", indexing["running"]["run"]), logs.SERVER_LOG],
                          indexing["running"]["logs"])
@@ -177,11 +181,85 @@ class Now(Base):
         self.assertTrue(found["server"]["taking_work"])
 
     def test_the_watchers_sync_under_way(self):
-        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {},
-                               "syncing": {"library": "harbour", "folder": "D:/Photos/Regatta", "started": "x"}})
+        """A whole sync's phase and counts are its run's row, the folder it is at this process's; a sync of one folder
+        says no progress; a library whose runs cannot be read leaves the others' shown."""
+        now = time.time()
+        claim = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", now)
+        job_runs.progress(self.harbour.path, claim.run_id, "walking_again", {"folders": 812, "files": 20417}, now)
+        whole = {"library": "Harbour", "folder": None, "started": "x", "walking_at": "D:/Photos/Regatta"}
+        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {}, "syncing": whole})
         found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
         self.assertTrue(found["watching"])
-        self.assertEqual("harbour", found["syncing"]["library"])
+        self.assertEqual({"library": "Harbour", "folder": None, "started": "x",
+                          "progress": {"phase": "walking the folders again", "folders": 812, "files": 20417,
+                                       "folder": "D:/Photos/Regatta", "progressed": job_runs.stamp(now)}},
+                         found["syncing"])
+        watcher.found["syncing"] = dict(whole, folder="D:/Photos/Regatta")
+        self.assertIsNone(self.get("/api/activity/now", tasks=[("folder watcher", watcher)])["syncing"]["progress"])
+        watcher.found["syncing"] = whole
+        real = activity.under_way
+
+        def unreadable(library):
+            if library.name.lower() == "harbour":
+                raise OSError("the library is locked")
+            return real(library)
+
+        with mock.patch.object(activity, "under_way", unreadable):
+            found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertIsNone(found["syncing"]["progress"])
+        self.assertEqual({"harbour", "regatta"}, {entry["name"] for entry in found["libraries"]})
+
+    def test_a_failure_after_the_sync_s_row_was_read_does_not_make_the_library_unreadable(self):
+        """#2215: only the runs of a library that cannot be listed leave its sync unknown (null); the index runs of a
+        sync failing to read later in the block do not."""
+        now = time.time()
+        claim = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", now)
+        job_runs.progress(self.harbour.path, claim.run_id, "walking", {"folders": 5, "files": 40}, now)
+        whole = {"library": "Harbour", "folder": None, "started": "x", "walking_at": None}
+        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {}, "syncing": whole})
+        with mock.patch.object(activity, "index_runs_under", side_effect=OSError("the library is locked")):
+            found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertEqual("walking the folders", found["syncing"]["progress"]["phase"])
+        self.assertEqual({"harbour", "regatta"}, {entry["name"] for entry in found["libraries"]})
+
+    def test_the_folder_the_walk_is_at_shows_before_the_row_has_said_anything(self):
+        """#2203: the walk's folder is the process's memory; the row's counts trail it by up to 10 s, or are a newer
+        version's: the folder shows alone, the page's own words (no phase) for the rest."""
+        claim = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", time.time())
+        whole = {"library": "Harbour", "folder": None, "started": "x", "walking_at": "D:/Photos/Regatta"}
+        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {}, "syncing": whole})
+        found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertEqual({"folder": "D:/Photos/Regatta"}, found["syncing"]["progress"])
+        watcher.found["syncing"] = dict(whole, walking_at=None)
+        self.assertIsNone(self.get("/api/activity/now", tasks=[("folder watcher", watcher)])["syncing"]["progress"])
+        # A row written by a newer version: a phase this one does not know says nothing, the folder still shows.
+        job_runs.progress(self.harbour.path, claim.run_id, "somewhere_new", {"folders": 3}, time.time())
+        watcher.found["syncing"] = whole
+        found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertEqual({"folder": "D:/Photos/Regatta"}, found["syncing"]["progress"])
+
+    def test_a_progress_this_version_does_not_know_is_not_read(self):
+        """#2206: a row of a newer version (another phase, counts not numbers) is None, never an error."""
+        said = {"phase": "walking", "counts": {"folders": 4, "files": 9}, "progressed": "t"}
+        self.assertEqual({"phase": sync_service.WALKING, "folders": 4, "files": 9, "progressed": "t"},
+                         sync_service.walked(said))
+        for odd in (dict(said, phase="somewhere_new"), dict(said, counts={"folders": 4}),
+                    dict(said, counts={"folders": "four", "files": 9}), dict(said, counts=None), {}):
+            self.assertIsNone(sync_service.walked(odd), odd)
+
+    def test_the_timeline_reads_a_librarys_index_runs_once(self):
+        """#2207: the entries and the logs of the runs an index is part of come from one read of the index rows."""
+        real = job_runs.runs
+        asked = []
+
+        def counting(path, job=None, limit=20, exclude=()):
+            if path == self.harbour.path and (job == job_runs.INDEX or (job is None and job_runs.INDEX not in exclude)):
+                asked.append((job, limit))
+            return real(path, job, limit, exclude)
+
+        with mock.patch.object(job_runs, "runs", counting):
+            self.get("/api/activity/timeline")
+        self.assertEqual(1, len(asked), asked)
 
 
 class ScheduledJobs(Base):
@@ -367,18 +445,6 @@ class SyncSnapshotsAndTheTimeline(Base):
         sync = [entry for entry in found["entries"] if entry["kind"] == "sync"][0]
         self.assertEqual(2, sync["counts"]["found_missing"])
         self.assertEqual(1, len(self.client().get("/api/activity/timeline?limit=1").get_json()["entries"]))
-
-    def test_the_index_queues_runs_are_in_the_timeline(self):
-        queue = indexing_jobs.queue_for(self.harbour)
-        self.addCleanup(indexing_jobs.forget, self.harbour)
-        queue.start([self.home.root], lambda folder, report: Result(attempted=1, changed=1))
-        queue.wait()
-        entries = [e for e in self.get("/api/activity/timeline")["entries"] if e["kind"] == "index"]
-        self.assertEqual(1, len(entries))
-        self.assertEqual("completed", entries[0]["outcome"])
-        self.assertTrue(entries[0]["run"].startswith("index:harbour:"))
-        # The logs it wrote in, named by the one owner of the names: its own, then the server's.
-        self.assertEqual([logs.run_log("indexer", entries[0]["run"]), logs.SERVER_LOG], entries[0]["logs"])
 
     def test_a_syncs_logs_include_the_indexing_it_queued(self):
         """A sync queues its new files' folders; the run of the indexer that indexes them

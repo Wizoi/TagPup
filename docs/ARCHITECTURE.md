@@ -220,11 +220,14 @@ programs only. A moved module takes every importer with it and leaves nothing at
   warmed on a thread, released after an idle period; each library's job runners; `begin`/`gpu_turn` take the
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
-  process, via the CLI's `index`), Suggest runs, Name faces from tags, Identify caches. **Recurring jobs**
+  process, via the CLI's `index`; each run its `index` row of `job_runs`, which the Activity page reads -- the queue
+  keeps no history), Suggest runs, Name faces from tags, Identify caches. **Recurring jobs**
   (`tagpup.jobs.recurring`: snapshots, sync) are run by the web server only; the
   folder **watcher** syncs a folder when it changes -- not when its notifications named only photos the library's rows
   already describe, TagPup's own writes from any process (`sync.followed`) -- and its whole sync is a run of the `sync` job
-  (`recurring.run_claimed`), so one walker per library. Event-driven first: a schedule is only for safety.
+  (`recurring.run_claimed`), so one walker per library; how far its walk got is that run's row (`job_runs.tell`, counts
+  only), the folder it is at alone kept in the walking process's memory (`sync.walking_at_into`, Now's live line).
+  Event-driven first: a schedule is only for safety.
 - **The graphics card**: one process at a time on the machine has a model on it (`tagpup.ml.gpu.Card`, a byte
   lock in the user's own folder, waiters queued and named on the Activity page).
 - **The installed copy.** The owner runs `%LOCALAPPDATA%\TagPup\*.cmd`, made by `scripts/install_app.py`, with
@@ -269,7 +272,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 | File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, sync (`refresh_rows.reread`, `edits_for`), `record_tags_in_index` (`store/photos.py`) |
 | Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
 | Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `face_embeddings` (a face's vector under the model that made it, read under the library's `faces.model`: `store.faces.model_key`), `suggestions`, `faces_detected`, `photo_fingerprints` (the hash of a photo's upright decode; not journaled, a rotation forgets it) | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py`, `store/photo_fingerprints.py` |
-| Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs` (the recurring jobs' runs, the syncs: `sync-whole`, `sync-folder`, and each index the queue makes: `index`, a record that gates nothing, one row per process indexing) | `store/schema.py`, `store/generations.py`, `store/job_runs.py` |
+| Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs` (the recurring jobs' runs, the syncs: `sync-whole`, `sync-folder`, and each index the queue makes: `index`, a record that gates nothing, one row per process indexing, holding its tag, its folders' count and the syncs it is part of) | `store/schema.py`, `store/generations.py`, `store/job_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |
 
 **The journal** (7.5). Every bulk edit and maintenance operation is one `changes`

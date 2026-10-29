@@ -85,6 +85,7 @@ import collections
 import contextlib
 import contextvars
 import logging
+import numbers
 import os
 import threading
 import time
@@ -118,36 +119,56 @@ CHANGED = KINDS + ("removed_faces", "removed_named")
 #: for this long to be back (shares.Walk, patient), once a share, before its roots are not looked at (#2101).
 FOLDER_WAIT = 10.0
 
-#: The phases of a sync its progress names (progress_into): its walk, the second walk only a removal makes, and what
+#: The phases of a sync its progress names (walked): its walk, the second walk only a removal makes, and what
 #: follows the walk (the changed files read, the change written).
 WALKING, WALKING_AGAIN, AFTER_THE_WALK = "walking the folders", "walking the folders again", "reading what changed"
-#: Each, as the run of a sync job records it (tagpup.services.job_runs.PHASES).
+#: Each, as the run of a sync job records it (tagpup.services.job_runs.PHASES), and back (walked).
 _RUN_PHASES = {WALKING: "walking", WALKING_AGAIN: "walking_again", AFTER_THE_WALK: "after_the_walk"}
+_PHASE_SAID = {recorded: said for said, recorded in _RUN_PHASES.items()}
 
 #: A walk logs how far it has got every LOG_FOLDERS folders and LOG_SECONDS seconds, whichever is the rarer: on the
 #: share, 2,564 folders in about 12 minutes (photo_index, #1915), never a line a file.
 LOG_FOLDERS, LOG_SECONDS = 50, 30
 
-_progress = contextvars.ContextVar("tagpup_sync_progress", default=None)
+_walking_at = contextvars.ContextVar("tagpup_sync_walking_at", default=None)
 
 
 @contextlib.contextmanager
-def progress_into(found):
-    """A sync run on this thread meanwhile keeps `found`, a dict, up to date with how far it got: {"phase" (WALKING,
-    WALKING_AGAIN, AFTER_THE_WALK), "folders" walked, "files" (photo files found), "folder" (the last one walked),
-    "progressed" (when it last moved, as the Activity page spells a time)}. The folder watcher's status
-    (tagpup.jobs.watching): in memory, this process's."""
-    found.update(phase=None, folders=0, files=0, folder=None, progressed=None)
-    token = _progress.set(found)
+def walking_at_into(at):
+    """A sync run on this thread meanwhile keeps at["folder"] the folder its walk is at: None before a walk, between its
+    walks and after. The one part of how far a walk got kept in memory, this process's -- the Activity page's live
+    "at <folder>" (owner, 2026-10-28: live progress shows folder paths, this PC only); its phase and counts are its run's
+    row (job_runs.tell; walked), which never holds a path. The folder watcher's (tagpup.jobs.watching)."""
+    at["folder"] = None
+    token = _walking_at.set(at)
     try:
-        yield found
+        yield at
     finally:
-        _progress.reset(token)
+        _walking_at.reset(token)
+
+
+def walked(progress):
+    """How far a sync's walk got as its run's row says it -- `progress`, a run's as tagpup.services.activity.under_way
+    gives it ({"phase", "counts", "progressed"}), None before the run said or in a library before migration 36 --
+    as the Activity page's Now reads it: {"phase" (WALKING, WALKING_AGAIN, AFTER_THE_WALK), "folders" walked, "files"
+    (photo files found), "progressed" (when it last said)}, or None -- also for a progress this version does not know
+    (a phase it has no name for, counts that are not the two numbers: a row a newer version wrote). Counts only: the
+    folder the walk is at is the process's that walks (walking_at_into)."""
+    if not isinstance(progress, dict):
+        return None
+    counts = progress.get("counts")
+    phase = _PHASE_SAID.get(progress.get("phase"))
+    if phase is None or not isinstance(counts, dict):
+        return None
+    folders, files = counts.get("folders"), counts.get("files")
+    if not all(isinstance(each, numbers.Number) and not isinstance(each, bool) for each in (folders, files)):
+        return None
+    return {"phase": phase, "folders": folders, "files": files, "progressed": progress.get("progressed")}
 
 
 class _Walked:
-    """How far one walk (_scan) has got: told each folder listed (images.stamps_under's `listed`), it keeps the sync's
-    progress (progress_into), tells the run recorded on this thread -- the sync job's (tagpup.jobs.recurring.run_claimed)
+    """How far one walk (_scan) has got: told each folder listed (images.stamps_under's `listed`), it keeps the folder
+    it is at (walking_at_into), tells the run recorded on this thread -- the sync job's (tagpup.jobs.recurring.run_claimed)
     -- its phase, folders and files (tagpup.services.job_runs.tell: at most every 10 s, never the folder), and logs a line at most every
     LOG_FOLDERS folders and LOG_SECONDS seconds, with the run's tag (tagpup.core.runs): the folder it is at, never a line
     a file."""
@@ -159,10 +180,9 @@ class _Walked:
         self._tell(None)
 
     def _tell(self, folder):
-        found = _progress.get()
-        if found is not None:
-            found.update(phase=self.phase, folders=self.folders, files=self.files, folder=folder,
-                         progressed=job_runs.stamp(time.time()))
+        at = _walking_at.get()
+        if at is not None:
+            at["folder"] = folder
         recorded_runs.tell(_RUN_PHASES[self.phase], {"folders": self.folders, "files": self.files})
 
     def listed(self, folder, photos):

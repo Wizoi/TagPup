@@ -1,6 +1,10 @@
 """What the Activity page shows of each library, read and never written (docs/ARCHITECTURE.md,
-phase 8.5): its syncs, its snapshots, and one timeline of what was done in it -- the
-journal's changes, the recurring jobs' runs and the syncs -- newest first.
+phase 8.5): its syncs, its snapshots, the runs under way, and one timeline of what was done in it -- the
+journal's changes, the recurring jobs' runs, the index's runs and the syncs -- newest first.
+
+An index's run is its row of `job_runs` (job_runs.INDEX, written by the server's index queue, tagpup.jobs.indexing):
+its tag, which its indexer's own log is named by, is `changed["run"]`; it is part of the run of its row's `parent` and
+of each sync its `changed["syncs"]` names (a sync's own row is written only as it ends). Nothing here reads the queue.
 
 Counts, times and run tags (tagpup.core.runs), from the library's own records: `changes`
 (tagpup.store.journal) and `job_runs`, the syncs among them (tagpup.store.job_runs.record_sync). A job run's note -- why it failed --
@@ -47,6 +51,49 @@ def _what(run):
     "what"), else the job's name."""
     said = run.changed.get("what")
     return said if isinstance(said, str) and said else run.job
+
+
+def _tag(run):
+    """The tag the lines of `run` carry (tagpup.core.runs): an index's its own, held in its row; any other job's its row's."""
+    if run.job == job_runs.INDEX:
+        return run.changed.get("run")
+    return runs.job_tag(run.library, run.id)
+
+
+def _progress(run):
+    """How far `run` said it got -- {"phase", "counts", "progressed": when it said so} -- or None before it said."""
+    return dict(run.progress, progressed=run.heartbeat) if run.progress else None
+
+
+def index_runs_under(library, indexes=None):
+    """{a run's tag: [the tags of the index runs part of it]}, newest first, from the library's index runs (job_runs.INDEX,
+    the newest KEEP_RUNS; `indexes`, when the caller has read them): each under the job run its row names as `parent`
+    and under each sync it names (`syncs`). What finds a run's lines in its indexes' own logs
+    (tagpup.web.activity_routes)."""
+    found = {}
+    if indexes is None:
+        indexes = job_runs.runs(library.path, job_runs.INDEX, job_runs.KEEP_RUNS)
+    for run in indexes:
+        under = [runs.job_tag(run.library, run.parent)] if run.parent is not None else []
+        for tag in under + list(run.changed.get("syncs") or ()):
+            found.setdefault(tag, []).append(_tag(run))
+    return found
+
+
+def under_way(library):
+    """The runs of the library still `running`, oldest first, whichever process owns them -- an index the CLI runs among
+    them: each {"job", "run_id", "started", "run", "parent", "progress"} (`run` its tag, `parent` the id of the run it is
+    part of, `progress` _progress)."""
+    return [{"job": run.job, "run_id": run.id, "started": run.started, "run": _tag(run), "parent": run.parent,
+             "progress": _progress(run)} for run in job_runs.under_way(library.path)]
+
+
+def _index_outcome(run):
+    """What an index's run says it came to: one that ended `done` completed, or was cancelled (counted so); any other
+    outcome (failed, abandoned, running) is its own."""
+    if run.outcome == job_runs.DONE:
+        return "cancelled" if run.changed.get("cancelled") else "completed"
+    return run.outcome
 
 
 def seconds_between(started, finished):
@@ -100,11 +147,17 @@ def snapshot_list(library, now=None):
 
 
 def timeline(library, limit=50):
-    """What was done in `library`, newest first, at most `limit` entries: each
-    {"kind": "change" | "job" | "sync", "library", "time", "finished", "seconds",
-    "what", "outcome", "counts", "id", "run", "error"}. A sync's change of the journal is its
-    sync's entry, not one of its own. An index's run (job_runs.INDEX) is not one of them: the Activity page lists the
-    index queue's own (tagpup.web.activity_routes) until it reads the runs."""
+    """What was done in `library`: timeline_and_children's entries."""
+    return timeline_and_children(library, limit)[0]
+
+
+def timeline_and_children(library, limit=50):
+    """(the entries, index_runs_under) of `library`, from one read of its index runs. The entries: what was done in
+    `library`, newest first, at most `limit` entries: each
+    {"kind": "change" | "job" | "index" | "sync", "library", "time", "finished", "seconds",
+    "what", "outcome", "counts", "id", "run", "error"}, a job's and an index's also its "parent" and "progress"
+    (under_way). A sync's change of the journal is its sync's entry, not one of its own. An index's run says how many
+    folders it indexed, never which (its row holds no path); its error is its note only when it failed or was abandoned."""
     limit = max(1, min(int(limit), MOST))
     entries = []
     conn = _look(library)
@@ -124,11 +177,16 @@ def timeline(library, limit=50):
                         "counts": dict(entry["changed"], **{"found_" + k: v for k, v in entry["found"].items()
                                                             if k in ("new", "missing", "moved", "changed")}),
                         "id": record["id"], "run": entry["run"], "error": None})
-    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS + (job_runs.INDEX,)):
+    indexes = job_runs.runs(library.path, job_runs.INDEX, job_runs.KEEP_RUNS)
+    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS + (job_runs.INDEX,)) + indexes:
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
                         "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,
-                        "run": runs.job_tag(run.library, run.id), "error": run.note})
+                        "run": _tag(run), "error": run.note, "parent": run.parent, "progress": _progress(run)})
+        if run.job == job_runs.INDEX:
+            entries[-1].update(kind="index", what="index of %d folder(s)" % run.changed.get("folders", 0),
+                               outcome=_index_outcome(run),
+                               error=run.note if run.outcome in (job_runs.FAILED, job_runs.ABANDONED) else None)
     for change in journal.history(library.path, limit=limit):
         if change["id"] in sync_changes:
             continue
@@ -141,4 +199,4 @@ def timeline(library, limit=50):
                         "what": change["operation"], "outcome": change["status"], "counts": counts,
                         "id": change["id"], "run": None, "error": None})
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
-    return entries[:limit]
+    return entries[:limit], index_runs_under(library, indexes)

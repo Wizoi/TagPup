@@ -106,10 +106,12 @@ def _counts_only(counts):
 def progress(library, run_id, counts, phase, now=None):
     """Record how far run `run_id` of `library` has got: in `phase`, one of PHASES (anything else is a code's mistake,
     ValueError), with `counts` ({name: number}; anything else in it is dropped). Tried at most once every
-    PROGRESS_EVERY seconds a run unless the phase changed -- a try the library was busy for, or that failed, counts --
-    and not written while the library is being written; `now` is seconds
-    since the epoch, now by default. True when written; False when not -- too soon, the library busy, the run no longer
-    this process's and running, or a library a restore has put back at 35. Never raises for those."""
+    PROGRESS_EVERY seconds a run unless the phase changed, and a try the library was busy for, or that failed, counts
+    (#2196). A change of phase is rare and a sync tells its last once, so it alone waits for the library to be free, as
+    long as a claim does (store.job_runs.RECORD_WITHIN); one still not written is logged and not tried again. Counts are
+    not written while the library is being written; `now` is seconds since the epoch, now by default. True when written;
+    False when not -- too soon, the library busy, the run no longer this process's and running, or a library a restore
+    has put back at 35. Never raises for those."""
     if phase not in PHASES:
         raise ValueError("a run's phase is one of %s, not %r" % (", ".join(PHASES), phase))
     now = time.time() if now is None else now
@@ -120,7 +122,13 @@ def progress(library, run_id, counts, phase, now=None):
             return False
         # Before the write: one the library is busy for is not tried again at the next line (#2196).
         _written[held] = (now, phase)
-    return job_runs.progress(library.path, run_id, phase, _counts_only(counts), now) is True
+    changed = last is not None and last[1] != phase
+    written = job_runs.progress(library.path, run_id, phase, _counts_only(counts), now,
+                                job_runs.RECORD_WITHIN if changed else 0.0)
+    if changed and written is db.BUSY:
+        logger.warning("Run %d of %s did not record its phase %s: the library was being written for %.0f s.", run_id,
+                       library.name, phase, job_runs.RECORD_WITHIN)
+    return written is True
 
 
 #: The run under way on this thread that `tell` records into: [library, run id, whether a failure was said], or None.

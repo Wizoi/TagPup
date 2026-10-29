@@ -131,8 +131,10 @@ function serverLines(data) {
     }
     if (data.syncing) {
         const progress = data.syncing.progress || {};
+        // A sync of one folder says no progress (it records no run while it runs): its folder is its line.
         const walked = progress.phase
-            ? `${progress.phase}: ${count(progress.folders)} folder(s), ${count(progress.files)} photo file(s)` : 'starting';
+            ? `${progress.phase}: ${count(progress.folders)} folder(s), ${count(progress.files)} photo file(s)`
+            : (data.syncing.folder ? '' : 'starting');
         lines.push(buildElement('div', { className: 'activity' }, [
             badge('syncing', 'busy'),
             buildElement('span', { className: 'what', text: data.syncing.library }),

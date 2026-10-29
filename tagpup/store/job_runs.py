@@ -34,8 +34,10 @@ logger = logging.getLogger(__name__)
 RUNNING, DONE, FAILED, ABANDONED = "running", "done", "failed", "abandoned"
 OUTCOMES = (RUNNING, DONE, FAILED, ABANDONED)
 
-#: The job a run of the indexer is recorded as (tagpup.jobs.indexing). Its row holds, as `changed["run"]` from the
-#: claim on, the run's tag (tagpup.core.runs.index_tag), which the indexer's own log file is named by (tagpup.logs.run_log).
+#: The job a run of the indexer is recorded as (tagpup.jobs.indexing). Its row holds from the claim on, in `changed`,
+#: the run's tag (`run`, tagpup.core.runs.index_tag), which the indexer's own log file is named by (tagpup.logs.run_log),
+#: how many folders it indexes (`folders`) and the tags of the syncs it is part of (`syncs`, when any): what the Activity
+#: page reads an index by (tagpup.services.activity), never a path.
 INDEX = "index"
 
 #: The jobs whose claim records a run and gates none: an index, which the graphics card's turns already take one at a time
@@ -68,9 +70,9 @@ class Run:
     owner: Optional[str] = None
     #: Why it failed or was abandoned; can name a path, so never sent to a page.
     note: Optional[str] = None
-    #: The run that queued this one (migration 36), its id; None for one nothing queued. Only `tree` reads it, and the two
-    #: below; the other readers leave them None: they select the columns a library at 35 has, which the MCP server and the
-    #: Activity page's look read without migrating it.
+    #: The run that queued this one (migration 36), its id; None for one nothing queued. `tree`, `runs` and `under_way`
+    #: read it and the two below from a library at 36 (_rows); the other readers, and a library at 35 -- which the MCP
+    #: server and the Activity page's look read without migrating it -- leave them None.
     parent: Optional[int] = None
     #: When it last said how far it got, a run's time (`stamp`), and what it said: {"phase": .., "counts": {..}} (progress).
     heartbeat: Optional[str] = None
@@ -289,10 +291,11 @@ def counts_so_far(db_path, run_id, changed):
 _AT_36 = ("parent", "heartbeat", "progress")
 
 
-def progress(db_path, run_id, phase, counts, now):
+def progress(db_path, run_id, phase, counts, now, within=0.0):
     """Record how far run `run_id`, this process's and running, has got: `heartbeat` the time `now` (seconds since the
     epoch), `progress` {"phase": phase, "counts": counts}, as the caller checked them (tagpup.services.job_runs.progress).
-    Made now or not at all (db.write_if_free): db.BUSY while the library is being written. False when the run is no longer
+    Made now or not at all (db.write_if_free): db.BUSY while the library is being written; `within` seconds, tried again
+    for that long (as the claim of a job of RECORDS_ONLY is), for the write that must be made once. False when the run is no longer
     this process's and running -- abandoned, ended, gone with a restore -- or the library is a snapshot at 35 a restore
     has put back and not yet migrated. Never raises for either."""
     text = json.dumps({"phase": phase, "counts": counts}, sort_keys=True)
@@ -301,8 +304,13 @@ def progress(db_path, run_id, phase, counts, now):
         return conn.execute("UPDATE job_runs SET heartbeat = ?, progress = ? WHERE id = ? AND outcome = 'running'"
                             " AND owner = ?", (stamp(now), text, run_id, file_journal.owner())).rowcount == 1
 
+    deadline = time.monotonic() + within
     try:
-        written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
+        while True:
+            written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
+            if written is not db.BUSY or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
     except sqlite3.OperationalError as e:
         message = str(e).lower()
         if "no such column" not in message or not any(column in message for column in _AT_36):
@@ -431,28 +439,40 @@ def last_sync(conn):
     return {"last_run": newest_sync(conn), "last_in_step": last_in_step(conn)}
 
 
+def _rows(conn, where, params=(), with_=""):
+    """The runs `where` (the SQL after FROM job_runs, under the WITH clause `with_`) selects on `conn`, each with its
+    `parent`, `heartbeat` and `progress` (parsed) when the library has had migration 36; without them before it."""
+    if not _has_parents(conn):
+        return [_run(row) for row in conn.execute(with_ + " SELECT " + _COLUMNS + " FROM job_runs " + where, params)]
+    found = []
+    for row in conn.execute(with_ + " SELECT " + _COLUMNS + ", parent, heartbeat, progress FROM job_runs " + where,
+                            params):
+        run = _run(row[:-3])
+        run.parent, run.heartbeat = row[-3], row[-2]
+        run.progress = json.loads(row[-1]) if row[-1] else None
+        found.append(run)
+    return found
+
+
 def under_way(db_path):
-    """Every run of the library still `running`, oldest first, whoever owns it: several of a job of RECORDS_ONLY can be.
-    Reads only."""
+    """Every run of the library still `running`, oldest first, whoever owns it, with its parent and progress (_rows):
+    several of a job of RECORDS_ONLY can be. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        return [_run(row) for row in conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE outcome = 'running'"
-                                                  " ORDER BY id")]
+        return _rows(conn, "WHERE outcome = 'running' ORDER BY id")
     finally:
         conn.close()
 
 
 def runs(db_path, job=None, limit=20, exclude=()):
-    """The library's runs, newest first, of `job` or of every job but those in `exclude`. Reads only."""
+    """The library's runs, newest first, of `job` or of every job but those in `exclude`, with their parent and progress
+    (_rows). Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         if job is None:
-            found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job NOT IN (" + ",".join("?" * len(exclude)) + ")"
-                                 " ORDER BY id DESC LIMIT ?", tuple(exclude) + (limit,))
-        else:
-            found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job = ? ORDER BY id DESC LIMIT ?",
-                                 (job, limit))
-        return [_run(row) for row in found.fetchall()]
+            return _rows(conn, "WHERE job NOT IN (" + ",".join("?" * len(exclude)) + ") ORDER BY id DESC LIMIT ?",
+                         tuple(exclude) + (limit,))
+        return _rows(conn, "WHERE job = ? ORDER BY id DESC LIMIT ?", (job, limit))
     finally:
         conn.close()
 
@@ -465,9 +485,7 @@ _TOPS = ("SELECT id FROM job_runs AS r WHERE r.parent IS NULL"
 #: also ends the walk whatever the rows say.
 _TREE = ("WITH RECURSIVE tops(id) AS (" + _TOPS + "),"
          " tree(id) AS (SELECT id FROM tops UNION ALL"
-         " SELECT c.id FROM job_runs AS c JOIN tree ON c.parent = tree.id AND c.id > tree.id)"
-         " SELECT " + _COLUMNS + ", parent, heartbeat, progress FROM job_runs WHERE id IN (SELECT id FROM tree)"
-         " ORDER BY id DESC")
+         " SELECT c.id FROM job_runs AS c JOIN tree ON c.parent = tree.id AND c.id > tree.id)")
 
 
 def _has_parents(conn):
@@ -484,14 +502,7 @@ def tree(db_path, limit=20):
     try:
         limit = max(0, int(limit))
         if not _has_parents(conn):
-            return [_run(row) for row in conn.execute("SELECT " + _COLUMNS + " FROM job_runs ORDER BY id DESC LIMIT ?",
-                                                      (limit,))]
-        found = []
-        for row in conn.execute(_TREE, (limit,)):
-            run = _run(row[:-3])
-            run.parent, run.heartbeat = row[-3], row[-2]
-            run.progress = json.loads(row[-1]) if row[-1] else None
-            found.append(run)
-        return found
+            return _rows(conn, "ORDER BY id DESC LIMIT ?", (limit,))
+        return _rows(conn, "WHERE id IN (SELECT id FROM tree) ORDER BY id DESC", (limit,), _TREE)
     finally:
         conn.close()

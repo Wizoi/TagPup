@@ -382,7 +382,6 @@ class FilesArrivingDuringAnIndex(QueueTest):
         held, message = seen[1]
         self.assertEqual(held[0], "sync-kr-track-20261016-2200")
         self.assertIn("arrived", message)
-        self.assertEqual(self.queue.history()[0]["parents"], ["sync-kr-track-20261016-2200"])
 
 
 class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
