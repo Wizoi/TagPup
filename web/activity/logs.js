@@ -83,9 +83,9 @@ export function readLog() {
         renderLogRecords();
         return Promise.resolve(null);
     }
-    const asked = ++state.logs.asked;
+    const read = ++state.logs.asked;
     return api.site.json(logAddress(state.logs.name) + logQuery()).then(data => {
-        if (asked !== state.logs.asked) return null;   // a newer read was asked meanwhile
+        if (read !== state.logs.asked) return null;   // a newer read was asked meanwhile
         if (!data || data.success === false) {
             say((data && data.error) || 'Could not read the log.');
             return data;
@@ -103,9 +103,9 @@ export function readLog() {
 /** Older: the records before the oldest shown. */
 export function readOlder() {
     if (!state.logs.name || state.logs.complete || state.logs.start === null) return Promise.resolve(null);
-    const asked = ++state.logs.asked;
+    const read = ++state.logs.asked;
     return api.site.json(logAddress(state.logs.name) + logQuery({ before: state.logs.start })).then(data => {
-        if (asked !== state.logs.asked || !data || data.success === false) return null;
+        if (read !== state.logs.asked || !data || data.success === false) return null;
         state.logs.records = state.logs.records.concat(data.records || []);
         state.logs.start = data.start;
         state.logs.complete = !!data.complete;
@@ -117,9 +117,9 @@ export function readOlder() {
 /** Follow: what was written since the last read, newest first above what is shown; nothing read while Logs is folded. */
 export function followLog() {
     if (!state.logs.follow || !unfolded('logs') || !state.logs.name || state.logs.end === null) return Promise.resolve(null);
-    const asked = state.logs.asked;
+    const reading = state.logs.asked;
     return asked(api.site.json(logAddress(state.logs.name) + logQuery({ after: state.logs.end }))).then(data => {
-        if (asked !== state.logs.asked || !data || data.success === false) return null;
+        if (reading !== state.logs.asked || !data || data.success === false) return null;
         if (data.rotated) {
             // The file was rotated: what it holds now is all new.
             state.logs.records = data.records || [];

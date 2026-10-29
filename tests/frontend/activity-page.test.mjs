@@ -848,6 +848,20 @@ describe("Logs", () => {
     assert.ok(fake.urls().some((url) => /before=100/.test(url)), "Older did not read from where the last read began");
   });
 
+  test("Follow draws what was written since, with nothing logged as broken", async (t) => {
+    const fake = server("morning", { first: [["/api/activity/logs/", (url) => (url.includes("after=")
+      ? { ...records(["a line written since"]), start: 20480, end: 20600 }
+      : records(["the first line"]))]] });
+    const { document, window, consoleErrors } = await open(t, fake, 30);
+    await flush(window, 8);
+    click(window, document.querySelector('details.fold[data-fold="logs"] > summary'));
+    const follow = document.getElementById("log-follow");
+    follow.checked = true;
+    follow.dispatchEvent(new window.Event("change"));
+    await settled(() => /a line written since/.test(document.body.textContent), "the followed line to be drawn");
+    assert.deepEqual(consoleErrors, [], "Follow's answer was thrown away");
+  });
+
   test("Follow reads nothing while Logs is folded, and follows again once it is opened", async (t) => {
     const fake = server();
     const { document, window } = await open(t, fake, 20);
