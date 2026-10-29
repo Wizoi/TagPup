@@ -20,18 +20,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import roots_library as rl  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
 
 import numpy as np  # noqa: E402
 from face_rows import add_vector  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.paths import key as paths_key  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
-from tagpup.store import db, faces_detected, journal, taxonomy  # noqa: E402
+from tagpup.store import db, faces_detected, journal, people, taxonomy  # noqa: E402
 
 #: When every file was last written, before the test changes any.
 THEN = 1_700_000_000
@@ -334,7 +336,8 @@ class ChangedFiles(SyncTestCase):
         result = self.run_sync(apply=True)
         self.assertTrue(result.ok, result.message())
         self.assertEqual(1, result.changed)
-        self.assertEqual({"from_files": 1, "relinked": 0}, result.details["changed"])
+        self.assertEqual({"from_files": 1, "relinked": 0, "removed": 0, "removed_faces": 0, "removed_named": 0},
+                         result.details["changed"])
         row = self.rows()[path]
         self.assertEqual((photo_id, THEN + 60, len(b"jpeg, tagged")), row[:3])
         self.assertEqual(["Events/Invitational", "Weather/Rain"], row[3])
@@ -389,7 +392,8 @@ class ChangedFiles(SyncTestCase):
         self.assertEqual((THEN + 120, ["Activity/Rowing"]), (rows[saved][1], rows[saved][3]),
                          "the app's save was overwritten with the older read")
         self.assertEqual([("photos %d" % saved_id, "not what the plan read: mtime, tags changed")], result.skipped)
-        self.assertEqual({"from_files": 1, "relinked": 0}, result.details["changed"])
+        self.assertEqual({"from_files": 1, "relinked": 0, "removed": 0, "removed_faces": 0, "removed_named": 0},
+                         result.details["changed"])
         self.assertEqual(["Weather/Sun"], rows[other][3])
         change = result.details["change"]
         self.assertEqual([[other_id]], journal.history(self.db_path, change_id=change)[0]["keys"]["photos"])
@@ -414,7 +418,8 @@ class ChangedFiles(SyncTestCase):
         finally:
             conn.close()
         result = self.run_sync(apply=True)
-        self.assertEqual({"from_files": 1, "relinked": 0}, result.details["changed"])
+        self.assertEqual({"from_files": 1, "relinked": 0, "removed": 0, "removed_faces": 0, "removed_named": 0},
+                         result.details["changed"])
         self.assertEqual(["Weather/Rain"], self.rows()[path][3])
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
@@ -444,7 +449,8 @@ class MovedFiles(SyncTestCase):
 
         result = self.run_sync(apply=True, queue=lambda folders: self.fail("nothing is new: it moved"))
         self.assertTrue(result.ok, result.message())
-        self.assertEqual({"from_files": 0, "relinked": 1}, result.details["changed"])
+        self.assertEqual({"from_files": 0, "relinked": 1, "removed": 0, "removed_faces": 0, "removed_named": 0},
+                         result.details["changed"])
         rows = self.rows()
         self.assertNotIn(old, rows)
         self.assertEqual(photo_id, rows[new][0])
@@ -812,58 +818,127 @@ class APictureToCheck(SyncTestCase):
 
 
 class MissingFiles(SyncTestCase):
-    def test_a_missing_file_is_reported_never_removed(self):
-        gone = self.photo(self.meet, "IMG_0001.jpg")
-        self.indexed(gone, self.photo(self.meet, "IMG_0002.jpg"))
-        photo_id = self.rows()[gone][0]
-        os.remove(gone)
-        result = self.run_sync(apply=True)
-        self.assertTrue(result.ok, result.message())
-        counts = result.details["counts"]
-        self.assertEqual((1, 1, 0), (counts["missing"], counts["missing_folders"], counts["folders_gone"]))
-        self.assertEqual([photo_id], result.details["ids"]["missing"])
-        self.assertIn(gone, self.rows())
-        self.assertEqual(0, result.changed)
-        self.assertTrue(result.details["in_step"], "a missing file is reported; it does not hold sync back")
+    """A file the walk looked for and did not find is removed by a sync of the whole library, its root confirmed there
+    (owner, DECISIONS 2026-10-28); a file not looked at -- a drive unplugged, a share that dropped, a root pointed at an
+    empty folder, a sync of one folder -- is never removed. The removal is one journaled change that undoes."""
 
-    def test_a_folder_wholly_gone_is_named_as_gone(self):
+    def rooted(self, *photo_paths, named=()):
+        """The photos indexed, a named face on each of `named` and an unnamed one on each photo, and the library
+        held under root `pictures` at self.pictures, as the three live libraries are. {path: photo id}."""
+        ids = dict(zip(photo_paths, self.indexed(*photo_paths)))
+        conn = db.connect(self.db_path)
+        try:
+            for path in photo_paths:
+                add_face(conn, path, [1, 2, 11, 12])
+            for path in named:
+                add_face(conn, path, [20, 20, 30, 30], name="Rowan Thackeray", name_source="manual")
+            people.rebuild(conn, sorted(ids.values()))     # as a writer naming a face rebuilds its photo's people
+            conn.commit()
+        finally:
+            conn.close()
+        rl.convert_to_root(self.db_path, self.pictures)
+        return ids
+
+    def held_ids(self):
+        return {photo_id for (photo_id,) in self.query("SELECT id FROM photos")}
+
+    def test_a_file_deleted_under_a_root_that_is_there_is_removed_with_its_faces(self):
+        gone, kept = self.photo(self.meet, "IMG_0001.jpg"), self.photo(self.meet, "IMG_0002.jpg")
+        ids = self.rooted(gone, kept, named=[gone])
+        os.remove(gone)
+        dry = self.run_sync(roots=[self.pictures])
+        counts = dry.details["counts"]
+        self.assertEqual((1, 1, 2, 1), (counts["missing"], counts["to_remove"], counts["to_remove_faces"],
+                                        counts["to_remove_named"]))
+        self.assertEqual([ids[gone]], dry.details["ids"]["to_remove"])
+        self.assertFalse(dry.details["in_step"], "a row to remove is work left")
+        self.assertTrue(dry.details["rehearsal"]["exact"] and dry.details["rehearsal"]["derived_exact"],
+                        dry.details["rehearsal"])
+        self.assertEqual(set(ids.values()), self.held_ids(), "a dry run removed a row")
+
+        result = self.run_sync(apply=True, roots=[self.pictures])
+        self.assertTrue(result.ok, result.message())
+        changed = result.details["changed"]
+        self.assertEqual((1, 2, 1), (changed["removed"], changed["removed_faces"], changed["removed_named"]))
+        self.assertEqual({ids[kept]}, self.held_ids())
+        self.assertEqual([], self.query("SELECT id FROM faces WHERE photo_id = ?", (ids[gone],)))
+        self.assertTrue(result.details["in_step"])
+        self.assertEqual(1, sync.last(self.library)["last_run"]["changed"]["removed"])
+        again = self.run_sync(apply=True, roots=[self.pictures])
+        self.assertEqual((0, 0, True), (again.details["counts"]["missing"], again.changed, again.details["in_step"]))
+
+    def test_a_folder_deleted_under_a_root_that_is_there_is_removed_with_its_rows(self):
         first, second = self.photo(self.trip, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg")
-        self.indexed(first, second, self.photo(self.meet, "IMG_0003.jpg"))
+        kept = self.photo(self.meet, "IMG_0003.jpg")
+        ids = self.rooted(first, second, kept)
         os.remove(first)
         os.remove(second)
         os.rmdir(self.trip)
-        result = self.run_sync(apply=True)
-        counts = result.details["counts"]
-        self.assertEqual((2, 1, 1), (counts["missing"], counts["missing_folders"], counts["folders_gone"]))
-        self.assertEqual([{"folder": self.trip, "rows": 2, "gone": True}], result.details["reveal"]["missing_folders"])
-        self.assertIn(first, self.rows())
-        self.assertIn(second, self.rows())
-
-    def test_a_folder_renamed_and_saved_again_is_flagged_missing_and_its_rows_are_left(self):
-        # The owner renames it back by hand: no marker file in the folder is read, and one a library once wrote is
-        # only a file (owner, 2026-10-10).
-        first, second = self.photo(self.trip, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg")
-        self.indexed(first, second, self.photo(self.meet, "IMG_0003.jpg"))
-        with open(os.path.join(self.trip, ".tagpup"), "w", encoding="utf-8") as handle:
-            handle.write("not read by anything\n")
-        before = self.rows()
-        renamed = os.path.join(self.pictures, "2025-11 Harbour Day")
-        os.rename(self.trip, renamed)
-        for name in ("IMG_0001.jpg", "IMG_0002.jpg"):
-            os.utime(os.path.join(renamed, name), (THEN + 5, THEN + 5))     # saved again: no stamp pairs them
-        result = self.run_sync(apply=True)
+        result = self.run_sync(apply=True, roots=[self.pictures])
         self.assertTrue(result.ok, result.message())
         counts = result.details["counts"]
-        self.assertEqual((2, 1, 1), (counts["missing"], counts["missing_folders"], counts["folders_gone"]))
-        self.assertEqual([{"folder": self.trip, "rows": 2, "gone": True}], result.details["reveal"]["missing_folders"])
-        self.assertEqual(before, self.rows(), "the rows are left as they were")
-        self.assertNotIn("folder_markers", result.details)
-        self.assertEqual(0, self.query("SELECT COUNT(*) FROM changes WHERE operation = 'follow_folder_markers'")[0][0])
+        self.assertEqual((2, 1, 1, 2), (counts["missing"], counts["missing_folders"], counts["folders_gone"],
+                                        counts["to_remove"]))
+        self.assertEqual({ids[kept]}, self.held_ids())
+        self.assertEqual(2, result.details["changed"]["removed"])
 
-    def test_a_root_that_is_not_there_is_reported_like_an_unplugged_drive(self):
+    def test_a_removal_undone_puts_back_the_row_its_named_faces_and_its_tags(self):
+        from tagpup.services import journal as library_journal
+        gone = self.photo(self.meet, "IMG_0001.jpg", **{"XMP:Subject": ["Events/Invitational"]})
+        ids = self.rooted(gone, self.photo(self.meet, "IMG_0002.jpg"), named=[gone])
+        before = self.query("SELECT id, path, mtime, size, tags FROM photos WHERE id = ?", (ids[gone],))
+        faces = self.query("SELECT id, name, tag_id, name_source FROM faces WHERE photo_id = ? ORDER BY id", (ids[gone],))
+        tagged = self.query("SELECT tag_id FROM photo_tags WHERE photo_id = ? ORDER BY tag_id", (ids[gone],))
+        people = self.query("SELECT name FROM photo_people WHERE photo_id = ?", (ids[gone],))
+        self.assertTrue(tagged)
+        self.assertEqual([("Rowan Thackeray",)], people)
+        self.assertEqual(1, len([face for face in faces if face[1] == "Rowan Thackeray"]))
+        os.remove(gone)
+        result = self.run_sync(apply=True, roots=[self.pictures])
+        self.assertEqual(1, result.details["changed"]["removed"])
+        self.assertEqual([], self.query("SELECT tag_id FROM photo_tags WHERE photo_id = ?", (ids[gone],)))
+
+        undone = library_journal.undo(self.library, result.details["change"], apply=True)
+        self.assertTrue(undone.ok, undone.message())
+        self.assertEqual(before, self.query("SELECT id, path, mtime, size, tags FROM photos WHERE id = ?", (ids[gone],)))
+        self.assertEqual(faces, self.query("SELECT id, name, tag_id, name_source FROM faces WHERE photo_id = ?"
+                                           " ORDER BY id", (ids[gone],)))
+        self.assertEqual(people, self.query("SELECT name FROM photo_people WHERE photo_id = ?", (ids[gone],)))
+        self.assertEqual(tagged, self.query("SELECT tag_id FROM photo_tags WHERE photo_id = ? ORDER BY tag_id",
+                                            (ids[gone],)))
+        self.assertEqual(2, self.query("SELECT COUNT(*) FROM face_embeddings WHERE face_id IN"
+                                       " (SELECT id FROM faces WHERE photo_id = ?)", (ids[gone],))[0][0])
+
+    def test_a_folder_renamed_in_explorer_pairs_as_a_move_and_only_the_unmatched_rest_is_removed(self):
+        first, second = self.photo(self.trip, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg")
+        ids = self.rooted(first, second, self.photo(self.meet, "IMG_0003.jpg"))
+        renamed = os.path.join(self.pictures, "2025-11 Harbour Day")
+        os.rename(self.trip, renamed)
+        os.utime(os.path.join(renamed, "IMG_0002.jpg"), (THEN + 5, THEN + 5))     # saved again: nothing pairs it
+        result = self.run_sync(apply=True, roots=[self.pictures])
+        self.assertTrue(result.ok, result.message())
+        counts = result.details["counts"]
+        self.assertEqual((1, 1, 1), (counts["moved"], counts["missing"], counts["to_remove"]))
+        self.assertEqual([ids[second]], result.details["ids"]["to_remove"])
+        self.assertEqual(sorted(ids.values()), sorted(self.held_ids() | {ids[second]}))
+        self.assertNotIn(ids[second], self.held_ids())
+        self.assertEqual([ids[first]], [row[0] for path, row in self.rows().items() if "Harbour Day" in path])
+
+    def test_a_root_unplugged_removes_nothing(self):
+        ids = self.rooted(self.photo(self.meet, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg"))
+        os.rename(self.pictures, self.pictures + " (unplugged)")
+        try:
+            result = self.run_sync(apply=True, roots=[self.pictures], queue=lambda folders: self.fail("nothing is new"))
+        finally:
+            os.rename(self.pictures + " (unplugged)", self.pictures)
+        self.assertTrue(result.ok, result.message())
+        counts = result.details["counts"]
+        self.assertEqual((2, 0), (counts["missing"], counts["to_remove"]))
+        self.assertEqual(set(ids.values()), self.held_ids(), "rows on an unplugged drive were removed")
+
+    def test_a_folder_on_a_drive_unplugged_in_a_library_with_no_roots_removes_nothing(self):
         here = self.photo(self.meet, "IMG_0001.jpg")
         self.indexed(here)
-        # A drive that is not plugged in: its rows name a root that does not exist.
         drive = os.path.join(self.home.root, "Backup drive")
         season = os.path.join(drive, "Photos", "2019")
         os.makedirs(season)
@@ -876,11 +951,90 @@ class MissingFiles(SyncTestCase):
             os.rename(drive + " (unplugged)", drive)
         self.assertTrue(result.ok, result.message())
         counts = result.details["counts"]
-        self.assertEqual((3, 1, 1, 1), (counts["missing"], counts["folders_gone"], counts["roots_gone"],
-                                        counts["folders_walked"]))
+        self.assertEqual((3, 1, 1, 1, 0), (counts["missing"], counts["folders_gone"], counts["roots_gone"],
+                                           counts["folders_walked"], counts["to_remove"]))
         self.assertEqual([season], result.details["reveal"]["roots_gone"])
         self.assertEqual([], self.reads.read)
         self.assertEqual(4, len(self.rows()), "rows on an unplugged drive were removed")
+
+    def test_a_root_repointed_at_an_empty_folder_removes_nothing(self):
+        from tagpup import config
+        ids = self.rooted(self.photo(self.meet, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg"))
+        empty = os.path.join(self.home.root, "New drive", "Pictures")
+        os.makedirs(empty)
+        # The owner's edit of the map: the new place first, the old kept listed.
+        with open(config.machine_roots_path(), "w", encoding="utf-8") as handle:
+            json.dump({"version": 1, "roots": {"pictures": [empty, self.pictures]}}, handle)
+        result = self.run_sync(apply=True, roots=[empty])
+        self.assertTrue(result.ok, result.message())
+        counts = result.details["counts"]
+        self.assertEqual((2, 0), (counts["missing"], counts["to_remove"]))
+        self.assertEqual(set(ids.values()), self.held_ids())
+
+    def test_a_share_that_drops_mid_walk_removes_nothing(self):
+        gone = self.photo(self.meet, "IMG_0001.jpg")
+        ids = self.rooted(gone, self.photo(self.meet, "IMG_0002.jpg"), self.photo(self.trip, "IMG_0003.jpg"))
+        os.remove(gone)
+        real = images.stamps_under
+
+        def drops(folder, unlisted):
+            found = real(folder, unlisted)
+            unlisted.append(self.trip)        # the share stopped answering as the walk listed it
+            return {key: stamp for key, stamp in found.items() if not key.startswith(paths_key(self.trip) + os.sep)}
+
+        with mock.patch.object(images, "stamps_under", side_effect=drops):
+            result = self.run_sync(apply=True, roots=[self.pictures])
+        counts = result.details["counts"]
+        self.assertEqual((1, 1, 0), (counts["missing"], counts["not_looked_at"], counts["to_remove"]))
+        self.assertFalse(result.details["in_step"])
+        self.assertEqual(set(ids.values()), self.held_ids())
+
+    def test_a_sync_of_one_folder_never_removes(self):
+        gone = self.photo(self.meet, "IMG_0001.jpg")
+        ids = self.rooted(gone, self.photo(self.meet, "IMG_0002.jpg"))
+        os.remove(gone)
+        result = self.run_sync(apply=True, folder=self.meet, roots=[self.pictures])
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual((1, 0), (result.details["counts"]["missing"], result.details["counts"]["to_remove"]))
+        self.assertEqual(set(ids.values()), self.held_ids())
+
+    def taken_meanwhile(self, between):
+        """A whole sync whose plan is read, then `between()` runs before it writes: the row it planned to remove is
+        taken meanwhile. (`between`'s Result, the photo ids.)"""
+        gone, other = self.photo(self.trip, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg")
+        ids = self.rooted(gone, other, self.photo(self.meet, "IMG_0003.jpg"), named=[gone])
+        os.remove(gone)
+        real_look, inner = sync.look, []
+
+        def look_then_another(*args, **kwargs):
+            plan = real_look(*args, **kwargs)
+            if not inner:
+                inner.append(None)
+                inner[0] = between()
+            return plan
+
+        with mock.patch.object(sync, "look", side_effect=look_then_another):
+            result = self.run_sync(apply=True, roots=[self.pictures])
+        self.assertTrue(inner[0].ok, inner[0].message())
+        self.assertFalse(result.refused, result.refused)
+        self.assertEqual([journal.row_name("photos", (ids[gone],))], [what for what, _why in result.skipped])
+        self.assertEqual((0, 0, 0), (result.details["changed"]["removed"], result.details["changed"]["removed_faces"],
+                                     result.details["changed"]["removed_named"]))
+        self.assertNotIn(ids[gone], self.held_ids())
+        self.assertFalse(result.details["in_step"], "a skipped row is settled by the next sync")
+        return inner[0], ids
+
+    def test_two_syncs_at_once_remove_a_row_once_and_the_second_skips_it(self):
+        # The stand-in ExifTool of the outer run answers the inner one too.
+        first, _ids = self.taken_meanwhile(lambda: sync.sync(self.library, apply=True, exiftool_path="exiftool",
+                                                             roots=[self.pictures]))
+        self.assertEqual((1, 2, 1), (first.details["changed"]["removed"], first.details["changed"]["removed_faces"],
+                                     first.details["changed"]["removed_named"]))
+
+    def test_remove_folder_between_a_syncs_plan_and_its_write_is_skipped_not_refused(self):
+        from tagpup.services import faces as face_service
+        removed, _ids = self.taken_meanwhile(lambda: face_service.remove_folder(self.library, self.trip))
+        self.assertEqual(2, removed.changed)
 
 
 class Roots(SyncTestCase):

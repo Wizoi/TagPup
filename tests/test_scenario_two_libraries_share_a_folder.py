@@ -176,6 +176,34 @@ class SharedFolderTwoLibraries(unittest.TestCase):
         # ...and made no row for a folder beta never held, alpha's private one.
         self.assertIsNone(self.tags_of(self.beta_path, alpha_private))
 
+    def paths_of(self, db_path):
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            return sorted(row[0] for row in conn.execute("SELECT path FROM photos"))
+        finally:
+            conn.close()
+
+    def test_a_file_deleted_from_the_shared_folder_is_removed_by_each_library_from_its_own_rows_alone(self):
+        # The owner deletes a photo of the shared folder, and one of alpha's own, in Explorer (DECISIONS 2026-10-28).
+        gone, kept = self.photo(self.meet, "meet_01.jpg"), self.photo(self.meet, "meet_02.jpg")
+        alpha_private = self.photo(self.alpha_only, "private.jpg")
+        self.indexed(self.alpha_path, gone, kept, alpha_private)
+        self.indexed(self.beta_path, gone, kept)
+        os.remove(gone)
+        os.remove(alpha_private)
+
+        alpha = self.run_sync(self.alpha, roots=[self.pictures])
+        self.assertTrue(alpha.ok, alpha.message())
+        self.assertEqual(2, alpha.details["changed"]["removed"])
+        self.assertEqual([kept], self.paths_of(self.alpha_path))
+        self.assertEqual(sorted([gone, kept]), self.paths_of(self.beta_path), "alpha's sync reached beta's rows")
+
+        beta = self.run_sync(self.beta)
+        self.assertTrue(beta.ok, beta.message())
+        self.assertEqual(1, beta.details["changed"]["removed"])
+        self.assertEqual([kept], self.paths_of(self.beta_path))
+        self.assertEqual([kept], self.paths_of(self.alpha_path))
+
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 class TwoLibrariesAdoptEachOthersBake(unittest.TestCase):

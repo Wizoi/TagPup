@@ -300,6 +300,12 @@ def _named(table, key):
     return "%s %s" % (table, "/".join(str(k) for k in key))
 
 
+def row_name(table, key):
+    """How a refusal or a skip (Applied.skipped, Rehearsal.skipped) names the row of `table` keyed `key`: a caller asks
+    whether one of its edits was skipped by this, never by reading the text."""
+    return _named(table, tuple(key))
+
+
 def _where(table):
     return " AND ".join('"%s" = ?' % column for column in KEYS[table])
 

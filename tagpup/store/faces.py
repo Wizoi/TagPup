@@ -985,6 +985,20 @@ def in_photo_for_panel(conn, photo_path, key):
                 " FROM faces f" + WITH_VECTOR + " WHERE " + where + " ORDER BY f.id", [key] + list(params)).fetchall()]
 
 
+def counts_by_photo(conn, photo_ids):
+    """{photo id: (faces, named faces)} of those of `photo_ids` that hold a face, by idx_faces_photo_id, a chunk at a
+    time: what a sync removing their rows says it takes with them. No crop or vector is read."""
+    found = {}
+    photo_ids = sorted(photo_ids)
+    for start in range(0, len(photo_ids), CHUNK):
+        chunk = photo_ids[start:start + CHUNK]
+        for photo_id, faces, named in conn.execute(
+                "SELECT photo_id, COUNT(*), COUNT(name) FROM faces INDEXED BY idx_faces_photo_id"
+                " WHERE photo_id IN (%s) GROUP BY photo_id" % ",".join("?" * len(chunk)), chunk):
+            found[photo_id] = (faces, named)
+    return found
+
+
 def counts_on(conn, stored_path):
     """(faces, named faces) of the photo stored under exactly `stored_path`."""
     return conn.execute("SELECT COUNT(*), COUNT(name) FROM faces"
