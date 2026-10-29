@@ -46,6 +46,7 @@ from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import activity, batches
 from tagpup.services import indexing
 from tagpup.services import job_runs
+from tagpup.services import sync as sync_service
 from tagpup.web import lifecycle as lifecycles
 from tagpup.web import responses, security
 
@@ -191,13 +192,30 @@ def _logs_for(run, children=None):
 
 # ---- Now -----------------------------------------------------------------------------------
 
+def _syncing(syncing, walks):
+    """The folder watcher's sync under way (Watcher.status), or None, with how far it got: a sync of the whole library
+    is a run of the `sync` job (recurring.sync_whole), one at a time a library, so its phase and counts are that
+    library's running `sync` row in `walks` ({library name, lower case: its run}, as activity.under_way reads it; none
+    when the read failed), the folder its walk is at added from this process's memory -- None when another process
+    walks it (a CLI's sync the watcher's claim was refused for). A sync of one folder records no run while it runs:
+    null, its line names the folder already."""
+    if syncing is None:
+        return None
+    syncing = dict(syncing)
+    at = syncing.pop("walking_at")
+    run = walks.get(syncing["library"].lower()) if syncing["folder"] is None else None
+    walked = sync_service.walked(run["progress"]) if run is not None else None
+    syncing["progress"] = dict(walked, folder=at) if walked is not None else None
+    return syncing
+
+
 @routes.get("/api/activity/now")
 def now():
     """What runs now, in this process and -- for the recurring jobs -- in any."""
     every = _libraries()
     queues = {name.lower(): queue for name, queue in indexing_jobs.every_queue() if name}
     suggesting = suggestion_jobs.under_way()
-    found = []
+    found, walks = [], {}
     for library in every:
         queue = queues.get(library.name.lower())
         indexed = queue.now() if queue is not None else {"running": None, "queued": []}
@@ -209,6 +227,8 @@ def now():
         try:
             children = None
             for run in activity.under_way(library):
+                if run["job"] == recurring.SYNC:
+                    walks[library.name.lower()] = run
                 if mine is not None and run["run"] == mine:
                     continue
                 if run["job"] != job_runs.INDEX and children is None:
@@ -224,7 +244,7 @@ def now():
     watching = watcher.status() if watcher is not None else None
     status = _lifecycle().status()
     return jsonify({"at": _stamp(time.time()), "libraries": found,
-                    "syncing": watching["syncing"] if watching else None,
+                    "syncing": _syncing(watching["syncing"], walks) if watching else None,
                     "watching": bool(watching and watching["running"]),
                     "server": {"version": status["version"], "taking_work": status["taking_work"],
                                "requests": status["requests"], "busy": status["busy"]}})

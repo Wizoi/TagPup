@@ -241,8 +241,9 @@ class Watcher:
     def status(self):
         """What the Activity page shows: {"running", "roots": [{"path", "watched", "absent",
         "libraries"}], "libraries": {name: {"last_event", "pending_folders", "whole_pending",
-        "last_sync", "not_watched"}}, "syncing": {"library", "folder", "started", "progress"} or None}: how far the sync
-        has got, as tagpup.services.sync.progress_into keeps it."""
+        "last_sync", "not_watched"}}, "syncing": {"library", "folder", "started", "walking_at"} or None}: `walking_at`,
+        the folder its walk is at (tagpup.services.sync.walking_at_into), the one part of how far it got held here; its
+        phase and counts are its run's row, the `sync` job's (recurring.sync_whole; tagpup.web.activity_routes)."""
         with self._lock:
             roots = [{"path": root["path"], "watched": root["watch"] is not None, "absent": root["absent"],
                       "libraries": sorted(library.name for library in root["libraries"].values())}
@@ -257,7 +258,7 @@ class Watcher:
                                "not_watched": key in self._too_many}
             syncing = dict(self._current) if self._current else None
             if syncing is not None:
-                syncing["progress"] = dict(syncing["progress"])
+                syncing["walking_at"] = syncing["walking_at"]["folder"]
         return {"running": self._thread is not None, "roots": sorted(roots, key=lambda root: paths.key(root["path"])),
                 "libraries": found, "syncing": syncing}
 
@@ -455,19 +456,20 @@ class Watcher:
     def _run(self, library, folder, noted=None):
         with self._lock:
             self._syncing += 1
-            progress = {}
-            self._current = {"library": library.name, "folder": folder, "started": job_runs.stamp(time.time()), "progress": progress}
+            at = {"folder": None}
+            self._current = {"library": library.name, "folder": folder, "started": job_runs.stamp(time.time()),
+                             "walking_at": at}
         result, ran = None, True
         try:
             if folder is None and self._whole is not None:
-                outcome = self._whole(library, lambda: self._synced(library, None, progress), noted)
+                outcome = self._whole(library, lambda: self._synced(library, None, at), noted)
                 if not outcome.ran:
                     ran = False
                     self._not_run(library, outcome.why, noted)
                     return
                 result = outcome.result
             else:
-                result = self._synced(library, folder, progress)
+                result = self._synced(library, folder, at)
             what = folder if folder else "every folder"
             if result is None:
                 return
@@ -498,9 +500,9 @@ class Watcher:
                         "changed": getattr(result, "changed", 0) or 0, "queued": details.get("queued", 0),
                         "refused": bool(getattr(result, "refused", None)), "failed": result is None}
 
-    def _synced(self, library, folder, progress):
-        """The sync of `folder` (None: the whole library), how far it got kept in `progress` meanwhile (status)."""
-        with sync_service.progress_into(progress):
+    def _synced(self, library, folder, at):
+        """The sync of `folder` (None: the whole library), the folder its walk is at kept in `at` meanwhile (status)."""
+        with sync_service.walking_at_into(at):
             return self._sync(library, folder)
 
     def _not_run(self, library, why, noted):

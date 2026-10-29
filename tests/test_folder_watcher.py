@@ -25,11 +25,14 @@ from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images, shares  # noqa: E402
-from tagpup.jobs import watching  # noqa: E402
+from tagpup.jobs import recurring, watching  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import job_runs as recorded_runs  # noqa: E402
 from tagpup.services import refresh_rows, tagging  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
 from tagpup.store import db, job_runs, schema  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
+from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 JPEG = None
@@ -576,14 +579,17 @@ class TagPupsOwnWrites(Base):
 
 
 class AWholeSyncOverASlowShare(unittest.TestCase):
-    """A whole sync walks the share folder by folder, minutes on photo_index's 2,564: while it walks, the watcher's
-    status (the Activity page's Now) says how far it got, and the log says so every LOG_FOLDERS folders and
-    LOG_SECONDS seconds, then once more when the walk is over."""
+    """A whole sync walks the share folder by folder, minutes on photo_index's 2,564: while it walks, the Activity
+    page's Now says how far it got -- its phase and counts from its run's row (a run of the `sync` job,
+    recurring.sync_whole), the folder it is at from the watcher's memory -- and the log says so every LOG_FOLDERS
+    folders and LOG_SECONDS seconds, then once more when the walk is over."""
 
     def test_says_how_far_it_got(self):
         home = own_home.for_test(self, prefix="watcher_slow_")
         library = Library(home.library("harbour.db"))
         schema.ensure(library.path)
+        # A second library, idle: Now reads both.
+        schema.ensure(home.library("regatta.db"))
         root = os.path.join(home.root, "Photos")
         os.makedirs(root)
         seed(library.path, a_jpeg(os.path.join(root, "Regatta - 1.jpg")))
@@ -603,35 +609,48 @@ class AWholeSyncOverASlowShare(unittest.TestCase):
 
         watcher = watching.Watcher(lambda: [library], lambda lib: [root],
                                    lambda lib, folder: runtimes.sync(lib, folder=folder, apply=False),
-                                   images.is_photo, debounce=0.5, recheck=0.2, tick=0.05)
-        with mock.patch.object(shares, "listing", slow_listing), \
+                                   images.is_photo, whole=recurring.sync_whole, debounce=0.5, recheck=0.2, tick=0.05)
+        app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background(
+            [(runtimes.FOLDER_WATCHER, watcher)])))
+        app.testing = True
+        page = app.test_client()
+        # Every count told is written: the 10 s between two writes of a run's progress is not what this is about.
+        with mock.patch.object(shares, "listing", slow_listing), mock.patch.object(recorded_runs, "PROGRESS_EVERY", 0), \
                 mock.patch.object(sync_service, "LOG_FOLDERS", 2), mock.patch.object(sync_service, "LOG_SECONDS", 0), \
                 self.assertLogs("tagpup.services.sync", level="INFO") as logged:
             syncing = threading.Thread(target=watcher._run, args=(library, None))
             syncing.start()
             try:
                 self.assertTrue(stalled.wait(30), "the walk never reached the stalling share")
-                now = watcher.status()["syncing"]
-                self.assertEqual("harbour", now["library"])
-                progress = now["progress"]
+                now = page.get("/api/activity/now").get_json()
+                self.assertEqual("harbour", now["syncing"]["library"])
+                self.assertIsNone(now["syncing"]["folder"])
+                progress = now["syncing"]["progress"]
                 self.assertEqual((sync_service.WALKING, 3, 3), (progress["phase"], progress["folders"], progress["files"]))
                 self.assertEqual(paths.key(listed[-1]), paths.key(progress["folder"]))
-                self.assertTrue(progress["progressed"])
+                [run] = job_runs.under_way(library.path)
+                self.assertEqual(recurring.SYNC, run.job)
+                self.assertEqual(run.heartbeat, progress["progressed"])
+                self.assertNotIn(paths.key(root), str(run.progress).lower(), "the row holds counts, never a path")
+                self.assertEqual({"harbour", "regatta"}, {each["name"] for each in now["libraries"]})
             finally:
                 go_on.set()
                 syncing.join(30)
         said = "\n".join(logged.output)
         self.assertIn("so far", said)
         self.assertIn("6 folder(s) and 6 photo file(s) in", said, "the walk's end is said once a progress line was")
-        self.assertIsNone(watcher.status()["syncing"])
+        self.assertIsNone(page.get("/api/activity/now").get_json()["syncing"])
+        self.assertEqual([], job_runs.under_way(library.path), "the walk's run ended with it")
 
     def test_a_short_walk_says_nothing_of_its_progress(self):
-        found = {}
-        with sync_service.progress_into(found), self.assertNoLogs("tagpup.services.sync", level="INFO"):
+        """Fewer than LOG_FOLDERS folders: no line; and once the walk is over, the folder it was at is no longer said."""
+        at = {}
+        with sync_service.walking_at_into(at), self.assertNoLogs("tagpup.services.sync", level="INFO"):
             walked = sync_service._Walked(sync_service.WALKING)
             walked.listed("D:/Photos/Regatta", 4)
+            self.assertEqual("D:/Photos/Regatta", at["folder"])
             walked.ended()
-        self.assertEqual((sync_service.AFTER_THE_WALK, 1, 4), (found["phase"], found["folders"], found["files"]))
+        self.assertIsNone(at["folder"])
 
 
 class FakeObserver:

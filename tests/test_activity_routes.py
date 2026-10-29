@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -24,6 +25,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
+from tagpup.services import activity  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
 from tagpup.store import job_runs, snapshots  # noqa: E402
@@ -178,11 +180,33 @@ class Now(Base):
         self.assertTrue(found["server"]["taking_work"])
 
     def test_the_watchers_sync_under_way(self):
-        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {},
-                               "syncing": {"library": "harbour", "folder": "D:/Photos/Regatta", "started": "x"}})
+        """A whole sync's phase and counts are its run's row, the folder it is at this process's; a sync of one folder
+        says no progress; a library whose runs cannot be read leaves the others' shown."""
+        now = time.time()
+        claim = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", now)
+        job_runs.progress(self.harbour.path, claim.run_id, "walking_again", {"folders": 812, "files": 20417}, now)
+        whole = {"library": "Harbour", "folder": None, "started": "x", "walking_at": "D:/Photos/Regatta"}
+        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {}, "syncing": whole})
         found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
         self.assertTrue(found["watching"])
-        self.assertEqual("harbour", found["syncing"]["library"])
+        self.assertEqual({"library": "Harbour", "folder": None, "started": "x",
+                          "progress": {"phase": "walking the folders again", "folders": 812, "files": 20417,
+                                       "folder": "D:/Photos/Regatta", "progressed": job_runs.stamp(now)}},
+                         found["syncing"])
+        watcher.found["syncing"] = dict(whole, folder="D:/Photos/Regatta")
+        self.assertIsNone(self.get("/api/activity/now", tasks=[("folder watcher", watcher)])["syncing"]["progress"])
+        watcher.found["syncing"] = whole
+        real = activity.under_way
+
+        def unreadable(library):
+            if library.name.lower() == "harbour":
+                raise OSError("the library is locked")
+            return real(library)
+
+        with mock.patch.object(activity, "under_way", unreadable):
+            found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertIsNone(found["syncing"]["progress"])
+        self.assertEqual({"harbour", "regatta"}, {entry["name"] for entry in found["libraries"]})
 
 
 class ScheduledJobs(Base):
