@@ -336,6 +336,8 @@ class SkippableEdits(JournalLibrary):
         # Recording an identity a file holds, and re-pointing a dead row at its renamed
         # file, are each one row's own business, as a refresh's rows are (phase 7.5); so is unnaming a face whose person was taken off its
         # photo (face_people, #908): a face renamed meanwhile is the owner's newer decision and the others go on.
+        # So is removing the row of a file a sync confirmed gone (sync, DECISIONS 2026-10-28): a row another sync or
+        # Remove Folder took meanwhile is already gone, and the other removals go on.
         services = os.path.join(WORKSPACE_DIR, "tagpup", "services")
         using = []
         for name in sorted(os.listdir(services)):
@@ -343,7 +345,7 @@ class SkippableEdits(JournalLibrary):
                 with open(os.path.join(services, name), encoding="utf-8") as handle:
                     if "skippable=True" in handle.read():
                         using.append(name)
-        self.assertEqual(["face_people.py", "refresh_rows.py", "relink_photos.py"], using)
+        self.assertEqual(["face_people.py", "refresh_rows.py", "relink_photos.py", "sync.py"], using)
 
 
 class HistoryReadsKeysOnly(JournalLibrary):
