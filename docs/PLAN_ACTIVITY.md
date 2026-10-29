@@ -58,3 +58,12 @@ the bake; 200 no-op `sync-folder` rows in 30 minutes). Verify its counts first.
 Whether the 200-row folder-sync flood comes from `worth_recording` recording every sync while the newest record is "not
 in step"; that the CLI jobs (embed, cluster, thumbnails, retire vectors) write no `job_runs` rows; whether
 `tagpup_web.log` rotates today; whether the watcher half of #2106 is already fixed by #2102.
+
+## Added 2026-10-29 (owner): a log that is clicked is never blank
+
+The owner clicked a run's log and it was empty, while the job was running. Every job that runs writes lines as it goes
+(B1 did it for the sync walk and the bake; B2 and B3 add the index and each failure), and the Logs view of a run says WHY when it
+shows nothing: "no lines yet; this job writes one every 30 s" (a running job), "this run wrote no lines at this level
+(INFO and up): show DEBUG" (a filter), or "the log of this run was removed (the last 5 are kept)" (retention). B5 owns the
+view; B1's levels and B2's run records are what it stands on. Its scenario test: clicking the log of a run that has just
+started shows that it started, never an empty box.
