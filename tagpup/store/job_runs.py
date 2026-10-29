@@ -7,9 +7,10 @@ A run is claimed by a row `running`, owned by the process as the file journal na
 ("host:pid:start", tagpup.store.file_journal.owner), inside one IMMEDIATE transaction:
 two processes claiming the same job for the same library at once are serialized by
 SQLite's write lock, and the second finds the first's row. A row whose owner has ended
--- a crash, a process killed mid-run -- is marked `abandoned` and the job claimed over
+-- a crash, a process killed mid-run -- is marked `abandoned` (`abandon`, the one place) and the job claimed over
 it, by the same test that settles a change of photo files a crash left
-(file_journal.owner_alive).
+(file_journal.owner_alive); the server's start marks every such run of the library at once
+(`sweep_abandoned`), so the Activity page does not show a run under way that is not.
 
 What is due is the runner's to decide (tagpup.jobs.recurring); it is handed the last
 run that ended and answers, inside the claim, so a process that lost the race to a run
@@ -93,6 +94,43 @@ def _running(conn, job, library):
                         " AND outcome = 'running' ORDER BY id", (job, library)).fetchall()
 
 
+#: Why a run a claim found `running`, its process ended, is marked abandoned.
+ENDED = "its process ended before it finished"
+
+#: Why a run the server's start found `running`, its process ended, is marked abandoned.
+STOPPED = "its process stopped while it ran; what it wrote is kept; the next run finishes it"
+
+
+def abandon(conn, note, at=None, run_ids=None):
+    """Mark the runs `run_ids` of the library open on `conn` that are still `running` -- every one, when None --
+    abandoned with `note`, finished at `at` (seconds since the epoch) or, when None, as they finished or started (a copy
+    cannot tell when they ended), their owner forgotten. Only the columns a library at 35 has: a snapshot a restore puts
+    back can be at 35 until it is brought up to date. The caller commits. Returns how many it marked."""
+    if run_ids is not None:
+        run_ids = list(run_ids)
+        if not run_ids:
+            return 0
+    sql = ("UPDATE job_runs SET outcome = 'abandoned', owner = NULL, note = ?, finished = COALESCE(?, finished, started)"
+           " WHERE outcome = 'running'")
+    params = [note, stamp(at) if at is not None else None]
+    if run_ids is not None:
+        sql += " AND id IN (" + ",".join("?" * len(run_ids)) + ")"
+        params += run_ids
+    return conn.execute(sql, params).rowcount
+
+
+def _owners_alive(rows):
+    """{owner: whether its process lives} of the (id, owner) `rows`: asked before the write lock is taken -- it may start
+    tasklist, seconds on a busy machine, which every writer of the library waited for."""
+    return {owner: file_journal.owner_alive(owner) for owner in {owner for _, owner in rows if owner}}
+
+
+def _lives(owner, alive):
+    """Does the run of `owner` belong to a live process, as `alive` (_owners_alive) found? A run with no owner does not;
+    one whose owner was not asked -- claimed after the look -- does."""
+    return bool(owner) and alive.get(owner, True)
+
+
 def _last_ended(conn, job, library):
     found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job = ? AND library IS ?"
                          " AND outcome IN ('done', 'failed') ORDER BY id DESC LIMIT 1", (job, library)).fetchone()
@@ -128,20 +166,17 @@ def claim(db_path, job, library, now, due=None, parent=None):
     # and the rows read again under it: a run that appeared meanwhile is its owner's.
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        owners = {owner for _, owner in _running(conn, job, library) if owner}
+        alive = _owners_alive(_running(conn, job, library))
     finally:
         conn.close()
-    alive = {owner: file_journal.owner_alive(owner) for owner in owners}
 
     def work(conn):
         db.begin(conn, immediate=True)
-        abandoned = 0
-        for run_id, owner in _running(conn, job, library):
-            if owner and alive.get(owner, True):
-                return Claim(why="running", holder=owner)
-            conn.execute("UPDATE job_runs SET outcome = 'abandoned', finished = ?, note = ? WHERE id = ?",
-                         (stamp(now), "its process ended before it finished", run_id))
-            abandoned += 1
+        running = _running(conn, job, library)
+        abandoned = abandon(conn, ENDED, now, [run_id for run_id, owner in running if not _lives(owner, alive)])
+        holder = next((owner for _, owner in running if _lives(owner, alive)), None)
+        if holder:
+            return Claim(why="running", abandoned=abandoned, holder=holder)
         if due is not None and not due(_last_ended(conn, job, library)):
             return Claim(why="not due", abandoned=abandoned)
         run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner, parent)"
@@ -150,6 +185,28 @@ def claim(db_path, job, library, now, due=None, parent=None):
         return Claim(run_id=run_id, abandoned=abandoned)
 
     return db.write_with_connection(db_path, work, label="claim the job %s" % job)
+
+
+def sweep_abandoned(db_path, now):
+    """Mark abandoned, with STOPPED, every run of the library at `db_path` still `running` whose process has ended -- a
+    server killed mid-run, a CLI run that died -- as the server starts. A run of a live process is kept, and one of another
+    machine, which file_journal.owner_alive cannot tell. Whether each owner lives is asked outside the write lock, as
+    claim asks it; a run claimed meanwhile is its owner's. Returns how many it marked; writes nothing when none runs."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        running = conn.execute("SELECT id, owner FROM job_runs WHERE outcome = 'running'").fetchall()
+    finally:
+        conn.close()
+    if not running:
+        return 0
+    alive = _owners_alive(running)
+
+    def work(conn):
+        db.begin(conn, immediate=True)
+        found = conn.execute("SELECT id, owner FROM job_runs WHERE outcome = 'running'").fetchall()
+        return abandon(conn, STOPPED, now, [run_id for run_id, owner in found if not _lives(owner, alive)])
+
+    return db.write_with_connection(db_path, work, label="sweep the abandoned runs")
 
 
 def finish(db_path, run_id, outcome, now, changed=None, note=None):

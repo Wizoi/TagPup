@@ -13,9 +13,14 @@ made in homes of their own; the names are fictional.
 The runs are read as trees (`services.job_runs.tree`): the newest top runs -- nothing queued them, or their parent is gone,
 pruned or not in a snapshot a restore put back -- and every run under them; a library a restore put back at 35 reads as
 its newest runs, each a top run.
+
+A run left `running` by a process that has ended -- a server killed mid-run, a CLI run that died -- is marked abandoned
+as the server starts (`libraries.bring_up_to_date_in_background`), with the one sentence that says what it means; a run
+of a live process, or of another machine, is kept, and a failure of the sweep does not stop the start.
 """
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -26,9 +31,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import migration_names  # noqa: E402
 
-from tagpup.core import runs  # noqa: E402
+from tagpup.core import processes, runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
+from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db, file_journal, job_runs, schema, snapshots  # noqa: E402
 
 NOW = 1790000000.0
@@ -287,6 +293,66 @@ class TheRunsAreReadAsTrees(unittest.TestCase):
         found = runs_service.tree(at_35, limit=2)
         self.assertEqual([("bake", None, None), ("index", None, None)], [(r.job, r.parent, r.progress) for r in found])
         self.assertEqual([(35,)], rows(at_35.path, "SELECT MAX(version) FROM schema_version"))
+
+
+class ARunWhoseProcessEndedIsAbandonedAsTheServerStarts(unittest.TestCase):
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.library = Library(self.home.library("harbour.db"))
+        schema.ensure(self.library.path)
+
+    def left_by(self, owner, job):
+        """A run of `job` claimed by the process `owner` and left running, as claim stores one."""
+        conn = db.connect(self.library.path)
+        try:
+            run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES (?, ?, ?, 'running', ?)",
+                                  (job, self.library.name, job_runs.stamp(NOW), owner)).lastrowid
+            conn.commit()
+            return run_id
+        finally:
+            conn.close()
+
+    def start_the_server(self):
+        library_actions.bring_up_to_date_in_background([self.library]).join(60)
+
+    def outcomes(self):
+        return dict((run_id, (outcome, note)) for run_id, outcome, note in
+                    rows(self.library.path, "SELECT id, outcome, note FROM job_runs ORDER BY id"))
+
+    def test_a_server_killed_mid_run_and_a_cli_run_that_died_are_abandoned_and_the_live_runs_kept(self):
+        here, pid = socket.gethostname(), os.getpid()
+        # This process's id with another start: the process that had the id before, which has ended.
+        killed = self.left_by("%s:%d:%d" % (here, pid, processes.started(pid) - 1), "index")
+        died = self.left_by("%s:%d:%d" % (here, pid, processes.started(pid) - 2), "embed")
+        alive = self.left_by("%s:%d:%d" % (here, os.getppid(), processes.started(os.getppid())), "snapshots")
+        elsewhere = self.left_by("lighthouse-pc:4242:1790000000", "sync")
+        mine = runs_service.claim(self.library, "bake", self.library.name, NOW).run_id
+        self.start_the_server()
+        found = self.outcomes()
+        self.assertEqual({killed: ("abandoned", job_runs.STOPPED), died: ("abandoned", job_runs.STOPPED),
+                          alive: ("running", None), elsewhere: ("running", None), mine: ("running", None)}, found)
+        self.assertEqual([(None, None)], rows(self.library.path, "SELECT DISTINCT owner, progress FROM job_runs"
+                                                                 " WHERE outcome = 'abandoned'"))
+
+    def test_after_the_sweep_the_job_is_claimed_again_with_nothing_left_to_abandon(self):
+        here, pid = socket.gethostname(), os.getpid()
+        self.left_by("%s:%d:%d" % (here, pid, processes.started(pid) - 1), "index")
+        self.start_the_server()
+        claim = runs_service.claim(self.library, "index", self.library.name, NOW + 60)
+        self.assertTrue(claim)
+        self.assertEqual(0, claim.abandoned)
+
+    def test_a_start_with_nothing_running_writes_nothing(self):
+        before = rows(self.library.path, "PRAGMA data_version")
+        self.assertEqual(0, runs_service.sweep_abandoned(self.library, NOW))
+        self.assertEqual(before, rows(self.library.path, "PRAGMA data_version"))
+
+    def test_a_sweep_that_fails_is_logged_and_the_start_goes_on(self):
+        with mock.patch.object(job_runs, "sweep_abandoned", side_effect=OSError("disk gone")), \
+                self.assertLogs("tagpup.services.libraries", "WARNING") as said:
+            self.start_the_server()
+        self.assertIn("abandoned runs", "\n".join(said.output))
+        self.assertFalse(library_actions.bringing_up_to_date())
 
 
 if __name__ == "__main__":

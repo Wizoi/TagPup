@@ -17,7 +17,7 @@ from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
 from tagpup.core.result import Result
 from tagpup.files import images, recycle_bin, shares
-from tagpup.services import settings
+from tagpup.services import job_runs, settings
 from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, photos, schema, taxonomy
 from tagpup.store import folders as store_folders
@@ -85,7 +85,9 @@ def bring_up_to_date_in_background(libraries_served):
     wait that out, #666), not parked on the write lock: sixteen parked threads left /api/server no thread. A library that cannot be brought up to date now -- held by another
     program past the busy timeout -- is logged and left for its first request. A library whose file is
     not there is left alone: bringing it up to date would make it, and the picker offers the default
-    library in an empty data folder (#100). Returns the thread."""
+    library in an empty data folder (#100). Each library brought up to date then has the runs a process that has ended left
+`running` marked abandoned (job_runs.sweep_abandoned); a failure of that is logged, and the start goes on. Returns the
+thread."""
     global _bringing
     there = [library for library in libraries_served if os.path.exists(library.path)]
     with _bringing_guard:
@@ -104,6 +106,15 @@ def bring_up_to_date_in_background(libraries_served):
                                 time.time() - started)
             except Exception as e:
                 logger.warning("Could not bring %s up to date at start: %s", library.path, e)
+            else:
+                # The runs a process that has ended left `running`: not under way, whatever the page would say.
+                try:
+                    swept = job_runs.sweep_abandoned(library)
+                    if swept:
+                        logger.info("%s: %d run(s) left running by a process that ended marked abandoned", library.path,
+                                    swept)
+                except Exception as e:
+                    logger.warning("Could not mark the abandoned runs of %s at start: %s", library.path, e)
             finally:
                 with _bringing_guard:
                     _bringing -= 1

@@ -43,6 +43,12 @@ def claim(library, job, run_for, now, due=None):
     return job_runs.claim(library.path, job, run_for, now, due, parent=run_tags.parent_run(library.name))
 
 
+def sweep_abandoned(library, now=None):
+    """Mark abandoned every run of `library` still running whose process has ended (tagpup.store.job_runs.sweep_abandoned):
+    what a server's start does. `now` is seconds since the epoch, now by default. Returns how many."""
+    return job_runs.sweep_abandoned(library.path, time.time() if now is None else now)
+
+
 def finish(library, run_id, now, result=None, error=None, failed=None):
     """End run `run_id` with the `result` its service returned, or the `error` it raised:
     done when the Result is ok, else failed -- and failed, with `failed` its note, when the
