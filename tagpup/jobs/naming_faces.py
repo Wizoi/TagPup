@@ -198,10 +198,10 @@ class Job:
         with self.lock:
             self.stage, self.done, self.total = stage, done, total
 
-    def _end_run(self, what, failed=None, run=None):
+    def _end_run(self, what, failed=None):
         """What the phase's run ends as, written as its block ends: done, or failed with `failed`, a job_runs.Failure the
-        mapper made (job_runs.failure). `run`, the phase's own, when a Yes may already have put the next in `self.run`."""
-        (run or self.run).ends(failed=failed, counts=self.counts(what))
+        mapper made (job_runs.failure)."""
+        self.run.ends(failed=failed, counts=self.counts(what))
 
     def _record(self, what):
         self.run.counts_so_far(self.counts(what))
@@ -260,8 +260,7 @@ class Job:
                                  "again": (AGAIN_SAYS + " " + where).strip() if earlier else None}
                     self.state, self.asked = ASKING, time.time()
                     self.done = self.total = 1
-                # Asking now: a Yes may already hold the apply's run in self.run.
-                self._end_run(what, run=run)
+                self._end_run(what)
         except Stopped:
             self._finish(CANCELLED, "Cancelled: nothing was changed.", what)
         except BaseException as problem:   # a thread that raised leaves a job that says why, not one still 'planning'
@@ -356,12 +355,10 @@ def _refuse_if_working(library):
 
 
 def _claim(library):
-    """A phase's run (job_runs.run), claimed: what the claim raised raises, and a run of the job anywhere, or a library
-    behind this version's schema, is a Conflict saying so."""
-    run = runs_service.run(library, JOB, library.name)
+    """A phase's run (job_runs.run), claimed: what the claim raised raises (the request's answer logs it), and a run of
+    the job anywhere, or a library behind this version's schema, is a Conflict saying so."""
+    run = runs_service.run(library, JOB, library.name, raises=True)
     if not run:
-        if run.error is not None:
-            raise run.error
         if run.why == "behind":
             raise Conflict("%s has not been brought up to date yet: open it in TagPup once and try again." % library.name)
         where = "in this TagPup" if batches.is_this_process(run.holder) else "in another TagPup process"

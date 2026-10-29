@@ -393,13 +393,14 @@ class Recorded:
         return False
 
 
-def run(library, job, run_for, clock=time.time, due=None, changed=None, stopped=None):
+def run(library, job, run_for, clock=time.time, due=None, changed=None, stopped=None, raises=False):
     """A run of `job` in `library` for the library named `run_for` (None for a job not run per library), claimed now
     (`claim`: its parent the run of the library this thread is part of) unless `due(last, now)`, asked with the last run
     that ended, says no, holding `changed` from the claim to its end: a Recorded, whose block is the run. The ends of
     `job` in `library` this process could not write are written first. A run that is not recorded is a null run, its
     claim's refusal logged; a library of None is never recorded (an index queue made without one). `clock()` says when,
-    seconds since the epoch; `stopped`: Recorded."""
+    seconds since the epoch; `stopped`: Recorded. `raises`: a claim that fails raises, not logged here, for a caller whose
+    own caller answers and logs it (the request that began a naming, a root's move); else it is logged here, once."""
     if library is None:
         return Recorded(None, job, clock(), why="no library")
     _write_ends_kept(library, job)
@@ -407,6 +408,8 @@ def run(library, job, run_for, clock=time.time, due=None, changed=None, stopped=
     try:
         claimed = claim(library, job, run_for, now, None if due is None else (lambda last: due(last, now)), changed)
     except Exception as e:
+        if raises:
+            raise
         logger.warning("The run of %s in %s is not recorded: its claim failed: %s", job, library.name, e)
         return Recorded(library, job, now, why=UNCLAIMED, error=e)
     if not claimed:

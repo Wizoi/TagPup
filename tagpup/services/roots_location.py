@@ -234,10 +234,8 @@ def change_location(library, name, location, machine, apply=False, override=Fals
         result.refuse("Not changed: %s. Wait for it to finish or cancel it, then try again. %s" % (
             "; ".join(running), SEES_ONLY_ITS_OWN))
         return result
-    with runs_service.run(library, MOVE_JOB % name, library.name, now) as run:
+    with runs_service.run(library, MOVE_JOB % name, library.name, now, raises=True) as run:
         if not run:
-            if run.error is not None:
-                raise run.error
             result.details["conflict"] = True
             result.refuse("Not changed: " + (BEHIND if run.why == "behind" else
                                              "another change of %s is under way; try again in a moment." % name))
