@@ -1022,16 +1022,24 @@ class Folders(SyncTestCase):
         self.photo(os.path.join(self.meet, "finals"), "IMG_0002.jpg")
         self.assertEqual([path], images.photos_in(self.meet))
         proc = MagicMock(returncode=0)
+        listed = []
+
+        def start(args, **_kwargs):
+            with open(args[args.index(indexing.FOLDERS_FILE) + 1], encoding="utf-8") as handle:
+                listed.append(handle.read().splitlines())
+            return proc
         proc.stdout.readline.side_effect = ["done\n", ""]
-        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+        with mock.patch("subprocess.Popen", side_effect=start) as popen:
             indexing.index_folder(self.library, self.meet, "code", subfolders=False)
-        self.assertEqual(["index", self.meet, "--no-subfolders"], popen.call_args[0][0][-3:])
+        self.assertEqual("--no-subfolders", popen.call_args[0][0][-1])
+        self.assertEqual([[self.meet]], listed)
         # Several folders are one run of the indexer.
         proc.stdout.readline.side_effect = ["done\n", ""]
-        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+        with mock.patch("subprocess.Popen", side_effect=start) as popen:
             indexing.index_folder(self.library, [self.meet, self.trip], "code", subfolders=False)
         self.assertEqual(1, popen.call_count)
-        self.assertEqual(["index", self.meet, self.trip, "--no-subfolders"], popen.call_args[0][0][-4:])
+        self.assertEqual("--no-subfolders", popen.call_args[0][0][-1])
+        self.assertEqual([self.meet, self.trip], listed[-1])
 
     def test_the_walk_stamps_each_photo_as_the_disk_does(self):
         path = self.photo(self.meet, "IMG_0001.jpg", body=b"12345")

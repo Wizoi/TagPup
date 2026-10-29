@@ -1331,10 +1331,18 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
         proc = MagicMock()
         proc.returncode = 0
         proc.stdout.readline.side_effect = ["done\n", ""]
-        with patch("subprocess.Popen", return_value=proc) as popen:
+        listed = []
+        from tagpup.services import indexing
+
+        def start(args, **_kwargs):
+            # The folders the child is handed, read as it would read them: the list is gone once the run ends.
+            with open(args[args.index(indexing.FOLDERS_FILE) + 1], encoding="utf-8") as handle:
+                listed.append(handle.read().splitlines())
+            return proc
+        with patch("subprocess.Popen", side_effect=start):
             self.post_start([forward_slashes(folder)], block_runner=False)
             self.wait_until_idle()
-        self.assertEqual(popen.call_args_list[0].args[0][3], folder)
+        self.assertEqual([[folder]], listed)
 
     def test_queued_and_running_jobs_name_the_folder_the_same_way(self):
         from unittest.mock import patch

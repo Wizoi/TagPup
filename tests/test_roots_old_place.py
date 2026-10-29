@@ -162,10 +162,14 @@ class AfterAMove(unittest.TestCase):
         Child.stdout.readline.side_effect = [""]
         Child.stdout.__enter__ = lambda s: s
         Child.stdout.__exit__ = lambda s, *a: False
-        with mock.patch.object(indexing.processes, "start", side_effect=lambda args, **kw: spawned.append(args) or Child()):
+        def start(args, **_kwargs):
+            # The folders the child is handed, read as it would read them: the list is gone once the run ends.
+            with open(args[args.index(indexing.FOLDERS_FILE) + 1], encoding="utf-8") as handle:
+                spawned.append(handle.read().splitlines())
+            return Child()
+        with mock.patch.object(indexing.processes, "start", side_effect=start):
             indexing.index_folder(self.library, queued[0][0], os.getcwd())
-        self.assertIn(os.path.join(self.first, "Made later"), spawned[0])
-        self.assertNotIn(later, spawned[0])
+        self.assertEqual([[os.path.join(self.first, "Made later")]], spawned)
 
 
 if __name__ == "__main__":
