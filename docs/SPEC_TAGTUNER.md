@@ -98,6 +98,8 @@ The page opened with `?review=1` opens the dialog as it starts: the Activity pag
 - **Recent activity**: one timeline of what was done -- changes of the journal, job runs, syncs, runs of the indexer, updates -- newest first, with their counts; **More** reads further back.
 - **Logs**: a tab for each log in `data/logs`, newest lines first, each as time, level, logger and message, filtered by level (warnings and worse unless asked) and by text; **Follow** asks for new lines every three seconds; **Raw** shows the end of the file as written, **Download** saves it.
 
+Scheduled jobs, Snapshots, Server and Logs are folded until opened, each showing one line while folded: the next run due and how many failed last time; the last snapshot and the disk they take; the version and how long it has run; how many logs. The browser remembers which are open (where it may: otherwise each opens folded), and a link of the page's top line, or **Logs for this run**, opens the section it goes to.
+
 ### Library settings
 
 **Library settings** in the gear opens the settings of the library the page is on

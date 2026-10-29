@@ -9,6 +9,7 @@ import { state } from './state.js';
 import { ago, counts, duration } from './format.js';
 import { badge, fill, none, outcomeKind, runLinks } from './view.js';
 import { renderNeeds } from './needs.js';
+import { foldLine } from './fold.js';
 
 /** Read each job's runs, and show them. */
 export function loadJobs() {
@@ -183,5 +184,18 @@ export function renderJobs() {
         ]));
     }
     fill(document.getElementById('jobs-body'), ...(blocks.length ? blocks : [none('No recurring jobs.')]));
+    foldLine('jobs', foldedJobs(data));
     renderNeeds(data, controlsFor);
+}
+
+/** Scheduled jobs folded: the next run due, and how many failed last time. */
+function foldedJobs(data) {
+    const jobs = (data.libraries || []).flatMap(library => library.jobs || []);
+    if (!jobs.length) return 'No recurring jobs.';
+    const running = jobs.filter(job => job.running).length;
+    const due = jobs.filter(job => !job.running && job.next_due).map(job => job.next_due).sort()[0];
+    const failing = jobs.filter(job => job.failing).length;
+    return [running ? `${running} running` : null,
+            due ? `next due ${ago(due)} (${due})` : 'none due',
+            failing ? `${failing} failed last time` : 'none failing'].filter(Boolean).join('; ');
 }

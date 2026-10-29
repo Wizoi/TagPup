@@ -38,20 +38,26 @@
             <div id="needs-body" class="body" aria-live="polite"><p class="none">Asking...</p></div>
         </section>
         <section id="jobs" aria-labelledby="jobs-title">
-            <h2 id="jobs-title">Scheduled jobs</h2>
-            <div id="jobs-body" class="body"><p class="none">Asking...</p></div>
+            <details class="fold" data-fold="jobs">
+                <summary><h2 id="jobs-title">Scheduled jobs</h2> <span id="jobs-folded" class="folded">Asking...</span></summary>
+                <div id="jobs-body" class="body"><p class="none">Asking...</p></div>
+            </details>
         </section>
         <section id="sync" aria-labelledby="sync-title">
             <h2 id="sync-title">Sync &amp; watcher</h2>
             <div id="sync-body" class="body"><p class="none">Asking...</p></div>
         </section>
         <section id="snapshots" aria-labelledby="snapshots-title">
-            <h2 id="snapshots-title">Snapshots</h2>
-            <div id="snapshots-body" class="body"><p class="none">Asking...</p></div>
+            <details class="fold" data-fold="snapshots">
+                <summary><h2 id="snapshots-title">Snapshots</h2> <span id="snapshots-folded" class="folded">Asking...</span></summary>
+                <div id="snapshots-body" class="body"><p class="none">Asking...</p></div>
+            </details>
         </section>
         <section id="server" aria-labelledby="server-title">
-            <h2 id="server-title">Server</h2>
-            <div id="server-body" class="body"><p class="none">Asking...</p></div>
+            <details class="fold" data-fold="server">
+                <summary><h2 id="server-title">Server</h2> <span id="server-folded" class="folded">Asking...</span></summary>
+                <div id="server-body" class="body"><p class="none">Asking...</p></div>
+            </details>
         </section>
         <section id="timeline" aria-labelledby="timeline-title">
             <h2 id="timeline-title">Recent activity</h2>
@@ -59,24 +65,26 @@
             <button id="timeline-more" type="button" class="btn" disabled>More</button>
         </section>
         <section id="logs" aria-labelledby="logs-title">
-            <h2 id="logs-title">Logs</h2>
-            <div id="log-tabs" class="tabs" role="tablist" aria-label="Logs"></div>
-            <div class="log-controls">
-                <label>Level <select id="log-level"></select></label>
-                <label>Text <input id="log-text" type="search" placeholder="Filter the lines" autocomplete="off"></label>
-                <span id="log-run" class="chip hidden">Run <code id="log-run-tag"></code>
-                    <button id="log-run-clear" type="button" class="link" aria-label="Show every run's lines">x</button></span>
-                <label><input id="log-follow" type="checkbox"> Follow</label>
-                <button id="log-older" type="button" class="btn" disabled>Older</button>
-                <a id="log-raw" class="btn" href="#" target="_blank" rel="noopener">Raw</a>
-                <a id="log-download" class="btn" href="#" download>Download</a>
-                <span id="log-status" class="status"></span>
-            </div>
-            <div class="table-wrap">
-                <table class="log-table">
-                    <tbody id="log-records"></tbody>
-                </table>
-            </div>
+            <details class="fold" data-fold="logs">
+                <summary><h2 id="logs-title">Logs</h2> <span id="logs-folded" class="folded">Asking...</span></summary>
+                <div id="log-tabs" class="tabs" role="tablist" aria-label="Logs"></div>
+                <div class="log-controls">
+                    <label>Level <select id="log-level"></select></label>
+                    <label>Text <input id="log-text" type="search" placeholder="Filter the lines" autocomplete="off"></label>
+                    <span id="log-run" class="chip hidden">Run <code id="log-run-tag"></code>
+                        <button id="log-run-clear" type="button" class="link" aria-label="Show every run's lines">x</button></span>
+                    <label><input id="log-follow" type="checkbox"> Follow</label>
+                    <button id="log-older" type="button" class="btn" disabled>Older</button>
+                    <a id="log-raw" class="btn" href="#" target="_blank" rel="noopener">Raw</a>
+                    <a id="log-download" class="btn" href="#" download>Download</a>
+                    <span id="log-status" class="status"></span>
+                </div>
+                <div class="table-wrap">
+                    <table class="log-table">
+                        <tbody id="log-records"></tbody>
+                    </table>
+                </div>
+            </details>
         </section>
     </main>
     <script type="module" src="main.js"></script>

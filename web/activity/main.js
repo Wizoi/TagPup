@@ -1,9 +1,10 @@
-// The Activity page: start-up and wiring. Each section is a module beside this one, its
+// The Activity page: start-up and wiring. Each section is a module beside this one (the folded ones fold.js's), its
 // state in state.js; every request goes through api.js, in its form for what covers every
 // library (api.site: web/common/api.js). Now is asked every few seconds while the page is
 // in view, the rest every half minute, and nothing while the page is hidden (poll.js).
 import { state } from './state.js';
 import { wireRootsBanner } from './common/roots-banner.js';
+import { wireFolds } from './fold.js';
 import { pauseWhenHidden, poller } from './poll.js';
 import { loadNow, renderNow } from './now.js';
 import { loadJobs } from './jobs.js';
@@ -23,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Each section's listeners, and the banner the other pages have (an update while the page is open).
     wireRootsBanner();
+    wireFolds();
     wireTimeline();
     wireLogs();
     pauseWhenHidden();

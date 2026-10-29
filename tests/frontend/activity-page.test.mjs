@@ -1,7 +1,9 @@
 /**
  * The Activity page (web/activity/; docs/ARCHITECTURE.md, phase 8.5): each section drawn from what the server answers,
  * Now asked again while the page is in view and not while it is hidden, Run now asked first, "Logs for this run" reading
- * that run's lines, and every request sent under no library, through api.js's form for what covers every library.
+ * that run's lines (Logs unfolded), every request sent under no library, through api.js's form for what covers every
+ * library; Scheduled jobs, Snapshots, Server and Logs folded, each with one line, the open ones remembered where the
+ * browser may.
  *
  * Now, Needs you, Scheduled jobs and Recent activity answer from fixtures/activity.json: the real routes' replies on
  * libraries seeded through the real writers (tests/test_activity_page_replies.py), one morning the owner opens the page
@@ -348,6 +350,71 @@ describe("the other sections", () => {
     assert.equal(window.document.getElementById("file-access"), null);
     assert.equal(window.document.querySelector('a[href="#file-access"]'), null);
     assert.deepEqual(fake.urls().filter((url) => url.includes("file-access")), []);
+  });
+});
+
+describe("Scheduled jobs, Snapshots, Server and Logs fold, and a folded one says what needs the owner", () => {
+  const FOLDS = ["jobs", "snapshots", "server", "logs"];
+  const opened = (document) => FOLDS.filter((name) => document.querySelector(`details.fold[data-fold="${name}"]`).open);
+  const line = (document, name) => document.getElementById(`${name}-folded`).textContent;
+  const summary = (document, name) => document.querySelector(`details.fold[data-fold="${name}"] > summary`);
+
+  test("the first visit opens them folded, each with its one line from what the page already read", async (t) => {
+    const { document, window } = await open(t);
+    await flush(window, 8);
+    assert.deepEqual(opened(document), []);
+    assert.match(line(document, "jobs"), /^next due .+ \(2026-09-22 01:13:20\); 1 failed last time$/);
+    assert.match(line(document, "server"), /^Version 20260926-090000-abc1234; up \d/);
+    assert.match(line(document, "snapshots"), /^Last taken 2026-09-26 09:00:00 \(.+\); 3\.0 GB all together$/);
+    assert.equal(line(document, "logs"), "2 logs");
+    // Now, Needs you, Sync and Recent activity never fold.
+    for (const id of ["now", "needs", "sync", "timeline"]) assert.equal(document.querySelector(`#${id} details`), null, id);
+  });
+
+  test("a section opened stays open on the next visit; one folded again stays folded", async (t) => {
+    const first = await open(t);
+    await flush(first.window, 6);
+    click(first.window, summary(first.document, "server"));
+    click(first.window, summary(first.document, "jobs"));
+    await flush(first.window, 2);
+    assert.deepEqual(opened(first.document), ["jobs", "server"]);
+    click(first.window, summary(first.document, "jobs"));
+    await flush(first.window, 2);
+    const kept = first.window.localStorage.getItem("tagpup_activity_open");
+    assert.equal(kept, JSON.stringify(["server"]));
+
+    const again = await loadApp("activity", { t, server: server(), url: "http://localhost:8090/activity/?every=5000",
+                                              before: (window) => window.localStorage.setItem("tagpup_activity_open", kept) });
+    await flush(again.window, 6);
+    assert.deepEqual(opened(again.document), ["server"]);
+  });
+
+  test("a browser that will not remember: every section folded, each opens and folds all the same", async (t) => {
+    const refuse = (window) => Object.defineProperty(window, "localStorage", { configurable: true,
+      get: () => { throw new window.DOMException("The operation is insecure.", "SecurityError"); } });
+    const { document, window, consoleErrors } = await loadApp("activity", { t, server: server(),
+      url: "http://localhost:8090/activity/?every=5000", before: refuse });
+    await flush(window, 8);
+    assert.deepEqual(opened(document), []);
+    assert.equal(line(document, "logs"), "2 logs");
+    click(window, summary(document, "snapshots"));
+    await flush(window, 2);
+    assert.deepEqual(opened(document), ["snapshots"]);
+    assert.equal(document.querySelectorAll("#snapshots-body tr.snapshot").length, 2);
+    assert.deepEqual(consoleErrors, []);
+  });
+
+  test("a nav link to a folded section, and Logs for this run, unfold it", async (t) => {
+    const { document, window } = await open(t);
+    await flush(window, 8);
+    click(window, document.querySelector('nav a[href="#jobs"]'));
+    click(window, document.querySelector('nav a[href="#now"]'));   // a section that never folds: nothing to unfold
+    await flush(window, 2);
+    assert.deepEqual(opened(document), ["jobs"]);
+    click(window, document.querySelector("#timeline-body button.run-logs"));
+    await flush(window, 6);
+    assert.deepEqual(opened(document), ["jobs", "logs"]);
+    assert.match(document.getElementById("log-records").textContent, /the run's line/);
   });
 });
 

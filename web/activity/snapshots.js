@@ -3,8 +3,9 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
-import { bytes, duration } from './format.js';
+import { ago, bytes, duration } from './format.js';
 import { fill, none } from './view.js';
+import { foldLine } from './fold.js';
 
 /** Read each library's snapshots, and show them. */
 export function loadSnapshots() {
@@ -41,4 +42,6 @@ export function renderSnapshots() {
     ]));
     fill(document.getElementById('snapshots-body'), buildElement('p', { className: 'total', text: `All together: ${bytes(data.bytes)}` }),
         ...(cards.length ? cards : [none('No libraries.')]));
+    const last = (data.libraries || []).flatMap(library => library.snapshots || []).map(each => each.taken).sort().at(-1);
+    foldLine('snapshots', `${last ? `Last taken ${last} (${ago(last)})` : 'None taken yet'}; ${bytes(data.bytes)} all together`);
 }

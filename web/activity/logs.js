@@ -8,6 +8,7 @@ import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import { bytes } from './format.js';
+import { foldLine, unfold } from './fold.js';
 
 /** How many records a read asks for. */
 const LOG_PAGE = 200;
@@ -60,6 +61,8 @@ function renderLogTabs() {
         return tab;
     });
     replaceContent(tabs, ...(buttons.length ? buttons : [buildElement('p', { className: 'none', text: 'No logs yet.' })]));
+    const many = state.logs.files.length;
+    foldLine('logs', many ? `${many} log${many === 1 ? '' : 's'}` : 'No logs yet.');
     const raw = document.getElementById('log-raw');
     const download = document.getElementById('log-download');
     if (raw) raw.href = state.logs.name ? api.site.url(logAddress(state.logs.name, '/raw')) : '#';
@@ -129,12 +132,13 @@ export function followLog() {
     });
 }
 
-/** "Logs for this run": the log `name` (as the server named it), only the lines of the run `run`, INFO and worse. */
+/** "Logs for this run": the log `name` (as the server named it), only the lines of the run `run`, INFO and worse; Logs unfolded. */
 export function showRunLogs(run, name) {
     state.logs.run = run;
     state.logs.level = 'INFO';
     const level = document.getElementById('log-level');
     if (level) level.value = 'INFO';
+    unfold('logs');
     const section = document.getElementById('logs');
     if (section && typeof section.scrollIntoView === 'function') section.scrollIntoView();
     return chooseLog(name || state.logs.server);
