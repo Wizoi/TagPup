@@ -247,6 +247,26 @@ class AnIndexThatDoesNotFinishIsRecordedSo(_Indexing):
 
 
 class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):
+    def test_an_end_that_cannot_be_written_is_written_as_the_next_index_of_the_library_begins(self):
+        """#2189: the row stayed `running`, this live server's, for good: every later index unrecorded and a root move
+        refused until a restart."""
+        real_end, said = runs_service.end, []
+
+        def end_once_unwritable(*args, **kwargs):
+            if not said:
+                said.append(args[1])
+                raise OSError("the library cannot be written just now")
+            return real_end(*args, **kwargs)
+        with mock.patch.object(runs_service, "end", side_effect=end_once_unwritable):
+            first = self.queued([self.folder("Regatta")], self.code(bars(1)))
+            self.assertEqual([job_runs.RUNNING], [run.outcome for run in self.runs()])
+            self.assertEqual(["the index job is running"], roots_location._running_here(self.library))
+            self.queued([self.folder("Lighthouse")], self.code(bars(1)))
+        found = self.runs()
+        self.assertEqual([(job_runs.DONE, None), (job_runs.DONE, first["message"])],
+                         [(run.outcome, run.note if run.id == said[0] else None) for run in found])
+        self.assertEqual([], roots_location._running_here(self.library))
+
     def test_a_library_behind_the_schema_is_indexed_and_never_written_a_run(self):
         behind = self.made("breakwater", at=35)
         status = self.queued([self.folder("Regatta")], self.code(bars(1) + bake([self.folder("Regatta")])),

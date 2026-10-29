@@ -16,7 +16,8 @@ HISTORY runs, for the Activity page -- in this process, as the queue itself is.
 Each run of the indexer is a run of the job `index` (job_runs.INDEX) in the library's `job_runs` too (DECISIONS 2026-10-28, ACTIVITY REWORK),
 claimed by this process as it takes the job -- under the run that queued it (a sync's), from the tags it was queued under
 -- told how far it got from the indexer's lines (tagpup.services.job_runs.tell, through index_folder), and ended with its
-counts and its message; its row holds the run's tag (`changed["run"]`), which the indexer's own log is named by. Only
+counts and its message -- an end that could not be written is written as the queue's next index of the library is
+claimed, so a live server holds no run of its own `running` that is not; its row holds the run's tag (`changed["run"]`), which the indexer's own log is named by. Only
 the claiming process writes a run's row: the indexer the queue starts claims none. A row that
 cannot be written -- the library behind this version's schema, being written, gone -- is logged, and the index runs as
 it would have.
@@ -110,6 +111,9 @@ class IndexQueue:
         #: The Library its runs of the indexer are recorded in (job_runs.INDEX); None for a queue made without one -- the tests of
         #: its scheduling alone -- which records none.
         self._recorded_in = recorded_in
+        #: The end of this queue's last run that could not be written -- (run id, when, counts, failed, note) -- written
+        #: as the next is claimed; None when there is none. Only the worker reads it, one at a time.
+        self._unended = None
         self._lock = threading.RLock()
         #: {"folder", "index"}, in the order they were asked for.
         self._pending = []
@@ -452,6 +456,9 @@ class IndexQueue:
         where = self._recorded_in
         if where is None:
             return None
+        if self._unended is not None:
+            # Its row is still `running`, this live process's: no one else ends it.
+            self._write_end(*self._unended)
         try:
             claim = job_runs.claim(where, job_runs.INDEX, where.name, time.time(), changed={"run": run})
         except Exception as e:
@@ -471,8 +478,8 @@ class IndexQueue:
         """End the run's row: done, with its message as the note, when it completed or was cancelled (counted
         `cancelled`); failed, its message the sentence, when it failed. Its counts are its Result's (job_runs.counts,
         what the indexer said it did among them) and its folders, beside its tag `run`; an index that raised counts one
-        error. A row that is
-        gone -- pruned, a restore, swept -- or cannot be written is logged."""
+        error. A row that is gone -- pruned, a restore, swept -- is logged; one that cannot be written is logged and
+        written as the next run is claimed (_claim)."""
         if run_id is None:
             return
         where, outcome = self._recorded_in, status.get("status")
@@ -480,12 +487,23 @@ class IndexQueue:
         counts.update(folders=len(_folders_of(job)), run=run)
         if outcome == "cancelled":
             counts["cancelled"] = 1
+        self._write_end(run_id, time.time(), counts, outcome not in ("completed", "cancelled"),
+                        status.get("message") or None)
+
+    def _write_end(self, run_id, when, counts, failed, note):
+        """Write the end of run `run_id` as it ended `when`; kept in _unended, to be written as the next run is claimed,
+        when it cannot be."""
+        where = self._recorded_in
         try:
-            if not job_runs.end(where, run_id, time.time(), counts, failed=outcome not in ("completed", "cancelled"),
-                                note=status.get("message") or None):
-                logger.info("The run %d of the index of %s was no longer this process's to end.", run_id, where.name)
+            ended = job_runs.end(where, run_id, when, counts, failed=failed, note=note)
         except Exception as e:
-            logger.warning("Could not record the end of the index of %s (run %d): %s", where.name, run_id, e)
+            self._unended = (run_id, when, counts, failed, note)
+            logger.warning("Could not record the end of the index of %s (run %d), written as its next index begins: %s",
+                           where.name, run_id, e)
+            return
+        self._unended = None
+        if not ended:
+            logger.info("The run %d of the index of %s was no longer this process's to end.", run_id, where.name)
 
     def _ensure_runner(self):
         """Start the worker, unless one is already working through the queue."""
