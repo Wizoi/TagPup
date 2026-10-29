@@ -17,7 +17,6 @@ said with what its kind means (job_runs.FAILURES) and the next step for its job 
 across the libraries.
 """
 import logging
-import numbers
 import time
 
 from tagpup.core import runs
@@ -54,10 +53,24 @@ def roots_there(roots):
     return listed
 
 
-def _counts(found):
-    """The numbers among `found`, a dict: what a record says it found or changed."""
-    return {name: value for name, value in (found or {}).items()
-            if isinstance(value, numbers.Number) and not isinstance(value, bool)}
+def _sync_run(entry, run):
+    """The timeline's one entry of a sync a job ran (the `sync` job: the daily sync, a watcher's whole sync): its record's
+    `entry` -- kind "sync", what it was and what it counted -- taking the job run's id, tag, times, parent and progress, so
+    the index runs it queued (whose `parent` is the job run) and its logs (the job's tag, which its sync's lines carry,
+    tagpup.core.runs) are found under it; and, when the run did not end done, its outcome and why (its note)."""
+    entry.update(id=run.id, run=_tag(run), time=run.started, finished=run.finished,
+                 seconds=seconds_between(run.started, run.finished), parent=run.parent, progress=_progress(run))
+    if run.outcome != job_runs.DONE:
+        entry.update(outcome=run.outcome, error=run.note)
+
+
+def _written_inside(entry, run):
+    """Whether the sync record whose timeline `entry` is was written inside the job `run`: the entry's "time" (the
+    record's `started`, store.job_runs._sync) at or after the run's `started` and, once it ended, at or before its
+    `finished`. A `sync` run written before migration 32 names the id of a row of the old sync_runs table, which the
+    migration folded into job_runs without rewriting the link: a later record (a watcher's folder sync) can take that
+    id, and it is not the run's."""
+    return run.started <= entry["time"] and (run.finished is None or entry["time"] <= run.finished)
 
 
 def _what(run):
@@ -128,7 +141,8 @@ def _sync_entry(library, record):
         return None
     return {"id": record["id"], "started": record["started"], "finished": record["finished"],
             "seconds": seconds_between(record["started"], record["finished"]), "whole": record["whole"],
-            "in_step": record["in_step"], "found": _counts(record["found"]), "changed": _counts(record["changed"]),
+            "in_step": record["in_step"], "found": runs_service.shown_counts(record["found"]),
+            "changed": runs_service.shown_counts(record["changed"]),
             "change": record["change_id"], "run": runs.sync_tag(library.name, record["started"])}
 
 
@@ -174,7 +188,10 @@ def timeline_and_children(library, limit=50):
     {"kind": "change" | "job" | "index" | "sync", "library", "time", "finished", "seconds",
     "what", "outcome", "counts", "id", "run", "error"}, a job's and an index's also its "parent" and "progress"
     (under_way), an index's also its "syncs" (the tags of the syncs it is part of: a folder sync's index, whose own
-    row has no parent while the sync runs). A sync's change of the journal is its sync's entry, not one of its own. An index's run says how many
+    row has no parent while the sync runs). A sync's change of the journal is its sync's entry, not one of its own; so is
+    the run of the job that ran it, when the run names its record (sync.RECORD) among the syncs read here and the record
+    was written inside the run (_written_inside, _sync_run): a record gone, an id that is now another job's, or one a
+    later sync took, is no sync of the run's, and the run stands as a job. An index's run says how many
     folders it indexed, never which (its row holds no path); its error is its note only when it failed or was abandoned."""
     limit = max(1, min(int(limit), MOST))
     entries = []
@@ -183,7 +200,7 @@ def timeline_and_children(library, limit=50):
         syncs = job_runs.recent_syncs(conn, limit)
     finally:
         conn.close()
-    sync_changes = set()
+    sync_changes, by_record = set(), {}
     for record in syncs:
         entry = _sync_entry(library, record)
         if record["change_id"]:
@@ -195,11 +212,17 @@ def timeline_and_children(library, limit=50):
                         "counts": dict(entry["changed"], **{"found_" + k: v for k, v in entry["found"].items()
                                                             if k in ("new", "missing", "moved", "changed")}),
                         "id": record["id"], "run": entry["run"], "error": None})
+        by_record[record["id"]] = entries[-1]
     indexes = job_runs.runs(library.path, job_runs.INDEX, job_runs.KEEP_RUNS)
     for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS + (job_runs.INDEX,)) + indexes:
+        named = by_record.get(run.changed.get(sync.RECORD)) if run.job != job_runs.INDEX else None
+        paired = by_record.pop(named["id"]) if named is not None and _written_inside(named, run) else None
+        if paired is not None:
+            _sync_run(paired, run)
+            continue
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
-                        "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,
+                        "outcome": run.outcome, "counts": runs_service.shown_counts(run.changed), "id": run.id,
                         "run": _tag(run), "error": run.note, "parent": run.parent, "progress": _progress(run)})
         if run.job == job_runs.INDEX:
             entries[-1].update(kind="index", what="index of %d folder(s)" % run.changed.get("folders", 0),
@@ -210,7 +233,7 @@ def timeline_and_children(library, limit=50):
             continue
         rows = sum(count for actions in (change.get("rows") or {}).values() for count in actions.values())
         files = sum((change.get("files") or {}).values())
-        counts = _counts(change.get("summary"))
+        counts = runs_service.shown_counts(change.get("summary"))
         counts.update(rows=rows, files=files)
         entries.append({"kind": "change", "library": library.name, "time": change["created"],
                         "finished": change["applied"] or change["undone"], "seconds": None,

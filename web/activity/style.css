@@ -87,6 +87,9 @@ details.fold[open] + .folded { display: none; }
 .run-tree .activity.at { margin-top: 0; }
 .run-line.stuck .what { color: var(--bad); }
 .activity.unreadable { margin: 4px 0 8px; }
+/* What happened: an entry a line, a rule between them, so a line wrapped at 360 px reads as one. */
+#timeline-body .run-tree > li.entry + li.entry { border-top: 1px solid var(--border); }
+#timeline-body .run-line, #timeline-body .activity.unreadable { margin: 0; padding: 4px 0; gap: 2px 10px; }
 .need h3 { flex-wrap: wrap; }
 .need-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
 .need-facts dt { color: var(--muted); }

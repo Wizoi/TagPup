@@ -459,17 +459,19 @@ def server():
 @routes.get("/api/activity/timeline")
 def timeline():
     limit = _int_arg("limit", TIMELINE, MOST_TIMELINE)
-    entries, children = [], {}
+    entries, children, unreadable = [], {}, []
     for library in _libraries():
         try:
             found, children[library.name] = activity.timeline_and_children(library, limit)
             entries += found
         except Exception as e:
             logger.warning("Could not read what was done in %s: %s", library.name, e)
+            unreadable.append({"library": library.name, "error": str(e)})
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
     for entry in entries[:limit]:
         entry["logs"] = _logs_for(entry["run"], children.get(entry["library"]))
-    return jsonify({"limit": limit, "entries": entries[:limit], "more": len(entries) > limit})
+    return jsonify({"limit": limit, "entries": entries[:limit], "more": len(entries) > limit,
+                    "unreadable": unreadable})
 
 
 # ---- The logs --------------------------------------------------------------------------------

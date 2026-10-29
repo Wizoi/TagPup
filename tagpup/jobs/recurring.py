@@ -204,7 +204,8 @@ def _record_library(job, library, libraries):
 def status(library, registry=JOBS, now=None):
     """Each job's last run in `library`, and when it is due next: [{"name", "period",
     "reason", "per_library", "about", "last": {"started", "finished", "outcome", "changed"} or None,
-    "running", "next_due"}]. Counts only: a run's note, which can name a path, is left out.
+    "running", "next_due"}]. Counts only (job_runs.shown_counts: never the id of a sync's record): a run's note, which
+    can name a path, is left out.
     A job not run per library shows what `library` records of it: its runs are recorded
     in the first library by name."""
     now = time.time() if now is None else now
@@ -218,7 +219,8 @@ def status(library, registry=JOBS, now=None):
             "name": job.name, "period": job.period.name, "reason": job.reason, "per_library": job.per_library,
             "about": job.about,
             "last": None if last is None else {"started": last.started, "finished": last.finished,
-                                               "outcome": last.outcome, "changed": last.changed},
+                                               "outcome": last.outcome,
+                                               "changed": job_runs.shown_counts(last.changed)},
             "running": last is not None and last.outcome == "running",
             "next_due": job_runs.stamp(max(now, due)) if due is not None else job_runs.stamp(now),
         })
@@ -240,7 +242,7 @@ def overview(library, registry=JOBS, now=None, limit=10):
         entry["runs"] = [{"id": run.id, "started": run.started, "finished": run.finished,
                           "seconds": (int(max(0, job_runs.seconds(run.finished) - job_runs.seconds(run.started)))
                                       if run.finished else None),
-                          "outcome": run.outcome, "changed": run.changed, "error": run.note,
+                          "outcome": run.outcome, "changed": job_runs.shown_counts(run.changed), "error": run.note,
                           "failure": job_runs.kind_of(run), "run": runs.job_tag(run.library, run.id)}
                          for run in found[:limit]]
         entry["failing"] = bool(job_runs.needs_you(found))

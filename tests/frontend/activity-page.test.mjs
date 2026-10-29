@@ -299,7 +299,9 @@ describe("the other sections", () => {
     click(window, sync.querySelector('tr.job[data-library="harbour"] button.fold'));
     const unfolded = jobs.querySelectorAll('.job-card[data-job="sync"] tr.run');
     assert.equal(unfolded.length, 2);
-    assert.match(unfolded[0].textContent, /new 812/);
+    assert.match(unfolded[0].textContent, /done/);
+    // A sync job's run names its sync's record, which pairs the two in What happened: an id, never said as a count.
+    assert.doesNotMatch(jobs.textContent, /record \d/, "a record's id is no count");
   });
 
   test("Sync & watcher, Snapshots and the server", async (t) => {
@@ -327,20 +329,62 @@ describe("the other sections", () => {
     assert.match(always.textContent, /20260926-090000-abc1234/);
   });
 
-  test("Recent activity, newest first, and More reads further back", async (t) => {
+  test("What happened the morning after: a tree of what ran, each line how it ended and why; an unreadable library said; More", async (t) => {
     const timeline = { ...SERVED.morning.timeline, more: true };
     const fake = server("morning", { first: [["/api/activity/timeline", timeline]] });
     const { document, window } = await open(t, fake);
     await flush(window, 6);
-    const rows = document.querySelectorAll("#timeline-body tr.entry");
-    assert.equal(rows.length, timeline.entries.length);
-    assert.deepEqual([...rows].slice(0, 3).map((row) => row.dataset.kind), ["job", "sync", "job"]);
-    assert.match(rows[0].textContent, /the process that started it stopped before it could record its end/);
+    const body = document.getElementById("timeline-body");
+    assert.equal(body.querySelectorAll("li.entry").length, timeline.entries.length + 1, "every entry, and the unreadable library");
+    const top = [...body.querySelectorAll(":scope > ul.run-tree > li.entry")];
+    // The library that is no library says so first; it was only logged before.
+    assert.ok(top[0].classList.contains("unreadable"));
+    assert.match(top[0].textContent, /pier.*Could not read what was done in this library: file is not a database/);
+    // The daily sync is one line, never its job's row and its record's both; the index its job queued is beneath it.
+    assert.deepEqual(top.slice(1, 8).map((li) => `${li.dataset.kind} ${li.dataset.library}`),
+                     ["job jetty", "sync breakwater", "sync jetty", "index harbour", "sync harbour", "index lighthouse", "sync harbour"]);
+    // The watcher's long sync, ended as the sync job ends it: its run and its record one line, its index beneath it.
+    const beneath = [...top[5].querySelectorAll(":scope > ul.run-tree > li.entry")];
+    assert.deepEqual(beneath.map((li) => li.dataset.kind), ["index"], "the index the sync job queued, under it");
+    assert.ok(beneath[0].querySelector('button.run-logs[data-run="index:harbour:20260921T152320-4242-1"]'));
+    // How each ended, in a word and why: never colour alone.
+    const failed = top[2].querySelector(":scope > .run-line");
+    assert.equal(failed.querySelector(".badge").textContent, "failed");
+    assert.match(failed.querySelector(".error").textContent, /^The network share C: is not answering just now/);
+    assert.match(top[1].querySelector(".error").textContent, /the process that started it stopped before it could record its end/);
+    assert.match(top[6].querySelector(".error").textContent, /The indexer stopped answering; its process was ended\./);
+    assert.equal(top[3].querySelector(".badge").textContent, "in step");
+    assert.equal(top[3].querySelector(".error"), null);
+    assert.equal(top[5].querySelector(":scope > .run-line .badge").textContent, "in step");
+    assert.match(top[5].querySelector(":scope > .run-line").textContent, /sync of the whole library/);
+    assert.match(top[5].querySelector(":scope > .run-line .took").textContent, /^took \d+ (s|min)$/);
+    assert.doesNotMatch(body.textContent, /record \d/, "a record's id is no count");
     const more = document.getElementById("timeline-more");
     assert.equal(more.disabled, false);
     click(window, more);
     await flush(window, 4);
     assert.ok(fake.urls().some((url) => url === "/api/activity/timeline?limit=100"), fake.urls().join("\n"));
+  });
+
+  test("What happened nests a folder sync's index by its syncs, never under a journal change of the same id; an older server's reply is drawn", async (t) => {
+    // A page left open across an update: the reply of a server before `unreadable` and before a sync was paired.
+    const entry = (fields) => ({ library: "harbour", time: "2026-09-26 09:10:00", finished: "2026-09-26 09:10:05", seconds: 5,
+                                 outcome: "completed", counts: {}, error: null, logs: [], ...fields });
+    const timeline = { limit: 50, more: false, entries: [
+      entry({ kind: "index", what: "index of 1 folder(s)", id: 7, parent: null, syncs: ["sync:harbour:20260926T091000"],
+              run: "index:harbour:20260926T091001-4242-1" }),
+      entry({ kind: "index", what: "index of 2 folder(s)", id: 8, parent: 4, syncs: [], run: "index:harbour:20260926T090500-4242-2" }),
+      entry({ kind: "sync", what: "sync of one folder", outcome: "in step", id: 6, run: "sync:harbour:20260926T091000" }),
+      entry({ kind: "change", what: "bulk tags", outcome: "applied", id: 4, run: null, seconds: null }),
+    ] };
+    const fake = server("quiet", { first: [["/api/activity/timeline", timeline]] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    const top = [...document.querySelectorAll("#timeline-body > ul.run-tree > li.entry")];
+    assert.deepEqual(top.map((li) => li.dataset.kind), ["index", "sync", "change"]);
+    assert.deepEqual([...top[1].querySelectorAll("li.entry")].map((li) => li.dataset.kind), ["index"]);
+    assert.equal(top[2].querySelector("li.entry"), null, "an index nested under a journal change that shares its id");
+    assert.equal(top[2].querySelector(".took"), null, "a change says no time it took");
   });
 
   test("every request goes under no library, through api.js", async (t) => {

@@ -15,7 +15,8 @@ export const state = {
     //: Unload models now under way (its button disabled), and what it last answered: { text, ok } or null.
     unloading: false,
     unloaded: null,
-    timeline: { limit: 50, entries: [], more: false },
+    //: What happened, as far back as asked, and the libraries whose timeline could not be read: [{ library, error }].
+    timeline: { limit: 50, entries: [], more: false, unreadable: [] },
     //: The Run now asked and waiting for its confirmation: { job, library, where } or null; `where` is the section
     //: whose button was clicked ('jobs' or 'needs'), the only one that shows it.
     confirming: null,

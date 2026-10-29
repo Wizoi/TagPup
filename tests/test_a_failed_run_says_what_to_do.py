@@ -13,6 +13,7 @@ import os
 import shutil
 import sqlite3
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -91,14 +92,16 @@ class _Libraries(unittest.TestCase):
         return os.path.join(self.home.root, "Share", name.title() + " Quay")
 
     def nightly_sync(self, library, queue=None, at=NIGHT):
-        """The daily `sync` job run on the recurring runner for `library`, its new folders handed to `queue`: its run."""
+        """The daily `sync` job run on the recurring runner for `library`, its new folders handed to `queue`: its run.
+        One clock, `at`, for the run and the sync's record, which reads time.time as the real runner's clock does."""
         pictures = os.path.join(self.pictures, library.name)
 
         class Runtime:
             def sync(self, library, folder=None, apply=False):
                 return sync.sync(library, folder=folder, apply=apply, queue=queue, roots=[pictures])
         runner = recurring.Runner(lambda: [library], clock=Clock(at), given={"runtime": Runtime()})
-        self.assertTrue(runner.run_job(recurring.JOBS.get(recurring.SYNC), library).ran)
+        with mock.patch("time.time", Clock(at)):
+            self.assertTrue(runner.run_job(recurring.JOBS.get(recurring.SYNC), library).ran)
         return job_runs.runs(library, recurring.SYNC, 1)[0]
 
     def share_drops(self, library):
@@ -139,6 +142,94 @@ class AFailedRunRecordsWhatHappened(_Libraries):
         self.assertEqual((job_runs.DONE, None, 1), (run.outcome, job_runs.kind_of(run), run.changed["skipped"]))
         self.assertFalse(queue.busy(), "a folder that is gone was queued")
         self.assertEqual([], activity.needs_you([lighthouse]))
+
+
+class WhatHappenedSaysASyncOnce(_Libraries):
+    """What happened, the morning after: the daily sync ran (the `sync` job, which writes its run's row) and its sync wrote
+    its record (`sync-whole`); the owner sees one line of it, or of its failure, never two (activity.timeline_and_children)."""
+
+    def syncs_of(self, library):
+        return [entry for entry in activity.timeline(library) if entry["kind"] in ("sync", "job")]
+
+    def test_the_daily_sync_is_one_entry_its_run_and_its_record_together(self):
+        """Break: the job's row and its sync's record each an entry (the sync shown twice, the same finish), or the
+        record's id shown as a count ("record 2")."""
+        harbour = self.library("harbour", photos=("IMG_0001.jpg", "IMG_0002.jpg"))
+        os.remove(os.path.join(self.folder_of("harbour"), "IMG_0002.jpg"))
+        run = self.nightly_sync(harbour)
+        self.assertEqual(job_runs.DONE, run.outcome)
+        (entry,) = self.syncs_of(harbour)
+        self.assertEqual(("sync", "sync of the whole library", "in step", None),
+                         (entry["kind"], entry["what"], entry["outcome"], entry["error"]))
+        self.assertEqual((run.id, activity.runs.job_tag(harbour.name, run.id), run.started, run.finished),
+                         (entry["id"], entry["run"], entry["time"], entry["finished"]))
+        self.assertEqual(1, entry["counts"]["found_missing"], entry["counts"])
+        self.assertNotIn(sync.RECORD, entry["counts"])
+
+    def test_the_jobs_section_shows_the_daily_syncs_counts_without_its_record(self):
+        """The Jobs section's runs of the sync job and its last run say what the sync counted, never the id of its record
+        (job_runs.RECORD), which only pairs the run with its record, nor of its journal change. Break: recurring.overview
+        sending a run's `changed` raw, the page saying "record 2" among the counts."""
+        harbour = self.library("harbour", photos=("IMG_0001.jpg", "IMG_0002.jpg"))
+        os.remove(os.path.join(self.folder_of("harbour"), "IMG_0002.jpg"))
+        run = self.nightly_sync(harbour)
+        self.assertIn(sync.RECORD, run.changed, "the run holds the link to its record")
+        (entry,) = [each for each in recurring.overview(harbour) if each["name"] == recurring.SYNC]
+        (shown,) = entry["runs"]
+        self.assertEqual(run.id, shown["id"])
+        for counts in (shown["changed"], entry["last"]["changed"]):
+            self.assertEqual({"attempted": 1, "changed": 1, "errors": 0, "queued": 0, "skipped": 0}, counts,
+                             "a link (the record's id, the change's) said as a count")
+
+    def test_a_sync_whose_share_drops_is_one_failed_entry_saying_why(self):
+        """Break: the record's "not in step" said beside a failed job, or the failure said without its sentence."""
+        harbour = self.library("harbour", new=("IMG_0002.jpg",))
+        self.nightly_sync(harbour, self.share_drops(harbour))
+        (entry,) = self.syncs_of(harbour)
+        self.assertEqual(("sync", job_runs.FAILED), (entry["kind"], entry["outcome"]))
+        self.assertTrue(entry["error"].startswith("The network share"), entry["error"])
+
+    def test_a_folder_sync_that_takes_the_id_an_old_run_names_stays_at_its_own_time(self):
+        """A `sync` run written before migration 32 names the id of its record in the old sync_runs table, which the
+        migration folded into job_runs without rewriting the link: an id above every row's. The watcher's folder syncs
+        (records, no job run) climb to it; the one that takes it is still its own line, at its own time with its own
+        counts, and the old run a plain job line. Break: pairing by the id alone (the folder sync gone, its counts on
+        the old run's line, dated weeks before)."""
+        harbour = self.library("harbour")
+        old = NIGHT - 27 * 24 * HOUR
+        claimed = stored_runs.claim(harbour.path, recurring.SYNC, harbour.name, old)
+        conn = db.connect(db.readonly_uri(harbour.path), uri=True)
+        try:
+            (highest,) = conn.execute("SELECT MAX(id) FROM job_runs").fetchone()
+        finally:
+            conn.close()
+        taken = highest + 3
+        self.assertTrue(stored_runs.finish(harbour.path, claimed.run_id, stored_runs.DONE, old + 60,
+                                           changed={sync.RECORD: taken, "changed": 0}))
+        record = None
+        while record is None or record < taken:
+            record = stored_runs.record_sync(harbour.path, stored_runs.stamp(time.time()), whole=False, in_step=True,
+                                             found={"new": 3}, changed={"rows": 0})
+        self.assertEqual(taken, record, "the folder syncs reached the old run's link")
+        entries = {(entry["kind"], entry["id"]): entry for entry in self.syncs_of(harbour)}
+        folder = entries.get(("sync", taken))
+        self.assertIsNotNone(folder, "the folder sync that took the id left its place")
+        written = [each for each in stored_runs.runs(harbour.path, stored_runs.SYNC_FOLDER, 10) if each.id == taken][0]
+        self.assertEqual((written.started, "sync of one folder", 3), (folder["time"], folder["what"],
+                                                                      folder["counts"]["found_new"]))
+        self.assertEqual(activity.runs.sync_tag(harbour.name, written.started), folder["run"])
+        run = entries.get(("job", claimed.run_id))
+        self.assertIsNotNone(run, "the old run was taken for a sync")
+        self.assertEqual(stored_runs.stamp(old), run["time"])
+        self.assertEqual(taken - highest, sum(1 for kind, _ in entries if kind == "sync"))
+
+    def test_a_sync_no_job_ran_keeps_its_record_alone(self):
+        """The CLI's sync, or a watcher's sync of a folder, writes its record and no job run: its entry is the record's."""
+        harbour = self.library("harbour")
+        result = sync.sync(harbour, apply=True, roots=[os.path.join(self.pictures, "harbour")])
+        (entry,) = self.syncs_of(harbour)
+        self.assertEqual(("sync", result.details[sync.RECORD], activity.runs.sync_tag(harbour.name, entry["time"])),
+                         (entry["kind"], entry["id"], entry["run"]))
 
 
 class NeedsYouInTheMorning(_Libraries):
@@ -227,6 +318,13 @@ class NeedsYouInTheMorning(_Libraries):
                                                   jobs["harbour"]["sync"]["failing"]))
         self.assertEqual((job_runs.ERROR, True), (jobs["breakwater"]["snapshots"]["runs"][0]["failure"],
                                                   jobs["breakwater"]["snapshots"]["failing"]))
+
+        timeline = app.test_client().get("/api/activity/timeline").get_json()
+        self.assertEqual(["pier"], [each["library"] for each in timeline["unreadable"]],
+                         "a library that cannot be read was only logged: What happened said nothing of it")
+        self.assertTrue(timeline["unreadable"][0]["error"])
+        (harbour_sync,) = [each for each in timeline["entries"] if each["library"] == "harbour" and each["kind"] != "change"]
+        self.assertEqual(("sync", job_runs.FAILED), (harbour_sync["kind"], harbour_sync["outcome"]))
 
     def test_failed_abandoned_and_failed_again_is_one_item_of_two_until_a_run_is_done(self):
         """Break: an abandoned run counted as failing or as settling it (recurring.overview's `failing` counted an
