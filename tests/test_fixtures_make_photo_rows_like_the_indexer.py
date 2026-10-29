@@ -56,8 +56,8 @@ BARE_FACE = re.compile(r"(?:INSERT\s+(?:OR\s+\w+\s+)?|REPLACE\s+)INTO\s+faces\b"
 #: The test files and helpers that still make a face row by hand: a count of such statements in each. face_rows.py is the
 #: helper itself; test_person_ids_single_owner.py names the statement in its docstring.
 STILL_BARE_FACES = {
-    "face_rows.py": 1, "test_bulk_scripts_back_up.py": 1, "test_journal.py": 1, "test_journal_through_the_services.py": 1,
-    "test_mcp_photo_against_file.py": 2, "test_migrations.py": 2, "test_person_ids_single_owner.py": 1,
+    "face_rows.py": 1, "test_bulk_scripts_back_up.py": 1, "test_journal.py": 1,
+    "test_migrations.py": 2, "test_person_ids_single_owner.py": 1,
     "test_person_rename_reaches_the_files.py": 1, "test_roots_at_scale.py": 1, "test_taxonomy_lifecycle.py": 2,
     "test_tuner_server_api.py": 2,
 }
