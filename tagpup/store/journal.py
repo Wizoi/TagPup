@@ -70,11 +70,10 @@ import json
 import logging
 import sqlite3
 import threading
-import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from tagpup.core import paths
+from tagpup.core import dates, paths
 from tagpup.store import db, derived, faces_detected, file_journal, people, person_ids, schema
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
@@ -178,8 +177,6 @@ CHUNK = 500
 
 #: How many rows a rehearsal lists that an undo did not restore.
 SHOWN = 20
-
-TIME = "%Y-%m-%d %H:%M:%S"
 
 
 @dataclass
@@ -293,7 +290,7 @@ def _reached(step):
 
 
 def _now():
-    return time.strftime(TIME)
+    return dates.recorded()
 
 
 def _named(table, key):

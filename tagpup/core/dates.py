@@ -6,9 +6,13 @@ which is not when the photo was taken. In both libraries on 2026-09-23 no photo 
 that, so dropping it changed nothing; taking XMP:CreateDate everywhere moved seven
 photos whose only date it is from after the dated ones to their place among them.
 tests/test_dates.py fails the build on a list of these fields anywhere else.
+
+And how TagPup spells a time it records (`recorded`): the journal's, the runs', the Activity page's. It was spelled by
+hand in fourteen places; tests/test_rules_have_one_owner.py fails the build on a copy.
 """
 import datetime
 import re
+import time
 from pathlib import PurePath
 
 #: The fields that say when a photo was taken, the most specific first.
@@ -141,3 +145,17 @@ def record_year(meta):
         text = str(year).strip() if year is not None else ""
         return int(text) if text.isdigit() else None
     return photo_year(meta.get("raw_metadata"), meta.get("path"))
+
+
+#: How every time TagPup records is spelled: local time, "YYYY-MM-DD HH:MM:SS".
+RECORDED = "%Y-%m-%d %H:%M:%S"
+
+
+def recorded(at=None):
+    """`at`, seconds since the epoch (now by default), as TagPup records a time."""
+    return time.strftime(RECORDED, time.localtime(at))
+
+
+def recorded_seconds(text):
+    """A time TagPup recorded, as seconds since the epoch; ValueError for a text that is not one, TypeError for None."""
+    return time.mktime(time.strptime(text, RECORDED))

@@ -206,7 +206,7 @@ class Job:
 
     def _record(self, what):
         try:
-            runs_service.progress(self.library, self.run_id, self.counts(what))
+            runs_service.counts_so_far(self.library, self.run_id, self.counts(what))
         except Exception as problem:
             logger.warning("Could not record the progress of name-faces job %s of %s: %s", self.handle, self.library.name,
                            problem)

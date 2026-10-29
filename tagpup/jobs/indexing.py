@@ -20,6 +20,7 @@ import time
 
 from tagpup.core import gpu_turns, paths, runs
 from tagpup.core.result import Result
+from tagpup.services import job_runs
 from tagpup.services import photos as photo_actions
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ class _Progress:
         if percent is not None:
             self.status["percent"] = percent
         if message is not None or percent is not None:
-            self.status["progressed"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            self.status["progressed"] = job_runs.stamp(time.time())
 
 
 class IndexQueue:
@@ -367,7 +368,7 @@ class IndexQueue:
                     status = {"status": "running", "percent": 0,
                               "message": job.get("message") or "Starting indexing...", "folder": job["folder"]}
                     self._current = {"run": runs.index_tag(self.library),
-                                     "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                     "started": job_runs.stamp(time.time()),
                                      "folders": len(_folders_of(job)), "name": os.path.basename(job["folder"]),
                                      "parents": list(job.get("parents") or ()), "status": status}
                     run = self._current["run"]
@@ -420,7 +421,7 @@ class IndexQueue:
             entry = {"run": current.get("run"), "parents": current.get("parents", []),
                      "folders": len(_folders_of(job)),
                      "name": os.path.basename(job["folder"]), "started": current.get("started"),
-                     "finished": time.strftime("%Y-%m-%d %H:%M:%S"), "outcome": status.get("status"),
+                     "finished": job_runs.stamp(time.time()), "outcome": status.get("status"),
                      "message": status.get("message", "")}
             self._history.append(entry)
             del self._history[:-HISTORY]

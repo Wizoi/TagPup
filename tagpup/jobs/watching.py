@@ -59,6 +59,7 @@ import time
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
 from tagpup.core import paths
+from tagpup.services import job_runs
 from tagpup.services import photos as photo_actions
 from tagpup.services import sync as sync_service
 
@@ -336,7 +337,8 @@ class Watcher:
         if not folders:
             return
         now = self._clock()
-        heard, wall = _now(), time.time()
+        wall = time.time()
+        heard = job_runs.stamp(wall)
         with self._lock:
             for library in libraries:
                 pending = self._pending_for(library)
@@ -454,7 +456,7 @@ class Watcher:
         with self._lock:
             self._syncing += 1
             progress = {}
-            self._current = {"library": library.name, "folder": folder, "started": _now(), "progress": progress}
+            self._current = {"library": library.name, "folder": folder, "started": job_runs.stamp(time.time()), "progress": progress}
         result, ran = None, True
         try:
             if folder is None and self._whole is not None:
@@ -492,7 +494,7 @@ class Watcher:
                 details = getattr(result, "details", None) or {}
                 if ran:
                     self._last_sync[library.key] = {
-                        "folder": folder, "started": started, "finished": _now(),
+                        "folder": folder, "started": started, "finished": job_runs.stamp(time.time()),
                         "changed": getattr(result, "changed", 0) or 0, "queued": details.get("queued", 0),
                         "refused": bool(getattr(result, "refused", None)), "failed": result is None}
 
@@ -678,11 +680,6 @@ def _named(held, more, a_folder):
     merged = dict(held)
     merged.update(more)
     return merged if len(merged) <= NAMED_MOST else None
-
-
-def _now():
-    """The time as the Activity page shows it."""
-    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _emitter_alive(observer, watch):

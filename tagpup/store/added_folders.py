@@ -11,15 +11,10 @@ recorded here, and a row is made as a photo is used -- by Suggest, as the indexe
 A record of what was asked, not a change of the library's photos: not journaled, as
 indexing is not. Removing a folder from the library forgets what was added at or under it.
 """
-import time
-
-from tagpup.core import paths
+from tagpup.core import dates, paths
 from tagpup.store import roots as store_roots
 
 TABLE = "added_folders"
-
-#: How a record spells a time (the journal's format).
-TIME = "%Y-%m-%d %H:%M:%S"
 
 
 def record(conn, folder, subfolders=True):
@@ -35,7 +30,7 @@ def record(conn, folder, subfolders=True):
             return 1
         return 0
     conn.execute("INSERT INTO added_folders (path, subfolders, added) VALUES (?, ?, ?)",
-                 (stored, 1 if subfolders else 0, time.strftime(TIME)))
+                 (stored, 1 if subfolders else 0, dates.recorded()))
     return 1
 
 

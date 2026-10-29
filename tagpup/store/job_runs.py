@@ -7,9 +7,10 @@ A run is claimed by a row `running`, owned by the process as the file journal na
 ("host:pid:start", tagpup.store.file_journal.owner), inside one IMMEDIATE transaction:
 two processes claiming the same job for the same library at once are serialized by
 SQLite's write lock, and the second finds the first's row. A row whose owner has ended
--- a crash, a process killed mid-run -- is marked `abandoned` and the job claimed over
+-- a crash, a process killed mid-run -- is marked `abandoned` (`abandon`, the one place) and the job claimed over
 it, by the same test that settles a change of photo files a crash left
-(file_journal.owner_alive).
+(file_journal.owner_alive); the server's start marks every such run of the library at once
+(`sweep_abandoned`), so the Activity page does not show a run under way that is not.
 
 What is due is the runner's to decide (tagpup.jobs.recurring); it is handed the last
 run that ended and answers, inside the claim, so a process that lost the race to a run
@@ -18,14 +19,17 @@ that has just finished does not run the job again.
 Times are the journal's: local time, "YYYY-MM-DD HH:MM:SS".
 """
 import json
+import logging
 import os
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from tagpup.core import dates
 from tagpup.store import db, file_journal, schema
 
-TIME = "%Y-%m-%d %H:%M:%S"
+logger = logging.getLogger(__name__)
 
 RUNNING, DONE, FAILED, ABANDONED = "running", "done", "failed", "abandoned"
 OUTCOMES = (RUNNING, DONE, FAILED, ABANDONED)
@@ -50,6 +54,13 @@ class Run:
     owner: Optional[str] = None
     #: Why it failed or was abandoned; can name a path, so never sent to a page.
     note: Optional[str] = None
+    #: The run that queued this one (migration 36), its id; None for one nothing queued. Only `tree` reads it, and the two
+    #: below; the other readers leave them None: they select the columns a library at 35 has, which the MCP server and the
+    #: Activity page's look read without migrating it.
+    parent: Optional[int] = None
+    #: When it last said how far it got, a run's time (`stamp`), and what it said: {"phase": .., "counts": {..}} (progress).
+    heartbeat: Optional[str] = None
+    progress: Optional[Dict[str, Any]] = None
 
     @property
     def started_at(self):
@@ -57,13 +68,13 @@ class Run:
 
 
 def stamp(at):
-    """`at`, seconds since the epoch, as a run records it."""
-    return time.strftime(TIME, time.localtime(at))
+    """`at`, seconds since the epoch, as a run records it (dates.recorded)."""
+    return dates.recorded(at)
 
 
 def seconds(text):
-    """A time a run recorded, as seconds since the epoch."""
-    return time.mktime(time.strptime(text, TIME))
+    """A time a run recorded, as seconds since the epoch (dates.recorded_seconds)."""
+    return dates.recorded_seconds(text)
 
 
 def _run(found):
@@ -81,6 +92,43 @@ def _prune(conn, job, library, keep):
 def _running(conn, job, library):
     return conn.execute("SELECT id, owner FROM job_runs WHERE job = ? AND library IS ?"
                         " AND outcome = 'running' ORDER BY id", (job, library)).fetchall()
+
+
+#: Why a run a claim found `running`, its process ended, is marked abandoned.
+ENDED = "its process ended before it finished"
+
+#: Why a run the server's start found `running`, its process ended, is marked abandoned.
+STOPPED = "its process stopped while it ran; what it wrote is kept; the next run finishes it"
+
+
+def abandon(conn, note, at=None, run_ids=None):
+    """Mark the runs `run_ids` of the library open on `conn` that are still `running` -- every one, when None --
+    abandoned with `note`, finished at `at` (seconds since the epoch) or, when None, as they finished or started (a copy
+    cannot tell when they ended), their owner forgotten. Only the columns a library at 35 has: a snapshot a restore puts
+    back can be at 35 until it is brought up to date. The caller commits. Returns how many it marked."""
+    if run_ids is not None:
+        run_ids = list(run_ids)
+        if not run_ids:
+            return 0
+    sql = ("UPDATE job_runs SET outcome = 'abandoned', owner = NULL, note = ?, finished = COALESCE(?, finished, started)"
+           " WHERE outcome = 'running'")
+    params = [note, stamp(at) if at is not None else None]
+    if run_ids is not None:
+        sql += " AND id IN (" + ",".join("?" * len(run_ids)) + ")"
+        params += run_ids
+    return conn.execute(sql, params).rowcount
+
+
+def _owners_alive(rows):
+    """{owner: whether its process lives} of the (id, owner) `rows`: asked before the write lock is taken -- it may read
+    the process list, seconds on a busy machine, which every writer of the library waited for."""
+    return {owner: file_journal.owner_alive(owner) for owner in {owner for _, owner in rows if owner}}
+
+
+def _lives(owner, alive):
+    """Does the run of `owner` belong to a live process, as `alive` (_owners_alive) found? A run with no owner does not;
+    one whose owner was not asked -- claimed after the look -- does."""
+    return bool(owner) and alive.get(owner, True)
 
 
 def _last_ended(conn, job, library):
@@ -101,9 +149,10 @@ class Claim:
         return self.run_id is not None
 
 
-def claim(db_path, job, library, now, due=None):
+def claim(db_path, job, library, now, due=None, parent=None):
     """Begin a run of `job` for `library` (a library's name, or None for a job not run per
-    library) at `now` (seconds since the epoch), owned by this process: unless a process
+    library) at `now` (seconds since the epoch), owned by this process, under the run `parent`
+    of the same library (its id) if it was queued by one: unless a process
     still running holds one, or `due`, called with the last run that ended (Run or None),
     answers False. A run whose process has ended is marked `abandoned` first. A Claim.
 
@@ -117,27 +166,47 @@ def claim(db_path, job, library, now, due=None):
     # and the rows read again under it: a run that appeared meanwhile is its owner's.
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        owners = {owner for _, owner in _running(conn, job, library) if owner}
+        alive = _owners_alive(_running(conn, job, library))
     finally:
         conn.close()
-    alive = {owner: file_journal.owner_alive(owner) for owner in owners}
 
     def work(conn):
         db.begin(conn, immediate=True)
-        abandoned = 0
-        for run_id, owner in _running(conn, job, library):
-            if owner and alive.get(owner, True):
-                return Claim(why="running", holder=owner)
-            conn.execute("UPDATE job_runs SET outcome = 'abandoned', finished = ?, note = ? WHERE id = ?",
-                         (stamp(now), "its process ended before it finished", run_id))
-            abandoned += 1
+        running = _running(conn, job, library)
+        abandoned = abandon(conn, ENDED, now, [run_id for run_id, owner in running if not _lives(owner, alive)])
+        holder = next((owner for _, owner in running if _lives(owner, alive)), None)
+        if holder:
+            return Claim(why="running", abandoned=abandoned, holder=holder)
         if due is not None and not due(_last_ended(conn, job, library)):
             return Claim(why="not due", abandoned=abandoned)
-        run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES (?, ?, ?, 'running', ?)",
-                              (job, library, stamp(now), file_journal.owner())).lastrowid
+        run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner, parent)"
+                              " VALUES (?, ?, ?, 'running', ?, ?)",
+                              (job, library, stamp(now), file_journal.owner(), parent)).lastrowid
         return Claim(run_id=run_id, abandoned=abandoned)
 
     return db.write_with_connection(db_path, work, label="claim the job %s" % job)
+
+
+def sweep_abandoned(db_path, now):
+    """Mark abandoned, with STOPPED, every run of the library at `db_path` still `running` whose process has ended -- a
+    server killed mid-run, a CLI run that died -- as the server starts. A run of a live process is kept, and one of another
+    machine, which file_journal.owner_alive cannot tell. Whether each owner lives is asked outside the write lock, as
+    claim asks it; a run claimed meanwhile is its owner's. Returns how many it marked; writes nothing when none runs."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        running = conn.execute("SELECT id, owner FROM job_runs WHERE outcome = 'running'").fetchall()
+    finally:
+        conn.close()
+    if not running:
+        return 0
+    alive = _owners_alive(running)
+
+    def work(conn):
+        db.begin(conn, immediate=True)
+        found = conn.execute("SELECT id, owner FROM job_runs WHERE outcome = 'running'").fetchall()
+        return abandon(conn, STOPPED, now, [run_id for run_id, owner in found if not _lives(owner, alive)])
+
+    return db.write_with_connection(db_path, work, label="sweep the abandoned runs")
 
 
 def finish(db_path, run_id, outcome, now, changed=None, note=None):
@@ -173,7 +242,7 @@ def discard(db_path, run_id):
     return db.write_with_connection(db_path, work, label="discard run %d" % run_id)
 
 
-def progress(db_path, run_id, changed):
+def counts_so_far(db_path, run_id, changed):
     """Record the counts of run `run_id` so far, while it runs: `changed` as the run's counts (what the Activity page lists
     of a run in progress). False when the run is no longer this process's and running -- taken over as abandoned, ended, or
     the library restored from a snapshot without it. One small write; a job calls it every few seconds, never per photo."""
@@ -181,7 +250,37 @@ def progress(db_path, run_id, changed):
         return conn.execute("UPDATE job_runs SET changed = ? WHERE id = ? AND outcome = 'running' AND owner = ?",
                             (json.dumps(changed or {}, sort_keys=True), run_id, file_journal.owner())).rowcount == 1
 
-    return db.write_with_connection(db_path, work, label="progress of run %d" % run_id)
+    return db.write_with_connection(db_path, work, label="counts so far of run %d" % run_id)
+
+
+#: The columns migration 36 added: a write of them meets a library still at 35 only in the gap snapshots.restore leaves
+#: between putting a snapshot at 35 back and bringing it to the current schema.
+_AT_36 = ("parent", "heartbeat", "progress")
+
+
+def progress(db_path, run_id, phase, counts, now):
+    """Record how far run `run_id`, this process's and running, has got: `heartbeat` the time `now` (seconds since the
+    epoch), `progress` {"phase": phase, "counts": counts}, as the caller checked them (tagpup.services.job_runs.progress).
+    Made now or not at all (db.write_if_free): db.BUSY while the library is being written. False when the run is no longer
+    this process's and running -- abandoned, ended, gone with a restore -- or the library is a snapshot at 35 a restore
+    has put back and not yet migrated. Never raises for either."""
+    text = json.dumps({"phase": phase, "counts": counts}, sort_keys=True)
+
+    def work(conn):
+        return conn.execute("UPDATE job_runs SET heartbeat = ?, progress = ? WHERE id = ? AND outcome = 'running'"
+                            " AND owner = ?", (stamp(now), text, run_id, file_journal.owner())).rowcount == 1
+
+    try:
+        written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
+    except sqlite3.OperationalError as e:
+        message = str(e).lower()
+        if "no such column" not in message or not any(column in message for column in _AT_36):
+            raise
+        logger.debug("progress of run %d: not written, the library is not yet at schema 36 (a restore under way)", run_id)
+        return False
+    if written is False:
+        logger.debug("progress of run %d: not written, it is no longer this process's running run", run_id)
+    return written
 
 
 def get(db_path, run_id):
@@ -312,5 +411,45 @@ def runs(db_path, job=None, limit=20, exclude=()):
             found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job = ? ORDER BY id DESC LIMIT ?",
                                  (job, limit))
         return [_run(row) for row in found.fetchall()]
+    finally:
+        conn.close()
+
+
+#: A top run: one nothing queued, or whose parent is gone -- pruned, or not in a snapshot a restore put back.
+_TOPS = ("SELECT id FROM job_runs AS r WHERE r.parent IS NULL"
+         " OR NOT EXISTS (SELECT 1 FROM job_runs AS p WHERE p.id = r.parent) ORDER BY r.id DESC LIMIT ?")
+
+#: The top runs and every run under them. A child is claimed after its parent, so its id is greater; asking for that
+#: also ends the walk whatever the rows say.
+_TREE = ("WITH RECURSIVE tops(id) AS (" + _TOPS + "),"
+         " tree(id) AS (SELECT id FROM tops UNION ALL"
+         " SELECT c.id FROM job_runs AS c JOIN tree ON c.parent = tree.id AND c.id > tree.id)"
+         " SELECT " + _COLUMNS + ", parent, heartbeat, progress FROM job_runs WHERE id IN (SELECT id FROM tree)"
+         " ORDER BY id DESC")
+
+
+def _has_parents(conn):
+    """Has the library open on `conn` had migration 36 (job_runs.parent, heartbeat, progress)?"""
+    return any(column[1] == "parent" for column in conn.execute("PRAGMA table_info(job_runs)"))
+
+
+def tree(db_path, limit=20):
+    """The newest `limit` top runs of the library -- those nothing queued, or whose parent is gone -- and every run under
+    them, newest first, each with its `parent`, `heartbeat` and `progress` (parsed): the one reader of the columns of
+    migration 36. A library not yet at 36 (one the Activity page's look reads without migrating it) has no parents: its
+    newest `limit` runs, each a top run. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        limit = max(0, int(limit))
+        if not _has_parents(conn):
+            return [_run(row) for row in conn.execute("SELECT " + _COLUMNS + " FROM job_runs ORDER BY id DESC LIMIT ?",
+                                                      (limit,))]
+        found = []
+        for row in conn.execute(_TREE, (limit,)):
+            run = _run(row[:-3])
+            run.parent, run.heartbeat = row[-3], row[-2]
+            run.progress = json.loads(row[-1]) if row[-1] else None
+            found.append(run)
+        return found
     finally:
         conn.close()

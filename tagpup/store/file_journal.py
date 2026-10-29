@@ -35,17 +35,14 @@ tagpup.services.file_changes'; this is the rows.
 import json
 import os
 import socket
-import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from tagpup.core import paths, processes
+from tagpup.core import dates, paths, processes
 from tagpup.store import db, schema
 from tagpup.store import roots as store_roots
 
 STATES = ("planned", "writing", "done", "conflict", "undone")
-
-TIME = "%Y-%m-%d %H:%M:%S"
 
 #: How many ids one query asks for.
 CHUNK = 500
@@ -172,7 +169,7 @@ def owner_alive(named):
 
 
 def _now():
-    return time.strftime(TIME)
+    return dates.recorded()
 
 
 def _row(found, roots):

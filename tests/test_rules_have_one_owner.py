@@ -40,6 +40,9 @@ RULES = (
      # "Location" alone is an HTTP header; "activity" is also the Activity page's route, named once (ACTIVITY_PAGE).
      r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']|(?<!ACTIVITY_PAGE = )[\"'](activity|school|trips)[\"']", ()),
     ("an unknown year is dates'", os.path.join("tagpup", "core", "dates.py"), r"[\"']Unknown[\"']", ()),
+    # A recorded time was spelled by hand in fourteen places (the journal's, the runs', the Activity page's), one
+    # format each could have drifted from: dates.recorded, or job_runs.stamp for a run's.
+    ("a recorded time is spelled by dates", os.path.join("tagpup", "core", "dates.py"), r"%Y-%m-%d %H:%M:%S", ()),
     ("the apps' ports are tagpup_web's", "tagpup_web.py", r"def find_available_port|\b80[89]0\b", ()),
     ("a face decision's numbers are clustering's", CLUSTERING, r"\bCuts\(|\b(offer_a_name|name_without_asking|name_margin|offer_margin|group_at)\s*=", ()),
     # The radius is a face model's (Cuts.group_at): a module constant of one value for every model is a copy, even in
@@ -270,6 +273,14 @@ class TheOwnersValues(unittest.TestCase):
         self.assertEqual("Oda Castellane - Rowing, Harbour School and Lakes",
                          caption_from_tags(["People/Oda Castellane", "Activity/Rowing", "Trips/Lakes",
                                             "School/Harbour School"], {"people"}))
+
+    def test_a_recorded_time_reads_back_as_it_was_written(self):
+        from tagpup.core import dates
+        from tagpup.services import job_runs
+        at = 1790000000.0
+        self.assertEqual(dates.recorded(at), job_runs.stamp(at))
+        self.assertEqual(at, job_runs.seconds(dates.recorded(at)))
+        self.assertRegex(dates.recorded(at), r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 
     def test_the_year_of_a_photo_with_none_and_the_ports(self):
         import tagpup_web

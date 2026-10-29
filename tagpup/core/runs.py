@@ -104,6 +104,18 @@ def running(*run_tags):
         _current.reset(token)
 
 
+def parent_run(library):
+    """The id of the run of `library` (a library's name) that what is claimed here is part of: the innermost job tag of
+    that library among the runs under way (`current`), a row of its `job_runs`; None when there is none. A sync's tag names
+    no row (its run is recorded as it ends) and a tag of another library names a row of another file: neither is a parent."""
+    want = _part(library)
+    for each in reversed(current()):
+        kind, of, ident = each.split(":", 2)
+        if kind == "job" and of == want:
+            return int(ident)
+    return None
+
+
 def held():
     """The tags held on this thread (not the process's): the runs something started here is
     part of -- a run of the indexer a sync queued is the sync's too (tagpup.jobs.indexing)."""

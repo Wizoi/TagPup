@@ -38,7 +38,8 @@ SCENARIOS = {
     "D5": ("data", "Every writer rebuilds the derived rows in its own transaction."),
     "D6": ("data", "A library's settings are its own: stamped, changed, undone, and read by the next run."),
     "D7": ("data", "The folders a library holds (roots) are stored, verified and followed through the same flows with and without them."),
-    "D8": ("data", "A library kept at the baseline meets an additive and a destructive step: interrupted, two openers, a failing check, a backup, an older app, undoable; one below the baseline is refused untouched; the owner's library at 32 meets the real 33, and at 33 the real 34."),
+    "D9": ("data", "A run nests under the run of its library that queued it and says how far it got, at most every 10 s, skipped while the library is written, never a path; one gone or another process's is left alone."),
+    "D8": ("data", "A library kept at the baseline meets an additive and a destructive step: interrupted, two openers, a failing check, a backup, an older app, undoable; one below the baseline is refused untouched; the owner's library at 32 meets the real 33, at 33 the real 34, at 34 the real 35, and at 35 the real 36."),
     "P1": ("people", "A person is the id of a tag-tree node: two processes naming, renaming or merging at once leave one answer."),
     "P2": ("people", "Names, tags and faces stay in step across photo files, jobs and the CLI's journaled apply."),
     "P3": ("people", "Identify faces: a cluster is named, ignored or split, and the page shows what the server says."),
@@ -92,6 +93,7 @@ _SCENARIO_FILES = {
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
     "D6": "test_a_librarys_settings_are_its_own",
     "D8": "test_migrations",
+    "D9": "test_runs_nest_and_say_how_far_they_got",
     "D7": (
         "test_library_roots test_roots_at_scale test_roots_ingress test_roots_location test_roots_scenarios "
         "test_roots_store"

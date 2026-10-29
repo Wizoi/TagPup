@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass
 
 from tagpup.core.library import Library
-from tagpup.store import db, schema
+from tagpup.store import db, job_runs, schema
 
 logger = logging.getLogger(__name__)
 
@@ -179,9 +179,7 @@ def _abandon_runs(conn):
     them -- and a process still alive would hold the job "running" in the library the copy
     is restored into until that process ended (tagpup.store.job_runs.claim). Returns how
     many."""
-    marked = conn.execute("UPDATE job_runs SET outcome = 'abandoned', owner = NULL, note = ?,"
-                          " finished = COALESCE(finished, started) WHERE outcome = 'running'",
-                          (NOT_RUNNING,)).rowcount
+    marked = job_runs.abandon(conn, NOT_RUNNING)
     conn.commit()
     return marked
 

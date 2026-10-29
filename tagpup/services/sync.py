@@ -157,7 +157,7 @@ class _Walked:
         found = _progress.get()
         if found is not None:
             found.update(phase=self.phase, folders=self.folders, files=self.files, folder=folder,
-                         progressed=time.strftime(job_runs.TIME))
+                         progressed=job_runs.stamp(time.time()))
 
     def listed(self, folder, photos):
         self.folders += 1
@@ -932,7 +932,7 @@ def synced_whole_within(library, seconds):
     if not finished:
         return False
     try:
-        at = time.mktime(time.strptime(finished, job_runs.TIME))
+        at = job_runs.seconds(finished)
     except (TypeError, ValueError):
         return False
     return time.time() - at < seconds

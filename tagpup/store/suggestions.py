@@ -12,8 +12,8 @@ output (`raw`), from which a folder's consensus is taken again as photos are add
 suggestion failed has a row with its `error`, so the next run tries it again.
 """
 import json
-import time
 
+from tagpup.core import dates
 from tagpup.store import roots as store_roots
 
 #: The columns of a row, in the order `entry` reads them.
@@ -65,7 +65,7 @@ def put_for(conn, photo_id, found, model=None):
          store_roots.suggested_to_row(json.dumps(found.get("raw_suggestions")), store_roots.roots_for(conn))
          if found.get("raw_suggestions") is not None else None,
          1 if found.get("raw_before_consensus") else 0, found.get("error"), model,
-         time.strftime("%Y-%m-%d %H:%M:%S")))
+         dates.recorded()))
 
 
 def offer(conn, photo_path, tags, people, title):

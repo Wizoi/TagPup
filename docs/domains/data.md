@@ -1,10 +1,10 @@
 # Data and journal: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-data.md` (its Scope, its contract, its guards, the scenario list D1 to
-D8). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its evidence
+D9). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its evidence
 and date, and what is so by design. A condition not met is the domain's queue.
 
-## What the domain is (counted 2026-10-15, read-only)
+## What the domain is (counted 2026-10-15; the table 2026-10-29; read-only)
 
 What is in the library file, and whether it can be put back: how a file is opened and written (`store/db.py`), the schema
 and its one baseline at 32, the journal of row changes and its undo, the journal of photo-file changes, the derived tables
@@ -14,23 +14,25 @@ shows (Views, Integration).
 
 | | photo_index | kr-track | renton_parkrun |
 |---|---|---|---|
-| schema | 33 | 33 | 33 |
-| photos / faces | 59,519 / 187,784 | 1,499 / 9,850 | 1,309 / 3,328 |
-| changes / change_rows / change_files | 742 / 8,939 / 77 | 318 / 1,204 / 1,190 | 1,210 / 1,470 / 2,940 |
+| schema | 35 | 35 | 35 |
+| photos / faces | 59,524 / 183,086 | 1,634 / 10,884 | 1,309 / 3,315 |
+| changes / change_rows / change_files | 6,239 / 1,491,017 / 51,451 | 391 / 88,486 / 2,968 | 1,243 / 24,032 / 4,318 |
 | changes made below 32 (row undo refused) | 715 | 316 | 1,210 |
-| roots / settings / job_runs | 1 / 13 / 42 | 1 / 12 / 35 | 1 / 12 / 35 |
+| roots / settings / job_runs | 1 / 11 / 323 | 1 / 10 / 112 | 1 / 10 / 96 |
 
 Unfinished work: 0 `derived_pending`, 0 files `writing`, 1 `conflict` file (a changed file, as designed). The doctor reports
 0 broken rules on all three. Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
 listed "too old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
 `faces_pending` and `idx_faces_name`; DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD") has run on all three
-(schema 33, counted 2026-10-18): no migration is in flight, and the slot is free. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
+(schema 33, counted 2026-10-18), and 34 and 35 after it (schema 35, counted 2026-10-29). Migration 36 (`job_runs.parent`,
+`heartbeat`, `progress` and an index by parent; additive; DECISIONS 2026-10-28, "ACTIVITY REWORK") is the one in flight
+from its merge until the owner's server has run it on the three libraries. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
 
 ## The contract other domains rely on
 
 | Who calls | Contract | Guard |
 |---|---|---|
-| every domain | `db.connect / write / write_with_connection / lock_for / readonly_uri`: WAL, a 30 s busy timeout, one writer per file, retry; one `db.key` for a library file; no `sqlite3.connect`, no SQL outside `tagpup/store` | `test_db_access`, `test_layers` |
+| every domain | `db.connect / write / write_with_connection / lock_for / readonly_uri`: WAL, a 30 s busy timeout, one writer per file, retry; one `db.key` for a library file; no `sqlite3.connect`, no SQL outside `tagpup/store`; `db.write_if_free` for a write worth nothing late (a run's progress): made now or not at all, `db.BUSY` while the file is being written | `test_db_access`, `test_layers`, `test_runs_nest_and_say_how_far_they_got` |
 | Integration (server, CLI, MCP, launcher) | `schema.ensure` migrates or raises; a newer or below-baseline library is refused, also in a long-lived process; `reading_newer` / `newer_problem` never write; 503 while migrating | `test_a_library_from_a_newer_tagpup`, `test_newer_library_guard_in_a_long_lived_process`, `test_server_migrates_at_start`, `test_migrations` |
 | People, Files (sync, refresh_rows, relink, maintenance), Views (a retiring of vectors) | `journal.apply / rehearse / undo / record / record_faces / add_counts / kept / kept_named / old_values / recorded_values`, `db.begin`: one transaction, applied and undone only where rows are as read (a retiring of vectors' change is added to a piece at a time, `add_counts` while `kept`; the deleted face pass's changes, added to one photo at a time, stay in the journals and are undone as recorded, made in the tests by `face_rows.as_a_face_pass_gave`) (an insert's undo: the exception for the change's own rows is the module docstring's, "undo"); refusals name keys; one `schema.row_key` spelling for a row's key; `journal.KEYS` is the one statement of the tables a change may name (`faces_detected` among them, keyed by its photo's id with no foreign key: `journal.UNLINKED`; journaled only by the deleted `delete-old-detector-rows`, whose change in each live journal is a kind in `services.journal.RETIRED`, its undo refused); `journal.CACHES` the tables none records (`face_crops`: the face pass recorded no crop, and `journal.NOT_CACHED` leaves a crop row a change recorded before out of `_load` and of History's counts and keys; DECISIONS 2026-10-27) | `test_journal`, `test_maintenance`, `test_sync` (the dry run, then `--apply`), `test_journal_keys_and_cascades`, `test_journal_through_the_services` (the journal's list and undo for changes of the deleted maintenance services' shape, at the current schema), `test_undo_after_every_later_kind` |
 | Files (`file_changes`), Integration (batches) | `file_journal`: planned, `writing`, `done` with its row; a crash settled at the next start by what the file holds; a change of an `INTERNAL` operation (the index's bake) is erased on a forward finish, listed by no history and no batch list, and met by no undo check but `newer_overlapping` (an undo of photo files) while a file of it is `writing` | `test_file_journal`, `test_a_crash_part_way_is_settled_at_the_next_start` |
@@ -43,6 +45,9 @@ listed "too old to restore". Migration 33 (each face's vector to `face_embedding
 | Files, Views, Integration | `store.roots`: a row's path form only at the store boundary | `test_roots_store`, `test_roots_scenarios` |
 | People | `removals`: a person taken off a photo blocks naming that face as them | `test_faces_and_tags_in_step`, `test_two_cousins_called_alike` |
 | Files, Views | `faces_detected`, `added_folders`, `job_runs` | `test_faces_detected_record`, `test_rows_only_in_folders_added`, `test_sync_records` |
+| Files, Integration (the runs of B2) | `services.job_runs.progress(library, run_id, counts, phase)`: `phase` one of `PHASES` (else ValueError), counts names and numbers only, at most every 10 s a run unless the phase changes, skipped while the library is written; False, never raising, for a run gone or a library a restore left at 35 | `test_runs_nest_and_say_how_far_they_got` (D9) |
+| Views (the Activity page, B4), Integration | `services.job_runs.tree(library, limit)`: the one reader of `parent`, `heartbeat`, `progress`; the newest `limit` top runs (none queued them, or their parent is gone) and every run under them, newest first; a library at 35 reads as its newest runs, each a top run | `test_runs_nest_and_say_how_far_they_got` (D9) |
+| Integration (the server's start) | `job_runs.abandon`, the one place a run is marked abandoned (a claim, a snapshot or restore, the start); `services.job_runs.sweep_abandoned` after each library is brought up to date: a run of a process that has ended is abandoned, a live one's and another machine's kept, a failure logged | `test_runs_nest_and_say_how_far_they_got` (D9) |
 | People (the index), Views (Suggest), Files (the bake) | `faces_detected`: the index and Suggest write it only through `faces_detected.record` (`services.faces._record_detection`), under the name `services.faces.detector_of` gives; Suggest and the bake's plan read it under that name through `detected`, the owed walk of a sync and an index through `unexamined` (`photo_fingerprints.owed`); a change deleting its rows records them (`journal.KEYS`; only the deleted `delete-old-detector-rows` did, a retired kind whose undo is refused); a rotation forgets a photo's row (`faces_detected.forget`, unjournaled, as its vectors and crops, `services.rotation`; a crop is a cache, `journal.CACHES`, which no change records) | `test_faces_detected_record`, `test_a_bake_is_planned_from_the_library`, `test_journal_undo_refusals` |
 | Files (`services.rotation`; the bake and the read side, phase 6) | `photo_fingerprints` (migration 34): get and put by photo id, `forget` by path; a row whose photo is gone reads as none; not journaled, not derived; a rotation forgets it beside the vectors | `test_migrations` (`TheOwnersLibraryAt33MeetsMigration34`), `test_rotate_is_journaled` |
 | People (`store.faces`) | `store.faces.model_key` reads `store.settings.face_model` on the reader's own connection: a face's vector (`face_embeddings`, keyed by face and model) is read under the key its caller gives the reader, which a decision reads once from the library's `faces.model` on its own connection | `test_a_library_indexes_and_suggests_with_its_face_model` (P10: the index, Suggest and Name faces from tags read under the library's key), `test_journal_keys_and_cascades` |
