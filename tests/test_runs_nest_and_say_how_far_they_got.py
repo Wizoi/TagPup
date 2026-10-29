@@ -92,8 +92,9 @@ class ARunNestsUnderTheRunThatQueuedIt(unittest.TestCase):
         self.assertEqual(sync.run_id, self.parent_of(index.run_id))
 
     def test_two_runs_of_one_job_the_second_is_refused_while_the_first_runs(self):
-        first = runs_service.claim(self.library, "index", self.library.name, NOW)
-        second = runs_service.claim(self.library, "index", self.library.name, NOW + 1)
+        """A sync's; an index's is recorded beside (job_runs.RECORDS_ONLY; tests/test_an_index_is_one_run_under_its_sync.py)."""
+        first = runs_service.claim(self.library, "sync", self.library.name, NOW)
+        second = runs_service.claim(self.library, "sync", self.library.name, NOW + 1)
         self.assertTrue(first)
         self.assertEqual("running", second.why)
         self.assertEqual([(1,)], rows(self.library.path, "SELECT COUNT(*) FROM job_runs"))
