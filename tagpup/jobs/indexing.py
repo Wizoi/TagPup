@@ -66,7 +66,8 @@ def forget(library):
 
 class _Progress:
     """What a run of the indexer reports through: `report(message, percent)` into its
-    status, and `stop_file`, set by tagpup.services.indexing while its indexer runs: the
+    status, with when it last reported (`progressed`: a run that stopped moving is told from a long one), and
+    `stop_file`, set by tagpup.services.indexing while its indexer runs: the
     file that stops it while it waits for the graphics card."""
 
     def __init__(self, status):
@@ -78,6 +79,8 @@ class _Progress:
             self.status["message"] = message
         if percent is not None:
             self.status["percent"] = percent
+        if message is not None or percent is not None:
+            self.status["progressed"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 class IndexQueue:
@@ -314,7 +317,7 @@ class IndexQueue:
 
     def now(self):
         """What the Activity page shows of this queue: the run of the indexer under way --
-        {"run", "parents", "started", "folders", "name", "percent", "message"}, or None -- and the jobs
+        {"run", "parents", "started", "folders", "name", "percent", "message", "progressed"}, or None -- and the jobs
         waiting, each {"name", "folders"} (a batch of sync's is one job, one run)."""
         with self._lock:
             current = dict(self._current) if self._current else None
@@ -322,7 +325,8 @@ class IndexQueue:
                        for job in self._pending]
         if current is not None:
             status = current.pop("status")
-            current.update(percent=status.get("percent", 0), message=status.get("message", ""))
+            current.update(percent=status.get("percent", 0), message=status.get("message", ""),
+                           progressed=status.get("progressed"))
         return {"running": current, "queued": waiting}
 
     def history(self):

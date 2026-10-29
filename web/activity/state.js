@@ -30,7 +30,8 @@ export const state = {
         //: The web server's own log, as the server names it: the tab chosen first.
         server: null,
         name: null,
-        level: 'WARNING',
+        //: INFO and worse, as the files are written: a long run's progress lines are INFO.
+        level: 'INFO',
         text: '',
         //: A run's tag: only its lines ("Logs for this run").
         run: null,

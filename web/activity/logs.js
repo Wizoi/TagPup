@@ -1,6 +1,6 @@
 // Logs: a tab for each log in data/logs (the web server's, each
 // library's indexer, the console's...), its newest records first as time, level, logger and
-// message; filtered by level (warnings and worse unless asked), by text and by run; Follow
+// message; filtered by level (INFO and worse unless asked), by text and by run; Follow
 // asks for what was written since, every few seconds; Older reads further back; Raw and
 // Download are the file itself. The server reads each log from its end and never whole
 // (/api/activity/logs/<name>): the page says where it read from and to, by offset.
@@ -129,12 +129,12 @@ export function followLog() {
     });
 }
 
-/** "Logs for this run": the log `name` (as the server named it), only the lines of the run `run`, at every level. */
+/** "Logs for this run": the log `name` (as the server named it), only the lines of the run `run`, INFO and worse. */
 export function showRunLogs(run, name) {
     state.logs.run = run;
-    state.logs.level = 'DEBUG';
+    state.logs.level = 'INFO';
     const level = document.getElementById('log-level');
-    if (level) level.value = 'DEBUG';
+    if (level) level.value = 'INFO';
     const section = document.getElementById('logs');
     if (section && typeof section.scrollIntoView === 'function') section.scrollIntoView();
     return chooseLog(name || state.logs.server);

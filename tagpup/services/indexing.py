@@ -54,6 +54,8 @@ NEW_FACES = "New faces: "
 #: The line the CLI prints when photos failed in its per-photo loop (#1995), read whole like NEW_FACES: the message says
 #: how many, since a run whose every photo failed exits 0 having recorded nothing.
 FAILED = "Photos that failed: "
+#: What the CLI's `index` says as it begins matching the faces it made (before NEW_FACES): the faces phase of the live line.
+MATCHING = "Matching the new faces with the named ones..."
 
 
 def new_faces_said(matched):
@@ -138,7 +140,10 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     ends the message, and after it what it read from the photos' bakes (bake_reading.SAID) and what its bake wrote
     (bake_after_index.SAID), each read whole.
 
-    `report(message, percent)` hears progress as it comes, the percent of each of the CLI's bars.
+    `report(message, percent)` hears progress as it comes, each message naming its phase: the percent of each of the
+    CLI's bars (metadata, embeddings), the faces' matching (MATCHING), and each folder of the bake as it begins, whole,
+    with the percent of the folders done before it (bake_after_index.folder_heard). A line cut short or garbled is passed
+    over.
 
     details: `message`, what to tell the person; `percent`, where the bar stops;
     `cancelled`, true when the indexer was stopped while it waited for the graphics card.
@@ -188,6 +193,12 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         with proc.stdout:
             for line in iter(proc.stdout.readline, ""):
                 whole = line.split("\r")[-1].strip()
+                if whole.startswith(bake_after_index.FOLDER_SAID):
+                    heard = bake_after_index.folder_heard(whole)
+                    if heard is not None:
+                        # Whole, path and all: the bar's summary would cut it at 90 characters.
+                        report(whole, heard["percent"])
+                    continue
                 if whole.startswith(NEW_FACES):
                     # Whole: the bar's summary cuts a line at 90 characters.
                     said.append(whole[len(NEW_FACES):])
