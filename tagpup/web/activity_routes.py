@@ -234,8 +234,15 @@ def now():
         mine = (indexed["running"] or {}).get("run")
         running = []
         try:
+            under_way = activity.under_way(library)
+        except Exception as e:
+            # Only a library whose runs cannot be read has a sync whose row is not known (null, not "none under way").
+            logger.warning("Could not read the running jobs of %s: %s", library.name, e)
+            walks[library.name.lower()] = None
+            under_way = []
+        try:
             children = None
-            for run in activity.under_way(library):
+            for run in under_way:
                 if run["job"] == recurring.SYNC:
                     walks[library.name.lower()] = run
                 if mine is not None and run["run"] == mine:
@@ -245,8 +252,7 @@ def now():
                 run["logs"] = _logs_for(run["run"], children)
                 running.append(run)
         except Exception as e:
-            logger.warning("Could not read the running jobs of %s: %s", library.name, e)
-            walks[library.name.lower()] = None
+            logger.warning("Could not list the running jobs of %s: %s", library.name, e)
         found.append({"name": library.name, "indexing": indexed,
                       "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
                       "jobs": running, "batches": batches.listing(library)})

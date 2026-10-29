@@ -209,6 +209,18 @@ class Now(Base):
         self.assertIsNone(found["syncing"]["progress"])
         self.assertEqual({"harbour", "regatta"}, {entry["name"] for entry in found["libraries"]})
 
+    def test_a_failure_after_the_sync_s_row_was_read_does_not_make_the_library_unreadable(self):
+        """#2215: only the runs of a library that cannot be listed leave its sync unknown (null); the index runs of a
+        sync failing to read later in the block do not."""
+        now = time.time()
+        claim = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", now)
+        job_runs.progress(self.harbour.path, claim.run_id, "walking", {"folders": 5, "files": 40}, now)
+        whole = {"library": "Harbour", "folder": None, "started": "x", "walking_at": None}
+        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {}, "syncing": whole})
+        with mock.patch.object(activity, "index_runs_under", side_effect=OSError("the library is locked")):
+            found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertEqual("walking the folders", found["syncing"]["progress"]["phase"])
+        self.assertEqual({"harbour", "regatta"}, {entry["name"] for entry in found["libraries"]})
 
     def test_the_folder_the_walk_is_at_shows_before_the_row_has_said_anything(self):
         """#2203: the walk's folder is the process's memory; the row's counts trail it by up to 10 s, or are a newer
