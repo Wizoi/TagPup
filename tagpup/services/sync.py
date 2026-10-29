@@ -15,9 +15,13 @@ folder scan's rule), and sorts what differs:
 - moved files -- a row whose file is gone, and a new file that is the same photo: the
   row follows the file, and its faces with it, as relink does (relink_photos.edits_for).
   Most rows hold no DocumentID, so a file is first matched by its name, size and
-  modified time, which the walk and the rows already hold -- only where exactly one file
-  matches the row and exactly one row the file; a match that is not one-to-one is
-  reported as ambiguous, never guessed, and the folders of its files are not queued.
+  modified time, which the walk and the rows already hold (a file moved to another folder),
+  then, for the rows and files that left, by its folder, size and modified time (a file
+  renamed in its own folder: a rename in Explorer keeps the modified time) (pair_by_stamp)
+  -- each only where exactly one file matches the row and exactly one row the file; a match
+  that is not one-to-one is reported as ambiguous, never guessed, and the folders of its
+  files are not queued. A file both moved and renamed, or saved again after a rename, is
+  not matched by its stamp.
   What that leaves is matched by the DocumentID (or, renamed in its folder by TagPup,
   the PreservedFileName) read from those new files alone (relink_photos.claims_of, pair);
 - work the index owes -- a photo with no vector under the library's photo model, one whose vector's stamp no longer
@@ -134,14 +138,31 @@ def pair_by_stamp(missing, new):
     """(pairs [(old, new)], ambiguous rows [path], ambiguous files {key}) of the `missing`
     rows [(photo_id, path, mtime, size)] and the `new` files {key: (path, mtime, size)}:
     a row and a file are the same photo when they have one name, one size, and a time
-    the row describes (store.photos.describes) -- and only when each is the other's one
-    match. A row or file with more than one match is ambiguous. Reads nothing."""
-    files = {}
+    the row describes (store.photos.describes) -- a file moved to another folder; then, for
+    a row no file of its name matched and the files no row matched, when the file is in the
+    row's own folder with its size and a time the row describes -- a file renamed in its
+    folder (a rename in Explorer keeps the modified time, #2155). Each only when each is the
+    other's one match. A row or file with more than one match is ambiguous. Reads nothing."""
+    by_name, by_folder = {}, {}
     for key, (path, mtime, size) in new.items():
-        files.setdefault((os.path.basename(path), size), []).append((key, path, mtime))
+        by_name.setdefault((os.path.basename(path), size), []).append((key, path, mtime))
+        by_folder.setdefault((paths.key(os.path.dirname(path)), size), []).append((key, path, mtime))
+    pairs, ambiguous_rows, ambiguous_files, matched, claimed = _one_to_one(
+        missing, by_name, lambda path, size: (os.path.basename(path), size))
+    in_place = _one_to_one(
+        [row for row in missing if row[1] not in matched],
+        {where: [file for file in files if file[0] not in claimed] for where, files in by_folder.items()},
+        lambda path, size: (paths.key(os.path.dirname(path)), size))
+    return pairs + in_place[0], ambiguous_rows + in_place[1], ambiguous_files | in_place[2]
+
+
+def _one_to_one(missing, files, where):
+    """(pairs, ambiguous rows, ambiguous files, the rows that matched any file {path}, the files any row matched {key})
+    of the `missing` rows and the `files` {where: [(key, path, mtime)]}, a row matching each file found at
+    `where(path, size)` whose time it describes: pair_by_stamp's one rule of a match, for each of its two looks."""
     matches, claimed = {}, {}
     for _photo_id, path, mtime, size in missing:
-        found = [(key, file_path) for key, file_path, file_mtime in files.get((os.path.basename(path), size), ())
+        found = [(key, file_path) for key, file_path, file_mtime in files.get(where(path, size), ())
                  if store_photos.describes(mtime, size, (file_mtime, size))]
         if found:
             matches[path] = found
@@ -154,7 +175,7 @@ def pair_by_stamp(missing, new):
         else:
             ambiguous_rows.append(path)
             ambiguous_files.update(key for key, _file_path in found)
-    return pairs, ambiguous_rows, ambiguous_files
+    return pairs, ambiguous_rows, ambiguous_files, set(matches), set(claimed)
 
 
 def _missing_by_folder(missing):

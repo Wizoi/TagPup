@@ -998,6 +998,57 @@ class MissingFiles(SyncTestCase):
         self.assertEqual((1, 0), (result.details["counts"]["missing"], result.details["counts"]["to_remove"]))
         self.assertEqual(set(ids.values()), self.held_ids())
 
+    def renamed_in_place(self, *more):
+        """trip's IMG_0001.jpg, with a named face, renamed in Explorer to 'Harbour finish.jpg' (a rename keeps the
+        modified time); `more` are names of other new files made beside it at the same time and size. (ids, new path)"""
+        renaming = self.photo(self.trip, "IMG_0001.jpg")
+        ids = self.rooted(renaming, self.photo(self.trip, "IMG_0002.jpg", body=b"other"),
+                          self.photo(self.meet, "IMG_0003.jpg"), named=[renaming])
+        renamed = os.path.join(self.trip, "Harbour finish.jpg")
+        os.rename(renaming, renamed)
+        self.truth["Harbour finish.jpg"] = self.truth["IMG_0001.jpg"]
+        for name in more:
+            self.photo(self.trip, name)
+        return ids[renaming], renamed
+
+    def test_a_file_renamed_in_its_folder_keeps_its_row_and_its_named_face(self):
+        photo_id, _renamed = self.renamed_in_place()
+        result = self.run_sync(apply=True, roots=[self.pictures], queue=lambda folders: self.fail("it was renamed"))
+        self.assertTrue(result.ok, result.message())
+        counts = result.details["counts"]
+        self.assertEqual((1, 0, 0, 1), (counts["moved"], counts["missing"], counts["to_remove"], counts["moved_named"]))
+        self.assertEqual(0, self.reads.sessions, "a rename matched by its stamp reads no file")
+        self.assertEqual([photo_id], [row[0] for path, row in self.rows().items() if path.endswith("Harbour finish.jpg")])
+        self.assertEqual([("Rowan Thackeray",)], self.query(
+            "SELECT name FROM faces WHERE photo_id = ? AND name IS NOT NULL", (photo_id,)))
+        self.assertTrue(result.details["in_step"])
+
+    def test_two_files_of_one_stamp_beside_a_renamed_one_are_held_back_and_nothing_is_removed(self):
+        photo_id, _renamed = self.renamed_in_place("Harbour finish (2).jpg")
+        result = self.run_sync(apply=True, roots=[self.pictures], queue=lambda folders: self.fail("held back"))
+        self.assertTrue(result.ok, result.message())
+        counts = result.details["counts"]
+        self.assertEqual((0, 1, 2, 1, 0), (counts["moved"], counts["ambiguous_rows"], counts["ambiguous_files"],
+                                           counts["held_back_folders"], counts["to_remove"]))
+        self.assertIn(photo_id, self.held_ids(), "a row held back as ambiguous was removed")
+        self.assertFalse(result.details["in_step"])
+
+    def test_a_file_in_the_folder_with_another_time_is_not_taken_for_a_rename(self):
+        photo_id, renamed = self.renamed_in_place()
+        os.utime(renamed, (THEN + 5, THEN + 5))      # saved again after the rename, or another photo of that size
+        asked = []
+
+        def queue(folders):
+            asked.extend(folders)
+            return Result(attempted=len(folders), changed=len(folders))
+
+        result = self.run_sync(apply=True, roots=[self.pictures], queue=queue)
+        self.assertTrue(result.ok, result.message())
+        counts = result.details["counts"]
+        self.assertEqual((0, 1, 1), (counts["moved"], counts["new"], counts["to_remove"]))
+        self.assertNotIn(photo_id, self.held_ids())
+        self.assertEqual([self.trip], asked)
+
     def walks(self, **kwargs):
         """A whole applied sync under the root, counting its walks of the library: (Result, walks)."""
         with mock.patch.object(sync, "_scan", wraps=sync._scan) as scan:
