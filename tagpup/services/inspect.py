@@ -467,8 +467,8 @@ def missing_files(library, reveal=False, limit=LIMIT):
     whether it is gone entirely, its rows (as ids), its faces, those named, named by hand
     and excluded, and how many different names sit on them -- which answers #42's
     question, which names sit on rows of a folder whose files are gone. Folder paths
-    and the names only with `reveal`. Missing rows are reported, never removed: a
-    folder renamed looks the same as a deleted one. A photo on a share that does not answer,
+    and the names only with `reveal`. Read only: a whole sync removes the rows of
+    files it confirms gone (tagpup.services.sync; DECISIONS 2026-10-28). A photo on a share that does not answer,
     or that cannot be read, is not looked at (`not_looked_at`), neither gone nor there, and a
     folder on a share is gone only when the share answers (shares.stamp_of, folder_state;
     #1356); on a local drive that is not connected it is gone (#1387)."""
