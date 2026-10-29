@@ -1,7 +1,7 @@
 # Data and journal: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-data.md` (its Scope, its contract, its guards, the scenario list D1 to
-D8). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its evidence
+D9). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its evidence
 and date, and what is so by design. A condition not met is the domain's queue.
 
 ## What the domain is (counted 2026-10-15; the table 2026-10-29; read-only)

@@ -50,6 +50,13 @@ class Run:
     owner: Optional[str] = None
     #: Why it failed or was abandoned; can name a path, so never sent to a page.
     note: Optional[str] = None
+    #: The run that queued this one (migration 36), its id; None for one nothing queued. The readers here leave it, and the
+    #: two below, None: they select the columns a library at 35 has, which the MCP server and the Activity page's look read
+    #: without migrating it.
+    parent: Optional[int] = None
+    #: When it last said how far it got, a run's time (`stamp`), and what it said: {"phase": .., "counts": {..}} (progress).
+    heartbeat: Optional[str] = None
+    progress: Optional[Dict[str, Any]] = None
 
     @property
     def started_at(self):
@@ -101,9 +108,10 @@ class Claim:
         return self.run_id is not None
 
 
-def claim(db_path, job, library, now, due=None):
+def claim(db_path, job, library, now, due=None, parent=None):
     """Begin a run of `job` for `library` (a library's name, or None for a job not run per
-    library) at `now` (seconds since the epoch), owned by this process: unless a process
+    library) at `now` (seconds since the epoch), owned by this process, under the run `parent`
+    of the same library (its id) if it was queued by one: unless a process
     still running holds one, or `due`, called with the last run that ended (Run or None),
     answers False. A run whose process has ended is marked `abandoned` first. A Claim.
 
@@ -133,8 +141,9 @@ def claim(db_path, job, library, now, due=None):
             abandoned += 1
         if due is not None and not due(_last_ended(conn, job, library)):
             return Claim(why="not due", abandoned=abandoned)
-        run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES (?, ?, ?, 'running', ?)",
-                              (job, library, stamp(now), file_journal.owner())).lastrowid
+        run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner, parent)"
+                              " VALUES (?, ?, ?, 'running', ?, ?)",
+                              (job, library, stamp(now), file_journal.owner(), parent)).lastrowid
         return Claim(run_id=run_id, abandoned=abandoned)
 
     return db.write_with_connection(db_path, work, label="claim the job %s" % job)

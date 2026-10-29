@@ -54,7 +54,7 @@ from migration_names import step  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
-from tagpup.store import db, generations, job_runs, journal, photo_fingerprints, photos as store_photos, schema  # noqa: E402
+from tagpup.store import db, file_journal, generations, job_runs, journal, photo_fingerprints, photos as store_photos, schema  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -836,10 +836,11 @@ class TheOwnersLibraryAt35MeetsMigration36(Migrated):
             super().setUp()
             self.change = journal.apply(self.db_path, "add a node",
                                         [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})]).change_id
-            # The runs as the app at 35 leaves them: a job that ended, one under way, and a sync's record.
-            ended = job_runs.claim(self.db_path, "snapshots", "harbour", 1790000000.0)
-            job_runs.finish(self.db_path, ended.run_id, job_runs.DONE, 1790000060.0, {"changed": 1, "bytes": 4096})
-            self.running = job_runs.claim(self.db_path, "sync", "harbour", 1790000100.0).run_id
+            # The runs as the app at 35 leaves them: a job that ended, one under way, and a sync's record. Its claim inserted
+            # the columns there were at 35 (today's names a parent), its finish and record_sync are today's.
+            ended = self.claimed_at_35("snapshots", 1790000000.0)
+            job_runs.finish(self.db_path, ended, job_runs.DONE, 1790000060.0, {"changed": 1, "bytes": 4096})
+            self.running = self.claimed_at_35("sync", 1790000100.0)
             job_runs.record_sync(self.db_path, job_runs.stamp(1790000200.0), True, True, {"new": 2}, {"new": 2})
         self.assertEqual(35, self.version())
         self.assertNotIn(self.INDEX, set(self.objects()))
@@ -848,6 +849,11 @@ class TheOwnersLibraryAt35MeetsMigration36(Migrated):
 
     objects = TheOwnersLibraryAt32MeetsMigration33.objects
     counts = TheOwnersLibraryAt32MeetsMigration33.counts
+
+    def claimed_at_35(self, job, now):
+        """A run begun by this process as the claim of the app at 35 inserted one. Its id."""
+        return self.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES (?, 'harbour', ?, 'running', ?)",
+                            (job, job_runs.stamp(now), file_journal.owner()))
 
     def runs(self, columns=None):
         """Every run, each value with the type SQLite stored it as, by id: the columns there were at 35 unless named."""

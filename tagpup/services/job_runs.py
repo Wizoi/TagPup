@@ -7,6 +7,7 @@ texts, which can name a path or a person.
 """
 import numbers
 
+from tagpup.core import runs as run_tags
 from tagpup.store import job_runs
 
 DONE, FAILED, RUNNING = job_runs.DONE, job_runs.FAILED, job_runs.RUNNING
@@ -28,8 +29,9 @@ def counts(result):
 def claim(library, job, run_for, now, due=None):
     """Begin a run of `job` in `library`, for the library named `run_for` (None for a job
     not run per library), unless a live process has one or `due` says it is not due
-    (tagpup.store.job_runs.claim). A Claim: true with its `run_id` when begun."""
-    return job_runs.claim(library.path, job, run_for, now, due)
+    (tagpup.store.job_runs.claim). Its parent is the run of `library` this thread is part of
+    (tagpup.core.runs.parent_run). A Claim: true with its `run_id` when begun."""
+    return job_runs.claim(library.path, job, run_for, now, due, parent=run_tags.parent_run(library.name))
 
 
 def finish(library, run_id, now, result=None, error=None, failed=None):
