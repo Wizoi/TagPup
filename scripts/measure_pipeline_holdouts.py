@@ -300,7 +300,7 @@ def tag_scores(offered, truths):
 
 def _a_person(tag, face_roots):
     """Is `tag` under a branch that holds people (the tree's face roots, as Suggest leaves them out)? No owner function
-    answers this for a tag: suggester.py and person_tags.py each test the root inline."""
+    answers this for a tag: suggester.py tests the root inline."""
     parts = vocabulary.segments(tag)
     return bool(parts) and vocabulary.key(parts[0]) in face_roots
 

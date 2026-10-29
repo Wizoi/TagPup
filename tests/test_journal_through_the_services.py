@@ -1,11 +1,13 @@
-"""The changes the deleted maintenance services left in the live journals still list in History and undo through the CLI
+"""The journal's History and undo, through the CLI, for changes shaped as the deleted maintenance services made them
 (docs/ARCHITECTURE.md, phase 7.5; tagpup.services.journal.RETIRED).
 
-`merge_duplicate_person_tags` (photo_index change 1) and `refresh_rows` (kr-track change 2) were each applied once,
-counted read-only 2026-10-28, and their writers are deleted with the MCP server's write tools (DECISIONS 2026-10-28, THE
-MCP SERVER ONLY READS). Each change is recorded here the way its writer recorded it -- the same operation, the same edits
--- and then listed with `tagpup_cli.py history`, which names no value, and undone with `undo`, rehearsed and then applied,
-which puts every row back.
+`merge_duplicate_person_tags` (photo_index change 1, schema 9) and `refresh_rows` (kr-track change 2, schema 10) were each
+applied once, counted read-only 2026-10-28, and their writers are deleted with the MCP server's write tools (DECISIONS
+2026-10-28, THE MCP SERVER ONLY READS). Each change is recorded here the way its writer recorded it -- the same operation,
+the same edits -- at the test library's own schema, then listed with `tagpup_cli.py history`, which names no value, and
+undone with `undo`, rehearsed and then applied, which puts every row back. That is the journal's mechanism, not the live
+case: in the live libraries (schema 35) the two changes are listed and the undo is refused by schema version
+(`journal.why_not`); this file does not exercise that refusal.
 """
 import json
 import os

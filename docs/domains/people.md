@@ -178,7 +178,7 @@ Python:
 - `test_identify_cache_keeps_others_writes`, `test_identify_cache_sees_every_change`: the grid cache's fingerprint.
 - `test_identify_queries`: what the Identify queries may touch on 225,000 faces.
 - `test_index_resolves_people`: the index resolves people by the library's own tree.
-- `test_journal_through_the_services`: the changes of the deleted merge of person tags and refresh of rows, which the live journals hold, list in History and undo.
+- `test_journal_through_the_services`: the changes of the deleted merge of person tags and refresh of rows, which the live journals hold, list in History; their undo is refused by schema version (the file tests the journal's list and undo of changes of that shape at the current schema).
 - `test_new_person_reads_the_pool_once`: New Person reads the nameless faces once per state (#5).
 - `test_organize_faces`: what the server gives and takes for Organize's face boxes (#791).
 - `test_people_by_id_tree`: rename, move, merge and delete of a person's tag, one transaction each.

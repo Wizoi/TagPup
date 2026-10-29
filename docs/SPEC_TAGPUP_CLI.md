@@ -133,7 +133,7 @@ Tags and captions are written back using ExifTool:
   This matters because indexing runs repeatedly: the kr-track taxonomy had been cleaned
   from 51 such duplicates to zero once before, and the next index run recreated them
   all. A merge (`merge_duplicate_person_tags`, the MCP server's tool, deleted 2026-10-28) removed
-  the 53 that already existed, across 129 photos here; its change still undoes from History.
+  the 53 that already existed, across 129 photos here; its change is listed in History and cannot be undone: the library is past the schema it was made at.
 - **Per-Photo Locking**:A photo is locked for the duration of its processing by creating a
   file in `data/locks/`, named for the MD5 of its absolute path -- exclusive creation makes this
   atomic between processes. The lock records the holding process's pid, host and acquisition

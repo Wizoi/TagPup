@@ -130,9 +130,11 @@ RETIRED = {
                                          "deleted, and no library is on it"),
     # The maintenance operations deleted with the MCP server's write tools (DECISIONS 2026-10-28, THE MCP SERVER ONLY
     # READS), counted read-only 2026-10-28: a merge of bare person tags into their People paths, photo_index change 1, and
-    # a refresh of rows from their files, kr-track change 2, each applied. The journal's account is the whole of either
-    # way back (the tree's nodes put back; each row put back only while it holds what the refresh wrote). dedupe_faces
-    # was never applied in any library: a name no table knows gets the journal's account alone, which is what it had.
+    # a refresh of rows from their files, kr-track change 2, each applied. Both are listed in History and can never be
+    # undone: the libraries are at schema 35 and each change was made at 9 and 10, so `why_not` refuses on the schema
+    # version before it reaches this entry. The entries stay for the journal's own account of a change made at the
+    # library's current schema (the tests). dedupe_faces was never applied in any library: a name no table knows gets
+    # the journal's account alone, which is what it had.
     "merge_duplicate_person_tags": None,
     "refresh_rows": None,
     # The roots' adoption of a folder and repair of a root's address: 1 adopt in each library, 1 repair in renton_parkrun.

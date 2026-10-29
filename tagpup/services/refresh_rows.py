@@ -7,8 +7,9 @@ that records what they hold: tags, people, captions, raw_metadata, mtime, size, 
 none. The files are only read, never written (no DocumentID is minted); embeddings and faces are untouched.
 
 The refresh that planned this over a whole library (`refresh_rows`, the MCP server's tool) is deleted with the server's
-write tools (DECISIONS 2026-10-28, THE MCP SERVER ONLY READS); kr-track's journal holds the one it applied, which still
-undoes (tagpup.services.journal.RETIRED).
+write tools (DECISIONS 2026-10-28, THE MCP SERVER ONLY READS); kr-track's journal holds the one it applied (change 2,
+schema 10), listed in History and never undone: the library is at schema 35 and `journal.why_not` refuses on the
+version (tagpup.services.journal.RETIRED).
 """
 import json
 from collections import Counter
