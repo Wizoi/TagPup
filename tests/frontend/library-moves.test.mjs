@@ -162,13 +162,14 @@ describe("a folder opened in Organize from a view (openInOrganize)", () => {
     assert.equal(ctx.state.moves.leaving, false, "and it can be tried again");
   });
 
-  test("a scan that cannot be had for another reason (a share away) keeps the view too, with the server's sentence", async (t) => {
+  test("a scan the server refuses because the share is away (503) keeps the view too, with the server's sentence", async (t) => {
     const ctx = await loadViewPage(t, { search: FOLDER_VIEW });
-    ctx.server.first("/api/folder/scan", { error: "The share did not answer." }, { status: 500 });
+    const away = "The network share \\\\NAS\\Pictures is not answering just now. Try again when it is back.";
+    ctx.server.first("/api/folder/scan", { success: false, error: away }, { status: 503 });
     await organize(ctx);
     await ctx.settle(200);
     assert.ok(ctx.state.library);
-    assert.match(ctx.stripText(), /Could not open that folder on disk: The share did not answer\./);
+    assert.ok(ctx.stripText().includes(`Could not open that folder on disk: ${away}`));
     pageErrors();
   });
 

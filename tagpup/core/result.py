@@ -54,6 +54,9 @@ class Result:
 #: page sent differs from the file's) carries: a web route answers 409, and the page reads the file again.
 CHANGED_ON_DISK = "changed_on_disk"
 CHANGED_ON_DISK_SENTENCE = "This photo changed on disk since you opened it: reload it first."
+#: What a Result refused because a folder's network share did not answer carries: a web route answers 503 (try
+#: again later), not the 400 of a folder that is not there (tagpup.files.shares.folder_refusal, #2129).
+SHARE_AWAY = "share_away"
 #: Refused because the page's record was of a photo ExifTool could not read when it was opened: what the file holds is
 #: not known, so a save that carries the whole tag list is not made from it.
 UNREADABLE_BASE_SENTENCE = "This photo could not be read just now: reopen it."

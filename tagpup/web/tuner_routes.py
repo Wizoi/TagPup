@@ -543,7 +543,7 @@ def folder_index_start():
         folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, requested)
     if result.refused:
-        _refuse(400, result.message())
+        return responses.refused(result)
     return jsonify({"success": True, "status": "running", **result.details})
 
 
@@ -601,14 +601,15 @@ def folder_subfolders():
     # Stored form before anything is joined onto it: a parent typed with forward
     # slashes otherwise yields children spelled with both separators at once.
     parent = paths.stored(wanted)
-    if photo_actions.folder_state(parent) != "there":
-        _refuse(400, "Not a folder: %s" % parent)
+    refused = responses.folder_refused(parent)
+    if refused:
+        return refused
     try:
         entries = photo_actions.subfolders(parent)
     except OSError as e:
         _refuse(500, "Could not read %s: %s" % (parent, e))
     if entries is None:
-        _refuse(500, "Could not read %s: its network share did not answer" % parent)
+        return responses.refused(photo_actions.folder_refusal(parent, "unanswered"))
     entries = sorted(entries)
 
     indexed_by_folder = photo_actions.indexed_by_folder(library)

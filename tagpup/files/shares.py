@@ -26,6 +26,7 @@ import threading
 import time
 
 from tagpup.core import paths
+from tagpup.core.result import SHARE_AWAY, Result
 from tagpup.files import recycle_bin
 
 logger = logging.getLogger(__name__)
@@ -238,6 +239,31 @@ def folder_state(folder, seconds=None):
         return _folder_state(folder, False)
     state, found = bounded(folder, lambda: _folder_state(folder, True), SHARE_WAIT if seconds is None else seconds)
     return found if state == "ok" else "unanswered"
+
+
+#: What a folder on a network share that did not answer is refused with: the share is named (its server and share, or
+#: its drive letter), never the folder, whose path names people; the owner is told to try again, not that the folder is
+#: wrong (#2129).
+SHARE_AWAY_SENTENCE = "The network share %s is not answering just now. Try again when it is back."
+#: What a folder that is not there, or is not a folder, is refused with.
+NOT_A_FOLDER_SENTENCE = "Path is not a valid directory: %s"
+
+
+def folder_refusal(folder, state=None):
+    """None when `folder` is a folder now; else a Result refused with the one sentence of why, the same on every page,
+    service and in the CLI (#2129): SHARE_AWAY_SENTENCE, and SHARE_AWAY in its details (a route answers 503), for a folder
+    whose network share did not answer; NOT_A_FOLDER_SENTENCE for one that is not there or not a folder. `state` is
+    folder_state's answer when the caller has it already (a listing of the folder that did not answer: "unanswered")."""
+    result = Result(attempted=1)
+    state = folder_state(folder) if state is None else state
+    if state == "there":
+        return None
+    if state == "unanswered":
+        result.refuse(SHARE_AWAY_SENTENCE % os.path.splitdrive(paths.stored(folder))[0])
+        result.details[SHARE_AWAY] = True
+    else:
+        result.refuse(NOT_A_FOLDER_SENTENCE % folder)
+    return result
 
 
 def _stat_state(photo_path, on_a_share):

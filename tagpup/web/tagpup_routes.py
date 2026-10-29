@@ -200,7 +200,7 @@ def _wanted_path():
 
 def _a_folder(folder):
     """Is `folder`, as a request sent it, a folder now? Through photos.folder_state, which waits a moment on a network
-    share: one that does not answer is not a folder to act on. The one check of the routes that act on a folder."""
+    share: what the folder box's suggestions ask. A route that acts on a folder refuses it by responses.folder_refused."""
     return isinstance(folder, str) and bool(folder) and photo_actions.folder_state(folder) == "there"
 
 
@@ -266,8 +266,9 @@ def folder_scan():
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
     force = (request.args.get("force") or "false").lower() == "true"
-    if not _a_folder(folder):
-        return responses.error(400, "Path is not a valid directory: %s" % folder)
+    refused = responses.folder_refused(folder)
+    if refused:
+        return refused
     return jsonify(_sorted(_folder_photos(library, paths.stored(folder), force)))
 
 
@@ -281,8 +282,9 @@ def folder_membership():
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
     # A folder on a network share is looked at by membership_checked, which tells a share away from a folder gone.
-    if not library_actions.on_a_network_drive(folder) and not _a_folder(folder):
-        return responses.error(400, "Path is not a valid directory: %s" % folder)
+    refused = None if library_actions.on_a_network_drive(folder) else responses.folder_refused(folder)
+    if refused:
+        return refused
     settings = runtimes.peek_settings(library)
     # Bounded, and one walk of a folder at a time (findings #568): a page asks it of a library view's folder too.
     return jsonify(library_actions.membership_checked(library, folder, settings.roots, settings.ignored))
@@ -308,7 +310,7 @@ def folder_index_start():
         library).start(folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, [body.get("folder_path")])
     if result.refused:
-        return responses.error(400, result.message())
+        return responses.refused(result)
     return jsonify({"success": True, "status": "running", **result.details})
 
 
@@ -320,13 +322,14 @@ def folder_add():
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
-    if not _a_folder(folder):
-        return responses.error(400, "Path is not a valid directory: %s" % folder)
+    refused = responses.folder_refused(folder)
+    if refused:
+        return refused
     result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
         folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, [folder])
     if result.refused:
-        return responses.error(400, result.message())
+        return responses.refused(result)
     return jsonify({"success": result.ok, "status": "running", "library": picker_name(os.path.basename(library.path)),
                     "folder": paths.stored(folder), **result.details})
 
@@ -348,8 +351,9 @@ def folder_suggest_start():
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
-    if not _a_folder(folder):
-        return responses.error(400, "Invalid folder path")
+    refused = responses.folder_refused(folder)
+    if refused:
+        return refused
     folder = paths.stored(folder)
     # In a folder the library holds, Suggest keeps what it finds as rows -- faces, vectors,
     # what it offered -- for every photo it looks at. In one it does not hold it only looks:
@@ -397,8 +401,9 @@ def folder_auto_apply():
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder = body.get("folder_path")
-    if not _a_folder(folder):
-        return responses.error(400, "Invalid folder path")
+    refused = responses.folder_refused(folder)
+    if refused:
+        return refused
     suggestions = suggestion_jobs.runs_for(library).suggestions(folder)
     if suggestions is None:
         return responses.error(400, "No suggestions found for this folder")
@@ -433,8 +438,9 @@ def folder_time_shift():
     folder = body.get("folder_path")
     camera_model = body.get("camera_model")
     shift_minutes = body.get("shift_minutes", 0)
-    if not _a_folder(folder):
-        return responses.error(400, "Invalid folder path")
+    refused = responses.folder_refused(folder)
+    if refused:
+        return refused
     if shift_minutes == 0:
         return jsonify({"success": True, "message": "No shift applied (0 minutes)"})
     # Walked and written in the stored form, looked up by the key. This used to walk the
@@ -480,8 +486,9 @@ def folder_rename_photos():
     photo_paths = [paths.stored(p) for p in body.get("photo_paths", [])]
     grouping = (body.get("grouping") or "").strip()
     folder = paths.stored(folder) if folder else folder
-    if not _a_folder(folder):
-        return responses.error(400, "Invalid folder path")
+    refused = responses.folder_refused(folder)
+    if refused:
+        return refused
     if not photo_paths:
         return responses.error(400, "No photos selected for renaming")
     cache = folders.of(library)

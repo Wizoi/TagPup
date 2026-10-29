@@ -44,6 +44,7 @@ from tagpup import runtime as runtimes  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.result import SHARE_AWAY, Result  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -682,7 +683,7 @@ class APageAskingOfAShareThatHangs(unittest.TestCase):
     def test_opening_typing_and_picking_a_folder_on_it_answer_within_the_moment(self):
         client = self.app("tagpup")
         self.the_share_hangs()
-        for ask, status in ((lambda: client.get("/library/api/folder/scan", query_string={"path": self.folder}), 400),
+        for ask, status in ((lambda: client.get("/library/api/folder/scan", query_string={"path": self.folder}), 503),
                             (lambda: client.get("/library/api/folder/membership", query_string={"path": self.folder}),
                              200),
                             (lambda: client.get("/library/api/autocomplete-folder",
@@ -702,9 +703,123 @@ class APageAskingOfAShareThatHangs(unittest.TestCase):
         self.the_share_hangs()
         reply, took = self.answered(lambda: client.get("/library/api/folder/subfolders",
                                                        query_string={"path": self.share}))
-        self.assertEqual(400, reply.status_code, reply.data)
+        self.assertEqual(503, reply.status_code, reply.data)
         self.assert_within_the_moment(took)
         self.assertTrue(self.looked_from, "the share was looked at")
+
+
+class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
+    """#2129: the owner opens, adds, Suggests in, shifts or renames in a folder on the NAS while it has stopped answering
+    (the library's one network root; #2101, #2109), or lists it in TagTuner's folder picker: every route that refuses the
+    folder says the SHARE is not answering, by its server and share and never the folder's path (which names people),
+    503 (try again later), in one sentence from one place (tagpup.files.shares.folder_refusal); a folder that is really
+    not there is still 400 "not a valid directory". Break: a route refusing an away share 400 "not a valid directory",
+    "Invalid folder path" or "Not a folder" (as each did), or its own sentence."""
+
+    SERVER = "\\\\NAS\\Pictures"
+    FOLDER = SERVER + "\\2021 Coast"
+    AWAY = "The network share \\\\NAS\\Pictures is not answering just now. Try again when it is back."
+
+    #: (app, method, route, the request's body or query for `folder`): every route that refuses a folder.
+    SITES = (
+        ("tagpup", "get", "/api/folder/scan", lambda folder: {"path": folder}),
+        ("tagpup", "post", "/api/folder/add", lambda folder: {"folder_path": folder}),
+        ("tagpup", "post", "/api/folder/suggest-start", lambda folder: {"folder_path": folder}),
+        ("tagpup", "post", "/api/folder/auto-apply", lambda folder: {"folder_path": folder}),
+        ("tagpup", "post", "/api/folder/time-shift",
+         lambda folder: {"folder_path": folder, "camera_model": "Canon EOS 80D", "shift_minutes": 60}),
+        ("tagpup", "post", "/api/folder/rename-photos",
+         lambda folder: {"folder_path": folder, "photo_paths": [folder + "\\IMG_0001.jpg"], "grouping": "Coast"}),
+        ("tagpup", "post", "/api/sync/review/include", lambda folder: {"folder": folder}),
+        ("tuner", "get", "/api/folder/subfolders", lambda folder: {"path": folder}),
+        ("tuner", "post", "/api/folder/index-start", lambda folder: {"folder_paths": [folder]}),
+    )
+
+    def setUp(self):
+        shares.forget()
+        self.addCleanup(shares.forget)
+        real_isdir, real_exists = os.path.isdir, os.path.exists
+
+        def on_the_server(path):
+            return str(path).upper().startswith(self.SERVER.upper())
+        # The server asleep says "not found" at once (WinError 53): the share is away, not the folder gone.
+        for patcher in (mock.patch.object(os.path, "isdir", lambda p: False if on_the_server(p) else real_isdir(p)),
+                        mock.patch.object(os.path, "exists", lambda p: False if on_the_server(p) else real_exists(p))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.clients = {}
+
+    def client(self, kind):
+        if kind not in self.clients:
+            app, self.home = web_client.app_for(self, kind)
+            self.clients[kind] = app.test_client()
+        return self.clients[kind]
+
+    def ask(self, kind, method, route, made, folder):
+        shares.forget()   # each request meets the share asleep, not one already taken as away
+        client = self.client(kind)
+        if method == "get":
+            return client.get("/library" + route, query_string=made(folder))
+        return client.post("/library" + route, json=made(folder))
+
+    def test_every_route_says_the_share_is_not_answering_503_and_a_folder_not_there_is_400(self):
+        for kind, method, route, made in self.SITES:
+            with self.subTest(route=route):
+                reply = self.ask(kind, method, route, made, self.FOLDER)
+                self.assertEqual((503, self.AWAY), (reply.status_code, reply.get_json()["error"]), route)
+                self.assertNotIn("2021 Coast", reply.get_json()["error"], "the folder's path is named")
+                nowhere = os.path.join(self.home.root, "nowhere")
+                reply = self.ask(kind, method, route, made, nowhere)
+                self.assertEqual(400, reply.status_code, route)
+                expected = ("No valid folder path: %s" if route == "/api/folder/index-start"
+                            else "Path is not a valid directory: %s") % nowhere
+                self.assertEqual(expected, reply.get_json()["error"], route)
+
+    def test_an_index_from_the_cli_says_the_share_is_not_answering_and_a_folder_not_there_is_not_one(self):
+        """The CLI's index (the owner's, and the queue's after a share dropped): click's exists=True looked unbounded and
+        said the folder does not exist."""
+        home = own_home.for_test(self)
+        db_path = home.library("library.db")
+        library_actions.create(db_path)
+        nowhere = os.path.join(home.root, "nowhere")
+        for folder, said in ((self.FOLDER, self.AWAY), (nowhere, "Path is not a valid directory: %s" % nowhere)):
+            shares.forget()
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", db_path, "index", folder])
+            self.assertEqual(2, result.exit_code, result.output)
+            self.assertIn(said, " ".join(result.output.split()), folder)
+
+    def test_the_cli_does_not_stat_a_folder_before_the_bounded_look(self):
+        """Break: click.Path(file_okay=False) on DIRECTORIES: it stats the path itself, unbounded, before folder_refusal."""
+        home = own_home.for_test(self)
+        db_path = home.library("library.db")
+        library_actions.create(db_path)
+        real_stat, statted = os.stat, []
+
+        def stat(path, *args, **kwargs):
+            if str(path).upper().startswith(self.SERVER.upper()):
+                statted.append(path)
+            return real_stat(path, *args, **kwargs)
+        with mock.patch.object(os, "stat", stat):
+            CliRunner().invoke(tagpup_cli.cli, ["--db", db_path, "index", self.FOLDER])
+        self.assertEqual([], statted)
+
+    def test_a_share_that_stops_answering_between_the_look_and_the_queue_is_still_refused_as_away(self):
+        """The review's include hands up the queue's Result whole: the queue's refusal keeps SHARE_AWAY (a 503), where a
+        refusal re-made from its sentence was a 400. Break: include copying `refused` into a Result of its own."""
+        home = own_home.for_test(self)
+        library = Library(home.library("library.db"))
+        library_actions.create(library.path)
+        folder = os.path.join(home.root, "Pictures", "2021 Coast")
+        os.makedirs(folder)
+
+        def queue(folders):
+            away = Result(attempted=len(folders))
+            away.refuse(self.AWAY)
+            away.details[SHARE_AWAY] = True
+            return away
+        result = sync.include(library, folder, [os.path.join(home.root, "Pictures")], queue)
+        self.assertEqual(self.AWAY, result.refused)
+        self.assertTrue(result.details.get(SHARE_AWAY))
 
 
 class TheCardStatsHaveABudget(unittest.TestCase):
