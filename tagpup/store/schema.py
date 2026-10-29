@@ -675,6 +675,19 @@ def _vector_stamps_covered(conn):
     conn.execute("CREATE INDEX idx_embeddings_stamp ON embeddings (photo_id, model, mtime, size)")
 
 
+def _runs_nest_and_say_how_far(conn):
+    """Migration 36 (owner, 2026-10-28; DECISIONS, "ACTIVITY REWORK"; docs/PLAN_ACTIVITY.md, B2): three columns of
+    `job_runs` -- `parent`, the run that queued this one; `heartbeat`, when it last said how far it got; `progress`, JSON
+    counts and a phase from a fixed vocabulary, never a path (tagpup.services.job_runs.progress) -- and an index by parent,
+    so a run's children are found without a scan. Every row that was there holds NULL in each, which reads as no parent and
+    no progress. Spelled here, not imported: a migration is frozen. Additive: three columns added at the end and an index;
+    `job_runs` is no table the journal keys, so a change made at 35 stays undoable (journal.schema_gap_blocker)."""
+    conn.execute("ALTER TABLE job_runs ADD COLUMN parent INTEGER")
+    conn.execute("ALTER TABLE job_runs ADD COLUMN heartbeat TEXT")
+    conn.execute("ALTER TABLE job_runs ADD COLUMN progress TEXT")
+    conn.execute("CREATE INDEX idx_job_runs_parent ON job_runs(parent)")
+
+
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
@@ -701,6 +714,13 @@ MIGRATIONS = (
               "that was there changes, so no backup",
               (),
               (RowsKept("embeddings"),) + STANDARD),
+    # It names `job_runs`, which the journal does not key: a change made at 35 stays undoable. The watch holds every row as
+    # it was (an added column is NULL in each, which the watch's triggers, made on the columns there were, do not see).
+    Migration(36, "runs nest and say how far they got", _runs_nest_and_say_how_far, ADDITIVE,
+              "adds job_runs.parent, heartbeat and progress (NULL in every row there was) and an index by parent; nothing "
+              "that was there changes, so no backup",
+              ("job_runs",),
+              (RowsKept(),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version

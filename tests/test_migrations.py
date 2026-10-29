@@ -1,10 +1,10 @@
 """The migration runner, and a library meeting a step it has not had (docs/DATABASE.md, "The baseline"; tagpup.store.schema).
 
-There are four real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused);
+There are five real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused);
 33, which moves each face's vector to `face_embeddings` under FaceNet's key and drops `faces.embedding`, the empty
 `faces_pending` and the redundant `idx_faces_name`, on a library kept at 32 and on a new one alike; 34, which adds the
-empty `photo_fingerprints`; and 35, which adds `idx_embeddings_stamp` (34 and 35 additive: no backup, and a change made
-before each stays undoable).
+empty `photo_fingerprints`; 35, which adds `idx_embeddings_stamp`; and 36, which adds `job_runs.parent`, `heartbeat` and
+`progress` (34, 35 and 36 additive: no backup, and a change made before each stays undoable).
 The runner is held to what it promises by SYNTHETIC steps after the latest real one (tests/migration_names.py):
 
 * one that adds takes nothing and is watched to change nothing that was there; one that destroys takes one backup, under
@@ -23,7 +23,10 @@ The runner is held to what it promises by SYNTHETIC steps after the latest real 
   after; a photo's fingerprint is kept, and reads as none once its photo is deleted. The owner's library at 34 meets the
   real 35: no backup, the index and nothing else, every row as it was, a change made at 34 still undoable, and a sync's
   stamp join answering the same stamps; killed part way it is still at 34 and migrates at the next open; the app before
-  35 refuses it after.
+  35 refuses it after. The owner's library at 35, with its runs (one running), meets the real 36: no backup, the three
+  columns NULL in every run and the index, nothing else, a change made at 35 still undoable, a second open a no-op; the
+  readers of the runs answer alike at 35 and at 36; two processes opening it at once apply it once; killed part way it is
+  still at 35 and migrates at the next open; the app before 36 refuses it after.
 * A library below the baseline is refused with a sentence before anything is written to it, whoever opens it.
 
 A step is declared once, in tests/migration_names.py, not in a list of names in every test that says which ran (#689). However
@@ -51,7 +54,7 @@ from migration_names import step  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
-from tagpup.store import db, generations, journal, photo_fingerprints, photos as store_photos, schema  # noqa: E402
+from tagpup.store import db, generations, job_runs, journal, photo_fingerprints, photos as store_photos, schema  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -261,7 +264,7 @@ class AFailedCheck(Migrated):
 
 class TheRealMigrations(unittest.TestCase):
     def test_each_says_what_it_is_and_names_its_checks(self):
-        baseline, dropping, fingerprints, stamps = schema.MIGRATIONS
+        baseline, dropping, fingerprints, stamps, nesting = schema.MIGRATIONS
         self.assertEqual((32, schema.ADDITIVE), (baseline.version, baseline.kind))
         self.assertEqual((33, schema.DESTRUCTIVE, ("faces_pending", "faces", "face_embeddings"), "face vectors in face_embeddings"),
                          (dropping.version, dropping.kind, dropping.touches, dropping.name))
@@ -271,7 +274,12 @@ class TheRealMigrations(unittest.TestCase):
         self.assertEqual((35, schema.ADDITIVE, (), "the vector stamps in an index"),
                          (stamps.version, stamps.kind, stamps.touches, stamps.name))
         self.assertIsNone(journal.schema_gap_blocker(34, 35))
-        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 35, 35))
+        # `job_runs` is no table the journal keys: a change made at 35 stays undoable.
+        self.assertEqual((36, schema.ADDITIVE, ("job_runs",), "runs nest and say how far they got"),
+                         (nesting.version, nesting.kind, nesting.touches, nesting.name))
+        self.assertNotIn("job_runs", journal.KEYS)
+        self.assertIsNone(journal.schema_gap_blocker(35, 36))
+        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 36, 36))
         for migration in schema.MIGRATIONS:
             self.assertIn(migration.kind, schema.KINDS)
             self.assertTrue(migration.why and "\n" not in migration.why)
@@ -713,6 +721,7 @@ class TheOwnersLibraryAt34MeetsMigration35(Migrated):
         self.assertEqual(34, self.version())
         self.assertNotIn(self.INDEX, set(self.objects()))
         self.before = (self.objects(), self.counts(), self.dump())
+        self.enterContext(migration_names.up_to(35))   # the app with 35 as its latest: 36 is its own class's
 
     objects = TheOwnersLibraryAt32MeetsMigration33.objects
     counts = TheOwnersLibraryAt32MeetsMigration33.counts
@@ -809,6 +818,145 @@ class TheOwnersLibraryAt34MeetsMigration35(Migrated):
         self.assertEqual(before, digest(self.db_path), "nothing written")
 
 
+# ---- The owner's library at 35 meets migration 36 ------------------------------------------------------------------------
+
+class TheOwnersLibraryAt35MeetsMigration36(Migrated):
+    """Made and seeded by the app before 36, as the three live libraries are (at 35, 323, 112 and 96 runs in `job_runs`, one
+    of photo_index's running under the owner's server, counted 2026-10-29), with its runs written by the writers of runs and a
+    change of rows made at 35, then opened by this one (owner, 2026-10-28; DECISIONS, "ACTIVITY REWORK";
+    docs/PLAN_ACTIVITY.md, B2)."""
+
+    NAME = "runs nest and say how far they got"
+    INDEX = ("index", "idx_job_runs_parent")
+    TABLE = ("table", "job_runs")
+    ADDED = ("parent", "heartbeat", "progress")
+
+    def setUp(self):
+        with migration_names.up_to(35):
+            super().setUp()
+            self.change = journal.apply(self.db_path, "add a node",
+                                        [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})]).change_id
+            # The runs as the app at 35 leaves them: a job that ended, one under way, and a sync's record.
+            ended = job_runs.claim(self.db_path, "snapshots", "harbour", 1790000000.0)
+            job_runs.finish(self.db_path, ended.run_id, job_runs.DONE, 1790000060.0, {"changed": 1, "bytes": 4096})
+            self.running = job_runs.claim(self.db_path, "sync", "harbour", 1790000100.0).run_id
+            job_runs.record_sync(self.db_path, job_runs.stamp(1790000200.0), True, True, {"new": 2}, {"new": 2})
+        self.assertEqual(35, self.version())
+        self.assertNotIn(self.INDEX, set(self.objects()))
+        self.before = (self.objects(), self.counts(), self.dump(), self.runs())
+        self.read_at_35 = self.readers()
+
+    objects = TheOwnersLibraryAt32MeetsMigration33.objects
+    counts = TheOwnersLibraryAt32MeetsMigration33.counts
+
+    def runs(self, columns=None):
+        """Every run, each value with the type SQLite stored it as, by id: the columns there were at 35 unless named."""
+        columns = columns or [row[1] for row in self.query("PRAGMA table_info(job_runs)") if row[1] not in self.ADDED]
+        typed = ", ".join("%s, typeof(%s)" % (c, c) for c in columns)
+        return self.query("SELECT %s FROM job_runs ORDER BY id" % typed)
+
+    def readers(self):
+        """What each reader of the runs answers: the pages', the MCP's and the recurring runner's."""
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            syncs = (job_runs.recent_syncs(conn), job_runs.last_sync(conn))
+        finally:
+            conn.close()
+        return (job_runs.latest(self.db_path), job_runs.runs(self.db_path), job_runs.get(self.db_path, self.running), syncs)
+
+    def test_it_adds_the_columns_takes_no_backup_and_a_change_made_at_35_stays_undoable(self):
+        objects, counts, dump, runs = self.before
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(36, self.version())
+        after = self.objects()
+        self.assertEqual({self.INDEX}, set(after) - set(objects), "the index and nothing else new")
+        self.assertEqual({k: v for k, v in objects.items() if k != self.TABLE},
+                         {k: v for k, v in after.items() if k not in (self.INDEX, self.TABLE)}, "nothing else changed")
+        columns = [row[1] for row in self.query("PRAGMA table_info(job_runs)")]
+        self.assertEqual(list(self.ADDED), columns[-3:], "added at the end")
+        counts.update(schema_version=counts["schema_version"] + 1, changes=counts["changes"] + 1)
+        self.assertEqual(counts, self.counts())
+        self.assertEqual(dump, self.dump(), "every row as it was")
+        self.assertEqual(runs, self.runs(), "every run as it was")
+        self.assertEqual([(3,)], self.query("SELECT COUNT(*) FROM job_runs WHERE parent IS NULL AND heartbeat IS NULL"
+                                            " AND progress IS NULL"), "NULL in every run there was")
+        self.assertEqual([], backups(self.db_path), "an additive migration takes none")
+        operation, version, status, summary = self.recorded()[-1]
+        self.assertEqual(("migration 36: " + self.NAME, 35, "applied", schema.ADDITIVE),
+                         (operation, version, status, summary["kind"]))
+        self.assertNotIn("backup", summary)
+        self.assertIn("nothing that was there changed", summary["checks"])
+        self.assertIn("rows kept", summary["checks"])
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        self.addCleanup(conn.close)
+        self.assertEqual([], journal.refusal(conn, self.change))
+        journal.undo(self.db_path, self.change)
+        self.assertEqual([], self.query("SELECT id FROM tag_taxonomy WHERE tag = 'Fresh'"))
+        schema.forget()
+        self.assertEqual([], schema.ensure(self.db_path), "a second open applies nothing")
+        plan = " ".join(str(r[-1]) for r in self.query("EXPLAIN QUERY PLAN SELECT id FROM job_runs WHERE parent = ?", (1,)))
+        self.assertIn("idx_job_runs_parent", plan)
+
+    def test_the_readers_of_the_runs_answer_alike_at_35_and_at_36(self):
+        """The MCP server and the Activity page read a library without migrating it: at 35 until the owner's server opens it."""
+        schema.ensure(self.db_path)
+        self.assertEqual(36, self.version())
+        self.assertEqual(self.read_at_35, self.readers())
+        latest, listed, running, (recent, last) = self.read_at_35
+        self.assertEqual(3, len(listed))
+        self.assertEqual(job_runs.RUNNING, running.outcome)
+        self.assertEqual((1, True), (len(recent), last["last_run"]["in_step"]))
+
+    def test_two_processes_opening_it_at_once_apply_it_once(self):
+        code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema; print(len(schema.ensure(%r)))"
+                % (ROOT, self.db_path))
+        env = dict(os.environ, TAGPUP_HOME=self.home.root)
+        running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True) for _ in range(2)]
+        answers = []
+        for each in running:
+            out, err = each.communicate(timeout=120)
+            self.assertEqual(0, each.returncode, err)
+            answers.append(out.strip())
+        self.assertEqual(1, sum(int(answer) for answer in answers), answers)
+        self.assertEqual(36, self.version())
+        self.assertEqual(self.before[3], self.runs())
+        self.assertEqual(["migration 36: " + self.NAME], [op for op, *_ in self.recorded() if op.startswith("migration 36")])
+
+    def test_killed_part_way_it_is_still_at_35_and_migrates_at_the_next_open(self):
+        code = textwrap.dedent("""
+            import os, sys
+            sys.path.insert(0, %(root)r)
+            from tagpup.store import schema
+            [real] = [m for m in schema.MIGRATIONS if m.version == 36]
+
+            def killed(conn):
+                real.apply(conn)
+                os._exit(9)   # the power goes: the columns and the index made, nothing committed
+
+            schema.MIGRATIONS = tuple(m for m in schema.MIGRATIONS if m.version < 36) + (real._replace(apply=killed),)
+            schema.ensure(%(path)r)
+            """) % {"root": ROOT, "path": self.db_path}
+        child = processes.start([sys.executable, "-c", code], env=dict(os.environ, TAGPUP_HOME=self.home.root),
+                                stdout=-1, stderr=-1, text=True)
+        _out, err = child.communicate(timeout=120)
+        self.assertEqual(9, child.returncode, err)
+        self.assertEqual(35, self.version())
+        self.assertEqual(self.before, (self.objects(), self.counts(), self.dump(), self.runs()), "as it was")
+        self.assertEqual([], backups(self.db_path))
+        schema.forget()
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(36, self.version())
+        self.assertIn(self.INDEX, set(self.objects()))
+
+    def test_the_app_before_36_refuses_it_after(self):
+        schema.ensure(self.db_path)
+        before = digest(self.db_path)
+        with migration_names.up_to(35), self.assertRaises(schema.NewerLibrary) as refused:
+            schema.ensure(self.db_path)
+        self.assertEqual((36, 35), (refused.exception.found, refused.exception.known))
+        self.assertEqual(before, digest(self.db_path), "nothing written")
+
+
 def db_rows(path, sql):
     conn = db.connect(db.readonly_uri(path), uri=True)
     try:
@@ -896,13 +1044,15 @@ class ANewLibrary(unittest.TestCase):
         schema.ensure(path)
         self.assertEqual([], backups(path))
         self.assertEqual([(0,)], db_rows(path, "SELECT COUNT(*) FROM changes"))
-        self.assertEqual([(32,), (33,), (34,), (35,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
+        self.assertEqual([(32,), (33,), (34,), (35,), (36,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
         self.assertEqual([], db_rows(path, "SELECT name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name')"),
-                         "made at the baseline and taken to 35 by the same runner")
+                         "made at the baseline and taken to 36 by the same runner")
         self.assertEqual([("idx_embeddings_stamp",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'idx_embeddings_stamp'"),
                          "the index from migration 35, not the baseline")
         self.assertEqual([("face_embeddings",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'face_embeddings'"))
         self.assertNotIn("embedding", [row[1] for row in db_rows(path, "PRAGMA table_info(faces)")])
+        self.assertEqual(["parent", "heartbeat", "progress"], [row[1] for row in db_rows(path, "PRAGMA table_info(job_runs)")][-3:],
+                         "the runs' columns from migration 36")
 
     def test_made_by_two_processes_at_once_is_made_once(self):
         home = own_home.for_test(self)
@@ -916,8 +1066,8 @@ class ANewLibrary(unittest.TestCase):
             out, err = each.communicate(timeout=120)
             self.assertEqual(0, each.returncode, err)
             answers.append(out.strip())
-        self.assertEqual(4, sum(int(answer) for answer in answers), answers)
-        self.assertEqual([(32,), (33,), (34,), (35,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
+        self.assertEqual(5, sum(int(answer) for answer in answers), answers)
+        self.assertEqual([(32,), (33,), (34,), (35,), (36,)], db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
 
 
 if __name__ == "__main__":

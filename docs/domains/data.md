@@ -4,7 +4,7 @@ The domain's charter is `.claude/agents/tagpup-owner-data.md` (its Scope, its co
 D8). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its evidence
 and date, and what is so by design. A condition not met is the domain's queue.
 
-## What the domain is (counted 2026-10-15, read-only)
+## What the domain is (counted 2026-10-15; the table 2026-10-29; read-only)
 
 What is in the library file, and whether it can be put back: how a file is opened and written (`store/db.py`), the schema
 and its one baseline at 32, the journal of row changes and its undo, the journal of photo-file changes, the derived tables
@@ -14,17 +14,19 @@ shows (Views, Integration).
 
 | | photo_index | kr-track | renton_parkrun |
 |---|---|---|---|
-| schema | 33 | 33 | 33 |
-| photos / faces | 59,519 / 187,784 | 1,499 / 9,850 | 1,309 / 3,328 |
-| changes / change_rows / change_files | 742 / 8,939 / 77 | 318 / 1,204 / 1,190 | 1,210 / 1,470 / 2,940 |
+| schema | 35 | 35 | 35 |
+| photos / faces | 59,524 / 183,086 | 1,634 / 10,884 | 1,309 / 3,315 |
+| changes / change_rows / change_files | 6,239 / 1,491,017 / 51,451 | 391 / 88,486 / 2,968 | 1,243 / 24,032 / 4,318 |
 | changes made below 32 (row undo refused) | 715 | 316 | 1,210 |
-| roots / settings / job_runs | 1 / 13 / 42 | 1 / 12 / 35 | 1 / 12 / 35 |
+| roots / settings / job_runs | 1 / 11 / 323 | 1 / 10 / 112 | 1 / 10 / 96 |
 
 Unfinished work: 0 `derived_pending`, 0 files `writing`, 1 `conflict` file (a changed file, as designed). The doctor reports
 0 broken rules on all three. Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
 listed "too old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
 `faces_pending` and `idx_faces_name`; DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD") has run on all three
-(schema 33, counted 2026-10-18): no migration is in flight, and the slot is free. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
+(schema 33, counted 2026-10-18), and 34 and 35 after it (schema 35, counted 2026-10-29). Migration 36 (`job_runs.parent`,
+`heartbeat`, `progress` and an index by parent; additive; DECISIONS 2026-10-28, "ACTIVITY REWORK") is the one in flight
+from its merge until the owner's server has run it on the three libraries. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
 
 ## The contract other domains rely on
 
