@@ -3,11 +3,18 @@ docs/PLAN_ACTIVITY.md, B2; tagpup.services.job_runs, tagpup.store.job_runs, tagp
 
 A run claimed while a run of the same library is under way on the thread is its child (`job_runs.parent`); a run of
 another library, or a sync, which names no row while it runs, is not a parent. A library at 35, which the owner's server
-has not yet opened, is never written by a claim: it is behind, and the claim says so. Libraries are made in homes of their
-own; the names are fictional.
+has not yet opened, is never written by a claim: it is behind, and the claim says so.
+
+A run says how far it got (`services.job_runs.progress`): a phase and counts, never a path, at most once every 10 s unless
+the phase changes, skipped -- not waited for -- while the library is being written, by this process or another; a run that
+is gone, or a library a restore has put back at 35 and not yet migrated, is not written and nothing raises. Libraries are
+made in homes of their own; the names are fictional.
 """
+import json
 import os
 import sys
+import threading
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,7 +24,7 @@ import migration_names  # noqa: E402
 from tagpup.core import runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
-from tagpup.store import db, job_runs, schema  # noqa: E402
+from tagpup.store import db, file_journal, job_runs, schema  # noqa: E402
 
 NOW = 1790000000.0
 
@@ -90,6 +97,114 @@ class ARunNestsUnderTheRunThatQueuedIt(unittest.TestCase):
         self.assertEqual(("behind", None), (claim.why, claim.run_id))
         self.assertEqual([(35, 0)], rows(at_35.path, "SELECT (SELECT MAX(version) FROM schema_version),"
                                                      " (SELECT COUNT(*) FROM job_runs)"))
+
+
+class ARunSaysHowFarItGot(unittest.TestCase):
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.library = Library(self.home.library("harbour.db"))
+        schema.ensure(self.library.path)
+        self.run_id = runs_service.claim(self.library, "index", self.library.name, NOW).run_id
+
+    def said(self, library=None, run_id=None):
+        heartbeat, progress = rows((library or self.library).path, "SELECT heartbeat, progress FROM job_runs WHERE id = ?",
+                                   (run_id or self.run_id,))[0]
+        return heartbeat, json.loads(progress) if progress else None
+
+    def test_a_run_says_its_phase_and_counts_at_most_every_10_seconds_and_at_once_when_its_phase_changes(self):
+        say = runs_service.progress
+        self.assertTrue(say(self.library, self.run_id, {"folders_done": 1, "folders": 9}, "walking", now=NOW))
+        self.assertFalse(say(self.library, self.run_id, {"folders_done": 2, "folders": 9}, "walking", now=NOW + 5))
+        self.assertEqual((job_runs.stamp(NOW), {"phase": "walking", "counts": {"folders": 9, "folders_done": 1}}),
+                         self.said())
+        self.assertTrue(say(self.library, self.run_id, {"photos_done": 3}, "metadata", now=NOW + 6))
+        self.assertEqual({"phase": "metadata", "counts": {"photos_done": 3}}, self.said()[1])
+        self.assertTrue(say(self.library, self.run_id, {"photos_done": 40}, "metadata", now=NOW + 16))
+        self.assertEqual((job_runs.stamp(NOW + 16), {"phase": "metadata", "counts": {"photos_done": 40}}), self.said())
+
+    def test_a_path_or_a_text_in_the_counts_is_never_written(self):
+        folder = os.path.join(self.home.root, "Pictures", "Harbour Day")
+        self.assertTrue(runs_service.progress(self.library, self.run_id, {
+            "folders_done": 2, "folder": folder, folder: 1, "Shown": 4, "share_away": True, "per_folder": {"a": 1},
+            "seconds": 1.5}, "walking", now=NOW))
+        text = rows(self.library.path, "SELECT progress FROM job_runs WHERE id = ?", (self.run_id,))[0][0]
+        self.assertEqual({"phase": "walking", "counts": {"folders_done": 2, "seconds": 1.5}}, json.loads(text))
+        self.assertNotIn("Harbour", text)
+
+    def test_a_phase_not_in_the_vocabulary_is_a_mistake_in_the_code(self):
+        with self.assertRaises(ValueError):
+            runs_service.progress(self.library, self.run_id, {}, "C:/Pictures", now=NOW)
+
+    def test_two_runs_with_one_id_in_two_libraries_each_keep_their_own_progress(self):
+        other = Library(self.home.library("lighthouse.db"))
+        schema.ensure(other.path)
+        theirs = runs_service.claim(other, "index", other.name, NOW).run_id
+        self.assertEqual(self.run_id, theirs)
+        self.assertTrue(runs_service.progress(self.library, self.run_id, {"photos_done": 1}, "faces", now=NOW))
+        self.assertTrue(runs_service.progress(other, theirs, {"photos_done": 7}, "faces", now=NOW + 1))
+        self.assertEqual({"photos_done": 1}, self.said()[1]["counts"])
+        self.assertEqual({"photos_done": 7}, self.said(other, theirs)[1]["counts"])
+
+    def test_a_run_that_is_gone_or_ended_is_not_written_and_nothing_raises(self):
+        self.assertTrue(runs_service.discard(self.library, self.run_id))
+        self.assertFalse(runs_service.progress(self.library, self.run_id, {"photos_done": 1}, "bake", now=NOW))
+        ended = runs_service.claim(self.library, "bake", self.library.name, NOW).run_id
+        self.assertTrue(runs_service.end(self.library, ended, NOW + 1, {"written": 2}))
+        self.assertFalse(runs_service.progress(self.library, ended, {"written": 3}, "bake", now=NOW + 2))
+        self.assertEqual((None, None), self.said(run_id=ended))
+
+    def test_while_another_thread_writes_the_library_progress_is_skipped_not_waited_for(self):
+        held, release = threading.Event(), threading.Event()
+
+        def write():
+            with db.lock_for(self.library.path):
+                held.set()
+                release.wait(30)
+
+        writer = threading.Thread(target=write)
+        writer.start()
+        try:
+            self.assertTrue(held.wait(10))
+            began = time.monotonic()
+            self.assertFalse(runs_service.progress(self.library, self.run_id, {"photos_done": 1}, "faces", now=NOW))
+            self.assertLess(time.monotonic() - began, 1.0)
+        finally:
+            release.set()
+            writer.join()
+        self.assertEqual((None, None), self.said())
+        # Not written is not throttled: the next says it.
+        self.assertTrue(runs_service.progress(self.library, self.run_id, {"photos_done": 2}, "faces", now=NOW + 1))
+
+    def test_while_another_process_writes_the_library_progress_is_skipped_not_waited_for(self):
+        """Another connection's open write transaction is what another process's write is to SQLite."""
+        other = db.connect(self.library.path)
+        try:
+            db.begin(other, immediate=True)
+            began = time.monotonic()
+            self.assertFalse(runs_service.progress(self.library, self.run_id, {"photos_done": 1}, "faces", now=NOW))
+            self.assertLess(time.monotonic() - began, 1.0)
+        finally:
+            other.rollback()
+            other.close()
+        self.assertEqual((None, None), self.said())
+
+    def test_a_library_a_restore_has_put_back_at_35_is_not_written_and_nothing_raises(self):
+        """snapshots.restore lets go of the write lock before it brings the snapshot to 36: a progress write in that gap
+        meets the columns' absence."""
+        at_35 = Library(self.home.library("breakwater.db"))
+        with migration_names.up_to(35):
+            schema.ensure(at_35.path)
+        schema.forget()
+        # A run of this process, as a claim at 35 stored it.
+        conn = db.connect(at_35.path)
+        try:
+            run_id = conn.execute("INSERT INTO job_runs (job, library, started, outcome, owner) VALUES (?, ?, ?, 'running', ?)",
+                                  ("index", at_35.name, job_runs.stamp(NOW), file_journal.owner())).lastrowid
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertFalse(runs_service.progress(at_35, run_id, {"photos_done": 1}, "faces", now=NOW))
+        self.assertEqual([(35,)], rows(at_35.path, "SELECT MAX(version) FROM schema_version"))
 
 
 if __name__ == "__main__":

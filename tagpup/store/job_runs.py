@@ -18,12 +18,16 @@ that has just finished does not run the job again.
 Times are the journal's: local time, "YYYY-MM-DD HH:MM:SS".
 """
 import json
+import logging
 import os
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from tagpup.store import db, file_journal, schema
+
+logger = logging.getLogger(__name__)
 
 TIME = "%Y-%m-%d %H:%M:%S"
 
@@ -182,7 +186,7 @@ def discard(db_path, run_id):
     return db.write_with_connection(db_path, work, label="discard run %d" % run_id)
 
 
-def progress(db_path, run_id, changed):
+def counts_so_far(db_path, run_id, changed):
     """Record the counts of run `run_id` so far, while it runs: `changed` as the run's counts (what the Activity page lists
     of a run in progress). False when the run is no longer this process's and running -- taken over as abandoned, ended, or
     the library restored from a snapshot without it. One small write; a job calls it every few seconds, never per photo."""
@@ -190,7 +194,37 @@ def progress(db_path, run_id, changed):
         return conn.execute("UPDATE job_runs SET changed = ? WHERE id = ? AND outcome = 'running' AND owner = ?",
                             (json.dumps(changed or {}, sort_keys=True), run_id, file_journal.owner())).rowcount == 1
 
-    return db.write_with_connection(db_path, work, label="progress of run %d" % run_id)
+    return db.write_with_connection(db_path, work, label="counts so far of run %d" % run_id)
+
+
+#: The columns migration 36 added: a write of them meets a library still at 35 only in the gap snapshots.restore leaves
+#: between putting a snapshot at 35 back and bringing it to the current schema.
+_AT_36 = ("parent", "heartbeat", "progress")
+
+
+def progress(db_path, run_id, phase, counts, now):
+    """Record how far run `run_id`, this process's and running, has got: `heartbeat` the time `now` (seconds since the
+    epoch), `progress` {"phase": phase, "counts": counts}, as the caller checked them (tagpup.services.job_runs.progress).
+    Made now or not at all (db.write_if_free): db.BUSY while the library is being written. False when the run is no longer
+    this process's and running -- abandoned, ended, gone with a restore -- or the library is a snapshot at 35 a restore
+    has put back and not yet migrated. Never raises for either."""
+    text = json.dumps({"phase": phase, "counts": counts}, sort_keys=True)
+
+    def work(conn):
+        return conn.execute("UPDATE job_runs SET heartbeat = ?, progress = ? WHERE id = ? AND outcome = 'running'"
+                            " AND owner = ?", (stamp(now), text, run_id, file_journal.owner())).rowcount == 1
+
+    try:
+        written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
+    except sqlite3.OperationalError as e:
+        message = str(e).lower()
+        if "no such column" not in message or not any(column in message for column in _AT_36):
+            raise
+        logger.debug("progress of run %d: not written, the library is not yet at schema 36 (a restore under way)", run_id)
+        return False
+    if written is False:
+        logger.debug("progress of run %d: not written, it is no longer this process's running run", run_id)
+    return written
 
 
 def get(db_path, run_id):

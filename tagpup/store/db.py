@@ -208,6 +208,59 @@ def write_with_connection(target, operation, label="database write"):
     return write(target, attempt, label=label)
 
 
+class _Busy:
+    def __repr__(self):
+        return "db.BUSY"
+
+    def __bool__(self):
+        return False
+
+
+#: What write_if_free returns for a write it did not make because the database was being written: false, like a write
+#: that changed nothing.
+BUSY = _Busy()
+
+
+def write_if_free(target, operation, label="database write"):
+    """Run a write now, on a connection of its own, or not at all: BUSY when this process is writing the database (its
+    write lock is held) or another process is (SQLite says locked or busy), without waiting either out. For a write that
+    is worth nothing late -- a run saying how far it got, which says it again a few seconds later -- and must never hold
+    up the run while the library is written (a restore, a long migration, the index's batch). `operation` is called with
+    the connection, converts no paths, and its result is returned; the commit, rollback and close are handled here."""
+    lock = lock_for(target)
+    if not lock.acquire(blocking=False):
+        logger.debug("%s: skipped, the database is being written", label)
+        return BUSY
+    try:
+        conn = connect(target, timeout=0)
+        try:
+            # configure() gave it the 30 s every other writer waits; this one does not wait.
+            conn.execute("PRAGMA busy_timeout=0")
+            result = operation(conn)
+            conn.commit()
+            return result
+        except sqlite3.OperationalError as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            message = str(e).lower()
+            if "locked" not in message and "busy" not in message:
+                raise
+            logger.debug("%s: skipped, the database is being written by another process", label)
+            return BUSY
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+    finally:
+        lock.release()
+
+
 def copy_database(source_path, target, then=None):
     """Copy the database at `source_path` to `target`, a new file, in one step of the backup
     API from a read-only connection -- one read transaction, so the copy is the database as

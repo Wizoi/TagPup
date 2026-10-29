@@ -4,11 +4,20 @@ claims, ends and reads (tagpup.store.job_runs; docs/ARCHITECTURE.md, phase 8).
 What a run changed is recorded as counts from the Result the job's service returned --
 attempted, changed, skipped, errors, and the numbers among its details -- never its
 texts, which can name a path or a person.
+
+How far a run has got while it runs (`progress`) is a phase of PHASES and counts, never a path, written at most once every
+PROGRESS_EVERY seconds a run unless its phase changes, and skipped, not waited for, while the library is being written.
 """
+import logging
 import numbers
+import re
+import threading
+import time
 
 from tagpup.core import runs as run_tags
-from tagpup.store import job_runs
+from tagpup.store import db, job_runs
+
+logger = logging.getLogger(__name__)
 
 DONE, FAILED, RUNNING = job_runs.DONE, job_runs.FAILED, job_runs.RUNNING
 Run = job_runs.Run
@@ -39,6 +48,7 @@ def finish(library, run_id, now, result=None, error=None, failed=None):
     done when the Result is ok, else failed -- and failed, with `failed` its note, when the
     job says why an ok Result did not do its work (recurring.Job.failed). False when it was
     no longer this process's to end."""
+    _forget(library, run_id)
     if error is not None:
         return job_runs.finish(library.path, run_id, FAILED, now, {"errors": 1}, "%s: %s" % (type(error).__name__, error))
     if failed:
@@ -47,20 +57,74 @@ def finish(library, run_id, now, result=None, error=None, failed=None):
     return job_runs.finish(library.path, run_id, outcome, now, counts(result), result.message() or None)
 
 
-def progress(library, run_id, counts):
-    """Record the counts of run `run_id` so far (tagpup.store.job_runs.progress): False when it is no longer this
+def counts_so_far(library, run_id, counts):
+    """Record the counts of run `run_id` so far (tagpup.store.job_runs.counts_so_far): False when it is no longer this
     process's to record."""
-    return job_runs.progress(library.path, run_id, counts)
+    return job_runs.counts_so_far(library.path, run_id, counts)
+
+
+#: The phases a run says it is in, the one vocabulary of `job_runs.progress`: a sync's walk of the folders and its walk
+#: again, its work after the walk, and the index's reading of metadata, its embeddings, its faces and the bake.
+PHASES = ("walking", "walking_again", "after_the_walk", "metadata", "embeddings", "faces", "bake")
+
+#: The seconds a run's progress is written at most once in, unless its phase changes.
+PROGRESS_EVERY = 10.0
+
+_COUNT_NAME = re.compile(r"[a-z][a-z0-9_]*")
+
+#: {(the library's db.key, run id): (when its progress was last written, its phase then)}; a run's entry goes when it ends.
+_written = {}
+_written_lock = threading.Lock()
+
+
+def _counts_only(counts):
+    """`counts` with only what may be written: names of lower-case letters, digits and _, numbers that are not booleans.
+    A path, a name or any text is dropped, and only how many were is logged."""
+    kept = {name: value for name, value in (counts or {}).items()
+            if isinstance(name, str) and _COUNT_NAME.fullmatch(name)
+            and isinstance(value, (int, float)) and not isinstance(value, bool)}
+    dropped = len(counts or {}) - len(kept)
+    if dropped:
+        logger.debug("progress: %d count(s) dropped, not a name and a number", dropped)
+    return kept
+
+
+def progress(library, run_id, counts, phase, now=None):
+    """Record how far run `run_id` of `library` has got: in `phase`, one of PHASES (anything else is a code's mistake,
+    ValueError), with `counts` ({name: number}; anything else in it is dropped). Written at most once every
+    PROGRESS_EVERY seconds a run unless the phase changed, and not while the library is being written; `now` is seconds
+    since the epoch, now by default. True when written; False when not -- too soon, the library busy, the run no longer
+    this process's and running, or a library a restore has put back at 35. Never raises for those."""
+    if phase not in PHASES:
+        raise ValueError("a run's phase is one of %s, not %r" % (", ".join(PHASES), phase))
+    now = time.time() if now is None else now
+    held = (db.key(library.path), run_id)
+    with _written_lock:
+        last = _written.get(held)
+        if last is not None and last[1] == phase and 0 <= now - last[0] < PROGRESS_EVERY:
+            return False
+    written = job_runs.progress(library.path, run_id, phase, _counts_only(counts), now)
+    if written is True:
+        with _written_lock:
+            _written[held] = (now, phase)
+    return written is True
+
+
+def _forget(library, run_id):
+    with _written_lock:
+        _written.pop((db.key(library.path), run_id), None)
 
 
 def end(library, run_id, now, counts, failed=False, note=None):
     """End run `run_id` with its `counts`: done, or failed with `note` (tagpup.store.job_runs.finish). A run that was
     cancelled is done: its counts say how far it got. False when it was no longer this process's to end."""
+    _forget(library, run_id)
     return job_runs.finish(library.path, run_id, FAILED if failed else DONE, now, counts, note)
 
 
 def discard(library, run_id):
     """Delete run `run_id` of this process, still running, as though never claimed (tagpup.store.job_runs.discard)."""
+    _forget(library, run_id)
     return job_runs.discard(library.path, run_id)
 
 
