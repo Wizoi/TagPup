@@ -272,8 +272,9 @@ def run_claimed(job, where, run_for, call, clock=time.time, due=None, started=No
     library `where`: claimed first -- refused while a live process holds a run of it, or when `due(last, now)`, asked
     with the last run that ended, says no -- then `call(now)`, which returns the Result, and ended: done, or failed when
     the call raised, its Result is not ok, or `job.failed` says why it did not do its work. `started(outcome, now)`, a
-    context manager, is entered once the run is claimed and held while it runs. An Outcome. The one claim and end of a
-    job's run: the runner's (Runner.run_job) and the folder watcher's sync of a whole library (sync_whole)."""
+    context manager, is entered once the run is claimed and held while it runs. While it runs, what its service tells
+    (job_runs.tell: a sync's walk) is the run's progress. An Outcome. The one claim and end of a job's run: the runner's
+    (Runner.run_job) and the folder watcher's sync of a whole library (sync_whole)."""
     now = clock()
     try:
         claim = job_runs.claim(where, job.name, run_for, now, None if due is None else (lambda last: due(last, now)))
@@ -287,7 +288,7 @@ def run_claimed(job, where, run_for, call, clock=time.time, due=None, started=No
     with (started or _nothing)(outcome, now):
         try:
             # Every line the run logs carries its tag: the Activity page's "Logs for this run".
-            with runs.running(runs.job_tag(run_for, claim.run_id)):
+            with runs.running(runs.job_tag(run_for, claim.run_id)), job_runs.recording(where, claim.run_id):
                 outcome.result = call(now)
         except Exception as e:
             logger.exception("The job %s for %s failed", job.name, run_for or "every library")

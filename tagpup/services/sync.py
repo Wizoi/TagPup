@@ -93,6 +93,7 @@ from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images, shares
 from tagpup.services import maintenance, refresh_rows, relink_photos, settings
+from tagpup.services import job_runs as recorded_runs
 from tagpup.services import roots as roots_service
 from tagpup.store import db, generations, job_runs, journal, photo_fingerprints, schema
 from tagpup.store import faces as store_faces
@@ -120,6 +121,8 @@ FOLDER_WAIT = 10.0
 #: The phases of a sync its progress names (progress_into): its walk, the second walk only a removal makes, and what
 #: follows the walk (the changed files read, the change written).
 WALKING, WALKING_AGAIN, AFTER_THE_WALK = "walking the folders", "walking the folders again", "reading what changed"
+#: Each, as the run of a sync job records it (tagpup.services.job_runs.PHASES).
+_RUN_PHASES = {WALKING: "walking", WALKING_AGAIN: "walking_again", AFTER_THE_WALK: "after_the_walk"}
 
 #: A walk logs how far it has got every LOG_FOLDERS folders and LOG_SECONDS seconds, whichever is the rarer: on the
 #: share, 2,564 folders in about 12 minutes (photo_index, #1915), never a line a file.
@@ -144,8 +147,10 @@ def progress_into(found):
 
 class _Walked:
     """How far one walk (_scan) has got: told each folder listed (images.stamps_under's `listed`), it keeps the sync's
-    progress (progress_into) and logs a line at most every LOG_FOLDERS folders and LOG_SECONDS seconds, with the run's
-    tag (tagpup.core.runs): the folder it is at, never a line a file."""
+    progress (progress_into), tells the run recorded on this thread -- the sync job's (tagpup.jobs.recurring.run_claimed)
+    -- its phase, folders and files (tagpup.services.job_runs.tell: at most every 10 s, never the folder), and logs a line at most every
+    LOG_FOLDERS folders and LOG_SECONDS seconds, with the run's tag (tagpup.core.runs): the folder it is at, never a line
+    a file."""
 
     def __init__(self, phase, clock=time.monotonic):
         self.phase, self.folders, self.files, self._clock = phase, 0, 0, clock
@@ -158,6 +163,7 @@ class _Walked:
         if found is not None:
             found.update(phase=self.phase, folders=self.folders, files=self.files, folder=folder,
                          progressed=job_runs.stamp(time.time()))
+        recorded_runs.tell(_RUN_PHASES[self.phase], {"folders": self.folders, "files": self.files})
 
     def listed(self, folder, photos):
         self.folders += 1
