@@ -9,9 +9,12 @@ contract 22). Each scenario is a morning the owner opens the page on:
     morning     breakwater's share dropped overnight (Needs you, Run it now); jetty's server was killed mid-sync (an
                 abandoned run says why); harbour's sync and its index ended (a tree); pier is no library at all.
 
-The clocks are the scenarios' own (time.time is the scenario's while the real sync runs and the routes answer, the home's folder and the process id in a run's tag are renumbered), so the file is the same on every run.
+The clocks are the scenarios' own (time.time is the scenario's while the real sync runs and the routes answer, the
+journal's clock the day before while each library is made; the home's folder, the process id in a run's tag and in a log's
+name (tagpup.logs.run_log) and the count after it are renumbered), so the file is the same on every run: the test makes it twice, in two homes, and the two are one text.
 Fictional names only.
 """
+import itertools
 import json
 import os
 import sys
@@ -24,10 +27,11 @@ from test_a_failed_run_says_what_to_do import NIGHT, Clock, _Libraries  # noqa: 
 from test_activity_routes import FakeWatcher  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
-from tagpup.core import runs  # noqa: E402
+from tagpup.core import dates, runs  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import job_runs  # noqa: E402
-from tagpup.store import file_journal  # noqa: E402
+from tagpup.store import file_journal, journal  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
@@ -38,8 +42,11 @@ ROUTES = ("now", "jobs", "timeline")
 
 class RepliesForTheActivityPage(_Libraries):
     def library(self, name, **kwargs):
-        """A library made the day before the scenarios: its settings' change of the journal reads time.time."""
-        with mock.patch("time.time", Clock(NIGHT - 24 * HOUR)):
+        """A library made the day before the scenarios: the change that stamps its settings is recorded at the journal's
+        clock (dates.recorded, time.localtime, which reads no time.time)."""
+        day_before = NIGHT - 24 * HOUR
+        with mock.patch("time.time", Clock(day_before)), \
+                mock.patch.object(journal, "_now", lambda: dates.recorded(day_before)):
             return super().library(name, **kwargs)
 
     def nightly_sync(self, library, queue=None, at=NIGHT):
@@ -75,6 +82,22 @@ class RepliesForTheActivityPage(_Libraries):
         return sync.run_id, index.run_id
 
     def test_the_replies_the_page_reads_are_written_for_the_page_test(self):
+        text = self.written()
+        self.home = own_home.for_test(self, prefix="failed_run_")
+        self.pictures = os.path.join(self.home.root, "Pictures")
+        shares.forget()
+        self.assertEqual(text, self.written(), "the replies differ from one run to the next")
+        os.makedirs(os.path.dirname(FIXTURE), exist_ok=True)
+        if not os.path.exists(FIXTURE) or open(FIXTURE, encoding="utf-8").read() != text:
+            with open(FIXTURE, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
+
+    def written(self):
+        """The four mornings' replies, as the fixture's text."""
+        with mock.patch.object(runs, "_counter", itertools.count(1)):
+            return self.mornings()
+
+    def mornings(self):
         found = {}
         harbour = self.library("harbour")
         lighthouse = self.library("lighthouse")
@@ -132,13 +155,10 @@ class RepliesForTheActivityPage(_Libraries):
         self.assertEqual(long_harbour["jobs"][0]["run_id"], long_harbour["jobs"][1]["parent"])
         text = "{\n" + ",\n".join("%s: %s" % (json.dumps(key), json.dumps(found[key], sort_keys=True))
                                   for key in sorted(found)) + "\n}\n"
-        text = text.replace("-%d-" % os.getpid(), "-4242-")
+        text = text.replace("-%d-" % os.getpid(), "-4242-").replace("-%d.log" % os.getpid(), "-4242.log")
         for spelled in (self.home.root, self.home.root.replace("\\", "/")):
             text = text.replace(json.dumps(spelled)[1:-1], "D:\\\\TagPup")
-        os.makedirs(os.path.dirname(FIXTURE), exist_ok=True)
-        if not os.path.exists(FIXTURE) or open(FIXTURE, encoding="utf-8").read() != text:
-            with open(FIXTURE, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write(text)
+        return text
 
 
 if __name__ == "__main__":
