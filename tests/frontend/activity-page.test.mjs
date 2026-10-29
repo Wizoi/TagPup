@@ -288,6 +288,8 @@ describe("the other sections", () => {
     const unfolded = jobs.querySelectorAll('.job-card[data-job="sync"] tr.run');
     assert.equal(unfolded.length, 2);
     assert.match(unfolded[0].textContent, /new 812/);
+    // A sync job's run names its sync's record, which pairs the two in What happened: an id, never said as a count.
+    assert.doesNotMatch(jobs.textContent, /record \d/, "a record's id is no count");
   });
 
   test("Sync & watcher, Snapshots and the server", async (t) => {

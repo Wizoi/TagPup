@@ -163,6 +163,21 @@ class WhatHappenedSaysASyncOnce(_Libraries):
         self.assertEqual(1, entry["counts"]["found_missing"], entry["counts"])
         self.assertNotIn(sync.RECORD, entry["counts"])
 
+    def test_the_jobs_section_shows_the_daily_syncs_counts_without_its_record(self):
+        """The Jobs section's runs of the sync job and its last run say what the sync counted, never the id of its record
+        (job_runs.RECORD), which only pairs the run with its record, nor of its journal change. Break: recurring.overview
+        sending a run's `changed` raw, the page saying "record 2" among the counts."""
+        harbour = self.library("harbour", photos=("IMG_0001.jpg", "IMG_0002.jpg"))
+        os.remove(os.path.join(self.folder_of("harbour"), "IMG_0002.jpg"))
+        run = self.nightly_sync(harbour)
+        self.assertIn(sync.RECORD, run.changed, "the run holds the link to its record")
+        (entry,) = [each for each in recurring.overview(harbour) if each["name"] == recurring.SYNC]
+        (shown,) = entry["runs"]
+        self.assertEqual(run.id, shown["id"])
+        for counts in (shown["changed"], entry["last"]["changed"]):
+            self.assertEqual({"attempted": 1, "changed": 1, "errors": 0, "queued": 0, "skipped": 0}, counts,
+                             "a link (the record's id, the change's) said as a count")
+
     def test_a_sync_whose_share_drops_is_one_failed_entry_saying_why(self):
         """Break: the record's "not in step" said beside a failed job, or the failure said without its sentence."""
         harbour = self.library("harbour", new=("IMG_0002.jpg",))

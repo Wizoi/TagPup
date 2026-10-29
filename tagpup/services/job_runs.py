@@ -139,6 +139,27 @@ def needs_you(runs):
     return failed if failed and FAILURES[kind_of(failed[0])][2] else []
 
 
+#: The id of a sync's record (tagpup.store.job_runs.record_sync) among a Result's details, and so among the `changed` of
+#: the job run that ran it (`counts`): what pairs the two in the Activity page's timeline
+#: (tagpup.services.activity.timeline_and_children). tagpup.services.sync.RECORD is this.
+RECORD = "record"
+
+#: The id of the journal change a run applied, among its details and so its `changed` (tagpup.services.maintenance).
+CHANGE = "change"
+
+#: The numbers a run's `changed` holds that are links to another row, not counts of what it did: `shown_counts` leaves
+#: them out, the server reads them from the run's `changed`.
+LINKS = (RECORD, CHANGE)
+
+
+def shown_counts(found):
+    """The counts among `found` (a run's `changed`, a sync record's found or changed, a change's summary), the one answer
+    every reply that shows them gives: its numbers, never a flag, a text (FAILURE) or a link (LINKS: the id of a sync's
+    record or of a journal change, which the page would say as "record 2")."""
+    return {name: value for name, value in (found or {}).items()
+            if isinstance(value, numbers.Number) and not isinstance(value, bool) and name not in LINKS}
+
+
 def counts(result):
     """What a Result says was changed, as counts: never its `percent`, where an index queue's bar stopped, which is not a
     count of what the run did (#2193)."""

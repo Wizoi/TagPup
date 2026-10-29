@@ -875,10 +875,8 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
     return result
 
 
-#: The id of the sync's record (job_runs.record_sync) among a Result's details, and so among the counts of the job run
-#: that ran it (tagpup.services.job_runs.counts): what pairs the two in the Activity page's timeline
-#: (tagpup.services.activity.timeline_and_children).
-RECORD = "record"
+#: The id of the sync's record among a Result's details: tagpup.services.job_runs.RECORD, its one spelling.
+RECORD = recorded_runs.RECORD
 
 #: What a sync of one folder can find that makes it worth a record by itself (the Activity page's "found_..." counts).
 FOUND_WORTH = ("new", "missing", "moved", "changed")

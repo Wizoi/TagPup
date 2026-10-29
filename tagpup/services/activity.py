@@ -17,7 +17,6 @@ said with what its kind means (job_runs.FAILURES) and the next step for its job 
 across the libraries.
 """
 import logging
-import numbers
 import time
 
 from tagpup.core import runs
@@ -52,13 +51,6 @@ def roots_there(roots):
         if state == "unanswered":
             listed[-1]["away_since"] = shares.away_since(shares.share_of(root))
     return listed
-
-
-def _counts(found):
-    """The numbers among `found`, a dict: what a record says it found or changed -- never the id of a sync's record a
-    sync job's run holds (sync.RECORD), which is not a count."""
-    return {name: value for name, value in (found or {}).items()
-            if isinstance(value, numbers.Number) and not isinstance(value, bool) and name != sync.RECORD}
 
 
 def _sync_run(entry, run):
@@ -140,7 +132,8 @@ def _sync_entry(library, record):
         return None
     return {"id": record["id"], "started": record["started"], "finished": record["finished"],
             "seconds": seconds_between(record["started"], record["finished"]), "whole": record["whole"],
-            "in_step": record["in_step"], "found": _counts(record["found"]), "changed": _counts(record["changed"]),
+            "in_step": record["in_step"], "found": runs_service.shown_counts(record["found"]),
+            "changed": runs_service.shown_counts(record["changed"]),
             "change": record["change_id"], "run": runs.sync_tag(library.name, record["started"])}
 
 
@@ -218,7 +211,7 @@ def timeline_and_children(library, limit=50):
             continue
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
-                        "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,
+                        "outcome": run.outcome, "counts": runs_service.shown_counts(run.changed), "id": run.id,
                         "run": _tag(run), "error": run.note, "parent": run.parent, "progress": _progress(run)})
         if run.job == job_runs.INDEX:
             entries[-1].update(kind="index", what="index of %d folder(s)" % run.changed.get("folders", 0),
@@ -229,7 +222,7 @@ def timeline_and_children(library, limit=50):
             continue
         rows = sum(count for actions in (change.get("rows") or {}).values() for count in actions.values())
         files = sum((change.get("files") or {}).values())
-        counts = _counts(change.get("summary"))
+        counts = runs_service.shown_counts(change.get("summary"))
         counts.update(rows=rows, files=files)
         entries.append({"kind": "change", "library": library.name, "time": change["created"],
                         "finished": change["applied"] or change["undone"], "seconds": None,
