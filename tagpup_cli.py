@@ -1131,11 +1131,16 @@ def sync(ctx, folder, apply_):
     if counts["missing"]:
         console.print("  %d folder(s) wholly gone, %d of them a folder the library holds, not there at all."
                       % (counts["folders_gone"], counts["roots_gone"]), markup=False, soft_wrap=True)
+        # Applied, what the change removed (a row another sync or Remove Folder took meanwhile is skipped); a dry run,
+        # what it would.
+        removed = ((result.details["changed"]["removed"], result.details["changed"]["removed_faces"],
+                    result.details["changed"]["removed_named"]) if apply_ else
+                   (counts["to_remove"], counts["to_remove_faces"], counts["to_remove_named"]))
         console.print("  %d of the missing row(s) %s removed, with %d face(s), %d of them named (undoably); the rest"
-                      " are kept: on a drive or share not confirmed there (an unplugged drive), a possible copy, a sync of"
-                      " one folder, or a folder not looked at."
-                      % (counts["to_remove"], "are" if apply_ else "would be", counts["to_remove_faces"],
-                         counts["to_remove_named"]), markup=False, soft_wrap=True)
+                      " are kept: on a drive or share not confirmed there (an unplugged drive), a possible copy, found by"
+                      " the second look (moved while the folders were walked), a sync of one folder, or a folder not"
+                      " looked at."
+                      % ((removed[0], "were" if apply_ else "would be") + removed[1:]), markup=False, soft_wrap=True)
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
     if counts.get("to_check"):

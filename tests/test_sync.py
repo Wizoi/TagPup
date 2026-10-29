@@ -1148,6 +1148,37 @@ class MissingFiles(SyncTestCase):
         self.assertFalse(result.details["in_step"], "a skipped row is settled by the next sync")
         return inner[0], ids
 
+    def test_the_command_says_what_it_removed_not_what_it_planned(self):
+        """The CLI's --apply says the rows the change removed: here none, Remove Folder having taken the row between
+        the plan and the write; its dry run says what it would remove."""
+        from click.testing import CliRunner
+        from tagpup.services import faces as face_service
+        from tagpup_cli import cli
+        gone = self.photo(self.trip, "IMG_0001.jpg")
+        self.rooted(gone, self.photo(self.trip, "IMG_0002.jpg"), self.photo(self.meet, "IMG_0003.jpg"), named=[gone])
+        os.remove(gone)
+
+        def said(*arguments):
+            with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
+                            side_effect=Reads(self.truth).batch_read), \
+                    mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=Reads(self.truth).session):
+                return CliRunner().invoke(cli, ["--db", self.db_path, "sync"] + list(arguments)).output
+
+        self.assertIn("1 of the missing row(s) would be removed, with 2 face(s), 1 of them named", said())
+        real_look, taken = sync.look, []
+
+        def look_then_remove_folder(*args, **kwargs):
+            plan = real_look(*args, **kwargs)
+            if not taken:
+                taken.append(face_service.remove_folder(self.library, self.trip))
+            return plan
+
+        with mock.patch.object(sync, "look", side_effect=look_then_remove_folder):
+            output = said("--apply")
+        self.assertTrue(taken[0].ok, taken[0].message())
+        self.assertIn("0 of the missing row(s) were removed, with 0 face(s), 0 of them named", output)
+        self.assertNotIn("1 of the missing row(s)", output)
+
     def test_two_syncs_at_once_remove_a_row_once_and_the_second_skips_it(self):
         # The stand-in ExifTool of the outer run answers the inner one too.
         first, _ids = self.taken_meanwhile(lambda: sync.sync(self.library, apply=True, exiftool_path="exiftool",
