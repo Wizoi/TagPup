@@ -219,7 +219,8 @@ def now():
         running = []
         try:
             for (job, _for), (last, _ended) in job_runs.latest(library).items():
-                if last is not None and last.outcome == job_runs.RUNNING:
+                # An index's run is `indexing` above, from this process's queue, until the page reads the runs (B2b-2).
+                if last is not None and last.outcome == job_runs.RUNNING and job != indexing_jobs.JOB:
                     tag = runs.job_tag(last.library, last.id)
                     running.append({"job": job, "run_id": last.id, "started": last.started, "run": tag,
                                     "logs": _logs_for(tag, children)})

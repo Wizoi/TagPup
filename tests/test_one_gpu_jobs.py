@@ -124,8 +124,10 @@ class SuggestWaitsForTheFoldersIndex(_Library):
     def test_it_runs_once_the_index_is_done(self):
         models = _FakeModels()
         self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, models))
-        self.assertTrue(until(lambda: "indexed first" in (self.status().get("message") or "")), self.status())
-        self.assertIn("Generating embeddings: 33% (1/3)", self.status()["message"])
+        # The index's own line, once it has claimed its run and begun: "Starting indexing..." until then.
+        self.assertTrue(until(lambda: "Generating embeddings: 33% (1/3)" in (self.status().get("message") or "")),
+                        self.status())
+        self.assertIn("indexed first", self.status()["message"])
         time.sleep(0.3)
         self.assertEqual([], models.began, "Suggest began while its folder was being indexed")
         self.release.set()
