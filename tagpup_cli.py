@@ -1108,8 +1108,10 @@ SYNC_FOUND = (("new", "new file(s), in %d folder(s)", "new_folders"), ("changed"
 @click.pass_context
 def sync(ctx, folder, apply_):
     """Bring the library in step with its folders: rows read again for files changed
-    outside the apps, rows following files that moved, and new files indexed. Missing
-    files are reported, never removed. A dry run unless --apply; counts only."""
+    outside the apps, rows following files that moved, new files indexed, and the rows of
+    files looked for and not found removed (with their faces, undoably) when every folder
+    was looked at and their root is there; a sync of one --folder never removes. A dry run
+    unless --apply; counts only."""
     library = _existing_library(ctx)
     result = runtimes.sync(library, folder=folder, apply=apply_)
     if result.refused:
@@ -1127,12 +1129,18 @@ def sync(ctx, folder, apply_):
                       " TagTuner (gear, Folders to review), never indexed on their own."
                       % (counts["review_folders"], counts["review_photos"]))
     if counts["missing"]:
-        console.print("  %d folder(s) wholly gone, %d of them a folder the library holds, not there at all (an "
-                      "unplugged drive looks the same); their rows are kept."
+        console.print("  %d folder(s) wholly gone, %d of them a folder the library holds, not there at all."
                       % (counts["folders_gone"], counts["roots_gone"]), markup=False, soft_wrap=True)
-        if counts["folders_gone"]:
-            console.print("  A folder renamed in Explorer looks the same: its rows are kept; rename it back "
-                          "by hand.")
+        # Applied, what the change removed (a row another sync or Remove Folder took meanwhile is skipped); a dry run,
+        # what it would.
+        removed = ((result.details["changed"]["removed"], result.details["changed"]["removed_faces"],
+                    result.details["changed"]["removed_named"]) if apply_ else
+                   (counts["to_remove"], counts["to_remove_faces"], counts["to_remove_named"]))
+        console.print("  %d of the missing row(s) %s removed, with %d face(s), %d of them named (undoably); the rest"
+                      " are kept: on a drive or share not confirmed there (an unplugged drive), a possible copy, found by"
+                      " the second look (moved while the folders were walked), a sync of one folder, or a folder not"
+                      " looked at."
+                      % ((removed[0], "were" if apply_ else "would be") + removed[1:]), markup=False, soft_wrap=True)
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
     if counts.get("to_check"):
@@ -1147,8 +1155,9 @@ def sync(ctx, folder, apply_):
                       "Nothing changed. --apply brings it in step.")
         return
     changed = result.details["changed"]
-    console.print("Wrote %d row(s): %d read again, %d moved. %s" % (
-        result.changed, changed["from_files"], changed["relinked"], maintenance.recorded(result, library.path)),
+    console.print("Wrote %d row(s): %d read again, %d moved, %d removed with %d face(s), %d of them named. %s" % (
+        result.changed, changed["from_files"], changed["relinked"], changed["removed"], changed["removed_faces"],
+        changed["removed_named"], maintenance.recorded(result, library.path)),
         markup=False, soft_wrap=True)
     for line in maintenance.skipped(result) + maintenance.failed(result) + result.details["warnings"]:
         console.print(line, markup=False, soft_wrap=True)

@@ -15,9 +15,13 @@ folder scan's rule), and sorts what differs:
 - moved files -- a row whose file is gone, and a new file that is the same photo: the
   row follows the file, and its faces with it, as relink does (relink_photos.edits_for).
   Most rows hold no DocumentID, so a file is first matched by its name, size and
-  modified time, which the walk and the rows already hold -- only where exactly one file
-  matches the row and exactly one row the file; a match that is not one-to-one is
-  reported as ambiguous, never guessed, and the folders of its files are not queued.
+  modified time, which the walk and the rows already hold (a file moved to another folder),
+  then, for the rows and files that left, by its folder, size and modified time (a file
+  renamed in its own folder: a rename in Explorer keeps the modified time) (pair_by_stamp)
+  -- each only where exactly one file matches the row and exactly one row the file; a match
+  that is not one-to-one is reported as ambiguous, never guessed, and the folders of its
+  files are not queued. A file both moved and renamed, or saved again after a rename, is
+  not matched by its stamp.
   What that leaves is matched by the DocumentID (or, renamed in its folder by TagPup,
   the PreservedFileName) read from those new files alone (relink_photos.claims_of, pair);
 - work the index owes -- a photo with no vector under the library's photo model, one whose vector's stamp no longer
@@ -28,11 +32,27 @@ folder scan's rule), and sorts what differs:
   index as a new file's is (`to_check`, counted by reason: `owed_no_vector`, `owed_stale`, `owed_unexamined`,
   `owed_no_fingerprint`), and the index tells a metadata write (the same picture: the vector kept) from an edited
   picture (computed again). Sync decodes nothing and leaves the vector, the faces and the file as they are;
-- missing files -- a row whose file is gone and was not found elsewhere: reported, never
-  removed. A folder renamed in Explorer looks the same as a deleted one, so removing
-  rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
-  folders are wholly gone (on a local drive, connected or not, or a share that answers:
-  shares.folder_state).
+- missing files -- a row whose file is gone and was not found elsewhere. A sync of the
+  whole library removes it (`to_remove`; owner, DECISIONS 2026-10-28: a file not looked at
+  is not a file not found) when the walk looked for it and did not find it: every folder
+  was looked at (nothing "not looked at", below), the row is not held back as a possible
+  copy (ambiguous), and its root is confirmed there -- the first place of the root it is
+  under (for a library with no roots, the topmost folder walked above it) is a folder
+  (shares.folder_state) and the walk found a file of that root's rows. So an unplugged
+  drive, a root gone, or a root repointed at an empty folder removes nothing, and a folder
+  wholly gone under a root that is there is removed with its rows. Two looks: when the walk
+  leaves a row to remove, the whole library is walked a second time, and a row is removed only
+  when that walk too looked at every folder, did not find its file, paired it with no file as a
+  move nor held it back, and confirmed its root -- a file dragged from a folder the first walk
+  had not listed yet into one it had is in neither of that walk's listings, and is found by the
+  second (#2153). A library with nothing to remove is walked once. A folder renamed in
+  Explorer is paired as a move where its files' stamps or identities match; what is left
+  unmatched is removed. A sync of one folder never removes: a file moved out of it may not
+  have been looked for where it went. The removal is a skippable delete of the change
+  (kind "removed"): the journal records the photo's faces, vectors and suggestions with
+  it, so an undo puts the row back under its id; a row another sync or Remove Folder took
+  meanwhile is skipped. The report also says which folders are wholly gone (on a local
+  drive, connected or not, or a share that answers: shares.folder_state).
 - not looked at -- a row under a folder the walk could not look at: a root on a share that
   does not answer (tagpup.files.shares.folder_state), or a folder whose listing failed or
   dropped part-way (images.stamps_under's `unlisted`). Neither missing nor paired with a
@@ -53,13 +73,13 @@ read the identities of the new files a missing row's stamp did not settle.
 
 On the maintenance scaffold (tagpup.services.maintenance): a dry run by default, which
 reads and rehearses and writes nothing -- neither a row nor a photo file (the files are
-only ever read: no DocumentID is minted); applied, the re-read rows and the moved rows are
-one change of the journal, `sync`, undoable. Then the new files' folders are queued, and
+only ever read: no DocumentID is minted); applied, the re-read rows, the moved rows and the
+removed rows are one change of the journal, `sync`, undoable. Then the new files' folders are queued, and
 the run is recorded in the library (tagpup.store.job_runs.record_sync, a run of the job "sync-whole" or
 "sync-folder"): what it found and what it
 changed, and whether it left the library in step -- nothing new, changed or moved left
-over and no folder left unlooked at; missing files do not count against it -- which is the
-pages' "last in step".
+over, no row left to remove and no folder left unlooked at; a missing file sync cannot
+confirm gone does not count against it -- which is the pages' "last in step".
 """
 import collections
 import logging
@@ -72,17 +92,22 @@ from tagpup.core.result import Result
 from tagpup.files import images, shares
 from tagpup.services import maintenance, refresh_rows, relink_photos, settings
 from tagpup.services import roots as roots_service
-from tagpup.store import db, generations, job_runs, photo_fingerprints, schema
+from tagpup.store import db, generations, job_runs, journal, photo_fingerprints, schema
+from tagpup.store import faces as store_faces
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
+from tagpup.store import roots as store_roots
 
 logger = logging.getLogger(__name__)
 
 #: What the change is recorded as.
 OPERATION = "sync"
 
-#: The kinds of row the change writes: re-read from its file, or following its file.
-KINDS = ("from_files", "relinked")
+#: The kinds of row the change writes: re-read from its file, following its file, or removed (its file confirmed gone).
+KINDS = ("from_files", "relinked", "removed")
+
+#: What details["changed"] holds: each kind, and the faces and named faces the removed rows took with them.
+CHANGED = KINDS + ("removed_faces", "removed_named")
 
 #: How long a sync waits to hear whether a root, or a missing row's folder, on a network share is there, in seconds:
 #: a job, not a page, so longer than shares.SHARE_WAIT; one that does not answer in it is not looked at. A root's share
@@ -113,14 +138,31 @@ def pair_by_stamp(missing, new):
     """(pairs [(old, new)], ambiguous rows [path], ambiguous files {key}) of the `missing`
     rows [(photo_id, path, mtime, size)] and the `new` files {key: (path, mtime, size)}:
     a row and a file are the same photo when they have one name, one size, and a time
-    the row describes (store.photos.describes) -- and only when each is the other's one
-    match. A row or file with more than one match is ambiguous. Reads nothing."""
-    files = {}
+    the row describes (store.photos.describes) -- a file moved to another folder; then, for
+    a row no file of its name matched and the files no row matched, when the file is in the
+    row's own folder with its size and a time the row describes -- a file renamed in its
+    folder (a rename in Explorer keeps the modified time, #2155). Each only when each is the
+    other's one match. A row or file with more than one match is ambiguous. Reads nothing."""
+    by_name, by_folder = {}, {}
     for key, (path, mtime, size) in new.items():
-        files.setdefault((os.path.basename(path), size), []).append((key, path, mtime))
+        by_name.setdefault((os.path.basename(path), size), []).append((key, path, mtime))
+        by_folder.setdefault((paths.key(os.path.dirname(path)), size), []).append((key, path, mtime))
+    pairs, ambiguous_rows, ambiguous_files, matched, claimed = _one_to_one(
+        missing, by_name, lambda path, size: (os.path.basename(path), size))
+    in_place = _one_to_one(
+        [row for row in missing if row[1] not in matched],
+        {where: [file for file in files if file[0] not in claimed] for where, files in by_folder.items()},
+        lambda path, size: (paths.key(os.path.dirname(path)), size))
+    return pairs + in_place[0], ambiguous_rows + in_place[1], ambiguous_files | in_place[2]
+
+
+def _one_to_one(missing, files, where):
+    """(pairs, ambiguous rows, ambiguous files, the rows that matched any file {path}, the files any row matched {key})
+    of the `missing` rows and the `files` {where: [(key, path, mtime)]}, a row matching each file found at
+    `where(path, size)` whose time it describes: pair_by_stamp's one rule of a match, for each of its two looks."""
     matches, claimed = {}, {}
     for _photo_id, path, mtime, size in missing:
-        found = [(key, file_path) for key, file_path, file_mtime in files.get((os.path.basename(path), size), ())
+        found = [(key, file_path) for key, file_path, file_mtime in files.get(where(path, size), ())
                  if store_photos.describes(mtime, size, (file_mtime, size))]
         if found:
             matches[path] = found
@@ -133,7 +175,7 @@ def pair_by_stamp(missing, new):
         else:
             ambiguous_rows.append(path)
             ambiguous_files.update(key for key, _file_path in found)
-    return pairs, ambiguous_rows, ambiguous_files
+    return pairs, ambiguous_rows, ambiguous_files, set(matches), set(claimed)
 
 
 def _missing_by_folder(missing):
@@ -214,6 +256,68 @@ def _unseen(by_key, on_disk, not_looked_at):
         else:
             missing.append((photo_id, path, mtime, size))
     return missing, unseen
+
+
+def _removable(conn, candidates, by_key, on_disk, walked):
+    """The `candidates` [(photo_id, path)] -- missing rows a whole sync that looked at every folder did not find -- whose
+    root is confirmed there: the first place of the root a row is under (a library with no roots: the topmost folder
+    walked above it) is a folder (shares.folder_state), and the walk found a file of that root's rows. An unplugged
+    drive, a root gone, or a root repointed at an empty or wrong folder confirms nothing. A row under none of the
+    library's roots is not removed (none in the three live libraries, 2026-10-28)."""
+    if not candidates:
+        return []
+    roots = store_roots.roots_for(conn)
+    firsts = {}
+
+    def place_of(path):
+        if roots.identity:
+            return next((top for top in walked if paths.is_under(path, top)), None)
+        located = roots.locate(path)
+        if located is None:
+            return None
+        if located[0] not in firsts:
+            firsts[located[0]] = store_roots.from_row(conn, paths.ROOT_MARK + located[0])
+        return firsts[located[0]]
+
+    wanted = {}
+    for photo_id, path in candidates:
+        place = place_of(path)
+        if place is not None:
+            wanted.setdefault(paths.key(place), (place, []))[1].append((photo_id, path))
+    # A file of each root's rows found: the first one found settles its root, so the rows are read only as far as that.
+    unseen = set(wanted)
+    for key, (_photo_id, path, _m, _s) in by_key.items():
+        if not unseen:
+            break
+        if key in on_disk:
+            place = place_of(path)
+            if place is not None:
+                unseen.discard(paths.key(place))
+    removable = []
+    for place_key, (place, rows) in sorted(wanted.items()):
+        if place_key not in unseen and shares.folder_state(place, FOLDER_WAIT) == "there":
+            removable.extend(rows)
+    return sorted(removable)
+
+
+def _gone_again(conn, candidates, roots, library_folders, exiftool_path):
+    """The `candidates` [(photo_id, path)] -- rows the first walk of a whole sync would remove -- that a second walk of
+    the whole library also looked for and did not find: not on disk, not paired with a new file as a move nor held
+    back as a possible copy (_pair_moves, the one pairing), and its root confirmed there by this walk (_removable). A
+    file moved between two folders while the first walk ran is in neither of its listings; this walk finds it (#2153).
+    None when this walk could not look at every folder."""
+    by_key, on_disk, walked, _gone, unanswered, unlisted = _scan(conn, None, roots, library_folders)
+    if unanswered or unlisted:
+        return []
+    missing, _unseen_ids = _unseen(by_key, on_disk, ())
+    new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
+    settled = set()
+    if missing and new:
+        pairs, ambiguous_rows, _files = _pair_moves(conn, by_key, missing, new, exiftool_path)
+        settled = {paths.key(old) for old, _new in pairs} | {paths.key(path) for path in ambiguous_rows}
+    still = {photo_id for photo_id, path, _m, _s in missing if paths.key(path) not in settled}
+    return _removable(conn, [(photo_id, path) for photo_id, path in candidates if photo_id in still],
+                      by_key, on_disk, walked)
 
 
 def _missing_elsewhere(conn, by_key, new):
@@ -387,6 +491,19 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                                                           on_disk[paths.key(move["to"])][1:]))
         new = {key: stamp for key, stamp in new.items() if key not in moved_to}
 
+        # Removed: a missing row the walk looked for and did not find, its root confirmed there -- only in a sync of
+        # the whole library that looked at every folder (a file moved out of one folder is looked for in the others),
+        # and only when a second walk, made only then, finds it gone too (_gone_again: a file moved mid-walk).
+        to_remove = []
+        if folder is None and not not_looked_at:
+            held_rows = {paths.key(path) for path in ambiguous_rows}
+            to_remove = _removable(conn, [(photo_id, path) for photo_id, path in missing
+                                          if paths.key(path) not in held_rows], by_key, on_disk, walked)
+            if to_remove:
+                to_remove = _gone_again(conn, to_remove, roots, library_folders, exiftool_path)
+        removing = {photo_id: (0, 0) for photo_id, _path in to_remove}
+        removing.update(store_faces.counts_by_photo(conn, list(removing)) if removing else {})
+
         # Changed: re-read, each row held to what it was when read.
         found = {}
         for path in changed:
@@ -398,6 +515,11 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
 
     edits = refresh_rows.edits_for(records, to_write, found, identities, changed)
     moved_edits, occupied = relink_photos.edits_for(library, moves)
+    # Each row removed as the plan read it, skippable: one another sync or Remove Folder took meanwhile is left out.
+    removed_edits = [journal.delete("photos", (photo_id,),
+                                    {"path": path, "mtime": stamp_of[paths.key(path)][0],
+                                     "size": stamp_of[paths.key(path)][1]}, kind="removed", skippable=True)
+                     for photo_id, path in to_remove]
     by_folder = _missing_by_folder(missing)
     stops = {paths.key(root) for root in walked + roots}
     queued, review, ignored_files, held_back, outside = _sort_new(
@@ -413,7 +535,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                         if paths.key(os.path.dirname(path)) in {paths.key(f) for f in queued}), key=paths.key)
     listed = [{"path": top, "photos": review[top]} for top in sorted(review, key=paths.key)]
     return maintenance.Plan(
-        size=len(edits) + len(moved_edits),
+        size=len(edits) + len(moved_edits) + len(removed_edits),
         counts={"rows": len(by_key), "files": len(on_disk),
                 "folders_walked": len(walked) - len(roots_gone) - len(unanswered)
                 - len({paths.key(f) for f in walked} & {paths.key(f) for f in unlisted}),
@@ -432,12 +554,15 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "occupied": len(occupied), "ambiguous_rows": len(ambiguous_rows),
                 "ambiguous_files": len(ambiguous_files), "held_back_folders": len(held_back),
                 "missing": len(missing), "missing_folders": len(by_folder),
+                "to_remove": len(removing), "to_remove_faces": sum(faces for faces, _named in removing.values()),
+                "to_remove_named": sum(named for _faces, named in removing.values()),
                 "folders_gone": sum(1 for _f, _n, gone in by_folder if gone), "roots_gone": len(roots_gone),
                 "not_looked_at": len(unseen), "folders_not_looked_at": len(not_looked_at)},
         ids={"changed": sorted(changed.values()), "to_write": sorted(changed[p] for p in to_write),
              "unreadable": sorted(changed[p] for p in unreadable), "to_check": sorted(to_check.values()),
              "moved": sorted(id_of[paths.key(m["from"])] for m in moves),
              "missing": sorted(photo_id for photo_id, _path in missing),
+             "to_remove": sorted(removing),
              "ambiguous": sorted(id_of[paths.key(path)] for path in ambiguous_rows)},
         reveal={"new": new_paths, "new_folders": new_folders, "review": listed, "moves": moves,
                 "to_check": sorted(to_check, key=paths.key),
@@ -446,7 +571,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                               "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
                 "roots_gone": roots_gone, "not_looked_at": sorted(not_looked_at, key=paths.key)},
-        work={"edits": edits + moved_edits, "new_folders": new_folders})
+        work={"edits": edits + moved_edits + removed_edits, "new_folders": new_folders, "removed": removing})
 
 
 def review(library, roots=(), ignored=()):
@@ -513,9 +638,10 @@ def include(library, folder, roots, queue, ignored=()):
 
 def in_step(counts, result=None):
     """Is the library in step with its folders by what a sync found (`counts`) and, once
-    applied, did (`result`)? Nothing new, nothing changed or moved left unwritten, nothing
-    unreadable, no picture to check, no folder it could not look at. Missing files do not count: they are reported,
-    and removing their rows is the owner's choice. A sync refused found nothing to say so."""
+    applied, did (`result`)? Nothing new, nothing changed, moved or to remove left unwritten, nothing
+    unreadable, no picture to check, no folder it could not look at. A missing file whose root sync could not confirm
+    there (an unplugged drive), or found by a sync of one folder, does not count: it is reported, and removed by the next
+    whole sync that confirms it. A sync refused found nothing to say so."""
     if not counts:
         return False
     if (counts.get("new") or counts.get("unreadable") or counts.get("to_check") or counts.get("moved_changed")
@@ -523,7 +649,7 @@ def in_step(counts, result=None):
             or counts.get("ambiguous_rows") or counts.get("folders_not_looked_at")):
         return False
     if result is None:
-        return not (counts.get("to_write") or counts.get("moved"))
+        return not (counts.get("to_write") or counts.get("moved") or counts.get("to_remove"))
     return result.ok and not result.skipped
 
 
@@ -543,7 +669,8 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
     """Bring `library` in step with its folders (or with `folder`), reading changed files
     with the ExifTool at `exiftool_path`; a dry run unless `apply`. A Result on the
     maintenance scaffold: `changed` is the rows the change changed (details["changed"]:
-    re-read "from_files", "relinked"), read from the writes; details["counts"] what was
+    re-read "from_files", "relinked", "removed", read from the writes, and "removed_faces", "removed_named": what the
+    removed rows held as the plan read them, less any row skipped); details["counts"] what was
     found (see look), ["ids"] the photo ids, ["reveal"] the paths.
 
     `roots` and `ignored` are the library's root folders and ignored folders (its
@@ -579,7 +706,7 @@ def not_run(why, apply):
     """A sync that did not run, `why` said: a refused Result with what the callers read of any."""
     result = Result()
     result.refuse(why)
-    result.details.update(counts={}, in_step=False, changed={kind: 0 for kind in KINDS}, queued=0, warnings=[],
+    result.details.update(counts={}, in_step=False, changed={what: 0 for what in CHANGED}, queued=0, warnings=[],
                           dry_run=not apply)
     return result
 
@@ -598,7 +725,16 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
         result.details["in_step"] = in_step(counts)
         return result
 
-    result.details.setdefault("changed", {kind: 0 for kind in KINDS})
+    changed = result.details.setdefault("changed", {})
+    for what in CHANGED:
+        changed.setdefault(what, 0)
+    if result.ok and planned is not None and planned.work:
+        # What the removed rows held, as the plan read it, less the rows the journal skipped (named as it names them).
+        skipped = {what for what, _why in result.skipped}
+        taken = [held for photo_id, held in planned.work["removed"].items()
+                 if journal.row_name("photos", (photo_id,)) not in skipped]
+        changed["removed_faces"] = sum(faces for faces, _named in taken)
+        changed["removed_named"] = sum(named for _faces, named in taken)
     result.details["queued"] = 0
     result.details["warnings"] = []
     if not result.ok:

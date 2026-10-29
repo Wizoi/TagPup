@@ -86,8 +86,9 @@ def add_unread(conn, photo_path):
     return photos.ensure_row(conn, photo_path)
 
 
-#: The photo hold() records: one indexed before and gone from disk since, whose row
-#: stays until the owner removes it (sync reports a missing file, never removes it).
+#: The photo hold() records: one indexed before and gone from disk since. A whole sync that
+#: finds a file of the folder's root removes its row (DECISIONS 2026-10-28); a sync of the
+#: folder alone, or one that finds no file of it, keeps it.
 HELD_BY = "indexed earlier.jpg"
 
 

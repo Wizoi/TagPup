@@ -313,6 +313,27 @@ class Stopping(Base):
         self.assertEqual([paths.stored(os.path.join(self.root, "Regatta"))], self.folder_syncs())
 
 
+class WhatTheLogSays(Base):
+    def said_of(self, changed):
+        """What the watcher logs of a whole sync whose Result changed `changed` (details["changed"])."""
+        from tagpup.core.result import Result
+        result = Result(attempted=1, changed=sum(changed.get(what, 0) for what in ("from_files", "relinked", "removed")))
+        result.details.update(counts={"missing": changed.get("removed", 0)}, queued=0, changed=changed)
+        watcher = watching.Watcher(lambda: [self.library], lambda library: [self.root], lambda library, folder: result,
+                                   images.is_photo, debounce=0.5, recheck=0.2, tick=0.05)
+        with self.assertLogs("tagpup.jobs.watching", level="INFO") as logged:
+            watcher._run(self.library, None)
+        return "\n".join(logged.output)
+
+    def test_an_unasked_removal_is_said_with_its_named_faces(self):
+        said = self.said_of({"from_files": 0, "relinked": 0, "removed": 2, "removed_faces": 5, "removed_named": 1})
+        self.assertIn("2 row(s) removed, with 5 face(s), 1 of them named", said)
+
+    def test_a_sync_that_removed_nothing_says_nothing_of_it(self):
+        said = self.said_of({"from_files": 3, "relinked": 0, "removed": 0, "removed_faces": 0, "removed_named": 0})
+        self.assertNotIn("removed", said)
+
+
 class TheCatchUpAtStart(Base):
     """Every start of the server synced each library whole: after a crash restart, or an
     update, that is photo_index walked again for nothing. It is skipped for a library

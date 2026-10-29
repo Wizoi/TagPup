@@ -51,7 +51,7 @@ SCENARIOS = {
     "F1": ("files", "A photo write is journaled, one at a time, read back; a click three times writes once."),
     "F2": ("files", "The indexer writes nothing into a photo that does not decode; nothing is written into a folder the library does not hold."),
     "F3": ("files", "A bulk edit over many photos: dry run first, a crash or a stalled ExifTool part-way, then resume."),
-    "F4": ("files", "A folder renamed or a photo moved is followed by sync and the watcher; sync never removes and never writes a file."),
+    "F4": ("files", "A folder renamed or a photo moved is followed by sync and the watcher; sync never writes a file, and removes only a row it looked for and did not find, its root confirmed there."),
     "F5": ("files", "Two libraries holding one folder stay each their own."),
     "F6": ("files", "A row never claims more than was read: an index or a partial write stamps only what described the file."),
     "F7": ("files", "A share asleep is not missing."),

@@ -45,7 +45,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Derived tables (`photo_tags`, `folders`, `photo_folder`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
 | Who is who (clustering, a face's name looking wrong; the one gallery of who a face looks like, `clustering.FaceRows.likeness` / `likeness_of`, each face's photo and year from `store.faces.eras_of`) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_rules_have_one_owner.py`, `tests/test_face_values_have_one_owner.py` |
 | Keeping a library in step with its folders | `tagpup/services/sync.py`, `tagpup/jobs/watching.py` | `tests/test_sync.py` |
-| A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time; a folder renamed and re-saved is reported missing and renamed back by hand) | `tests/test_sync.py` |
+| A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time, a file renamed in its folder by folder, size and modified time, then DocumentID; what is left unpaired is removed by a whole sync whose root is confirmed there and whose second walk finds it gone too, undoably: DECISIONS 2026-10-28) | `tests/test_sync.py` |
 | Roots (where a library's folders are, per machine) | `tagpup/services/roots*.py`, `tagpup/store/roots_check.py`, `tagpup/config.py` | `tests/test_roots*.py` |
 | The library views (grid, navigator, search) | `tagpup/services/library_view.py`, `tagpup/store/library_view.py`, `web/tagpup/` | `tests/test_library_view.py`, `tests/frontend/` |
 | A page's request, its DOM output | `web/common/api.js`, `web/common/dom.js` | `tests/frontend/` |

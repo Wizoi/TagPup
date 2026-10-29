@@ -73,6 +73,26 @@ read-only (`file_changes`' `read_only`, the one failure no retry changes), recor
 (`photo_fingerprints.adopt`); any other photo stays owed: the bake takes away the index's rows of this run's photos
 before it plans, so only those three give one back, however the bake ends; an index that ends before its bake (an error, a Ctrl+C) takes them away too (`tests/test_the_index_writes_the_bake.py`).
 
+## Rows removed by a whole sync (DECISIONS 2026-10-28)
+
+The one place is `sync.look`; nothing else removes a row for a missing file (the charter's contract, point 4).
+
+- **Who removes:** a sync of the whole library, applied: the CLI's `sync --apply`, the daily job and the watcher's
+  catch-up. The CLI's dry run says the count first; the automatic whole syncs remove unasked (the owner's "removed by
+  the syncer"), and the watcher's log line says the rows removed and the named faces among them.
+- **Never:** a sync of one folder (a file moved out of it may not have been looked for where it went), nor any sync
+  that could not look at every folder, nor a row whose root is not confirmed there (`_removable`).
+- **Two looks:** when the first walk leaves a row to remove, the whole library is walked again (`_gone_again`) and a
+  row is removed only if that walk also looked at every folder, did not find its file, did not pair it as a move nor
+  hold it back. A file dragged between folders during the first walk is in neither of its listings (#2153). A library
+  with nothing to remove is walked once.
+- **A rename in its folder:** `pair_by_stamp` pairs a missing row with a new file of its own folder with its size and
+  modified time, one to one, as a move: the row follows with its faces (#2155). Two such files is ambiguous, held
+  back, and nothing is removed. A file renamed and saved again, or moved and renamed, with no identity, is not paired.
+- Guards: `tests/test_sync.py` (MissingFiles: the two walks, a share dropping in the second, a file moved mid-walk,
+  a rename in place, ambiguity, a different time, the command's count), `tests/test_folder_watcher.py`
+  (WhatTheLogSays).
+
 ## Roots and machines: a share away
 
 - `tagpup/files/shares.py` is the one owner of a share being away and back: `away_since` (when it stopped answering),
