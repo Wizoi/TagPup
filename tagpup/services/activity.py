@@ -64,6 +64,15 @@ def _sync_run(entry, run):
         entry.update(outcome=run.outcome, error=run.note)
 
 
+def _written_inside(entry, run):
+    """Whether the sync record whose timeline `entry` is was written inside the job `run`: the entry's "time" (the
+    record's `started`, store.job_runs._sync) at or after the run's `started` and, once it ended, at or before its
+    `finished`. A `sync` run written before migration 32 names the id of a row of the old sync_runs table, which the
+    migration folded into job_runs without rewriting the link: a later record (a watcher's folder sync) can take that
+    id, and it is not the run's."""
+    return run.started <= entry["time"] and (run.finished is None or entry["time"] <= run.finished)
+
+
 def _what(run):
     """What a run of a job is called in the timeline: what it says it did (a text in its counts,
     "what"), else the job's name."""
@@ -180,8 +189,9 @@ def timeline_and_children(library, limit=50):
     "what", "outcome", "counts", "id", "run", "error"}, a job's and an index's also its "parent" and "progress"
     (under_way), an index's also its "syncs" (the tags of the syncs it is part of: a folder sync's index, whose own
     row has no parent while the sync runs). A sync's change of the journal is its sync's entry, not one of its own; so is
-    the run of the job that ran it, when the run names its record (sync.RECORD) among the syncs read here (_sync_run): a
-    record gone, or an id that is now another job's, is no sync read, and the run stands as a job. An index's run says how many
+    the run of the job that ran it, when the run names its record (sync.RECORD) among the syncs read here and the record
+    was written inside the run (_written_inside, _sync_run): a record gone, an id that is now another job's, or one a
+    later sync took, is no sync of the run's, and the run stands as a job. An index's run says how many
     folders it indexed, never which (its row holds no path); its error is its note only when it failed or was abandoned."""
     limit = max(1, min(int(limit), MOST))
     entries = []
@@ -205,7 +215,8 @@ def timeline_and_children(library, limit=50):
         by_record[record["id"]] = entries[-1]
     indexes = job_runs.runs(library.path, job_runs.INDEX, job_runs.KEEP_RUNS)
     for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS + (job_runs.INDEX,)) + indexes:
-        paired = by_record.pop(run.changed.get(sync.RECORD), None) if run.job != job_runs.INDEX else None
+        named = by_record.get(run.changed.get(sync.RECORD)) if run.job != job_runs.INDEX else None
+        paired = by_record.pop(named["id"]) if named is not None and _written_inside(named, run) else None
         if paired is not None:
             _sync_run(paired, run)
             continue

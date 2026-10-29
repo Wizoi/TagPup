@@ -13,6 +13,7 @@ import os
 import shutil
 import sqlite3
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -91,14 +92,16 @@ class _Libraries(unittest.TestCase):
         return os.path.join(self.home.root, "Share", name.title() + " Quay")
 
     def nightly_sync(self, library, queue=None, at=NIGHT):
-        """The daily `sync` job run on the recurring runner for `library`, its new folders handed to `queue`: its run."""
+        """The daily `sync` job run on the recurring runner for `library`, its new folders handed to `queue`: its run.
+        One clock, `at`, for the run and the sync's record, which reads time.time as the real runner's clock does."""
         pictures = os.path.join(self.pictures, library.name)
 
         class Runtime:
             def sync(self, library, folder=None, apply=False):
                 return sync.sync(library, folder=folder, apply=apply, queue=queue, roots=[pictures])
         runner = recurring.Runner(lambda: [library], clock=Clock(at), given={"runtime": Runtime()})
-        self.assertTrue(runner.run_job(recurring.JOBS.get(recurring.SYNC), library).ran)
+        with mock.patch("time.time", Clock(at)):
+            self.assertTrue(runner.run_job(recurring.JOBS.get(recurring.SYNC), library).ran)
         return job_runs.runs(library, recurring.SYNC, 1)[0]
 
     def share_drops(self, library):
@@ -185,6 +188,40 @@ class WhatHappenedSaysASyncOnce(_Libraries):
         (entry,) = self.syncs_of(harbour)
         self.assertEqual(("sync", job_runs.FAILED), (entry["kind"], entry["outcome"]))
         self.assertTrue(entry["error"].startswith("The network share"), entry["error"])
+
+    def test_a_folder_sync_that_takes_the_id_an_old_run_names_stays_at_its_own_time(self):
+        """A `sync` run written before migration 32 names the id of its record in the old sync_runs table, which the
+        migration folded into job_runs without rewriting the link: an id above every row's. The watcher's folder syncs
+        (records, no job run) climb to it; the one that takes it is still its own line, at its own time with its own
+        counts, and the old run a plain job line. Break: pairing by the id alone (the folder sync gone, its counts on
+        the old run's line, dated weeks before)."""
+        harbour = self.library("harbour")
+        old = NIGHT - 27 * 24 * HOUR
+        claimed = stored_runs.claim(harbour.path, recurring.SYNC, harbour.name, old)
+        conn = db.connect(db.readonly_uri(harbour.path), uri=True)
+        try:
+            (highest,) = conn.execute("SELECT MAX(id) FROM job_runs").fetchone()
+        finally:
+            conn.close()
+        taken = highest + 3
+        self.assertTrue(stored_runs.finish(harbour.path, claimed.run_id, stored_runs.DONE, old + 60,
+                                           changed={sync.RECORD: taken, "changed": 0}))
+        record = None
+        while record is None or record < taken:
+            record = stored_runs.record_sync(harbour.path, stored_runs.stamp(time.time()), whole=False, in_step=True,
+                                             found={"new": 3}, changed={"rows": 0})
+        self.assertEqual(taken, record, "the folder syncs reached the old run's link")
+        entries = {(entry["kind"], entry["id"]): entry for entry in self.syncs_of(harbour)}
+        folder = entries.get(("sync", taken))
+        self.assertIsNotNone(folder, "the folder sync that took the id left its place")
+        written = [each for each in stored_runs.runs(harbour.path, stored_runs.SYNC_FOLDER, 10) if each.id == taken][0]
+        self.assertEqual((written.started, "sync of one folder", 3), (folder["time"], folder["what"],
+                                                                      folder["counts"]["found_new"]))
+        self.assertEqual(activity.runs.sync_tag(harbour.name, written.started), folder["run"])
+        run = entries.get(("job", claimed.run_id))
+        self.assertIsNotNone(run, "the old run was taken for a sync")
+        self.assertEqual(stored_runs.stamp(old), run["time"])
+        self.assertEqual(taken - highest, sum(1 for kind, _ in entries if kind == "sync"))
 
     def test_a_sync_no_job_ran_keeps_its_record_alone(self):
         """The CLI's sync, or a watcher's sync of a folder, writes its record and no job run: its entry is the record's."""
