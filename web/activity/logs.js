@@ -7,7 +7,9 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
+import { asked } from './poll.js';
 import { bytes } from './format.js';
+import { foldLine, unfold, unfolded } from './fold.js';
 
 /** How many records a read asks for. */
 const LOG_PAGE = 200;
@@ -60,6 +62,8 @@ function renderLogTabs() {
         return tab;
     });
     replaceContent(tabs, ...(buttons.length ? buttons : [buildElement('p', { className: 'none', text: 'No logs yet.' })]));
+    const many = state.logs.files.length;
+    foldLine('logs', many ? `${many} log${many === 1 ? '' : 's'}` : 'No logs yet.');
     const raw = document.getElementById('log-raw');
     const download = document.getElementById('log-download');
     if (raw) raw.href = state.logs.name ? api.site.url(logAddress(state.logs.name, '/raw')) : '#';
@@ -79,9 +83,9 @@ export function readLog() {
         renderLogRecords();
         return Promise.resolve(null);
     }
-    const asked = ++state.logs.asked;
+    const read = ++state.logs.asked;
     return api.site.json(logAddress(state.logs.name) + logQuery()).then(data => {
-        if (asked !== state.logs.asked) return null;   // a newer read was asked meanwhile
+        if (read !== state.logs.asked) return null;   // a newer read was asked meanwhile
         if (!data || data.success === false) {
             say((data && data.error) || 'Could not read the log.');
             return data;
@@ -99,9 +103,9 @@ export function readLog() {
 /** Older: the records before the oldest shown. */
 export function readOlder() {
     if (!state.logs.name || state.logs.complete || state.logs.start === null) return Promise.resolve(null);
-    const asked = ++state.logs.asked;
+    const read = ++state.logs.asked;
     return api.site.json(logAddress(state.logs.name) + logQuery({ before: state.logs.start })).then(data => {
-        if (asked !== state.logs.asked || !data || data.success === false) return null;
+        if (read !== state.logs.asked || !data || data.success === false) return null;
         state.logs.records = state.logs.records.concat(data.records || []);
         state.logs.start = data.start;
         state.logs.complete = !!data.complete;
@@ -110,12 +114,12 @@ export function readOlder() {
     });
 }
 
-/** Follow: what was written since the last read, newest first above what is shown. */
+/** Follow: what was written since the last read, newest first above what is shown; nothing read while Logs is folded. */
 export function followLog() {
-    if (!state.logs.follow || !state.logs.name || state.logs.end === null) return Promise.resolve(null);
-    const asked = state.logs.asked;
-    return api.site.json(logAddress(state.logs.name) + logQuery({ after: state.logs.end })).then(data => {
-        if (asked !== state.logs.asked || !data || data.success === false) return null;
+    if (!state.logs.follow || !unfolded('logs') || !state.logs.name || state.logs.end === null) return Promise.resolve(null);
+    const reading = state.logs.asked;
+    return asked(api.site.json(logAddress(state.logs.name) + logQuery({ after: state.logs.end }))).then(data => {
+        if (reading !== state.logs.asked || !data || data.success === false) return null;
         if (data.rotated) {
             // The file was rotated: what it holds now is all new.
             state.logs.records = data.records || [];
@@ -129,12 +133,13 @@ export function followLog() {
     });
 }
 
-/** "Logs for this run": the log `name` (as the server named it), only the lines of the run `run`, INFO and worse. */
+/** "Logs for this run": the log `name` (as the server named it), only the lines of the run `run`, INFO and worse; Logs unfolded. */
 export function showRunLogs(run, name) {
     state.logs.run = run;
     state.logs.level = 'INFO';
     const level = document.getElementById('log-level');
     if (level) level.value = 'INFO';
+    unfold('logs');
     const section = document.getElementById('logs');
     if (section && typeof section.scrollIntoView === 'function') section.scrollIntoView();
     return chooseLog(name || state.logs.server);

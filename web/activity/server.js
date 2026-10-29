@@ -3,12 +3,14 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
-import { ago } from './format.js';
+import { asked } from './poll.js';
+import { ago, duration, parseTime } from './format.js';
+import { foldLine } from './fold.js';
 import { badge, fill } from './view.js';
 
 /** Read how the server is, and show it. */
 export function loadServer() {
-    return api.site.json('/api/activity/server').then(data => {
+    return asked(api.site.json('/api/activity/server')).then(data => {
         if (!data || data.success === false) return data;
         state.server = data;
         renderServer();
@@ -53,11 +55,13 @@ function modelsFact(models) {
 export function renderServer() {
     const data = state.server;
     if (!data) return;
+    const version = data.version || 'run from its code folder';
     const facts = [
-        fact('Version', buildElement('span', { text: data.version || 'run from its code folder' })),
+        fact('Version', buildElement('span', { text: version })),
         fact('Server running since', buildElement('span', { text: data.running_since || '', title: ago(data.running_since) })),
         fact('Background', buildElement('span', { text: (data.background || []).join(', ') || 'none' })),
     ];
     if (data.models) facts.push(modelsFact(data.models));
     fill(document.getElementById('server-body'), buildElement('div', { className: 'card' }, facts));
+    foldLine('server', `Version ${version}; up ${duration((Date.now() - parseTime(data.running_since).getTime()) / 1000)}`);
 }

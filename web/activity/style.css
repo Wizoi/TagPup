@@ -45,6 +45,19 @@ body {
 main { padding: 12px 20px 40px; max-width: 1400px; }
 section { margin: 18px 0 28px; scroll-margin-top: 60px; }
 section h2 { font-size: 16px; margin: 0 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+/* A folded section: its heading and, just after it, one line in sight; the line hidden once it is open. */
+details.fold > summary { cursor: pointer; display: flex; list-style: none; align-items: baseline; gap: 8px;
+                         border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 10px; }
+details.fold:not([open]) > summary { margin-bottom: 4px; }
+details.fold > summary::before { content: '\25B8'; color: var(--muted); }
+details.fold[open] > summary::before { content: '\25BE'; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary h2 { display: inline; border: none; margin: 0; padding: 0; }
+details.fold + .folded { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+details.fold[open] + .folded { display: none; }
+/* A section whose poll could not refresh it says so (poll.js), until its next answer. */
+.poll-status { margin: 4px 0 0; color: var(--busy); font-size: 12px; overflow-wrap: anywhere; }
+.poll-status:empty { display: none; }
 
 .card {
     background: var(--bg-card);

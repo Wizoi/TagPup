@@ -5,12 +5,13 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
+import { asked } from './poll.js';
 import { ago, counts } from './format.js';
 import { badge, fill, none, runLinks } from './view.js';
 
 /** Read each library's syncs, and show them. */
 export function loadSync() {
-    return api.site.json('/api/activity/sync').then(data => {
+    return asked(api.site.json('/api/activity/sync')).then(data => {
         if (!data || data.success === false) return data;
         state.sync = data;
         renderSync();

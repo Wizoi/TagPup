@@ -9,10 +9,12 @@ import { state } from './state.js';
 import { ago, counts, duration } from './format.js';
 import { badge, fill, none, outcomeKind, runLinks } from './view.js';
 import { renderNeeds } from './needs.js';
+import { foldLine } from './fold.js';
+import { asked, soon } from './poll.js';
 
 /** Read each job's runs, and show them. */
 export function loadJobs() {
-    return api.site.json('/api/activity/jobs').then(data => {
+    return asked(api.site.json('/api/activity/jobs')).then(data => {
         if (!data || data.success === false) return data;
         state.jobs = data;
         renderJobs();
@@ -27,7 +29,8 @@ function jobKey(job, library) {
 /**
  * Run now, once confirmed: the server answers once the run has started or been refused.
  * Once per click: while its POST is on its way, another for the same job and library sends
- * nothing, and the first answer is what is shown.
+ * nothing, and the first answer is what is shown. The jobs are read again by their poll
+ * (soon): at once, or once the read in flight is answered, never a second beside it.
  */
 export function runNow(job, library, where = 'jobs') {
     const key = jobKey(job, library);
@@ -49,7 +52,7 @@ export function runNow(job, library, where = 'jobs') {
         done();
         state.ranNow = { job, library, where, text, ok: !!(answer && answer.success) };
         renderJobs();
-        return loadJobs().then(() => answer);
+        return soon('jobs').then(() => answer);
     }).catch(err => {
         done();
         state.ranNow = { job, library, where, text: `Could not start it: ${err.message || err}`, ok: false };
@@ -183,5 +186,18 @@ export function renderJobs() {
         ]));
     }
     fill(document.getElementById('jobs-body'), ...(blocks.length ? blocks : [none('No recurring jobs.')]));
+    foldLine('jobs', foldedJobs(data));
     renderNeeds(data, controlsFor);
+}
+
+/** Scheduled jobs folded: the next run due, and how many failed last time. */
+function foldedJobs(data) {
+    const jobs = (data.libraries || []).flatMap(library => library.jobs || []);
+    if (!jobs.length) return 'No recurring jobs.';
+    const running = jobs.filter(job => job.running).length;
+    const due = jobs.filter(job => !job.running && job.next_due).map(job => job.next_due).sort()[0];
+    const failing = jobs.filter(job => job.failing).length;
+    return [running ? `${running} running` : null,
+            due ? `next due ${ago(due)} (${due})` : 'none due',
+            failing ? `${failing} failed last time` : 'none failing'].filter(Boolean).join('; ');
 }

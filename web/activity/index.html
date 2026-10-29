@@ -38,45 +38,63 @@
             <div id="needs-body" class="body" aria-live="polite"><p class="none">Asking...</p></div>
         </section>
         <section id="jobs" aria-labelledby="jobs-title">
-            <h2 id="jobs-title">Scheduled jobs</h2>
-            <div id="jobs-body" class="body"><p class="none">Asking...</p></div>
+            <details class="fold" data-fold="jobs">
+                <summary aria-describedby="jobs-folded jobs-status"><h2 id="jobs-title">Scheduled jobs</h2></summary>
+                <div id="jobs-body" class="body"><p class="none">Asking...</p></div>
+            </details>
+            <p id="jobs-folded" class="folded">Asking...</p>
+            <p id="jobs-status" class="poll-status" role="status"></p>
         </section>
         <section id="sync" aria-labelledby="sync-title">
             <h2 id="sync-title">Sync &amp; watcher</h2>
+            <p id="sync-status" class="poll-status" role="status"></p>
             <div id="sync-body" class="body"><p class="none">Asking...</p></div>
         </section>
         <section id="snapshots" aria-labelledby="snapshots-title">
-            <h2 id="snapshots-title">Snapshots</h2>
-            <div id="snapshots-body" class="body"><p class="none">Asking...</p></div>
+            <details class="fold" data-fold="snapshots">
+                <summary aria-describedby="snapshots-folded snapshots-status"><h2 id="snapshots-title">Snapshots</h2></summary>
+                <div id="snapshots-body" class="body"><p class="none">Asking...</p></div>
+            </details>
+            <p id="snapshots-folded" class="folded">Asking...</p>
+            <p id="snapshots-status" class="poll-status" role="status"></p>
         </section>
         <section id="server" aria-labelledby="server-title">
-            <h2 id="server-title">Server</h2>
-            <div id="server-body" class="body"><p class="none">Asking...</p></div>
+            <details class="fold" data-fold="server">
+                <summary aria-describedby="server-folded server-status"><h2 id="server-title">Server</h2></summary>
+                <div id="server-body" class="body"><p class="none">Asking...</p></div>
+            </details>
+            <p id="server-folded" class="folded">Asking...</p>
+            <p id="server-status" class="poll-status" role="status"></p>
         </section>
         <section id="timeline" aria-labelledby="timeline-title">
             <h2 id="timeline-title">Recent activity</h2>
+            <p id="timeline-status" class="poll-status" role="status"></p>
             <div id="timeline-body" class="body"><p class="none">Asking...</p></div>
             <button id="timeline-more" type="button" class="btn" disabled>More</button>
         </section>
         <section id="logs" aria-labelledby="logs-title">
-            <h2 id="logs-title">Logs</h2>
-            <div id="log-tabs" class="tabs" role="tablist" aria-label="Logs"></div>
-            <div class="log-controls">
-                <label>Level <select id="log-level"></select></label>
-                <label>Text <input id="log-text" type="search" placeholder="Filter the lines" autocomplete="off"></label>
-                <span id="log-run" class="chip hidden">Run <code id="log-run-tag"></code>
-                    <button id="log-run-clear" type="button" class="link" aria-label="Show every run's lines">x</button></span>
-                <label><input id="log-follow" type="checkbox"> Follow</label>
-                <button id="log-older" type="button" class="btn" disabled>Older</button>
-                <a id="log-raw" class="btn" href="#" target="_blank" rel="noopener">Raw</a>
-                <a id="log-download" class="btn" href="#" download>Download</a>
-                <span id="log-status" class="status"></span>
-            </div>
-            <div class="table-wrap">
-                <table class="log-table">
-                    <tbody id="log-records"></tbody>
-                </table>
-            </div>
+            <details class="fold" data-fold="logs">
+                <summary aria-describedby="logs-folded logs-status"><h2 id="logs-title">Logs</h2></summary>
+                <div id="log-tabs" class="tabs" role="tablist" aria-label="Logs"></div>
+                <div class="log-controls">
+                    <label>Level <select id="log-level"></select></label>
+                    <label>Text <input id="log-text" type="search" placeholder="Filter the lines" autocomplete="off"></label>
+                    <span id="log-run" class="chip hidden">Run <code id="log-run-tag"></code>
+                        <button id="log-run-clear" type="button" class="link" aria-label="Show every run's lines">x</button></span>
+                    <label><input id="log-follow" type="checkbox"> Follow</label>
+                    <button id="log-older" type="button" class="btn" disabled>Older</button>
+                    <a id="log-raw" class="btn" href="#" target="_blank" rel="noopener">Raw</a>
+                    <a id="log-download" class="btn" href="#" download>Download</a>
+                    <span id="log-status" class="status"></span>
+                </div>
+                <div class="table-wrap">
+                    <table class="log-table">
+                        <tbody id="log-records"></tbody>
+                    </table>
+                </div>
+            </details>
+            <p id="logs-folded" class="folded">Asking...</p>
+            <p id="logs-status" class="poll-status" role="status"></p>
         </section>
     </main>
     <script type="module" src="main.js"></script>
