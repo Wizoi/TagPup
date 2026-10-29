@@ -445,9 +445,10 @@ class IndexQueue:
 
     def _claim(self, run):
         """Begin this run's row (job_runs.INDEX) in the library, under the run of the library that queued it
-        (tagpup.core.runs.parent_run of the tags held), holding the run's tag `run`: its id, or None when it is not recorded -- the library behind
-        this version's schema, another process's index of it under way, the library not to be written -- which is
-        logged; the index runs all the same."""
+        (tagpup.core.runs.parent_run of the tags held), holding the run's tag `run`: its id, or None when it is not
+        recorded -- the library behind this version's schema, being written by another for longer than the claim tries
+        (job_runs.RECORD_WITHIN: the index starts at once all the same), not to be written -- which is logged. Another
+        process's index of the library under way is no reason: each is its own row (job_runs.RECORDS_ONLY)."""
         where = self._recorded_in
         if where is None:
             return None

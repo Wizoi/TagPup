@@ -30,6 +30,7 @@ from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import activity, bake_after_index, indexing  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import roots_location  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
 from tagpup.store import db, job_runs, schema  # noqa: E402
 
@@ -132,6 +133,27 @@ class _Indexing(unittest.TestCase):
 
     def runs(self, library=None):
         return runs_service.tree(library or self.library)
+
+    def indexing_in_another_process(self):
+        """Another process -- the server, a CLI's sync -- whose daily sync has queued an index of the library, which
+        hangs once it has begun: the process, its index under way."""
+        ready = os.path.join(self.home.root, "READY")
+        script = os.path.join(self.home.root, "server.py")
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(SERVER % {"root": ROOT, "library": self.library.path, "ready": ready,
+                                   "folder": self.folder("Regatta")})
+        server = processes.start([sys.executable, script], cwd=self.home.root)
+        try:
+            deadline = time.monotonic() + 60
+            while not os.path.exists(ready):
+                self.assertIsNone(server.poll(), "the server ended before its index began")
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.05)
+        except BaseException:
+            processes.kill_tree(server.pid)
+            server.wait(30)
+            raise
+        return server
 
     def index_run(self, library=None):
         [run] = [each for each in self.runs(library) if each.job == runs_service.INDEX]
@@ -275,6 +297,70 @@ class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):
         self.assertIn(False, told)
 
 
+#: Another process writing the library -- a CLI's change, a restore -- until RELEASE is made: it says READY once it holds it.
+WRITER = '''
+import os, sys, time
+sys.path.insert(0, %(root)r)
+from tagpup.store import db
+held = db.connect(%(library)r)
+db.begin(held, immediate=True)
+open(%(ready)r, "w").close()
+while not os.path.exists(%(release)r):
+    time.sleep(0.02)
+held.rollback()
+held.close()
+'''
+
+
+class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
+    def test_a_library_another_process_holds_is_indexed_at_once_and_unrecorded(self):
+        """#2196: the claim waited out the other's write, up to four times 30 s, before the indexer started."""
+        ready, release = os.path.join(self.home.root, "READY"), os.path.join(self.home.root, "RELEASE")
+        script = os.path.join(self.home.root, "writer.py")
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(WRITER % {"root": ROOT, "library": self.library.path, "ready": ready, "release": release})
+        writer = processes.start([sys.executable, script], cwd=self.home.root)
+        self.addCleanup(writer.wait, 30)
+        self.addCleanup(lambda: open(release, "w").close())
+        deadline = time.monotonic() + 60
+        while not os.path.exists(ready):
+            self.assertIsNone(writer.poll(), "the writer ended before it held the library")
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.05)
+        began, first = time.monotonic(), []
+
+        def report(message, percent):
+            if not first:
+                first.append(time.monotonic() - began)
+                open(release, "w").close()
+        status = self.queued([self.folder("Regatta")], self.code(bars(1)), report=report)
+        self.assertEqual("completed", status["status"], status)
+        self.assertLess(first[0], 15, "the indexer started only once the other's write was waited out")
+        self.assertEqual([], [run for run in self.runs() if run.job == "index"])
+
+
+class TwoProcessesIndexingOneLibrary(_Indexing):
+    def test_the_server_and_a_cli_sync_each_record_their_index_and_a_root_move_waits_for_both(self):
+        """#2190: the second process's claim answered `running` and its index ran unrecorded (a CLI `sync --apply`
+        beside the app). Each is its own row, its own owner; a root move is refused while either runs, and the one whose
+        process is killed is swept at the next start, the other kept."""
+        cli = self.indexing_in_another_process()
+        try:
+            self.assertEqual("completed", self.queued([self.folder("Lighthouse")], self.code(bars(1)))["status"])
+            found = [run for run in self.runs() if run.job == "index"]
+            self.assertEqual([job_runs.DONE, job_runs.RUNNING], [run.outcome for run in found])
+            self.assertNotEqual(found[0].owner, found[1].owner)
+            # The newest index has ended; the other process's still runs.
+            self.assertEqual(["the index job is running"], roots_location._running_here(self.library))
+        finally:
+            processes.kill_tree(cli.pid)
+            cli.wait(30)
+        self.assertEqual(1, runs_service.sweep_abandoned(self.library))
+        self.assertEqual([job_runs.DONE, job_runs.ABANDONED],
+                         [run.outcome for run in self.runs() if run.job == "index"])
+        self.assertEqual([], roots_location._running_here(self.library))
+
+
 class ALongIndexWritesItsProgressAboutEvery10Seconds(_Indexing):
     def test_388_folders_written_once_in_10_s_of_the_clock(self):
         """The bake of 388 folders, a line each 2.5 s of a fake clock: the run's row is written at most 98 times (one
@@ -346,21 +432,9 @@ queue.wait()
 
 class AServerKilledMidIndex(_Indexing):
     def test_the_next_start_marks_the_index_abandoned_under_its_sync(self):
-        ready = os.path.join(self.home.root, "READY")
-        script = os.path.join(self.home.root, "server.py")
-        with open(script, "w", encoding="utf-8") as handle:
-            handle.write(SERVER % {"root": ROOT, "library": self.library.path, "ready": ready,
-                                   "folder": self.folder("Regatta")})
-        server = processes.start([sys.executable, script], cwd=self.home.root)
-        try:
-            deadline = time.monotonic() + 60
-            while not os.path.exists(ready):
-                self.assertIsNone(server.poll(), "the server ended before its index began")
-                self.assertLess(time.monotonic(), deadline)
-                time.sleep(0.05)
-        finally:
-            processes.kill_tree(server.pid)
-            server.wait(30)
+        server = self.indexing_in_another_process()
+        processes.kill_tree(server.pid)
+        server.wait(30)
         self.assertEqual([("index", job_runs.RUNNING), ("sync", job_runs.DONE)],
                          [(run.job, run.outcome) for run in self.runs()])
         library_actions.bring_up_to_date_in_background([self.library]).join(60)

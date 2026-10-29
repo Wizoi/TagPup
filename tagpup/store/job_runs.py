@@ -38,6 +38,16 @@ OUTCOMES = (RUNNING, DONE, FAILED, ABANDONED)
 #: claim on, the run's tag (tagpup.core.runs.index_tag), which the indexer's own log file is named by (tagpup.logs.run_log).
 INDEX = "index"
 
+#: The jobs whose claim records a run and gates none: an index, which the graphics card's turns already take one at a time
+#: (tagpup.core.gpu_turns) and the index queue one at a time in a process. Its claim excludes no other process's running
+#: run of it -- the server's and a CLI's `sync --apply` index of one library are two rows, each its owner's -- and is made
+#: now or within RECORD_WITHIN seconds, never waited out: a library written by another for longer leaves the run
+#: unrecorded ("busy"), and it runs all the same. Every other job's claim is refused while a live process holds a run of it.
+RECORDS_ONLY = (INDEX,)
+
+#: The seconds a claim of a job of RECORDS_ONLY tries for while the library is being written.
+RECORD_WITHIN = 2.0
+
 #: The runs kept of each job for each library; older ones are deleted as a run finishes.
 KEEP_RUNS = 50
 
@@ -143,8 +153,9 @@ def _last_ended(conn, job, library):
 
 class Claim:
     """What claim() found: `run_id` of the run begun, or `why` not -- "running" (a live
-    process has it), "not due", or "behind" (the library has not had this version's
-    migrations) -- and `abandoned`, the runs of ended processes it marked so."""
+    process has it), "not due", "behind" (the library has not had this version's
+    migrations), or "busy" (a job of RECORDS_ONLY, the library being written) -- and `abandoned`, the runs of ended
+    processes it marked so."""
 
     def __init__(self, run_id=None, why=None, abandoned=0, holder=None):
         self.run_id, self.why, self.abandoned, self.holder = run_id, why, abandoned, holder
@@ -159,7 +170,8 @@ def claim(db_path, job, library, now, due=None, parent=None, changed=None):
     of the same library (its id) if it was queued by one, `changed` what it holds from the start
     (an index's tag, INDEX): unless a process
     still running holds one, or `due`, called with the last run that ended (Run or None),
-    answers False. A run whose process has ended is marked `abandoned` first. A Claim.
+    answers False -- a job of RECORDS_ONLY is begun beside a live process's, and not waited for. A run whose process has
+    ended is marked `abandoned` first. A Claim.
 
     A library behind this version's schema is left alone ("behind"), not migrated: a job
     run by hand from the CLI is no reason to migrate one (docs/findings.md, #243). Its
@@ -180,7 +192,7 @@ def claim(db_path, job, library, now, due=None, parent=None, changed=None):
         running = _running(conn, job, library)
         abandoned = abandon(conn, ENDED, now, [run_id for run_id, owner in running if not _lives(owner, alive)])
         holder = next((owner for _, owner in running if _lives(owner, alive)), None)
-        if holder:
+        if holder and not records_only:
             return Claim(why="running", abandoned=abandoned, holder=holder)
         if due is not None and not due(_last_ended(conn, job, library)):
             return Claim(why="not due", abandoned=abandoned)
@@ -190,7 +202,17 @@ def claim(db_path, job, library, now, due=None, parent=None, changed=None):
                                json.dumps(changed, sort_keys=True) if changed else None)).lastrowid
         return Claim(run_id=run_id, abandoned=abandoned)
 
-    return db.write_with_connection(db_path, work, label="claim the job %s" % job)
+    records_only = job in RECORDS_ONLY
+    if not records_only:
+        return db.write_with_connection(db_path, work, label="claim the job %s" % job)
+    deadline = time.monotonic() + RECORD_WITHIN
+    while True:
+        made = db.write_if_free(db_path, work, label="claim the job %s" % job)
+        if made is not db.BUSY:
+            return made
+        if time.monotonic() >= deadline:
+            return Claim(why="busy")
+        time.sleep(0.05)
 
 
 def sweep_abandoned(db_path, now):
@@ -404,6 +426,17 @@ def last_sync(conn):
     """{"last_run": the newest sync, or None; "last_in_step": when the newest sync of the whole library that left it in step
     finished, or None} of the library open on `conn`. Both None for a library without the runs: a look does not migrate."""
     return {"last_run": newest_sync(conn), "last_in_step": last_in_step(conn)}
+
+
+def under_way(db_path):
+    """Every run of the library still `running`, oldest first, whoever owns it: several of a job of RECORDS_ONLY can be.
+    Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return [_run(row) for row in conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE outcome = 'running'"
+                                                  " ORDER BY id")]
+    finally:
+        conn.close()
 
 
 def runs(db_path, job=None, limit=20, exclude=()):
