@@ -225,7 +225,9 @@ programs only. A moved module takes every importer with it and leaves nothing at
   (`tagpup.jobs.recurring`: snapshots, sync) are run by the web server only; the
   folder **watcher** syncs a folder when it changes -- not when its notifications named only photos the library's rows
   already describe, TagPup's own writes from any process (`sync.followed`) -- and its whole sync is a run of the `sync` job
-  (`recurring.run_claimed`), so one walker per library. Event-driven first: a schedule is only for safety.
+  (`recurring.run_claimed`), so one walker per library; how far its walk got is that run's row (`job_runs.tell`, counts
+  only), the folder it is at alone kept in the walking process's memory (`sync.walking_at_into`, Now's live line).
+  Event-driven first: a schedule is only for safety.
 - **The graphics card**: one process at a time on the machine has a model on it (`tagpup.ml.gpu.Card`, a byte
   lock in the user's own folder, waiters queued and named on the Activity page).
 - **The installed copy.** The owner runs `%LOCALAPPDATA%\TagPup\*.cmd`, made by `scripts/install_app.py`, with
