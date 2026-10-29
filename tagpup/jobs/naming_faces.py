@@ -27,7 +27,7 @@ written, asked during it lets the write finish (all of it). So Cancel never leav
 **One at a time.** A library has at most one of these jobs, and none while it is indexed, synced, being worked on by Suggest,
 verified or edited in bulk; the claim is
 in the library's `job_runs` (tagpup.services.job_runs) so another process is refused too, and each phase is a run of its own
-that the Activity page lists with counts, never a name. The faces are held against writes from the Yes to the end: TagTuner's
+(job_runs.run: claimed on the request, its block the phase's thread) that the Activity page lists with counts, never a name. The faces are held against writes from the Yes to the end: TagTuner's
 assignments and TagPup's face writes are refused while names are being given (`writing`, which the web layer asks).
 
 **A restart.** The thread dies with its process: the job is gone from memory, its run is `running` and the next claim marks it
@@ -114,8 +114,9 @@ def _plural(count, one, many=None):
 class Job:
     """One run of the button: what it is for, where it has got to, what it counted."""
 
-    def __init__(self, library, handle, folder, only_folder=False):
-        self.library, self.handle = library, handle
+    def __init__(self, library, run, folder, only_folder=False):
+        #: Its handle is the id of the run of its plan; `run`, the run of the phase under way (job_runs.Recorded).
+        self.library, self.handle, self.run = library, run.run_id, run
         self.folder = folder
         #: The plan and the apply are limited to `folder` and its subfolders (see the module's docstring).
         self.only_folder = bool(only_folder and folder is not None)
@@ -130,7 +131,6 @@ class Job:
         self.started = time.time()
         self.asked = None
         self.finished = None
-        self.run_id = handle
         #: The plan in memory while it waits for an answer, and what was read of it.
         self.planned = None
         self.earlier = False
@@ -199,18 +199,12 @@ class Job:
             self.stage, self.done, self.total = stage, done, total
 
     def _end_run(self, what, failed=None):
-        """End the job's run: done, or failed with `failed`, a job_runs.Failure the mapper made (job_runs.failure)."""
-        try:
-            runs_service.end(self.library, self.run_id, time.time(), self.counts(what), failed=failed)
-        except Exception as problem:
-            logger.warning("Could not record the end of name-faces job %s of %s: %s", self.handle, self.library.name, problem)
+        """What the phase's run ends as, written as its block ends: done, or failed with `failed`, a job_runs.Failure the
+        mapper made (job_runs.failure)."""
+        self.run.ends(failed=failed, counts=self.counts(what))
 
     def _record(self, what):
-        try:
-            runs_service.counts_so_far(self.library, self.run_id, self.counts(what))
-        except Exception as problem:
-            logger.warning("Could not record the progress of name-faces job %s of %s: %s", self.handle, self.library.name,
-                           problem)
+        self.run.counts_so_far(self.counts(what))
 
     def _finish(self, state, message, what, failed=None):
         """End the job in `state`, saying `message`; `failed`, why its run failed (job_runs.failure, said as `message`)."""
@@ -231,9 +225,14 @@ class Job:
 
     def run_plan(self):
         """Phase 1's thread: read the plan, then wait for the answer (or end, with nothing to ask)."""
+        run = self.run
+        with run:
+            self._plan(run)
+
+    def _plan(self, run):
         what = "name faces from tags: plan"
         try:
-            with runs.running(runs.job_tag(self.library.name, self.run_id)):
+            with runs.running(runs.job_tag(self.library.name, run.run_id)):
                 library_counts = face_service.named_counts(self.library)
                 if not library_counts["named"] and not library_counts["unnamed"]:
                     self.in_folder = None
@@ -271,9 +270,13 @@ class Job:
 
     def run_apply(self):
         """Phase 2's thread: the change of the names. Writes of faces are refused meanwhile (`writing`)."""
+        with self.run:
+            self._apply()
+
+    def _apply(self):
         what = "name faces from tags"
         try:
-            with runs.running(runs.job_tag(self.library.name, self.run_id)):
+            with runs.running(runs.job_tag(self.library.name, self.run.run_id)):
                 written = 0
                 if self.planned is not None and self.planned.size:
                     if self.cancel.is_set():
@@ -352,22 +355,15 @@ def _refuse_if_working(library):
 
 
 def _claim(library):
-    claim = runs_service.claim(library, JOB, library.name, time.time())
-    if not claim:
-        if claim.why == "behind":
+    """A phase's run (job_runs.run), claimed: what the claim raised raises (the request's answer logs it), and a run of
+    the job anywhere, or a library behind this version's schema, is a Conflict saying so."""
+    run = runs_service.run(library, JOB, library.name, raises=True)
+    if not run:
+        if run.why == "behind":
             raise Conflict("%s has not been brought up to date yet: open it in TagPup once and try again." % library.name)
-        where = "in this TagPup" if batches.is_this_process(claim.holder) else "in another TagPup process"
+        where = "in this TagPup" if batches.is_this_process(run.holder) else "in another TagPup process"
         raise Conflict("Name faces from tags is already running in %s, %s. Wait for it to finish." % (library.name, where))
-    return claim
-
-
-def _give_back(library, claim):
-    try:
-        if not runs_service.discard(library, claim.run_id):
-            runs_service.end(library, claim.run_id, time.time(), {"what": "name faces from tags not begun", "state": FAILED},
-                             failed=runs_service.failure(result=Result(refused="It was not begun.")))
-    except Exception as problem:
-        logger.warning("Could not give back the claim of run %s of %s: %s", claim.run_id, library.name, problem)
+    return run
 
 
 def _refuse_if_busy(library, busy):
@@ -406,16 +402,16 @@ def start(library, folder=None, busy=None, only_folder=False):
         if waiting is not None:
             return _the_waiting_one(waiting, folder, only_folder)
     _refuse_if_busy(library, busy)
-    claim = _claim(library)
+    run = _claim(library)
     job = None
     try:
         with _lock:
             _refuse_if_working(library)
             waiting = _waiting(library)
             if waiting is not None:
-                _give_back(library, claim)
+                run.give_back()
                 return _the_waiting_one(waiting, folder, only_folder)
-            job = Job(library, claim.run_id, folder, only_folder)
+            job = Job(library, run, folder, only_folder)
             _register(library, job)
         job._record("name faces from tags: plan")
         job.thread = threading.Thread(target=job.run_plan, name="NameFaces", daemon=True)
@@ -423,7 +419,7 @@ def start(library, folder=None, busy=None, only_folder=False):
     except BaseException:
         if job is not None:
             _unregister(library, job)
-        _give_back(library, claim)
+        run.give_back()
         raise
     return job
 
@@ -476,20 +472,20 @@ def confirm(library, handle, busy=None):
         raise Refused("There is nothing to write: no face %scan be named from its tag."
                       % ("in this folder " if job.only_folder else ""))
     _refuse_if_busy(library, busy)
-    claim = _claim(library)
+    run = _claim(library)
     try:
         with _lock:
             _refuse_if_working(library)
             if job.state != ASKING:
                 raise Conflict("This plan is not waiting for an answer (it is %s)." % job.state)
             job.state = job.phase = APPLYING
-            job.run_id = claim.run_id
+            job.run = run
             job.stage, job.done, job.total, job.message, job.writing = "writing", 0, 1, None, True
         job._record("name faces from tags")
         job.thread = threading.Thread(target=job.run_apply, name="NameFaces", daemon=True)
         job.thread.start()
     except BaseException:
-        _give_back(library, claim)
+        run.give_back()
         raise
     return job
 

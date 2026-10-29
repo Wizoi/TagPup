@@ -40,6 +40,10 @@ RULES = (
      # "Location" alone is an HTTP header; "activity" is also the Activity page's route, named once (ACTIVITY_PAGE).
      r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']|(?<!ACTIVITY_PAGE = )[\"'](activity|school|trips)[\"']", ()),
     ("an unknown year is dates'", os.path.join("tagpup", "core", "dates.py"), r"[\"']Unknown[\"']", ()),
+    # A run's lifecycle (claim, progress, failure mapping, end, give-back) is job_runs.run's: each job kept its own claim and
+    # end, and an end that failed left a run `running` for good (#2189, #2199).
+    ("a run is claimed, ended or discarded by job_runs.run", os.path.join("tagpup", "services", "job_runs.py"),
+     r"\b(job_runs|runs_service|stored_runs)\.(claim|end|discard|finish)\(", ()),
     # A recorded time was spelled by hand in fourteen places (the journal's, the runs', the Activity page's), one
     # format each could have drifted from: dates.recorded, or job_runs.stamp for a run's.
     ("a recorded time is spelled by dates", os.path.join("tagpup", "core", "dates.py"), r"%Y-%m-%d %H:%M:%S", ()),
