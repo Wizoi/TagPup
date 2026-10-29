@@ -232,13 +232,14 @@ def walks_into(entry):
     return not attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
 
 
-def photo_entries(folder, unlisted=None):
+def photo_entries(folder, unlisted=None, listed=None):
     """Each photo under `folder`, at any depth, as its folder's listing entry, in the
     order os.walk gives: a folder's photos, then each subfolder in turn. Walked from
     paths.stored(folder), each folder listed through shares.listing; a folder that cannot be
     listed, whose listing fails part-way, or on a share that does not answer within its wait
     (a share dropping mid-walk, #2104), is passed over and, when `unlisted` (a list) is given,
-    appended to it: what it holds was not looked at, which is not the same as not there (#1356)."""
+    appended to it: what it holds was not looked at, which is not the same as not there (#1356). `listed(folder, photos)`
+    is told each folder listed, once its photos are handed on: how far a long walk has got."""
     pending = [paths.stored(folder)]
     while pending:
         current = pending.pop()
@@ -250,16 +251,19 @@ def photo_entries(folder, unlisted=None):
             if unlisted is not None:
                 unlisted.append(current)
             continue
-        subfolders = []
+        subfolders, photos = [], 0
         for entry in listing:
             if walks_into(entry):
                 subfolders.append(entry.path)
             elif is_photo(entry.name):
                 try:
                     if not entry.is_dir():
+                        photos += 1
                         yield entry
                 except OSError:
                     continue
+        if listed is not None:
+            listed(current, photos)
         pending.extend(reversed(subfolders))
 
 
@@ -316,14 +320,14 @@ def stamps_in(folder):
     return found
 
 
-def stamps_under(folder, unlisted=None):
+def stamps_under(folder, unlisted=None, listed=None):
     """{paths.key: (path as stored, mtime, size)} of the photos under `folder`, at any
     depth: the photos photos_under finds, each with the stamp its folder's listing gives.
     On Windows the listing carries both, so no file is opened or looked up on its own: a
     sync that finds nothing costs one walk (docs/ARCHITECTURE.md, phase 8). The folders
-    that could not be listed go into `unlisted`, as photo_entries puts them."""
+    that could not be listed go into `unlisted`, and each folder listed is told to `listed`, as photo_entries does."""
     found = {}
-    for entry in photo_entries(folder, unlisted):
+    for entry in photo_entries(folder, unlisted, listed):
         try:
             stat_of = entry.stat()
         except OSError:

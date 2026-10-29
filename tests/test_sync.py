@@ -800,7 +800,7 @@ class APictureToCheck(SyncTestCase):
     def test_a_sync_stopped_mid_walk_leaves_nothing_marked_and_two_in_a_row_queue_the_same_folder(self):
         self.edit(self.path, b"cropped")
         before = (self.held(self.path), self.held(self.other), self.rows())
-        def stops_part_way(folder, unlisted):
+        def stops_part_way(folder, unlisted, listed=None):
             raise KeyboardInterrupt("the owner closed the window as the walk listed %s" % os.path.basename(folder))
         with mock.patch.object(images, "stamps_under", side_effect=stops_part_way), \
                 self.assertRaises(KeyboardInterrupt):
@@ -977,8 +977,8 @@ class MissingFiles(SyncTestCase):
         os.remove(gone)
         real = images.stamps_under
 
-        def drops(folder, unlisted):
-            found = real(folder, unlisted)
+        def drops(folder, unlisted, listed=None):
+            found = real(folder, unlisted, listed)
             unlisted.append(self.trip)        # the share stopped answering as the walk listed it
             return {key: stamp for key, stamp in found.items() if not key.startswith(paths_key(self.trip) + os.sep)}
 
@@ -1107,9 +1107,9 @@ class MissingFiles(SyncTestCase):
         os.remove(gone)
         real, called = images.stamps_under, []
 
-        def drops_the_second_time(folder, unlisted):
+        def drops_the_second_time(folder, unlisted, listed=None):
             called.append(folder)
-            found = real(folder, unlisted)
+            found = real(folder, unlisted, listed)
             if len(called) > 1:
                 unlisted.append(self.trip)     # the share stopped answering as the second walk listed it
                 return {key: stamp for key, stamp in found.items() if not key.startswith(paths_key(self.trip) + os.sep)}

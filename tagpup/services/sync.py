@@ -82,6 +82,8 @@ over, no row left to remove and no folder left unlooked at; a missing file sync 
 confirm gone does not count against it -- which is the pages' "last in step".
 """
 import collections
+import contextlib
+import contextvars
 import logging
 import os
 import threading
@@ -114,6 +116,66 @@ CHANGED = KINDS + ("removed_faces", "removed_named")
 #: taken as away when the sync starts (the watcher's look as the server started did not answer in its moment) is waited
 #: for this long to be back (shares.Walk, patient), once a share, before its roots are not looked at (#2101).
 FOLDER_WAIT = 10.0
+
+#: The phases of a sync its progress names (progress_into): its walk, the second walk only a removal makes, and what
+#: follows the walk (the changed files read, the change written).
+WALKING, WALKING_AGAIN, AFTER_THE_WALK = "walking the folders", "walking the folders again", "reading what changed"
+
+#: A walk logs how far it has got every LOG_FOLDERS folders and LOG_SECONDS seconds, whichever is the rarer: on the
+#: share, 2,564 folders in about 12 minutes (photo_index, #1915), never a line a file.
+LOG_FOLDERS, LOG_SECONDS = 50, 30
+
+_progress = contextvars.ContextVar("tagpup_sync_progress", default=None)
+
+
+@contextlib.contextmanager
+def progress_into(found):
+    """A sync run on this thread meanwhile keeps `found`, a dict, up to date with how far it got: {"phase" (WALKING,
+    WALKING_AGAIN, AFTER_THE_WALK), "folders" walked, "files" (photo files found), "folder" (the last one walked),
+    "progressed" (when it last moved, as the Activity page spells a time)}. The folder watcher's status
+    (tagpup.jobs.watching): in memory, this process's."""
+    found.update(phase=None, folders=0, files=0, folder=None, progressed=None)
+    token = _progress.set(found)
+    try:
+        yield found
+    finally:
+        _progress.reset(token)
+
+
+class _Walked:
+    """How far one walk (_scan) has got: told each folder listed (images.stamps_under's `listed`), it keeps the sync's
+    progress (progress_into) and logs a line at most every LOG_FOLDERS folders and LOG_SECONDS seconds, with the run's
+    tag (tagpup.core.runs): the folder it is at, never a line a file."""
+
+    def __init__(self, phase, clock=time.monotonic):
+        self.phase, self.folders, self.files, self._clock = phase, 0, 0, clock
+        self._began = self._logged = clock()
+        self._logged_at = 0
+        self._tell(None)
+
+    def _tell(self, folder):
+        found = _progress.get()
+        if found is not None:
+            found.update(phase=self.phase, folders=self.folders, files=self.files, folder=folder,
+                         progressed=time.strftime(job_runs.TIME))
+
+    def listed(self, folder, photos):
+        self.folders += 1
+        self.files += photos
+        self._tell(folder)
+        now = self._clock()
+        if self.folders - self._logged_at >= LOG_FOLDERS and now - self._logged >= LOG_SECONDS:
+            self._logged, self._logged_at = now, self.folders
+            logger.info("Sync, %s: %d folder(s) and %d photo file(s) so far, at %s.", self.phase, self.folders,
+                        self.files, folder)
+
+    def ended(self):
+        """The walk is over: said, when it was long enough to say how far it had got, and the phase after it begins."""
+        if self._logged_at:
+            logger.info("Sync, %s: %d folder(s) and %d photo file(s) in %d s.", self.phase, self.folders, self.files,
+                        self._clock() - self._began)
+        self.phase = AFTER_THE_WALK
+        self._tell(None)
 
 
 def walk_roots(folders):
@@ -218,28 +280,30 @@ def watch_states(folders, on_back=None):
     return states
 
 
-def _scan(conn, folder, roots, library_folders):
+def _scan(conn, folder, roots, library_folders, phase=WALKING):
     """What is on disk against the rows: (by_key {key: (id, path, mtime, size)} of the rows
     looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there,
     those that did not answer, and those under them that would not list).
     The whole library walks every root and every folder of the library's
     (`library_folders`, tagpup.store.folders: those with rows, and those added), each once
     from the topmost; a folder, that folder alone. Each is asked through one patient shares.Walk: a share taken as away
-    as the sync starts is waited for, once, up to FOLDER_WAIT, to be back (#2101)."""
+    as the sync starts is waited for, once, up to FOLDER_WAIT, to be back (#2101). How far it got is told as `phase`
+    (_Walked)."""
     by_key = {}
     for photo_id, path, mtime, size in store_photos.stamps(conn, folder):
         by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
     walked = [paths.stored(folder)] if folder else walk_roots(set(roots) | set(library_folders.walked()))
     on_disk, gone, unanswered, unlisted = {}, [], [], []
-    walk = shares.Walk(patient=True, wait=FOLDER_WAIT)
+    walk, told = shares.Walk(patient=True, wait=FOLDER_WAIT), _Walked(phase)
     for root in walked:
         state = walk.folder_state(root, FOLDER_WAIT)
         if state == "there":
-            on_disk.update(images.stamps_under(root, unlisted))
+            on_disk.update(images.stamps_under(root, unlisted, told.listed))
         elif state == "gone":
             gone.append(root)
         else:
             unanswered.append(root)
+    told.ended()
     return by_key, on_disk, walked, gone, unanswered, unlisted
 
 
@@ -306,7 +370,7 @@ def _gone_again(conn, candidates, roots, library_folders, exiftool_path):
     back as a possible copy (_pair_moves, the one pairing), and its root confirmed there by this walk (_removable). A
     file moved between two folders while the first walk ran is in neither of its listings; this walk finds it (#2153).
     None when this walk could not look at every folder."""
-    by_key, on_disk, walked, _gone, unanswered, unlisted = _scan(conn, None, roots, library_folders)
+    by_key, on_disk, walked, _gone, unanswered, unlisted = _scan(conn, None, roots, library_folders, WALKING_AGAIN)
     if unanswered or unlisted:
         return []
     missing, _unseen_ids = _unseen(by_key, on_disk, ())
