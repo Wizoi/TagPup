@@ -484,6 +484,8 @@ class IndexQueue:
             return
         where, outcome = self._recorded_in, status.get("status")
         counts = job_runs.counts(result) if result is not None else {"errors": 1}
+        # The queue's own bar, not a count of what the index did.
+        counts.pop("percent", None)
         counts.update(folders=len(_folders_of(job)), run=run)
         if outcome == "cancelled":
             counts["cancelled"] = 1

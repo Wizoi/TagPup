@@ -65,14 +65,14 @@ sys.exit(plan.get("exit", 0))
 
 
 def bars(photos):
-    return ["Reading metadata: 100%%|##########| %d/%d [00:01<00:00]" % (photos, photos),
-            "Generating embeddings: 100%%|##########| %d/%d [00:02<00:00]" % (photos, photos),
+    return [indexing.READING_METADATA + ": 100%%|##########| %d/%d [00:01<00:00]" % (photos, photos),
+            indexing.GENERATING_EMBEDDINGS + ": 100%%|##########| %d/%d [00:02<00:00]" % (photos, photos),
             indexing.MATCHING, indexing.NEW_FACES + "No new face is waiting for a name."]
 
 
 def bake(folders, of=None):
     of = of or len(folders)
-    return [bake_after_index.FOLDER_SAID + "%d of %d, %d written, 0 current, 0 conflicts: %s" % (number, of, number - 1, each)
+    return [bake_after_index.folder_said(number, of, bake_after_index.Baked(written=number - 1), each)
             for number, each in enumerate(folders, 1)]
 
 
@@ -166,7 +166,7 @@ class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
     def test_the_daily_sync_s_index_is_its_child_says_how_far_it_got_and_ends_with_its_counts_and_message(self):
         folders = [self.folder("Regatta"), self.folder("Lighthouse")]
         code = self.code(bars(3) + bake(folders) + [
-            bake_after_index.SAID + "3 file(s) written, 0 already held it; 1 conflict(s), left as they are."])
+            bake_after_index.Baked(written=3, conflicts=1).said()])
         queue = indexing_jobs.queue_for(self.library)
         index = self.index_with(self.library, code)
         synced = recurring.run_claimed(recurring.JOBS.get(recurring.SYNC), self.library, self.library.name,
@@ -179,6 +179,8 @@ class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
         self.assertEqual([("index", synced.run_id), ("sync", None)], [(run.job, run.parent) for run in found])
         run = found[0]
         self.assertEqual((job_runs.DONE, status["message"]), (run.outcome, run.note))
+        # The queue's bar is not a count of what the index did (#2193).
+        self.assertNotIn("percent", run.changed)
         self.assertEqual((3, 3, 0, 1, 2), tuple(run.changed[name] for name in (
             "photos_read", "baked_written", "baked_current", "baked_conflicts", "folders")))
         # The last phase it said, at once as the phase changed: the bake's first folder, counted, its path not written.
@@ -281,7 +283,7 @@ class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):
         folders = [self.folder("Quay %d" % number) for number in range(5)]
         heard = os.path.join(self.home.root, "HEARD")
         code = self.code(bars(5) + ["HOLD"] + bake(folders) + ["WAIT " + heard, "LET_GO",
-                                                               bake_after_index.SAID + "4 file(s) written, 0 already held it."])
+                                                               bake_after_index.Baked(written=4).said()])
 
         def report(message, percent):
             # The last bake line has been told (job_runs.tell runs before the report): the bake may let go.
@@ -385,8 +387,8 @@ class TwoProcessesIndexingOneLibrary(_Indexing):
 
 class ALongIndexWritesItsProgressAboutEvery10Seconds(_Indexing):
     def test_388_folders_written_once_in_10_s_of_the_clock(self):
-        """The bake of 388 folders, a line each 2.5 s of a fake clock: the run's row is written at most 98 times (one
-        in four lines; a write the library was busy for is skipped), not 388."""
+        """The bake of 388 folders, a line each 2.5 s of a fake clock: the run's row is written 97 times (the first
+        line and one in four of the 387 after it: 1 + 387 // 4), not 388."""
         folders = ["F%03d" % number for number in range(388)]
         clock = iter(1790000000.0 + 2.5 * step for step in range(10000))
         written = []
@@ -400,7 +402,7 @@ class ALongIndexWritesItsProgressAboutEvery10Seconds(_Indexing):
                 mock.patch.object(job_runs, "progress", side_effect=counted):
             status = self.queued([self.folder("Regatta")], self.code(bake(folders)))
         self.assertEqual("completed", status["status"], status)
-        self.assertTrue(90 <= written.count(True) <= 98, (written.count(True), len(written)))
+        self.assertEqual(97, written.count(True), (written.count(True), len(written)))
         self.assertEqual(388, self.index_run().progress["counts"]["folders"])
 
     def test_a_library_busy_the_whole_bake_is_tried_once_in_10_s_not_at_each_line(self):

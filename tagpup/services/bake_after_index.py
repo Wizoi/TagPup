@@ -81,8 +81,17 @@ def folder_heard(line):
             "conflicts": int(found.group(5)), "folder": found.group(6), "percent": (number - 1) * 100 // of}
 
 
-_SAID_LINE = re.compile("^" + re.escape(SAID) + r"(\d+) file\(s\) written, (\d+) already held it")
-_SAID_CONFLICTS = re.compile(r"; (\d+) conflict\(s\)")
+def _heard_as(said):
+    """The pattern that reads what a format made (`said`, with %d for each number): one spelling, said and heard."""
+    return re.escape(said).replace("%d", r"(\d+)")
+
+
+#: The parts of a line Baked.said makes, each a format said with and heard by: the counts every line has, and the
+#: conflicts it adds when there are any.
+_SAID_COUNTS = "%d file(s) written, %d already held it"
+_SAID_CONFLICTS = "%d conflict(s), left as they are"
+_SAID_LINE = re.compile("^" + re.escape(SAID) + _heard_as(_SAID_COUNTS))
+_SAID_CONFLICTS_HEARD = re.compile("; " + _heard_as(_SAID_CONFLICTS))
 
 
 def said_heard(line):
@@ -91,7 +100,7 @@ def said_heard(line):
     found = _SAID_LINE.match(line or "")
     if not found:
         return None
-    conflicts = _SAID_CONFLICTS.search(line)
+    conflicts = _SAID_CONFLICTS_HEARD.search(line)
     return {"written": int(found.group(1)), "current": int(found.group(2)),
             "conflicts": int(conflicts.group(1)) if conflicts else 0}
 
@@ -121,9 +130,9 @@ class Baked:
 
     def said(self):
         """The run in one line, counts only (the paths name people)."""
-        line = SAID + "%d file(s) written, %d already held it" % (self.written, self.current)
+        line = SAID + _SAID_COUNTS % (self.written, self.current)
         more = [("%d fingerprint(s) recorded with no write" % self.adopted) if self.adopted else "",
-                ("%d conflict(s), left as they are" % self.conflicts) if self.conflicts else "",
+                (_SAID_CONFLICTS % self.conflicts) if self.conflicts else "",
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",
                 ", ".join("%d %s" % (n, kind) for kind, n in sorted(self.cannot.items())),

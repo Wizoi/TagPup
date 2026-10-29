@@ -30,11 +30,13 @@ The indexer is a stand-in child that prints the real lines -- and a line cut sho
 passed over -- and holds at the second folder until the test lets it go. Failed on the old code: the line was cut at 90
 characters and the bar stayed where the last indexer bar left it.
 """
+import itertools
 import os
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
@@ -49,8 +51,9 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.services import bake_after_index, indexing, sync  # noqa: E402
+from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, job_runs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
@@ -105,7 +108,7 @@ class TheBarReachesTheEnd(unittest.TestCase):
         percents = [percent for _message, percent in heard if percent is not None]
         # Each bar the CLI draws is read as "label: N% (done/total)", at its own percent.
         self.assertIn(100, percents, heard)
-        self.assertTrue(any("Generating embeddings: 100% (3/3)" == message for message, _p in heard), heard)
+        self.assertTrue(any(indexing.GENERATING_EMBEDDINGS + ": 100% (3/3)" == message for message, _p in heard), heard)
         self.assertEqual(100, result.details["percent"])
         self.assertEqual("Folder indexed. No new face is waiting for a name. Bake: 3 file(s) written, 0 already held it.",
                          result.details["message"])
@@ -122,8 +125,54 @@ class TheBarReachesTheEnd(unittest.TestCase):
         again, heard_again = index()
         self.assertTrue(again.ok, (again.errors, heard_again))
         self.assertIn("All images are up to date! Index is current.", [message for message, _p in heard_again], heard_again)
-        self.assertFalse(any("Generating embeddings" in (message or "") for message, _p in heard_again), heard_again)
+        self.assertFalse(any(indexing.GENERATING_EMBEDDINGS in (message or "") for message, _p in heard_again), heard_again)
         self.assertEqual("Folder indexed: no photo was added or read again.", again.details["message"])
+
+    def test_the_phases_the_cli_draws_reach_the_run_s_row_through_the_queue(self):
+        """#2191: the bars' labels were copied into the reader; the real CLI's, through the server's queue, reach the
+        row of the run the queue claimed: its metadata and embeddings phases are told with their counts, and the
+        photos it read are in the row's counts."""
+        home = own_home.for_test(self, "index_phase_")
+        shim = os.path.join(home.root, "shim")
+        os.makedirs(shim)
+        with open(os.path.join(shim, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(SITECUSTOMIZE % {"root": ROOT})
+        folder = os.path.join(home.root, "Regatta")
+        os.makedirs(folder)
+        for name in ("one.jpg", "two.jpg", "three.jpg"):
+            Image.new("RGB", (64, 64), "navy").save(os.path.join(folder, name), "JPEG")
+        library_actions.create(home.library("harbour.db"))
+        library = Library(home.library("harbour.db"))
+        self.addCleanup(indexing_jobs.forget, library)
+        queue = indexing_jobs.queue_for(library)
+        told = []
+        real = runs_service.progress
+
+        def spy(lib, run_id, counts, phase, now=None):
+            told.append((phase, dict(counts)))
+            return real(lib, run_id, counts, phase, now)
+        saved = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = shim
+        try:
+            with mock.patch.object(runs_service, "progress", side_effect=spy):
+                self.assertTrue(queue.start([folder], lambda folders, report: indexing.index_folder(
+                    library, folders, ROOT, report), together=True).ok)
+                queue.wait()
+        finally:
+            if saved is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = saved
+        self.assertEqual("completed", queue.status(folder)["status"], queue.status(folder))
+        phases = [phase for phase, _counts in told]
+        self.assertEqual(["metadata", "embeddings", "faces", "bake"],
+                         [phase for phase, _each in itertools.groupby(phases)], told)
+        last = max(index for index, phase in enumerate(phases) if phase == "embeddings")
+        self.assertEqual({"done": 3, "of": 3, "percent": 100}, dict(told[last][1]))
+        [run] = [each for each in runs_service.tree(library) if each.job == runs_service.INDEX]
+        self.assertEqual(job_runs.DONE, run.outcome)
+        self.assertEqual(3, run.changed["photos_read"])
+        self.assertIsNotNone(run.progress, "the run's row says how far it got")
 
     def test_an_index_whose_every_photo_failed_says_so_and_not_that_the_folder_is_current(self):
         """#1995: the CLI's per-photo loop logs a failure and goes on, exits 0 having recorded nothing; the message told
@@ -226,11 +275,11 @@ class ASyncOfManyFolders(unittest.TestCase):
 STUB_CLI = '''
 import os, sys, time
 sys.path.insert(0, %(root)r)
-from tagpup.services import bake_after_index
+from tagpup.services import bake_after_index, indexing
 args = sys.argv[1:]
 with open(args[args.index("--folders-file") + 1], encoding="utf-8") as handle:
     folders = handle.read().splitlines()
-print("Reading metadata: 100%%|##########| 3/3 [00:00<00:00, 9.00it/s]", flush=True)
+print(indexing.READING_METADATA + ": 100%%|##########| 3/3 [00:00<00:00, 9.00it/s]", flush=True)
 print("Bake folder 2 of", flush=True)
 print("Bake folder 1 of 0, 0 written, 0 current, 0 conflicts: nowhere", flush=True)
 baked = bake_after_index.Baked()

@@ -57,6 +57,9 @@ NEW_FACES = "New faces: "
 FAILED = "Photos that failed: "
 #: What the CLI's `index` says as it begins matching the faces it made (before NEW_FACES): the faces phase of the live line.
 MATCHING = "Matching the new faces with the named ones..."
+#: The labels of the two bars the CLI's `index` draws (tqdm `desc`), which the live line and a run's phase are read from.
+READING_METADATA = "Reading metadata"
+GENERATING_EMBEDDINGS = "Generating embeddings"
 
 
 def new_faces_said(matched):
@@ -78,7 +81,7 @@ def new_faces_said(matched):
 _INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
 
 #: The phase of an index (job_runs.PHASES) each of the CLI's bars is, by its label.
-_BAR_PHASES = {"Reading metadata": "metadata", "Generating embeddings": "embeddings"}
+_BAR_PHASES = {READING_METADATA: "metadata", GENERATING_EMBEDDINGS: "embeddings"}
 
 #: Longest message worth putting on a progress bar. Past this it is ellipsised in
 #: the page anyway, so a truncated sentence is all anyone can read.
