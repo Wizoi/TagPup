@@ -23,6 +23,13 @@ export function ago(text, now = Date.now(), otherwise = 'never') {
     return seconds < 0 ? `in ${span(-seconds)}` : `${span(seconds)} ago`;
 }
 
+/** The seconds from the server time `from` to the server time `to`, or null without both. */
+export function secondsBetween(from, to) {
+    const start = parseTime(from);
+    const end = parseTime(to);
+    return start && end ? Math.max(0, Math.round((end.getTime() - start.getTime()) / 1000)) : null;
+}
+
 /** A number of seconds as "1 min 5 s", or '' for none. */
 export function duration(seconds) {
     if (seconds === null || seconds === undefined || seconds === '') return '';

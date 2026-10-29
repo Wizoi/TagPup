@@ -300,6 +300,7 @@ class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
         said = bake_after_index.FOLDER_SAID + "2 of 3, 1 written, 0 current, 0 conflicts: "
         self.assertIn(running["message"], [said + paths.stored(folder) for folder in folders], "the folder's path, whole")
         self.assertEqual(33, running["percent"], "one folder of three is done")
+        self.assertLessEqual(running["started"], running["progressed"], "when it last moved, for 'last progress'")
 
         open(os.path.join(stub, "RELEASE"), "w").close()
         queue.wait()

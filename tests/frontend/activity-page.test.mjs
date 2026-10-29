@@ -17,7 +17,7 @@ const NOW = {
       name: "harbour",
       indexing: {
         running: { run: "index:harbour:20260926T095900-1", started: "2026-09-26 09:59:00", folders: 2,
-                   name: "Regatta 2019", percent: 40, message: "Indexing: 40% (4/10)",
+                   name: "Regatta 2019", percent: 40, message: "Indexing: 40% (4/10)", progressed: "2026-09-26 09:59:58",
                    logs: ["indexer-harbour-20260926T095900-4242-1.log", "tagpup_web.log"] },
         queued: [{ name: "Harbour Walk", folders: 1 }],
       },
@@ -262,6 +262,72 @@ describe("the Activity page draws each section from what the server says", () =>
   });
 });
 
+describe("Now says how far a long run has got, and how long since it moved", () => {
+  const WALKING = {
+    ...NOW,
+    at: "2026-09-26 10:12:03",
+    syncing: { library: "harbour", folder: null, started: "2026-09-26 10:00:00",
+               progress: { phase: "walking the folders", folders: 812, files: 20417,
+                           folder: "\\\\nas\\Pictures\\2019\\Regatta", progressed: "2026-09-26 10:11:58" } },
+  };
+
+  test("a whole sync over the share: its phase, the folders and files so far, where it is, and its times", async (t) => {
+    const { document, window } = await open(t, server({ first: [["/api/activity/now", WALKING]] }));
+    await flush(window, 6);
+    const now = document.getElementById("now-body");
+    assert.match(now.textContent, /every folder/);
+    assert.match(now.textContent, /walking the folders: 812 folder\(s\), 20417 photo file\(s\)/);
+    assert.match(now.textContent, /at \\\\nas\\Pictures\\2019\\Regatta/);
+    assert.match(now.textContent, /running 12 min 3 s, last progress 5 s ago/);
+    // The index beside it: how long it has run, since it last moved, and its percent in words beside the bar.
+    assert.match(now.textContent, /running 13 min 3 s, last progress 12 min 5 s ago/);
+    const bar = now.querySelector("progress");
+    assert.equal(bar.getAttribute("aria-valuetext"), "40%, Indexing");
+    assert.equal(bar.nextElementSibling.textContent, "40%");
+  });
+
+  test("the line read aloud changes with the phase or a ten of percent, never with each poll", async (t) => {
+    let answer = WALKING;
+    const fake = server({ first: [["/api/activity/now", () => answer]] });
+    const { document, window } = await open(t, fake, 20);
+    await flush(window, 6);
+    const line = document.getElementById("now-summary");
+    assert.equal(line.getAttribute("aria-live"), "polite");
+    assert.equal(line.textContent,
+                 "harbour: syncing, walking the folders. harbour: indexing Regatta 2019, Indexing, 40%.");
+    const said = line.firstChild;
+    // The next poll's answer drawn (every 20 ms here).
+    const again = async () => {
+      const asked = fake.urls().filter((url) => url === "/api/activity/now").length;
+      while (fake.urls().filter((url) => url === "/api/activity/now").length < asked + 2) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await flush(window, 4);
+    };
+
+    // Three seconds on: more folders, a later time, 43%: the same words, left as they were.
+    const running = { ...NOW.libraries[0].indexing.running, percent: 43 };
+    answer = { ...WALKING, at: "2026-09-26 10:12:06",
+               syncing: { ...WALKING.syncing, progress: { ...WALKING.syncing.progress, folders: 830 } },
+               libraries: [{ ...NOW.libraries[0], indexing: { ...NOW.libraries[0].indexing, running } }, NOW.libraries[1]] };
+    await again();
+    assert.match(document.getElementById("now-body").textContent, /830 folder/);
+    assert.equal(line.firstChild, said, "the same words were written again, and read out again");
+
+    // The walk over and the index at 51%: said.
+    answer = { ...answer, syncing: { ...answer.syncing, progress: { ...answer.syncing.progress, phase: "reading what changed" } },
+               libraries: [{ ...NOW.libraries[0], indexing: { ...NOW.libraries[0].indexing,
+                                                              running: { ...running, percent: 51 } } }, NOW.libraries[1]] };
+    await again();
+    assert.equal(line.textContent,
+                 "harbour: syncing, reading what changed. harbour: indexing Regatta 2019, Indexing, 50%.");
+
+    answer = { ...NOW, syncing: null, libraries: [] };
+    await again();
+    assert.equal(line.textContent, "Nothing is running.");
+  });
+});
+
 describe("Now is asked while the page is in view, and not while it is hidden", () => {
   test("hidden, it asks nothing; back, it asks at once", async (t) => {
     const fake = server();
@@ -408,7 +474,7 @@ describe("Unload models now", () => {
 });
 
 describe("Logs", () => {
-  test("a tab for each log, the web server's first, warnings and worse by default", async (t) => {
+  test("a tab for each log, the web server's first, INFO and worse by default", async (t) => {
     const fake = server();
     const { document, window } = await open(t, fake);
     await flush(window, 8);
@@ -417,13 +483,13 @@ describe("Logs", () => {
     assert.ok(tabs[0].classList.contains("chosen"));
     const read = fake.urls().find((url) => url.startsWith("/api/activity/logs/tagpup_web.log?"));
     assert.ok(read, fake.urls().join("\n"));
-    assert.match(read, /level=WARNING/);
+    assert.match(read, /level=INFO/);
     assert.match(document.getElementById("log-records").textContent, /slow: GET \/api\/tags/);
     assert.equal(document.getElementById("log-raw").getAttribute("href"), "/api/activity/logs/tagpup_web.log/raw");
     assert.equal(document.getElementById("log-download").getAttribute("href"), "/api/activity/logs/tagpup_web.log/download");
   });
 
-  test("Logs for this run reads only that run's lines, at every level, in its log", async (t) => {
+  test("Logs for this run reads only that run's lines, INFO and worse, in its log", async (t) => {
     const fake = server();
     const { document, window } = await open(t, fake);
     await flush(window, 8);
@@ -434,7 +500,7 @@ describe("Logs", () => {
     const read = fake.urls().filter((url) => url.startsWith("/api/activity/logs/indexer-harbour.log?")).at(-1);
     assert.ok(read, fake.urls().join("\n"));
     assert.match(read, /run=index%3Aharbour%3A20260926T091000-1/);
-    assert.match(read, /level=DEBUG/);
+    assert.match(read, /level=INFO/);
     assert.equal(document.getElementById("log-run").classList.contains("hidden"), false);
     assert.match(document.getElementById("log-records").textContent, /the run's line/);
     click(window, document.getElementById("log-run-clear"));
