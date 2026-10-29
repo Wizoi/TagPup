@@ -208,6 +208,7 @@ class WhenTheFacesChangeBeforeTheAnswer(Case789):
         found = wait(job)
         self.assertEqual(naming_faces.FAILED, found["state"])
         self.assertEqual(naming_faces.REFUSED_SAYS, found["message"])
+        self.assertEqual(runs_service.REFUSED, runs_service.kind_of(self.runs()[0]), "a refusal reads refused, not an error")
         self.assertEqual(before, self.names(), "all or nothing: the other face was not named either")
 
     def test_a_tag_removed_from_a_planned_photo_meanwhile_refuses_the_whole_change(self):

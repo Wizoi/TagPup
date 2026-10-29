@@ -206,13 +206,18 @@ class TestBusyIsRetriedAndOtherFailuresAreNot(unittest.TestCase):
         import sqlite3
         attempts = []
 
-        def broken():
-            attempts.append(1)
-            raise sqlite3.OperationalError("no such table: nope")
+        # A same-connection cursor conflict is a defect in the code, not another program writing: raised, not waited for.
+        for message in ("no such table: nope", "database table is locked", "database schema is locked"):
+            with self.subTest(message):
+                del attempts[:]
 
-        with self.assertRaises(sqlite3.OperationalError):
-            tagpup_db.retry_when_busy(broken, first_delay=0.001)
-        self.assertEqual(len(attempts), 1, "a broken statement was retried")
+                def broken():
+                    attempts.append(1)
+                    raise sqlite3.OperationalError(message)
+
+                with self.assertRaises(sqlite3.OperationalError):
+                    tagpup_db.retry_when_busy(broken, first_delay=0.001)
+                self.assertEqual(len(attempts), 1, "a broken statement was retried")
 
     def test_it_gives_up_eventually_rather_than_hanging(self):
         import sqlite3

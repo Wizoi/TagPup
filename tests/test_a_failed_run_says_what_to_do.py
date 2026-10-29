@@ -155,11 +155,13 @@ class NeedsYouInTheMorning(_Libraries):
         harbour = self.library("harbour", new=("IMG_0002.jpg",))
         self.nightly_sync(harbour, self.share_drops(harbour))
 
-        breakwater = self.library("breakwater", photos=("IMG_0001.jpg", "IMG_0002.jpg"))
+        breakwater = self.library("breakwater", photos=("IMG_0001.jpg", "IMG_0002.jpg"), away=("IMG_0003.jpg",))
         newer = job_runs.claim(breakwater, SNAPSHOTS, breakwater.name, NIGHT - HOUR)
         stored_runs.finish(breakwater.path, newer.run_id, stored_runs.FAILED, NIGHT - HOUR + 60,
                            {"errors": 1, job_runs.FAILURE: "quota"}, "QuotaError: the disk allows no more")
-        os.remove(os.path.join(self.folder_of("breakwater"), "IMG_0002.jpg"))   # a removal: the sync writes
+        moved_to = os.path.join(self.pictures, "breakwater", "Moved")      # a photo moved: the sync relinks its row
+        os.makedirs(moved_to)
+        os.rename(os.path.join(self.folder_of("breakwater"), "IMG_0002.jpg"), os.path.join(moved_to, "IMG_0002.jpg"))
         asleep, real = paths.key(self.away_of("breakwater")), shares.Walk.folder_state
 
         def walked(walk, folder, *args, **kwargs):
