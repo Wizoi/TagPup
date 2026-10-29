@@ -858,6 +858,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # does not leave this run's faces unmatched.
     if total_new_indexed:
         try:
+            console.print(indexing_service.MATCHING, markup=False, soft_wrap=True, highlight=False)
             _match_new_faces(db_path, after, upto)
         except (Exception, KeyboardInterrupt):
             _owe_the_recorded(db_path, touched, handed)
@@ -905,7 +906,7 @@ def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_fi
         console.print(line, markup=False, soft_wrap=True, highlight=False)
     try:
         bake_after_index.bake_folders(library, exiftool_path, detector, folders, handed,
-                                      stop=lambda: bool(stop_file) and os.path.exists(stop_file), told=say)
+                                      stop=lambda: bool(stop_file) and os.path.exists(stop_file), told=say, each=say)
     except Exception as error:
         logger.exception("The bake after the index stopped")
         say(bake_after_index.SAID + "stopped (%s); the photos are indexed, and the next index of their folders "

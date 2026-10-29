@@ -22,23 +22,37 @@ A sync that finds many folders queues them as one job, one indexer for them all 
 command line they passed Windows's 32,767 characters and the indexer never started; the server hands them over in a file
 (`index --folders-file`), and 400 folders of 120 characters each, some spelled beyond ASCII, reach the indexer whole.
 Failed on the old code: `FileNotFoundError: [WinError 206]` from processes.start.
+
+The owner watches a sync's new folders being indexed and baked (#1915: a 3 h bake showed nothing but the indexer's last
+line, at 100%): the bake says each folder as it begins (bake_after_index.folder_said), and the Activity page's Now reads
+"Bake folder 2 of 3", the folder's path whole and the percent of the folders done, while the run is at its second folder.
+The indexer is a stand-in child that prints the real lines -- and a line cut short and one of no folders among them,
+passed over -- and holds at the second folder until the test lets it go. Failed on the old code: the line was cut at 90
+characters and the bar stayed where the last indexer bar left it.
 """
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import tagpup_cli  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import indexing  # noqa: E402
+from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.services import bake_after_index, indexing, sync  # noqa: E402
+from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
+from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXIFTOOL = own_home.installed_exiftool()
@@ -205,6 +219,95 @@ class ASyncOfManyFolders(unittest.TestCase):
         result = CliRunner().invoke(tagpup_cli.cli, ["--db", library, "index"])
         self.assertEqual(2, result.exit_code, result.output)
         self.assertIn("Missing argument", result.output)
+
+
+#: The indexer a sync's new folders are handed to, stood in for: the lines the real one prints, from the code that prints
+#: them, its folders read from the list the server hands over, held at the second folder until RELEASE appears beside it.
+STUB_CLI = '''
+import os, sys, time
+sys.path.insert(0, %(root)r)
+from tagpup.services import bake_after_index
+args = sys.argv[1:]
+with open(args[args.index("--folders-file") + 1], encoding="utf-8") as handle:
+    folders = handle.read().splitlines()
+print("Reading metadata: 100%%|##########| 3/3 [00:00<00:00, 9.00it/s]", flush=True)
+print("Bake folder 2 of", flush=True)
+print("Bake folder 1 of 0, 0 written, 0 current, 0 conflicts: nowhere", flush=True)
+baked = bake_after_index.Baked()
+for number, folder in enumerate(folders, 1):
+    print(bake_after_index.folder_said(number, len(folders), baked, folder), flush=True)
+    if number == 2:
+        release = os.path.join(os.path.dirname(os.path.abspath(__file__)), "RELEASE")
+        deadline = time.time() + 60
+        while not os.path.exists(release) and time.time() < deadline:
+            time.sleep(0.05)
+    baked.written += 1
+print(baked.said(), flush=True)
+'''
+
+
+class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
+    def test_now_reads_the_bakes_folder_its_path_and_how_far_while_it_runs(self):
+        home = own_home.for_test(self, "bake_seen_")
+        stub = os.path.join(home.root, "stub")
+        os.makedirs(stub)
+        with open(os.path.join(stub, "tagpup_cli.py"), "w", encoding="utf-8") as handle:
+            handle.write(STUB_CLI % {"root": ROOT})
+        pictures = os.path.join(home.root, "Pictures")
+        folders = [os.path.join(pictures, name) for name in ("Regatta", "Harbour Walk", "Lighthouse")]
+        library_actions.create(home.library("harbour.db"))
+        library = Library(home.library("harbour.db"))
+        conn = db.connect(library.path)
+        try:
+            for folder in folders:
+                os.makedirs(folder)
+                Image.new("RGB", (32, 32), "navy").save(os.path.join(folder, "held.jpg"), "JPEG")
+                photo_rows.add_indexed(conn, os.path.join(folder, "held.jpg"), {})
+            conn.commit()
+        finally:
+            conn.close()
+        for folder in folders:
+            Image.new("RGB", (32, 32), "teal").save(os.path.join(folder, "new.jpg"), "JPEG")
+
+        queue = indexing_jobs.queue_for(library)
+        self.addCleanup(indexing_jobs.forget, library)
+        heard = []
+
+        def index(each, report):
+            def told(message=None, percent=None):
+                heard.append((message, percent))
+                report(message, percent)
+            return indexing.index_folder(library, each, stub, told, subfolders=False)
+
+        synced = sync.sync(library, apply=True, exiftool_path="exiftool", roots=[pictures],
+                           queue=lambda new: queue.start(new, index, together=True))
+        self.assertTrue(synced.ok, synced.message())
+        self.assertEqual(3, synced.details["queued"])
+        self.addCleanup(queue.wait)
+        self.addCleanup(lambda: open(os.path.join(stub, "RELEASE"), "w").close())
+
+        app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background([])))
+        app.testing = True
+        client = app.test_client()
+        deadline, running = time.time() + 60, None
+        while True:
+            reply = client.get("/api/activity/now").get_json()
+            running = next(each for each in reply["libraries"] if each["name"] == "harbour")["indexing"]["running"]
+            if running and running["message"].startswith("Bake folder 2 of 3"):
+                break
+            self.assertLess(time.time(), deadline, (running, heard))
+            time.sleep(0.05)
+        said = bake_after_index.FOLDER_SAID + "2 of 3, 1 written, 0 current, 0 conflicts: "
+        self.assertIn(running["message"], [said + paths.stored(folder) for folder in folders], "the folder's path, whole")
+        self.assertEqual(33, running["percent"], "one folder of three is done")
+
+        open(os.path.join(stub, "RELEASE"), "w").close()
+        queue.wait()
+        self.assertEqual("completed", queue.status(folders[0])["status"])
+        # The line cut short and the line of no folders were passed over; nothing raised.
+        self.assertFalse([message for message, _p in heard if message and message.startswith("Bake folder")
+                          and bake_after_index.folder_heard(message) is None], heard)
+        self.assertEqual([0, 33, 66], [percent for message, percent in heard if message.startswith("Bake folder")])
 
 
 if __name__ == "__main__":

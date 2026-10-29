@@ -38,6 +38,7 @@ import collections
 import dataclasses
 import logging
 import os
+import re
 
 from tagpup.core import paths
 from tagpup.files import bake, exiftool_session, field_values, images, shares
@@ -51,6 +52,33 @@ logger = logging.getLogger(__name__)
 #: The start of each line the index's bake says (Baked.said, and the CLI's when it stops): the index queue keeps it in
 #: the job's message (tagpup.services.indexing).
 SAID = "Bake: "
+
+#: The start of the line the bake says as it begins each folder (folder_said): which of how many, the run's counts so
+#: far, and the folder (owner, DECISIONS 2026-10-28: the live line shows folder paths). The index queue reads it into the
+#: job's live line (tagpup.services.indexing, folder_heard), and the run's log holds it: a long bake is seen to move.
+FOLDER_SAID = "Bake folder "
+_FOLDER_LINE = re.compile("^" + re.escape(FOLDER_SAID)
+                          + r"(\d+) of (\d+), (\d+) written, (\d+) current, (\d+) conflicts: (.+)$")
+
+
+def folder_said(number, of, baked, folder):
+    """The line of the `number`th folder of `of` as the bake begins it, with `baked`'s counts so far (Baked)."""
+    return FOLDER_SAID + "%d of %d, %d written, %d current, %d conflicts: %s" % (
+        number, of, baked.written, baked.current, baked.conflicts, folder)
+
+
+def folder_heard(line):
+    """What a line folder_said made says: {"number", "of", "folder", "percent"} -- the percent the folders done before
+    this one are of all -- or None for any other line, and for one that is not whole in that shape (cut short, garbled,
+    a number not within 1..of)."""
+    found = _FOLDER_LINE.match(line or "")
+    if not found:
+        return None
+    number, of = int(found.group(1)), int(found.group(2))
+    if not 1 <= number <= of:
+        return None
+    return {"number": number, "of": of, "folder": found.group(6), "percent": (number - 1) * 100 // of}
+
 
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
 ROOTS_CHANGED = "the library's roots were changed by another process"
@@ -92,19 +120,24 @@ class Baked:
         return line + "."
 
 
-def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, told=None):
+def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, told=None, each=None):
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
-    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did.
+    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did;
+    `each(line)`, the line of each folder as it begins (folder_said), which the run's log holds too.
     A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first)."""
     baked, snapshot, walk = Baked(), [], baking.walk(stop)
     owe_first(library, folders, handed)
     with field_values.session(exiftool_path) as session:
         et = exiftool_session.StaysDead(session)
-        for folder in folders:
+        for number, folder in enumerate(folders, 1):
             if stop is not None and stop():
                 break
+            line = folder_said(number, len(folders), baked, folder)
+            logger.info("%s", line)
+            if each is not None:
+                each(line)
             to_bake, stored, unfingerprinted = _planned(library, et, detector, folder, handed, baked, walk)
             written = None
             if to_bake and not baked.stalled:
