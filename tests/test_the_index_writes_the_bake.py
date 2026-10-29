@@ -25,7 +25,10 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
   of a new index (the index's rows of the folder not reached are forgotten) each leave their photos owed, and the next
   index bakes them; so do a new folder's photos whose share stops answering while the bake reads the folder, a new
   photo another program holds open through its first index, and a Ctrl+C part-way through a folder's write, after which
-  the files written keep their rows and the rest are owed.
+  the files written keep their rows and the rest are owed;
+- a folder of many photos says how far its write has got as each chunk of its files ends, and a share that stops
+  answering mid-chunk stops the lines: the page can say it has not moved (photo_index, 2026-10-28: 759 files baked over
+  57 minutes with no line). The lines change nothing written: the files not reached are owed as before.
 
 Lifted: the deleted `bake-photos` command's tests of a PNG and of a turn between the plan and the write
 (test_a_bake_is_written_folder_by_folder), now of the index's bake.
@@ -328,6 +331,60 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertIn("ExifTool stopped answering after 1 of 3 photos: 1 file(s) were written; the rest", said)
         self.assertNotIn("History", said)
         self.assertNotIn("undone", said)
+        self.assertNoBakeListed()
+
+    def test_a_large_folder_says_each_chunk_written_and_a_share_that_stops_mid_chunk_stops_the_lines(self):
+        photos = [self.picture("heat %d.jpg" % number, (40 * number, 90, 160)) for number in range(5)]
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            self.index()
+        heard = lambda lines: [(found.get("files_done"), found.get("files"))
+                               for found in map(bake_after_index.folder_heard, lines) if found is not None]
+        real = field_values.read_one
+
+        def read_one(et, path, *args, **kwargs):
+            if paths.key(path) == paths.key(photos[3]):
+                raise field_values.NotAnswered("ExifTool did not answer in 300 s")
+            return real(et, path, *args, **kwargs)
+        lines = []
+        with mock.patch.object(batches, "CHUNK", 2), \
+                mock.patch.object(file_changes.field_values, "read_one", side_effect=read_one):
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=lines.append)
+        self.assertTrue(baked.stalled)
+        self.assertEqual([(None, None), (2, 5)], heard(lines), "no line after the share stopped answering")
+        self.assertIn(", 2 of 5 of its files reached: ", lines[1])
+        self.assertEqual(3, baked.written, baked)
+        for path in photos[:3]:
+            self.assertBaked(path, 0)
+
+        lines = []
+        with mock.patch.object(batches, "CHUNK", 2):
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=lines.append)
+        self.assertEqual((2, 3), (baked.written, baked.current), baked)
+        self.assertEqual([(None, None)], heard(lines), "two files to write are one chunk")
+        for path in photos:
+            self.assertBaked(path, 0)
+        self.assertNoBakeListed()
+
+    def test_a_progress_line_that_cannot_be_said_does_not_end_the_write(self):
+        """A repo-run server restarting on a .py save orphans its indexer: the stdout pipe's reader is gone and the
+        line raises. The write goes on to its last file, the failure is logged once, no row is left planned."""
+        photos = [self.picture("heat %d.jpg" % number, (40 * number, 90, 160)) for number in range(7)]
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            self.index()
+        lines = []
+
+        def each(line):
+            lines.append(line)
+            if len(lines) == 3:   # the folder's line, the first chunk's, the second chunk's: this one raises
+                raise OSError("the pipe is closed")
+        with mock.patch.object(batches, "CHUNK", 2), \
+                self.assertLogs(bake_after_index.logger, "WARNING") as logged:
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=each)
+        self.assertEqual(7, baked.written, baked)
+        self.assertEqual(1, len(logged.records), "the failure is logged once, not per chunk")
+        self.assertEqual(3, len(lines), "a line was said after one failed")
+        for path in photos:
+            self.assertBaked(path, 0)
         self.assertNoBakeListed()
 
     def test_a_face_missing_from_the_rows_but_held_by_a_current_bake_is_left_alone_and_does_not_return(self):

@@ -29,6 +29,12 @@ line, at 100%): the bake says each folder as it begins (bake_after_index.folder_
 The indexer is a stand-in child that prints the real lines -- and a line cut short and one of no folders among them,
 passed over -- and holds at the second folder until the test lets it go. Failed on the old code: the line was cut at 90
 characters and the bar stayed where the last indexer bar left it.
+
+A folder of many photos is baked a chunk at a time, and the queue's `progressed` moves as each chunk ends, not only as the
+folder begins (photo_index, 2026-10-28: one folder of 759 files baked over 57 minutes with no line, 152 of 2,564
+folders over the page's 5 minutes): the real CLI over five photos, its chunks two files (batches.CHUNK patched in the
+child), each line the queue hears stamped by a clock that moves. Failed on the old code: one line for the folder, one
+`progressed`, and no `files_done` told to the run's row.
 """
 import itertools
 import os
@@ -200,6 +206,62 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertTrue(result.ok, result.errors)
         self.assertTrue(result.details["message"].startswith("3 photo(s) failed and were not indexed"),
                         result.details["message"])
+
+
+@unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
+class TheOwnerWatchesALargeFolderBaked(unittest.TestCase):
+    def test_progressed_moves_as_each_chunk_of_the_folders_files_is_written(self):
+        home = own_home.for_test(self, "bake_chunks_")
+        shim = os.path.join(home.root, "shim")
+        os.makedirs(shim)
+        with open(os.path.join(shim, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(SITECUSTOMIZE % {"root": ROOT}
+                         + "from tagpup.services import batches\nbatches.CHUNK = 2\n")
+        folder = os.path.join(home.root, "Regatta")
+        os.makedirs(folder)
+        for number in range(5):
+            Image.new("RGB", (64, 64), (40 * number, 90, 160)).save(os.path.join(folder, "heat %d.jpg" % number), "JPEG")
+        library_actions.create(home.library("harbour.db"))
+        library = Library(home.library("harbour.db"))
+        self.addCleanup(indexing_jobs.forget, library)
+        queue = indexing_jobs.queue_for(library)
+        # The queue's clock moves a minute at each look: each report it hears is a `progressed` of its own.
+        ticks = itertools.count()
+        clock = mock.Mock(time=lambda: time.time() + 60 * next(ticks))
+        heard, told = [], []
+        real = runs_service.progress
+
+        def spy(lib, run_id, counts, phase, now=None):
+            told.append((phase, dict(counts)))
+            return real(lib, run_id, counts, phase, now)
+
+        def index(folders, report):
+            def hearing(message=None, percent=None):
+                report(message, percent)
+                heard.append((message, percent, queue.status(folder).get("progressed")))
+            return indexing.index_folder(library, folders, ROOT, hearing)
+        saved = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = shim
+        try:
+            with mock.patch.object(indexing_jobs, "time", clock), \
+                    mock.patch.object(runs_service, "progress", side_effect=spy):
+                self.assertTrue(queue.start([folder], index, together=True).ok)
+                queue.wait()
+        finally:
+            if saved is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = saved
+        self.assertEqual("completed", queue.status(folder)["status"], queue.status(folder))
+        in_the_folder = [(message, percent, progressed) for message, percent, progressed in heard
+                         if (message or "").startswith(bake_after_index.FOLDER_SAID + "1 of 1")]
+        self.assertEqual(3, len({progressed for _m, _p, progressed in in_the_folder}), ("progressed moved within the folder",
+                                                                                         heard))
+        self.assertEqual([None, 2, 4], [bake_after_index.folder_heard(message)["files_done"]
+                                        for message, _p, _at in in_the_folder], heard)
+        self.assertEqual([0, 40, 80], [percent for _m, percent, _at in in_the_folder])
+        self.assertEqual([(2, 5), (4, 5)], [(counts["files_done"], counts["files"]) for phase, counts in told
+                                            if phase == "bake" and "files_done" in counts])
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
