@@ -1,5 +1,11 @@
-"""The runs of the recurring jobs, recorded in the library: what tagpup.jobs.recurring
-claims, ends and reads (tagpup.store.job_runs; docs/ARCHITECTURE.md, phase 8).
+"""The runs of the library's jobs, recorded in the library (tagpup.store.job_runs; docs/ARCHITECTURE.md, phase 8).
+
+A run's lifecycle is `run`'s, the one place: claimed, its progress recorded while its block runs, its failure mapped, its
+end written as the block ends, and an end that cannot be written kept and written as the next run of the job in the
+library is claimed in this process. The jobs keep their own scheduling: the recurring runner (tagpup.jobs.recurring), the
+index queue (tagpup.jobs.indexing), a root's move (tagpup.services.roots_location), the naming from tags
+(tagpup.jobs.naming_faces). A run that is not recorded -- refused, the library behind this version's schema or being
+written, the claim failing -- is a null run, whose block runs as its caller decides and which writes nothing.
 
 What a run changed is recorded as counts from the Result the job's service returned --
 attempted, changed, skipped, errors, and the numbers among its details -- never its
@@ -134,11 +140,12 @@ def needs_you(runs):
 
 
 def counts(result):
-    """What a Result says was changed, as counts."""
+    """What a Result says was changed, as counts: never its `percent`, where an index queue's bar stopped, which is not a
+    count of what the run did (#2193)."""
     found = {"attempted": result.attempted, "changed": result.changed,
              "skipped": len(result.skipped), "errors": len(result.errors)}
     for name, value in (result.details or {}).items():
-        if isinstance(value, numbers.Number) and not isinstance(value, bool) and name not in found:
+        if isinstance(value, numbers.Number) and not isinstance(value, bool) and name not in found and name != "percent":
             found[name] = value
     return found
 
@@ -156,19 +163,6 @@ def sweep_abandoned(library, now=None):
     """Mark abandoned every run of `library` still running whose process has ended (tagpup.store.job_runs.sweep_abandoned):
     what a server's start does. `now` is seconds since the epoch, now by default. Returns how many."""
     return job_runs.sweep_abandoned(library.path, time.time() if now is None else now)
-
-
-def finish(library, run_id, now, result=None, error=None, failed=None):
-    """End run `run_id` with the `result` its service returned, or the `error` it raised: done when the Result is ok,
-    else failed, as `failure` says why -- and failed with `failed`, a Failure, when the job says why an ok Result did not
-    do its work (recurring.Job.failed). False when it was no longer this process's to end."""
-    _forget(library, run_id)
-    found = failure(error, result, failed)
-    changed = {"errors": 1} if error is not None else counts(result)
-    if found is None:
-        return job_runs.finish(library.path, run_id, DONE, now, changed, result.message() or None)
-    changed[FAILURE] = found.kind
-    return job_runs.finish(library.path, run_id, FAILED, now, changed, found.sentence)
 
 
 def counts_so_far(library, run_id, counts):
@@ -238,9 +232,8 @@ _under_way = contextvars.ContextVar("tagpup_run_under_way", default=None)
 
 @contextlib.contextmanager
 def recording(library, run_id):
-    """While the block runs, `tell` on this thread records into run `run_id` of `library`: what the code that claimed a
-    run holds around its work (tagpup.jobs.recurring.run_claimed, tagpup.jobs.indexing). A thread started meanwhile is
-    not in it: a run of the indexer a sync queued is its own run."""
+    """While the block runs, `tell` on this thread records into run `run_id` of `library`: what a recorded run's block
+    is run inside (Recorded). A thread started meanwhile is not in it: a run of the indexer a sync queued is its own run."""
     token = _under_way.set([library, run_id, False])
     try:
         yield
@@ -286,6 +279,144 @@ def discard(library, run_id):
     """Delete run `run_id` of this process, still running, as though never claimed (tagpup.store.job_runs.discard)."""
     _forget(library, run_id)
     return job_runs.discard(library.path, run_id)
+
+
+#: Why a run is not recorded when its claim raised (the library gone, unreadable, written by another for longer than
+#: the claim waits): Recorded.error says what.
+UNCLAIMED = "unclaimed"
+
+#: The ends this process could not write, {(the library's db.key, job): {run id: (library, run id, when, counts, failed,
+#: note)}}: each is written as the next run of that job in that library is claimed here (`run`), and leaves only once its
+#: own is written or its row is found gone (#2199). It grows only by a run whose end failed, which needs a library
+#: unwritable as the run ends.
+_unended = {}
+_unended_lock = threading.Lock()
+
+
+def _write_end(library, job, run_id, when, counts, failed, note):
+    """Write the end of run `run_id` of `job`; kept in _unended when it cannot be, to be written as the next run of the
+    job in the library is claimed."""
+    try:
+        ended = end(library, run_id, when, counts, failed=failed, note=note)
+    except Exception as e:
+        with _unended_lock:
+            _unended.setdefault((db.key(library.path), job), {})[run_id] = (library, run_id, when, counts, failed, note)
+        logger.warning("Could not record the end of run %d of %s in %s, written as its next run begins: %s", run_id, job,
+                       library.name, e)
+        return
+    if not ended:
+        logger.info("Run %d of %s in %s was no longer this process's to end.", run_id, job, library.name)
+
+
+def _write_ends_kept(library, job):
+    """Write the ends of `job` in `library` this process could not (_unended); one that fails again is kept."""
+    with _unended_lock:
+        kept = _unended.pop((db.key(library.path), job), {})
+    for each in kept.values():
+        _write_end(each[0], job, *each[1:])
+
+
+class Recorded:
+    """A run of a job as `run` claimed it: true when it is recorded (`run_id`); else a null run, which writes nothing,
+    `why` it is not ("running", "not due", "behind", "busy", UNCLAIMED, "no library"), `holder` the process holding a run
+    of the job and `error` what the claim raised. `now` is when it was claimed, seconds since the epoch.
+
+    Its block (`with`) is the run: what its services tell on this thread is its progress (`recording`), and as the block
+    ends the run is ended -- as `ends` says, or failed when the block raised (`failure` of what it raised; `stopped`, the
+    sentence, when it is not an Exception: a thread stopped), the exception going on. It is claimed on one thread and
+    its block may run on another (the naming's): the block's thread is the one its progress is told on."""
+
+    def __init__(self, library, job, now, run_id=None, why=None, holder=None, error=None, changed=None,
+                 clock=time.time, stopped=None):
+        self.library, self.job, self.now, self.run_id = library, job, now, run_id
+        self.why, self.holder, self.error = why, holder, error
+        self._changed, self._clock, self._stopped = dict(changed or {}), clock, stopped
+        self._said = (None, None, None, None, None)
+        self._recording = None
+
+    def __bool__(self):
+        return self.run_id is not None
+
+    def ends(self, result=None, error=None, failed=None, counts=None, note=None):
+        """What the run's end says, written as its block ends: done, or failed as `failure` says of the `error` the work
+        raised, the `result` it returned or `failed` (a Failure the job gave: recurring.Job.failed, a refusal's kind);
+        its counts the Result's (one error when it raised), what it held from its claim and `counts`; a done run's note
+        `note`, or its Result's message."""
+        self._said = (result, error, failed, counts, note)
+
+    def counts_so_far(self, counts):
+        """Record `counts` as the run's so far (tagpup.store.job_runs.counts_so_far); False when not written -- the run
+        not recorded, no longer this process's, or the write failing (logged). Never raises."""
+        if not self:
+            return False
+        try:
+            return counts_so_far(self.library, self.run_id, counts)
+        except Exception as e:
+            logger.warning("Could not record the counts of run %d of %s in %s: %s", self.run_id, self.job,
+                           self.library.name, e)
+            return False
+
+    def give_back(self):
+        """Delete the run, before its block began, as though never claimed: work refused after the claim (a second
+        click of the naming). Never raises; logged when it cannot be deleted."""
+        if not self:
+            return
+        try:
+            if not discard(self.library, self.run_id):
+                logger.info("Run %d of %s in %s was no longer this process's to give back.", self.run_id, self.job,
+                            self.library.name)
+        except Exception as e:
+            logger.warning("Could not give back run %d of %s in %s: %s", self.run_id, self.job, self.library.name, e)
+
+    def __enter__(self):
+        if self:
+            self._recording = recording(self.library, self.run_id)
+            self._recording.__enter__()
+        return self
+
+    def __exit__(self, kind, raised, trace):
+        if not self:
+            return False
+        self._recording.__exit__(kind, raised, trace)
+        self._recording = None
+        result, error, failed, extra, note = self._said
+        if raised is not None:
+            result, error, extra, note = None, raised, None, None
+            failed = Failure(ERROR, self._stopped) if self._stopped and not isinstance(raised, Exception) else None
+        found = failed if raised is not None and failed is not None else failure(error, result, failed)
+        counted = counts(result) if result is not None else {"errors": 1} if error is not None else {}
+        counted.update(self._changed)
+        counted.update(extra or {})
+        if found is None and note is None and result is not None:
+            note = result.message() or None
+        _write_end(self.library, self.job, self.run_id, self._clock(), counted, found, None if found else note)
+        return False
+
+
+def run(library, job, run_for, clock=time.time, due=None, changed=None, stopped=None, raises=False):
+    """A run of `job` in `library` for the library named `run_for` (None for a job not run per library), claimed now
+    (`claim`: its parent the run of the library this thread is part of) unless `due(last, now)`, asked with the last run
+    that ended, says no, holding `changed` from the claim to its end: a Recorded, whose block is the run. The ends of
+    `job` in `library` this process could not write are written first. A run that is not recorded is a null run, its
+    claim's refusal logged; a library of None is never recorded (an index queue made without one). `clock()` says when,
+    seconds since the epoch; `stopped`: Recorded. `raises`: a claim that fails raises, not logged here, for a caller whose
+    own caller answers and logs it (the request that began a naming, a root's move); else it is logged here, once."""
+    if library is None:
+        return Recorded(None, job, clock(), why="no library")
+    _write_ends_kept(library, job)
+    now = clock()
+    try:
+        claimed = claim(library, job, run_for, now, None if due is None else (lambda last: due(last, now)), changed)
+    except Exception as e:
+        if raises:
+            raise
+        logger.warning("The run of %s in %s is not recorded: its claim failed: %s", job, library.name, e)
+        return Recorded(library, job, now, why=UNCLAIMED, error=e)
+    if not claimed:
+        logger.log(logging.INFO if claimed.why == "busy" else logging.DEBUG, "The run of %s in %s is not recorded (%s).",
+                   job, library.name, claimed.why)
+        return Recorded(library, job, now, why=claimed.why, holder=claimed.holder)
+    return Recorded(library, job, now, run_id=claimed.run_id, changed=changed, clock=clock, stopped=stopped)
 
 
 def get(library, run_id):
