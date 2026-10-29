@@ -291,10 +291,11 @@ def counts_so_far(db_path, run_id, changed):
 _AT_36 = ("parent", "heartbeat", "progress")
 
 
-def progress(db_path, run_id, phase, counts, now):
+def progress(db_path, run_id, phase, counts, now, within=0.0):
     """Record how far run `run_id`, this process's and running, has got: `heartbeat` the time `now` (seconds since the
     epoch), `progress` {"phase": phase, "counts": counts}, as the caller checked them (tagpup.services.job_runs.progress).
-    Made now or not at all (db.write_if_free): db.BUSY while the library is being written. False when the run is no longer
+    Made now or not at all (db.write_if_free): db.BUSY while the library is being written; `within` seconds, tried again
+    for that long (as the claim of a job of RECORDS_ONLY is), for the write that must be made once. False when the run is no longer
     this process's and running -- abandoned, ended, gone with a restore -- or the library is a snapshot at 35 a restore
     has put back and not yet migrated. Never raises for either."""
     text = json.dumps({"phase": phase, "counts": counts}, sort_keys=True)
@@ -303,8 +304,13 @@ def progress(db_path, run_id, phase, counts, now):
         return conn.execute("UPDATE job_runs SET heartbeat = ?, progress = ? WHERE id = ? AND outcome = 'running'"
                             " AND owner = ?", (stamp(now), text, run_id, file_journal.owner())).rowcount == 1
 
+    deadline = time.monotonic() + within
     try:
-        written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
+        while True:
+            written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
+            if written is not db.BUSY or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
     except sqlite3.OperationalError as e:
         message = str(e).lower()
         if "no such column" not in message or not any(column in message for column in _AT_36):

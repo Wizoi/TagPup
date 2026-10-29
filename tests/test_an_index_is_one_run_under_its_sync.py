@@ -494,9 +494,9 @@ class TheDailySyncSaysHowFarItsWalkGot(_Indexing):
         phases = []
         real = job_runs.progress
 
-        def heard(db_path, run_id, phase, counts, now):
+        def heard(db_path, run_id, phase, counts, now, *within):
             phases.append(phase)
-            return real(db_path, run_id, phase, counts, now)
+            return real(db_path, run_id, phase, counts, now, *within)
         with mock.patch.object(job_runs, "progress", side_effect=heard):
             synced = recurring.run_claimed(recurring.JOBS.get(recurring.SYNC), self.library, self.library.name,
                                            lambda now: sync_service.sync(self.library, roots=[pictures]))

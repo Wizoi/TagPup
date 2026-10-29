@@ -6,7 +6,8 @@ another library, or a sync, which names no row while it runs, is not a parent. A
 has not yet opened, is never written by a claim: it is behind, and the claim says so.
 
 A run says how far it got (`services.job_runs.progress`): a phase and counts, never a path, at most once every 10 s unless
-the phase changes, skipped -- not waited for -- while the library is being written, by this process or another; a run that
+the phase changes, skipped -- not waited for -- while the library is being written, by this process or another
+(a change of phase alone waits a moment for it: a sync tells its last phase once); a run that
 is gone, or a library a restore has put back at 35 and not yet migrated, is not written and nothing raises. Libraries are
 made in homes of their own; the names are fictional.
 
@@ -189,22 +190,68 @@ class ARunSaysHowFarItGot(unittest.TestCase):
         self.assertTrue(runs_service.progress(self.library, self.run_id, {"photos_done": 3}, "faces",
                                               now=NOW + runs_service.PROGRESS_EVERY))
 
-    def test_a_phase_change_skipped_as_busy_is_not_remembered_as_made(self):
-        """#2204: a sync is told its last phase once; a write lost to another writer left the row at the old phase."""
+    def hold_the_library(self, seconds):
+        """Another connection (what another process's write is to SQLite) holds the library's write for `seconds`;
+        the thread is started once it does."""
+        held = threading.Event()
+
+        def write():
+            conn = db.connect(self.library.path)
+            try:
+                db.begin(conn, immediate=True)
+                held.set()
+                time.sleep(seconds)
+                conn.rollback()
+            finally:
+                conn.close()
+
+        holder = threading.Thread(target=write)
+        holder.start()
+        self.assertTrue(held.wait(10))
+        self.addCleanup(holder.join)
+        return holder
+
+    def test_a_sync_s_one_tell_of_the_phase_after_the_walk_is_written_though_another_writer_holds_the_library_a_second(self):
+        """#2213: a sync tells the end of its walk once (sync._Walked.ended); a write the library was busy for was lost and
+        the row stayed at 'walking' for the rest of the sync."""
+        from tagpup.services import sync as sync_service
+        with runs_service.recording(self.library, self.run_id):
+            walked = sync_service._Walked(sync_service.WALKING)
+            self.assertEqual("walking", self.said()[1]["phase"])
+            self.hold_the_library(1.0)
+            walked.ended()
+        self.assertEqual("after_the_walk", self.said()[1]["phase"])
+
+    def test_a_phase_change_the_library_stays_busy_for_is_logged_once_and_not_tried_at_every_line(self):
+        """#2214: a phase change waits at most the claim's two seconds; one not written is not tried again by the 100
+        lines that follow it, which wait the 10 s of their phase as a write does (#2196)."""
         say = runs_service.progress
         self.assertTrue(say(self.library, self.run_id, {"folders": 9}, "walking", now=NOW))
-        other = db.connect(self.library.path)
-        try:
-            db.begin(other, immediate=True)
-            self.assertFalse(say(self.library, self.run_id, {"folders": 9}, "metadata", now=NOW + 1))
-        finally:
-            other.rollback()
-            other.close()
+        self.hold_the_library(job_runs.RECORD_WITHIN + 1.5)
+        with mock.patch.object(job_runs, "progress", wraps=job_runs.progress) as store, \
+                self.assertLogs("tagpup.services.job_runs", level="WARNING"):
+            began = time.monotonic()
+            self.assertFalse(say(self.library, self.run_id, {"folders": 9}, "after_the_walk", now=NOW + 1))
+            self.assertLess(time.monotonic() - began, job_runs.RECORD_WITHIN + 1.0)
+            for i in range(100):
+                self.assertFalse(say(self.library, self.run_id, {"folders": 9}, "after_the_walk", now=NOW + 1 + i * 0.05))
+        self.assertEqual(1, store.call_count)
         self.assertEqual("walking", self.said()[1]["phase"])
-        self.assertTrue(say(self.library, self.run_id, {"folders": 9}, "metadata", now=NOW + 2))
-        self.assertEqual("metadata", self.said()[1]["phase"])
-        # The counts of one phase keep their 10 s.
-        self.assertFalse(say(self.library, self.run_id, {"folders": 10}, "metadata", now=NOW + 3))
+
+    def test_a_phase_change_for_a_run_that_is_gone_is_tried_once_not_at_every_line(self):
+        say = runs_service.progress
+        self.assertTrue(say(self.library, self.run_id, {"folders": 9}, "walking", now=NOW))
+        # Taken away as a restore does, not ended by this process (which would forget the run).
+        conn = db.connect(self.library.path)
+        try:
+            conn.execute("DELETE FROM job_runs WHERE id = ?", (self.run_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        with mock.patch.object(job_runs, "progress", wraps=job_runs.progress) as store:
+            for i in range(100):
+                self.assertFalse(say(self.library, self.run_id, {"folders": 9}, "after_the_walk", now=NOW + 1 + i * 0.05))
+        self.assertEqual(1, store.call_count)
 
     def test_while_another_process_writes_the_library_progress_is_skipped_not_waited_for(self):
         """Another connection's open write transaction is what another process's write is to SQLite."""
