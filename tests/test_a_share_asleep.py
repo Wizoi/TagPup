@@ -44,6 +44,7 @@ from tagpup import runtime as runtimes  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.result import SHARE_AWAY, Result  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -786,6 +787,39 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", db_path, "index", folder])
             self.assertEqual(2, result.exit_code, result.output)
             self.assertIn(said, " ".join(result.output.split()), folder)
+
+    def test_the_cli_does_not_stat_a_folder_before_the_bounded_look(self):
+        """Break: click.Path(file_okay=False) on DIRECTORIES: it stats the path itself, unbounded, before folder_refusal."""
+        home = own_home.for_test(self)
+        db_path = home.library("library.db")
+        library_actions.create(db_path)
+        real_stat, statted = os.stat, []
+
+        def stat(path, *args, **kwargs):
+            if str(path).upper().startswith(self.SERVER.upper()):
+                statted.append(path)
+            return real_stat(path, *args, **kwargs)
+        with mock.patch.object(os, "stat", stat):
+            CliRunner().invoke(tagpup_cli.cli, ["--db", db_path, "index", self.FOLDER])
+        self.assertEqual([], statted)
+
+    def test_a_share_that_stops_answering_between_the_look_and_the_queue_is_still_refused_as_away(self):
+        """The review's include hands up the queue's Result whole: the queue's refusal keeps SHARE_AWAY (a 503), where a
+        refusal re-made from its sentence was a 400. Break: include copying `refused` into a Result of its own."""
+        home = own_home.for_test(self)
+        library = Library(home.library("library.db"))
+        library_actions.create(library.path)
+        folder = os.path.join(home.root, "Pictures", "2021 Coast")
+        os.makedirs(folder)
+
+        def queue(folders):
+            away = Result(attempted=len(folders))
+            away.refuse(self.AWAY)
+            away.details[SHARE_AWAY] = True
+            return away
+        result = sync.include(library, folder, [os.path.join(home.root, "Pictures")], queue)
+        self.assertEqual(self.AWAY, result.refused)
+        self.assertTrue(result.details.get(SHARE_AWAY))
 
 
 class TheCardStatsHaveABudget(unittest.TestCase):

@@ -276,7 +276,7 @@ def _folders_now(ctx, param, directories):
 
 
 @cli.command()
-@click.argument("directories", nargs=-1, required=True, type=click.Path(file_okay=False), callback=_folders_now)
+@click.argument("directories", nargs=-1, required=True, type=str, callback=_folders_now)
 @click.option("--force-reembed", is_flag=True, help="Force recreation of embeddings.")
 @click.option("--reset", is_flag=True, help="Delete existing index and taxonomy to start fresh.")
 @click.option("--skip-faces", is_flag=True, help="Skip face detection during indexing.")

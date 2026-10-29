@@ -255,9 +255,6 @@ def folder_refusal(folder, state=None):
     whose network share did not answer; NOT_A_FOLDER_SENTENCE for one that is not there or not a folder. `state` is
     folder_state's answer when the caller has it already (a listing of the folder that did not answer: "unanswered")."""
     result = Result(attempted=1)
-    if not isinstance(folder, str) or not folder:
-        result.refuse("No folder was given.")
-        return result
     state = folder_state(folder) if state is None else state
     if state == "there":
         return None

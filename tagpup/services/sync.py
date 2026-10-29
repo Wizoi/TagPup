@@ -507,13 +507,9 @@ def include(library, folder, roots, queue, ignored=()):
         if not _under_any(folder, {paths.key(f): f for f in walked}):
             result.refuse("That folder is under none of the folders the library holds.")
             return result
-    outcome = queue([folder])
-    result.changed = outcome.changed
-    for what, why in outcome.skipped:
-        result.skip(what, why)
-    if outcome.refused:
-        result.refuse(outcome.refused)
-    return result
+    # The queue's Result whole, as libraries.add hands it up: its details (a share that stopped answering: SHARE_AWAY,
+    # so the route answers 503) are the queue's to say.
+    return queue([folder])
 
 
 def in_step(counts, result=None):
