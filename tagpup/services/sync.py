@@ -863,7 +863,7 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
     result.details["in_step"] = in_step(counts, result)
     try:
         if worth_recording(library, folder is None, result.details["in_step"], counts, result.changed, queued):
-            result.details["record"] = job_runs.record_sync(
+            result.details[RECORD] = job_runs.record_sync(
                 library.path, started, whole=folder is None, in_step=result.details["in_step"],
                 found={what: n for what, n in counts.items() if isinstance(n, int)},
                 changed={"rows": result.changed, **result.details["changed"], "queued_folders": queued},
@@ -874,6 +874,11 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
                                           % (type(e).__name__, e))
     return result
 
+
+#: The id of the sync's record (job_runs.record_sync) among a Result's details, and so among the counts of the job run
+#: that ran it (tagpup.services.job_runs.counts): what pairs the two in the Activity page's timeline
+#: (tagpup.services.activity.timeline_and_children).
+RECORD = "record"
 
 #: What a sync of one folder can find that makes it worth a record by itself (the Activity page's "found_..." counts).
 FOUND_WORTH = ("new", "missing", "moved", "changed")

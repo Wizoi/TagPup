@@ -322,7 +322,7 @@ describe("the other sections", () => {
     await flush(window, 6);
     const rows = document.querySelectorAll("#timeline-body tr.entry");
     assert.equal(rows.length, timeline.entries.length);
-    assert.deepEqual([...rows].slice(0, 3).map((row) => row.dataset.kind), ["job", "sync", "job"]);
+    assert.deepEqual([...rows].slice(0, 3).map((row) => row.dataset.kind), ["job", "sync", "sync"]);
     assert.match(rows[0].textContent, /the process that started it stopped before it could record its end/);
     const more = document.getElementById("timeline-more");
     assert.equal(more.disabled, false);

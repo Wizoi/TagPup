@@ -55,9 +55,21 @@ def roots_there(roots):
 
 
 def _counts(found):
-    """The numbers among `found`, a dict: what a record says it found or changed."""
+    """The numbers among `found`, a dict: what a record says it found or changed -- never the id of a sync's record a
+    sync job's run holds (sync.RECORD), which is not a count."""
     return {name: value for name, value in (found or {}).items()
-            if isinstance(value, numbers.Number) and not isinstance(value, bool)}
+            if isinstance(value, numbers.Number) and not isinstance(value, bool) and name != sync.RECORD}
+
+
+def _sync_run(entry, run):
+    """The timeline's one entry of a sync a job ran (the `sync` job: the daily sync, a watcher's whole sync): its record's
+    `entry` -- kind "sync", what it was and what it counted -- taking the job run's id, tag, times, parent and progress, so
+    the index runs it queued (whose `parent` is the job run) and its logs (the job's tag, which its sync's lines carry,
+    tagpup.core.runs) are found under it; and, when the run did not end done, its outcome and why (its note)."""
+    entry.update(id=run.id, run=_tag(run), time=run.started, finished=run.finished,
+                 seconds=seconds_between(run.started, run.finished), parent=run.parent, progress=_progress(run))
+    if run.outcome != job_runs.DONE:
+        entry.update(outcome=run.outcome, error=run.note)
 
 
 def _what(run):
@@ -174,7 +186,9 @@ def timeline_and_children(library, limit=50):
     {"kind": "change" | "job" | "index" | "sync", "library", "time", "finished", "seconds",
     "what", "outcome", "counts", "id", "run", "error"}, a job's and an index's also its "parent" and "progress"
     (under_way), an index's also its "syncs" (the tags of the syncs it is part of: a folder sync's index, whose own
-    row has no parent while the sync runs). A sync's change of the journal is its sync's entry, not one of its own. An index's run says how many
+    row has no parent while the sync runs). A sync's change of the journal is its sync's entry, not one of its own; so is
+    the run of the job that ran it, when the run names its record (sync.RECORD) among the syncs read here (_sync_run): a
+    record gone, or an id that is now another job's, is no sync read, and the run stands as a job. An index's run says how many
     folders it indexed, never which (its row holds no path); its error is its note only when it failed or was abandoned."""
     limit = max(1, min(int(limit), MOST))
     entries = []
@@ -183,7 +197,7 @@ def timeline_and_children(library, limit=50):
         syncs = job_runs.recent_syncs(conn, limit)
     finally:
         conn.close()
-    sync_changes = set()
+    sync_changes, by_record = set(), {}
     for record in syncs:
         entry = _sync_entry(library, record)
         if record["change_id"]:
@@ -195,8 +209,13 @@ def timeline_and_children(library, limit=50):
                         "counts": dict(entry["changed"], **{"found_" + k: v for k, v in entry["found"].items()
                                                             if k in ("new", "missing", "moved", "changed")}),
                         "id": record["id"], "run": entry["run"], "error": None})
+        by_record[record["id"]] = entries[-1]
     indexes = job_runs.runs(library.path, job_runs.INDEX, job_runs.KEEP_RUNS)
     for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS + (job_runs.INDEX,)) + indexes:
+        paired = by_record.pop(run.changed.get(sync.RECORD), None) if run.job != job_runs.INDEX else None
+        if paired is not None:
+            _sync_run(paired, run)
+            continue
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
                         "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,
