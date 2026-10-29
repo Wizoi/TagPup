@@ -351,6 +351,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
             baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=lines.append)
         self.assertTrue(baked.stalled)
         self.assertEqual([(None, None), (2, 5)], heard(lines), "no line after the share stopped answering")
+        self.assertIn(", 2 of 5 of its files reached: ", lines[1])
         self.assertEqual(3, baked.written, baked)
         for path in photos[:3]:
             self.assertBaked(path, 0)
@@ -360,6 +361,28 @@ class TheIndexWritesTheBake(unittest.TestCase):
             baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=lines.append)
         self.assertEqual((2, 3), (baked.written, baked.current), baked)
         self.assertEqual([(None, None)], heard(lines), "two files to write are one chunk")
+        for path in photos:
+            self.assertBaked(path, 0)
+        self.assertNoBakeListed()
+
+    def test_a_progress_line_that_cannot_be_said_does_not_end_the_write(self):
+        """A repo-run server restarting on a .py save orphans its indexer: the stdout pipe's reader is gone and the
+        line raises. The write goes on to its last file, the failure is logged once, no row is left planned."""
+        photos = [self.picture("heat %d.jpg" % number, (40 * number, 90, 160)) for number in range(7)]
+        with mock.patch.object(bake_after_index, "bake_folders"):
+            self.index()
+        lines = []
+
+        def each(line):
+            lines.append(line)
+            if len(lines) == 3:   # the folder's line, the first chunk's, the second chunk's: this one raises
+                raise OSError("the pipe is closed")
+        with mock.patch.object(batches, "CHUNK", 2), \
+                self.assertLogs(bake_after_index.logger, "WARNING") as logged:
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=each)
+        self.assertEqual(7, baked.written, baked)
+        self.assertEqual(1, len(logged.records), "the failure is logged once, not per chunk")
+        self.assertEqual(3, len(lines), "a line was said after one failed")
         for path in photos:
             self.assertBaked(path, 0)
         self.assertNoBakeListed()
