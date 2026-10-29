@@ -42,7 +42,8 @@ Needs you, What happened (run trees), folded Schedule / Server / Logs; one `/api
    per run, parent link from the held tags, throttled progress, end with counts and a note, in-memory history deleted,
    abandoned sweep at start. Needs: no other migration in flight. Scenarios: restart during an index says abandoned and
    why; the sync shows done with its index running beneath it; an index that fails to start is shown failed with a sentence.
-   B2b-2 (the rest of B2): deletes the queue's in-memory `_history` (B2 above names it deleted; until B2b-2 it stays), and
+   B2b-2 (the rest of B2): deletes the queue's in-memory `_history` (deleted: Now and the timeline read the `index` rows,
+   `services/activity.under_way`, `index_runs_under`, `timeline`), and
    removes `sync.progress_into` and its `_progress` contextvar -- the walk's progress is the run's row, told through
    `job_runs.tell`. The page it brings must read `store.job_runs.under_way()` / `tree()`, never `latest()`, to know whether
    an index runs (`latest()` is the newest row of any job, not the index's), and builds the name of a run's log from the
