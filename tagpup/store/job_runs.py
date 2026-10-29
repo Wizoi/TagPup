@@ -34,8 +34,10 @@ logger = logging.getLogger(__name__)
 RUNNING, DONE, FAILED, ABANDONED = "running", "done", "failed", "abandoned"
 OUTCOMES = (RUNNING, DONE, FAILED, ABANDONED)
 
-#: The job a run of the indexer is recorded as (tagpup.jobs.indexing). Its row holds, as `changed["run"]` from the
-#: claim on, the run's tag (tagpup.core.runs.index_tag), which the indexer's own log file is named by (tagpup.logs.run_log).
+#: The job a run of the indexer is recorded as (tagpup.jobs.indexing). Its row holds from the claim on, in `changed`,
+#: the run's tag (`run`, tagpup.core.runs.index_tag), which the indexer's own log file is named by (tagpup.logs.run_log),
+#: how many folders it indexes (`folders`) and the tags of the syncs it is part of (`syncs`, when any): what the Activity
+#: page reads an index by (tagpup.services.activity), never a path.
 INDEX = "index"
 
 #: The jobs whose claim records a run and gates none: an index, which the graphics card's turns already take one at a time

@@ -7,10 +7,10 @@ Modelled on how Immich (Jobs), Jellyfin (Scheduled Tasks, Logs), Hangfire and Si
 raw, downloaded) show background work. What it asks:
 
 - GET /api/activity/now, which the page asks every few seconds while it is in view: what
-  runs now -- each library's index queue and Suggest runs, the recurring jobs running in
-  any process (their `running` rows), the folder watcher's sync, and whether the server
-  takes work or waits to move onto a new version. Cheap: memory, and one small read of
-  each library's `job_runs`. Each library also lists its batches of photo files, running or
+  runs now -- each library's index queue and Suggest runs, the runs running in any process
+  (their `running` rows, an index the CLI runs among them, each with its parent and how far
+  it got), the folder watcher's sync, and whether the server takes work or waits to move onto
+  a new version. Cheap: memory, and small reads of each library's `job_runs`. Each library also lists its batches of photo files, running or
   waiting (tagpup.services.batches), with the counts of their files.
 - GET /api/activity/batches: those batches alone, of every library; POST
   /api/activity/batches/cancel stops one of this process's at its chunk, or never starts it.
@@ -177,22 +177,10 @@ def _app_url(kind, library_name, query=""):
     return "%s://%s:%d/%s/%s" % (request.scheme, host, port, urllib.parse.quote(library_name), query)
 
 
-def _index_runs_of():
-    """{a run's tag: [the runs of the indexer it queued]}, from this process's index queues:
-    a sync's new folders, indexed as part of it (their `parents`)."""
-    found = {}
-    for _name, queue in indexing_jobs.every_queue():
-        running = queue.now()["running"]
-        for run in queue.history() + ([running] if running else []):
-            for parent in run.get("parents") or ():
-                found.setdefault(parent, []).append(run["run"])
-    return found
-
-
 def _logs_for(run, children=None):
     """The logs a run's lines are in, as the page is to read them, the first its own: a run
     of the indexer's own file, then this server's; any other run, this server's, then the
-    own files of the runs of the indexer it queued (`children`, _index_runs_of). [] for
+    own files of the runs of the indexer it queued (`children`, activity.index_runs_under). [] for
     none. Named by tagpup.logs alone: the page never spells a log's name."""
     if not run:
         return []
@@ -209,21 +197,24 @@ def now():
     every = _libraries()
     queues = {name.lower(): queue for name, queue in indexing_jobs.every_queue() if name}
     suggesting = suggestion_jobs.under_way()
-    children = _index_runs_of()
     found = []
     for library in every:
         queue = queues.get(library.name.lower())
         indexed = queue.now() if queue is not None else {"running": None, "queued": []}
         if indexed["running"]:
             indexed["running"]["logs"] = _logs_for(indexed["running"]["run"])
+        # This process's index is `indexing` above, from its queue: its row is not listed again.
+        mine = (indexed["running"] or {}).get("run")
         running = []
         try:
-            for (job, _for), (last, _ended) in job_runs.latest(library).items():
-                # An index's run is `indexing` above, from this process's queue, until the page reads the runs (B2b-2).
-                if last is not None and last.outcome == job_runs.RUNNING and job != job_runs.INDEX:
-                    tag = runs.job_tag(last.library, last.id)
-                    running.append({"job": job, "run_id": last.id, "started": last.started, "run": tag,
-                                    "logs": _logs_for(tag, children)})
+            children = None
+            for run in activity.under_way(library):
+                if mine is not None and run["run"] == mine:
+                    continue
+                if run["job"] != job_runs.INDEX and children is None:
+                    children = activity.index_runs_under(library)
+                run["logs"] = _logs_for(run["run"], children)
+                running.append(run)
         except Exception as e:
             logger.warning("Could not read the running jobs of %s: %s", library.name, e)
         found.append({"name": library.name, "indexing": indexed,
@@ -267,10 +258,10 @@ def cancel_batch():
 def jobs():
     limit = _int_arg("runs", RUNS, MOST_RUNS)
     runner = _task(runtimes.RECURRING_JOBS)
-    children = _index_runs_of()
     listed = []
     for library in _libraries():
         try:
+            children = activity.index_runs_under(library)
             listed.append({"name": library.name, "jobs": recurring.overview(library, limit=limit)})
             for job in listed[-1]["jobs"]:
                 for run in job["runs"]:
@@ -316,12 +307,12 @@ def run_job():
 def sync_state():
     watcher = _lifecycle().watcher()
     watching = watcher.status() if watcher is not None else None
-    children = _index_runs_of()
     listed = []
     for library in _libraries():
         entry = {"name": library.name, "review_url": _app_url("tuner", library.name, "?review=1")}
         try:
             entry.update(activity.sync_state(library))
+            children = activity.index_runs_under(library)
             for which in ("last_whole", "last_folder"):
                 if entry.get(which):
                     entry[which]["logs"] = _logs_for(entry[which]["run"], children)
@@ -421,24 +412,16 @@ def server():
 @routes.get("/api/activity/timeline")
 def timeline():
     limit = _int_arg("limit", TIMELINE, MOST_TIMELINE)
-    entries = []
+    entries, children = [], {}
     for library in _libraries():
         try:
             entries += activity.timeline(library, limit)
+            children[library.name] = activity.index_runs_under(library)
         except Exception as e:
             logger.warning("Could not read what was done in %s: %s", library.name, e)
-    for name, queue in indexing_jobs.every_queue():
-        for run in queue.history()[:limit]:
-            entries.append({"kind": "index", "library": name, "time": run["started"], "finished": run["finished"],
-                            "seconds": activity.seconds_between(run["started"], run["finished"]),
-                            "what": "index of %s%s" % (run["name"], " and %d more folder(s)" % (run["folders"] - 1)
-                                                       if run["folders"] > 1 else ""),
-                            "outcome": run["outcome"], "counts": {"folders": run["folders"]}, "id": None,
-                            "run": run["run"], "error": run["message"] if run["outcome"] == "failed" else None})
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
-    children = _index_runs_of()
     for entry in entries[:limit]:
-        entry["logs"] = _logs_for(entry["run"], children)
+        entry["logs"] = _logs_for(entry["run"], children.get(entry["library"]))
     return jsonify({"limit": limit, "entries": entries[:limit], "more": len(entries) > limit})
 
 

@@ -811,7 +811,6 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual("completed", status["status"], status)
         self.assertTrue(status["message"].startswith("Folder indexed. "), status["message"])
         self.assertTrue(status["message"].endswith(" " + line), status["message"])
-        self.assertEqual(status["message"], queue.history()[0]["message"])
 
     def test_a_turned_photos_faces_read_from_its_bake_are_the_boxes_a_detection_stores(self):
         folder = self.folder("Harbour Turned")

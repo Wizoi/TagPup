@@ -116,6 +116,13 @@ def parent_run(library):
     return None
 
 
+def syncs(library, tags):
+    """The tags of syncs of `library` (a library's name) among `tags`, in their order: what a run's row names the syncs it
+    is part of by, a sync's own run being recorded only as it ends (parent_run)."""
+    want = _part(library)
+    return [each for each in tags if is_tag(each) and each.split(":", 2)[:2] == ["sync", want]]
+
+
 def held():
     """The tags held on this thread (not the process's): the runs something started here is
     part of -- a run of the indexer a sync queued is the sync's too (tagpup.jobs.indexing)."""

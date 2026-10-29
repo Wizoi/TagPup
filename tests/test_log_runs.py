@@ -137,7 +137,7 @@ class TheRunsTagTheirLines(LinesTest):
             sync_service.sync(self.library, apply=True)
         self.assertEqual((runs.sync_tag("harbour", held["started"]),), held["tags"])
 
-    def test_a_run_of_the_indexer_tags_its_lines_and_is_remembered(self):
+    def test_a_run_of_the_indexer_tags_its_lines(self):
         queue = indexing_jobs.IndexQueue("harbour")
         seen = {}
 
@@ -151,10 +151,6 @@ class TheRunsTagTheirLines(LinesTest):
         self.assertEqual(1, len(seen["tags"]))
         self.assertTrue(seen["tags"][0].startswith("index:harbour:"), seen["tags"])
         self.assertIn("[run %s] - indexing" % seen["tags"][0], self.lines.lines[0])
-        history = queue.history()
-        self.assertEqual(1, len(history))
-        self.assertEqual(seen["tags"][0], history[0]["run"])
-        self.assertEqual("completed", history[0]["outcome"])
 
     def test_the_indexer_is_told_its_run_and_its_log(self):
         started = []

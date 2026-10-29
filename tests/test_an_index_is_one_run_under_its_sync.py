@@ -8,8 +8,12 @@ sentence, or done and counted cancelled. The indexer it starts (the CLI, faked h
 claims nothing. A library behind this version's schema, a library being written by the bake, a row pruned mid-run: the
 index runs as it would have; another process writing the library as an index starts leaves it unrecorded, started at
 once; an end that cannot be written is written as the next index begins. Two processes indexing one library (the app and
-a CLI sync) each record their own. The timeline lists an index once. The daily sync's walk says how far it got in its own
-run. A server killed mid-index leaves its run to the sweep at the next start, under its sync still. Libraries are made in
+a CLI sync) each record their own. The daily sync's walk says how far it got in its own run. A server killed mid-index
+leaves its run to the sweep at the next start, under its sync still.
+
+The Activity page reads the index's runs from these rows alone (tagpup.services.activity; the queue keeps no history):
+the timeline lists each once, nested under its sync with how far it got, cancelled or abandoned as it ended, with its
+log; Now lists another process's index among the runs, and this process's once, as its queue's. Libraries are made in
 homes of their own; the names are fictional.
 """
 import json
@@ -25,6 +29,8 @@ import migration_names  # noqa: E402
 
 from PIL import Image  # noqa: E402
 
+from tagpup import logs  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
@@ -35,6 +41,8 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import roots_location  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
 from tagpup.store import db, job_runs, schema  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
+from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -161,6 +169,21 @@ class _Indexing(unittest.TestCase):
         [run] = [each for each in self.runs(library) if each.job == runs_service.INDEX]
         return run
 
+    def page(self, url):
+        """What the Activity page is answered at `url`, by an app of this home's libraries (Flask's test client)."""
+        app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background([])))
+        app.testing = True
+        reply = app.test_client().get(url)
+        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        return reply.get_json()
+
+    def timeline(self, kind):
+        return [entry for entry in self.page("/api/activity/timeline")["entries"] if entry["kind"] == kind]
+
+    def own_log(self, run):
+        """The log an index's own indexer writes, which the page links to."""
+        return logs.run_log(indexing.INDEXER_LOG, run.changed["run"])
+
 
 class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
     def test_the_daily_sync_s_index_is_its_child_says_how_far_it_got_and_ends_with_its_counts_and_message(self):
@@ -188,14 +211,26 @@ class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
                                                       "conflicts": 0, "percent": 0}}, run.progress)
         text = rows(self.library.path, "SELECT COALESCE(progress, '') || changed || COALESCE(note, '') FROM job_runs")
         self.assertFalse(any("Regatta" in each[0] or "Pictures" in each[0] for each in text), text)
-        # Its tag, which its indexer's log is named by, is in its row: what the page will find the run's lines by.
+        # Its tag, which its indexer's log is named by, is in its row: what the page finds the run's lines by.
         self.assertTrue(run.changed["run"].startswith("index:harbour:"), run.changed)
+        [entry] = self.timeline("index")
+        self.assertEqual((synced.run_id, "bake", "index of 2 folder(s)"),
+                         (entry["parent"], entry["progress"]["phase"], entry["what"]))
+        self.assertEqual(run.heartbeat, entry["progress"]["progressed"])
+        [sync] = [each for each in self.timeline("job") if each["id"] == synced.run_id]
+        self.assertEqual([logs.SERVER_LOG, self.own_log(run)], sync["logs"])
 
-    def test_the_timeline_lists_an_index_once_from_the_queue_not_again_as_a_job(self):
+    def test_the_timeline_lists_an_index_once_from_its_row_with_its_log(self):
         """#2188: the index's row was listed as a job beside the queue's own entry of it."""
         self.queued([self.folder("Regatta")], self.code(bars(1)))
-        self.assertEqual("index", self.index_run().job)
-        self.assertEqual([], [entry for entry in activity.timeline(self.library) if entry["kind"] == "job"])
+        run = self.index_run()
+        found = [entry for entry in self.page("/api/activity/timeline")["entries"] if entry["kind"] in ("index", "job")]
+        self.assertEqual([("index", run.id, "index of 1 folder(s)", "completed", None, run.changed["run"])],
+                         [(each["kind"], each["id"], each["what"], each["outcome"], each["error"], each["run"])
+                          for each in found])
+        self.assertEqual([self.own_log(run), logs.SERVER_LOG], found[0]["logs"])
+        self.assertEqual([("index", run.id)], [(each["kind"], each["id"]) for each in activity.timeline(self.library)
+                                               if each["kind"] != "change"])
 
     def test_an_index_queued_by_no_run_is_a_top_run_and_the_indexer_it_starts_claims_none(self):
         folder = self.folder("Regatta")
@@ -219,6 +254,10 @@ class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
                           for each in (self.library, other)):
                 self.assertLess(time.monotonic(), deadline)
                 time.sleep(0.02)
+            now = {entry["name"]: entry for entry in self.page("/api/activity/now")["libraries"]}
+            for library in (self.library, other):
+                self.assertEqual((self.index_run(library).changed["run"], []),
+                                 (now[library.name]["indexing"]["running"]["run"], now[library.name]["jobs"]))
         finally:
             open(release, "w").close()
             for queue in queues:
@@ -233,6 +272,7 @@ class AnIndexThatDoesNotFinishIsRecordedSo(_Indexing):
         self.assertEqual("cancelled", status["status"])
         run = self.index_run()
         self.assertEqual((job_runs.DONE, indexing.CANCELLED_WAITING, 1), (run.outcome, run.note, run.changed["cancelled"]))
+        self.assertEqual([("cancelled", None)], [(entry["outcome"], entry["error"]) for entry in self.timeline("index")])
 
     def test_an_index_that_fails_to_start_ends_failed_with_the_sentence_the_queue_shows(self):
         """WinError 206: a command line past 32,767 characters, the indexer never started (#2149)."""
@@ -297,6 +337,10 @@ class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):
         self.assertEqual("completed", status["status"], status)
         self.assertEqual([(35, 0)], rows(behind.path, "SELECT (SELECT MAX(version) FROM schema_version),"
                                                       " (SELECT COUNT(*) FROM job_runs)"))
+        self.queued([self.folder("Lighthouse")], self.code(bars(1)))
+        self.assertEqual({"breakwater": [], "harbour": []},
+                         {entry["name"]: entry["jobs"] for entry in self.page("/api/activity/now")["libraries"]})
+        self.assertEqual([("harbour", "completed")], [(entry["library"], entry["outcome"]) for entry in self.timeline("index")])
 
     def test_while_the_bake_holds_the_library_progress_is_skipped_and_the_index_is_not_slowed(self):
         folders = [self.folder("Quay %d" % number) for number in range(5)]
@@ -393,8 +437,14 @@ class TwoProcessesIndexingOneLibrary(_Indexing):
             found = [run for run in self.runs() if run.job == "index"]
             self.assertEqual([job_runs.DONE, job_runs.RUNNING], [run.outcome for run in found])
             self.assertNotEqual(found[0].owner, found[1].owner)
-            # The newest index has ended; the other process's still runs.
+            # The newest index has ended; the other process's still runs, and Now lists it under its sync.
             self.assertEqual(["the index job is running"], roots_location._running_here(self.library))
+            [theirs] = [entry for entry in self.page("/api/activity/now")["libraries"] if entry["name"] == "harbour"]
+            self.assertEqual([("index", found[1].id, found[1].changed["run"], found[1].parent,
+                               [self.own_log(found[1]), logs.SERVER_LOG])],
+                             [(each["job"], each["run_id"], each["run"], each["parent"], each["logs"])
+                              for each in theirs["jobs"]])
+            self.assertIsNotNone(found[1].parent)
         finally:
             processes.kill_tree(cli.pid)
             cli.wait(30)
@@ -494,6 +544,11 @@ class AServerKilledMidIndex(_Indexing):
         found = self.runs()
         self.assertEqual([("index", found[1].id, job_runs.ABANDONED, job_runs.STOPPED), ("sync", None, job_runs.DONE, None)],
                          [(run.job, run.parent, run.outcome, run.note if run.job == "index" else None) for run in found])
+        [entry] = self.timeline("index")
+        self.assertEqual(("abandoned", job_runs.STOPPED, found[1].id, [self.own_log(found[0]), logs.SERVER_LOG]),
+                         (entry["outcome"], entry["error"], entry["parent"], entry["logs"]))
+        [sync] = self.timeline("job")
+        self.assertEqual([logs.SERVER_LOG, self.own_log(found[0])], sync["logs"])
 
 
 if __name__ == "__main__":

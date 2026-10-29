@@ -312,7 +312,6 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
         status = queue.status(self.folder)
         self.assertEqual("cancelled", status["status"], status)
         self.assertEqual(indexing_service.CANCELLED_WAITING, status["message"])
-        self.assertEqual("cancelled", queue.history()[0]["outcome"])
 
     def test_a_run_that_has_begun_is_not_stopped(self):
         queue = indexing_jobs.queue_for(self.library)

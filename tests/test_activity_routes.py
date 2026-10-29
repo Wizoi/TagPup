@@ -169,7 +169,8 @@ class Now(Base):
         self.assertEqual([{"name": "Harbour Walk", "folders": 1}], indexing["queued"])
         self.assertEqual([], by_name["harbour"]["jobs"])
         self.assertEqual([{"job": "snapshots", "run_id": claim.run_id, "started": by_name["regatta"]["jobs"][0]["started"],
-                           "run": "job:regatta:%d" % claim.run_id, "logs": [logs.SERVER_LOG]}],
+                           "run": "job:regatta:%d" % claim.run_id, "parent": None, "progress": None,
+                           "logs": [logs.SERVER_LOG]}],
                          by_name["regatta"]["jobs"])
         self.assertEqual([logs.run_log("indexer", indexing["running"]["run"]), logs.SERVER_LOG],
                          indexing["running"]["logs"])
@@ -367,18 +368,6 @@ class SyncSnapshotsAndTheTimeline(Base):
         sync = [entry for entry in found["entries"] if entry["kind"] == "sync"][0]
         self.assertEqual(2, sync["counts"]["found_missing"])
         self.assertEqual(1, len(self.client().get("/api/activity/timeline?limit=1").get_json()["entries"]))
-
-    def test_the_index_queues_runs_are_in_the_timeline(self):
-        queue = indexing_jobs.queue_for(self.harbour)
-        self.addCleanup(indexing_jobs.forget, self.harbour)
-        queue.start([self.home.root], lambda folder, report: Result(attempted=1, changed=1))
-        queue.wait()
-        entries = [e for e in self.get("/api/activity/timeline")["entries"] if e["kind"] == "index"]
-        self.assertEqual(1, len(entries))
-        self.assertEqual("completed", entries[0]["outcome"])
-        self.assertTrue(entries[0]["run"].startswith("index:harbour:"))
-        # The logs it wrote in, named by the one owner of the names: its own, then the server's.
-        self.assertEqual([logs.run_log("indexer", entries[0]["run"]), logs.SERVER_LOG], entries[0]["logs"])
 
     def test_a_syncs_logs_include_the_indexing_it_queued(self):
         """A sync queues its new files' folders; the run of the indexer that indexes them
