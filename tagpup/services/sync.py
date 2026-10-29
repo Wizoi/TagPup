@@ -85,6 +85,7 @@ import collections
 import contextlib
 import contextvars
 import logging
+import numbers
 import os
 import threading
 import time
@@ -150,13 +151,19 @@ def walked(progress):
     """How far a sync's walk got as its run's row says it -- `progress`, a run's as tagpup.services.activity.under_way
     gives it ({"phase", "counts", "progressed"}), None before the run said or in a library before migration 36 --
     as the Activity page's Now reads it: {"phase" (WALKING, WALKING_AGAIN, AFTER_THE_WALK), "folders" walked, "files"
-    (photo files found), "progressed" (when it last said)}, or None. Counts only: the folder the walk is at is the
-    process's that walks (walking_at_into)."""
-    if progress is None:
+    (photo files found), "progressed" (when it last said)}, or None -- also for a progress this version does not know
+    (a phase it has no name for, counts that are not the two numbers: a row a newer version wrote). Counts only: the
+    folder the walk is at is the process's that walks (walking_at_into)."""
+    if not isinstance(progress, dict):
         return None
-    counts = progress["counts"]
-    return {"phase": _PHASE_SAID[progress["phase"]], "folders": counts["folders"], "files": counts["files"],
-            "progressed": progress["progressed"]}
+    counts = progress.get("counts")
+    phase = _PHASE_SAID.get(progress.get("phase"))
+    if phase is None or not isinstance(counts, dict):
+        return None
+    folders, files = counts.get("folders"), counts.get("files")
+    if not all(isinstance(each, numbers.Number) and not isinstance(each, bool) for each in (folders, files)):
+        return None
+    return {"phase": phase, "folders": folders, "files": files, "progressed": progress.get("progressed")}
 
 
 class _Walked:

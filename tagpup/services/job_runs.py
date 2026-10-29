@@ -106,8 +106,8 @@ def _counts_only(counts):
 def progress(library, run_id, counts, phase, now=None):
     """Record how far run `run_id` of `library` has got: in `phase`, one of PHASES (anything else is a code's mistake,
     ValueError), with `counts` ({name: number}; anything else in it is dropped). Tried at most once every
-    PROGRESS_EVERY seconds a run unless the phase changed -- a try the library was busy for, or that failed, counts --
-    and not written while the library is being written; `now` is seconds
+    PROGRESS_EVERY seconds a run unless the phase changed -- a try the library was busy for, or that failed, counts,
+    except one that changed the phase, which is tried again at the next tell -- and not written while the library is being written; `now` is seconds
     since the epoch, now by default. True when written; False when not -- too soon, the library busy, the run no longer
     this process's and running, or a library a restore has put back at 35. Never raises for those."""
     if phase not in PHASES:
@@ -120,7 +120,19 @@ def progress(library, run_id, counts, phase, now=None):
             return False
         # Before the write: one the library is busy for is not tried again at the next line (#2196).
         _written[held] = (now, phase)
-    return job_runs.progress(library.path, run_id, phase, _counts_only(counts), now) is True
+    try:
+        written = job_runs.progress(library.path, run_id, phase, _counts_only(counts), now) is True
+    except BaseException:
+        written = False
+        raise
+    finally:
+        # A change of phase not written is not made: the next tell of that phase goes through (a sync tells its last
+        # phase once), where the counts of a phase keep their wait (#2204).
+        if not written and last is not None and last[1] != phase:
+            with _written_lock:
+                if _written.get(held) == (now, phase):
+                    _written[held] = last
+    return written
 
 
 #: The run under way on this thread that `tell` records into: [library, run id, whether a failure was said], or None.

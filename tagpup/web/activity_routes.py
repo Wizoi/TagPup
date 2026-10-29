@@ -195,17 +195,26 @@ def _logs_for(run, children=None):
 def _syncing(syncing, walks):
     """The folder watcher's sync under way (Watcher.status), or None, with how far it got: a sync of the whole library
     is a run of the `sync` job (recurring.sync_whole), one at a time a library, so its phase and counts are that
-    library's running `sync` row in `walks` ({library name, lower case: its run}, as activity.under_way reads it; none
-    when the read failed), the folder its walk is at added from this process's memory -- None when another process
-    walks it (a CLI's sync the watcher's claim was refused for). A sync of one folder records no run while it runs:
-    null, its line names the folder already."""
+    library's running `sync` row in `walks` ({library name, lower case: its run, or None when its runs could not be
+    read}, as activity.under_way reads them), the folder its walk is at added from this process's memory, which shows
+    before the row has said anything (its counts trail the folder by up to 10 s). A CLI's sync claims no `sync` run (it records one only
+    as it ends); the only other holder of the library's running `sync` row is the daily sync job, so while the watcher's
+    claim waits for it Now shows that run's counts under the watcher's line (and in the library's jobs). A sync of one
+    folder records no run while it runs: null, its line names the folder already."""
     if syncing is None:
         return None
     syncing = dict(syncing)
     at = syncing.pop("walking_at")
-    run = walks.get(syncing["library"].lower()) if syncing["folder"] is None else None
+    if syncing["folder"] is not None:
+        syncing["progress"] = None
+        return syncing
+    name = syncing["library"].lower()
+    run = walks.get(name)
+    if name in walks and run is None:
+        syncing["progress"] = None  # the library's runs could not be read: no word of how far, not the folder alone
+        return syncing
     walked = sync_service.walked(run["progress"]) if run is not None else None
-    syncing["progress"] = dict(walked, folder=at) if walked is not None else None
+    syncing["progress"] = dict(walked or {}, folder=at) if walked is not None or at is not None else None
     return syncing
 
 
@@ -237,6 +246,7 @@ def now():
                 running.append(run)
         except Exception as e:
             logger.warning("Could not read the running jobs of %s: %s", library.name, e)
+            walks[library.name.lower()] = None
         found.append({"name": library.name, "indexing": indexed,
                       "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
                       "jobs": running, "batches": batches.listing(library)})
@@ -435,8 +445,8 @@ def timeline():
     entries, children = [], {}
     for library in _libraries():
         try:
-            entries += activity.timeline(library, limit)
-            children[library.name] = activity.index_runs_under(library)
+            found, children[library.name] = activity.timeline_and_children(library, limit)
+            entries += found
         except Exception as e:
             logger.warning("Could not read what was done in %s: %s", library.name, e)
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)

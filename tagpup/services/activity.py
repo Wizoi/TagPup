@@ -65,12 +65,15 @@ def _progress(run):
     return dict(run.progress, progressed=run.heartbeat) if run.progress else None
 
 
-def index_runs_under(library):
+def index_runs_under(library, indexes=None):
     """{a run's tag: [the tags of the index runs part of it]}, newest first, from the library's index runs (job_runs.INDEX,
-    the newest KEEP_RUNS): each under the job run its row names as `parent` and under each sync it names (`syncs`). What
-    finds a run's lines in its indexes' own logs (tagpup.web.activity_routes)."""
+    the newest KEEP_RUNS; `indexes`, when the caller has read them): each under the job run its row names as `parent`
+    and under each sync it names (`syncs`). What finds a run's lines in its indexes' own logs
+    (tagpup.web.activity_routes)."""
     found = {}
-    for run in job_runs.runs(library.path, job_runs.INDEX, job_runs.KEEP_RUNS):
+    if indexes is None:
+        indexes = job_runs.runs(library.path, job_runs.INDEX, job_runs.KEEP_RUNS)
+    for run in indexes:
         under = [runs.job_tag(run.library, run.parent)] if run.parent is not None else []
         for tag in under + list(run.changed.get("syncs") or ()):
             found.setdefault(tag, []).append(_tag(run))
@@ -144,7 +147,13 @@ def snapshot_list(library, now=None):
 
 
 def timeline(library, limit=50):
-    """What was done in `library`, newest first, at most `limit` entries: each
+    """What was done in `library`: timeline_and_children's entries."""
+    return timeline_and_children(library, limit)[0]
+
+
+def timeline_and_children(library, limit=50):
+    """(the entries, index_runs_under) of `library`, from one read of its index runs. The entries: what was done in
+    `library`, newest first, at most `limit` entries: each
     {"kind": "change" | "job" | "index" | "sync", "library", "time", "finished", "seconds",
     "what", "outcome", "counts", "id", "run", "error"}, a job's and an index's also its "parent" and "progress"
     (under_way). A sync's change of the journal is its sync's entry, not one of its own. An index's run says how many
@@ -168,7 +177,8 @@ def timeline(library, limit=50):
                         "counts": dict(entry["changed"], **{"found_" + k: v for k, v in entry["found"].items()
                                                             if k in ("new", "missing", "moved", "changed")}),
                         "id": record["id"], "run": entry["run"], "error": None})
-    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS):
+    indexes = job_runs.runs(library.path, job_runs.INDEX, job_runs.KEEP_RUNS)
+    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS + (job_runs.INDEX,)) + indexes:
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
                         "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,
@@ -189,4 +199,4 @@ def timeline(library, limit=50):
                         "what": change["operation"], "outcome": change["status"], "counts": counts,
                         "id": change["id"], "run": None, "error": None})
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
-    return entries[:limit]
+    return entries[:limit], index_runs_under(library, indexes)

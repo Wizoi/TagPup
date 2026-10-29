@@ -28,6 +28,7 @@ from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import activity  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
+from tagpup.services import sync as sync_service  # noqa: E402
 from tagpup.store import job_runs, snapshots  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
@@ -207,6 +208,46 @@ class Now(Base):
             found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
         self.assertIsNone(found["syncing"]["progress"])
         self.assertEqual({"harbour", "regatta"}, {entry["name"] for entry in found["libraries"]})
+
+
+    def test_the_folder_the_walk_is_at_shows_before_the_row_has_said_anything(self):
+        """#2203: the walk's folder is the process's memory; the row's counts trail it by up to 10 s, or are a newer
+        version's: the folder shows alone, the page's own words (no phase) for the rest."""
+        claim = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", time.time())
+        whole = {"library": "Harbour", "folder": None, "started": "x", "walking_at": "D:/Photos/Regatta"}
+        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {}, "syncing": whole})
+        found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertEqual({"folder": "D:/Photos/Regatta"}, found["syncing"]["progress"])
+        watcher.found["syncing"] = dict(whole, walking_at=None)
+        self.assertIsNone(self.get("/api/activity/now", tasks=[("folder watcher", watcher)])["syncing"]["progress"])
+        # A row written by a newer version: a phase this one does not know says nothing, the folder still shows.
+        job_runs.progress(self.harbour.path, claim.run_id, "somewhere_new", {"folders": 3}, time.time())
+        watcher.found["syncing"] = whole
+        found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertEqual({"folder": "D:/Photos/Regatta"}, found["syncing"]["progress"])
+
+    def test_a_progress_this_version_does_not_know_is_not_read(self):
+        """#2206: a row of a newer version (another phase, counts not numbers) is None, never an error."""
+        said = {"phase": "walking", "counts": {"folders": 4, "files": 9}, "progressed": "t"}
+        self.assertEqual({"phase": sync_service.WALKING, "folders": 4, "files": 9, "progressed": "t"},
+                         sync_service.walked(said))
+        for odd in (dict(said, phase="somewhere_new"), dict(said, counts={"folders": 4}),
+                    dict(said, counts={"folders": "four", "files": 9}), dict(said, counts=None), {}):
+            self.assertIsNone(sync_service.walked(odd), odd)
+
+    def test_the_timeline_reads_a_librarys_index_runs_once(self):
+        """#2207: the entries and the logs of the runs an index is part of come from one read of the index rows."""
+        real = job_runs.runs
+        asked = []
+
+        def counting(path, job=None, limit=20, exclude=()):
+            if path == self.harbour.path and (job == job_runs.INDEX or (job is None and job_runs.INDEX not in exclude)):
+                asked.append((job, limit))
+            return real(path, job, limit, exclude)
+
+        with mock.patch.object(job_runs, "runs", counting):
+            self.get("/api/activity/timeline")
+        self.assertEqual(1, len(asked), asked)
 
 
 class ScheduledJobs(Base):

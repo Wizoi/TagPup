@@ -189,6 +189,23 @@ class ARunSaysHowFarItGot(unittest.TestCase):
         self.assertTrue(runs_service.progress(self.library, self.run_id, {"photos_done": 3}, "faces",
                                               now=NOW + runs_service.PROGRESS_EVERY))
 
+    def test_a_phase_change_skipped_as_busy_is_not_remembered_as_made(self):
+        """#2204: a sync is told its last phase once; a write lost to another writer left the row at the old phase."""
+        say = runs_service.progress
+        self.assertTrue(say(self.library, self.run_id, {"folders": 9}, "walking", now=NOW))
+        other = db.connect(self.library.path)
+        try:
+            db.begin(other, immediate=True)
+            self.assertFalse(say(self.library, self.run_id, {"folders": 9}, "metadata", now=NOW + 1))
+        finally:
+            other.rollback()
+            other.close()
+        self.assertEqual("walking", self.said()[1]["phase"])
+        self.assertTrue(say(self.library, self.run_id, {"folders": 9}, "metadata", now=NOW + 2))
+        self.assertEqual("metadata", self.said()[1]["phase"])
+        # The counts of one phase keep their 10 s.
+        self.assertFalse(say(self.library, self.run_id, {"folders": 10}, "metadata", now=NOW + 3))
+
     def test_while_another_process_writes_the_library_progress_is_skipped_not_waited_for(self):
         """Another connection's open write transaction is what another process's write is to SQLite."""
         other = db.connect(self.library.path)
