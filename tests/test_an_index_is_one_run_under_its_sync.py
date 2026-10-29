@@ -381,6 +381,16 @@ class ALongIndexWritesItsProgressAboutEvery10Seconds(_Indexing):
         self.assertTrue(90 <= written.count(True) <= 98, (written.count(True), len(written)))
         self.assertEqual(388, self.index_run().progress["counts"]["folders"])
 
+    def test_a_library_busy_the_whole_bake_is_tried_once_in_10_s_not_at_each_line(self):
+        """#2196: a write the library was busy for was tried again at the very next line, a connection each."""
+        folders = ["F%03d" % number for number in range(388)]
+        clock = iter(1790000000.0 + 2.5 * step for step in range(10000))
+        with mock.patch.object(runs_service, "time", mock.Mock(time=lambda: next(clock))), \
+                mock.patch.object(job_runs, "progress", return_value=db.BUSY) as progress:
+            status = self.queued([self.folder("Regatta")], self.code(bake(folders)))
+        self.assertEqual("completed", status["status"], status)
+        self.assertTrue(90 <= progress.call_count <= 98, progress.call_count)
+
 
 class TheDailySyncSaysHowFarItsWalkGot(_Indexing):
     def test_the_sync_job_s_walk_writes_its_phase_folders_and_files_into_its_run(self):

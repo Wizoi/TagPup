@@ -184,8 +184,10 @@ class ARunSaysHowFarItGot(unittest.TestCase):
             release.set()
             writer.join()
         self.assertEqual((None, None), self.said())
-        # Not written is not throttled: the next says it.
-        self.assertTrue(runs_service.progress(self.library, self.run_id, {"photos_done": 2}, "faces", now=NOW + 1))
+        # Not written waits its 10 s as a write does (#2196): the next line is not tried, the one 10 s on says it.
+        self.assertFalse(runs_service.progress(self.library, self.run_id, {"photos_done": 2}, "faces", now=NOW + 1))
+        self.assertTrue(runs_service.progress(self.library, self.run_id, {"photos_done": 3}, "faces",
+                                              now=NOW + runs_service.PROGRESS_EVERY))
 
     def test_while_another_process_writes_the_library_progress_is_skipped_not_waited_for(self):
         """Another connection's open write transaction is what another process's write is to SQLite."""

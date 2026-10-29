@@ -5,8 +5,9 @@ What a run changed is recorded as counts from the Result the job's service retur
 attempted, changed, skipped, errors, and the numbers among its details -- never its
 texts, which can name a path or a person.
 
-How far a run has got while it runs (`progress`) is a phase of PHASES and counts, never a path, written at most once every
-PROGRESS_EVERY seconds a run unless its phase changes, and skipped, not waited for, while the library is being written.
+How far a run has got while it runs (`progress`) is a phase of PHASES and counts, never a path, tried at most once every
+PROGRESS_EVERY seconds a run unless its phase changes, and skipped, not waited for, while the library is being written:
+a write that was skipped or failed waits its PROGRESS_EVERY like one made.
 A service deep in a run says it with `tell`, into the run the code that claimed it holds on the thread (`recording`): the
 sync's walk, the index's phases read from its indexer's lines.
 """
@@ -84,7 +85,8 @@ PROGRESS_EVERY = 10.0
 
 _COUNT_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
-#: {(the library's db.key, run id): (when its progress was last written, its phase then)}; a run's entry goes when it ends.
+#: {(the library's db.key, run id): (when its progress was last tried, written or not, its phase then)}; a run's entry
+#: goes when it ends.
 _written = {}
 _written_lock = threading.Lock()
 
@@ -103,8 +105,9 @@ def _counts_only(counts):
 
 def progress(library, run_id, counts, phase, now=None):
     """Record how far run `run_id` of `library` has got: in `phase`, one of PHASES (anything else is a code's mistake,
-    ValueError), with `counts` ({name: number}; anything else in it is dropped). Written at most once every
-    PROGRESS_EVERY seconds a run unless the phase changed, and not while the library is being written; `now` is seconds
+    ValueError), with `counts` ({name: number}; anything else in it is dropped). Tried at most once every
+    PROGRESS_EVERY seconds a run unless the phase changed -- a try the library was busy for, or that failed, counts --
+    and not written while the library is being written; `now` is seconds
     since the epoch, now by default. True when written; False when not -- too soon, the library busy, the run no longer
     this process's and running, or a library a restore has put back at 35. Never raises for those."""
     if phase not in PHASES:
@@ -115,11 +118,9 @@ def progress(library, run_id, counts, phase, now=None):
         last = _written.get(held)
         if last is not None and last[1] == phase and 0 <= now - last[0] < PROGRESS_EVERY:
             return False
-    written = job_runs.progress(library.path, run_id, phase, _counts_only(counts), now)
-    if written is True:
-        with _written_lock:
-            _written[held] = (now, phase)
-    return written is True
+        # Before the write: one the library is busy for is not tried again at the next line (#2196).
+        _written[held] = (now, phase)
+    return job_runs.progress(library.path, run_id, phase, _counts_only(counts), now) is True
 
 
 #: The run under way on this thread that `tell` records into: [library, run id, whether a failure was said], or None.
