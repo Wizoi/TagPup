@@ -7,8 +7,9 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
+import { asked } from './poll.js';
 import { bytes } from './format.js';
-import { foldLine, unfold } from './fold.js';
+import { foldLine, unfold, unfolded } from './fold.js';
 
 /** How many records a read asks for. */
 const LOG_PAGE = 200;
@@ -113,11 +114,11 @@ export function readOlder() {
     });
 }
 
-/** Follow: what was written since the last read, newest first above what is shown. */
+/** Follow: what was written since the last read, newest first above what is shown; nothing read while Logs is folded. */
 export function followLog() {
-    if (!state.logs.follow || !state.logs.name || state.logs.end === null) return Promise.resolve(null);
+    if (!state.logs.follow || !unfolded('logs') || !state.logs.name || state.logs.end === null) return Promise.resolve(null);
     const asked = state.logs.asked;
-    return api.site.json(logAddress(state.logs.name) + logQuery({ after: state.logs.end })).then(data => {
+    return asked(api.site.json(logAddress(state.logs.name) + logQuery({ after: state.logs.end }))).then(data => {
         if (asked !== state.logs.asked || !data || data.success === false) return null;
         if (data.rotated) {
             // The file was rotated: what it holds now is all new.

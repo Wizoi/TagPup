@@ -10,6 +10,7 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
+import { asked } from './poll.js';
 import { ago, duration, parseTime, secondsBetween } from './format.js';
 import { badge, fill, none, runLinks } from './view.js';
 
@@ -18,12 +19,12 @@ const STUCK_AFTER = 300;
 
 /** Ask what runs now, and show it. */
 export function loadNow() {
-    return api.site.json('/api/activity/now').then(data => {
+    return asked(api.site.json('/api/activity/now')).then(data => {
         if (!data || data.success === false) return data;
         state.now = data;
-        renderNow();
         const stamp = document.getElementById('updated');
         if (stamp) stamp.textContent = data.at ? `Updated ${data.at.slice(11)}` : '';
+        renderNow();
         return data;
     });
 }

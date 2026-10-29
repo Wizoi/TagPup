@@ -5,6 +5,7 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
+import { asked } from './poll.js';
 import { ago, counts, duration } from './format.js';
 import { badge, fill, none, outcomeKind, runLinks } from './view.js';
 
@@ -13,7 +14,7 @@ const MORE = 50;
 
 /** Read the timeline, as far back as it has been asked, and show it. */
 export function loadTimeline() {
-    return api.site.json(`/api/activity/timeline?limit=${state.timeline.limit}`).then(data => {
+    return asked(api.site.json(`/api/activity/timeline?limit=${state.timeline.limit}`)).then(data => {
         if (!data || data.success === false) return data;
         state.timeline.entries = data.entries || [];
         state.timeline.more = !!data.more;

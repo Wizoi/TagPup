@@ -31,14 +31,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Now, while the page is in view; the logs followed, when asked; the rest now and then, Now drawn again with the jobs:
     // it says a library whose jobs could not be read, and what finished in it last (both /api/activity/jobs).
-    poller(loadNow, state.every, 'now').start();
-    poller(followLog, state.every, 'follow').start();
+    // Each poll by the sections it draws, where it says it could not refresh them (poll.js).
+    poller({ now: loadNow }, state.every, 'now').start();
+    poller({ logs: followLog }, state.every, 'follow').start();
     // The jobs on their own, so Run now's read after its answer is this poll's (soon('jobs'), jobs.js).
-    poller(() => loadJobs().then(data => {
+    poller({ jobs: () => loadJobs().then(data => {
         renderNow();
         return data;
-    }), state.slowEvery, 'jobs').start();
-    poller(() => Promise.all([loadSync(), loadServer(), loadTimeline()]), state.slowEvery, 'rest').start();
-    poller(loadSnapshots, state.slowEvery * 4, 'snapshots').start();
+    }) }, state.slowEvery, 'jobs').start();
+    poller({ sync: loadSync, server: loadServer, timeline: loadTimeline }, state.slowEvery, 'rest').start();
+    poller({ snapshots: loadSnapshots }, state.slowEvery * 4, 'snapshots').start();
     loadLogFiles().then(() => readLog());
 });

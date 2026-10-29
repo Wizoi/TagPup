@@ -3,13 +3,14 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
+import { asked } from './poll.js';
 import { ago, duration, parseTime } from './format.js';
 import { foldLine } from './fold.js';
 import { badge, fill } from './view.js';
 
 /** Read how the server is, and show it. */
 export function loadServer() {
-    return api.site.json('/api/activity/server').then(data => {
+    return asked(api.site.json('/api/activity/server')).then(data => {
         if (!data || data.success === false) return data;
         state.server = data;
         renderServer();

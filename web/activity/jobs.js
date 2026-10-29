@@ -10,11 +10,11 @@ import { ago, counts, duration } from './format.js';
 import { badge, fill, none, outcomeKind, runLinks } from './view.js';
 import { renderNeeds } from './needs.js';
 import { foldLine } from './fold.js';
-import { soon } from './poll.js';
+import { asked, soon } from './poll.js';
 
 /** Read each job's runs, and show them. */
 export function loadJobs() {
-    return api.site.json('/api/activity/jobs').then(data => {
+    return asked(api.site.json('/api/activity/jobs')).then(data => {
         if (!data || data.success === false) return data;
         state.jobs = data;
         renderJobs();

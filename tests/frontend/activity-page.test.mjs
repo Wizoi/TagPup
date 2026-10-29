@@ -3,7 +3,8 @@
  * Now asked again while the page is in view and not while it is hidden, Run now asked first, "Logs for this run" reading
  * that run's lines (Logs unfolded), every request sent under no library, through api.js's form for what covers every
  * library; Scheduled jobs, Snapshots, Server and Logs folded, each with one line, the open ones remembered where the
- * browser may; a server that stops answering asked less and less often, and Run now's read of the jobs the poll's.
+ * browser may; a server that stops answering asked less and less often, Now's silence said in the top line and each
+ * other section's in that section, a drawing's error never taken for the server's; Run now's read of the jobs the poll's.
  *
  * Now, Needs you, Scheduled jobs and Recent activity answer from fixtures/activity.json: the real routes' replies on
  * libraries seeded through the real writers (tests/test_activity_page_replies.py), one morning the owner opens the page
@@ -12,7 +13,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { loadApp, FakeServer, flush, closeAllApps, click } from "./harness.mjs";
+import { loadApp, FakeServer, flush, closeAllApps, click, pageExports } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -101,10 +102,10 @@ async function settled(done, what, ms = 5000) {
   }
 }
 
-/** Until the page has asked `route` `times` more times, and drawn the answer. */
+/** Until the page has asked `route` `times` more times, and drawn the answer; failing, never hanging, if it does not. */
 async function polled(window, fake, route, times = 2) {
   const from = asked(fake, route);
-  while (asked(fake, route) < from + times) await new Promise((resolve) => setTimeout(resolve, 10));
+  await settled(() => asked(fake, route) >= from + times, `${route} asked ${times} more times`);
   await flush(window, 4);
 }
 
@@ -502,6 +503,89 @@ describe("a server that stops answering: the page asks less and less often, says
   });
 });
 
+describe("an update hands the server over: each poll says its own silence, and only its own", () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const status = (document, section) => document.getElementById(`${section}-status`).textContent;
+
+  test("every route away, then back: Now's answer puts the top line back while a slower poll, still waiting, says so in its section", async (t) => {
+    let down = false;
+    const gated = (body) => () => (down ? { success: false, error: "the server is moving onto a new version" } : body);
+    const fake = new FakeServer()
+      .on("/api/activity/now", gated(SERVED.morning.now))
+      .on("/api/activity/jobs", gated(SERVED.morning.jobs))
+      .on("/api/activity/sync", gated(SYNC))
+      .on("/api/activity/snapshots", gated(SNAPSHOTS))
+      .on("/api/activity/server", gated(SERVER))
+      .on("/api/activity/timeline", gated(SERVED.morning.timeline))
+      .on("/api/activity/logs", LOG_FILES);
+    // Every 25 ms: the snapshots every second, a failed ask of them waiting two.
+    const { document, window } = await open(t, fake, 25);
+    await wait(150);
+    const updated = document.getElementById("updated");
+    assert.match(updated.textContent, /^Updated /);
+
+    down = true;
+    await settled(() => asked(fake, "/api/activity/snapshots") >= 2 && /did not answer/.test(updated.textContent),
+                  "the snapshots asked while the server is away", 6000);
+    down = false;
+    await polled(window, fake, "/api/activity/now", 2);
+    assert.match(updated.textContent, /^Updated /, "Now answers again, and the top line still says the server did not answer");
+    assert.match(status(document, "snapshots"), /^Snapshots could not be refreshed; asking again at \d\d:\d\d:\d\d\.$/,
+                 "the snapshots wait to be asked again, and their section does not say so");
+    await settled(() => status(document, "snapshots") === "", "the snapshots' next answer to clear their line", 8000);
+    assert.match(updated.textContent, /^Updated /);
+  });
+
+  test("one route failing is said in its own section, by name, and nowhere else", async (t) => {
+    let refuse = true;
+    const fake = server("morning", { first: [["/api/activity/timeline",
+      () => (refuse ? { success: false, error: "database is locked" } : SERVED.morning.timeline)]] });
+    const { document, window } = await open(t, fake, 20);
+    await settled(() => /could not be refreshed/.test(status(document, "timeline")), "the timeline's section to say it failed");
+    assert.match(status(document, "timeline"), /^Recent activity could not be refreshed; asking again at /);
+    assert.match(document.getElementById("updated").textContent, /^Updated /, "one route failing said the whole server did not answer");
+    for (const section of ["jobs", "sync", "snapshots", "server", "logs"]) assert.equal(status(document, section), "", section);
+    refuse = false;
+    await settled(() => status(document, "timeline") === "", "the timeline's next answer to clear its line");
+    await flush(window, 2);
+  });
+
+  test("a section that fails to draw is the page's error, not the server's: logged, and asked again on time", async (t) => {
+    const fake = server("morning", { first: [["/api/activity/server", { ...SERVER, background: 5 }]] });
+    const { document, window, consoleErrors } = await open(t, fake, 20);
+    await wait(100);
+    const from = asked(fake, "/api/activity/server");
+    await wait(1000);
+    await flush(window, 2);
+    // Every 200 ms: about five; backing off (400, 800 ms) it would be two.
+    assert.ok(asked(fake, "/api/activity/server") - from >= 4, `asked ${asked(fake, "/api/activity/server") - from} times in 1 s`);
+    assert.equal(status(document, "server"), "");
+    assert.match(document.getElementById("updated").textContent, /^Updated /);
+    assert.ok(consoleErrors.some((line) => /Could not draw/.test(String(line))), consoleErrors.join("\n"));
+  });
+
+  test("a server away for long: Now is asked once a minute at the longest, never less often", async (t) => {
+    let refuse = false;
+    const fake = server("morning", { first: [["/api/activity/now",
+      () => (refuse ? { success: false, error: "database is locked" } : SERVED.morning.now)]] });
+    // Now every 15 s: failing, it waits 30 s, then 60 s, then 60 s again.
+    const { document, window } = await open(t, fake, 15000);
+    await flush(window, 6);
+    refuse = true;
+    const { state } = pageExports(window, "web/activity/state.js");
+    const { soon } = pageExports(window, "web/activity/poll.js");
+    const now = state.pollers.find((each) => each.name === "now");
+    const waits = [];
+    for (let i = 0; i < 4; i += 1) {
+      await soon("now");
+      await flush(window, 2);
+      waits.push(Math.round((now.nextAt - Date.now()) / 1000));
+    }
+    assert.deepEqual(waits, [30, 60, 60, 60]);
+    assert.match(document.getElementById("updated").textContent, /^The server did not answer; asking again at /);
+  });
+});
+
 describe("Run now's read of the jobs is the jobs poll's, never a second request beside it", () => {
   test("two jobs run in quick succession while the jobs are being read: one more read, after the one in flight", async (t) => {
     let quick = true;
@@ -753,6 +837,7 @@ describe("Logs", () => {
     const fake = server();
     const { document, window } = await open(t, fake, 30);
     await flush(window, 8);
+    click(window, document.querySelector('details.fold[data-fold="logs"] > summary'));
     const follow = document.getElementById("log-follow");
     follow.checked = true;
     follow.dispatchEvent(new window.Event("change"));
@@ -761,5 +846,25 @@ describe("Logs", () => {
     click(window, document.getElementById("log-older"));
     await flush(window, 4);
     assert.ok(fake.urls().some((url) => /before=100/.test(url)), "Older did not read from where the last read began");
+  });
+
+  test("Follow reads nothing while Logs is folded, and follows again once it is opened", async (t) => {
+    const fake = server();
+    const { document, window } = await open(t, fake, 20);
+    await flush(window, 8);
+    const followed = () => fake.urls().filter((url) => /\/api\/activity\/logs\/tagpup_web\.log\?.*after=/.test(url)).length;
+    const follow = document.getElementById("log-follow");
+    follow.checked = true;
+    follow.dispatchEvent(new window.Event("change"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(followed(), 0, "a folded Logs was read every few seconds");
+    const logs = document.querySelector('details.fold[data-fold="logs"] > summary');
+    click(window, logs);
+    await settled(() => followed() > 0, "Follow to read once Logs is opened");
+    click(window, logs);
+    await flush(window, 4);
+    const folded = followed();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(followed(), folded, "folded again, Logs was still read");
   });
 });

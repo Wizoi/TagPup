@@ -1,7 +1,9 @@
 // The folded sections (Scheduled jobs, Snapshots, Server, Logs): each a <details class="fold">, folded unless the owner
 // opened it, the browser remembering which are open (localStorage, where it may: without it each opens folded, and
 // opens and folds all the same). A folded section keeps one line in sight (`#<name>-folded`, written by the section's
-// own module through foldLine), so folding it hides nothing that needs the owner. A link to a section in the page's
+// own module through foldLine), so folding it hides nothing that needs the owner; the line sits just after the
+// <details>, its summary holding the heading alone (a summary is one heading or phrasing content, not both) and
+// described by the line (aria-describedby). A link to a section in the page's
 // nav, or a reach for it from another (showRunLogs), unfolds it.
 
 /** Where the browser keeps the names of the sections left open. */
@@ -33,6 +35,12 @@ function foldOf(name) {
 export function unfold(name) {
     const fold = foldOf(name);
     if (fold) fold.open = true;   // its toggle event remembers it
+}
+
+/** Whether the section `name` is open: a folded one is not followed (logs.js). */
+export function unfolded(name) {
+    const fold = foldOf(name);
+    return !fold || fold.open;
 }
 
 /** The line a folded section `name` shows: what of it needs the owner without opening it. */

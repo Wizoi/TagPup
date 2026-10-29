@@ -2,7 +2,11 @@
 // a tab left open in the background all day asks nothing. A poll waits for the one before
 // it to be answered, so a slow answer never piles requests up behind it. A poll that fails
 // (no answer, or one saying success: false) waits twice as long each time, up to a minute
-// (or its own interval, if longer), the top line saying so; one answered puts it back.
+// (or its own interval, if longer). Each poll says its own failure where its sections are:
+// Now's in the top line (the page's pulse; now.js writes "Updated" there when it answers),
+// each other section's under its heading (`#<section>-status`), and each poll's next answer
+// clears its own. A request that failed counts; an error drawing what was answered is the
+// page's, logged, and the poll goes on asking on time.
 // soon(name) asks a poller once more now, or once its answer is in: a button's follow-up
 // read is the poll's, never a second request beside it.
 import { state } from './state.js';
@@ -10,36 +14,59 @@ import { state } from './state.js';
 /** The longest a failing poller waits before asking again, unless its own interval is longer. */
 const LONGEST_WAIT = 60000;
 
-function hidden() {
-    return document.visibilityState === 'hidden';
+/** A request the server did not answer (asked()): what a poller counts, unlike an error drawing an answer. */
+class NoAnswer extends Error {
+    constructor(cause) {
+        super(`The server did not answer: ${(cause && cause.message) || cause}`);
+        this.cause = cause;
+    }
 }
 
-/** Whether `answer` is a failure: a reply saying success: false, or a group of replies one of which does. */
-function answerFailed(answer) {
-    if (Array.isArray(answer)) return answer.some(answerFailed);
-    return !!answer && answer.success === false;
+/** `request` (a promise of the server's answer), its failure marked as the server's: what a section's load asks through. */
+export function asked(request) {
+    return Promise.resolve(request).catch(err => {
+        throw new NoAnswer(err);
+    });
+}
+
+function hidden() {
+    return document.visibilityState === 'hidden';
 }
 
 function clock(ms) {
     return new Date(ms).toTimeString().slice(0, 8);
 }
 
-/** While any poller is failing, the top line says so, and when the page asks again (the soonest). Now's answer puts it back. */
-function sayFailing() {
-    const waiting = state.pollers.filter(each => each.failures && each.timer);
-    if (!waiting.length) return;
-    const next = Math.min(...waiting.map(each => each.nextAt));
-    document.getElementById('updated').textContent = `The server did not answer; asking again at ${clock(next)}.`;
+/** What section `section` says while its poll fails ('' once it answered): Now's in the top line, any other's under its heading. */
+function say(section, nextAt) {
+    if (section === 'now') {
+        if (nextAt) document.getElementById('updated').textContent = `The server did not answer; asking again at ${clock(nextAt)}.`;
+        return;   // answered: now.js wrote "Updated" with what it drew
+    }
+    const line = document.getElementById(`${section}-status`);
+    const title = document.getElementById(`${section}-title`);
+    if (line) line.textContent = nextAt ? `${title ? title.textContent : section} could not be refreshed; asking again at ${clock(nextAt)}.` : '';
+}
+
+/** One section's load: whether it failed (not answered, or answered success: false); an error drawing it is logged, not counted. */
+function settle(section, load) {
+    return Promise.resolve().then(load).then(answer => !!answer && answer.success === false, err => {
+        if (err instanceof NoAnswer) {
+            console.error(`Could not ask the server (${section}):`, err.cause);
+            return true;
+        }
+        console.error(`Could not draw ${section}:`, err);
+        return false;
+    });
 }
 
 /**
- * A poller of `task` (returning a promise) every `ms` milliseconds, called `name`: { start, stop,
- * wake, sleep, soon, busy }. `start()` asks now and then every `ms`; `sleep()` stops asking until
- * `wake()`, which asks at once; `soon()` asks now, or once the request in flight is answered,
- * resolving when that answer is in; `stop()` for good. Each is registered in state.pollers,
- * paused when the page is hidden (pauseWhenHidden).
+ * A poller of `loads` ({ section: load }, each load returning a promise) every `ms` milliseconds, called `name`: { start,
+ * stop, wake, sleep, soon, busy }. `start()` asks now and then every `ms`; `sleep()` stops asking until `wake()`, which
+ * asks at once; `soon()` asks now, or once the request in flight is answered, resolving when that answer is in; `stop()`
+ * for good. Each is registered in state.pollers, paused when the page is hidden (pauseWhenHidden).
  */
-export function poller(task, ms, name) {
+export function poller(loads, ms, name) {
     const self = { name, ms, timer: null, asking: false, stopped: true, asked: 0, failures: 0, nextAt: null,
                    again: false, waiting: [] };
 
@@ -58,20 +85,18 @@ export function poller(task, ms, name) {
         self.again = false;
         self.asked += 1;
         const answered = self.waiting.splice(0);
-        Promise.resolve()
-            .then(task)
-            .then(answerFailed, err => {
-                console.error('Could not ask the server:', err);
-                return true;
-            })
-            .then(failure => {
-                self.failures = failure ? self.failures + 1 : 0;
-                self.asking = false;
-                answered.forEach(resolve => resolve());
-                if (self.again) ask();
-                else schedule();
-                sayFailing();
+        const sections = Object.keys(loads);
+        Promise.all(sections.map(section => settle(section, loads[section]))).then(failed => {
+            self.failures = failed.some(Boolean) ? self.failures + 1 : 0;
+            self.asking = false;
+            answered.forEach(resolve => resolve());
+            if (self.again) ask();
+            else schedule();
+            sections.forEach((section, i) => {
+                if (!failed[i]) say(section, null);
+                else if (self.timer) say(section, self.nextAt);
             });
+        });
     }
 
     self.start = () => {
