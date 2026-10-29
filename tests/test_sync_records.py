@@ -14,6 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 from test_sync import SyncTestCase  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -125,7 +126,7 @@ class TheRecordIsBounded(unittest.TestCase):
 
 class WhichFolderSyncsAreRecorded(SyncTestCase):
     """The folder watcher syncs a folder each time it settles; a sync of one folder is recorded when it found or changed
-    something, or left the library not in step, or ends a stretch of not being in step (worth_recording)."""
+    something, or says otherwise than the newest record of whether the library is in step (worth_recording)."""
 
     def setUp(self):
         super().setUp()
@@ -171,6 +172,25 @@ class WhichFolderSyncsAreRecorded(SyncTestCase):
         self.assertEqual([(job_runs.SYNC_FOLDER,), (job_runs.SYNC_FOLDER,)], self.recorded())
         self.run_sync(apply=True, folder=self.meet)
         self.assertEqual(2, len(self.recorded()), "and then it settles on nothing again")
+
+    def test_a_folder_owed_its_index_settling_again_and_again_is_recorded_once(self):
+        """While the index owed a folder its bake, the library was not in step, and each settling of the folder was
+        recorded: 200 records of it in 28 minutes on photo_index, the job's whole history (2026-10-28)."""
+        owed = self.photo(self.meet, "IMG_0003.jpg")
+        conn = db.connect(self.db_path)
+        try:
+            photo_rows.add_read(conn, owed, self.truth["IMG_0003.jpg"])   # read, no vector yet
+            conn.commit()
+        finally:
+            conn.close()
+        for _ in range(3):
+            result = self.run_sync(apply=True, folder=self.meet)
+            self.assertFalse(result.details["in_step"], "the index owes the photo its vector")
+        self.assertEqual([(job_runs.SYNC_FOLDER,)], self.recorded(), "the newest record already says not in step")
+        self.photo(self.meet, "IMG_0004.jpg")   # new
+        result = self.run_sync(apply=True, folder=self.meet)
+        self.assertEqual(1, result.details["counts"]["new"])
+        self.assertEqual([(job_runs.SYNC_FOLDER,)] * 2, self.recorded(), "a sync that found something is recorded")
 
     def test_a_record_that_cannot_be_read_just_now_is_written(self):
         with mock.patch.object(sync.db, "readonly_uri", side_effect=OSError("locked")):
