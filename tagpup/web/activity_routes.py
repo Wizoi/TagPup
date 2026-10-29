@@ -231,7 +231,9 @@ def now():
         queue = queues.get(library.name.lower())
         indexed = queue.now() if queue is not None else {"running": None, "queued": []}
         if indexed["running"]:
-            indexed["running"]["logs"] = _logs_for(indexed["running"]["run"])
+            # Its row's id, the id of the run it is part of and its phase in words, as every other run's (its row
+            # below, by its tag; all null while the row is not read, or was never claimed: RECORDS_ONLY).
+            indexed["running"].update(logs=_logs_for(indexed["running"]["run"]), run_id=None, parent=None, said=None)
         # This process's index is `indexing` above, from its queue: its row is not listed again.
         mine = (indexed["running"] or {}).get("run")
         running = []
@@ -248,6 +250,8 @@ def now():
                 if run["job"] == recurring.SYNC:
                     walks[library.name.lower()] = run
                 if mine is not None and run["run"] == mine:
+                    indexed["running"].update(run_id=run["run_id"], parent=run["parent"],
+                                              said=(run["progress"] or {}).get("said"))
                     continue
                 if run["job"] != job_runs.INDEX and children is None:
                     children = activity.index_runs_under(library)
@@ -302,14 +306,15 @@ def jobs():
     needs_you = activity.needs_you(libraries, runner.registry.names() if runner is not None else ())
     for library in libraries:
         try:
-            children = activity.index_runs_under(library)
-            listed.append({"name": library.name, "jobs": recurring.overview(library, limit=limit)})
+            done, children = activity.timeline_and_children(library, TIMELINE)
+            listed.append({"name": library.name, "jobs": recurring.overview(library, limit=limit),
+                           "last_finished": activity.last_finished(done)})
             for job in listed[-1]["jobs"]:
                 for run in job["runs"]:
                     run["logs"] = _logs_for(run["run"], children)
         except Exception as e:
             logger.warning("Could not read the jobs of %s: %s", library.name, e)
-            listed.append({"name": library.name, "jobs": [], "error": str(e)})
+            listed.append({"name": library.name, "jobs": [], "last_finished": None, "error": str(e)})
     return jsonify({"runs_jobs": runner is not None, "check_every": recurring.CHECK_EVERY,
                     "running_here": runner.status() if runner is not None else [], "libraries": listed,
                     "needs_you": needs_you})

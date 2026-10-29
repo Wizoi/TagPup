@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     pauseWhenHidden();
 
     // Now, while the page is in view; the logs followed, when asked; the rest now and then, Now drawn again with them:
-    // it says a library whose jobs could not be read, and what finished last (the timeline).
+    // it says a library whose jobs could not be read, and what finished in it last (both /api/activity/jobs).
     poller(loadNow, state.every).start();
     poller(followLog, state.every).start();
     poller(() => Promise.all([loadJobs(), loadSync(), loadServer(), loadTimeline()]).then(renderNow),

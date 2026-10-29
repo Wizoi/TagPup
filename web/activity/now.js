@@ -1,11 +1,12 @@
-// Now: what runs this moment, a card a library -- its runs as a tree (an index under the run that queued it, this
-// process's own index under the run it was queued for, the folder watcher's whole sync one line with the library's
+// Now: what runs this moment, a card a library -- its runs as a tree (each run under the run its row names as `parent`,
+// this process's own index -- its queue's -- by its row's `parent` too, the folder watcher's whole sync one line with the library's
 // running sync row, at the folder its walk is at), each with its phase in the server's words (`said`), how far, how
 // long and since it last moved; its Suggest runs, the folders waiting and its batches of photo files -- and the server
 // draining for an update. Asked every few seconds while the page is in view (/api/activity/now). Every time is by the
 // server's clock (`at`). The folders are shown as the server names them: the page is served to this PC only (owner). A run whose last progress is older than STUCK_AFTER says so; one that has said nothing yet is
 // not called stuck. A library whose jobs could not be read (/api/activity/jobs) says why on its card, and the others are
-// drawn. A line read aloud (#now-summary) says what runs, in tens of percent, changed only when its words change.
+// drawn; one with nothing running says what finished in it last (its `last_finished`, /api/activity/jobs). A line read
+// aloud (#now-summary) says what runs, in tens of percent, changed only when its words change; the cards are not read.
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
@@ -101,7 +102,7 @@ function fromRow(row) {
 /** This process's own index (its queue's `indexing.running`), as a line says it. */
 function fromQueue(running) {
     const more = running.folders > 1 ? ` and ${running.folders - 1} more folder(s)` : '';
-    return { label: `index of ${running.name}${more}`, said: '', far: running.message || '', percent: running.percent || 0,
+    return { label: `index of ${running.name}${more}`, said: running.said || '', far: running.message || '', percent: running.percent || 0,
              started: running.started, progressed: running.progressed || null, run: running.run, logs: running.logs };
 }
 
@@ -132,8 +133,7 @@ function treeOf(library, data) {
     }
     const running = (library.indexing || {}).running;
     if (running) {
-        const parents = running.parents || [];
-        const parent = [...nodes.values()].find(node => parents.includes(node.row.run));
+        const parent = running.parent !== null && running.parent !== undefined ? nodes.get(running.parent) : null;
         (parent ? parent.children : roots).push({ item: fromQueue(running), children: [] });
     }
     return roots;
@@ -193,19 +193,22 @@ function waitingLines(library) {
     return lines;
 }
 
-/** "Nothing is running.", and when the newest of what was done in the library finished (the timeline's). */
+/** The library's block of /api/activity/jobs, or null before it is read. */
+function listed(name) {
+    return ((state.jobs && state.jobs.libraries) || []).find(library => library.name === name) || null;
+}
+
+/** "Nothing is running.", and what finished in the library last, as the server read it of that library alone. */
 function nothingRunning(name) {
-    const done = (state.timeline.entries || []).filter(entry => entry.library === name && entry.finished);
-    const newest = done.reduce((best, entry) => (!best || entry.finished > best.finished ? entry : best), null);
+    const last = (listed(name) || {}).last_finished;
     const at = parseTime(state.now && state.now.at);
-    if (!newest || !at) return 'Nothing is running.';
-    return `Nothing is running. The last, ${newest.what}, finished ${ago(newest.finished, at.getTime())}.`;
+    if (!last || !at) return 'Nothing is running.';
+    return `Nothing is running. The last, ${last.what}, finished ${ago(last.finished, at.getTime())}.`;
 }
 
 /** Why the library's jobs could not be read (/api/activity/jobs), or ''. */
 function unreadable(name) {
-    const listed = ((state.jobs && state.jobs.libraries) || []).find(library => library.name === name);
-    return (listed && listed.error) || '';
+    return (listed(name) || {}).error || '';
 }
 
 function libraryCard(library, roots, at) {

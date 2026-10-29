@@ -220,6 +220,17 @@ def timeline_and_children(library, limit=50):
     return entries[:limit], index_runs_under(library, indexes)
 
 
+def last_finished(entries):
+    """What finished last among a library's timeline `entries` (timeline_and_children's): {"what", "kind", "outcome",
+    "finished"} of the one that finished newest, or None when none has finished. Asked of each library's own entries,
+    never of the timeline of every library together, whose newest cut can hold none of a quiet library's."""
+    done = [entry for entry in entries if entry["finished"]]
+    if not done:
+        return None
+    newest = max(done, key=lambda entry: entry["finished"])
+    return {name: newest[name] for name in ("what", "kind", "outcome", "finished")}
+
+
 def needs_you(libraries, run_now=()):
     """What the owner must act on in `libraries`, grouped by kind in the order of job_runs.FAILURES: [{"kind", "means",
     "items": [{"library", "job", "sentence", "count", "since", "last", "run", "run_now", "next_step"}]}], each item a job

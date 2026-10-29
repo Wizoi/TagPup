@@ -98,7 +98,7 @@ async function polled(window, fake, route, times = 2) {
 }
 
 describe("Now: a card a library, its runs as a tree, in the server's words", () => {
-  test("the watcher's whole sync is one line with the library's sync row, at its folder, its index beneath it", async (t) => {
+  test("the watcher's whole sync is one line with the library's sync row, at its folder, this process's index beneath it", async (t) => {
     const { document, window } = await open(t, server("long_sync"));
     await flush(window, 8);
     const harbour = card(document, "harbour");
@@ -108,19 +108,22 @@ describe("Now: a card a library, its runs as a tree, in the server's words", () 
     assert.match(top[0].textContent, /812 folders, 20,417 photo files/);
     assert.match(top[0].textContent, /at D:\\TagPup\\Pictures\\harbour\\2019\\Regatta/);
     assert.match(top[0].textContent, /running 14 min, last progress 5 s ago/);
+    // This process's own index (its queue's) nests by its row's parent, as every run does, its phase in the server's words.
     const beneath = [...top[0].querySelectorAll(":scope > ul.run-tree > li.run")];
-    assert.deepEqual(beneath.map((li) => li.dataset.label), ["index"], "the index it queued is under it");
-    assert.match(beneath[0].textContent, /reading metadata/);
+    assert.deepEqual(beneath.map((li) => li.dataset.label), ["index of Regatta 2019"], "the index it queued is under it");
+    assert.match(beneath[0].querySelector(".phase").textContent, /^reading metadata$/);
     assert.equal(beneath[0].querySelector("progress").getAttribute("aria-valuetext"), "15%, reading metadata");
-    // The library with nothing running says so, and what finished last (the timeline's).
+    assert.match(beneath[0].textContent, /running 4 min, last progress 3 s ago/);
+    // The library with nothing running says so, and what finished in it last.
     assert.match(card(document, "lighthouse").textContent, /^lighthouseNothing is running\. The last, .+, finished .+ ago\.$/);
     assert.equal(document.getElementById("updated").textContent, "Updated 15:27:20");
   });
 
   test("a run is stuck only when its last progress is over five minutes old; one that said none is not", async (t) => {
     const stuck = SERVED.stuck.now;
-    const silent = { ...stuck, libraries: [{ ...stuck.libraries[0], jobs: stuck.libraries[0].jobs.map(
-      (row) => (row.job === "index" ? { ...row, progress: null } : row)) }, stuck.libraries[1]] };
+    const [harbourNow, lighthouseNow] = stuck.libraries;
+    const running = { ...harbourNow.indexing.running, progressed: null, said: null };
+    const silent = { ...stuck, libraries: [{ ...harbourNow, indexing: { ...harbourNow.indexing, running } }, lighthouseNow] };
     const { document, window } = await open(t, server("stuck", { first: [["/api/activity/now", silent]] }));
     await flush(window, 8);
     const lighthouse = card(document, "lighthouse");
@@ -130,25 +133,34 @@ describe("Now: a card a library, its runs as a tree, in the server's words", () 
     assert.match(lighthouse.textContent, /no progress for 12 min; the share may be away/);
     const harbour = card(document, "harbour");
     assert.equal(harbour.querySelector(".run-line.stuck"), null);
-    assert.match(harbour.querySelector('li.run[data-label="index"]').textContent, /no progress said yet/);
+    assert.match(harbour.querySelector('li.run[data-label="index of Regatta 2019"]').textContent, /no progress said yet/);
   });
 
-  test("this process's own index sits under the run it was queued for; the folders waiting and Suggest beside", async (t) => {
+  test("this process's own index: its queue's words and bar, the folder waiting behind it and Suggest beside", async (t) => {
     const long = SERVED.long_sync.now;
-    const harbour = { ...long.libraries[0], jobs: long.libraries[0].jobs.filter((row) => row.job === "sync"),
-      indexing: { running: { run: "index:harbour:20260921T152320-4242-1", parents: ["job:harbour:3"], started: "2026-09-21 15:23:20",
-                             folders: 2, name: "Regatta 2019", percent: 40, message: "Indexing: 40% (4/10)",
-                             progressed: "2026-09-21 15:27:18", logs: ["tagpup_web.log"] },
-                  queued: [{ name: "Harbour Walk", folders: 1 }] },
+    const harbour = { ...long.libraries[0],
       suggesting: [{ library: "harbour", folder: "Lakes", status: "running", completed: 3, total: 9 }] };
     const { document, window } = await open(t, server("long_sync", { first: [["/api/activity/now", { ...long, libraries: [harbour] }]] }));
     await flush(window, 8);
     const sync = card(document, "harbour").querySelector('li.run[data-label="sync (folder watcher)"]');
-    const index = sync.querySelector('li.run[data-label="index of Regatta 2019 and 1 more folder(s)"]');
+    const index = sync.querySelector('li.run[data-label="index of Regatta 2019"]');
     assert.ok(index, card(document, "harbour").textContent);
-    assert.equal(index.querySelector("progress").getAttribute("value"), "40");
+    assert.equal(index.querySelector("progress").getAttribute("value"), "15");
+    assert.match(index.textContent, /Reading metadata: 15% \(120\/800\)/, "the queue's own message: the graphics card's wait is said there");
     assert.match(card(document, "harbour").textContent, /1 waiting.*Harbour Walk/);
     assert.match(card(document, "harbour").textContent, /Lakes.*running, 3 of 9/);
+  });
+
+  test("a library with nothing running says what finished in it last, whatever the timeline of every library holds", async (t) => {
+    const cut = { entries: [], more: true, limit: 50 };
+    const { document, window } = await open(t, server("morning", { first: [["/api/activity/timeline", cut]] }));
+    await flush(window, 8);
+    assert.match(card(document, "jetty").textContent, /Nothing is running\. The last, sync, finished 2 h ago\./);
+    // A server before last_finished: nothing said of the last, never a guess.
+    const jobs = { ...SERVED.morning.jobs, libraries: SERVED.morning.jobs.libraries.map(({ last_finished, ...rest }) => rest) };
+    const older = await open(t, server("morning", { first: [["/api/activity/jobs", jobs]] }));
+    await flush(older.window, 8);
+    assert.equal(card(older.document, "jetty").textContent, "jettyNothing is running.");
   });
 
   test("batches of photo files, running and waiting, with Cancel for this server's own", async (t) => {
@@ -187,22 +199,27 @@ describe("Now: a card a library, its runs as a tree, in the server's words", () 
     await flush(window, 8);
     const line = document.getElementById("now-summary");
     assert.equal(line.getAttribute("aria-live"), "polite");
-    assert.equal(line.textContent, "harbour: sync (folder watcher), walking the folders again. harbour: index, reading metadata, 10%.");
+    // Only the line is read aloud: the cards, drawn again at every poll, are not.
+    assert.equal(document.getElementById("now-body").getAttribute("aria-live"), null);
+    assert.equal(line.textContent,
+                 "harbour: sync (folder watcher), walking the folders again. harbour: index of Regatta 2019, reading metadata, 10%.");
     const said = line.firstChild;
 
     // Three seconds on, more folders walked: the same words, left as they were.
-    const rows = (sync, index) => [{ ...long.libraries[0].jobs[0], progress: { ...long.libraries[0].jobs[0].progress, ...sync } },
-                                   { ...long.libraries[0].jobs[1], progress: { ...long.libraries[0].jobs[1].progress, ...index } }];
-    const at = (jobs) => ({ ...long, at: "2026-09-21 15:27:23", libraries: [{ ...long.libraries[0], jobs }, long.libraries[1]] });
-    answer = at(rows({ counts: { folders: 830, files: 20500 } }, {}));
+    const [harbourNow, lighthouseNow] = long.libraries;
+    const at = (sync, index) => ({ ...long, at: "2026-09-21 15:27:23", libraries: [{ ...harbourNow,
+      jobs: [{ ...harbourNow.jobs[0], progress: { ...harbourNow.jobs[0].progress, ...sync } }],
+      indexing: { ...harbourNow.indexing, running: { ...harbourNow.indexing.running, ...index } } }, lighthouseNow] });
+    answer = at({ counts: { folders: 830, files: 20500 } }, {});
     await polled(window, fake, "/api/activity/now");
     assert.match(document.getElementById("now-body").textContent, /830 folders/);
     assert.equal(line.firstChild, said, "the same words were written again, and read out again");
 
     // The walk over: said.
-    answer = at(rows({ said: "reading what changed" }, { counts: { done: 200, of: 800, percent: 25 } }));
+    answer = at({ said: "reading what changed" }, { percent: 25 });
     await polled(window, fake, "/api/activity/now");
-    assert.equal(line.textContent, "harbour: sync (folder watcher), reading what changed. harbour: index, reading metadata, 20%.");
+    assert.equal(line.textContent,
+                 "harbour: sync (folder watcher), reading what changed. harbour: index of Regatta 2019, reading metadata, 20%.");
 
     answer = SERVED.quiet.now;
     await polled(window, fake, "/api/activity/now");
