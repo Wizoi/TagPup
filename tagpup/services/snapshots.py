@@ -11,6 +11,7 @@ the library, not the files, and sync (phase 8) brings the rows in step with them
 """
 import time
 
+from tagpup.core import dates
 from tagpup.core.result import NotFound, Result
 from tagpup.store import schema, snapshots
 
@@ -50,7 +51,7 @@ def _described(library, snapshot):
     (schema.BASELINE; owner, 2026-10-15)."""
     made_at = schema.version_of(snapshot.path)
     return {"name": snapshot.name, "kind": snapshot.kind,
-            "taken": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(snapshot.taken)),
+            "taken": dates.recorded(snapshot.taken),
             "bytes": snapshot.size, "changes_since": len(snapshots.changes_since(library.path, snapshot.path)),
             "schema": made_at, "too_old": made_at < schema.BASELINE}
 

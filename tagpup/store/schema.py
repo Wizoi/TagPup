@@ -32,7 +32,7 @@ import sqlite3
 import threading
 import time
 
-from tagpup.core import paths
+from tagpup.core import dates, paths
 from tagpup.store import db, derived, search_index
 
 logger = logging.getLogger(__name__)
@@ -931,7 +931,7 @@ class _Run:
             if self.note:
                 summary["took"] = self.note
             conn.execute("INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)",
-                         (migration.version, migration.name, time.strftime("%Y-%m-%d %H:%M:%S")))
+                         (migration.version, migration.name, dates.recorded()))
             self._record(journal, migration, summary)
             conn.commit()
         except CheckFailed as e:

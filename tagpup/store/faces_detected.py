@@ -26,14 +26,11 @@ journal must account for; not journaled when written, as indexing is not. The on
 detector's, tagpup.services.journal.RETIRED) recorded them (tagpup.store.journal.KEYS); its undo is refused.
 """
 import json
-import time
 
+from tagpup.core import dates
 from tagpup.store import roots as store_roots
 
 TABLE = "faces_detected"
-
-#: How a row spells a time (the journal's format).
-TIME = "%Y-%m-%d %H:%M:%S"
 
 
 def detector(settings):
@@ -51,7 +48,7 @@ def record(conn, photo_path, name, stamp, found, now=None):
         return 0
     mtime, size = stamp if stamp else (None, None)
     conn.execute("INSERT OR REPLACE INTO faces_detected (photo_id, detector, mtime, size, found, at) "
-                 "VALUES (?, ?, ?, ?, ?, ?)", (photo_id, name, mtime, size, int(found), now or time.strftime(TIME)))
+                 "VALUES (?, ?, ?, ?, ?, ?)", (photo_id, name, mtime, size, int(found), now or dates.recorded()))
     return 1
 
 

@@ -44,7 +44,7 @@ import string
 import threading
 import time
 
-from tagpup.core import machine, paths, validation
+from tagpup.core import dates, machine, paths, validation
 from tagpup.store import db
 
 TABLE = "roots"
@@ -54,8 +54,6 @@ RECHECK_SECONDS = 1.0
 
 #: The settings that hold folders, one a line: converted line by line.
 FOLDER_SETTINGS = ("library.roots", "library.ignored")
-
-TIME = "%Y-%m-%d %H:%M:%S"
 
 
 class RootsChanged(RuntimeError):
@@ -101,7 +99,7 @@ def listing(db_path):
 def insert(conn, name, address):
     """Add a root. The caller commits, in the transaction that converts the rows it names."""
     conn.execute("INSERT INTO roots (name, address, added) VALUES (?, ?, ?)",
-                 (paths.root_name(name), address or "", time.strftime(TIME)))
+                 (paths.root_name(name), address or "", dates.recorded()))
     _forget(conn)
 
 

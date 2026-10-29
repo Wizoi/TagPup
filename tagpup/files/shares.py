@@ -25,7 +25,7 @@ import os
 import threading
 import time
 
-from tagpup.core import paths
+from tagpup.core import dates, paths
 from tagpup.core.result import SHARE_AWAY, Result
 from tagpup.files import recycle_bin
 
@@ -180,7 +180,7 @@ def away_since(share):
         since, began = _away.get(share), _since.get(share)
     if since is None or began is None or _left_of_away(since, AWAY_SECONDS) <= 0:
         return None
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(began))
+    return dates.recorded(began)
 
 
 def on_back(share, callback):

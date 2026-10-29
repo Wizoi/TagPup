@@ -54,8 +54,7 @@ def seconds_between(started, finished):
     if not started or not finished:
         return None
     try:
-        return max(0, int(time.mktime(time.strptime(finished, job_runs.TIME))
-                          - time.mktime(time.strptime(started, job_runs.TIME))))
+        return max(0, int(job_runs.seconds(finished) - job_runs.seconds(started)))
     except (TypeError, ValueError):
         return None
 
@@ -95,7 +94,7 @@ def snapshot_list(library, now=None):
     now = time.time() if now is None else now
     found = snapshots.listed(library.path)
     return {"snapshots": [{"name": each.name, "kind": each.kind,
-                           "taken": time.strftime(job_runs.TIME, time.localtime(each.taken)),
+                           "taken": job_runs.stamp(each.taken),
                            "age_seconds": max(0, int(now - each.taken)), "bytes": each.size} for each in found],
             "bytes": sum(each.size for each in found)}
 

@@ -154,7 +154,7 @@ def is_syncing(library):
 
 
 def _stamp(seconds):
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(seconds)) if seconds else None
+    return job_runs.stamp(seconds) if seconds else None
 
 
 def _int_arg(name, default, most):

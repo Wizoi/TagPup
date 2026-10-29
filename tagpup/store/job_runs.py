@@ -25,11 +25,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from tagpup.core import dates
 from tagpup.store import db, file_journal, schema
 
 logger = logging.getLogger(__name__)
-
-TIME = "%Y-%m-%d %H:%M:%S"
 
 RUNNING, DONE, FAILED, ABANDONED = "running", "done", "failed", "abandoned"
 OUTCOMES = (RUNNING, DONE, FAILED, ABANDONED)
@@ -68,13 +67,13 @@ class Run:
 
 
 def stamp(at):
-    """`at`, seconds since the epoch, as a run records it."""
-    return time.strftime(TIME, time.localtime(at))
+    """`at`, seconds since the epoch, as a run records it (dates.recorded)."""
+    return dates.recorded(at)
 
 
 def seconds(text):
-    """A time a run recorded, as seconds since the epoch."""
-    return time.mktime(time.strptime(text, TIME))
+    """A time a run recorded, as seconds since the epoch (dates.recorded_seconds)."""
+    return dates.recorded_seconds(text)
 
 
 def _run(found):
