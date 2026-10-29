@@ -93,7 +93,7 @@ _SCENARIO_FILES = {
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
     "D6": "test_a_librarys_settings_are_its_own",
     "D8": "test_migrations",
-    "D9": "test_runs_nest_and_say_how_far_they_got",
+    "D9": "test_runs_nest_and_say_how_far_they_got test_an_index_is_one_run_under_its_sync",
     "D7": (
         "test_library_roots test_roots_at_scale test_roots_ingress test_roots_location test_roots_scenarios "
         "test_roots_store"
@@ -121,7 +121,7 @@ _SCENARIO_FILES = {
     "F9": "test_roots_old_place test_roots_pinned_runs",
     "F10": "test_one_photo_whatever_its_spelling",
     "F11": (
-        "test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead "
+        "test_an_index_is_one_run_under_its_sync test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead "
         "test_an_index_reads_a_bake test_a_machine_without_a_card"
     ),
     "I1": "scenario-switching-library-mid-folder",

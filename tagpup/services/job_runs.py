@@ -7,7 +7,11 @@ texts, which can name a path or a person.
 
 How far a run has got while it runs (`progress`) is a phase of PHASES and counts, never a path, written at most once every
 PROGRESS_EVERY seconds a run unless its phase changes, and skipped, not waited for, while the library is being written.
+A service deep in a run says it with `tell`, into the run the code that claimed it holds on the thread (`recording`): the
+sync's walk, the index's phases read from its indexer's lines.
 """
+import contextlib
+import contextvars
 import logging
 import numbers
 import re
@@ -114,6 +118,41 @@ def progress(library, run_id, counts, phase, now=None):
         with _written_lock:
             _written[held] = (now, phase)
     return written is True
+
+
+#: The run under way on this thread that `tell` records into: [library, run id, whether a failure was said], or None.
+_under_way = contextvars.ContextVar("tagpup_run_under_way", default=None)
+
+
+@contextlib.contextmanager
+def recording(library, run_id):
+    """While the block runs, `tell` on this thread records into run `run_id` of `library`: what the code that claimed a
+    run holds around its work (tagpup.jobs.recurring.run_claimed, tagpup.jobs.indexing). A thread started meanwhile is
+    not in it: a run of the indexer a sync queued is its own run."""
+    token = _under_way.set([library, run_id, False])
+    try:
+        yield
+    finally:
+        _under_way.reset(token)
+
+
+def tell(phase, counts):
+    """Record how far the run under way on this thread (`recording`) has got, through `progress`: nothing when none is.
+    A write that fails -- a library gone, unreadable, its job_runs not there -- is logged, a warning the first time in a
+    run, and the work goes on: True only when written. A phase not in PHASES is a mistake in the code (ValueError)."""
+    held = _under_way.get()
+    if held is None:
+        return False
+    library, run_id, said = held
+    try:
+        return progress(library, run_id, counts, phase)
+    except ValueError:
+        raise
+    except Exception as e:
+        held[2] = True
+        (logger.debug if said else logger.warning)("Could not record how far run %d of %s got: %s", run_id,
+                                                    library.name, e)
+        return False
 
 
 def _forget(library, run_id):

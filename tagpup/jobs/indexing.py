@@ -12,7 +12,15 @@ Each run of the indexer has a tag (tagpup.core.runs.index_tag), held while it ru
 its lines in this process's log and in the indexer's own (the CLI it starts writes
 indexer-<library>-<run>.log) can be shown together; and the queue keeps what became of its last
 HISTORY runs, for the Activity page -- in this process, as the queue itself is.
+
+Each run of the indexer is a run of the job JOB in the library's `job_runs` too (DECISIONS 2026-10-28, ACTIVITY REWORK),
+claimed by this process as it takes the job -- under the run that queued it (a sync's), from the tags it was queued under
+-- told how far it got from the indexer's lines (tagpup.services.job_runs.tell, through index_folder), and ended with its
+counts and its message. Only the claiming process writes a run's row: the indexer the queue starts claims none. A row that
+cannot be written -- the library behind this version's schema, being written, gone -- is logged, and the index runs as
+it would have.
 """
+import contextlib
 import logging
 import os
 import threading
@@ -31,6 +39,9 @@ READY = {"status": "completed", "percent": 100, "message": "Ready"}
 #: How many ended runs of the indexer each library's queue remembers.
 HISTORY = 50
 
+#: The job a run of the indexer is recorded as in the library's `job_runs`.
+JOB = "index"
+
 #: What a folder queued once more after a run that began before its files arrived says.
 AGAIN = "Indexing again: files arrived in it while it was being indexed..."
 
@@ -48,7 +59,7 @@ def queue_for(library):
     with _queues_lock:
         queue = _queues.get(library.key)
         if queue is None:
-            queue = _queues[library.key] = IndexQueue(library.name)
+            queue = _queues[library.key] = IndexQueue(library.name, library)
         return queue
 
 
@@ -95,9 +106,12 @@ class IndexQueue:
     leaving that start's folder with nothing to index it.
     """
 
-    def __init__(self, library=None):
+    def __init__(self, library=None, recorded_in=None):
         #: The library's name: what its runs' tags and the Activity page name it by.
         self.library = library
+        #: The Library its runs of the indexer are recorded in (JOB); None for a queue made without one -- the tests of
+        #: its scheduling alone -- which records none.
+        self._recorded_in = recorded_in
         self._lock = threading.RLock()
         #: {"folder", "index"}, in the order they were asked for.
         self._pending = []
@@ -379,12 +393,17 @@ class IndexQueue:
                         self._statuses[paths.key(each)] = status
                 # Every line the run logs here carries its tag, and the indexer it starts is
                 # told it (tagpup.services.indexing).
+                run_id, result = None, None
                 try:
                     with runs.running(*(job.get("parents") or ()), run):
-                        self._index(job, progress)
+                        # Claimed here, under the tags it was queued under: its parent is the run that queued it.
+                        run_id = self._claim()
+                        with self._recording(run_id):
+                            result = self._index(job, progress)
                 finally:
                     with self._lock:
                         self._progress, self._current_folders = None, []
+                    self._end(run_id, job, status, result)
                 self._remember(job, status)
                 self._queue_what_was_missed(job, status)
         finally:
@@ -426,6 +445,48 @@ class IndexQueue:
             self._history.append(entry)
             del self._history[:-HISTORY]
 
+    def _claim(self):
+        """Begin this run's row (JOB) in the library, under the run of the library that queued it
+        (tagpup.core.runs.parent_run of the tags held): its id, or None when it is not recorded -- the library behind
+        this version's schema, another process's index of it under way, the library not to be written -- which is
+        logged; the index runs all the same."""
+        where = self._recorded_in
+        if where is None:
+            return None
+        try:
+            claim = job_runs.claim(where, JOB, where.name, time.time())
+        except Exception as e:
+            logger.warning("The index of %s is not recorded as a run: %s", where.name, e)
+            return None
+        if not claim:
+            logger.log(logging.DEBUG if claim.why == "behind" else logging.INFO,
+                       "The index of %s is not recorded as a run (%s).", where.name, claim.why)
+            return None
+        return claim.run_id
+
+    def _recording(self, run_id):
+        """What the run's work is done inside: the run `run_id`, recorded (job_runs.recording), or nothing."""
+        return job_runs.recording(self._recorded_in, run_id) if run_id is not None else contextlib.nullcontext()
+
+    def _end(self, run_id, job, status, result):
+        """End the run's row: done, with its message as the note, when it completed or was cancelled (counted
+        `cancelled`); failed, its message the sentence, when it failed. Its counts are its Result's (job_runs.counts,
+        what the indexer said it did among them) and its folders; an index that raised counts one error. A row that is
+        gone -- pruned, a restore, swept -- or cannot be written is logged."""
+        if run_id is None:
+            return
+        where, outcome = self._recorded_in, status.get("status")
+        counts = job_runs.counts(result) if result is not None else {"errors": 1}
+        counts["folders"] = len(_folders_of(job))
+        if outcome == "cancelled":
+            counts["cancelled"] = 1
+        try:
+            if not job_runs.end(where, run_id, time.time(), counts, failed=outcome not in ("completed", "cancelled"),
+                                note=status.get("message") or None):
+                logger.info("The run %d of the index of %s was no longer this process's to end.", run_id, where.name)
+        except Exception as e:
+            logger.warning("Could not record the end of the index of %s (run %d): %s", where.name, run_id, e)
+
     def _ensure_runner(self):
         """Start the worker, unless one is already working through the queue."""
         with self._lock:
@@ -437,13 +498,14 @@ class IndexQueue:
 
     @staticmethod
     def _index(job, report):
+        """Run the job's index, its status said in `report.status`: its Result, or None when it raised."""
         status = report.status
         try:
             result = job["index"](job["folders"] if "folders" in job else job["folder"], report)
         except Exception as e:
             logger.exception("Indexing %s failed", job["folder"])
             status.update(status="failed", percent=0, message="Error: %s" % e)
-            return
+            return None
         if result.details.get("cancelled"):
             status.update(status="cancelled", percent=0, message=result.details.get("message", "Cancelled."))
         elif result.ok:
@@ -452,3 +514,4 @@ class IndexQueue:
         else:
             status.update(status="failed", percent=result.details.get("percent", 0),
                           message=result.message())
+        return result

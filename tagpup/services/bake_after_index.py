@@ -68,16 +68,32 @@ def folder_said(number, of, baked, folder):
 
 
 def folder_heard(line):
-    """What a line folder_said made says: {"number", "of", "folder", "percent"} -- the percent the folders done before
-    this one are of all -- or None for any other line, and for one that is not whole in that shape (cut short, garbled,
-    a number not within 1..of)."""
+    """What a line folder_said made says: {"number", "of", "written", "current", "conflicts", "folder", "percent"} -- the
+    run's counts so far, and the percent the folders done before this one are of all -- or None for any other line, and
+    for one that is not whole in that shape (cut short, garbled, a number not within 1..of)."""
     found = _FOLDER_LINE.match(line or "")
     if not found:
         return None
     number, of = int(found.group(1)), int(found.group(2))
     if not 1 <= number <= of:
         return None
-    return {"number": number, "of": of, "folder": found.group(6), "percent": (number - 1) * 100 // of}
+    return {"number": number, "of": of, "written": int(found.group(3)), "current": int(found.group(4)),
+            "conflicts": int(found.group(5)), "folder": found.group(6), "percent": (number - 1) * 100 // of}
+
+
+_SAID_LINE = re.compile("^" + re.escape(SAID) + r"(\d+) file\(s\) written, (\d+) already held it")
+_SAID_CONFLICTS = re.compile(r"; (\d+) conflict\(s\)")
+
+
+def said_heard(line):
+    """What a line Baked.said made says, as counts: {"written", "current", "conflicts"}; None for any other line (the
+    CLI's line of a bake that stopped among them)."""
+    found = _SAID_LINE.match(line or "")
+    if not found:
+        return None
+    conflicts = _SAID_CONFLICTS.search(line)
+    return {"written": int(found.group(1)), "current": int(found.group(2)),
+            "conflicts": int(conflicts.group(1)) if conflicts else 0}
 
 
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
