@@ -6,9 +6,11 @@ The server's queue claims the run as it takes the job -- under the run of the li
 got from the indexer's lines (a phase and counts, never a path, at most every 10 s), and ends it done, failed with its
 sentence, or done and counted cancelled. The indexer it starts (the CLI, faked here: it prints what the real one prints)
 claims nothing. A library behind this version's schema, a library being written by the bake, a row pruned mid-run: the
-index runs as it would have. The daily sync's walk says how far it got in its own run. A server killed mid-index leaves its
-run to the sweep at the next start, under its sync still. Libraries are made in homes of their own; the names are
-fictional.
+index runs as it would have; another process writing the library as an index starts leaves it unrecorded, started at
+once; an end that cannot be written is written as the next index begins. Two processes indexing one library (the app and
+a CLI sync) each record their own. The timeline lists an index once. The daily sync's walk says how far it got in its own
+run. A server killed mid-index leaves its run to the sweep at the next start, under its sync still. Libraries are made in
+homes of their own; the names are fictional.
 """
 import json
 import os
