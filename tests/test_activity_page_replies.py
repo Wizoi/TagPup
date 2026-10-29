@@ -75,9 +75,9 @@ class RepliesForTheActivityPage(_Libraries):
         again, and the index of what its first walk found claimed beneath it, reading metadata: their run ids."""
         sync = job_runs.claim(library, recurring.SYNC, library.name, started)
         job_runs.progress(library, sync.run_id, {"folders": 812, "files": 20417}, "walking_again", now=at - 5)
+        self.held = {"run": runs.index_tag(library.name, started + 10 * MINUTE), "folders": 3}
         with runs.running(runs.job_tag(library.name, sync.run_id)):
-            index = job_runs.claim(library, job_runs.INDEX, library.name, started + 10 * MINUTE,
-                                   changed={"run": runs.index_tag(library.name, started + 10 * MINUTE), "folders": 3})
+            index = job_runs.claim(library, job_runs.INDEX, library.name, started + 10 * MINUTE, changed=self.held)
         job_runs.progress(library, index.run_id, {"done": 120, "of": 800, "percent": 15}, "metadata", now=at - 3)
         return sync.run_id, index.run_id
 
@@ -88,7 +88,11 @@ class RepliesForTheActivityPage(_Libraries):
         shares.forget()
         self.assertEqual(text, self.written(), "the replies differ from one run to the next")
         os.makedirs(os.path.dirname(FIXTURE), exist_ok=True)
-        if not os.path.exists(FIXTURE) or open(FIXTURE, encoding="utf-8").read() != text:
+        before = None
+        if os.path.exists(FIXTURE):
+            with open(FIXTURE, encoding="utf-8") as handle:
+                before = handle.read()
+        if before != text:
             with open(FIXTURE, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(text)
 
@@ -116,19 +120,20 @@ class RepliesForTheActivityPage(_Libraries):
         found["long_sync"] = self.replies([harbour, lighthouse], at, watcher=walking)
 
         # Stuck: the CLI's index of lighthouse said nothing for 12 minutes.
-        cli = job_runs.claim(lighthouse, job_runs.INDEX, lighthouse.name, started,
-                             changed={"run": runs.index_tag(lighthouse.name, started), "folders": 1})
+        cli_held = {"run": runs.index_tag(lighthouse.name, started), "folders": 1}
+        cli = job_runs.claim(lighthouse, job_runs.INDEX, lighthouse.name, started, changed=cli_held)
         job_runs.progress(lighthouse, cli.run_id, {"folders_done": 2, "folders": 9, "written": 14, "current": 40,
                                                    "conflicts": 0, "percent": 22}, "bake", now=at - 12 * MINUTE)
         found["stuck"] = self.replies([harbour, lighthouse], at, watcher=walking)
 
         # The morning after: the long sync and its index ended, the stuck index failed; breakwater's share dropped in
-        # the night, jetty's server was killed mid-sync, and pier is no library.
+        # the night, jetty's server was killed mid-sync, and pier is no library. An index ends as the queue ends it
+        # (tagpup.jobs.indexing.IndexQueue._end): its counts beside what it held from its claim.
         sync_id, index_id = self.long
-        job_runs.end(harbour, index_id, at + 20 * MINUTE, {"folders": 3, "photos_read": 800})
+        job_runs.end(harbour, index_id, at + 20 * MINUTE, dict({"photos_read": 800}, **self.held))
         job_runs.end(harbour, sync_id, at + 25 * MINUTE, {"new": 812})
-        job_runs.end(lighthouse, cli.run_id, at + 30 * MINUTE, {"errors": 1},
-                     failed=job_runs.failure(sentence="The indexer stopped answering; its process was ended."))
+        job_runs.end(lighthouse, cli.run_id, at + 30 * MINUTE, dict({"errors": 1}, **cli_held),
+                     failed=job_runs.Failure(job_runs.ERROR, "The indexer stopped answering; its process was ended."))
         night = started + 6 * HOUR
         breakwater = self.library("breakwater", new=("IMG_0002.jpg",))
         jetty = self.library("jetty")
@@ -144,12 +149,16 @@ class RepliesForTheActivityPage(_Libraries):
 
         morning = found["morning"]
         items = [each for group in morning["jobs"]["needs_you"] for each in group["items"]]
-        self.assertEqual([("breakwater", "sync", True)], [(each["library"], each["job"], each["run_now"]) for each in items])
+        # Run it now only for a job of the recurring runner: an index is run again by syncing its folder.
+        self.assertEqual([("breakwater", "sync", True), ("lighthouse", "index", False)],
+                         [(each["library"], each["job"], each["run_now"]) for each in items])
         self.assertTrue(items[0]["sentence"].startswith("The network share"), items[0]["sentence"])
         self.assertIn("pier", {each["name"] for each in morning["jobs"]["libraries"] if each.get("error")})
         self.assertIn("abandoned", {each["outcome"] for each in morning["timeline"]["entries"]})
         (index,) = [each for each in morning["timeline"]["entries"] if each["kind"] == "index" and each["parent"]]
         self.assertEqual(sync_id, index["parent"])
+        self.assertEqual(self.held["run"], index["run"])
+        self.assertTrue(index["logs"], "an ended index names its log")
         (long_harbour,) = [each for each in found["long_sync"]["now"]["libraries"] if each["name"] == "harbour"]
         self.assertEqual(["sync", "index"], [run["job"] for run in long_harbour["jobs"]])
         self.assertEqual(long_harbour["jobs"][0]["run_id"], long_harbour["jobs"][1]["parent"])
