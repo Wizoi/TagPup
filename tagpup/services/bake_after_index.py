@@ -53,37 +53,49 @@ logger = logging.getLogger(__name__)
 #: the job's message (tagpup.services.indexing).
 SAID = "Bake: "
 
-#: The start of the line the bake says as it begins each folder (folder_said): which of how many, the run's counts so
-#: far, and the folder (owner, DECISIONS 2026-10-28: the live line shows folder paths). The index queue reads it into the
-#: job's live line (tagpup.services.indexing, folder_heard), and the run's log holds it: a long bake is seen to move.
+def _heard_as(said):
+    """The pattern that reads what a format made (`said`, with %d for each number): one spelling, said and heard."""
+    return re.escape(said).replace("%d", r"(\d+)")
+
+
+#: The start of the line the bake says as it begins each folder, and again as each chunk of the folder's files is
+#: written (folder_said): which of how many, the run's counts of the folders done, how many of the folder's files are
+#: done when a chunk ends, and the folder (owner, DECISIONS 2026-10-28: the live line shows folder paths). The index queue
+#: reads it into the job's live line (tagpup.services.indexing, folder_heard), and the run's log holds it: a long bake,
+#: and a long folder (759 files over 57 minutes, photo_index 2026-10-28), is seen to move.
 FOLDER_SAID = "Bake folder "
-_FOLDER_LINE = re.compile("^" + re.escape(FOLDER_SAID)
-                          + r"(\d+) of (\d+), (\d+) written, (\d+) current, (\d+) conflicts: (.+)$")
+_FOLDER_COUNTS = "%d of %d, %d written, %d current, %d conflicts"
+_FOLDER_FILES = ", %d of %d of its files done"
+_FOLDER_LINE = re.compile("^" + re.escape(FOLDER_SAID) + _heard_as(_FOLDER_COUNTS)
+                          + "(?:" + _heard_as(_FOLDER_FILES) + ")?: (.+)$")
 
 
-def folder_said(number, of, baked, folder):
-    """The line of the `number`th folder of `of` as the bake begins it, with `baked`'s counts so far (Baked)."""
-    return FOLDER_SAID + "%d of %d, %d written, %d current, %d conflicts: %s" % (
-        number, of, baked.written, baked.current, baked.conflicts, folder)
+def folder_said(number, of, baked, folder, files=None):
+    """The line of the `number`th folder of `of` as the bake begins it, with `baked`'s counts so far (Baked); with
+    `files`, (done, of the folder's files to write), the line as a chunk of its write ends."""
+    return (FOLDER_SAID + _FOLDER_COUNTS % (number, of, baked.written, baked.current, baked.conflicts)
+            + (_FOLDER_FILES % files if files is not None else "") + ": " + folder)
 
 
 def folder_heard(line):
-    """What a line folder_said made says: {"number", "of", "written", "current", "conflicts", "folder", "percent"} -- the
-    run's counts so far, and the percent the folders done before this one are of all -- or None for any other line, and
-    for one that is not whole in that shape (cut short, garbled, a number not within 1..of)."""
+    """What a line folder_said made says: {"number", "of", "written", "current", "conflicts", "files_done", "files",
+    "folder", "percent"} -- the run's counts of the folders done, the folder's files done and to write (None in the line
+    as the folder begins), and the percent the folders done before this one, and this one's files done, are of all --
+    or None for any other line, and for one that is not whole in that shape (cut short, garbled, a number not within
+    1..of, files done not within 1..files)."""
     found = _FOLDER_LINE.match(line or "")
     if not found:
         return None
     number, of = int(found.group(1)), int(found.group(2))
     if not 1 <= number <= of:
         return None
+    done, files = (None, None) if found.group(6) is None else (int(found.group(6)), int(found.group(7)))
+    if files is not None and not 1 <= done <= files:
+        return None
+    percent = (number - 1) * 100 // of if files is None else ((number - 1) * files + done) * 100 // (of * files)
     return {"number": number, "of": of, "written": int(found.group(3)), "current": int(found.group(4)),
-            "conflicts": int(found.group(5)), "folder": found.group(6), "percent": (number - 1) * 100 // of}
-
-
-def _heard_as(said):
-    """The pattern that reads what a format made (`said`, with %d for each number): one spelling, said and heard."""
-    return re.escape(said).replace("%d", r"(\d+)")
+            "conflicts": int(found.group(5)), "files_done": done, "files": files, "folder": found.group(8),
+            "percent": percent}
 
 
 #: The parts of a line Baked.said makes, each a format said with and heard by: the counts every line has, and the
@@ -150,7 +162,8 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
     the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did;
-    `each(line)`, the line of each folder as it begins (folder_said), which the run's log holds too.
+    `each(line)`, the line of each folder as it begins and as each chunk of its write ends (folder_said), which the
+    run's log holds too: nothing between two is said, so a share that stops answering mid-chunk stops the lines.
     A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first)."""
     baked, snapshot, walk = Baked(), [], baking.walk(stop)
     owe_first(library, folders, handed)
@@ -159,16 +172,19 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
         for number, folder in enumerate(folders, 1):
             if stop is not None and stop():
                 break
-            line = folder_said(number, len(folders), baked, folder)
-            logger.info("%s", line)
-            if each is not None:
-                each(line)
+            def say(files=None, number=number, folder=folder):
+                line = folder_said(number, len(folders), baked, folder, files)
+                logger.info("%s", line)
+                if each is not None:
+                    each(line)
+            say()
             to_bake, stored, unfingerprinted = _planned(library, et, detector, folder, handed, baked, walk)
             written = None
             if to_bake and not baked.stalled:
                 if not snapshot:
                     snapshot.append(snapshot_service.before_a_long_write(library))
-                written = _write(library, exiftool_path, et, stored, to_bake, baked)
+                written = _write(library, exiftool_path, et, stored, to_bake, baked,
+                                 lambda done, of, say=say: say((done, of)))
             _adopt(library, unfingerprinted, to_bake, written, handed, baked)
             if baked.stalled or et.dead:
                 baked.stalled = True
@@ -273,13 +289,14 @@ def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
     baked.adopted += db.write_with_connection(library.path, adopt, label="the fingerprints of the photos whose files hold their bake")
 
 
-def _write(library, exiftool_path, et, stored, to_bake, baked):
+def _write(library, exiftool_path, et, stored, to_bake, baked, on_chunk):
     """Write the photos of one folder to bake as one internal change, each file read again before its write, and count
-    in `baked` what the write reported (its Result: the change is erased once it finishes)."""
+    in `baked` what the write reported (its Result: the change is erased once it finishes); `on_chunk(done, of)` as each
+    chunk of its files ends (write_fields)."""
     result = file_changes.write_fields(
         library, baking.INDEX_OPERATION, exiftool_path, [path for path, _values in to_bake.values()],
         list(bake.WRITTEN.values()), lambda path, _held: file_changes.Plan(after=to_bake[paths.key(path)][1]),
-        summary={"folder": stored}, et=et)
+        summary={"folder": stored}, et=et, on_chunk=on_chunk)
     unanswered = {paths.key(path) for path in result.details.get("not_answered", [])}
     conflicts = len(result.details.get("conflicts", []))
     baked.planned += len(to_bake)

@@ -305,7 +305,7 @@ def between_chunks(batch):
 @roots_service.canonical_args("photo_paths")
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
                  unreadable="fail", stop_at_first_error=False, et=None, held=None, whole=False, on_planned=None,
-                 uncapped=False, alongside=None):
+                 uncapped=False, alongside=None, on_chunk=None):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
     what one file is to hold (a Plan) from what it holds, {field: [texts]}.
@@ -324,7 +324,10 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     transaction that marks it done (store.photos.follow_fields): a save, whose row was written
     a second time after (#1368); that read is its read back. `on_planned(change_id)` is called once the plan is committed and
     before any file is written (a job records which change it is about to carry out); if it
-    raises nothing is written and the change is released, planned.
+    raises nothing is written and the change is released, planned. `on_chunk(done, of)` is called as each batches.CHUNK
+    of the change's `of` files has been carried out (`done` so far), before the next chunk begins: a long write is heard
+    to move (the index's bake, tagpup.services.bake_after_index), and one that a share stopped mid-chunk says nothing
+    more. It writes nothing; one that raises ends the write as a crash does (the rest settled forward at the next open).
 
     A Result: `changed` the files written, errors the photos that failed and the
     conflicts. details: `change` (its id, or None when nothing was written), `written`
@@ -354,7 +357,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 refused.details["cancelled"] = isinstance(why, Refused)     # cancelled while it waited, not a queue that is full
                 return refused
         return _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                              stop_at_first_error, et, held, whole, on_planned, alongside)
+                              stop_at_first_error, et, held, whole, on_planned, alongside, on_chunk)
 
 
 def _refused_whole(photo_paths, why):
@@ -366,20 +369,20 @@ def _refused_whole(photo_paths, why):
 @_exclusive
 @_pinned
 def _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                   stop_at_first_error, et, held, whole, on_planned, alongside=None):
+                   stop_at_first_error, et, held, whole, on_planned, alongside=None, on_chunk=None):
     if len(photo_paths) > batches.CHUNK and batches.current() is None:
         raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
     if et is None:
         # Dead for good after a command timed out: a share that went away costs its deadline once, not once a file.
         with field_values.session(exiftool_path) as session:
             return _write_fields(exiftool_session.StaysDead(session), library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                                 unreadable, stop_at_first_error, held, whole, on_planned, alongside)
+                                 unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
     return _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                         unreadable, stop_at_first_error, held, whole, on_planned, alongside)
+                         unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
 
 
 def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                  stop_at_first_error, fresh, whole, on_planned=None, alongside=None):
+                  stop_at_first_error, fresh, whole, on_planned=None, alongside=None, on_chunk=None):
     result = Result(attempted=len(photo_paths))
     _running.result, _running.internal = result, operation in file_journal.INTERNAL
     written = result.details["written"] = {}
@@ -458,6 +461,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             on_planned(change_id)
         stalled = None
         for n, row in enumerate(rows):
+            if n and n % batches.CHUNK == 0 and on_chunk is not None:
+                on_chunk(n, len(rows))
             if n and n % batches.CHUNK == 0 and not between_chunks(batch):
                 file_journal.withdraw(library.path, [r.id for r in rows[n:]])
                 result.details["stopped"] = {"after": n, "of": len(rows)}

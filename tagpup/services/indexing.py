@@ -148,11 +148,12 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
     (bake_after_index.SAID), each read whole.
 
     `report(message, percent)` hears progress as it comes, each message naming its phase: the percent of each of the
-    CLI's bars (metadata, embeddings), the faces' matching (MATCHING), and each folder of the bake as it begins, whole,
-    with the percent of the folders done before it (bake_after_index.folder_heard). A line cut short or garbled is passed
+    CLI's bars (metadata, embeddings), the faces' matching (MATCHING), and each folder of the bake as it begins and as
+    each chunk of its files is written, whole, with the percent of the folders and files done (bake_after_index.folder_heard). A line cut short or garbled is passed
     over. The run under way on this thread, when one is recorded (job_runs.recording: the index queue's), is told the
     same as a phase and counts, never a path (job_runs.tell): a bar's `done`, `of` and `percent`; a bake folder's
-    `folders_done`, `folders`, `written`, `current`, `conflicts` and `percent`.
+    `folders_done`, `folders`, `written`, `current`, `conflicts` and `percent`, and as a chunk ends `files_done` and
+    `files`, the folder's.
 
     details: `message`, what to tell the person; `percent`, where the bar stops;
     `cancelled`, true when the indexer was stopped while it waited for the graphics card; and, as counts, what the CLI
@@ -209,9 +210,11 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                 if whole.startswith(bake_after_index.FOLDER_SAID):
                     heard = bake_after_index.folder_heard(whole)
                     if heard is not None:
-                        job_runs.tell("bake", {"folders_done": heard["number"] - 1, "folders": heard["of"],
-                                               "written": heard["written"], "current": heard["current"],
-                                               "conflicts": heard["conflicts"], "percent": heard["percent"]})
+                        told = {"folders_done": heard["number"] - 1, "folders": heard["of"], "written": heard["written"],
+                                "current": heard["current"], "conflicts": heard["conflicts"], "percent": heard["percent"]}
+                        if heard["files"] is not None:
+                            told.update(files_done=heard["files_done"], files=heard["files"])
+                        job_runs.tell("bake", told)
                         # Whole, path and all: the bar's summary would cut it at 90 characters.
                         report(whole, heard["percent"])
                     continue
