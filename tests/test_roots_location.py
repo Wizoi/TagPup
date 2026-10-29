@@ -320,6 +320,19 @@ class ChangingTheLocation(RootsCase):
         self.assertIn("changed since you looked", result.refused)
         self.assertEqual(before, open(config.machine_roots_path(), "rb").read())
 
+    def test_a_move_the_map_refuses_at_its_write_ends_failed_refused_on_the_activity_page(self):
+        """The map changed between the owner's look and Confirm: the move's run ends failed as a refusal, so the page
+        says to do what the sentence says, not that something unexpected went wrong."""
+        from tagpup.services import job_runs as runs_service
+        hand = os.path.join(self.home.root, "Hand", "Pictures")
+        os.makedirs(hand)
+        config.set_location("pictures", hand)
+        self.assertIn("changed since you looked", self.move(apply=True, expected=self.side.pictures).refused)
+        moved = [r for r in store_job_runs.runs(self.side.db_path, None, 10) if r.job.startswith("change location")]
+        self.assertEqual(["failed"], [r.outcome for r in moved])
+        self.assertEqual(runs_service.REFUSED, runs_service.kind_of(moved[0]))
+        self.assertIn("changed since you looked", moved[0].note)
+
     def test_nothing_moves_while_something_of_the_library_is_queued_or_running(self):
         before = open(config.machine_roots_path(), "rb").read()
         result = self.move(apply=True, busy=lambda: ["an index run is queued"])
