@@ -178,11 +178,22 @@ def move_rows_in(conn, renames):
 def rows_of(conn, photo_paths):
     """{paths.key(path): (id, path as stored, document_id)} of each photo in
     `photo_paths` the library has a row for. One indexed lookup a photo."""
+    return _each_row(conn, photo_paths, "id, path, document_id")
+
+
+def stamps_of(conn, photo_paths):
+    """{paths.key(path): (id, path as stored, mtime, size)} of each photo in `photo_paths` the library has a row for: what
+    the folder watcher asks whether a notification is of a file its row already describes (tagpup.services.sync.followed).
+    One indexed lookup a photo."""
+    return _each_row(conn, photo_paths, "id, path, mtime, size")
+
+
+def _each_row(conn, photo_paths, columns):
+    """{paths.key(path): (`columns`, the path second)} of each photo in `photo_paths` with a row."""
     found = {}
     for photo_path in photo_paths:
         where, params = store_roots.sql_equals(conn, "path", photo_path)
-        row = conn.execute("SELECT id, path, document_id FROM photos WHERE " + where + " LIMIT 1",
-                           params).fetchone()
+        row = conn.execute("SELECT " + columns + " FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
         if row:
             found[paths.key(photo_path)] = store_roots.native_one(conn, row, 1)
     return found

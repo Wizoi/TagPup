@@ -4,7 +4,7 @@ with the schedule as the safety net"): real watchdog on temporary folders.
 A photo copied in is one sync of its folder once the notifications settle; fifty are one
 sync too; a file that is no photo is none. The whole library is synced when the watcher
 starts, when notifications were lost, and when a folder that was gone is back. A write
-TagPup makes is synced too, and the sync reads no file. Stopping waits for a sync under
+TagPup makes is not synced: the rows already describe the files. Stopping waits for a sync under
 way. No library of the owner's is touched: the libraries here are stand-ins, or made in
 the test's own home.
 """
@@ -27,9 +27,9 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images, shares  # noqa: E402
 from tagpup.jobs import watching  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
-from tagpup.services import refresh_rows, relink_photos, tagging  # noqa: E402
+from tagpup.services import refresh_rows, tagging  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
-from tagpup.store import db, schema  # noqa: E402
+from tagpup.store import db, job_runs, schema  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 JPEG = None
@@ -438,57 +438,141 @@ class WhichFoldersALibraryHas(unittest.TestCase):
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
-class TagPupsOwnWrites(unittest.TestCase):
-    """The app's writes are notified like any other; the sync they cause finds each row
-    describing its file, and reads nothing."""
+class TagPupsOwnWrites(Base):
+    """TagPup's own writes are notified like any other, from whichever process made them. A bake of photo_index synced
+    its folder once for each file it wrote, 7 or 8 times a minute, and recorded each (2026-10-28). The watcher the
+    server runs (runtime.folder_watcher) asks sync.followed whether the library's rows already describe each photo the
+    notifications named: then the folder is not synced. Anything else -- a photo renamed by the owner, a second library
+    whose rows are stale, a folder changed, a look that fails, too many photos to look at -- is synced as before."""
 
-    def test_a_tag_written_by_tagpup_is_a_sync_that_reads_no_file(self):
-        home = own_home.for_test(self, prefix="watcher_writes_")
-        library = Library(home.library("harbour.db"))
+    PHOTOS = 201
+
+    def setUp(self):
+        super().setUp()
+        self.regatta = os.path.join(self.root, "Regatta")
+        self.photos = [a_jpeg(os.path.join(self.regatta, "Regatta - %03d.jpg" % n)) for n in range(self.PHOTOS)]
+        self.harbour = self.made("harbour.db", self.photos)
+        self.results, self.reads = [], []
+
+    def made(self, name, photos):
+        """A library holding `photos` as a whole index leaves them, synced whole just now: no catch-up at start."""
+        library = Library(self.home.library(name))
         schema.ensure(library.path)
-        folder = os.path.join(home.root, "Photos")
-        os.makedirs(folder)
-        photo = a_jpeg(os.path.join(folder, "Regatta - 1.jpg"))
-        seed(library.path, photo)
+        db.write_with_connection(library.path, lambda conn: [photo_rows.add_indexed(conn, photo, {}) for photo in photos])
+        job_runs.record_sync(library.path, job_runs.stamp(time.time()), whole=True, in_step=True, found={}, changed={})
+        return library
 
-        results, reads = [], []
-
-        def counted(real, what):
+    def record(self, library, folder):
+        """The watcher's sync, applied as the server's is, and what it read of the files."""
+        def counted(real):
             def call(*args, **kwargs):
-                files = args[1] if what == "read_files" else args[0]
-                if files:
-                    reads.append((what, len(files)))
+                if args[1]:
+                    self.reads.append((library.name, len(args[1])))
                 return real(*args, **kwargs)
             return call
 
-        def sync(lib, folder_synced):
-            with mock.patch.object(refresh_rows, "read_files", counted(refresh_rows.read_files, "read_files")), \
-                    mock.patch.object(relink_photos, "claims_of", counted(relink_photos.claims_of, "claims_of")):
-                result = runtimes.sync(lib, folder=folder_synced, apply=True)
-            results.append((folder_synced, result))
+        with mock.patch.object(refresh_rows, "read_files", counted(refresh_rows.read_files)):
+            result = runtimes.sync(library, folder=folder, apply=True, index_new=False)
+        self.synced.append((library.name, folder))
+        self.results.append(result)
 
-        watcher = watching.Watcher(lambda: [library], lambda lib: sync_service.watch_folders(lib, []), sync,
-                                   images.is_photo, debounce=1.0, recheck=0.5, tick=0.05)
+    def watching(self, *libraries):
+        # Half the server's DEBOUNCE: a pause longer than it between a file written and its row recorded (a loaded
+        # machine) is a sync, rightly -- the row did not yet describe the file -- but not what these tests ask.
+        watcher = runtimes.folder_watcher(libraries=lambda: list(libraries), sync_with=self.record,
+                                          debounce=1.5, recheck=0.5, tick=0.05)
         self.addCleanup(watcher.stop, 20)
         watcher.start()
-        deadline = time.time() + 30
-        while not (results and watcher.watched()) and time.time() < deadline:
-            time.sleep(0.05)
-        self.assertEqual([None], [f for f, _r in results], "no catch-up at start")
-        self.assertTrue(results[0][1].details["in_step"])
-        del results[:]
+        self.wait_until(lambda: watcher.watched() == [paths.stored(self.regatta)])
+        return watcher
 
-        written = tagging.change_tags(library, [photo], ["Harbour"], [], EXIFTOOL)
-        self.assertEqual(1, written.changed, written.refused)
-        while not results and time.time() < deadline + 30:
-            time.sleep(0.05)
-        time.sleep(1.5)
-        self.assertEqual([paths.stored(folder)], [f for f, _r in results], "one sync of the written folder")
-        result = results[0][1]
-        counts = result.details["counts"]
-        self.assertEqual((0, 0, 0, 0), (counts["changed"], counts["new"], counts["moved"], counts["missing"]))
-        self.assertEqual(0, result.changed)
-        self.assertEqual([], reads, "the sync of TagPup's own write read a file")
+    def settled(self, watcher, *libraries):
+        """Wait until each library's notifications were heard and none waits, then a tick more."""
+        def done():
+            told = watcher.status()["libraries"]
+            return all(told.get(library.name, {}).get("last_event") and not told[library.name]["pending_folders"]
+                       and not told[library.name]["whole_pending"] for library in libraries)
+        self.wait_until(done, 60)
+        self.wait_until(lambda: not watcher.busy(), 60)
+        time.sleep(0.3)
+
+    def write(self, photos, library=None):
+        written = tagging.change_tags(library or self.harbour, photos, ["Harbour"], [], EXIFTOOL)
+        self.assertEqual(len(photos), written.changed, written.refused)
+
+    def folder_records(self, library):
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            return conn.execute("SELECT COUNT(*) FROM job_runs WHERE job = ?", (job_runs.SYNC_FOLDER,)).fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_two_hundred_photos_written_by_tagpup_are_no_sync_and_no_record(self):
+        watcher = self.watching(self.harbour)
+        self.write(self.photos[:200])
+        self.settled(watcher, self.harbour)
+        self.assertEqual([], self.synced, "neither the folder nor the whole library is synced")
+        self.assertEqual(0, self.folder_records(self.harbour))
+
+    def test_a_photo_the_owner_renames_during_the_writes_is_synced_and_its_row_follows(self):
+        watcher = self.watching(self.harbour)
+        renamed = os.path.join(self.regatta, "Regatta - start line.jpg")
+        writing = threading.Thread(target=self.write, args=(self.photos[:200],), daemon=True)
+        writing.start()
+        time.sleep(0.2)
+        os.rename(self.photos[200], renamed)
+        writing.join(120)
+        self.settled(watcher, self.harbour)
+        self.assertEqual([("harbour", paths.stored(self.regatta))], self.synced)
+        counts = self.results[0].details["counts"]
+        self.assertEqual((1, 0, 0, 0), (counts["moved"], counts["new"], counts["missing"], counts["changed"]))
+        self.assertEqual([], self.reads, "the sync read a file TagPup wrote")
+        conn = db.connect(db.readonly_uri(self.harbour.path), uri=True)
+        try:
+            held = sorted(paths.key(path) for (path,) in conn.execute("SELECT path FROM photos"))
+        finally:
+            conn.close()
+        self.assertIn(paths.key(renamed), held)
+        self.assertNotIn(paths.key(self.photos[200]), held)
+        self.assertEqual(1, self.folder_records(self.harbour), "a sync that found something is recorded")
+
+    def test_a_second_library_holding_the_folder_has_stale_rows_and_syncs_it(self):
+        marina = self.made("marina.db", self.photos[:3])
+        watcher = self.watching(self.harbour, marina)
+        self.write(self.photos[:3])
+        self.settled(watcher, self.harbour, marina)
+        self.assertEqual([("marina", paths.stored(self.regatta))], self.synced)
+        self.assertEqual(3, self.results[0].details["counts"]["changed"])
+        conn = db.connect(db.readonly_uri(marina.path), uri=True)
+        try:
+            tags = [tags for (tags,) in conn.execute("SELECT tags FROM photos")]
+        finally:
+            conn.close()
+        self.assertTrue(all("Harbour" in each for each in tags), tags)
+
+    def test_a_look_that_fails_still_syncs(self):
+        with mock.patch.object(sync_service, "followed", side_effect=OSError("the library is locked")):
+            watcher = self.watching(self.harbour)
+        self.write(self.photos[:3])
+        self.settled(watcher, self.harbour)
+        self.assertEqual([("harbour", paths.stored(self.regatta))], self.synced)
+
+    def test_more_photos_named_than_it_looks_at_walk_the_folder(self):
+        watcher = self.watching(self.harbour)
+        with mock.patch.object(watching, "NAMED_MOST", 3):
+            self.write(self.photos[:4])
+            self.settled(watcher, self.harbour)
+        self.assertEqual([("harbour", paths.stored(self.regatta))], self.synced)
+        self.assertEqual([], self.reads, "its rows describe every file: nothing is read")
+
+    def test_a_folder_named_among_the_writes_walks_the_folder(self):
+        spare = os.path.join(self.regatta, "Spare")
+        os.makedirs(spare)
+        watcher = self.watching(self.harbour)
+        self.write(self.photos[:3])
+        os.rmdir(spare)   # Windows says: a name gone, which may have been a folder
+        self.settled(watcher, self.harbour)
+        self.assertEqual([("harbour", paths.stored(self.regatta))], self.synced)
 
 
 class AWholeSyncOverASlowShare(unittest.TestCase):

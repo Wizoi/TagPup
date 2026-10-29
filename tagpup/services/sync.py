@@ -839,11 +839,13 @@ FOUND_WORTH = ("new", "missing", "moved", "changed")
 
 def worth_recording(library, whole, in_step, counts, changed, queued):
     """Is a sync, just applied, recorded? The whole library's always. A folder's when it found (FOUND_WORTH), changed or queued
-    something, or left the library not in step -- and, when it found nothing, when the newest record says not in step, so that
-    "in step" is not left standing on an older one. A folder settling on nothing is not: the watcher syncs a folder each time
-    one settles, and a record of each pushed the daily whole sync out of the old table (the Files owner's finding). A read that
-    fails records."""
-    if whole or not in_step or changed or queued or any(counts.get(what) for what in FOUND_WORTH):
+    something; when it found nothing, only when it says otherwise than the newest record of whether the library is in step
+    (none yet: when it says not), so that neither "in step" nor "not in step" is left standing on an older one. A folder
+    settling on nothing that the newest record already speaks for is not: the watcher syncs a folder each time one settles,
+    and a record of each pushed the daily whole sync out of the old table (the Files owner's finding), and, while the index
+    owed a folder its bake (not in step), 200 records of it in 28 minutes, the job's whole history (2026-10-28). A read
+    that fails records."""
+    if whole or changed or queued or any(counts.get(what) for what in FOUND_WORTH):
         return True
     try:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -853,7 +855,35 @@ def worth_recording(library, whole, in_step, counts, changed, queued):
             conn.close()
     except Exception:
         return True
-    return newest is not None and not newest["in_step"]
+    if newest is None:
+        return not in_step
+    return bool(newest["in_step"]) != bool(in_step)
+
+
+def followed(library, notified):
+    """Do `library`'s rows already describe each photo file named in `notified` (the paths a folder's notifications named) as it
+    is now: there, with a row that describes it (store.photos.describes, the folder scan's rule), or not there and without a
+    row? Then the folder holds nothing of theirs for a sync to follow. The one answer to "was that TagPup's own write", for
+    every writer in every process -- the page, the indexer's bake and its identities, the CLI: each records the file's stamp
+    in its row in the transaction that marks the file written (file_changes.write_fields; a rename moves the row with the
+    file, which keeps its stamp), so a write it made is described by the time its notifications settle. A file another
+    program added, changed, renamed or deleted is not, and its folder is synced. A look that cannot answer -- a share that
+    does not answer, a file that cannot be read, a library that cannot be read -- is False, and the folder is synced."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        rows = store_photos.stamps_of(conn, notified)
+    finally:
+        conn.close()
+    for path in notified:
+        stamp = shares.stamp_of(path)
+        row = rows.get(paths.key(path))
+        if stamp is None:
+            if row is not None:
+                return False    # a photo of the library's gone: deleted, or moved away
+            continue
+        if not isinstance(stamp, tuple) or row is None or not store_photos.describes(row[2], row[3], stamp):
+            return False
+    return True
 
 
 #: {library key: (photos generation, the folders it holds photos in)}: watch_folders is
