@@ -3,8 +3,9 @@
 // library (api.site: web/common/api.js). Now is asked every few seconds while the page is
 // in view, the rest every half minute, and nothing while the page is hidden (poll.js).
 import { state } from './state.js';
+import { wireRootsBanner } from './common/roots-banner.js';
 import { pauseWhenHidden, poller } from './poll.js';
-import { loadNow } from './now.js';
+import { loadNow, renderNow } from './now.js';
 import { loadJobs } from './jobs.js';
 import { loadSync } from './sync.js';
 import { loadSnapshots } from './snapshots.js';
@@ -20,15 +21,17 @@ document.addEventListener('DOMContentLoaded', () => {
         state.slowEvery = every * 10;
     }
 
-    // Each section's listeners.
+    // Each section's listeners, and the banner the other pages have (an update while the page is open).
+    wireRootsBanner();
     wireTimeline();
     wireLogs();
     pauseWhenHidden();
 
-    // Now, while the page is in view; the logs followed, when asked; the rest now and then.
+    // Now, while the page is in view; the logs followed, when asked; the rest now and then, Now drawn again with them:
+    // it says a library whose jobs could not be read, and what finished last (the timeline).
     poller(loadNow, state.every).start();
     poller(followLog, state.every).start();
-    poller(() => Promise.all([loadJobs(), loadSync(), loadServer(), loadTimeline()]),
+    poller(() => Promise.all([loadJobs(), loadSync(), loadServer(), loadTimeline()]).then(renderNow),
            state.slowEvery).start();
     poller(loadSnapshots, state.slowEvery * 4).start();
     loadLogFiles().then(() => readLog());

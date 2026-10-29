@@ -1,12 +1,14 @@
 // Scheduled jobs: each recurring job, why it is scheduled, and for each library its last
 // run -- when, how long, how it ended, what it changed, why it failed -- and when it is due;
 // Run now, asked first; its last runs unfolded; a failed last run flagged until a later one
-// is done (/api/activity/jobs, POST /api/activity/jobs/run).
+// is done (/api/activity/jobs, POST /api/activity/jobs/run). Needs you is drawn from the same answer (needs.js), its
+// Run it now this one's: the confirmation and the answer shown where the button was clicked (`where`: jobs or needs).
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { ago, counts, duration } from './format.js';
 import { badge, fill, none, outcomeKind, runLinks } from './view.js';
+import { renderNeeds } from './needs.js';
 
 /** Read each job's runs, and show them. */
 export function loadJobs() {
@@ -27,12 +29,12 @@ function jobKey(job, library) {
  * Once per click: while its POST is on its way, another for the same job and library sends
  * nothing, and the first answer is what is shown.
  */
-export function runNow(job, library) {
+export function runNow(job, library, where = 'jobs') {
     const key = jobKey(job, library);
     if (state.asking[key]) return Promise.resolve(null);
     state.asking[key] = true;
     state.confirming = null;
-    state.ranNow = { job, library, text: 'Starting...', ok: true };
+    state.ranNow = { job, library, where, text: 'Starting...', ok: true };
     renderJobs();
     const done = () => { delete state.asking[key]; };
     return api.site.json('/api/activity/jobs/run', {
@@ -45,24 +47,28 @@ export function runNow(job, library) {
         else if (answer && answer.started === null) text = `Asked: ${answer.why}.`;
         else text = (answer && (answer.error || answer.why)) || 'Could not start it.';
         done();
-        state.ranNow = { job, library, text, ok: !!(answer && answer.success) };
+        state.ranNow = { job, library, where, text, ok: !!(answer && answer.success) };
         renderJobs();
         return loadJobs().then(() => answer);
     }).catch(err => {
         done();
-        state.ranNow = { job, library, text: `Could not start it: ${err.message || err}`, ok: false };
+        state.ranNow = { job, library, where, text: `Could not start it: ${err.message || err}`, ok: false };
         renderJobs();
         return null;
     });
 }
 
-function runNowControls(job, library) {
-    const confirming = state.confirming && state.confirming.job === job.name && state.confirming.library === library;
-    if (confirming) {
+/** Whether `said` (state.confirming or state.ranNow) is of this job and library, where its button is. */
+function here(said, job, library, where) {
+    return !!said && said.job === job && said.library === library && said.where === where;
+}
+
+function runNowControls(job, library, where = 'jobs') {
+    if (here(state.confirming, job.name, library, where)) {
         const yes = buildElement('button', { className: 'btn btn-danger confirm-run', text: 'Run',
                                              attrs: { type: 'button' } });
         const no = buildElement('button', { className: 'btn cancel-run', text: 'Cancel', attrs: { type: 'button' } });
-        yes.addEventListener('click', () => runNow(job.name, library));
+        yes.addEventListener('click', () => runNow(job.name, library, where));
         no.addEventListener('click', () => {
             state.confirming = null;
             renderJobs();
@@ -71,7 +77,7 @@ function runNowControls(job, library) {
             buildElement('span', { text: `Run ${job.name} for ${library} now?` }), yes, no]);
     }
     const button = buildElement('button', {
-        className: 'btn run-now', text: 'Run now',
+        className: 'btn run-now', text: where === 'needs' ? 'Run it now' : 'Run now',
         attrs: { type: 'button', disabled: !state.jobs.runs_jobs || job.running || !!state.asking[jobKey(job.name, library)] },
         title: state.jobs.runs_jobs ? `Run ${job.name} for ${library} now, whether or not it is due`
             : 'This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS is set)',
@@ -80,10 +86,19 @@ function runNowControls(job, library) {
     button.addEventListener('click', () => {
         // A click that reaches a disabled button (one dispatched to it) asks nothing either.
         if (button.disabled || state.asking[jobKey(job.name, library)]) return;
-        state.confirming = { job: job.name, library };
+        state.confirming = { job: job.name, library, where };
         renderJobs();
     });
     return button;
+}
+
+/** Run it now in Needs you, for the job `name` of `library`, and what it answered there. */
+function controlsFor(name, library) {
+    const listed = (state.jobs.libraries || []).find(each => each.name === library);
+    const job = ((listed && listed.jobs) || []).find(each => each.name === name) || { name, running: false };
+    const ran = here(state.ranNow, name, library, 'needs') ? state.ranNow : null;
+    return [runNowControls(job, library, 'needs'),
+            ran ? buildElement('span', { className: ran.ok ? 'said' : 'said bad', text: ran.text }) : null];
 }
 
 function runRow(run, library) {
@@ -109,7 +124,7 @@ function jobRow(job, library) {
         state.unfolded[key] = !unfolded;
         renderJobs();
     });
-    const ran = state.ranNow && state.ranNow.job === job.name && state.ranNow.library === library ? state.ranNow : null;
+    const ran = here(state.ranNow, job.name, library, 'jobs') ? state.ranNow : null;
     const rows = [buildElement('tr', { className: job.failing ? 'job failing' : 'job', data: { job: job.name, library } }, [
         buildElement('td', { className: 'library', text: library }),
         buildElement('td', {}, [
@@ -160,12 +175,13 @@ export function renderJobs() {
                 buildElement('small', { text: job.period }),
             ]),
             buildElement('p', { className: 'about', text: job.about || '' }),
-            buildElement('table', { className: 'jobs-table' }, [
+            buildElement('div', { className: 'table-wrap' }, [buildElement('table', { className: 'jobs-table' }, [
                 buildElement('thead', {}, [buildElement('tr', {}, ['Library', 'Last run', 'When', 'Took', 'Changed',
                                                                     'Error', 'Next', ''].map(text => buildElement('th', { text })))]),
                 buildElement('tbody', {}, rows),
-            ]),
+            ])]),
         ]));
     }
     fill(document.getElementById('jobs-body'), ...(blocks.length ? blocks : [none('No recurring jobs.')]));
+    renderNeeds(data, controlsFor);
 }
