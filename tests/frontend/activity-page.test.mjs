@@ -681,6 +681,37 @@ describe("a section a module changed is asked again by its own poll, at once, ne
     assert.match(card(document, "harbour").textContent, /Nothing is running/);
   });
 
+  test("300 photos copied into a watched folder: Nows carrying a sync of one folder after another read nothing; a whole sync starting and ending does", async (t) => {
+    const quiet = SERVED.quiet.now;
+    const whole = SERVED.long_sync.now.syncing;
+    let now = quiet;
+    const fake = server("quiet", { first: [["/api/activity/now", () => now]] });
+    const { window } = await open(t, fake, 15000);
+    await flush(window, 6);
+    const { touched } = pageExports(window, "web/activity/poll.js");
+    const reads = () => [asked(fake, "/api/activity/jobs"), timelineReads(fake).length];
+    const from = reads();
+    for (let i = 0; i < 6; i += 1) {
+      now = { ...quiet, syncing: { library: "harbour", folder: "D:\\TagPup\\Pictures\\harbour\\Import", progress: null,
+                                   started: `2026-09-21 15:13:${String(10 + i).padStart(2, "0")}`, state: "running" } };
+      await touched("now");
+      await flush(window, 2);
+      now = quiet;
+      await touched("now");
+      await flush(window, 2);
+    }
+    assert.deepEqual(reads(), from, "a sync of one folder read the jobs or the timeline");
+
+    now = { ...quiet, syncing: whole };
+    await touched("now");
+    await flush(window, 6);
+    assert.deepEqual(reads(), [from[0] + 1, from[1] + 1], "a whole sync starting did not read at once");
+    now = quiet;
+    await touched("now");
+    await flush(window, 6);
+    assert.deepEqual(reads(), [from[0] + 2, from[1] + 2], "a whole sync ending did not read at once");
+  });
+
   test("More while the timeline is being read: one read at a time, the longer one asked after it and drawn last", async (t) => {
     let release = null;
     let inFlight = 0;

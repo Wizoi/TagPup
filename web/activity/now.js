@@ -30,12 +30,13 @@ export function loadNow() {
     });
 }
 
-/** The runs Now shows, by their rows (the queue's index by its row too, the watcher's sync by its start), as one text. */
+/** The runs Now shows, by their rows (the queue's index by its row too, the watcher's WHOLE sync by its start; a sync of
+ *  one folder records no run and comes and goes with every file copied in, so it is no run here), as one text. */
 function runsOf(data) {
     const runs = (data.libraries || []).flatMap(library => [
         ...(library.jobs || []).map(row => `${library.name}|${row.run_id}`),
         ...((library.indexing || {}).running ? [`${library.name}|${library.indexing.running.run_id}`] : [])]);
-    if (data.syncing) runs.push(`${data.syncing.library}|watcher|${data.syncing.started}`);
+    if (data.syncing && !data.syncing.folder) runs.push(`${data.syncing.library}|watcher|${data.syncing.started}`);
     return [...new Set(runs)].sort().join(' ');
 }
 
