@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-10-29 | low: the Activity page filters the runs' logs by library and kind from the one listing it reads (`web/activity/logs.js`, renderRunFiles): the same reply draws the programs' own logs and the filters' options, and a filter changed asks nothing, so rapid changes have no race; the listing's `library=` and `kind=` arguments (`activity_routes.log_list`, B5a) now have no caller but their test (`tests/test_activity_routes.py`), a branch with no instance. Remove them, or name the caller that needs a filtered listing. | open: server side, not this branch's (the page half of #1914) |
+| B-2 | 2026-10-29 | low: the Kind filter's words (`KIND_WORDS` in `web/activity/logs.js`: "Indexer runs", "Test runs") are a second statement beside `tagpup.logs.SOURCES`' labels ("Indexer (...)", "Test run"); a kind the page does not know is shown as the server spells it (`run_tests`). The listing could carry each kind's words (`kinds: {indexer: "Indexer runs"}`) so the page holds no copy. | open: server side, not this branch's |
+| B-3 | 2026-10-29 | low: the list of logs is read when the page opens and again on "Logs for this run" (a run newer than the page has a log the first listing did not hold), not polled: a run's log written meanwhile appears on the next "Logs for this run" or a reload, and one removed at a server's start while the page stayed open keeps its row, whose click says the server's sentence where its lines would be ("The log of this run was removed: ..."), Raw and Download then pointing at a file that is gone (404). | decided: by design, the listing is a few dozen names and the removal is at a server's start only; a click says why, which is the owner's ask (#1914); a poll of the listing would redraw the lists under the owner's pointer |
