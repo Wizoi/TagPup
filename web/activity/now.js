@@ -126,8 +126,8 @@ function treeOf(library, data) {
     }
     const syncing = data.syncing;
     if (syncing && syncing.library === library.name) {
-        // The watcher's whole sync is a run of the sync job: the same walk as the library's running sync row.
-        const row = syncing.folder === null ? [...nodes.values()].find(node => node.row.job === 'sync') : null;
+        // The watcher's whole sync is the row the server names its (`source`), the same walk as that run.
+        const row = [...nodes.values()].find(node => node.row.source === 'watcher');
         if (row) Object.assign(row.item, { label: 'sync (folder watcher)', at: (syncing.progress || {}).folder || '' });
         else roots.unshift({ item: fromWatcher(syncing), children: [] });
     }
