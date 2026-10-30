@@ -6,7 +6,9 @@
 // asked), by text and by run; Follow asks for what was written since, every few seconds; Older reads further back;
 // Raw and Download are the file itself. The server reads each log from its end and never whole
 // (/api/activity/logs/<name>): the page says where it read from and to, by offset. A log that is not there (removed
-// with the older runs', or not written yet) is said in the server's sentence where its lines would be.
+// with the older runs', or not written yet), found so by a read, Older or Follow, is said in the server's sentence
+// where its lines would be, nothing more read of it and Raw and Download not offered. A test run belongs to no library:
+// the Library filter is set aside while the kind chosen is one of no library's.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
@@ -84,7 +86,20 @@ function fillFilter(id, values, words, chosen) {
     return kept;
 }
 
+/** The log whose button has the keyboard's focus, or null: drawn again, its new button gets it back. */
+function focusedLog() {
+    const active = document.activeElement;
+    return active && active.classList && active.classList.contains('log-file') ? active.dataset.log : null;
+}
+
+function refocus(name) {
+    if (!name) return;
+    const button = [...document.querySelectorAll('button.log-file')].find(each => each.dataset.log === name);
+    if (button) button.focus();
+}
+
 function renderLogFiles() {
+    const focused = focusedLog();
     const files = state.logs.files;
     const system = files.filter(file => !isRun(file));
     const ran = files.filter(isRun);
@@ -102,18 +117,36 @@ function renderLogFiles() {
     foldLine('logs', files.length
         ? `${plural(system.length, 'system log', 'system logs')}; ${plural(ran.length, "run's log", "runs' logs")} kept`
         : 'No logs yet.');
-    const raw = document.getElementById('log-raw');
-    const download = document.getElementById('log-download');
-    if (raw) raw.href = state.logs.name ? api.site.url(logAddress(state.logs.name, '/raw')) : '#';
-    if (download) download.href = state.logs.name ? api.site.url(logAddress(state.logs.name, '/download')) : '#';
+    renderFileLinks();
+    refocus(focused);
+}
+
+/** Raw and Download: the chosen log's file, or not offered while there is none (no log chosen, or it is not there). */
+function renderFileLinks() {
+    for (const [id, what] of [['log-raw', '/raw'], ['log-download', '/download']]) {
+        const link = document.getElementById(id);
+        if (!link) continue;
+        if (state.logs.name && !state.logs.why) {
+            link.href = api.site.url(logAddress(state.logs.name, what));
+            link.removeAttribute('aria-disabled');
+        } else {
+            link.removeAttribute('href');
+            link.setAttribute('aria-disabled', 'true');
+        }
+    }
 }
 
 /** The runs' logs of the library and kind chosen, or why there are none. */
 function renderRunFiles() {
     const list = document.getElementById('log-runs');
     if (!list) return;
-    const { library, kind } = state.logs;
+    const { kind } = state.logs;
     const ran = state.logs.files.filter(isRun);
+    // A kind whose runs belong to no library (a test run's): the Library filter is set aside, not matched by nothing.
+    const libraryless = !!kind && ran.filter(file => file.kind === kind).every(file => !file.library);
+    const filter = document.getElementById('log-library');
+    if (filter) filter.disabled = libraryless;
+    const library = libraryless ? '' : state.logs.library;
     const shown = ran.filter(file => (!library || file.library === library) && (!kind || file.kind === kind));
     const none = ran.length
         ? `No ${kind ? (KIND_WORDS[kind] || kind).toLowerCase() : 'runs'}' logs of ${library || 'any library'} are kept.`
@@ -125,8 +158,17 @@ function renderRunFiles() {
 /** Show the log `name` from its end, with the filters as they are. */
 export function chooseLog(name) {
     state.logs.name = name;
+    state.logs.why = '';
     renderLogFiles();
     return readLog();
+}
+
+/** The chosen log is not there (removed with the older runs', or not written yet), or was refused: said where its
+ *  lines would be, nothing followed or read further back, Raw and Download not offered. */
+function notThere(data) {
+    Object.assign(state.logs, { records: [], start: null, end: null, complete: true,
+                                why: (data && data.error) || 'Could not read the log.' });
+    renderLogRecords();
 }
 
 /** Read the chosen log from its end again: the filters changed, or another log was chosen. */
@@ -139,11 +181,7 @@ export function readLog() {
     return api.site.json(logAddress(state.logs.name) + logQuery()).then(data => {
         if (read !== state.logs.asked) return null;   // a newer read was asked meanwhile
         if (!data || data.success === false) {
-            // Not there (removed with the older runs', or not written yet), or refused: said where its lines would be,
-            // and nothing followed or read further back.
-            Object.assign(state.logs, { records: [], start: null, end: null, complete: true,
-                                        why: (data && data.error) || 'Could not read the log.' });
-            renderLogRecords();
+            notThere(data);
             return data;
         }
         state.logs.records = data.records || [];
@@ -161,7 +199,11 @@ export function readOlder() {
     if (!state.logs.name || state.logs.complete || state.logs.start === null) return Promise.resolve(null);
     const read = ++state.logs.asked;
     return api.site.json(logAddress(state.logs.name) + logQuery({ before: state.logs.start })).then(data => {
-        if (read !== state.logs.asked || !data || data.success === false) return null;
+        if (read !== state.logs.asked) return null;
+        if (!data || data.success === false) {
+            notThere(data);
+            return null;
+        }
         state.logs.records = state.logs.records.concat(data.records || []);
         state.logs.start = data.start;
         state.logs.complete = !!data.complete;
@@ -175,7 +217,13 @@ export function followLog() {
     if (!state.logs.follow || !unfolded('logs') || !state.logs.name || state.logs.end === null) return Promise.resolve(null);
     const reading = state.logs.asked;
     return asked(api.site.json(logAddress(state.logs.name) + logQuery({ after: state.logs.end }))).then(data => {
-        if (reading !== state.logs.asked || !data || data.success === false) return null;
+        if (reading !== state.logs.asked) return null;
+        if (!data || data.success === false) {
+            // Removed meanwhile (a server's start keeps the last runs' logs): said, and not followed on; the server
+            // answered, so the poll has not failed.
+            notThere(data);
+            return null;
+        }
         if (data.rotated) {
             // The file was rotated: what it holds now is all new.
             state.logs.records = data.records || [];
@@ -198,8 +246,10 @@ export function showRunLogs(run, name) {
     unfold('logs');
     const section = document.getElementById('logs');
     if (section && typeof section.scrollIntoView === 'function') section.scrollIntoView();
-    // The listing again first: a run newer than the page has a log the first listing did not hold.
-    return loadLogFiles().then(() => chooseLog(name || state.logs.server));
+    // The listing again first: a run newer than the page has a log the first listing did not hold. A click (or any
+    // read) asked meanwhile is newer than this one, and is the one shown.
+    const asking = ++state.logs.asked;
+    return loadLogFiles().then(() => (asking === state.logs.asked ? chooseLog(name || state.logs.server) : null));
 }
 
 function renderRecord(record) {
@@ -224,6 +274,7 @@ export function renderLogRecords() {
     }
     const older = document.getElementById('log-older');
     if (older) older.disabled = !state.logs.name || state.logs.complete;
+    renderFileLinks();
     const chip = document.getElementById('log-run');
     if (chip) {
         chip.classList.toggle('hidden', !state.logs.run);

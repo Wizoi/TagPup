@@ -133,6 +133,7 @@ td.actions { white-space: nowrap; }
 }
 .link { border: none; padding: 2px 4px; }
 .btn:disabled, .link:disabled { color: var(--muted); cursor: default; }
+a.btn[aria-disabled="true"] { color: var(--muted); cursor: default; }
 .btn-danger { color: var(--bad); border-color: var(--bad); }
 .confirm { display: inline-flex; gap: 6px; align-items: center; }
 

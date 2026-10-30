@@ -853,16 +853,21 @@ describe("Logs", () => {
     assert.equal(document.getElementById("log-download").getAttribute("href"), "/api/activity/logs/tagpup_web.log/download");
   });
 
-  test("the runs' logs filtered by library and kind from the one listing, a filter matching nothing saying so", async (t) => {
+  test("the runs' logs filtered by library and kind from the one listing, a test run's of no library", async (t) => {
     const fake = server();
     const { document, window } = await open(t, fake);
     await flush(window, 8);
     const asked = fake.urls().length;
     choose(window, "log-library", "lighthouse");
     assert.deepEqual(logsIn(document, "log-runs"), [RUN_LOGS[1]]);
+    // A test run belongs to no library: the owner with several libraries, one chosen, still finds the test runs' logs.
     choose(window, "log-kind", "run_tests");
-    assert.deepEqual(logsIn(document, "log-runs"), []);
-    assert.equal(document.getElementById("log-runs").textContent, "No test runs' logs of lighthouse are kept.");
+    assert.deepEqual(logsIn(document, "log-runs"), [RUN_LOGS[0]]);
+    assert.equal(document.getElementById("log-library").disabled, true, "a library offered for runs of no library");
+    choose(window, "log-kind", "");
+    assert.equal(document.getElementById("log-library").disabled, false);
+    assert.deepEqual(logsIn(document, "log-runs"), [RUN_LOGS[1]]);
+    choose(window, "log-kind", "run_tests");
     choose(window, "log-library", "");
     assert.deepEqual(logsIn(document, "log-runs"), [RUN_LOGS[0]]);
     // The programs' own logs and the log shown stay as they were; a filter asks the server nothing.
@@ -886,12 +891,80 @@ describe("Logs", () => {
     await flush(window, 6);
     assert.equal(document.getElementById("log-records").textContent, removed.error);
     assert.equal(document.getElementById("log-older").disabled, true);
+    for (const id of ["log-raw", "log-download"]) {
+      const link = document.getElementById(id);
+      assert.equal(link.hasAttribute("href"), false, `${id} still points at a log that is not there`);
+      assert.equal(link.getAttribute("aria-disabled"), "true", id);
+    }
     await new Promise((resolve) => setTimeout(resolve, 120));
     assert.equal(fake.urls().filter((url) => url.includes(`${RUN_LOGS[1]}?`) && url.includes("after=")).length, 0,
                  "a log that is not there was followed");
     click(window, document.querySelector('#log-system button[data-log="tagpup_web.log"]'));
     await flush(window, 6);
     assert.match(document.getElementById("log-records").textContent, /slow: GET \/api\/tags/);
+    assert.equal(document.getElementById("log-raw").getAttribute("href"), "/api/activity/logs/tagpup_web.log/raw");
+    assert.equal(document.getElementById("log-raw").hasAttribute("aria-disabled"), false);
+  });
+
+  test("a log removed by a server's start while the page follows it says why, and the poll is not failing", async (t) => {
+    const removed = { success: false, removed: true,
+                      error: "The log of this run was removed: the last 5 runs' logs of each library and kind are kept." };
+    const fake = server().first(/tagpup_web\.log\?.*after=/, removed, { status: 404 });
+    const { document, window } = await open(t, fake, 20);
+    await flush(window, 8);
+    click(window, document.querySelector('details.fold[data-fold="logs"] > summary'));
+    const follow = document.getElementById("log-follow");
+    follow.checked = true;
+    follow.dispatchEvent(new window.Event("change"));
+    const followed = () => fake.urls().filter((url) => /tagpup_web\.log\?.*after=/.test(url)).length;
+    await settled(() => document.getElementById("log-records").textContent === removed.error, "the removal to be said");
+    const asked = followed();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(followed(), asked, "a log that is not there was followed on");
+    assert.equal(document.getElementById("logs-status").textContent, "", "a removed log read as the server failing");
+    assert.equal(document.getElementById("log-raw").hasAttribute("href"), false);
+  });
+
+  test("Older on a log removed meanwhile says why where its lines would be", async (t) => {
+    const removed = { success: false, removed: true,
+                      error: "The log of this run was removed: the last 5 runs' logs of each library and kind are kept." };
+    const fake = server().first(/tagpup_web\.log\?.*before=/, removed, { status: 404 });
+    const { document, window } = await open(t, fake);
+    await flush(window, 8);
+    click(window, document.getElementById("log-older"));
+    await flush(window, 6);
+    assert.equal(document.getElementById("log-records").textContent, removed.error);
+    assert.equal(document.getElementById("log-older").disabled, true);
+  });
+
+  test("rapid clicks on two runs' logs show the last one clicked, however slowly the first listing answers", async (t) => {
+    let listed = 0;
+    const slowFirstClick = () => {
+      listed += 1;
+      const reply = SERVED.morning.logs;
+      return listed === 2 ? new Promise((resolve) => setTimeout(() => resolve(reply), 80)) : reply;
+    };
+    const fake = server().first(/\/api\/activity\/logs$/, slowFirstClick);
+    const { document, window } = await open(t, fake);
+    await flush(window, 8);
+    const link = (run) => document.querySelector(`#timeline-body button.run-logs[data-run="${run}"][data-log^="indexer-"]`);
+    click(window, link(INDEX_RUN));
+    click(window, link("index:lighthouse:20260921T151320-4242-2"));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await flush(window, 6);
+    assert.equal(document.querySelector("#log-runs button.chosen").dataset.log, RUN_LOGS[1], "an older click won");
+    const read = fake.urls().filter((url) => url.includes("/api/activity/logs/") && url.includes("run=")).at(-1);
+    assert.ok(read.startsWith(`/api/activity/logs/${RUN_LOGS[1]}?`), read);
+  });
+
+  test("the log button pressed keeps the keyboard's focus as the lists are drawn again", async (t) => {
+    const { document, window } = await open(t, server());
+    await flush(window, 8);
+    const pressed = document.querySelector(`#log-runs button[data-log="${RUN_LOGS[1]}"]`);
+    pressed.focus();
+    click(window, pressed);
+    await flush(window, 6);
+    assert.equal(document.activeElement.dataset.log, RUN_LOGS[1], "the focus went to the page");
   });
 
   test("Logs for this run of a run that wrote no log says so, in the server's words", async (t) => {
