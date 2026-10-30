@@ -255,11 +255,23 @@ FIRST_LOOK = 64 * 1024
 SOURCES = (
     (re.compile(r"^tagpup_web\.console$"), "Server console"),
     (re.compile(r"^tagpup_web$"), "Web server"),
+    # What a server an install started printed before its own log (tagpup.launcher.STARTED_LOG).
+    (re.compile(r"^tagpup_web\.installed$"), "Server start-up output (installed copy)"),
     (re.compile(r"^indexer-(.+)-(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)\d\d-\d+-\d+$"), "Indexer ({0}, {2}-{3} {4}:{5})"),
     (re.compile(r"^tagpup_mcp$"), "MCP server"),
     (re.compile(r"^runner$"), "Desktop runner"),
     (re.compile(r"^run_tests-.*$"), "Test run"),
 )
+
+
+#: Each kind of run (group_of) in words, for the Activity page's Kind filter: the listing sends them (kind_words), the
+#: page holds no copy. The indexer's kind is its log's (tagpup.services.indexing.INDEXER_LOG).
+KIND_WORDS = {"indexer": "Indexer runs", TESTS: "Test runs"}
+
+
+def kind_words(kind):
+    """The kind of run `kind` in words ("Indexer runs"); a kind with none is said as it is spelled."""
+    return KIND_WORDS.get(kind, kind)
 
 
 def source_of(program):

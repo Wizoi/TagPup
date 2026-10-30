@@ -11,7 +11,10 @@ owner opens the page on:
                 (its queue's, tagpup.jobs.indexing) runs beneath it, reading metadata, another folder waiting.
     stuck       the CLI's index of lighthouse last said how far it got 12 minutes ago, in its bake (#2210).
     morning     breakwater's share dropped overnight (Needs you, Run it now); jetty's server was killed mid-sync (an
-                abandoned run says why); harbour's sync and its index ended (a tree); pier is no library at all.
+                abandoned run says why); harbour's sync and its index ended (a tree); pier is no library at all. Its
+                logs (/api/activity/logs): the web server's and the MCP server's own, the runs' of harbour's and
+                lighthouse's indexes, written by tagpup.logs, and a failed test run's (tools/run_tests.py names it);
+                the index of the folder that waited wrote none, and reading its log answers why (`missing_log`).
 
 The clocks are the scenarios' own (time.time is the scenario's throughout -- the index queue's thread and the claim
 of its run among it -- the journal's clock the day before while each library is made, an index's tag the scenario's
@@ -21,6 +24,7 @@ Fictional names only.
 """
 import itertools
 import json
+import logging
 import os
 import sys
 import threading
@@ -34,6 +38,7 @@ from test_a_failed_run_says_what_to_do import NIGHT, Clock, _Libraries  # noqa: 
 from test_activity_routes import FakeWatcher  # noqa: E402
 from test_an_index_is_one_run_under_its_sync import FAKE_CLI, ROOT  # noqa: E402
 
+from tagpup import logs  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import dates, runs  # noqa: E402
 from tagpup.files import shares  # noqa: E402
@@ -46,7 +51,7 @@ from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "fixtures", "activity.json")
 MINUTE, HOUR = 60, 3600
-ROUTES = ("now", "jobs", "timeline")
+ROUTES = ("now", "jobs", "timeline", "logs")
 #: Set to 1 to write the fixture again from the replies, when a change of the server's is meant to change them.
 WRITE_FIXTURE = "TAGPUP_WRITE_FIXTURE"
 WRITE_COMMAND = ("%s=1 .venv/Scripts/python.exe -m unittest tests.test_activity_page_replies"
@@ -62,8 +67,9 @@ class RepliesForTheActivityPage(_Libraries):
                 mock.patch.object(journal, "_now", lambda: dates.recorded(day_before)):
             return super().library(name, **kwargs)
 
-    def replies(self, libraries, at, watcher=None):
-        """What the page asks, as the real routes answer it, at the scenario's clock `at`."""
+    def replies(self, libraries, at, watcher=None, missing=None):
+        """What the page asks, as the real routes answer it, at the scenario's clock `at`; and the read of the log
+        `missing`, which is not there (`missing_log`)."""
         tasks = [(runtimes.RECURRING_JOBS, recurring.Runner(lambda: libraries, clock=Clock(at)))]
         if watcher is not None:
             tasks.append((runtimes.FOLDER_WATCHER, FakeWatcher(watcher)))
@@ -76,7 +82,27 @@ class RepliesForTheActivityPage(_Libraries):
                 reply = client.get("/api/activity/" + route)
                 self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
                 found[route] = reply.get_json()
+            if missing:
+                reply = client.get("/api/activity/logs/" + missing + "?limit=200&level=INFO")
+                self.assertEqual(404, reply.status_code, reply.get_data(as_text=True))
+                found["missing_log"] = reply.get_json()
         return found
+
+    def write_log(self, program, tag, message, at):
+        """A line logged to the log of `program` (a file name, as tagpup.logs names it) by its writer
+        (tagpup.logs.to_file), under the run `tag` (or none), at the scenario's clock; the file last written at `at`."""
+        root = logging.getLogger()
+        level = root.level
+        path = logs.to_file(program)
+        (handler,) = [each for each in root.handlers if getattr(each, "baseFilename", None) == path]
+        try:
+            with runs.running(*([tag] if tag else [])):
+                logging.getLogger("tagpup.indexing").info(message)
+        finally:
+            root.removeHandler(handler)
+            handler.close()
+            root.setLevel(level)
+        os.utime(path, (at, at))
 
     def indexer(self, name, lines):
         """The code folder of an indexer that prints `lines` as the CLI's `index` prints them (FAKE_CLI; "WAIT <file>"
@@ -227,7 +253,17 @@ class RepliesForTheActivityPage(_Libraries):
             self.assertEqual(1, job_runs.sweep_abandoned(jetty, night + 2 * HOUR))   # the server's next start
         with open(self.home.library("pier.db"), "wb") as handle:
             handle.write(b"not a library")
-        found["morning"] = self.replies([harbour, lighthouse, breakwater, jetty], night + 4 * HOUR)
+        # The logs: the servers' own, and the runs' of the two indexes that ran; the one that waited wrote none.
+        index_tags = {run.parent: run.changed.get("run") for run in job_runs.runs(harbour, job_runs.INDEX, 5)}
+        self.write_log(logs.SERVER_LOG, None, "Serving on port 8080", night + 4 * HOUR - 60)
+        self.write_log("tagpup_mcp.log", None, "MCP server ready", night - HOUR)
+        self.write_log(logs.run_log(indexing.INDEXER_LOG, index_tags[sync_id]), index_tags[sync_id],
+                       "Indexed 1 folder", at + 20 * MINUTE)
+        self.write_log(logs.run_log(indexing.INDEXER_LOG, cli_held["run"]), cli_held["run"],
+                       "The indexer stopped answering", at + 30 * MINUTE)
+        self.write_log("run_tests-20260921-150500.log", None, "FAILED (failures=1)", night - 2 * HOUR)
+        waited = logs.run_log(indexing.INDEXER_LOG, index_tags[None])
+        found["morning"] = self.replies([harbour, lighthouse, breakwater, jetty], night + 4 * HOUR, missing=waited)
 
         morning = found["morning"]
         items = [each for group in morning["jobs"]["needs_you"] for each in group["items"]]

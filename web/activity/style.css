@@ -133,11 +133,13 @@ td.actions { white-space: nowrap; }
 }
 .link { border: none; padding: 2px 4px; }
 .btn:disabled, .link:disabled { color: var(--muted); cursor: default; }
+a.btn[aria-disabled="true"] { color: var(--muted); cursor: default; }
 .btn-danger { color: var(--bad); border-color: var(--bad); }
 .confirm { display: inline-flex; gap: 6px; align-items: center; }
 
-.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
-.tab {
+.log-group { margin: 10px 0 6px; font-size: 14px; }
+.log-files { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.log-file {
     background: var(--bg-card);
     color: var(--text);
     border: 1px solid var(--border);
@@ -145,11 +147,15 @@ td.actions { white-space: nowrap; }
     padding: 4px 10px;
     cursor: pointer;
     display: inline-flex;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 2px 6px;
     align-items: baseline;
+    text-align: left;
+    max-width: 100%;
 }
-.tab small { color: var(--muted); }
-.tab.chosen { border-color: var(--accent); }
+.log-file small { color: var(--muted); }
+/* The log shown: its border thicker and its name bold, not its colour alone. */
+.log-file.chosen { border: 2px solid var(--accent); font-weight: bold; padding: 3px 9px; }
 
 .log-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .log-controls input[type="search"], .log-controls select {
@@ -165,6 +171,7 @@ td.actions { white-space: nowrap; }
 .log-table td { font-family: Consolas, monospace; font-size: 12px; }
 .log-table td.when { white-space: nowrap; color: var(--muted); }
 .log-table td.logger { color: var(--muted); }
+.log-table td.why { font-family: inherit; font-size: 13px; color: var(--text); }
 .log-table pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
 .record.level-warning td.level { color: var(--busy); }
 .record.level-error td.level, .record.level-critical td.level { color: var(--bad); }

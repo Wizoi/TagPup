@@ -31,9 +31,18 @@ export const state = {
     needsDrawn: '',
     logs: {
         files: [],
-        //: The web server's own log, as the server names it: the tab chosen first.
+        //: The web server's own log, as the server names it: the one shown first.
         server: null,
+        //: How many runs' logs of each library and kind the server keeps.
+        keepRuns: null,
+        //: Each kind of run the listing holds, in the server's words (tagpup.logs.kind_words): the Kind filter's.
+        kinds: {},
         name: null,
+        //: The runs' logs shown: of this library and of this kind ('' for all); the listing is filtered here, not asked again.
+        library: '',
+        kind: '',
+        //: Why the chosen log could not be read (the server's sentence: removed, or not written yet), or ''.
+        why: '',
         //: INFO and worse, as the files are written: a long run's progress lines are INFO.
         level: 'INFO',
         text: '',

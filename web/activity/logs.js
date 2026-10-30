@@ -1,14 +1,19 @@
-// Logs: a tab for each log in data/logs (the web server's, each
-// library's indexer, the console's...), its newest records first as time, level, logger and
-// message; filtered by level (INFO and worse unless asked), by text and by run; Follow
-// asks for what was written since, every few seconds; Older reads further back; Raw and
-// Download are the file itself. The server reads each log from its end and never whole
-// (/api/activity/logs/<name>): the page says where it read from and to, by offset.
+// Logs: the logs in data/logs in two lists, as the server groups them (`group`): the programs' own (the web server's,
+// the MCP server's, the console's: a short list), and the runs' (each index's, each failed test run's), which keep
+// coming and are kept the last few of each library and kind -- those filtered by library and by kind, here, from the
+// one listing; each said in words (what ran, the library, when, its size), the file's name only its title. The log
+// chosen, its newest records first as time, level, logger and message; filtered by level (INFO and worse unless
+// asked), by text and by run; Follow asks for what was written since, every few seconds; Older reads further back;
+// Raw and Download are the file itself. The server reads each log from its end and never whole
+// (/api/activity/logs/<name>): the page says where it read from and to, by offset. A log that is not there (removed
+// with the older runs', or not written yet), found so by a read, Older or Follow, is said in the server's sentence
+// where its lines would be, nothing more read of it and Raw and Download not offered. A test run belongs to no library:
+// the Library filter is set aside while the kind chosen is one of no library's.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import { asked } from './poll.js';
-import { bytes } from './format.js';
+import { bytes, clock } from './format.js';
 import { foldLine, unfold, unfolded } from './fold.js';
 
 /** How many records a read asks for. */
@@ -18,6 +23,8 @@ const LOG_PAGE = 200;
 const LOG_KEEP = 2000;
 
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'];
+
+const RUN = 'run';
 
 function logAddress(name, what = '') {
     return `/api/activity/logs/${encodeURIComponent(name)}${what}`;
@@ -34,47 +41,135 @@ function logQuery(extra = {}) {
     return `?${params.toString()}`;
 }
 
-/** Read the list of logs, and make a tab of each. */
-export function loadLogFiles() {
+/** Read the list of logs, and draw the two lists. The chosen log that left the listing gives way to the server's log
+ *  unless `keepName`: its caller chooses a log itself, and may be overtaken (showRunLogs), the name then staying the one
+ *  whose lines are shown. */
+export function loadLogFiles({ keepName = false } = {}) {
     return api.site.json('/api/activity/logs').then(data => {
         state.logs.files = (data && data.logs) || [];
         state.logs.server = (data && data.server) || null;
-        if (!state.logs.name || !state.logs.files.some(file => file.name === state.logs.name)) {
+        state.logs.keepRuns = (data && data.keep_runs) || null;
+        state.logs.kinds = (data && data.kinds) || {};
+        if (!keepName && (!state.logs.name || !state.logs.files.some(file => file.name === state.logs.name))) {
             const web = state.logs.files.find(file => file.name === state.logs.server);
             state.logs.name = web ? web.name : (state.logs.files[0] || {}).name || null;
         }
-        renderLogTabs();
+        renderLogFiles();
         return data;
     });
 }
 
-function renderLogTabs() {
-    const tabs = document.getElementById('log-tabs');
-    if (!tabs) return;
-    const buttons = state.logs.files.map(file => {
-        const chosen = file.name === state.logs.name;
-        const tab = buildElement('button', {
-            className: chosen ? 'tab chosen' : 'tab', title: file.name,
-            attrs: { type: 'button', role: 'tab', 'aria-selected': chosen ? 'true' : 'false' },
-            data: { log: file.name },
-        }, [buildElement('span', { text: file.source }), buildElement('small', { text: bytes(file.bytes) })]);
-        tab.addEventListener('click', () => chooseLog(file.name));
-        return tab;
-    });
-    replaceContent(tabs, ...(buttons.length ? buttons : [buildElement('p', { className: 'none', text: 'No logs yet.' })]));
-    const many = state.logs.files.length;
-    foldLine('logs', many ? `${many} log${many === 1 ? '' : 's'}` : 'No logs yet.');
-    const raw = document.getElementById('log-raw');
-    const download = document.getElementById('log-download');
-    if (raw) raw.href = state.logs.name ? api.site.url(logAddress(state.logs.name, '/raw')) : '#';
-    if (download) download.href = state.logs.name ? api.site.url(logAddress(state.logs.name, '/download')) : '#';
+/** A run's log is one the server groups so; any other (a program's own) is in the short list. */
+const isRun = file => file.group === RUN;
+
+const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+function logButton(file, label) {
+    const chosen = file.name === state.logs.name;
+    const button = buildElement('button', {
+        className: chosen ? 'log-file chosen' : 'log-file', title: file.name,
+        attrs: { type: 'button', 'aria-pressed': chosen ? 'true' : 'false' },
+        data: { log: file.name },
+    }, [buildElement('span', { text: label }), buildElement('small', { text: `last written ${clock(file.modified)}, ${bytes(file.bytes)}` })]);
+    button.addEventListener('click', () => chooseLog(file.name));
+    return button;
+}
+
+/** The options of a filter: All, then each value the runs' logs hold, in words; the value chosen kept if still there. */
+function fillFilter(id, values, words, chosen) {
+    const select = document.getElementById(id);
+    if (!select) return chosen;
+    const kept = values.includes(chosen) ? chosen : '';
+    replaceContent(select, buildElement('option', { text: 'All', attrs: { value: '' } }),
+                   ...values.map(value => buildElement('option', { text: words(value), attrs: { value } })));
+    select.value = kept;
+    return kept;
+}
+
+/** The log whose button has the keyboard's focus, or null: drawn again, its new button gets it back. */
+function focusedLog() {
+    const active = document.activeElement;
+    return active && active.classList && active.classList.contains('log-file') ? active.dataset.log : null;
+}
+
+function refocus(name) {
+    if (!name) return;
+    const button = [...document.querySelectorAll('button.log-file')].find(each => each.dataset.log === name);
+    if (button) button.focus();
+}
+
+function renderLogFiles() {
+    const focused = focusedLog();
+    const files = state.logs.files;
+    const system = files.filter(file => !isRun(file));
+    const ran = files.filter(isRun);
+    const own = document.getElementById('log-system');
+    if (own) replaceContent(own, ...(system.length ? system.map(file => logButton(file, file.source))
+        : [buildElement('p', { className: 'none', text: 'No program has written a log yet.' })]));
+    const libraries = [...new Set(ran.map(file => file.library).filter(Boolean))].sort();
+    const kinds = [...new Set(ran.map(file => file.kind).filter(Boolean))].sort();
+    state.logs.library = fillFilter('log-library', libraries, value => value, state.logs.library);
+    state.logs.kind = fillFilter('log-kind', kinds, value => state.logs.kinds[value], state.logs.kind);
+    renderRunFiles();
+    const kept = document.getElementById('log-kept');
+    if (kept) kept.textContent = state.logs.keepRuns
+        ? `The last ${state.logs.keepRuns} runs' logs of each library and kind are kept.` : '';
+    foldLine('logs', files.length
+        ? `${plural(system.length, 'system log', 'system logs')}; ${plural(ran.length, "run's log", "runs' logs")} kept`
+        : 'No logs yet.');
+    renderFileLinks();
+    refocus(focused);
+}
+
+/** Raw and Download: the chosen log's file, or not offered while there is none (no log chosen, or it is not there). */
+function renderFileLinks() {
+    for (const [id, what] of [['log-raw', '/raw'], ['log-download', '/download']]) {
+        const link = document.getElementById(id);
+        if (!link) continue;
+        if (state.logs.name && !state.logs.why) {
+            link.href = api.site.url(logAddress(state.logs.name, what));
+            link.removeAttribute('aria-disabled');
+        } else {
+            link.removeAttribute('href');
+            link.setAttribute('aria-disabled', 'true');
+        }
+    }
+}
+
+/** The runs' logs of the library and kind chosen, or why there are none. */
+function renderRunFiles() {
+    const list = document.getElementById('log-runs');
+    if (!list) return;
+    const { kind } = state.logs;
+    const ran = state.logs.files.filter(isRun);
+    // A kind whose runs belong to no library (a test run's): the Library filter is set aside, not matched by nothing.
+    const libraryless = !!kind && ran.filter(file => file.kind === kind).every(file => !file.library);
+    const filter = document.getElementById('log-library');
+    if (filter) filter.disabled = libraryless;
+    const library = libraryless ? '' : state.logs.library;
+    const shown = ran.filter(file => (!library || file.library === library) && (!kind || file.kind === kind));
+    const none = ran.length
+        ? `No ${kind ? state.logs.kinds[kind].toLowerCase() : 'runs'}' logs of ${library || 'any library'} are kept.`
+        : 'No run has written a log yet.';
+    replaceContent(list, ...(shown.length ? shown.map(file => logButton(file, file.source))
+        : [buildElement('p', { className: 'none', text: none })]));
 }
 
 /** Show the log `name` from its end, with the filters as they are. */
 export function chooseLog(name) {
     state.logs.name = name;
-    renderLogTabs();
+    state.logs.why = '';
+    state.logs.end = null;   // the previous log's end is no place in this one: not followed until it is read
+    renderLogFiles();
     return readLog();
+}
+
+/** The chosen log is not there (removed with the older runs', or not written yet), or was refused: said where its
+ *  lines would be, nothing followed or read further back, Raw and Download not offered. */
+function notThere(data) {
+    Object.assign(state.logs, { records: [], start: null, end: null, complete: true,
+                                why: (data && data.error) || 'Could not read the log.' });
+    renderLogRecords();
 }
 
 /** Read the chosen log from its end again: the filters changed, or another log was chosen. */
@@ -87,14 +182,14 @@ export function readLog() {
     return api.site.json(logAddress(state.logs.name) + logQuery()).then(data => {
         if (read !== state.logs.asked) return null;   // a newer read was asked meanwhile
         if (!data || data.success === false) {
-            say((data && data.error) || 'Could not read the log.');
+            notThere(data);
             return data;
         }
         state.logs.records = data.records || [];
         state.logs.start = data.start;
         state.logs.end = data.end;
         state.logs.complete = !!data.complete;
-        say('');
+        state.logs.why = '';
         renderLogRecords();
         return data;
     });
@@ -105,7 +200,11 @@ export function readOlder() {
     if (!state.logs.name || state.logs.complete || state.logs.start === null) return Promise.resolve(null);
     const read = ++state.logs.asked;
     return api.site.json(logAddress(state.logs.name) + logQuery({ before: state.logs.start })).then(data => {
-        if (read !== state.logs.asked || !data || data.success === false) return null;
+        if (read !== state.logs.asked) return null;
+        if (!data || data.success === false) {
+            notThere(data);
+            return null;
+        }
         state.logs.records = state.logs.records.concat(data.records || []);
         state.logs.start = data.start;
         state.logs.complete = !!data.complete;
@@ -119,7 +218,13 @@ export function followLog() {
     if (!state.logs.follow || !unfolded('logs') || !state.logs.name || state.logs.end === null) return Promise.resolve(null);
     const reading = state.logs.asked;
     return asked(api.site.json(logAddress(state.logs.name) + logQuery({ after: state.logs.end }))).then(data => {
-        if (reading !== state.logs.asked || !data || data.success === false) return null;
+        if (reading !== state.logs.asked) return null;
+        if (!data || data.success === false) {
+            // Removed meanwhile (a server's start keeps the last runs' logs): said, and not followed on; the server
+            // answered, so the poll has not failed.
+            notThere(data);
+            return null;
+        }
         if (data.rotated) {
             // The file was rotated: what it holds now is all new.
             state.logs.records = data.records || [];
@@ -142,12 +247,10 @@ export function showRunLogs(run, name) {
     unfold('logs');
     const section = document.getElementById('logs');
     if (section && typeof section.scrollIntoView === 'function') section.scrollIntoView();
-    return chooseLog(name || state.logs.server);
-}
-
-function say(text) {
-    const line = document.getElementById('log-status');
-    if (line) line.textContent = text || '';
+    // The listing again first: a run newer than the page has a log the first listing did not hold. A click (or any
+    // read) asked meanwhile is newer than this one, and is the one shown.
+    const asking = ++state.logs.asked;
+    return loadLogFiles({ keepName: true }).then(() => (asking === state.logs.asked ? chooseLog(name || state.logs.server) : null));
 }
 
 function renderRecord(record) {
@@ -165,12 +268,14 @@ export function renderLogRecords() {
     const table = document.getElementById('log-records');
     if (table) {
         const rows = state.logs.records.map(renderRecord);
+        const none = state.logs.why || (!state.logs.name ? 'Choose a log.'
+            : state.logs.run ? "No line of this run's matches." : 'No lines match.');
         replaceContent(table, ...(rows.length ? rows : [buildElement('tr', {}, [
-            buildElement('td', { className: 'none', attrs: { colspan: 4 },
-                                 text: state.logs.name ? 'No lines match.' : 'Choose a log.' })])]));
+            buildElement('td', { className: state.logs.why ? 'none why' : 'none', attrs: { colspan: 4 }, text: none })])]));
     }
     const older = document.getElementById('log-older');
     if (older) older.disabled = !state.logs.name || state.logs.complete;
+    renderFileLinks();
     const chip = document.getElementById('log-run');
     if (chip) {
         chip.classList.toggle('hidden', !state.logs.run);
@@ -201,6 +306,13 @@ export function wireLogs() {
                 state.logs.text = text.value.trim();
                 readLog();
             }, 300);
+        });
+    }
+    for (const [id, key] of [['log-library', 'library'], ['log-kind', 'kind']]) {
+        const filter = document.getElementById(id);
+        if (filter) filter.addEventListener('change', () => {
+            state.logs[key] = filter.value;
+            renderRunFiles();
         });
     }
     const follow = document.getElementById('log-follow');
