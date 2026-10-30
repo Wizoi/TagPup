@@ -191,7 +191,7 @@ class WhenNotificationsMayHaveBeenMissed(Base):
     def test_an_overflow_syncs_the_library_whole(self):
         watcher = self.started(self.make())
         with self.assertLogs("tagpup.jobs.watching", level="WARNING"):
-            watcher.notice(paths.key(self.root), watching.Overflow(self.root))
+            watcher.notice(paths.key(self.root), watching.Overflow(self.root, watching._Lately().said()))
         self.wait_until(lambda: self.synced)
         self.assertEqual([("harbour", None)], self.synced)
 
@@ -205,14 +205,17 @@ class WhenNotificationsMayHaveBeenMissed(Base):
         queued = []
         emitter.queue_event = queued.append
         emitter.should_keep_running = lambda: True
-        from watchdog.observers import winapi
-        with mock.patch.object(winapi, "read_directory_changes", return_value=(b"", 0)):
+        with mock.patch.object(watching, "_read_directory_changes", return_value=(b"", 0)):
             self.assertEqual([], emitter._read_events())
         self.assertEqual(1, len(queued))
         self.assertIsInstance(queued[0], watching.Overflow)
+        # A read aborted -- the watch's stop cancels it -- is no overflow, running or not.
+        with mock.patch.object(watching, "_read_directory_changes", return_value=(None, 0)):
+            self.assertEqual([], emitter._read_events())
+        self.assertEqual(1, len(queued))
         # And a watch being stopped reads nothing too, and that is no overflow.
         emitter.should_keep_running = lambda: False
-        with mock.patch.object(winapi, "read_directory_changes", return_value=(b"", 0)):
+        with mock.patch.object(watching, "_read_directory_changes", return_value=(b"", 0)):
             emitter._read_events()
         self.assertEqual(1, len(queued))
 
@@ -282,6 +285,141 @@ class WhenNotificationsMayHaveBeenMissed(Base):
             time.sleep(0.6)
         self.assertEqual([], watcher.watched())
         self.assertEqual(1, sum("root folders" in line for line in logged.output), "said at every look")
+
+
+@unittest.skipUnless(os.name == "nt", "Windows' notifications")
+class WhatAWatchAsksWindowsFor(Base):
+    """A watch asks Windows for names made, removed and renamed and for last writes only (watching.NOTIFY_FILTER):
+    over the share one ExifTool write of a photo was 158 notifications under watchdog's whole filter, 6 under this
+    (2026-10-30). Whatever changes a photo's row -- a photo written, renamed, deleted -- still syncs its folder."""
+
+    def setUp(self):
+        super().setUp()
+        self.regatta = os.path.join(self.root, "Regatta")
+        self.real_read = watching._read_directory_changes
+        self.hold, self.held, self.release = threading.Event(), threading.Event(), threading.Event()
+        self.failing = threading.Event()
+        self.addCleanup(self.release.set)
+        patcher = mock.patch.object(watching, "_read_directory_changes", self.read)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def read(self, handle, path, recursive):
+        """The watch's read: as it is, held once its next read returned while `hold` is set, failing once while `fail`
+        is."""
+        if self.failing.is_set():
+            self.failing.clear()
+            raise OSError(64, "The specified network name is no longer available")
+        found = self.real_read(handle, path, recursive)
+        if self.hold.is_set() and found[1]:
+            self.hold.clear()
+            self.held.set()
+            self.release.wait(30)
+        return found
+
+    def test_it_asks_for_names_and_last_writes_and_nothing_else(self):
+        from watchdog.observers import winapi
+        from watchdog.observers.api import EventQueue, ObservedWatch
+        emitter = watching.make_observer()._emitter_class(EventQueue(), ObservedWatch(self.root, recursive=True))
+        emitter._whandle = object()
+        emitter.queue_event = lambda event: None
+        asked = []
+        with mock.patch.object(watching, "_read_directory_changes", self.real_read), \
+                mock.patch.object(winapi, "ReadDirectoryChangesW",
+                                  side_effect=lambda *args: asked.append(args[4]) or True):
+            emitter._read_events()
+        self.assertEqual([winapi.FILE_NOTIFY_CHANGE_FILE_NAME | winapi.FILE_NOTIFY_CHANGE_DIR_NAME
+                          | winapi.FILE_NOTIFY_CHANGE_LAST_WRITE], asked)
+
+    def test_a_photo_written_in_pieces_is_synced_after_its_last_piece(self):
+        started = []
+        self.sync = lambda library, folder: (started.append(time.monotonic()), self.synced.append((library.name, folder)))
+        self.started(self.make(debounce=0.5))
+        del started[:]
+        photo = os.path.join(self.regatta, "Regatta - slow.jpg")
+        whole = a_jpeg(os.path.join(self.home.root, "whole.jpg"))
+        with open(whole, "rb") as handle:
+            data = handle.read()
+        with open(photo, "wb") as handle:
+            for n in range(4):
+                if n:
+                    time.sleep(0.8)    # longer than the debounce: each piece is heard, or the folder settles early
+                handle.write(data[n * len(data) // 4:(n + 1) * len(data) // 4])
+                handle.flush()
+                os.fsync(handle.fileno())
+        last = time.monotonic()
+        self.wait_until(lambda: started and started[-1] >= last)
+        self.assertEqual({paths.stored(self.regatta)}, set(self.folder_syncs()))
+
+    def test_a_burst_of_photos_made_renamed_and_deleted_is_one_sync_of_their_folder(self):
+        self.started(self.make(debounce=1.0))
+        with self.assertNoLogs("tagpup.jobs.watching", level="WARNING"):
+            for n in range(40):
+                made = a_jpeg(os.path.join(self.regatta, "Regatta - %d.jpg" % n))
+                renamed = os.path.join(self.regatta, "Regatta - %d renamed.jpg" % n)
+                os.replace(made, renamed)
+                if n % 2:
+                    os.remove(renamed)
+            self.wait_until(lambda: self.synced)
+            time.sleep(1.5)
+        self.assertEqual([paths.stored(self.regatta)], self.folder_syncs())
+
+    def test_a_photo_renamed_in_its_folder_syncs_it(self):
+        a_jpeg(os.path.join(self.regatta, "Buoy.jpg"))
+        self.started(self.make())
+        os.replace(os.path.join(self.regatta, "Buoy.jpg"), os.path.join(self.regatta, "Buoy at dawn.jpg"))
+        self.wait_until(lambda: self.synced)
+        time.sleep(1)
+        self.assertEqual([paths.stored(self.regatta)], self.folder_syncs())
+
+    def test_an_overflow_names_its_folder_and_what_its_watch_read_before(self):
+        self.started(self.make())
+        self.hold.set()
+        with self.assertLogs("tagpup.jobs.watching", level="WARNING") as said:
+            a_jpeg(os.path.join(self.regatta, "Regatta - first.jpg"))
+            self.wait_until(self.held.is_set)
+            # While the watch's thread is held, Windows keeps what happens in its buffer, which these overfill.
+            for n in range(400):
+                with open(os.path.join(self.regatta, "%s %03d.txt" % ("a long name for a race note" * 4, n)), "w",
+                          encoding="utf-8") as handle:
+                    handle.write("lap")
+            self.release.set()
+            self.wait_until(lambda: self.synced)
+        self.assertEqual([("harbour", None)], self.synced)
+        line = [record.getMessage() for record in said.records if "overflowed" in record.getMessage()]
+        self.assertEqual(1, len(line), said.output)
+        self.assertIn(paths.stored(self.root), line[0])
+        self.assertRegex(line[0], r"read \d+ notifications in the 60 s before \(1 added")
+
+    def test_the_overflow_counts_only_the_last_minute(self):
+        now = [1000.0]
+        lately = watching._Lately(clock=lambda: now[0])
+        lately.add([1, 3, 3, 4, 5])
+        now[0] += 30
+        lately.add([2])
+        self.assertEqual("5 notifications in the 60 s before (1 added, 2 modified, 1 removed, 1 renamed)", lately.said())
+        now[0] += 31
+        self.assertEqual("1 notifications in the 60 s before (1 removed)", lately.said())
+        now[0] += 60
+        self.assertEqual("no notification in the 60 s before", lately.said())
+
+    def test_a_watch_whose_read_fails_is_watched_again_and_its_library_synced_whole(self):
+        watcher = self.started(self.make())
+        self.failing.set()
+        ended = []
+        with self.assertLogs("tagpup.jobs.watching", level="WARNING") as said, \
+                mock.patch.object(threading, "excepthook", lambda hooked: ended.append(hooked.exc_value)):
+            # The read under way returns with this photo's notifications; the next one fails, as a share's that dropped.
+            a_jpeg(os.path.join(self.regatta, "Regatta - 1.jpg"))
+            self.wait_until(lambda: ("harbour", None) in self.synced)
+        self.assertTrue(any("failed; watching it again" in line for line in said.output), said.output)
+        self.assertEqual([64], [error.errno for error in ended])
+        self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
+        time.sleep(1)
+        del self.synced[:]
+        a_jpeg(os.path.join(self.regatta, "Regatta - 2.jpg"))
+        self.wait_until(lambda: self.synced)
+        self.assertEqual([paths.stored(self.regatta)], self.folder_syncs())
 
 
 class Stopping(Base):

@@ -31,7 +31,8 @@ Notifications can be missed, so the whole library is synced
 - when the watcher first starts (a catch-up for what happened while the process was
   not running), unless the library was synced whole in the last CATCH_UP_SKIP (a crash
   restart, an update);
-- when Windows says its buffer overflowed, or a watch fails;
+- when Windows says its buffer overflowed, or a watch fails; the log line of an overflow names the folder and how many
+  notifications of each kind its watch read in the COUNTED seconds before, what it knows of the cause;
 - when a folder that was not there -- a drive unplugged -- is back. A folder that is not
   there is looked for again every RECHECK, and the libraries and their folders are read
   again then too (a root folder added in the settings is watched within RECHECK). One on a
@@ -47,10 +48,16 @@ the library, it is asked again RECHECK later, still wanted since then. A folder 
 is wanted since the share was first found not answering, so the catch-up that waited for it (sync.FOLDER_WAIT) and
 looked at every folder covers it; one back from gone is wanted from now, since a sync that found it gone ended done.
 
+A watch asks Windows only for what can change a photo's row (NOTIFY_FILTER): a name made, removed or renamed, and a
+file's last write -- the row's stamp is (mtime, size), and a file's size never changes without its last write. Watchdog's
+own filter asks for every kind of change besides; over the share one ExifTool write of a 7.1 MB photo was 158
+notifications under it, 6 under this one, and the writes took 4.7 s a file against 3.0 s (2026-10-30).
+
 `busy()` is true while a sync it started runs: an update waits for it
 (tagpup.web.lifecycle). stop() stops the watches and waits for that sync to end; start()
 after a stop watches again, without the catch-up.
 """
+import collections
 import logging
 import os
 import threading
@@ -88,33 +95,110 @@ NAMED_MOST = 500
 #: each. It is told to set its root folders, and the daily sync keeps it in step.
 MAX_WATCHES = 64
 
+#: What a watch asks Windows to notify: FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+#: FILE_NOTIFY_CHANGE_LAST_WRITE. Not sizes (a size changes with a last write), attributes, security, creation or
+#: last-access times (none is in a row; the server keeps no last-access): watchdog's WATCHDOG_FILE_NOTIFY_FLAGS, 0x17f.
+NOTIFY_FILTER = 0x01 | 0x02 | 0x10
+
+#: The seconds of notifications an overflow's log line counts.
+COUNTED = 60
+
+#: The kinds of notification counted, by Windows' FILE_ACTION_*: a rename is counted once, by its old name.
+_KINDS = {1: "added", 2: "removed", 3: "modified", 4: "renamed"}
+
 
 class Overflow(FileSystemEvent):
-    """Windows dropped notifications for a watched folder: its buffer overflowed."""
+    """Windows dropped notifications for a watched folder: its buffer overflowed. `read_lately` says how many its
+    watch read in the COUNTED seconds before (_Lately.said)."""
     event_type = "overflow"
     is_synthetic = True
 
+    def __init__(self, src_path, read_lately):
+        super().__init__(src_path)
+        self.read_lately = read_lately
+
+
+class _Lately:
+    """How many notifications of each kind a watch read in the last COUNTED seconds: a count for each second, at most
+    COUNTED of them kept. Only its emitter's thread touches it."""
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._seconds = collections.deque()     # [second, Counter of kinds]
+
+    def add(self, actions):
+        now = int(self._clock())
+        if not self._seconds or self._seconds[-1][0] != now:
+            self._seconds.append([now, collections.Counter()])
+        self._seconds[-1][1].update(_KINDS[action] for action in actions if action in _KINDS)
+        self._forget(now)
+
+    def said(self):
+        self._forget(int(self._clock()))
+        kinds = collections.Counter()
+        for _second, counted in self._seconds:
+            kinds.update(counted)
+        if not kinds:
+            return "no notification in the %d s before" % COUNTED
+        return "%d notifications in the %d s before (%s)" % (
+            sum(kinds.values()), COUNTED, ", ".join("%d %s" % (n, kind) for kind, n in sorted(kinds.items())))
+
+    def _forget(self, now):
+        while self._seconds and self._seconds[0][0] <= now - COUNTED:
+            self._seconds.popleft()
+
+
+def _read_directory_changes(handle, path, recursive):
+    """One ReadDirectoryChangesW of `handle` with NOTIFY_FILTER: watchdog's winapi.read_directory_changes, which asks
+    for its own filter. (buffer, bytes read); 0 bytes when Windows' buffer overflowed. (None, 0) for a read aborted,
+    which only the watch's stop makes (winapi.close_directory_handle cancels it). The watched folder deleted reads as
+    watchdog's deleted-self; any other failure -- a share that stops answering -- is raised, and ends the watch's
+    thread, which the watcher finds and watches again (_emitter_alive)."""
+    import ctypes
+    from ctypes.wintypes import DWORD
+
+    from watchdog.observers import winapi
+    buffer = ctypes.create_string_buffer(winapi.BUFFER_SIZE)
+    read = DWORD()
+    try:
+        winapi.ReadDirectoryChangesW(handle, ctypes.byref(buffer), len(buffer), recursive, NOTIFY_FILTER,
+                                     ctypes.byref(read), None, None)
+    except OSError as e:
+        if e.winerror == winapi.ERROR_OPERATION_ABORTED:
+            return None, 0
+        if winapi._is_observed_path_deleted(handle, path):
+            return winapi._generate_observed_path_deleted_event()
+        raise
+    return buffer.raw, int(read.value)
+
 
 def _windows_observer():
-    """watchdog's Windows observer, told when ReadDirectoryChangesW overflows: Windows then
-    returns no notification at all, which watchdog reads as none happening."""
+    """watchdog's Windows observer, asking for NOTIFY_FILTER and told when ReadDirectoryChangesW overflows: Windows
+    then returns no notification at all, which watchdog reads as none happening."""
     from watchdog.observers import winapi
     from watchdog.observers.api import BaseObserver
     from watchdog.observers.read_directory_changes import WindowsApiEmitter
 
     class OverflowingEmitter(WindowsApiEmitter):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.read_lately = _Lately()
+
         def _read_events(self):
             if not self._whandle:
                 return []
-            buffer, size = winapi.read_directory_changes(self._whandle, self.watch.path,
-                                                         recursive=self.watch.is_recursive)
-            if not size:
-                # Also what a watch being stopped reads; only a running one overflowed.
-                if self.should_keep_running():
-                    self.queue_event(Overflow(self.watch.path))
+            buffer, size = _read_directory_changes(self._whandle, self.watch.path, self.watch.is_recursive)
+            if buffer is None:
                 return []
-            return [winapi.WinAPINativeEvent(action, path)
-                    for action, path in winapi._parse_event_buffer(buffer, size)]
+            if not size:
+                # A watch being stopped may read nothing too; only a running one overflowed.
+                if self.should_keep_running():
+                    self.queue_event(Overflow(self.watch.path, self.read_lately.said()))
+                return []
+            events = [winapi.WinAPINativeEvent(action, path)
+                      for action, path in winapi._parse_event_buffer(buffer, size)]
+            self.read_lately.add(event.action for event in events)
+            return events
 
     return BaseObserver(emitter_class=OverflowingEmitter)
 
@@ -300,8 +384,8 @@ class Watcher:
         if not libraries:
             return
         if isinstance(event, Overflow):
-            logger.warning("Notifications for a watched folder were lost (its buffer overflowed); "
-                           "syncing its libraries whole.")
+            logger.warning("Notifications for the watched folder %s were lost (its buffer overflowed) after its watch "
+                           "read %s; syncing its libraries whole.", event.src_path, event.read_lately)
             self._note_whole(libraries)
             return
         # (folder, the photo in it the notification named, or None: what changed in it is the folder's walk to find)
