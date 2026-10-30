@@ -241,7 +241,7 @@ def _resolve_directories(library, kwargs):
         refusal = photo_actions.folder_refusal(found) if found != directory else None
         if refusal:
             # The share's sentence when it did not answer (a wait, not a folder gone); the old place's otherwise (#2145).
-            said = (refusal.refused if refusal.details.get(SHARE_AWAY)
+            said = (refusal.refused if refusal.refused_kind == SHARE_AWAY
                     else library_roots.old_place_sentence(library, directory, found))
             console.print(said, markup=False, soft_wrap=True)
             raise SystemExit(USAGE_EXIT)   # as _folders_now refuses the same folder: one refusal, one code (#2145)

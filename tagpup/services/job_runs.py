@@ -35,7 +35,6 @@ import time
 from dataclasses import dataclass
 
 from tagpup.core import runs as run_tags
-from tagpup.core.result import SHARE_AWAY
 from tagpup.store import db, job_runs
 
 logger = logging.getLogger(__name__)
@@ -89,14 +88,14 @@ class Failure:
 def failure(error=None, result=None, failed=None, sentence=None):
     """Why a run failed, or None when it did not: the `error` it raised (LOCKED for SQLite's database locked or busy,
     else ERROR, said as its type and text); else, for a Result not ok, the kind its details say (FAILURE, set where it
-    is known), SHARE for a share that did not answer (SHARE_AWAY), REFUSED for a refusal, ERROR for errors, said as the
+    is known: SHARE for a share that did not answer), REFUSED for a refusal, ERROR for errors, said as the
     Result says it; else `failed`, why the job says an ok Result did not do its work (recurring.Job.failed). Said as
     `sentence` instead when the job says it its own way (the naming dialog's)."""
     if error is not None:
         found = Failure(LOCKED if db.locked(error) else ERROR, "%s: %s" % (type(error).__name__, error))
     elif result is not None and not result.ok:
         details = result.details or {}
-        kind = details.get(FAILURE) or (SHARE if details.get(SHARE_AWAY) else REFUSED if result.refused else ERROR)
+        kind = details.get(FAILURE) or (REFUSED if result.refused else ERROR)
         found = Failure(kind, result.message())
     else:
         found = failed

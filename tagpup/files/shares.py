@@ -251,7 +251,7 @@ NOT_A_FOLDER_SENTENCE = "Path is not a valid directory: %s"
 
 def folder_refusal(folder, state=None):
     """None when `folder` is a folder now; else a Result refused with the one sentence of why, the same on every page,
-    service and in the CLI (#2129): SHARE_AWAY_SENTENCE, and SHARE_AWAY in its details (a route answers 503), for a folder
+    service and in the CLI (#2129): SHARE_AWAY_SENTENCE, refused as SHARE_AWAY (a route answers 503), for a folder
     whose network share did not answer; NOT_A_FOLDER_SENTENCE for one that is not there or not a folder. `state` is
     folder_state's answer when the caller has it already (a listing of the folder that did not answer: "unanswered")."""
     result = Result(attempted=1)
@@ -259,8 +259,7 @@ def folder_refusal(folder, state=None):
     if state == "there":
         return None
     if state == "unanswered":
-        result.refuse(SHARE_AWAY_SENTENCE % os.path.splitdrive(paths.stored(folder))[0])
-        result.details[SHARE_AWAY] = True
+        result.refuse(SHARE_AWAY_SENTENCE % os.path.splitdrive(paths.stored(folder))[0], SHARE_AWAY)
     else:
         result.refuse(NOT_A_FOLDER_SENTENCE % folder)
     return result

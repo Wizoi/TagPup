@@ -814,7 +814,7 @@ class ASyncsLogSaysWhatItDid(Base):
             seen["run"] = runs.current()[-1]
             result = Result()
             result.fail("walking the folders", "the share did not answer in 10 s")
-            result.details.update(counts={}, in_step=False, **{sync_service.SHARE_AWAY: True})
+            result.details.update(counts={}, in_step=False, **{job_runs_service.FAILURE: job_runs_service.SHARE})
             return result
 
         with mock.patch.object(sync_service, "_sync", side_effect=share_away):
