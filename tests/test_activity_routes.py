@@ -639,11 +639,20 @@ class Logs(Base):
     def group(self, entry):
         return entry["group"], entry["kind"], entry["library"]
 
+    def ran(self, library, started, ended, n=1):
+        """A run of the indexer's log, as it is left: named for when it `started`, last written when it `ended`
+        ("HH:MM" on 2026-09-26, local time, as runs.index_tag names it). Its file name."""
+        name = "indexer-%s-20260926T%s00-4242-%d.log" % (library, started.replace(":", ""), n)
+        self.write(name, a_line("2026-09-26 %s:00" % ended, "INFO", "indexing"))
+        when = time.mktime(time.strptime("2026-09-26 " + ended, "%Y-%m-%d %H:%M"))
+        os.utime(os.path.join(self.folder, name), (when, when))
+        return name
+
     def test_a_runs_log_that_is_not_there_says_why(self):
         """A run's log removed as the server started (five newer of its library and kind kept) says so; one its run
         has not written yet says that, never that it was removed."""
         for minute in range(1, logs.KEEP_RUN_LOGS + 1):
-            self.write("indexer-harbour-20260926T09%02d00-4242-1.log" % minute, a_line("2026-09-26 09:00:00", "INFO", "x"))
+            self.ran("harbour", "09:%02d" % minute, "09:%02d" % (minute + 1))
         removed = self.client_.get("/api/activity/logs/indexer-harbour-20260926T070000-4242-1.log")
         self.assertEqual(404, removed.status_code)
         self.assertTrue(removed.get_json()["removed"])
@@ -652,6 +661,21 @@ class Logs(Base):
         self.assertFalse(unwritten["removed"])
         self.assertIn("no log of its own", unwritten["error"])
         self.assertFalse(self.client_.get("/api/activity/logs/nothing.log").get_json()["removed"])
+
+    def test_a_short_run_beside_a_long_one_removed_at_the_start_says_it_was_removed(self):
+        """Runs overlapping: A indexed 10:00-12:00 while B..F ran 10:30-11:05; the server restarting at 12:30 removes
+        B, the one last written longest ago -- not the one that started first -- and the page asking for B's log is told
+        it was removed, by the same ordering, not that B wrote none. A run starting after them has written none yet."""
+        self.ran("regatta", "10:00", "12:00")
+        short = [self.ran("regatta", started, ended, n) for n, (started, ended) in enumerate(
+            [("10:30", "10:35"), ("10:40", "10:45"), ("10:50", "10:55"), ("10:55", "11:00"), ("11:00", "11:05")], 2)]
+        self.assertEqual(1, logs.retire_run_logs())
+        self.assertFalse(os.path.exists(os.path.join(self.folder, short[0])))
+        reply = self.client_.get("/api/activity/logs/" + short[0])
+        self.assertEqual(404, reply.status_code)
+        self.assertTrue(reply.get_json()["removed"], reply.get_json())
+        later = self.client_.get("/api/activity/logs/indexer-regatta-20260926T123000-4242-9.log").get_json()
+        self.assertFalse(later["removed"], later)
 
     def test_records_newest_first_parsed_with_their_tracebacks(self):
         records = self.lines()["records"]

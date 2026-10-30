@@ -27,6 +27,7 @@ import logging
 import logging.handlers
 import os
 import re
+import time
 
 from tagpup import config
 from tagpup.core import runs
@@ -103,19 +104,11 @@ def _base(name):
     return name if name.endswith(".log") else name.rsplit(".", 1)[0]
 
 
-def retire_run_logs(spared=(), unread=(), keep=KEEP_RUN_LOGS):
-    """Remove the runs' logs beyond the newest `keep` (by when each was last written) of each library and kind, each
-    with its rotated copies: the server's start does it (tagpup.runtime.retire_run_logs). Never a log in `spared` (the
-    logs of runs a library's rows say are running), nor any of a library named in `unread` (one whose rows could not be
-    read, so nothing says which of its runs are running); a test run's are tools/run_tests.py's. A file gone already --
-    another server starting at the same moment removed it -- or held open by its writer (Windows refuses to remove it)
-    is passed over, left for the next start. Returns how many files this call removed."""
-    folder = log_dir()
-    try:
-        names = os.listdir(folder)
-    except OSError:
-        return 0
-    spared, unread = set(spared), {name.lower() for name in unread}
+def _run_families(folder, names, unread=()):
+    """The runs' logs among `names` in `folder`, by library and kind -- the one ordering of "which runs are newer" that
+    retire_run_logs removes by and why_missing explains by: {(kind, library lowercased): {base: [when it was last
+    written, its files]}}, a run's log with its rotated copies one family, last written when its newest file was.
+    A library in `unread` (lowercased) is left out; a file that cannot be looked at is passed over."""
     families = {}
     for name in names:
         if not LOG_FILE.match(name):
@@ -131,9 +124,30 @@ def retire_run_logs(spared=(), unread=(), keep=KEEP_RUN_LOGS):
         family = families.setdefault((kind, library.lower()), {}).setdefault(base, [0.0, []])
         family[0] = max(family[0], modified)
         family[1].append(name)
+    return families
+
+
+def _newest_first(logs_of):
+    """One library and kind's run logs (a value of _run_families), the last written first."""
+    return sorted(logs_of.items(), key=lambda item: -item[1][0])
+
+
+def retire_run_logs(spared=(), unread=(), keep=KEEP_RUN_LOGS):
+    """Remove the runs' logs beyond the newest `keep` (by when each was last written: _run_families) of each library
+    and kind, each with its rotated copies: the server's start does it (tagpup.runtime.retire_run_logs). Never a log in
+    `spared` (the logs of runs a library's rows say are running), nor any of a library named in `unread` (one whose rows
+    could not be read, so nothing says which of its runs are running); a test run's are tools/run_tests.py's. A file
+    gone already -- another server starting at the same moment removed it -- or held open by its writer (Windows
+    refuses to remove it) is passed over, left for the next start. Returns how many files this call removed."""
+    folder = log_dir()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    spared = set(spared)
     removed = 0
-    for logs_of in families.values():
-        for base, (_modified, members) in sorted(logs_of.items(), key=lambda item: -item[1][0])[keep:]:
+    for logs_of in _run_families(folder, names, {name.lower() for name in unread}).values():
+        for base, (_modified, members) in _newest_first(logs_of)[keep:]:
             if base in spared:
                 continue
             for name in members:
@@ -145,19 +159,34 @@ def retire_run_logs(spared=(), unread=(), keep=KEEP_RUN_LOGS):
     return removed
 
 
+def _started(program):
+    """When the run whose log is `program` (a file name without .log) started, from its name (tagpup.core.runs.index_tag
+    writes it in local time), or None for a name that is not a run's of the indexer's shape."""
+    found = RUN_LOG.match(program)
+    try:
+        return time.mktime(time.strptime(found["ident"][:15], "%Y%m%dT%H%M%S")) if found else None
+    except (ValueError, OverflowError):
+        return None
+
+
 def why_missing(name):
     """Why there is no log called `name` in data/logs, as (a sentence the Activity page shows, whether it was removed):
-    a run's log with KEEP_RUN_LOGS newer of its library and kind was removed (retire_run_logs); any other run's has not
-    been written (its indexer has not started, or never did)."""
-    group, kind, library = group_of(_base(str(name))[:-len(".log")]) if LOG_FILE.match(str(name)) else (SYSTEM, None, None)
-    if group != RUN or library is None:
+    a run's log was removed (retire_run_logs) when its library and kind keep KEEP_RUN_LOGS others last written after
+    the run started -- by the same ordering retire_run_logs removes by (_run_families), so a run that overlapped longer
+    ones is said removed when it was; any other run's has not been written (its indexer has not started, or never did).
+    A run that never wrote a log while five later ones did reads as removed: nothing on disk tells the two apart."""
+    name = str(name)
+    group, kind, library = group_of(_base(name)[:-len(".log")]) if LOG_FILE.match(name) else (SYSTEM, None, None)
+    started = _started(_base(name)[:-len(".log")]) if group == RUN else None
+    if group != RUN or library is None or started is None:
         return "There is no log called %s in data/logs" % name, False
+    folder = log_dir()
     try:
-        names = os.listdir(log_dir())
+        names = os.listdir(folder)
     except OSError:
         names = []
-    newer = {base for base in map(_base, names)
-             if base > name and group_of(base[:-len(".log")])[1:] == (kind, library)}
+    logs_of = _run_families(folder, names).get((kind, library.lower()), {})
+    newer = [base for base, (modified, _members) in _newest_first(logs_of) if base != _base(name) and modified > started]
     if len(newer) >= KEEP_RUN_LOGS:
         return ("The log of this run was removed: the last %d runs' logs of each library and kind are kept."
                 % KEEP_RUN_LOGS), True
