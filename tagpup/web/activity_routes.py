@@ -443,8 +443,10 @@ def log_list():
     found = [entry for entry in logs.log_files()
              if (library is None or (entry["library"] or "").lower() == library.lower())
              and (kind is None or entry["kind"] == kind)]
+    kinds = {entry["kind"] for entry in found if entry["kind"]}
     return jsonify({"folder": logs.log_dir(), "server": logs.SERVER_LOG, "logs": found, "levels": list(logs.LEVELS),
-                    "groups": [logs.SYSTEM, logs.RUN], "keep_runs": logs.KEEP_RUN_LOGS})
+                    "groups": [logs.SYSTEM, logs.RUN], "keep_runs": logs.KEEP_RUN_LOGS,
+                    "kinds": {kind: logs.kind_words(kind) for kind in sorted(kinds)}})
 
 
 def _offset(name, value):

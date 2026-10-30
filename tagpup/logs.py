@@ -264,6 +264,16 @@ SOURCES = (
 )
 
 
+#: Each kind of run (group_of) in words, for the Activity page's Kind filter: the listing sends them (kind_words), the
+#: page holds no copy. The indexer's kind is its log's (tagpup.services.indexing.INDEXER_LOG).
+KIND_WORDS = {"indexer": "Indexer runs", TESTS: "Test runs"}
+
+
+def kind_words(kind):
+    """The kind of run `kind` in words ("Indexer runs"); a kind with none is said as it is spelled."""
+    return KIND_WORDS.get(kind, kind)
+
+
 def source_of(program):
     """What the log of `program` (its file name without .log) is, for a person."""
     for pattern, label in SOURCES:

@@ -35,6 +35,8 @@ export const state = {
         server: null,
         //: How many runs' logs of each library and kind the server keeps.
         keepRuns: null,
+        //: Each kind of run the listing holds, in the server's words (tagpup.logs.kind_words): the Kind filter's.
+        kinds: {},
         name: null,
         //: The runs' logs shown: of this library and of this kind ('' for all); the listing is filtered here, not asked again.
         library: '',

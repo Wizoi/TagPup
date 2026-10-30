@@ -642,6 +642,8 @@ class Logs(Base):
         self.assertEqual(["run_tests-20260926-080000.log"], names("?kind=run_tests"))
         self.assertEqual([], names("?library=regatta"))
         self.assertEqual(logs.KEEP_RUN_LOGS, self.get("/api/activity/logs")["keep_runs"])
+        # Each kind of run the listing holds, in the words the page's Kind filter offers (it holds no copy).
+        self.assertEqual({"indexer": "Indexer runs", "run_tests": "Test runs"}, self.get("/api/activity/logs")["kinds"])
 
     def group(self, entry):
         return entry["group"], entry["kind"], entry["library"]

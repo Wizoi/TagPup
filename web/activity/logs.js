@@ -24,9 +24,6 @@ const LOG_KEEP = 2000;
 
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'];
 
-/** A run's kind (tagpup.logs.group_of) in words, for the Kind filter; a kind not here is shown as the server sends it. */
-const KIND_WORDS = { indexer: 'Indexer runs', run_tests: 'Test runs' };
-
 const RUN = 'run';
 
 function logAddress(name, what = '') {
@@ -50,6 +47,7 @@ export function loadLogFiles() {
         state.logs.files = (data && data.logs) || [];
         state.logs.server = (data && data.server) || null;
         state.logs.keepRuns = (data && data.keep_runs) || null;
+        state.logs.kinds = (data && data.kinds) || {};
         if (!state.logs.name || !state.logs.files.some(file => file.name === state.logs.name)) {
             const web = state.logs.files.find(file => file.name === state.logs.server);
             state.logs.name = web ? web.name : (state.logs.files[0] || {}).name || null;
@@ -109,7 +107,7 @@ function renderLogFiles() {
     const libraries = [...new Set(ran.map(file => file.library).filter(Boolean))].sort();
     const kinds = [...new Set(ran.map(file => file.kind).filter(Boolean))].sort();
     state.logs.library = fillFilter('log-library', libraries, value => value, state.logs.library);
-    state.logs.kind = fillFilter('log-kind', kinds, value => KIND_WORDS[value] || value, state.logs.kind);
+    state.logs.kind = fillFilter('log-kind', kinds, value => state.logs.kinds[value], state.logs.kind);
     renderRunFiles();
     const kept = document.getElementById('log-kept');
     if (kept) kept.textContent = state.logs.keepRuns
@@ -149,7 +147,7 @@ function renderRunFiles() {
     const library = libraryless ? '' : state.logs.library;
     const shown = ran.filter(file => (!library || file.library === library) && (!kind || file.kind === kind));
     const none = ran.length
-        ? `No ${kind ? (KIND_WORDS[kind] || kind).toLowerCase() : 'runs'}' logs of ${library || 'any library'} are kept.`
+        ? `No ${kind ? state.logs.kinds[kind].toLowerCase() : 'runs'}' logs of ${library || 'any library'} are kept.`
         : 'No run has written a log yet.';
     replaceContent(list, ...(shown.length ? shown.map(file => logButton(file, file.source))
         : [buildElement('p', { className: 'none', text: none })]));
