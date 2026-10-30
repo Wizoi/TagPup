@@ -24,7 +24,7 @@ raw, downloaded) show background work. What it asks:
   what is loaded.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
   watched folders, its snapshots, the server, and one timeline of what was done.
-- GET /api/activity/logs[?library=&kind=] and /api/activity/logs/<name>[/raw|/download]: the logs in
+- GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
   data/logs, each in its group (a program's own, a run's: tagpup.logs.group_of), read from the end and never whole
   (tagpup.logs.read).
 
@@ -437,12 +437,9 @@ def timeline():
 
 @routes.get("/api/activity/logs")
 def log_list():
-    """The logs in data/logs, each with its group, and a run's kind and library; only a run's of the `library` and of
-    the `kind` asked for (either, both, or neither: every log), and how many runs' logs of a library and kind are kept."""
-    library, kind = request.args.get("library") or None, request.args.get("kind") or None
-    found = [entry for entry in logs.log_files()
-             if (library is None or (entry["library"] or "").lower() == library.lower())
-             and (kind is None or entry["kind"] == kind)]
+    """The logs in data/logs, each with its group, and a run's kind and library; each kind of run in words, and how many
+    runs' logs of a library and kind are kept. The Activity page filters the runs' logs from it."""
+    found = logs.log_files()
     kinds = {entry["kind"] for entry in found if entry["kind"]}
     return jsonify({"folder": logs.log_dir(), "server": logs.SERVER_LOG, "logs": found, "levels": list(logs.LEVELS),
                     "groups": [logs.SYSTEM, logs.RUN], "keep_runs": logs.KEEP_RUN_LOGS,

@@ -629,18 +629,13 @@ class Logs(Base):
         self.assertEqual(("system", "Server start-up output (installed copy)"), (entry["group"], entry["source"]))
 
     def test_a_programs_own_logs_apart_from_the_runs_and_the_runs_by_library_and_kind(self):
-        """The owner tells what a file is: a program's own log, or a run's, of which library and kind; and lists one
-        library's runs of the indexer. The page's old call, with no filter, still lists every log."""
+        """The owner tells what a file is: a program's own log, or a run's, of which library and kind (the page filters
+        the runs' logs by them, from this one listing)."""
         by_name = {entry["name"]: entry for entry in self.get("/api/activity/logs")["logs"]}
         self.assertEqual(("system", None, None), self.group(by_name["tagpup_web.log"]))
         self.assertEqual(("system", None, None), self.group(by_name["tagpup_web.console.log"]))
         self.assertEqual(("run", "indexer", "harbour"), self.group(by_name[INDEXED]))
         self.assertEqual(("run", "run_tests", None), self.group(by_name["run_tests-20260926-080000.log"]))
-        names = lambda query: [entry["name"] for entry in self.get("/api/activity/logs" + query)["logs"]]  # noqa: E731
-        self.assertEqual([INDEXED], names("?library=Harbour&kind=indexer"))
-        self.assertEqual([INDEXED], names("?library=harbour"))
-        self.assertEqual(["run_tests-20260926-080000.log"], names("?kind=run_tests"))
-        self.assertEqual([], names("?library=regatta"))
         self.assertEqual(logs.KEEP_RUN_LOGS, self.get("/api/activity/logs")["keep_runs"])
         # Each kind of run the listing holds, in the words the page's Kind filter offers (it holds no copy).
         self.assertEqual({"indexer": "Indexer runs", "run_tests": "Test runs"}, self.get("/api/activity/logs")["kinds"])
