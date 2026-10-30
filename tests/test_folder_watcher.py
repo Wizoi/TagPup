@@ -670,6 +670,31 @@ class TagPupsOwnWrites(Base):
             conn.close()
         self.assertTrue(all("Harbour" in each for each in tags), tags)
 
+    def test_it_is_busy_while_it_looks_whether_a_change_was_its_own(self):
+        # Taken off the list, a folder was neither pending nor syncing while followed looked at its photos: a test
+        # waiting for the watcher to settle read it as done before the sync ran (#2297), and so could an update.
+        looking, answer = threading.Event(), threading.Event()
+
+        def followed(library, photos):
+            looking.set()
+            answer.wait(30)
+            return False
+
+        watcher = watching.Watcher(lambda: [self.harbour], lambda library: [self.regatta], self.record, images.is_photo,
+                                   debounce=0.3, recheck=0.5, tick=0.05, followed=followed,
+                                   recent=lambda library: True)
+        self.addCleanup(watcher.stop, 20)
+        self.addCleanup(answer.set)
+        watcher.start()
+        self.wait_until(lambda: watcher.watched() == [paths.stored(self.regatta)])
+        self.write(self.photos[:1])
+        self.wait_until(looking.is_set)
+        self.assertTrue(watcher.busy(), "not busy while it decides whether to sync")
+        answer.set()
+        self.wait_until(lambda: self.synced)
+        self.wait_until(lambda: not watcher.busy())
+        self.assertEqual([("harbour", paths.stored(self.regatta))], self.synced)
+
     def test_a_look_that_fails_still_syncs(self):
         with mock.patch.object(sync_service, "followed", side_effect=OSError("the library is locked")):
             watcher = self.watching(self.harbour)

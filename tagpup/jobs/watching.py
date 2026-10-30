@@ -53,8 +53,8 @@ file's last write -- the row's stamp is (mtime, size), and a file's size never c
 own filter asks for every kind of change besides; over the share one ExifTool write of a 7.1 MB photo was 158
 notifications under it, 6 under this one, and the writes took 4.7 s a file against 3.0 s (2026-10-30).
 
-`busy()` is true while a sync it started runs: an update waits for it
-(tagpup.web.lifecycle). stop() stops the watches and waits for that sync to end; start()
+`busy()` is true while a sync it started runs, and from when a folder's notifications settled until it is synced or
+found TagPup's own: an update waits for it (tagpup.web.lifecycle). stop() stops the watches and waits for that sync to end; start()
 after a stop watches again, without the catch-up.
 """
 import collections
@@ -265,6 +265,7 @@ class Watcher:
         #: "noted": since when (time.time()) the whole sync is wanted, or None}; `named` is {key: path} of the photos
         #: its notifications named, or None when one named a folder, or more than NAMED_MOST photos (_named).
         self._pending = {}
+        #: Syncs running, and settled folders taken off the list (_due) not yet synced or found TagPup's own: busy().
         self._syncing = 0
         self._stop = threading.Event()
         self._thread = None
@@ -318,7 +319,7 @@ class Watcher:
         return not thread.is_alive()
 
     def busy(self):
-        """Is a sync it started running?"""
+        """Is a sync it started running, or a folder whose notifications settled waiting for one (_due)?"""
         with self._lock:
             return self._syncing > 0
 
@@ -459,7 +460,8 @@ class Watcher:
         """[(library, folder or None, noted, named)] whose notifications have settled, taken off the
         list: the whole library (since when it is wanted; named None), or each folder no pending folder of
         it is under (noted None; named, the photos the notifications of it and of the folders under it named,
-        or None: _named)."""
+        or None: _named). Each is counted in busy() until _loop has decided it (_decided): taken off the list,
+        it is not pending either, and a look at whether it was TagPup's own takes a round trip a photo."""
         now = self._clock()
         due = []
         with self._lock:
@@ -491,7 +493,12 @@ class Watcher:
                         del folders[key]
                 for folder in taken:
                     due.append((library, folder, None, named[paths.key(folder)]))
+            self._syncing += len(due)
         return due
+
+    def _decided(self):
+        with self._lock:
+            self._syncing -= 1
 
     # ---- The watcher's thread ------------------------------------------------------------
 
@@ -510,12 +517,15 @@ class Watcher:
                     logger.exception("Looking at the folders to watch failed")
                 next_look = self._clock() + self.recheck
             for library, folder, noted, named in self._due():
-                if stop.is_set():
-                    # Not synced now: the catch-up at the next start finds it.
-                    break
-                if folder is not None and named and self._own(library, folder, named):
-                    continue
-                self._run(library, folder, noted)
+                try:
+                    if stop.is_set():
+                        # Not synced now: the catch-up at the next start finds it.
+                        continue
+                    if folder is not None and named and self._own(library, folder, named):
+                        continue
+                    self._run(library, folder, noted)
+                finally:
+                    self._decided()
 
     def _own(self, library, folder, named):
         """Were the notifications of `folder` TagPup's own writes, the photos they `named` described by `library`'s rows
