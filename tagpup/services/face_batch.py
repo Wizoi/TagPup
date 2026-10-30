@@ -131,6 +131,16 @@ def follower(row, state):
     return None if row.is_rename or row.photo_id is None else Follower(row, state)
 
 
+def photos_kept(library, change_id):
+    """The ids of the photos change `change_id` of `library` holds for their faces as well as their files (what `Work.wants` said
+    when it was planned), read from the journal: for a settle, which has no Work. Raises when the library cannot be read."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return face_batches.photos_of(conn, change_id)
+    finally:
+        conn.close()
+
+
 def tidy(conn, change_id):
     """The change is finished (file_journal.finish): the records of faces whose photo was never written are removed."""
     face_batches.tidy(conn, change_id)

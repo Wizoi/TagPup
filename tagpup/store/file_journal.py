@@ -88,8 +88,6 @@ class FileRow:
     turned: Optional[tuple] = None
     #: Not stored: the faces an undo of this file left as they were because they had changed since (tagpup.store.face_batches).
     faces_left: int = 0
-    #: Not stored: a forward write found the file holding what it was to hold before writing it (tagpup.services.file_changes).
-    found_holding: bool = False
     #: Not stored: a forward write failed and the file is marked read-only, which no retry of the write changes
     #: (tagpup.services.file_changes._after_failure; the one failure a write tells from a passing one).
     read_only: bool = False

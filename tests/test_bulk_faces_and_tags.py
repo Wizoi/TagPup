@@ -365,6 +365,21 @@ class InterruptedAndAtOnce(Bulk):
         self.settle()
         self.assertEqual([WREN] * 3, [self.row(f)[0] for _p, f in made])
 
+    def test_a_photo_given_the_person_by_another_program_before_the_settle_is_done_with_its_face(self):
+        """A bulk assignment's photo is in the change for its face as well as its file: found holding the person at the settle
+        (another program wrote the tag after the crash), it is done with its face named, not taken out as a file another
+        program wrote is (tests/test_bulk_edits.py, WhilePhotosMove)."""
+        made = self.many(3)
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file recorded", nth=1)):
+            with self.assertRaises(Crash):
+                face_assignment.run(self.library, face_assignment.plan_name(self.library, [f for _p, f in made], WREN), "exiftool")
+        self.files.keep_tags(made[2][0], [PEOPLE + WREN])
+        self.assertEqual(1, self.settle())
+        self.assertEqual([WREN] * 3, [self.row(f)[0] for _p, f in made])
+        change = self.operations(ASSIGN)[0]
+        self.assertEqual([("done",)] * 3, self.look("SELECT state FROM change_files WHERE change_id = ?", (change,)))
+        self.assertEqual(3, self.faces_recorded(change), "the faces stay recorded with their files")
+
     def test_cancelled_after_a_chunk_the_first_photos_are_whole_and_the_rest_untouched_and_it_is_undoable(self):
         made = self.many(60)
 
