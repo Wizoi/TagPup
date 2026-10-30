@@ -9,7 +9,7 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
-import { asked } from './poll.js';
+import { asked, touched } from './poll.js';
 import { ago, counts, duration } from './format.js';
 import { badge, fill, none, outcomeKind, runLinks, runTree } from './view.js';
 
@@ -28,10 +28,10 @@ export function loadTimeline() {
     });
 }
 
-/** More: read further back. */
+/** More: read further back, by the timeline's poll (a read in flight of fewer entries is not drawn over More's). */
 export function readMore() {
     state.timeline.limit += MORE;
-    return loadTimeline();
+    return touched('timeline');
 }
 
 const known = value => value !== null && value !== undefined;

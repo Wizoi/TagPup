@@ -8,10 +8,11 @@
 // how long; one that has said nothing yet is not stuck. A library whose jobs could not be read (/api/activity/jobs) says why on its card, and the others are
 // drawn; one with nothing running says what finished in it last (its `last_finished`, /api/activity/jobs). A line read
 // aloud (#now-summary) says what runs, in tens of percent, changed only when its words change; the cards are not read.
+// A run that starts or ends here is said to the jobs and the timeline (touched), which show it without waiting for their poll.
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
-import { asked } from './poll.js';
+import { asked, touched } from './poll.js';
 import { ago, duration, parseTime, secondsBetween } from './format.js';
 import { badge, fill, none, runLinks, runTree } from './view.js';
 
@@ -19,12 +20,23 @@ import { badge, fill, none, runLinks, runTree } from './view.js';
 export function loadNow() {
     return asked(api.site.json('/api/activity/now')).then(data => {
         if (!data || data.success === false) return data;
+        const before = state.now;
         state.now = data;
+        if (before && runsOf(before) !== runsOf(data)) touched('jobs', 'timeline');
         const stamp = document.getElementById('updated');
         if (stamp) stamp.textContent = data.at ? `Updated ${data.at.slice(11)}` : '';
         renderNow();
         return data;
     });
+}
+
+/** The runs Now shows, by their rows (the queue's index by its row too, the watcher's sync by its start), as one text. */
+function runsOf(data) {
+    const runs = (data.libraries || []).flatMap(library => [
+        ...(library.jobs || []).map(row => `${library.name}|${row.run_id}`),
+        ...((library.indexing || {}).running ? [`${library.name}|${library.indexing.running.run_id}`] : [])]);
+    if (data.syncing) runs.push(`${data.syncing.library}|watcher|${data.syncing.started}`);
+    return [...new Set(runs)].sort().join(' ');
 }
 
 /** Stop a batch of photo files of this server at its chunk (or never start it, if it waits). */
@@ -33,7 +45,7 @@ function cancelBatch(library, batch) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ library: library.name, ticket: batch.ticket }),
-    }).then(() => loadNow());
+    }).then(() => touched('now'));
 }
 
 /** A batch of photo files, running or waiting: how far, and Cancel when this server runs it. */

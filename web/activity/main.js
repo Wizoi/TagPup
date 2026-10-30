@@ -1,12 +1,13 @@
 // The Activity page: start-up and wiring. Each section is a module beside this one (the folded ones fold.js's), its
 // state in state.js; every request goes through api.js, in its form for what covers every
 // library (api.site: web/common/api.js). Now is asked every few seconds while the page is
-// in view, the jobs and the rest every half minute, and nothing while the page is hidden (poll.js).
+// in view, the jobs and the rest every half minute, and nothing while the page is hidden; a section
+// a module has just changed is asked at once (touched, poll.js).
 import { state } from './state.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { wireFolds } from './fold.js';
 import { pauseWhenHidden, poller } from './poll.js';
-import { loadNow, renderNow } from './now.js';
+import { loadNow } from './now.js';
 import { loadJobs } from './jobs.js';
 import { loadSync } from './sync.js';
 import { loadSnapshots } from './snapshots.js';
@@ -29,17 +30,14 @@ document.addEventListener('DOMContentLoaded', () => {
     wireLogs();
     pauseWhenHidden();
 
-    // Now, while the page is in view; the logs followed, when asked; the rest now and then, Now drawn again with the jobs:
-    // it says a library whose jobs could not be read, and what finished in it last (both /api/activity/jobs).
-    // Each poll by the sections it draws, where it says it could not refresh them (poll.js).
-    poller({ now: loadNow }, state.every, 'now').start();
-    poller({ logs: followLog }, state.every, 'follow').start();
-    // The jobs on their own, so Run now's read after its answer is this poll's (soon('jobs'), jobs.js).
-    poller({ jobs: () => loadJobs().then(data => {
-        renderNow();
-        return data;
-    }) }, state.slowEvery, 'jobs').start();
-    poller({ sync: loadSync, server: loadServer, timeline: loadTimeline }, state.slowEvery, 'rest').start();
-    poller({ snapshots: loadSnapshots }, state.slowEvery * 4, 'snapshots').start();
+    // A poll a section, named for it, where it says it could not refresh it (poll.js): Now, while the page is in view;
+    // the logs followed, when asked; the rest now and then.
+    poller('now', loadNow, state.every).start();
+    poller('logs', followLog, state.every).start();
+    poller('jobs', loadJobs, state.slowEvery).start();
+    poller('sync', loadSync, state.slowEvery).start();
+    poller('server', loadServer, state.slowEvery).start();
+    poller('timeline', loadTimeline, state.slowEvery).start();
+    poller('snapshots', loadSnapshots, state.slowEvery * 4).start();
     loadLogFiles().then(() => readLog());
 });
