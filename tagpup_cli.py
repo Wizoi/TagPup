@@ -79,7 +79,7 @@ from tagpup import launcher
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
-from tagpup.core.result import NotFound
+from tagpup.core.result import SHARE_AWAY, NotFound
 from tagpup.services import maintenance
 from tagpup.services import refresh_rows
 from tagpup.services import file_changes
@@ -224,8 +224,12 @@ def _resolve_directories(library, kwargs):
     resolved = []
     for directory in typed:
         found = canonical(directory)
-        if found != directory and not os.path.isdir(found):
-            console.print(library_roots.old_place_sentence(library, directory, found), markup=False, soft_wrap=True)
+        refusal = photo_actions.folder_refusal(found) if found != directory else None
+        if refusal:
+            # The share's sentence when it did not answer (a wait, not a folder gone); the old place's otherwise (#2145).
+            said = (refusal.refused if refusal.details.get(SHARE_AWAY)
+                    else library_roots.old_place_sentence(library, directory, found))
+            console.print(said, markup=False, soft_wrap=True)
             raise SystemExit(1)
         resolved.append(found)
     kwargs["directories"] = tuple(resolved)

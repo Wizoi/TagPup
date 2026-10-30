@@ -788,6 +788,23 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
             self.assertEqual(2, result.exit_code, result.output)
             self.assertIn(said, " ".join(result.output.split()), folder)
 
+    def test_a_folder_typed_in_an_old_places_spelling_on_a_share_asleep_says_the_share_is_away(self):
+        """#2145: the first place is on a share that does not answer; the old place's sentence ("does not exist at its
+        current place") said the folder was not there. A first place that is really gone still says the old one's.
+        Break: `not os.path.isdir(found)` in _resolve_directories, unbounded and with no word of the share."""
+        old_place = "an old place sentence"
+        nowhere = os.path.join(own_home.for_test(self).root, "nowhere")
+        for first, said in ((self.FOLDER, self.AWAY), (nowhere, old_place)):
+            shares.forget()
+            printed = []
+            with mock.patch.object(tagpup_cli.library_roots, "canonicaliser", return_value=lambda folder: first), \
+                    mock.patch.object(tagpup_cli.library_roots, "old_place_sentence", return_value=old_place), \
+                    mock.patch.object(tagpup_cli.console, "print", lambda text, **kwargs: printed.append(text)):
+                with self.assertRaises(SystemExit) as stopped:
+                    tagpup_cli._resolve_directories(None, {"directories": ("C:\\Old\\Coast",)})
+            self.assertEqual(1, stopped.exception.code)
+            self.assertEqual([said], printed, first)
+
     def test_the_cli_does_not_stat_a_folder_before_the_bounded_look(self):
         """Break: click.Path(file_okay=False) on DIRECTORIES: it stats the path itself, unbounded, before folder_refusal."""
         home = own_home.for_test(self)
