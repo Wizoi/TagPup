@@ -96,13 +96,29 @@ class ExifToolTimeout(RuntimeError):
 SAID_LINES = 2
 
 
-#: What ExifTool says when the copy it writes a photo through is there already, and what the owner is told to do: a
-#: failed write leaves it (a read-only or locked photo), and nothing here deletes a file beside a photo -- after a
-#: failure that deleted the original it is the photo's only copy (#1410, #1411).
+#: What ExifTool names the copy it writes a photo through, its scratch file: the photo's path as it was given, with this
+#: after it (exiftool.pl: `"${file}_exiftool_tmp"`, 13.59). A write that is interrupted (a share that drops, a crash)
+#: leaves it beside the photo.
+SCRATCH_SUFFIX = "_exiftool_tmp"
+
+#: What ExifTool says when the scratch file of a photo is there already, and what the owner is told to do. A failed
+#: write leaves one (a read-only or locked photo, an interrupted write); file_changes removes only an interrupted
+#: write's, stale, beside the photo as the write saw it (#2180): after a failure that deleted the original it is the
+#: photo's only copy (#1410, #1411).
 TEMPORARY_IN_THE_WAY = "Temporary file already exists"
 TEMPORARY_SENTENCE = (". A file named as the photo with _exiftool_tmp after it, left beside it by a write that failed, "
                       "is in the way; the server's log names both. If the photo is there and opens, delete that file; "
                       "if the photo is gone, that file is its only copy: rename it back. Then try again.")
+
+
+def scratch_of(photo_path):
+    """The scratch file ExifTool writes `photo_path` through (SCRATCH_SUFFIX)."""
+    return photo_path + SCRATCH_SUFFIX
+
+
+def scratch_in_the_way(error):
+    """Did ExifTool refuse a write because the photo's scratch file is there already (TEMPORARY_IN_THE_WAY)?"""
+    return isinstance(error, ExifToolFailed) and TEMPORARY_IN_THE_WAY in str(error)
 
 
 class ExifToolFailed(ExifToolExecuteError):

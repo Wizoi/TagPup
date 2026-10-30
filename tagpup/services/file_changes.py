@@ -54,7 +54,9 @@ and asks whether it is to stop: a stopped batch withdraws the files it did not r
 "stopped after N of M". More than batches.MAX_BATCH photos are refused, but for the tag tree's rewrites (`uncapped`).
 
 **A share that stops answering** in a write (ExifTool does not answer for a file) stops it the same way, at that file, for any
-write: never a conflict, since the file under way holds what it held or what it was to hold (_Stalled, _share_stopped).
+write: never a conflict, since the file under way holds what it held or what it was to hold (_Stalled, _share_stopped). The
+scratch file ExifTool leaves beside it, which refuses every later write of it, is removed by the next write of it, which then
+tries once more (_removed_scratch, #2180).
 """
 import contextlib
 import functools
@@ -372,13 +374,16 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
                    stop_at_first_error, et, held, whole, on_planned, alongside=None, on_chunk=None):
     if len(photo_paths) > batches.CHUNK and batches.current() is None:
         raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
+    since = _removed_so_far()
     if et is None:
         # Dead for good after a command timed out: a share that went away costs its deadline once, not once a file.
         with field_values.session(exiftool_path) as session:
-            return _write_fields(exiftool_session.StaysDead(session), library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                                 unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
-    return _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                         unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
+            result = _write_fields(exiftool_session.StaysDead(session), library, operation, exiftool_path, photo_paths, read,
+                                   plan_one, summary, unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
+    else:
+        result = _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
+                               unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
+    return _said_removed(result, since)
 
 
 def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
@@ -742,15 +747,18 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     if settled is not None:
         return settled
     # One look before the write, two projections: the vectors' stamp and the journal's fingerprint describe one file.
+    # The stamp, from the journal, of a write of the file that a crash or a share interrupted (it left it `writing`).
+    interrupted = row.stamp if row.state == "writing" else None
     before = _stat(row.path)
     stamp = row.stamp = (before.st_mtime, before.st_size) if before is not None else None
     row.known_as = _fingerprint_of(before) if before is not None else None
     file_journal.writing(library.path, row.id, stamp)
     _reached("file writing")
-    try:
-        field_values.write(et, row.path, target)
-    except Exception as e:
-        return _after_failure(et, library, row, origin, target, finished, on_failure, e, stall_stops)
+    failed = _written(et, row.path, target)
+    if exiftool_session.scratch_in_the_way(failed) and _removed_scratch(row.path, stamp, interrupted):
+        failed = _written(et, row.path, target)      # once: a second failure is the write's own
+    if failed is not None:
+        return _after_failure(et, library, row, origin, target, finished, on_failure, failed, stall_stops)
     _reached("file written")
     # The stat before the read back: a change another program makes after it leaves the row older than its file, which
     # the next scan reads again; taken after, it stamped what was read before the change as the newer file.
@@ -761,6 +769,66 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
         wrote[row.id] = (row, stat)
     _reached("file recorded")
     return finished, None
+
+
+def _written(et, path, target):
+    """None when field_values.write wrote `target` into the file at `path`; else what it raised."""
+    try:
+        field_values.write(et, path, target)
+    except Exception as e:
+        return e
+    return None
+
+
+#: How long ago the scratch file of a photo must have been written for it to be no write's under way: longer than any
+#: ExifTool command of TagPup's runs, since each is killed, its process with it, at that deadline (exiftool_session).
+SCRATCH_STALE = exiftool_session.DEFAULT_TIMEOUT
+
+
+def _removed_so_far():
+    return getattr(_running, "scratch_removed", 0)
+
+
+def _said_removed(result, since):
+    """`result`, saying how many scratch files _removed_scratch removed in this thread since `since` (_removed_so_far)."""
+    removed = _removed_so_far() - since
+    if removed:
+        result.details["scratch_removed"] = removed
+        logger.info("A write removed %d leftover scratch file(s) of interrupted writes", removed)
+    return result
+
+
+def _removed_scratch(path, saw, interrupted):
+    """Remove the scratch file an interrupted write of the photo at `path` left beside it (exiftool_session.scratch_of),
+    which made ExifTool refuse this write ("Temporary file already exists"; #2180): True when it was removed, and the
+    write is made once more. Only when all of these hold (owner, 2026-10-29): it is that photo's, never one a listing
+    found; the photo is there with the stamp this write saw before it began (`saw`) and, when the journal has one, the
+    stamp of the write it interrupted (`interrupted`), and was not modified after the scratch file was last written (a
+    write of it renames the scratch file over it, and takes a new modified time): so it is not the photo's only copy
+    (#1410) and the photo is not changed since; no write of the photo is under way: this process's are held by the one lock (exclusively), and one of
+    another process (the CLI, a second library holding the folder) would have written it in the last SCRATCH_STALE
+    seconds; and both looks answered (shares.stamp_of: a share away is not "no scratch file"). It is ExifTool's file, not
+    the photo: the photo and its row are untouched here. Logged, and counted in the write's Result (_said_removed)."""
+    scratch = exiftool_session.scratch_of(path)
+    left, photo = shares.stamp_of(scratch), shares.stamp_of(path)
+    if not isinstance(left, tuple) or not isinstance(photo, tuple):
+        why = "it or its photo could not be looked at"
+    elif saw is None or tuple(saw) != photo or (interrupted is not None and tuple(interrupted) != photo) \
+            or photo[0] > left[0]:
+        why = "the photo has changed since the write that left it"
+    elif time.time() - left[0] < SCRATCH_STALE:
+        why = "it was written in the last %d s, by a write that may be under way" % SCRATCH_STALE
+    else:
+        try:
+            os.remove(scratch)
+        except OSError as e:
+            why = "it could not be removed: %s" % e
+        else:
+            logger.warning("Removed %s (%d bytes), the scratch file an interrupted write left beside its photo", scratch, left[1])
+            _running.scratch_removed = _removed_so_far() + 1
+            return True
+    logger.info("Left %s beside its photo: %s", scratch, why)
+    return False
 
 
 def _held_or_conflict(et, library, row, origin, target, finished, now=None, unread_stays=False, stall_stops=False):
@@ -1216,6 +1284,7 @@ def undo(library, change_id, exiftool_path, check, apply=False):
     if not apply or rehearsal.refused:
         return rehearsal
     result = Result(attempted=rehearsal.attempted, details={"dry_run": False, "change": change_id, "files": True})
+    since = _removed_so_far()
     schema.ensure(library.path)
     change, ready, refused = _undoable(library, change_id, exiftool_path, check)
     if change is None:
@@ -1256,4 +1325,4 @@ def undo(library, change_id, exiftool_path, check, apply=False):
         file_journal.release(library.path, change_id)
         raise
     logger.info("%s: change %d undone, %d file(s) put back", library.path, change_id, result.changed)
-    return result
+    return _said_removed(result, since)
