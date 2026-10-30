@@ -279,15 +279,15 @@ def run_claimed(job, where, run_for, call, clock=time.time, due=None, started=No
         if not run:
             return Outcome(job.name, run_for, why=run.why, error=run.error)
         outcome = Outcome(job.name, run_for, run_id=run.run_id)
-        logger.info("Running the job %s for %s", job.name, run_for or "every library")
         with (started or _nothing)(outcome, run.now):
-            try:
-                # Every line the run logs carries its tag: the Activity page's "Logs for this run".
-                with runs.running(runs.job_tag(run_for, run.run_id)):
+            # Every line the run logs carries its tag, its first and its failure too: the Activity page's "Logs for this run".
+            with runs.running(runs.job_tag(run_for, run.run_id)):
+                logger.info("Running the job %s for %s", job.name, run_for or "every library")
+                try:
                     outcome.result = call(run.now)
-            except Exception as e:
-                logger.exception("The job %s for %s failed", job.name, run_for or "every library")
-                outcome.error = e
+                except Exception as e:
+                    logger.exception("The job %s for %s failed", job.name, run_for or "every library")
+                    outcome.error = e
         run.ends(outcome.result, outcome.error,
                  job.failed(outcome.result) if job.failed is not None and outcome.result is not None else None)
     return outcome

@@ -130,6 +130,20 @@ class TheRunsTagTheirLines(LinesTest):
         self.assertIn("[run job:harbour:%d] - working on it" % outcome.run_id, self.lines.lines[0])
         self.assertEqual("done", job_runs.runs(self.library.path, "chatty")[0].outcome)
 
+    def test_a_job_that_logs_nothing_still_shows_its_start_under_its_run(self):
+        registry = recurring.Registry()
+
+        @registry.job("quiet", recurring.DAILY, reason=recurring.SAFETY)
+        def _quiet(library, run):
+            return Result(attempted=1, changed=1)
+
+        runner_log = logging.getLogger(recurring.__name__)
+        runner_log.addHandler(self.lines)
+        self.addCleanup(runner_log.removeHandler, self.lines)
+        outcome = recurring.Runner(lambda: [self.library], registry=registry).run("quiet", self.library)[0]
+        self.assertTrue(self.lines.lines)
+        self.assertIn("[run job:harbour:%d] - Running the job quiet for harbour" % outcome.run_id, self.lines.lines[0])
+
     def test_a_sync_tags_what_it_logs_with_when_it_started_as_its_record_keeps_it(self):
         held = {}
 
