@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-10-29 | low: `/api/activity/jobs` is not yet a serialisation of `activity.runs_now`: its `running_here` is the recurring runner's memory (`recurring.Runner.status`, `_current`), whose `forced` no row holds, so answering it from the rows would remove a reply key, which P3b's additive rule forbids (no page reads `running_here`: grep of web/); `recurring.overview` lists no running run of its own (its `running` is the job's latest row, `job_runs.latest`; its `runs` are history). Whether to drop `forced` and `Runner._current` is the main session's call (P3b's server half). | open |
+| B-2 | 2026-10-29 | low: decided while building runs_now: when a library's index runs cannot be read for the logs of its other runs (`activity.index_runs_under` failing after its `running` rows were read), Now lists every row with its own logs only and logs a warning; before, the rows after the failure were dropped without a word (`tagpup/services/activity.py` `_library_runs`). `Now.test_a_failure_after_the_sync_s_row_was_read_does_not_make_the_library_unreadable` holds the sync's progress. | decided: a read that fails for the logs costs the logs, not the runs |
+| B-3 | 2026-10-29 | low: decided while building runs_now: the folder watcher's sync is shown on Now only for a library the page lists (`_libraries()`); before, `syncing` was sent whatever its library. The watcher syncs the home's libraries, the ones the page lists; no case of one outside them is known, so no branch was written (CLAUDE.md, a special case needs a real instance). | decided: no instance |
