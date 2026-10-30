@@ -41,6 +41,7 @@ import photo_rows  # noqa: E402
 import tuner_client  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
+from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -104,6 +105,25 @@ class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
             "COVERING", plan.upper(),
             "the count still reaches the table rows; plan was: %s" % plan,
         )
+
+    def test_the_queue_reads_no_vector(self):
+        """#2143: the queue groups faces by the people their photo names and counts them; selecting the vectors read 380 MB
+        of BLOB on photo_index to answer a question about integers. The statement it runs names neither the vector table
+        nor its column. Break: WITH_VECTOR joined into store.faces.identify_candidates."""
+        pi = PhotoIndex(db_path=self.db)
+        pi.load()
+        pi.close()
+        statements = []
+        conn = db.connect(self.db)
+        try:
+            conn.set_trace_callback(statements.append)
+            store_faces.identify_candidates(conn)
+        finally:
+            conn.close()
+        asked = " ".join(statements).lower()
+        self.assertIn("from faces", asked, "the queue's statement was not seen")
+        self.assertNotIn("vector", asked)
+        self.assertNotIn("face_embeddings", asked)
 
 
 def unit_vector(seed):
@@ -173,44 +193,6 @@ class MatchingTestBase(unittest.TestCase):
         finally:
             conn.close()
         return row[0] if row else None
-
-
-class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
-    """Counting who is waiting does not require anybody's face vector.
-
-    The queue endpoint selected `f.embedding` for all 189,000 nameless faces and
-    normalised every one of them -- 380 MB of BLOB read and 189,000 numpy allocations
-    -- then used the result for nothing but a non-empty test. It groups faces by the
-    tags their photo carries and counts them; no vector is ever compared to anything.
-
-    Tested by giving a face an embedding that is real bytes but not a vector. Code
-    that only asks whether an embedding is there is unbothered; code that parses every
-    one of them cannot get past it. That is the distinction worth pinning, and it is
-    also a robustness property in its own right -- one damaged row should not take the
-    whole queue down.
-    """
-
-    def unreadable_embedding_face(self, photo):
-        conn = db.connect(self.TEST_DB)
-        # Not a whole number of float32s.
-        fid = add_face(conn, photo, box="[0,0,10,10]", embedding=b"\x01\x02\x03", prob=0.99)
-        conn.commit()
-        conn.close()
-        return fid
-
-    def queue(self):
-        return self.requests.get("/api/unmatched-faces/people")
-
-    def test_the_queue_opens_when_a_face_has_an_unreadable_embedding(self):
-        photo = self.add_photo("IMG_4242.jpg")
-        self.add_face(photo, seed=11)
-        self.unreadable_embedding_face(photo)
-
-        buckets = self.queue()
-        self.assertTrue(
-            any(b["name"] == "Unknown Faces" for b in buckets),
-            "the queue did not come back with its Unknown Faces bucket: %s" % (buckets,),
-        )
 
 
 class TestAnUnderscoreInAFilenameIsNotAWildcard(MatchingTestBase):

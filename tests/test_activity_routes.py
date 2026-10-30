@@ -861,6 +861,10 @@ class TheWatcherSays(unittest.TestCase):
         while len(synced) < 2:
             self.assertLess(time.time(), deadline)
             time.sleep(0.02)
+        # The fake sync appends inside the sync; the watcher clears `syncing` after it returns (#2257).
+        while watcher.status()["syncing"] is not None:
+            self.assertLess(time.time(), deadline)
+            time.sleep(0.02)
         found = watcher.status()
         self.assertTrue(found["running"])
         self.assertEqual([{"path": root, "watched": True, "absent": False, "libraries": ["harbour"]}],

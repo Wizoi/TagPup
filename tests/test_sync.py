@@ -345,6 +345,30 @@ class NewFiles(SyncTestCase):
         asked.clear()
         self.assertTrue(sync.include(self.library, sub, [], queue, ignored=[self.home.root + "-elsewhere"]).changed)
 
+    def test_a_new_folder_the_queue_found_gone_is_skipped_and_said_so(self):
+        """#2229: the queue's `invalid` folders (gone or away between the walk and the queue, others queued: the shape
+        jobs/indexing.py `_enqueue` makes, which refuses outright when none is valid) were never read; the run's skipped
+        list names each, the queued one is not named, and the run is recorded not in step. Break: dropping
+        outcome.details["invalid"] on the floor."""
+        self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
+        self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
+        self.photo(self.meet, "IMG_0100.jpg")
+        self.photo(self.trip, "IMG_0100.jpg")
+
+        def queue(folders):
+            # The trip folder went away between the walk and the queue; the meet folder was queued.
+            queued = Result(attempted=len(folders), changed=1)
+            queued.details["invalid"] = [folder for folder in folders if paths_key(folder) == paths_key(self.trip)]
+            return queued
+
+        result = self.run_sync(apply=True, queue=queue, roots=[self.pictures])
+        self.assertEqual([(self.trip, sync.GONE_BEFORE_QUEUED)], result.skipped)
+        self.assertEqual(1, result.details["queued"])
+        self.assertFalse(result.details["in_step"], "two folders of new files, one never queued")
+        self.assertIsNotNone(result.details.get(sync.RECORD), "the run is recorded")
+        recorded = sync.last(self.library)["last_run"]
+        self.assertEqual((False, 1), (recorded["in_step"], recorded["changed"]["queued_folders"]))
+
     def test_without_a_queue_new_files_are_reported(self):
         self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
         self.photo(self.meet, "IMG_0100.jpg")
