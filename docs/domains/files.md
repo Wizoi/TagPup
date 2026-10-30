@@ -90,8 +90,8 @@ The one place is `sync.look`; nothing else removes a row for a missing file (the
   modified time, one to one, as a move: the row follows with its faces (#2155). Two such files is ambiguous, held
   back, and nothing is removed. A file renamed and saved again, or moved and renamed, with no identity, is not paired.
 - Guards: `tests/test_sync.py` (MissingFiles: the two walks, a share dropping in the second, a file moved mid-walk,
-  a rename in place, ambiguity, a different time, the command's count), `tests/test_folder_watcher.py`
-  (WhatTheLogSays).
+  a rename in place, ambiguity, a different time, the command's count, the removal said once in the sync's closing
+  line with its named faces).
 
 ## Roots and machines: a share away
 

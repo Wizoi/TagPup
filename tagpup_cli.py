@@ -40,7 +40,6 @@ logger = logging.getLogger("tagpup_cli")
 if os.environ.get("TAGPUP_LOG_TO"):
     from tagpup import logs as _tagpup_logs
     from tagpup.core import runs as _tagpup_runs
-    _tagpup_logs.prune_run_logs(os.environ["TAGPUP_LOG_TO"])
     _tagpup_logs.to_file(_tagpup_logs.run_log(os.environ["TAGPUP_LOG_TO"], _tagpup_runs.current()), quiet=True)
 
 # Suppress verbose faiss loader and huggingface logs

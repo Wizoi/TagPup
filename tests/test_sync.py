@@ -10,6 +10,7 @@ ExifTool is stood in for: the reader answers from a table of what each file hold
 counts what it was asked to read.
 """
 import json
+import logging
 import os
 import sys
 import unittest
@@ -31,6 +32,7 @@ from tagpup.core.paths import key as paths_key  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import images, shares  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+from tagpup.jobs import watching  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
 from tagpup.store import db, faces_detected, journal, people, taxonomy  # noqa: E402
@@ -228,6 +230,42 @@ class TheRecord(SyncTestCase):
         self.assertEqual(1, result.changed)
         self.assertEqual(["Weather/Rain"], self.rows()[path][3])
         self.assertEqual(1, len(result.details["warnings"]))
+
+
+class WhatASyncLogs(SyncTestCase):
+    """A sync's lines in the server's log, which keeps INFO and up: a folder's sync writes only its end, at INFO when it
+    was worth a record -- even when the record could not be written -- and at DEBUG when it found nothing (the
+    watcher's, each time a folder settles); a whole sync writes its begin line too."""
+
+    def lines(self, level, **sync_args):
+        with self.assertLogs("tagpup.services.sync", level="DEBUG") as logged:
+            result = self.run_sync(apply=True, **sync_args)
+        self.assertTrue(result.ok, result.message())
+        return [(record.levelno, record.getMessage()) for record in logged.records if record.levelno >= level]
+
+    def test_a_folder_sync_that_changed_a_row_ends_at_info_though_its_record_failed(self):
+        path = self.photo(self.meet, "IMG_0001.jpg", **{"XMP:Subject": ["Events/Invitational"]})
+        self.indexed(path)
+        self.photo(self.meet, "IMG_0001.jpg", body=b"jpeg, edited", **{"XMP:Subject": ["Weather/Rain"]})
+        with mock.patch("tagpup.store.job_runs.record_sync", side_effect=OSError("locked")):
+            said = self.lines(logging.INFO, folder=self.meet)
+        self.assertEqual(1, len(said), said)
+        self.assertTrue(said[0][1].startswith("Sync of %s ended in " % self.meet), said)
+        self.assertIn("changed 1 row(s)", said[0][1])
+
+    def test_a_folder_sync_writes_no_begin_line_and_one_that_found_nothing_ends_at_debug(self):
+        self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
+        self.run_sync(apply=True)     # the newest record says in step: a folder settling on nothing is not worth one
+        said = self.lines(logging.DEBUG, folder=self.meet)
+        self.assertEqual([logging.DEBUG], [level for level, _message in said], said)
+        self.assertIn(" ended in ", said[0][1])
+
+    def test_a_whole_sync_writes_its_begin_and_its_end(self):
+        self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
+        said = self.lines(logging.INFO)
+        self.assertEqual(["Sync of the whole library began.", "Sync of the whole library ended"],
+                         [message[:len("Sync of the whole library ended")] if " ended" in message else message
+                          for _level, message in said])
 
 
 class NewFiles(SyncTestCase):
@@ -866,6 +904,26 @@ class MissingFiles(SyncTestCase):
         self.assertEqual(1, sync.last(self.library)["last_run"]["changed"]["removed"])
         again = self.run_sync(apply=True, roots=[self.pictures])
         self.assertEqual((0, 0, True), (again.details["counts"]["missing"], again.changed, again.details["in_step"]))
+
+    def test_a_whole_sync_that_removes_rows_says_so_once_with_the_named_faces_they_held(self):
+        """The watcher's whole sync (its catch-up at start) removing three rows, two of them holding a named face: the
+        sync's one closing line says what it removed with the faces and the named ones (DECISIONS 2026-10-28), and the
+        watcher writes no second closing line of its own."""
+        gone = [self.photo(self.trip, "IMG_%04d.jpg" % n) for n in (1, 2, 3)]
+        self.rooted(*gone, self.photo(self.meet, "IMG_0004.jpg"), named=gone[:2])
+        for path in gone:
+            os.remove(path)
+        watcher = watching.Watcher(lambda: [self.library], lambda library: [self.pictures],
+                                   lambda library, folder: self.run_sync(apply=True, folder=folder, roots=[self.pictures]),
+                                   images.is_photo, debounce=0.5, recheck=0.2, tick=0.05)
+        with self.assertLogs("tagpup", level="INFO") as logged:
+            watcher._run(self.library, None)
+        self.assertEqual(3, sync.last(self.library)["last_run"]["changed"]["removed"])
+        said = [line for line in logged.output if "removed" in line]
+        self.assertEqual(1, len(said), logged.output)
+        self.assertTrue(said[0].startswith("INFO:tagpup.services.sync:Sync of the whole library ended in "), said[0])
+        self.assertIn("changed 3 row(s), removed 3 row(s) with 5 face(s), 2 of them named, queued 0", said[0])
+        self.assertEqual([], [line for line in logged.output if ":tagpup.jobs.watching:" in line])
 
     def test_a_folder_deleted_under_a_root_that_is_there_is_removed_with_its_rows(self):
         first, second = self.photo(self.trip, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg")

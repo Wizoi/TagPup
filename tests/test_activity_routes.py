@@ -26,6 +26,7 @@ from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import activity  # noqa: E402
+from tagpup.services import job_runs as job_runs_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
@@ -598,7 +599,8 @@ class Logs(Base):
         self.write("tagpup_web.log", "".join(lines))
         self.write("tagpup_web.log.1", a_line("2026-09-25 09:00:00", "INFO", "older"))
         self.write("tagpup_web.console.log", "Traceback (most recent call last):\nKeyboardInterrupt\n")
-        self.write("indexer-harbour.log", a_line("2026-09-26 08:00:00", "INFO", "indexing"))
+        self.write(INDEXED, a_line("2026-09-26 08:00:00", "INFO", "indexing"))
+        self.write("run_tests-20260926-080000.log", "FAIL: test_x\n")
         self.client_ = self.client()
 
     def write(self, name, text):
@@ -613,10 +615,67 @@ class Logs(Base):
     def test_the_logs_by_source_with_their_rotated_copies(self):
         found = self.get("/api/activity/logs")
         by_name = {entry["name"]: entry for entry in found["logs"]}
-        self.assertEqual({"tagpup_web.log", "tagpup_web.console.log", "indexer-harbour.log"}, set(by_name))
+        self.assertEqual({"tagpup_web.log", "tagpup_web.console.log", INDEXED, "run_tests-20260926-080000.log"},
+                         set(by_name))
         self.assertEqual("Web server", by_name["tagpup_web.log"]["source"])
-        self.assertEqual("Indexer (harbour)", by_name["indexer-harbour.log"]["source"])
+        self.assertEqual("Indexer (harbour, 09-26 08:00)", by_name[INDEXED]["source"])
         self.assertEqual(["tagpup_web.log.1"], [each["name"] for each in by_name["tagpup_web.log"]["rotated"]])
+
+    def test_a_programs_own_logs_apart_from_the_runs_and_the_runs_by_library_and_kind(self):
+        """The owner tells what a file is: a program's own log, or a run's, of which library and kind; and lists one
+        library's runs of the indexer. The page's old call, with no filter, still lists every log."""
+        by_name = {entry["name"]: entry for entry in self.get("/api/activity/logs")["logs"]}
+        self.assertEqual(("system", None, None), self.group(by_name["tagpup_web.log"]))
+        self.assertEqual(("system", None, None), self.group(by_name["tagpup_web.console.log"]))
+        self.assertEqual(("run", "indexer", "harbour"), self.group(by_name[INDEXED]))
+        self.assertEqual(("run", "run_tests", None), self.group(by_name["run_tests-20260926-080000.log"]))
+        names = lambda query: [entry["name"] for entry in self.get("/api/activity/logs" + query)["logs"]]  # noqa: E731
+        self.assertEqual([INDEXED], names("?library=Harbour&kind=indexer"))
+        self.assertEqual([INDEXED], names("?library=harbour"))
+        self.assertEqual(["run_tests-20260926-080000.log"], names("?kind=run_tests"))
+        self.assertEqual([], names("?library=regatta"))
+        self.assertEqual(logs.KEEP_RUN_LOGS, self.get("/api/activity/logs")["keep_runs"])
+
+    def group(self, entry):
+        return entry["group"], entry["kind"], entry["library"]
+
+    def ran(self, library, started, ended, n=1):
+        """A run of the indexer's log, as it is left: named for when it `started`, last written when it `ended`
+        ("HH:MM" on 2026-09-26, local time, as runs.index_tag names it). Its file name."""
+        name = "indexer-%s-20260926T%s00-4242-%d.log" % (library, started.replace(":", ""), n)
+        self.write(name, a_line("2026-09-26 %s:00" % ended, "INFO", "indexing"))
+        when = time.mktime(time.strptime("2026-09-26 " + ended, "%Y-%m-%d %H:%M"))
+        os.utime(os.path.join(self.folder, name), (when, when))
+        return name
+
+    def test_a_runs_log_that_is_not_there_says_why(self):
+        """A run's log removed as the server started (five newer of its library and kind kept) says so; one its run
+        has not written yet says that, never that it was removed."""
+        for minute in range(1, logs.KEEP_RUN_LOGS + 1):
+            self.ran("harbour", "09:%02d" % minute, "09:%02d" % (minute + 1))
+        removed = self.client_.get("/api/activity/logs/indexer-harbour-20260926T070000-4242-1.log")
+        self.assertEqual(404, removed.status_code)
+        self.assertTrue(removed.get_json()["removed"])
+        self.assertIn("removed", removed.get_json()["error"])
+        unwritten = self.client_.get("/api/activity/logs/indexer-harbour-20260926T100000-4242-2.log").get_json()
+        self.assertFalse(unwritten["removed"])
+        self.assertIn("no log of its own", unwritten["error"])
+        self.assertFalse(self.client_.get("/api/activity/logs/nothing.log").get_json()["removed"])
+
+    def test_a_short_run_beside_a_long_one_removed_at_the_start_says_it_was_removed(self):
+        """Runs overlapping: A indexed 10:00-12:00 while B..F ran 10:30-11:05; the server restarting at 12:30 removes
+        B, the one last written longest ago -- not the one that started first -- and the page asking for B's log is told
+        it was removed, by the same ordering, not that B wrote none. A run starting after them has written none yet."""
+        self.ran("regatta", "10:00", "12:00")
+        short = [self.ran("regatta", started, ended, n) for n, (started, ended) in enumerate(
+            [("10:30", "10:35"), ("10:40", "10:45"), ("10:50", "10:55"), ("10:55", "11:00"), ("11:00", "11:05")], 2)]
+        self.assertEqual(1, logs.retire_run_logs())
+        self.assertFalse(os.path.exists(os.path.join(self.folder, short[0])))
+        reply = self.client_.get("/api/activity/logs/" + short[0])
+        self.assertEqual(404, reply.status_code)
+        self.assertTrue(reply.get_json()["removed"], reply.get_json())
+        later = self.client_.get("/api/activity/logs/indexer-regatta-20260926T123000-4242-9.log").get_json()
+        self.assertFalse(later["removed"], later)
 
     def test_records_newest_first_parsed_with_their_tracebacks(self):
         records = self.lines()["records"]
@@ -693,6 +752,81 @@ class Logs(Base):
             for suffix in ("", "/raw", "/download"):
                 self.assertEqual(404, self.client_.get("/api/activity/logs/%s%s" % (name, suffix)).status_code,
                                  name + suffix)
+
+
+#: A run of the indexer's own log, as tagpup.logs.run_log names it.
+INDEXED = "indexer-harbour-20260926T080000-4242-1.log"
+
+
+class ASyncsLogSaysWhatItDid(Base):
+    """A finished sync's "Logs for this run" (#1914, #1915): the sync writes a line as it starts and one as it ends into
+    the server's log, with its run's tag, so the log the timeline names for it, read for its tag, shows them -- while it
+    runs, the line that it began; a failed one, why, in the words its run's failure is said in."""
+
+    def setUp(self):
+        super().setUp()
+        root = logging.getLogger()
+        level = root.level
+        path = logs.to_file(logs.SERVER_PROGRAM)
+        handler = [each for each in root.handlers if getattr(each, "baseFilename", None) == path][0]
+        self.addCleanup(lambda: (root.removeHandler(handler), handler.close(), root.setLevel(level)))
+        self.client_ = self.client()
+
+    def lines_of(self, name, run):
+        reply = self.client_.get("/api/activity/logs/%s?run=%s" % (name, run))
+        self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
+        return [record["message"] for record in reversed(reply.get_json()["records"])]
+
+    def test_a_finished_sync_s_log_shows_what_it_looked_at_found_and_how_it_ended(self):
+        seen = {}
+        real = sync_service._sync
+
+        def watched(*args):
+            # Clicked while it runs: the line that it began is there already.
+            seen["while"] = self.lines_of(logs.SERVER_LOG, runs.current()[-1])
+            return real(*args)
+
+        with mock.patch.object(sync_service, "_sync", side_effect=watched):
+            done = sync_service.sync(self.harbour, apply=True)
+        self.assertTrue(done.ok, done.message())
+        self.assertEqual(["Sync of the whole library began."], seen["while"])
+        entry = [each for each in self.get("/api/activity/timeline")["entries"] if (each["run"] or "").startswith("sync:")][0]
+        self.assertEqual([logs.SERVER_LOG], entry["logs"])
+        said = self.lines_of(entry["logs"][0], entry["run"])
+        self.assertEqual(2, len(said), said)
+        self.assertRegex(said[1], r"^Sync of the whole library ended in \d+ s: looked at 0 folder\(s\) and 0 photo "
+                                  r"file\(s\), found nothing to do; changed 0 row\(s\), queued 0 folder\(s\) to index; "
+                                  r"in step\.$")
+        self.assertEqual([], self.lines_of(logs.SERVER_LOG, runs.sync_tag("regatta", "2026-09-26 09:00:00")))
+
+    def test_a_failed_sync_says_why_as_its_failure_is_said(self):
+        seen = {}
+
+        def share_away(library, folder, apply, exiftool_path, queue, roots, ignored, started):
+            seen["run"] = runs.current()[-1]
+            result = Result()
+            result.fail("walking the folders", "the share did not answer in 10 s")
+            result.details.update(counts={}, in_step=False, **{sync_service.SHARE_AWAY: True})
+            return result
+
+        with mock.patch.object(sync_service, "_sync", side_effect=share_away):
+            failed = sync_service.sync(self.harbour, apply=True)
+        found = job_runs_service.failure(result=failed)
+        reply = self.client_.get("/api/activity/logs/%s?run=%s&level=WARNING" % (logs.SERVER_LOG, seen["run"]))
+        records = reply.get_json()["records"]
+        self.assertEqual(1, len(records))
+        self.assertRegex(records[0]["message"], r"^Sync of the whole library failed after \d+ s: ")
+        self.assertTrue(records[0]["message"].endswith(": %s %s" % (job_runs_service.FAILURES[job_runs_service.SHARE][0],
+                                                                   found.sentence)), records[0]["message"])
+
+    def test_a_sync_that_raised_says_so_and_raises(self):
+        with mock.patch.object(sync_service, "_sync", side_effect=OSError("the disk is full")), \
+                self.assertRaises(OSError):
+            sync_service.sync(self.harbour, apply=True)
+        with open(os.path.join(self.home.data, "logs", logs.SERVER_LOG), encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn(" s: %s OSError: the disk is full" % job_runs_service.FAILURES[job_runs_service.ERROR][0], text)
+        self.assertIn("[WARNING]", text)
 
 
 class TheWatcherSays(unittest.TestCase):

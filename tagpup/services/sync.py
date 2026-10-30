@@ -776,17 +776,73 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
     nothing is queued or recorded, or it was of one folder and found and changed nothing (worth_recording); a record that cannot be written is one of
     details["warnings"], not a failure of the write. details["in_step"] says whether the
     library is in step: for a dry run, as found; applied, after the write.
+
+    It logs one line as it ends (_said), with its tag; a sync of the whole library one as it starts too.
     """
-    started = job_runs.stamp(time.time())
+    began = time.time()
+    started = job_runs.stamp(began)
     # Every line the sync logs carries its tag, made from what its record keeps (the
     # library and when it started): the Activity page's "Logs for this run".
-    try:
-        # One map for the whole pass: a place moved meanwhile (TagTuner's Roots) changes nothing
-        # until it ends, and another process changing the library's roots stops it, cleanly.
-        with runs.running(runs.sync_tag(library.name, started)), roots_service.pinned(library):
-            return _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
-    except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
-        return _not_run(stop, apply)
+    with runs.running(runs.sync_tag(library.name, started)):
+        if folder is None:
+            # A folder's sync writes only its end: its begin line at INFO would be one each time a folder settles,
+            # and at DEBUG the file drops it, so a recorded one's log showed it ending without beginning.
+            logger.info("Sync of the whole library began%s.", "" if apply else " (a dry run)")
+        try:
+            # One map for the whole pass: a place moved meanwhile (TagTuner's Roots) changes nothing
+            # until it ends, and another process changing the library's roots stops it, cleanly.
+            with roots_service.pinned(library):
+                result = _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
+        except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
+            result = _not_run(stop, apply)
+        except Exception as e:
+            _said(folder, apply, None, began, error=e)
+            raise
+        _said(folder, apply, result, began)
+        return result
+
+
+def _what_it_looks_at(folder):
+    return "the whole library" if folder is None else folder
+
+
+#: What a sync's closing line counts, when it found any: what it found to do, and what it could not look at or read.
+SAID_FOUND = ("new", "changed", "moved", "missing", "to_remove", "unreadable", "to_check", "ambiguous_rows",
+              "folders_not_looked_at")
+
+
+def _said(folder, apply, result, began, error=None):
+    """The sync's closing line, the one writer of it (the watcher writes none of its own): what it looked at, what it
+    found, what it changed -- the rows it removed with the faces they held and how many of those were named, a removal
+    nobody asked for said in the log and not only in History (DECISIONS 2026-10-28) -- and how it ended; a failed one in
+    the words of tagpup.services.job_runs.failure (what the kind means, then its sentence; WARNING when the kind asks
+    the owner to act). Its library is its run tag's. INFO for a sync of the whole library, one that failed and one worth
+    recording (it found, changed or queued something: worth_recording's first test) or recorded, whether or not its
+    record could be written; DEBUG for a folder's that found nothing worth a record (the watcher's, each time a folder
+    settles)."""
+    seconds = time.time() - began
+    what = _what_it_looks_at(folder)
+    failed = recorded_runs.failure(error=error) if error is not None else (
+        recorded_runs.failure(result=result) if not result.ok else could_not_look(result))
+    if failed is not None:
+        means, _next, asks = recorded_runs.FAILURES[failed.kind]
+        logger.log(logging.WARNING if asks else logging.INFO, "Sync of %s failed after %d s: %s %s", what, seconds,
+                   means, failed.sentence)
+        return
+    details = result.details or {}
+    counts = details.get("counts") or {}
+    found = ", ".join("%s %d" % (name.replace("_", " "), counts[name]) for name in SAID_FOUND if counts.get(name))
+    worth = (folder is None or details.get(RECORD) is not None or result.changed or details.get("queued")
+             or any(counts.get(what) for what in FOUND_WORTH))
+    level = logging.INFO if worth else logging.DEBUG
+    removed = details.get("changed") or {}
+    logger.log(level, "Sync of %s ended%s in %d s: looked at %d folder(s) and %d photo file(s), found %s; changed %d "
+               "row(s)%s, queued %d folder(s) to index; %s.", what, "" if apply else " (a dry run)", seconds,
+               counts.get("folders_walked") or 0, counts.get("files") or 0, found or "nothing to do", result.changed,
+               ", removed %d row(s) with %d face(s), %d of them named" % (
+                   removed["removed"], removed.get("removed_faces") or 0, removed.get("removed_named") or 0)
+               if removed.get("removed") else "",
+               details.get("queued") or 0, "in step" if details.get("in_step") else "not in step")
 
 
 def _not_run(stop, apply):
