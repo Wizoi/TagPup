@@ -641,9 +641,7 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None, who
         for each in follow:
             getattr(each, "start", lambda _conn: None)(conn)
         photos.follow_fields(conn, row.path, values, stat, stamp, whole=whole)
-        if stat is not None and row.known_as:
-            # The file this process wrote: a rename that left it under this name knows it by what the write left.
-            file_journal.follow_renamed(conn, row.path, row.known_as, _fingerprint_of(stat))
+        _follow_rename(conn, row.path, row.known_as, stat)
         for each in follow:
             each(conn)
         if after is not None:
@@ -751,7 +749,7 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     interrupted = row.stamp if row.state == "writing" else None
     before = _stat(row.path)
     stamp = row.stamp = (before.st_mtime, before.st_size) if before is not None else None
-    row.known_as = _fingerprint_of(before) if before is not None else None
+    row.known_as = before
     file_journal.writing(library.path, row.id, stamp)
     _reached("file writing")
     failed = _written(et, row.path, target)
@@ -969,6 +967,54 @@ def _fingerprint_of(stat):
     return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "ino": stat.st_ino}
 
 
+def _follow_rename(conn, path, before, after):
+    """The one rule of a photo file this process just wrote under the name a rename gave it: a rename done that knows it by
+    its fingerprint before the write (`before`, its os.stat) knows it by the one the write left (`after`) from here on
+    (file_journal.follow_renamed). Nothing when either stat could not be taken. In the caller's transaction: for the
+    journal's own writes, the one that records the file (_record); for a write outside the journal, its own (OutsideWrites).
+    Returns the files of renames followed."""
+    if before is None or after is None:
+        return 0
+    return file_journal.follow_renamed(conn, path, _fingerprint_of(before), _fingerprint_of(after))
+
+
+class OutsideWrites:
+    """The writes of photo files a process makes outside the journal's file-change path: the indexer's identity mint
+    (tagpup.files.metadata.IdentityWriter over field_values.ensure_document_id; the charter's named exception, #1355). Each
+    is carried over the journal's renames as the journal's own writes are (_follow_rename), so that a rename's undo still finds the
+    file it renamed (#1957). Forward only: a file minted before this was made is not looked for (no backfill), and a file
+    another program rewrites stays as it is: History reads no file. Nothing else of the journal knows of the write: it is
+    no change, and no undo takes it back."""
+
+    def __init__(self, library):
+        self.library = library
+
+    def around(self, path, write):
+        """`write()`, a write of the file at `path` that returns something true when it wrote, with the file's stat taken
+        just before and after it and the rename that knew it by the one before carried to the one after, in a transaction
+        of its own right after the write: a Save of the photo that follows (the server, another process) finds the rename
+        knowing the file as it is. A photo no rename knows (almost every one) takes one read and no write transaction.
+        Never raises for the carry: the file is written either way. What is left: a process killed between the write and
+        this transaction leaves the rename knowing the file as it was, and its undo refuses it, as before; a stat a share
+        does not answer is no carry. Returns what `write` returned."""
+        before = _stat(path)
+        result = write()
+        if not result or before is None:
+            return result
+        after = _stat(path)
+        if after is None or _fingerprint_of(after) == _fingerprint_of(before):
+            return result
+        try:
+            if file_journal.renamed_known_by(self.library.path, _fingerprint_of(before)):
+                followed = db.write_with_connection(self.library.path, lambda conn: _follow_rename(conn, path, before, after),
+                                                    label="a rename told of a write outside the journal")
+                logger.info("%s: %d rename(s) told of a write outside the journal", self.library.path, followed)
+        except Exception as e:
+            logger.warning("%s: a rename could not be told of a write outside the journal; its undo will refuse the file:"
+                           " %s", self.library.path, e)
+        return result
+
+
 def _holds(path, row):
     """Is the file at `path` the one `row` renames: its size, modified time and file id
     are what the plan recorded, or the journal's last write of it left."""
@@ -987,6 +1033,10 @@ def rename(library, operation, renames, aside, exiftool_path=None, summary=None)
     the transaction that moves their rows (tagpup.store.photos.move_rows_in). Raises
     names.RenameFailed as rename_all does, every file it put back taken out of the
     change. Returns Renamed."""
+    if operation not in file_journal.RENAMES:
+        # A rename is known by its operation (file_journal.RENAMES): one under another would not be followed by the writes
+        # of its files after it.
+        raise ValueError("%r is not one of the renames the journal knows (file_journal.RENAMES)" % operation)
     if exiftool_path:
         settle(library, exiftool_path)
     moves = dict(aside)

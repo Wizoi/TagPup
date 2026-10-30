@@ -163,7 +163,7 @@ class AChangeOfPhotoFiles(PinnedRuns):
         new = os.path.join(os.path.dirname(old), "Renamed.jpg")
         with mock.patch.object(file_changes.file_journal, "plan", rename_all):
             with self.assertRaises(roots_service.RootsChanged):
-                file_changes.rename(self.library, "test", {old: new}, {})
+                file_changes.rename(self.library, "smart rename", {old: new}, {})
         self.assertTrue(os.path.exists(old), "nothing was renamed")
 
     def test_an_ordinary_tag_write_still_works_pinned(self):
