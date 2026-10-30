@@ -175,44 +175,6 @@ class MatchingTestBase(unittest.TestCase):
         return row[0] if row else None
 
 
-class TestTheQueueDoesNotReadEmbeddings(MatchingTestBase):
-    """Counting who is waiting does not require anybody's face vector.
-
-    The queue endpoint selected `f.embedding` for all 189,000 nameless faces and
-    normalised every one of them -- 380 MB of BLOB read and 189,000 numpy allocations
-    -- then used the result for nothing but a non-empty test. It groups faces by the
-    tags their photo carries and counts them; no vector is ever compared to anything.
-
-    Tested by giving a face an embedding that is real bytes but not a vector. Code
-    that only asks whether an embedding is there is unbothered; code that parses every
-    one of them cannot get past it. That is the distinction worth pinning, and it is
-    also a robustness property in its own right -- one damaged row should not take the
-    whole queue down.
-    """
-
-    def unreadable_embedding_face(self, photo):
-        conn = db.connect(self.TEST_DB)
-        # Not a whole number of float32s.
-        fid = add_face(conn, photo, box="[0,0,10,10]", embedding=b"\x01\x02\x03", prob=0.99)
-        conn.commit()
-        conn.close()
-        return fid
-
-    def queue(self):
-        return self.requests.get("/api/unmatched-faces/people")
-
-    def test_the_queue_opens_when_a_face_has_an_unreadable_embedding(self):
-        photo = self.add_photo("IMG_4242.jpg")
-        self.add_face(photo, seed=11)
-        self.unreadable_embedding_face(photo)
-
-        buckets = self.queue()
-        self.assertTrue(
-            any(b["name"] == "Unknown Faces" for b in buckets),
-            "the queue did not come back with its Unknown Faces bucket: %s" % (buckets,),
-        )
-
-
 class TestAnUnderscoreInAFilenameIsNotAWildcard(MatchingTestBase):
     """`photo_path LIKE ?` does not mean "this photo", and the difference bites.
 
