@@ -802,7 +802,7 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
                     mock.patch.object(tagpup_cli.console, "print", lambda text, **kwargs: printed.append(text)):
                 with self.assertRaises(SystemExit) as stopped:
                     tagpup_cli._resolve_directories(None, {"directories": ("C:\\Old\\Coast",)})
-            self.assertEqual(1, stopped.exception.code)
+            self.assertEqual(2, stopped.exception.code, "the code _folders_now's usage error exits with")
             self.assertEqual([said], printed, first)
 
     def test_the_cli_does_not_stat_a_folder_before_the_bounded_look(self):

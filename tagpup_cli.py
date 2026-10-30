@@ -213,6 +213,10 @@ def cli(ctx, db, test):
             click.echo(library_actions.newer_note(newer_path), err=True)
             ctx.with_resource(library_actions.reading_newer())
 
+#: The exit code of a folder refused as typed: click's own for a usage error (_folders_now's BadParameter).
+USAGE_EXIT = 2
+
+
 def _resolve_directories(library, kwargs):
     """A folder typed in an old place's spelling is the first place's folder: spelled so before the command
     walks or records it. One that does not exist at the first place is refused, naming both places and the root,
@@ -230,7 +234,7 @@ def _resolve_directories(library, kwargs):
             said = (refusal.refused if refusal.details.get(SHARE_AWAY)
                     else library_roots.old_place_sentence(library, directory, found))
             console.print(said, markup=False, soft_wrap=True)
-            raise SystemExit(1)
+            raise SystemExit(USAGE_EXIT)   # as _folders_now refuses the same folder: one refusal, one code (#2145)
         resolved.append(found)
     kwargs["directories"] = tuple(resolved)
 
