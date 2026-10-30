@@ -203,8 +203,9 @@ def _row(run):
 @routes.get("/api/activity/now")
 def now():
     """What runs now, in this process and any (activity.runs_now), by library: its rows (`jobs`, but this process's own
-    index), this process's index (`indexing`: the run under way and the folders waiting), its Suggest runs, its batches
-    and, for one whose runs could not be read, why (`error`); the folder watcher's sync (`syncing`)."""
+    index), this process's index (`indexing`: the run under way and the folders waiting), its Suggest runs and its
+    batches; the folder watcher's sync (`syncing`). A library whose runs could not be read is said by
+    /api/activity/jobs' `error`, which its card reads: Now does not say it a second time."""
     every = _libraries()
     watcher = _lifecycle().watcher()
     watching = watcher.status() if watcher is not None else None
@@ -222,8 +223,6 @@ def now():
                       "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
                       "jobs": [_row(run) for run in mine if run["run_id"] is not None and run["source"] != activity.QUEUE],
                       "batches": batches.listing(library)})
-        if library.name in told["unreadable"]:
-            found[-1]["error"] = told["unreadable"][library.name]
     status = _lifecycle().status()
     return jsonify({"at": _stamp(time.time()), "libraries": found,
                     "syncing": next((run["here"] for run in told["runs"] if run["source"] == activity.WATCHER), None),

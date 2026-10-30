@@ -460,6 +460,25 @@ describe("Scheduled jobs, Snapshots, Server and Logs fold, and a folded one says
     assert.deepEqual(consoleErrors, []);
   });
 
+  test("an open section's status line sits under its heading, above its body; a folded one's stays in sight", async (t) => {
+    // #2266: the line sat after the whole </details>, below a long log table, while Sync and Recent activity put
+    // theirs under the heading.
+    const { document, window } = await open(t);
+    await flush(window, 6);
+    const status = (name) => document.getElementById(`${name}-status`);
+    for (const name of FOLDS) {
+      assert.equal(status(name).previousElementSibling, document.getElementById(`${name}-folded`), `${name} folded`);
+    }
+    click(window, summary(document, "logs"));
+    await flush(window, 2);
+    assert.equal(status("logs").previousElementSibling, summary(document, "logs"), "under the heading while open");
+    assert.ok(document.getElementById("log-records").compareDocumentPosition(status("logs"))
+              & window.Node.DOCUMENT_POSITION_PRECEDING, "above the log table");
+    click(window, summary(document, "logs"));
+    await flush(window, 2);
+    assert.equal(status("logs").previousElementSibling, document.getElementById("logs-folded"), "folded again");
+  });
+
   test("a nav link to a folded section, and Logs for this run, unfold it", async (t) => {
     const { document, window } = await open(t);
     await flush(window, 8);
@@ -1178,6 +1197,24 @@ describe("Logs", () => {
     click(window, document.getElementById("log-run-clear"));
     await flush(window, 6);
     assert.doesNotMatch(fake.urls().at(-1), /run=/);
+  });
+
+  test("a log with no line to show says so: of the run asked for, or under the filters", async (t) => {
+    // #2299: a roots move or a CLI's sync whose log holds none of its lines answers with "No line of this run's
+    // matches."; a log the filters leave empty with "No lines match.". Each in its own situation, back again when the
+    // run is let go.
+    const fake = server("morning", { first: [["/api/activity/logs/", records([])]] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 8);
+    const said = () => document.getElementById("log-records").textContent;
+    assert.equal(said(), "No lines match.");
+    click(window, document.querySelector(`#timeline-body button.run-logs[data-run="${INDEX_RUN}"][data-log="${INDEX_LOG}"]`));
+    await flush(window, 6);
+    assert.ok(fake.urls().some((url) => url.startsWith(`/api/activity/logs/${INDEX_LOG}?`) && url.includes("run=")));
+    assert.equal(said(), "No line of this run's matches.");
+    click(window, document.getElementById("log-run-clear"));
+    await flush(window, 6);
+    assert.equal(said(), "No lines match.");
   });
 
   test("a run's log is the one the server names, never one the page spells", async (t) => {

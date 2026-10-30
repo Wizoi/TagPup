@@ -53,6 +53,7 @@ import urllib.error
 import urllib.request
 
 from tagpup import config
+from tagpup import logs
 from tagpup.core import byte_lock
 from tagpup.core import library as libraries
 from tagpup.core import processes
@@ -105,7 +106,7 @@ STARTING_WAIT = 60
 #: How the server exits when another already answers on its ports: not a crash.
 PORTS_TAKEN = 3
 
-#: The size at which a server's console output (an install's STARTED_LOG) is rotated as the
+#: The size at which a server's console output (an install's logs.STARTED_LOG) is rotated as the
 #: next server starts.
 CONSOLE_LOG_MAX = 5 * 1024 * 1024
 
@@ -440,11 +441,6 @@ START_MULTIPLE = 10
 START_CEILING = 600
 SAY_WAITING = 30
 
-#: Where a server an install started writes what it prints, in its home's data/logs: its log
-#: is server.log (tagpup.logs), and this holds what comes before it -- a traceback that stops
-#: it starting.
-STARTED_LOG = "tagpup_web.installed.log"
-
 #: What an install does with each server running (`kind_of`).
 SAME, CHECKOUT, ELSEWHERE, REPLACE = "same", "checkout", "elsewhere", "replace"
 
@@ -503,13 +499,15 @@ def starts(python, code, home):
 
 
 def started_log(home):
-    return os.path.join(home, config.DATA, "logs", STARTED_LOG)
+    """Where a server an install started writes what it prints, in its home's data/logs: its log is
+    logs.SERVER_LOG, and this holds what comes before it -- a traceback that stops it starting."""
+    return os.path.join(home, config.DATA, "logs", logs.STARTED_LOG)
 
 
 def start_server(python, code, home, ports):
     """Start the server of `code` on `ports`, `home` its home: a process of its own that
     outlives the install -- a hidden console and a process group of its own
-    (tagpup.core.processes), its output in STARTED_LOG -- opening no page. The Popen."""
+    (tagpup.core.processes), its output in logs.STARTED_LOG -- opening no page. The Popen."""
     log_path = started_log(home)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     try:   # rotated as each starts

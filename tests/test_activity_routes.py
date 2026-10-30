@@ -302,8 +302,9 @@ class Now(Base):
                          (running["run_id"], running["parent"], running["said"], running["state"]))
 
     def test_a_library_that_cannot_be_read_says_why_and_its_index_here_still_shows(self):
-        """A locked library: its card says why (`error`), the other library's runs are listed, and this process's index
-        of it -- memory, no row to read -- still shows, under the run its tags name."""
+        """A locked library: the other library's runs are listed, and this process's index of it -- memory, no row to
+        read -- still shows, under the run its tags name. Its card says why from /api/activity/jobs' `error`
+        (tests/test_activity_page_replies.py); Now says it nowhere (#2273: a key no page read)."""
         now = time.time()
         claim = job_runs.claim(self.regatta.path, "snapshots", "regatta", now)
         tag = runs.index_tag("harbour", now)
@@ -317,7 +318,7 @@ class Now(Base):
                 mock.patch.object(activity, "under_way", locked):
             found = self.get("/api/activity/now")
         by_name = {each["name"]: each for each in found["libraries"]}
-        self.assertEqual("the library is locked", by_name["harbour"]["error"])
+        self.assertNotIn("error", by_name["harbour"])
         self.assertEqual((tag, 7), (by_name["harbour"]["indexing"]["running"]["run"],
                                     by_name["harbour"]["indexing"]["running"]["parent"]))
         self.assertNotIn("error", by_name["regatta"])
@@ -622,10 +623,13 @@ class Logs(Base):
         self.assertEqual(["tagpup_web.log.1"], [each["name"] for each in by_name["tagpup_web.log"]["rotated"]])
 
     def test_the_installed_servers_start_up_output_is_said_in_words(self):
-        """What a server an install started printed before its own log (tagpup.launcher.STARTED_LOG) is a program's
-        own log, said in words, not by its file's name."""
-        self.write(launcher.STARTED_LOG, "Traceback (most recent call last):\nOSError: port 8080 is held\n")
-        (entry,) = [each for each in self.get("/api/activity/logs")["logs"] if each["name"] == launcher.STARTED_LOG]
+        """What a server an install started printed before its own log, in the file the launcher writes it to, is a
+        program's own log, said in words, not by its file's name (#2291: the launcher named the file and the listing
+        matched its own spelling of it, so a rename of one listed it by its file's name; both read logs.STARTED_LOG)."""
+        name = os.path.basename(launcher.started_log(self.home.root))
+        self.assertEqual(logs.STARTED_LOG, name)
+        self.write(name, "Traceback (most recent call last):\nOSError: port 8080 is held\n")
+        (entry,) = [each for each in self.get("/api/activity/logs")["logs"] if each["name"] == name]
         self.assertEqual(("system", "Server start-up output (installed copy)"), (entry["group"], entry["source"]))
 
     def test_a_programs_own_logs_apart_from_the_runs_and_the_runs_by_library_and_kind(self):
