@@ -6,8 +6,8 @@ finishes the rename, a copy is not mistaken for the photo (a file is known by it
 time: #269), a rename of the case alone settles (#283), and every row -- with its faces named by hand and its vector --
 is where its file is, including in a renumbered run, a swap, and a name moved aside. A photo saved after its rename is
 still the photo once the Save is undone, and its rename is undone too; a file another program put in its place is not,
-saved or not (#1952). A rename on a volume that gives no
-file id is refused with a sentence before anything is written (owner decision 2026-10-15: no weaker recognition by size
+saved or not (#1952); nor is it after the index gives it an identity, a write outside the journal (#1957). A rename
+on a volume that gives no file id is refused with a sentence before anything is written (owner decision 2026-10-15: no weaker recognition by size
 and modified time; 791 of 791 rename plans in the three live libraries carry an id, counted that day). Real JPEGs made
 here, the rows seeded as the indexer stores them; a crash is a BaseException at a step of the rename.
 
@@ -26,16 +26,21 @@ import sys
 import unittest
 from unittest import mock
 
+from click.testing import CliRunner
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import FACES_WITH_PATHS, VECTORS_WITH_PATHS, add_face, add_vector  # noqa: E402
-from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, field_of, write_outside  # noqa: E402
+from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, field_of, keywords_of, write_outside  # noqa: E402
+
+import tagpup_cli  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import names as file_names  # noqa: E402
 from tagpup.services import file_changes, tagging, photos as photo_actions  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, file_journal  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 FORMAT = "{grouping} - {index} - {caption}"
 NEW_NAME = "Regatta - 1 - Start.jpg"
@@ -314,6 +319,110 @@ class ALaterWriteOfTheRenamedPhoto(RenameCase):
         self.assertEqual(0, undone.changed)
         self.assertIn("not found under the name the change gave it", undone.message())
         self.assertEqual(([NEW_NAME], self.new, stranger), (self.names(), self.path_of_row(), os.stat(self.new).st_ino))
+
+
+class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
+    """Smart Rename of three photos that carry no DocumentID (58,688 of photo_index's 59,523 rows have none, counted
+    2026-10-29), then an index of their folder: it decodes them and mints each its identity, one write outside the journal
+    that gives the file a new file id, size and modified time (live: photo_index change 34, three files grown 84 bytes,
+    #1954). The mint carries the rename's fingerprint over its write, as the journal's own writes do, so History offers
+    the rename's Undo and it puts every photo back under its old name (#1957). Before, the Undo was offered and its
+    rehearsal refused each photo "not found under the name the change gave it". Real ExifTool and the real index; only
+    CLIP is stood in for, after each picture has decoded."""
+
+    def setUp(self):
+        super().setUp()
+        library_actions.record_added(self.library, [self.folder])
+        self.old = [self.make("IMG_000%d.jpg" % n, caption="Start", preserved="IMG_000%d.jpg" % n) for n in (1, 2, 3)]
+        self.ids = [self.photo_id(path) for path in self.old]
+
+    def rename(self):
+        renamed = photo_actions.smart_rename(self.library, self.old, "Regatta", FORMAT, EXIFTOOL)
+        self.assertTrue(renamed.ok, renamed.message())
+        self.new = [renamed.details["updated_paths"][path] for path in self.old]
+        self.assertEqual(sorted(os.path.basename(path) for path in self.new), sorted(os.listdir(self.folder)))
+        return renamed.details["change"]
+
+    def index(self):
+        """The index of the folder, as the queue runs it; the mint is its own (tagpup_cli's IdentityWriter). Returns how
+        often the run read what the renames know."""
+        known = {path: os.stat(path).st_ino for path in self.new}
+        with mock.patch("tagpup.ml.clip.ClipModel._init_model"), \
+                mock.patch("tagpup.ml.clip.ClipModel.picture_input"), \
+                mock.patch("tagpup.ml.clip.ClipModel.embed_input", return_value=[0.1] * 8), \
+                mock.patch.object(file_journal, "renamed_fingerprints", wraps=file_journal.renamed_fingerprints) as read:
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "index", self.folder, "--skip-faces"])
+        self.assertEqual(0, result.exit_code, result.output)
+        for path in self.new:
+            self.assertTrue(str(field_of(path, "XMP-xmpMM:DocumentID") or "").startswith("xmp.did:"), "no identity minted")
+            self.assertNotEqual(known[path], os.stat(path).st_ino, "the mint did not write the file anew")
+        return read.call_count
+
+    def photo_rows_at(self, photo_paths):
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            return store_roots.photo_ids_at(conn, photo_paths)
+        finally:
+            conn.close()
+
+    def assert_undone(self, rename):
+        self.assertIsNone(journal_service.refusals(self.library, [{"id": rename}])[rename], "History offers no Undo")
+        rehearsed = self.undo(rename, apply=False)
+        self.assertFalse(rehearsed.refused, rehearsed.message())
+        self.assertTrue(rehearsed.details["rehearsal"]["exact"], rehearsed.details["rehearsal"])
+        undone = self.undo(rename)
+        self.assertEqual((None, 3), (undone.refused or None, undone.changed), undone.message())
+        self.assertEqual(["IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg"], sorted(os.listdir(self.folder)))
+        self.assertEqual(3, len(self.photo_rows_at(self.old)))
+        self.assertEqual("undone", self.status(rename))
+
+    def test_minted_after_the_rename_the_rename_is_undone(self):
+        rename = self.rename()
+        # What the renames know is the run's answer: read once for the three photos minted, not once a photo.
+        self.assertEqual(1, self.index(), "the renames' fingerprints are read once a run")
+        self.assert_undone(rename)
+
+    def test_a_rename_recorded_before_the_roots_were_adopted_is_undone(self):
+        # photo_index's nine done rename files hold their new names in native spelling, recorded before its roots were
+        # adopted (counted 2026-10-29); _row reads either spelling, and so does the carry.
+        rename = self.rename()
+        import roots_library
+        roots_library.convert_to_root(self.library.path, self.folder)
+        conn = db.connect(self.library.path)
+        try:
+            roots = store_roots.roots_for(conn)
+            for file_id, new_path in conn.execute("SELECT id, new_path FROM change_files WHERE change_id = ?",
+                                                  (rename,)).fetchall():
+                self.assertTrue(new_path.startswith(paths.ROOT_MARK), "the library is not held under its root")
+                conn.execute("UPDATE change_files SET new_path = ? WHERE id = ?", (paths.from_row(new_path, roots), file_id))
+            conn.commit()
+        finally:
+            conn.close()
+        self.index()
+        self.assert_undone(rename)
+
+    def test_their_rows_made_again_with_new_ids_the_rename_is_undone(self):
+        # Live, all nine rows at change 34's new names carry other photo ids than the journal's: a rename knows its
+        # file by the file, not by the row.
+        rename = self.rename()
+        self.execute("DELETE FROM photos WHERE path IN (?, ?, ?)", tuple(self.new))
+        self.index()
+        again = [self.photo_id(path) for path in self.new]
+        self.assertFalse(set(again) & set(self.ids), "the rows were not made again")
+        self.assert_undone(rename)
+
+    def test_a_save_between_the_rename_and_the_mint_is_undone_and_then_the_rename(self):
+        # Two writers of one photo: the Save's (journaled) and then the mint's (not). Each carries the rename over its
+        # own write, the mint from what the Save left.
+        rename = self.rename()
+        saved = tagging.save_photo(self.library, self.new[0], "Start", ["Beach", "Harbour"], None, EXIFTOOL, FORMAT)
+        self.assertTrue(saved.changed, saved.message())
+        self.index()
+        self.assertIn("undo it first", str(self.undo(rename).refused))
+        unsaved = self.undo(saved.details["change"])
+        self.assertFalse(unsaved.refused, unsaved.message())
+        self.assert_undone(rename)
+        self.assertEqual(["Beach"], keywords_of(self.old[0]), "the Save's undo did not put the keywords back")
 
 
 if __name__ == "__main__":

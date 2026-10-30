@@ -63,7 +63,10 @@ exceptions, each unjournaled by decision:
 
 - **The DocumentID the indexer mints**: `files/field_values.ensure_document_id`, through `field_values.write`. It is
   one command, made with `-m` as every write is (`field_values.WRITE_OPTIONS`, #2009, DECISIONS 2026-10-27) (#1355).
-  It is never written into a photo whose picture did not decode.
+  It is never written into a photo whose picture did not decode. Its write is wrapped by `file_changes.OutsideWrites`,
+  which carries a done rename's fingerprint over it as `_record` carries the journal's own writes (one helper,
+  `_follow_rename`; #1957): the exception stays unjournaled, but no longer leaves a rename knowing a file by a
+  fingerprint the mint changed. Forward only (#1959); a renamed file minted before 2026-10-29 stays refused.
 - **Just look**: `services/file_only.py`, the files of a folder the library does not hold (#527).
 
 Every photo's file is baked with no command (owner, 2026-10-28): a current vector with no fingerprint row

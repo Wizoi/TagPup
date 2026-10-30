@@ -82,6 +82,7 @@ from tagpup.services import roots as library_roots
 from tagpup.core.result import NotFound
 from tagpup.services import maintenance
 from tagpup.services import refresh_rows
+from tagpup.services import file_changes
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex
 from tagpup.store.locks import PathLocker
@@ -494,8 +495,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # folder, wherever each was started from.
     locker = PathLocker(lock_dir=Library(db_path).locks)
     # The indexer records what it reads, so it may give a photo its identity -- after the
-    # photo's picture has decoded in full, never before (IdentityWriter).
-    identity_writer = IdentityWriter(exiftool_path)
+    # photo's picture has decoded in full, never before (IdentityWriter); a rename that knows the file is told what the
+    # write left (file_changes.OutsideWrites, #1957).
+    identity_writer = IdentityWriter(exiftool_path, around=file_changes.OutsideWrites(Library(db_path)).around)
     unreadable, incomplete = [], []
 
     # The index queue's Cancel, while this waits for the graphics card (tagpup.jobs.indexing).

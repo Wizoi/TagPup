@@ -29,7 +29,7 @@ A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]
 the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
 vectors (migration 12); a rename keeps the file's old and new path, and its size, modified time and file id, which a
 rename does not change, to know the file by wherever it is found -- carried over each later write of the journal's own
-that the file under its new name takes (follow_renamed). Reading and writing the files is
+that the file under its new name takes, and over the indexer's identity mint (follow_renamed). Reading and writing the files is
 tagpup.services.file_changes'; this is the rows.
 """
 import json
@@ -55,6 +55,11 @@ CHUNK = 500
 INDEX_BAKE = "index bake"
 #: The operations whose changes are internal: listed by no history, met by no undo's check of newer changes.
 INTERNAL = (INDEX_BAKE,)
+#: The operations that rename photo files (tagpup.services.file_changes.rename refuses another): the changes whose files a
+#: rename left under a new name, known there by their fingerprint (follow_renamed). By the operation, the change_files of a
+#: library are sought by their change (its index), not scanned: 51,451 rows in photo_index, 85 ms warm and 6 s cold, of
+#: which 9 are renames (counted 2026-10-29); every rename-holding change of the three libraries is a "smart rename".
+RENAMES = ("smart rename", "rename after caption")
 
 
 def not_internal(column):
@@ -88,9 +93,9 @@ class FileRow:
     #: Not stored: a forward write failed and the file is marked read-only, which no retry of the write changes
     #: (tagpup.services.file_changes._after_failure; the one failure a write tells from a passing one).
     read_only: bool = False
-    #: Not stored: the file's fingerprint just before this process wrote it (tagpup.services.file_changes._fingerprint),
-    #: by which a rename that left it under this name knows it (follow_renamed).
-    known_as: Optional[dict] = None
+    #: Not stored: the file's os.stat just before this process wrote it, whose fingerprint (tagpup.services.file_changes.
+    #: _fingerprint_of) a rename that left it under this name knows it by (follow_renamed).
+    known_as: Optional[Any] = None
 
     @property
     def is_rename(self):
@@ -172,15 +177,21 @@ def _now():
     return dates.recorded()
 
 
+def _native(value, roots):
+    """A path change_files holds, as this machine spells it: the row form or, recorded before the library's roots were
+    adopted, the native path, either read by the first place of its root -- a change recorded before the adoption holds
+    the path as it was then (the place the library lived at); after a move an undo must write where writes go now. The
+    one reading of a journaled path (_row, follow_renamed)."""
+    return paths.canonical(paths.from_row(value, roots), roots)
+
+
 def _row(found, roots):
     """A FileRow of a change_files row, its paths as this machine spells them. A change
     recorded before the library's roots were adopted holds native paths, and one recorded
     after holds the row form: either reads as the native path (paths.from_row)."""
     file_id, change_id, photo_id, path, new_path, before, after, state, note, stamp = found
-    # By the first place of its root: a change recorded before the adoption holds the path as it was then
-    # (the place the library lived at); after a move an undo must write where writes go now.
-    path = paths.canonical(paths.from_row(path, roots), roots)
-    new_path = paths.canonical(paths.from_row(new_path, roots), roots) if new_path else new_path
+    path = _native(path, roots)
+    new_path = _native(new_path, roots) if new_path else new_path
     return FileRow(file_id, change_id, photo_id, path, new_path, json.loads(before or "{}"),
                    json.loads(after or "{}"), state, note, tuple(json.loads(stamp)) if stamp else None)
 
@@ -243,17 +254,47 @@ def writing(db_path, file_id, stamp):
     db.write_with_connection(db_path, work, label="file %d writing" % file_id)
 
 
+#: The files of renames done (RENAMES): sought by their change, the change_id index, never a scan of change_files.
+_RENAMED = ("change_id IN (SELECT id FROM changes WHERE operation IN (%s)) AND new_path IS NOT NULL AND state = 'done'"
+            % ", ".join("?" * len(RENAMES)))
+
+
+def fingerprint_key(was):
+    """`was`, a file's fingerprint (size, modified time, file id), as a rename's file holds it (fields_before)."""
+    return json.dumps(was, sort_keys=True)
+
+
 def follow_renamed(conn, path, was, now):
-    """The file under `path` was just written by the journal, and was `was` (its fingerprint: size, modified time, file
-    id) before: a rename done that left it there, knowing it by `was`, knows it by `now`, what the write left, from here
-    on. A field write -- ExifTool's, beside the file and renamed over it -- changes all three for good, and the rename's
-    undo, after the write's own undo, did not find its file (#1952). A rename that knows another file there -- one put in
-    its place since -- is left as it is, and its undo refuses this one. In the caller's transaction, the one that records
-    the write."""
-    where, params = store_roots.sql_equals(conn, "new_path", path)
-    now = json.dumps(now, sort_keys=True)
-    conn.execute("UPDATE change_files SET fields_before = ?, fields_after = ? WHERE " + where
-                 + " AND state = 'done' AND fields_before = ?", (now, now) + tuple(params) + (json.dumps(was, sort_keys=True),))
+    """The file under `path` was just written, by the journal or the indexer's identity mint, and was `was` (its
+    fingerprint: size, modified time, file id) before: a rename done that left it there, knowing it by `was`, knows it by
+    `now`, what the write left, from here on. A field write -- ExifTool's, beside the file and renamed over it -- changes
+    all three for good, and the rename's undo, after the write's own undo, did not find its file (#1952); after the mint,
+    which no undo takes back, it never did (#1957). A rename that knows another file there -- one put in its place since --
+    is left as it is, and its undo refuses this one. The renames knowing `was` are sought by it, and their new names read
+    as _row reads them (_native): one recorded before the library's roots were adopted holds the native spelling, which a
+    comparison in the row form does not match (photo_index's nine). In the caller's transaction, the one that records the
+    write. Returns the files of renames followed."""
+    roots = store_roots.roots_for(conn)
+    here = paths.canonical(path, roots)
+    followed = [file_id for file_id, new_path in conn.execute(
+        "SELECT id, new_path FROM change_files WHERE " + _RENAMED + " AND fields_before = ?",
+        RENAMES + (fingerprint_key(was),)) if paths.same(_native(new_path, roots), here)]
+    now = fingerprint_key(now)
+    for file_id in followed:
+        conn.execute("UPDATE change_files SET fields_before = ?, fields_after = ? WHERE id = ?", (now, now, file_id))
+    return len(followed)
+
+
+def renamed_fingerprints(db_path):
+    """The fingerprints (fingerprint_key) the renames done know their files by (follow_renamed): one read of the renames'
+    files, on a read connection, for a run of writes outside the journal to ask of each file without a query (a few
+    hundred in a library; nine in photo_index)."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return frozenset(known for (known,) in conn.execute(
+            "SELECT fields_before FROM change_files WHERE " + _RENAMED, RENAMES))
+    finally:
+        conn.close()
 
 
 def mark(db_path, file_ids, state, note=None):

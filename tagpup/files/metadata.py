@@ -211,9 +211,14 @@ class IdentityWriter:
     Failures are per-file and logged, never raised: an identity is an improvement on
     knowing only the path, and a photo that cannot take one indexes without it. The
     ExifTool session is started for the first photo that needs one; close() ends it.
+
+    `around(path, write)` makes each write, `write()`, and returns what it returned: the indexer's carries the fingerprint
+    of a file a rename gave its name over the write (tagpup.services.file_changes.OutsideWrites, #1957); by default the
+    write alone.
     """
 
-    def __init__(self, exiftool_path: Optional[str] = None):
+    def __init__(self, exiftool_path: Optional[str] = None, around=None):
+        self.around = around or (lambda _path, write: write())
         executable = exiftool_path
         if executable and not os.path.isabs(executable):
             executable = os.path.abspath(executable)
@@ -235,7 +240,8 @@ class IdentityWriter:
         et = self._session()
         if et is None:
             return None
-        minted = field_values.ensure_document_id(et, record["path"], record.get("raw_metadata"))
+        minted = self.around(record["path"],
+                             lambda: field_values.ensure_document_id(et, record["path"], record.get("raw_metadata")))
         if not minted:
             return None
         self.minted += 1
