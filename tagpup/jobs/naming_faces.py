@@ -204,7 +204,7 @@ class Job:
         self.run.ends(failed=failed, counts=self.counts(what))
 
     def _record(self, what):
-        self.run.counts_so_far(self.counts(what))
+        self.run.changed_so_far(self.counts(what))
 
     def _finish(self, state, message, what, failed=None):
         """End the job in `state`, saying `message`; `failed`, why its run failed (job_runs.failure, said as `message`)."""

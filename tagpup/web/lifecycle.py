@@ -42,6 +42,7 @@ from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup import launcher
 from tagpup import runtime as runtimes
 from tagpup.services import batches
+from tagpup.services import job_runs
 from tagpup.services import libraries as library_actions
 from tagpup.web import responses, security
 
@@ -109,12 +110,16 @@ class Work(NamedTuple):
 
 
 def under_way(watcher=None):
-    """The one list of what runs in this process beside its requests: [Work]. Each index queue busy and each Suggest
-    run by its library, the naming of faces, the batches of photo files and the startup migrations (#664) counted, and
+    """The one list of what runs in this process beside its requests: [Work]. Each index queue busy (or its last run's
+    end waiting for the library) and each Suggest run by its library, the naming of faces, the batches of photo files and the startup migrations (#664) counted, and
     the sync of `watcher` (the folder watcher this process runs, Lifecycle.watcher), when it is given. A drain reads it
     (long_work), and so do the Activity page, the roots' moves and Name faces from tags (Lifecycle.under_way)."""
     found = [Work(INDEX, name, "an index run is running or queued")
              for name, queue in indexing_jobs.every_queue() if queue.busy()]
+    # An index whose end waits for the library, after its queue is idle (#2200): once per library with an index.
+    indexed = {work.library for work in found}
+    found += [Work(INDEX, name, "an index's end waits for the library")
+              for name in job_runs.ends_waiting() if name not in indexed]
     found += [Work(SUGGEST, run["library"], "Suggest is running") for run in suggestion_jobs.under_way()]
     naming = naming_faces_jobs.running()
     if naming:

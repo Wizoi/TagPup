@@ -2,7 +2,10 @@
 
 A run's lifecycle is `run`'s, the one place: claimed, its progress recorded while its block runs, its failure mapped, its
 end written as the block ends, and an end that cannot be written kept and written as the next run of the job in the
-library is claimed in this process. The jobs keep their own scheduling: the recurring runner (tagpup.jobs.recurring), the
+library is claimed in this process. An index's end is tried for RECORD_WITHIN, as its claim is, and one the library is
+being written for meanwhile is waited for on a thread of its own: the next index starts at once. The process waits for
+that thread as it ends, and a drain while it is alive (ends_waiting); an end it gives up on is kept, and a process
+killed meanwhile leaves the row to the next claim or the next start's sweep. The jobs keep their own scheduling: the recurring runner (tagpup.jobs.recurring), the
 index queue (tagpup.jobs.indexing), a root's move (tagpup.services.roots_location), the naming from tags
 (tagpup.jobs.naming_faces). A run that is not recorded -- refused, the library behind this version's schema or being
 written, the claim failing -- is a null run, whose block runs as its caller decides and which writes nothing.
@@ -186,10 +189,10 @@ def sweep_abandoned(library, now=None):
     return job_runs.sweep_abandoned(library.path, time.time() if now is None else now)
 
 
-def counts_so_far(library, run_id, counts):
-    """Record the counts of run `run_id` so far (tagpup.store.job_runs.counts_so_far): False when it is no longer this
-    process's to record."""
-    return job_runs.counts_so_far(library.path, run_id, counts)
+def changed_so_far(library, run_id, counts):
+    """Write `counts` as run `run_id`'s record before its end (tagpup.store.job_runs.changed_so_far: what an abandoned
+    run keeps; not `progress`): False when it is no longer this process's to record."""
+    return job_runs.changed_so_far(library.path, run_id, counts)
 
 
 #: The phases a run says it is in, the one vocabulary of `job_runs.progress`: a sync's walk of the folders and its walk
@@ -286,14 +289,15 @@ def _forget(library, run_id):
         _written.pop((db.key(library.path), run_id), None)
 
 
-def end(library, run_id, now, counts, failed=None, note=None):
+def end(library, run_id, now, counts, failed=None, note=None, within=None):
     """End run `run_id` with its `counts`: done with `note`, or failed with `failed`, a Failure (its sentence the note,
-    its kind in the counts; tagpup.store.job_runs.finish). A run that was cancelled is done: its counts say how far it
-    got. False when it was no longer this process's to end."""
+    its kind in the counts; tagpup.store.job_runs.finish, `within` its). A run that was cancelled is done: its counts say
+    how far it got. False when it was no longer this process's to end; db.BUSY when not made within `within`."""
     _forget(library, run_id)
     if failed is None:
-        return job_runs.finish(library.path, run_id, DONE, now, counts, note)
-    return job_runs.finish(library.path, run_id, FAILED, now, dict(counts, **{FAILURE: failed.kind}), failed.sentence)
+        return job_runs.finish(library.path, run_id, DONE, now, counts, note, within)
+    return job_runs.finish(library.path, run_id, FAILED, now, dict(counts, **{FAILURE: failed.kind}), failed.sentence,
+                           within)
 
 
 def discard(library, run_id):
@@ -312,29 +316,73 @@ UNCLAIMED = "unclaimed"
 #: unwritable as the run ends.
 _unended = {}
 _unended_lock = threading.Lock()
+#: The threads waiting for a library being written by another to write the ends kept for it, {thread: the library's
+#: name}, under _unended_lock: what a drain waits for (ends_waiting).
+_waiting = {}
 
 
-def _write_end(library, job, run_id, when, counts, failed, note):
-    """Write the end of run `run_id` of `job`; kept in _unended when it cannot be, to be written as the next run of the
-    job in the library is claimed."""
+def _end_within(job):
+    """How long an end of `job` is tried for while the library is being written: RECORD_WITHIN for a job of RECORDS_ONLY
+    (an index), whose claim is bounded so; None, waited for, for any other, whose running row gates its next claim."""
+    return job_runs.RECORD_WITHIN if job in job_runs.RECORDS_ONLY else None
+
+
+def _write_end(library, job, run_id, when, counts, failed, note, within=None):
+    """Write the end of run `run_id` of `job`, tried for `within` seconds while the library is being written (None:
+    waited for); kept in _unended when it cannot be, to be written as the next run of the job in the library is claimed,
+    and, when the library was only being written by another, on a thread of its own that waits for it (#2200)."""
     try:
-        ended = end(library, run_id, when, counts, failed=failed, note=note)
+        ended = end(library, run_id, when, counts, failed=failed, note=note, within=within)
     except Exception as e:
-        with _unended_lock:
-            _unended.setdefault((db.key(library.path), job), {})[run_id] = (library, run_id, when, counts, failed, note)
+        _keep(library, job, run_id, when, counts, failed, note)
         logger.warning("Could not record the end of run %d of %s in %s, written as its next run begins: %s", run_id, job,
                        library.name, e)
+        return
+    if ended is db.BUSY:
+        _keep(library, job, run_id, when, counts, failed, note)
+        logger.info("The end of run %d of %s in %s waits for the library, which is being written: written once it is"
+                    " free.", run_id, job, library.name)
+        # Not a daemon, so a CLI's run ending meanwhile writes it before the process ends; said, because a thread takes
+        # its flag from the thread that makes it, here the index queue's worker, a daemon (#2200).
+        thread = threading.Thread(target=_write_ends_waited, args=(library, job), name="RunEnd", daemon=False)
+        with _unended_lock:
+            _waiting[thread] = library.name
+        thread.start()
         return
     if not ended:
         logger.info("Run %d of %s in %s was no longer this process's to end.", run_id, job, library.name)
 
 
-def _write_ends_kept(library, job):
-    """Write the ends of `job` in `library` this process could not (_unended); one that fails again is kept."""
+def _keep(library, job, run_id, when, counts, failed, note):
+    with _unended_lock:
+        _unended.setdefault((db.key(library.path), job), {})[run_id] = (library, run_id, when, counts, failed, note)
+
+
+def _write_ends_kept(library, job, within=None):
+    """Write the ends of `job` in `library` this process could not (_unended), each tried for `within` (_write_end); one
+    that fails again is kept."""
     with _unended_lock:
         kept = _unended.pop((db.key(library.path), job), {})
     for each in kept.values():
-        _write_end(each[0], job, *each[1:])
+        _write_end(each[0], job, *each[1:], within=within)
+
+
+def _write_ends_waited(library, job):
+    """The RunEnd thread: the ends kept for `job` in `library`, each waited for (db's busy retries); one still not
+    written is kept for the next claim, and no longer waited for by a drain."""
+    try:
+        _write_ends_kept(library, job)
+    finally:
+        with _unended_lock:
+            _waiting.pop(threading.current_thread(), None)
+
+
+def ends_waiting():
+    """The names of the libraries an end of a run waits for in this process, on its thread (#2200): what a drain must
+    not cut (tagpup.web.lifecycle.under_way). Not an end that thread gave up on, nor one kept from an end that failed:
+    each waits for the next claim of its job, which no drain holds for."""
+    with _unended_lock:
+        return sorted(set(_waiting.values()))
 
 
 class Recorded:
@@ -365,13 +413,13 @@ class Recorded:
         `note`, or its Result's message."""
         self._said = (result, error, failed, counts, note)
 
-    def counts_so_far(self, counts):
-        """Record `counts` as the run's so far (tagpup.store.job_runs.counts_so_far); False when not written -- the run
-        not recorded, no longer this process's, or the write failing (logged). Never raises."""
+    def changed_so_far(self, counts):
+        """Write `counts` as the run's record before its end (tagpup.store.job_runs.changed_so_far); False when not
+        written -- the run not recorded, no longer this process's, or the write failing (logged). Never raises."""
         if not self:
             return False
         try:
-            return counts_so_far(self.library, self.run_id, counts)
+            return changed_so_far(self.library, self.run_id, counts)
         except Exception as e:
             logger.warning("Could not record the counts of run %d of %s in %s: %s", self.run_id, self.job,
                            self.library.name, e)
@@ -410,7 +458,8 @@ class Recorded:
         counted.update(extra or {})
         if found is None and note is None and result is not None:
             note = result.message() or None
-        _write_end(self.library, self.job, self.run_id, self._clock(), counted, found, None if found else note)
+        _write_end(self.library, self.job, self.run_id, self._clock(), counted, found, None if found else note,
+                   within=_end_within(self.job))
         return False
 
 
@@ -424,7 +473,7 @@ def run(library, job, run_for, clock=time.time, due=None, changed=None, stopped=
     own caller answers and logs it (the request that began a naming, a root's move); else it is logged here, once."""
     if library is None:
         return Recorded(None, job, clock(), why="no library")
-    _write_ends_kept(library, job)
+    _write_ends_kept(library, job, _end_within(job))
     now = clock()
     try:
         claimed = claim(library, job, run_for, now, None if due is None else (lambda last: due(last, now)), changed)
