@@ -3,7 +3,9 @@
 A run's lifecycle is `run`'s, the one place: claimed, its progress recorded while its block runs, its failure mapped, its
 end written as the block ends, and an end that cannot be written kept and written as the next run of the job in the
 library is claimed in this process. An index's end is tried for RECORD_WITHIN, as its claim is, and one the library is
-being written for meanwhile is written on a thread of its own once it is free: the next index starts at once. The jobs keep their own scheduling: the recurring runner (tagpup.jobs.recurring), the
+being written for meanwhile is waited for on a thread of its own: the next index starts at once. The process waits for
+that thread as it ends, and a drain while it is alive (ends_waiting); an end it gives up on is kept, and a process
+killed meanwhile leaves the row to the next claim or the next start's sweep. The jobs keep their own scheduling: the recurring runner (tagpup.jobs.recurring), the
 index queue (tagpup.jobs.indexing), a root's move (tagpup.services.roots_location), the naming from tags
 (tagpup.jobs.naming_faces). A run that is not recorded -- refused, the library behind this version's schema or being
 written, the claim failing -- is a null run, whose block runs as its caller decides and which writes nothing.
