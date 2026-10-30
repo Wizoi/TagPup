@@ -57,6 +57,7 @@ and is noted. Pillow and ExifTool are real; the bakes are written through the on
 planned and written as a bake run does: bake_as_planned); the library is made by the picker's Create alone, in a home of
 its own.
 """
+import itertools
 import json
 import os
 import shutil
@@ -87,6 +88,7 @@ from tagpup.ml import clip  # noqa: E402
 from tagpup.ml.clip import ClipModel  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
+from tagpup.services import job_runs  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import bake_after_index, bake_reading, baking, file_changes, file_only, indexing, search, tagging  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -853,6 +855,22 @@ class AnIndexReadsABake(unittest.TestCase):
             again = self.index(folder).output
         heard = [progress_line.heard(line) for line in again.splitlines()]
         self.assertIn("new_faces", [fact["kind"] for fact in heard if fact], again)
+
+    def test_a_slow_index_whose_percent_stands_still_is_heard_every_progress_every_seconds(self):
+        # photo_index's 59,523 photos at under 2 a second: a whole percent is over activity.STUCK_AFTER, and the run read
+        # as stuck. Here 120 photos, each read as the CLI's clock moves PROGRESS_EVERY: every photo is said, though the
+        # percent stands still between some of them. Failed on the old code: 101 facts, the percent's moves alone.
+        folder = self.folder("Harbour Slow")
+        for number in range(120):
+            self.picture(folder, "heat %03d.jpg" % number, (number, 90, 160), size=(48, 32))
+        bake_after_index.bake_folders.return_value = bake_after_index.Baked()
+        ticks = itertools.count()
+        clock = mock.Mock(monotonic=lambda: next(ticks) * job_runs.PROGRESS_EVERY)
+        with mock.patch.dict(os.environ, {progress_line.ASKED: "1"}), mock.patch.object(tagpup_cli, "time", clock):
+            printed = self.index(folder).output
+        heard = [progress_line.heard(line) for line in printed.splitlines()]
+        said = [fact["done"] for fact in heard if fact and fact["kind"] == "phase" and fact["phase"] == "embeddings"]
+        self.assertEqual(list(range(121)), said)
 
     def test_a_turned_photos_faces_read_from_its_bake_are_the_boxes_a_detection_stores(self):
         folder = self.folder("Harbour Turned")

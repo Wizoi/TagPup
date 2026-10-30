@@ -4,6 +4,7 @@ import functools
 from collections import Counter
 import os
 import sys
+import time
 import logging
 import click
 from rich.console import Console
@@ -79,6 +80,7 @@ from tagpup.services import bake_after_index
 from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
+from tagpup.services import job_runs
 from tagpup.services import thumbnails
 from tagpup.services import photos as photo_actions
 from tagpup.services import photo_reembed
@@ -658,14 +660,17 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # The bar is moved by hand: tqdm iterating `photos` kept the last photo it handed on, and its pictures, while
         # it waited for the next one -- outside what the read-ahead counts.
         bar = tqdm(total=len(to_index_meta), desc=indexing_service.GENERATING_EMBEDDINGS, disable=progress_line.asked())
-        # The server is told each time the whole percent moves: a fact a photo would be thousands of lines.
-        embedded, percent_said = 0, 0
+        # The server is told each time the whole percent moves (a fact a photo would be thousands of lines), and at
+        # least every job_runs.PROGRESS_EVERY seconds: a percent of photo_index's 59,523 photos at under 2 a second is
+        # over activity.STUCK_AFTER, and the run would read as stuck.
+        embedded, percent_said, said_at = 0, 0, time.monotonic()
         _say(indexing_service.phase_fact("embeddings", 0, len(to_index_meta)))
         for meta, begun, result in photos:
             bar.update(1)
             embedded += 1
-            if embedded * 100 // len(to_index_meta) != percent_said:
-                percent_said = embedded * 100 // len(to_index_meta)
+            percent = embedded * 100 // len(to_index_meta)
+            if percent != percent_said or time.monotonic() - said_at >= job_runs.PROGRESS_EVERY:
+                percent_said, said_at = percent, time.monotonic()
                 _say(indexing_service.phase_fact("embeddings", embedded, len(to_index_meta)))
             if begun is None:
                 continue
