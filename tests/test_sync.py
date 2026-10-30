@@ -31,6 +31,7 @@ from tagpup.core.paths import key as paths_key  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import images, shares  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
+from tagpup.jobs import watching  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
 from tagpup.store import db, faces_detected, journal, people, taxonomy  # noqa: E402
@@ -866,6 +867,26 @@ class MissingFiles(SyncTestCase):
         self.assertEqual(1, sync.last(self.library)["last_run"]["changed"]["removed"])
         again = self.run_sync(apply=True, roots=[self.pictures])
         self.assertEqual((0, 0, True), (again.details["counts"]["missing"], again.changed, again.details["in_step"]))
+
+    def test_a_whole_sync_that_removes_rows_says_so_once_with_the_named_faces_they_held(self):
+        """The watcher's whole sync (its catch-up at start) removing three rows, two of them holding a named face: the
+        sync's one closing line says what it removed with the faces and the named ones (DECISIONS 2026-10-28), and the
+        watcher writes no second closing line of its own."""
+        gone = [self.photo(self.trip, "IMG_%04d.jpg" % n) for n in (1, 2, 3)]
+        self.rooted(*gone, self.photo(self.meet, "IMG_0004.jpg"), named=gone[:2])
+        for path in gone:
+            os.remove(path)
+        watcher = watching.Watcher(lambda: [self.library], lambda library: [self.pictures],
+                                   lambda library, folder: self.run_sync(apply=True, folder=folder, roots=[self.pictures]),
+                                   images.is_photo, debounce=0.5, recheck=0.2, tick=0.05)
+        with self.assertLogs("tagpup", level="INFO") as logged:
+            watcher._run(self.library, None)
+        self.assertEqual(3, sync.last(self.library)["last_run"]["changed"]["removed"])
+        said = [line for line in logged.output if "removed" in line]
+        self.assertEqual(1, len(said), logged.output)
+        self.assertTrue(said[0].startswith("INFO:tagpup.services.sync:Sync of the whole library ended in "), said[0])
+        self.assertIn("changed 3 row(s), removed 3 row(s) with 5 face(s), 2 of them named, queued 0", said[0])
+        self.assertEqual([], [line for line in logged.output if ":tagpup.jobs.watching:" in line])
 
     def test_a_folder_deleted_under_a_root_that_is_there_is_removed_with_its_rows(self):
         first, second = self.photo(self.trip, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg")

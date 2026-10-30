@@ -810,10 +810,12 @@ SAID_FOUND = ("new", "changed", "moved", "missing", "to_remove", "unreadable", "
 
 
 def _said(folder, apply, result, began, error=None):
-    """The sync's closing line, the one writer of it: what it looked at, what it found, what it changed and how it ended
-    -- a failed one in the words of tagpup.services.job_runs.failure (what the kind means, then its sentence; WARNING
-    when the kind asks the owner to act). INFO for a sync of the whole library, one that failed and one that was
-    recorded; DEBUG for a folder's that found nothing worth a record (the watcher's, each time a folder settles)."""
+    """The sync's closing line, the one writer of it (the watcher writes none of its own): what it looked at, what it
+    found, what it changed -- the rows it removed with the faces they held and how many of those were named, a removal
+    nobody asked for said in the log and not only in History (DECISIONS 2026-10-28) -- and how it ended; a failed one in
+    the words of tagpup.services.job_runs.failure (what the kind means, then its sentence; WARNING when the kind asks
+    the owner to act). Its library is its run tag's. INFO for a sync of the whole library, one that failed and one that
+    was recorded; DEBUG for a folder's that found nothing worth a record (the watcher's, each time a folder settles)."""
     seconds = time.time() - began
     what = _what_it_looks_at(folder)
     failed = recorded_runs.failure(error=error) if error is not None else (
@@ -827,9 +829,13 @@ def _said(folder, apply, result, began, error=None):
     counts = details.get("counts") or {}
     found = ", ".join("%s %d" % (name.replace("_", " "), counts[name]) for name in SAID_FOUND if counts.get(name))
     level = logging.INFO if folder is None or details.get(RECORD) is not None else logging.DEBUG
+    removed = details.get("changed") or {}
     logger.log(level, "Sync of %s ended%s in %d s: looked at %d folder(s) and %d photo file(s), found %s; changed %d "
-               "row(s), queued %d folder(s) to index; %s.", what, "" if apply else " (a dry run)", seconds,
+               "row(s)%s, queued %d folder(s) to index; %s.", what, "" if apply else " (a dry run)", seconds,
                counts.get("folders_walked") or 0, counts.get("files") or 0, found or "nothing to do", result.changed,
+               ", removed %d row(s) with %d face(s), %d of them named" % (
+                   removed["removed"], removed.get("removed_faces") or 0, removed.get("removed_named") or 0)
+               if removed.get("removed") else "",
                details.get("queued") or 0, "in step" if details.get("in_step") else "not in step")
 
 
