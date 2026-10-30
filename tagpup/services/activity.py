@@ -12,12 +12,19 @@ is given as its `error`: the page that asks answers this PC alone (tagpup.web.
 activity_routes), and says what went wrong, which a count cannot. A library behind this
 version's schema reads as holding none of what it lacks; nothing is migrated by a look.
 
+What runs now (runs_now) is one list of runs: the library's `running` rows of `job_runs`, whichever process owns them,
+are the truth; what this process holds in memory (Here: its index queue, its folder watcher's sync) only adds what no
+row says yet -- the folders waiting, the folder a walk is at, the own index's message and its run before its row is
+read -- and whether a run is stuck is said here, once (STUCK_AFTER).
+
 Needs you is each job whose last run that ended failed asking the owner to act (tagpup.services.job_runs.needs_you),
 said with what its kind means (job_runs.FAILURES) and the next step for its job (job_runs.next_step), grouped by kind
 across the libraries.
 """
 import logging
 import time
+from dataclasses import dataclass, field
+from typing import Callable, Optional
 
 from tagpup.core import runs
 from tagpup.files import shares
@@ -34,6 +41,14 @@ MOST = 500
 #: Each phase a run says it is in (job_runs.PHASES) in the words the page shows: a sync's (sync.PHASE_SAID, the words
 #: its walk logs in) and an index's (indexing.PHASE_SAID). The page holds no copy.
 PHASE_SAID = dict(sync.PHASE_SAID, **indexing.PHASE_SAID)
+
+#: The seconds without a word of progress after which a run under way is stuck (docs/PLAN_ACTIVITY.md, "Design"); one
+#: that has said nothing yet is not. The one statement of the rule: each run of runs_now carries its `state`.
+STUCK_AFTER = 300
+#: A run's `state` in runs_now, and its `source`: a row alone, or with what this process's queue or watcher holds of it
+#: (also a run no row says yet: a folder waiting for the queue, a run before its row is read, a sync of one folder).
+RUNNING, STUCK, QUEUED = job_runs.RUNNING, "stuck", "queued"
+ROW, QUEUE, WATCHER = "row", "queue", "watcher"
 
 
 def _look(library):
@@ -116,6 +131,109 @@ def under_way(library):
     part of, `progress` _progress)."""
     return [{"job": run.job, "run_id": run.id, "started": run.started, "run": _tag(run), "parent": run.parent,
              "progress": _progress(run)} for run in job_runs.under_way(library.path)]
+
+
+@dataclass
+class Here:
+    """What this process holds of the runs under way that their rows do not say: each library's index queue as
+    IndexQueue.now gives it ({"running", "queued"}), by the library's name in lower case; the folder watcher's sync under
+    way (Watcher.status's `syncing`: {"library", "folder", "started", "walking_at"}) or None, a sync of a whole library
+    being a run of the job `sync_job`; and `logs_of(tag, children)`, the logs a run's lines are in (named by tagpup.logs,
+    which this layer does not reach)."""
+    queues: dict = field(default_factory=dict)
+    syncing: Optional[dict] = None
+    sync_job: str = "sync"
+    logs_of: Callable = lambda tag, children=None: []
+
+
+def state_of(progressed, now):
+    """STUCK when a run last said how far it got (`progressed`, as a run records a time) more than STUCK_AFTER seconds
+    before `now`, else RUNNING: one that has said nothing yet is not stuck."""
+    return STUCK if progressed and now - job_runs.seconds(progressed) > STUCK_AFTER else RUNNING
+
+
+def runs_now(libraries, here, now=None):
+    """What runs now in `libraries`: {"runs": [...], "unreadable": {a library's name: why its runs could not be read}}.
+    Each run {"run" (its tag), "run_id" (its row's id, None while no row says it), "job", "library", "parent" (the id of
+    the run it is part of), "state" (RUNNING, STUCK or QUEUED), "started", "progress" (_progress, its row's), "logs",
+    "source" (ROW, QUEUE or WATCHER)}, and for one this process holds, "here": what it holds, in the words the page has
+    always read it in -- the own index's queue entry with its row's id, parent and phase in words (`said`); a folder
+    waiting, {"name", "folders"}; the watcher's sync with how far its walk got (`progress`: its row's counts and the
+    folder it is at, null for a sync of one folder or a library whose runs cannot be read). The own index's row is that
+    run, never a second one; with no row read yet its parent is the one its queue's tags name (runs.parent_of, the rule
+    its claim records by). One library that cannot be read leaves the others said."""
+    now = time.time() if now is None else now
+    found, unreadable = [], {}
+    for library in libraries:
+        try:
+            rows = under_way(library)
+        except Exception as e:
+            logger.warning("Could not read the running jobs of %s: %s", library.name, e)
+            unreadable[library.name] = str(e)
+            rows = None
+        found += _library_runs(library, rows, here, now)
+    return {"runs": found, "unreadable": unreadable}
+
+
+def _library_runs(library, rows, here, now):
+    """runs_now's runs of one library, from its `running` rows (None when they could not be read) and `here`."""
+    name = library.name
+    queue = here.queues.get(name.lower()) or {"running": None, "queued": []}
+    own, mine, listed, children = queue["running"], None, [], None
+    for row in rows or ():
+        run = dict(row, library=name, source=ROW, state=state_of((row["progress"] or {}).get("progressed"), now))
+        if own is not None and run["run"] == own["run"]:
+            mine = run
+            continue
+        if run["job"] != job_runs.INDEX and children is None:
+            try:
+                children = index_runs_under(library)
+            except Exception as e:
+                logger.warning("Could not read the index runs of %s: %s", name, e)
+                children = {}
+        run["logs"] = here.logs_of(run["run"], children)
+        listed.append(run)
+    if own is not None:
+        said = ((mine or {}).get("progress") or {}).get("said")
+        run = {"run": own["run"], "run_id": mine["run_id"] if mine else None, "job": job_runs.INDEX, "library": name,
+               "parent": mine["parent"] if mine else runs.parent_of(name, own.get("parents") or ()),
+               "state": state_of(own.get("progressed"), now), "started": own["started"],
+               "progress": mine["progress"] if mine else None, "logs": here.logs_of(own["run"]), "source": QUEUE}
+        run["here"] = dict(own, logs=run["logs"], run_id=run["run_id"], parent=run["parent"], said=said,
+                           state=run["state"])
+        listed.append(run)
+    for waiting in queue["queued"]:
+        listed.append({"run": None, "run_id": None, "job": job_runs.INDEX, "library": name, "parent": None,
+                       "state": QUEUED, "started": None, "progress": None, "logs": [], "source": QUEUE,
+                       "here": waiting})
+    syncing = here.syncing
+    if syncing is not None and syncing["library"].lower() == name.lower():
+        _watched(syncing, listed, rows, here.sync_job, now, name)
+    return listed
+
+
+def _watched(syncing, listed, rows, sync_job, now, name):
+    """The watcher's sync under way made one of `listed`, as runs_now gives it: a sync of the whole library is the
+    library's running row of `sync_job` there (the same walk, one run), its phase and counts that row's and the folder its walk is
+    at this process's, which shows before the row has said anything (its counts trail the folder by up to 10 s). Only the
+    watcher's claim and the daily sync job hold that row, so while the watcher's claim waits for the job's run, the run
+    shown is the job's. A sync of one folder records no run while it runs: it says no progress, its folder names it."""
+    syncing = dict(syncing)
+    at = syncing.pop("walking_at")
+    row = next((run for run in listed if run["job"] == sync_job and run["source"] == ROW), None)
+    if syncing["folder"] is not None or rows is None:
+        syncing["progress"] = None
+    else:
+        walked = sync.walked(row["progress"]) if row is not None else None
+        syncing["progress"] = dict(walked or {}, folder=at) if walked is not None or at is not None else None
+    if row is not None and syncing["folder"] is None:
+        run = row
+    else:
+        run = {"run": None, "run_id": None, "job": sync_job, "library": name, "parent": None, "started":
+               syncing["started"], "progress": None, "logs": []}
+        listed.insert(0, run)
+    syncing["state"] = state_of((syncing["progress"] or {}).get("progressed"), now)
+    run.update(source=WATCHER, here=syncing, state=syncing["state"])
 
 
 def _index_outcome(run):

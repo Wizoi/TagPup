@@ -29,7 +29,7 @@ from tagpup.services import activity  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
-from tagpup.store import job_runs, snapshots  # noqa: E402
+from tagpup.store import file_journal, job_runs, snapshots  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
@@ -173,7 +173,7 @@ class Now(Base):
         self.assertEqual([], by_name["harbour"]["jobs"])
         self.assertEqual([{"job": "snapshots", "run_id": claim.run_id, "started": by_name["regatta"]["jobs"][0]["started"],
                            "run": "job:regatta:%d" % claim.run_id, "parent": None, "progress": None,
-                           "logs": [logs.SERVER_LOG]}],
+                           "logs": [logs.SERVER_LOG], "library": "regatta", "source": "row", "state": "running"}],
                          by_name["regatta"]["jobs"])
         self.assertEqual([logs.run_log("indexer", indexing["running"]["run"]), logs.SERVER_LOG],
                          indexing["running"]["logs"])
@@ -192,7 +192,8 @@ class Now(Base):
         self.assertTrue(found["watching"])
         self.assertEqual({"library": "Harbour", "folder": None, "started": "x",
                           "progress": {"phase": "walking the folders again", "folders": 812, "files": 20417,
-                                       "folder": "D:/Photos/Regatta", "progressed": job_runs.stamp(now)}},
+                                       "folder": "D:/Photos/Regatta", "progressed": job_runs.stamp(now)},
+                          "state": "running"},
                          found["syncing"])
         watcher.found["syncing"] = dict(whole, folder="D:/Photos/Regatta")
         self.assertIsNone(self.get("/api/activity/now", tasks=[("folder watcher", watcher)])["syncing"]["progress"])
@@ -237,6 +238,84 @@ class Now(Base):
         watcher.found["syncing"] = whole
         found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
         self.assertEqual({"folder": "D:/Photos/Regatta"}, found["syncing"]["progress"])
+
+    def index_here(self, library, tag, parents, progressed):
+        """This process's index of `library` as its queue holds it (IndexQueue.now): run `tag`, queued under `parents`,
+        last said how far it got at `progressed`; nothing waits behind it."""
+        running = {"run": tag, "parents": parents, "started": job_runs.stamp(progressed - 60), "folders": 1,
+                   "name": "Regatta 2019", "percent": 15, "message": "Reading metadata: 15% (120/800)",
+                   "progressed": job_runs.stamp(progressed)}
+        queue = mock.Mock(now=mock.Mock(return_value={"running": running, "queued": [{"name": "Harbour Walk", "folders": 1}]}))
+        return mock.patch.object(indexing_jobs, "every_queue", return_value=[(library.name, queue)])
+
+    def test_the_own_index_before_its_row_is_read_is_under_the_run_that_queued_it(self):
+        """#2253: the queue's own index has no row yet (its claim not committed, retried on a busy library, or never
+        recorded): it is drawn under the run its queue's tags name, by the rule its claim records its parent by
+        (runs.parent_of: the innermost job tag of its library), not at the top level; a tag of another library is none."""
+        now = time.time()
+        sync = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", now - 600)
+        tag = runs.index_tag("harbour", now)
+        parents = ["sync:harbour:20260921T151320", runs.job_tag("harbour", sync.run_id), runs.job_tag("regatta", 99)]
+        with self.index_here(self.harbour, tag, parents, now):
+            found = self.get("/api/activity/now")
+        (harbour,) = [each for each in found["libraries"] if each["name"] == "harbour"]
+        own = harbour["indexing"]["running"]
+        self.assertEqual((tag, None, sync.run_id), (own["run"], own["run_id"], own["parent"]))
+        self.assertEqual("running", own["state"])
+        self.assertEqual([sync.run_id], [row["run_id"] for row in harbour["jobs"]])
+        self.assertEqual([{"name": "Harbour Walk", "folders": 1}], harbour["indexing"]["queued"])
+
+    def test_an_index_here_and_one_in_another_process_each_once_the_stuck_one_said(self):
+        """Two indexes of one library: this process's (its row and its queue's memory, one run) and the CLI's (its row
+        alone), which said nothing for 12 minutes: stuck, by the server, once (activity.STUCK_AFTER). The own run is
+        found by its tag, never by an id a restore can give another row."""
+        now = time.time()
+        sync = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", now - 900)
+        cli_tag, own_tag = runs.index_tag("harbour", now - 800), runs.index_tag("harbour", now)
+        cli = job_runs.claim(self.harbour.path, job_runs.INDEX, "harbour", now - 800, changed={"run": cli_tag})
+        job_runs.progress(self.harbour.path, cli.run_id, "bake", {"done": 3, "of": 9}, now - 12 * 60)
+        own = job_runs.claim(self.harbour.path, job_runs.INDEX, "harbour", now - 60, parent=sync.run_id,
+                             changed={"run": own_tag})
+        job_runs.progress(self.harbour.path, own.run_id, "metadata", {"done": 120, "of": 800}, now - 3)
+        with self.index_here(self.harbour, own_tag, [runs.job_tag("harbour", sync.run_id)], now - 3):
+            found = self.get("/api/activity/now")
+        (harbour,) = [each for each in found["libraries"] if each["name"] == "harbour"]
+        self.assertEqual([(sync.run_id, "running"), (cli.run_id, "stuck")],
+                         [(row["run_id"], row["state"]) for row in harbour["jobs"]])
+        running = harbour["indexing"]["running"]
+        self.assertEqual((own.run_id, sync.run_id, "reading metadata", "running"),
+                         (running["run_id"], running["parent"], running["said"], running["state"]))
+
+    def test_a_library_that_cannot_be_read_says_why_and_its_index_here_still_shows(self):
+        """A locked library: its card says why (`error`), the other library's runs are listed, and this process's index
+        of it -- memory, no row to read -- still shows, under the run its tags name."""
+        now = time.time()
+        claim = job_runs.claim(self.regatta.path, "snapshots", "regatta", now)
+        tag = runs.index_tag("harbour", now)
+        real = activity.under_way
+
+        def locked(library):
+            if library.name == "harbour":
+                raise OSError("the library is locked")
+            return real(library)
+        with self.index_here(self.harbour, tag, [runs.job_tag("harbour", 7)], now), \
+                mock.patch.object(activity, "under_way", locked):
+            found = self.get("/api/activity/now")
+        by_name = {each["name"]: each for each in found["libraries"]}
+        self.assertEqual("the library is locked", by_name["harbour"]["error"])
+        self.assertEqual((tag, 7), (by_name["harbour"]["indexing"]["running"]["run"],
+                                    by_name["harbour"]["indexing"]["running"]["parent"]))
+        self.assertNotIn("error", by_name["regatta"])
+        self.assertEqual([claim.run_id], [row["run_id"] for row in by_name["regatta"]["jobs"]])
+
+    def test_an_abandoned_run_is_not_running(self):
+        """A run whose server was killed, swept abandoned at the next start, is in the timeline, not in Now."""
+        killed = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", time.time() - 3600)
+        with mock.patch.object(file_journal, "owner_alive", return_value=False):
+            self.assertEqual(1, job_runs.sweep_abandoned(self.harbour.path, time.time()))
+        (harbour,) = [each for each in self.get("/api/activity/now")["libraries"] if each["name"] == "harbour"]
+        self.assertEqual([], harbour["jobs"])
+        self.assertIn(killed.run_id, [entry["id"] for entry in self.get("/api/activity/timeline")["entries"]])
 
     def test_a_progress_this_version_does_not_know_is_not_read(self):
         """#2206: a row of a newer version (another phase, counts not numbers) is None, never an error."""
