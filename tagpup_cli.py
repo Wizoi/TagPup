@@ -321,6 +321,7 @@ def _folders_now(ctx, param, directories):
 def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
     """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run
     (sync hands it every folder of new files at once, so one indexer loads the models; the server, in --folders-file)."""
+    del _NOT_SAYING[:]
     runtime = get_runtime()
 
     test_mode = ctx.obj.get("test", False)
@@ -920,7 +921,8 @@ def _owe_the_recorded(db_path, touched, handed):
         logger.exception("The fingerprints the index recorded could not be taken away")
 
 
-#: The first line that could not be said (_say), after which none is.
+#: The first line of this index that could not be said (_say), after which none is: emptied as each index begins, so an
+#: index run in-process after another (a test's CliRunner) says its lines.
 _NOT_SAYING = []
 
 

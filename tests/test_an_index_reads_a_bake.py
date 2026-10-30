@@ -828,6 +828,32 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual("completed", status["status"], status)
         self.assertEqual(" ".join(["Folder indexed. " + faces, read, bake_after_index.Baked().said()]), status["message"])
 
+    def test_a_server_gone_mid_index_leaves_the_index_whole_and_the_next_one_is_heard(self):
+        # A repo-run server restarted on a .py save (#1564): the pipe's reader is gone, and the first fact raises. The
+        # index goes on to its end, the failure logged once; the next index is heard from its first line.
+        folder = self.folder("Harbour Gone")
+        path = self.picture(folder, "gone.jpg", "navy")
+        self.bake(path, [baked_files.area(0)])
+        bake_after_index.bake_folders.return_value = bake_after_index.Baked()
+        said = print
+
+        def closed(*args, **kwargs):
+            if args and str(args[0]).startswith(progress_line.PREFIX):
+                raise OSError(22, "Invalid argument")
+            said(*args, **kwargs)
+        with mock.patch.dict(os.environ, {progress_line.ASKED: "1"}):
+            with mock.patch("builtins.print", side_effect=closed), \
+                    self.assertLogs("tagpup_cli", "WARNING") as logged:
+                printed = self.index(folder).output
+            self.assertNotIn(progress_line.PREFIX, printed)
+            self.assertEqual(1, len([record for record in logged.records if "progress lines stop" in record.getMessage()]),
+                             "the failure is logged once")
+            self.assertEqual(1, self.query("SELECT COUNT(*) FROM photos")[0][0], printed)
+            self.picture(folder, "back.jpg", "teal")   # a photo added since, for the next index to read
+            again = self.index(folder).output
+        heard = [progress_line.heard(line) for line in again.splitlines()]
+        self.assertIn("new_faces", [fact["kind"] for fact in heard if fact], again)
+
     def test_a_turned_photos_faces_read_from_its_bake_are_the_boxes_a_detection_stores(self):
         folder = self.folder("Harbour Turned")
         detected = self.picture(folder, "turned detected.jpg", "navy", turned=6)
