@@ -153,7 +153,7 @@ def state_of(progressed, now):
 
 
 def runs_now(libraries, here, now=None):
-    """What runs now in `libraries`: {"runs": [...], "unreadable": {a library's name: why its runs could not be read}}.
+    """What runs now in `libraries`: {"runs": [...]}.
     Each run {"run" (its tag), "run_id" (its row's id, None while no row says it), "job", "library", "parent" (the id of
     the run it is part of), "state" (RUNNING, STUCK or QUEUED), "started", "progress" (_progress, its row's), "logs",
     "source" (ROW, QUEUE or WATCHER)}, and for one this process holds, "here": what it holds, in the words the page has
@@ -161,18 +161,18 @@ def runs_now(libraries, here, now=None):
     waiting, {"name", "folders"}; the watcher's sync with how far its walk got (`progress`: its row's counts and the
     folder it is at, null for a sync of one folder or a library whose runs cannot be read). The own index's row is that
     run, never a second one; with no row read yet its parent is the one its queue's tags name (runs.parent_of, the rule
-    its claim records by). One library that cannot be read leaves the others said."""
+    its claim records by). One library that cannot be read leaves the others said, and is logged; why is said to the page
+    by /api/activity/jobs' `error`, not here."""
     now = time.time() if now is None else now
-    found, unreadable = [], {}
+    found = []
     for library in libraries:
         try:
             rows = under_way(library)
         except Exception as e:
             logger.warning("Could not read the running jobs of %s: %s", library.name, e)
-            unreadable[library.name] = str(e)
             rows = None
         found += _library_runs(library, rows, here, now)
-    return {"runs": found, "unreadable": unreadable}
+    return {"runs": found}
 
 
 def _library_runs(library, rows, here, now):
