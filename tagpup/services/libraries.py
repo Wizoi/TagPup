@@ -414,5 +414,5 @@ def add(library, folders, queue):
     for what, why in outcome.errors:
         result.fail(what, why)
     if outcome.refused:
-        result.refuse(outcome.refused)
+        result.refuse(outcome.refused, outcome.refused_kind)
     return result

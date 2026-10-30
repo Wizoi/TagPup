@@ -722,8 +722,8 @@ def include(library, folder, roots, queue, ignored=()):
         if not _under_any(folder, {paths.key(f): f for f in walked}):
             result.refuse("That folder is under none of the folders the library holds.")
             return result
-    # The queue's Result whole, as libraries.add hands it up: its details (a share that stopped answering: SHARE_AWAY,
-    # so the route answers 503) are the queue's to say.
+    # The queue's Result whole, as libraries.add hands it up: its refusal's kind (a share that stopped answering:
+    # SHARE_AWAY, so the route answers 503) is the queue's to say.
     return queue([folder])
 
 
@@ -911,11 +911,11 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
             for gone in () if outcome.refused else outcome.details.get("invalid", ()):
                 # Some folders were queued and these were not: said, not dropped (#2229). A refusal says it already.
                 result.skip(gone, GONE_BEFORE_QUEUED)
-            if outcome.details.get(SHARE_AWAY):
+            if outcome.refused_kind == SHARE_AWAY:
                 # The share stopped answering between the walk and the queue: the new files are not indexed, and the
-                # sync says so with the share's sentence, not done.
+                # sync says so with the share's sentence, not done (its run a failure of a share: job_runs.SHARE).
                 result.fail("queueing the new files' folders", outcome.refused)
-                result.details[SHARE_AWAY] = True
+                result.details[recorded_runs.FAILURE] = recorded_runs.SHARE
             elif outcome.refused:
                 # The new files' folders were gone between the walk and the queue: skipped, and the next sync removes
                 # their rows.

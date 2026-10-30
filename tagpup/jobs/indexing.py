@@ -201,8 +201,7 @@ class IndexQueue:
         if not valid and away:
             # None to queue, and a share did not answer: the share's sentence, a 503 (#2129), not "no valid folder".
             refusal = photo_actions.folder_refusal(away[0], "unanswered")
-            result.refuse(refusal.refused)
-            result.details.update(refusal.details)
+            result.refuse(refusal.refused, refusal.refused_kind)
         elif not valid:
             result.refuse("No valid folder path" + (": %s" % ", ".join(invalid[:3]) if invalid else ""))
         result.changed = len(queued)

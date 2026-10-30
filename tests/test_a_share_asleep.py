@@ -821,8 +821,8 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
         self.assertEqual([], statted)
 
     def test_a_share_that_stops_answering_between_the_look_and_the_queue_is_still_refused_as_away(self):
-        """The review's include hands up the queue's Result whole: the queue's refusal keeps SHARE_AWAY (a 503), where a
-        refusal re-made from its sentence was a 400. Break: include copying `refused` into a Result of its own."""
+        """The review's include hands up the queue's Result whole: the queue's refusal keeps its kind, SHARE_AWAY (a 503),
+        where a refusal re-made from its sentence was a 400. Break: include copying `refused` into a Result of its own."""
         home = own_home.for_test(self)
         library = Library(home.library("library.db"))
         library_actions.create(library.path)
@@ -831,12 +831,11 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
 
         def queue(folders):
             away = Result(attempted=len(folders))
-            away.refuse(self.AWAY)
-            away.details[SHARE_AWAY] = True
+            away.refuse(self.AWAY, SHARE_AWAY)
             return away
         result = sync.include(library, folder, [os.path.join(home.root, "Pictures")], queue)
         self.assertEqual(self.AWAY, result.refused)
-        self.assertTrue(result.details.get(SHARE_AWAY))
+        self.assertEqual(SHARE_AWAY, result.refused_kind)
 
 
 class TheCardStatsHaveABudget(unittest.TestCase):
