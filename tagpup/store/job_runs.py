@@ -276,15 +276,18 @@ def discard(db_path, run_id):
     return db.write_with_connection(db_path, work, label="discard run %d" % run_id)
 
 
-def counts_so_far(db_path, run_id, changed):
-    """Record the counts of run `run_id` so far, while it runs: `changed` as the run's counts (what the Activity page lists
-    of a run in progress). False when the run is no longer this process's and running -- taken over as abandoned, ended, or
-    the library restored from a snapshot without it. One small write; a job calls it every few seconds, never per photo."""
+def changed_so_far(db_path, run_id, changed):
+    """Write `changed` as run `run_id`'s `changed` before its end: the record `finish` writes, made early -- what the
+    Activity page lists of the run, the job a later look finds it by, a journal change it has written -- so a run that
+    ends abandoned keeps it. Waited for like the end (db.write_with_connection), never skipped: not `progress`, the
+    throttled word of how far a run has got, which a busy library goes without. False when the run is no longer this
+    process's and running -- taken over as abandoned, ended, or the library restored from a snapshot without it. A job
+    writes it at a step of its own (naming faces: its claim, its write), never per photo."""
     def work(conn):
         return conn.execute("UPDATE job_runs SET changed = ? WHERE id = ? AND outcome = 'running' AND owner = ?",
                             (json.dumps(changed or {}, sort_keys=True), run_id, file_journal.owner())).rowcount == 1
 
-    return db.write_with_connection(db_path, work, label="counts so far of run %d" % run_id)
+    return db.write_with_connection(db_path, work, label="changed so far of run %d" % run_id)
 
 
 def progress(db_path, run_id, phase, counts, now, within=0.0):

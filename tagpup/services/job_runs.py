@@ -186,10 +186,10 @@ def sweep_abandoned(library, now=None):
     return job_runs.sweep_abandoned(library.path, time.time() if now is None else now)
 
 
-def counts_so_far(library, run_id, counts):
-    """Record the counts of run `run_id` so far (tagpup.store.job_runs.counts_so_far): False when it is no longer this
-    process's to record."""
-    return job_runs.counts_so_far(library.path, run_id, counts)
+def changed_so_far(library, run_id, counts):
+    """Write `counts` as run `run_id`'s record before its end (tagpup.store.job_runs.changed_so_far: what an abandoned
+    run keeps; not `progress`): False when it is no longer this process's to record."""
+    return job_runs.changed_so_far(library.path, run_id, counts)
 
 
 #: The phases a run says it is in, the one vocabulary of `job_runs.progress`: a sync's walk of the folders and its walk
@@ -365,13 +365,13 @@ class Recorded:
         `note`, or its Result's message."""
         self._said = (result, error, failed, counts, note)
 
-    def counts_so_far(self, counts):
-        """Record `counts` as the run's so far (tagpup.store.job_runs.counts_so_far); False when not written -- the run
-        not recorded, no longer this process's, or the write failing (logged). Never raises."""
+    def changed_so_far(self, counts):
+        """Write `counts` as the run's record before its end (tagpup.store.job_runs.changed_so_far); False when not
+        written -- the run not recorded, no longer this process's, or the write failing (logged). Never raises."""
         if not self:
             return False
         try:
-            return counts_so_far(self.library, self.run_id, counts)
+            return changed_so_far(self.library, self.run_id, counts)
         except Exception as e:
             logger.warning("Could not record the counts of run %d of %s in %s: %s", self.run_id, self.job,
                            self.library.name, e)
