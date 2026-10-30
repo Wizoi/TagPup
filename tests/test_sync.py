@@ -10,6 +10,7 @@ ExifTool is stood in for: the reader answers from a table of what each file hold
 counts what it was asked to read.
 """
 import json
+import logging
 import os
 import sys
 import unittest
@@ -229,6 +230,42 @@ class TheRecord(SyncTestCase):
         self.assertEqual(1, result.changed)
         self.assertEqual(["Weather/Rain"], self.rows()[path][3])
         self.assertEqual(1, len(result.details["warnings"]))
+
+
+class WhatASyncLogs(SyncTestCase):
+    """A sync's lines in the server's log, which keeps INFO and up: a folder's sync writes only its end, at INFO when it
+    was worth a record -- even when the record could not be written -- and at DEBUG when it found nothing (the
+    watcher's, each time a folder settles); a whole sync writes its begin line too."""
+
+    def lines(self, level, **sync_args):
+        with self.assertLogs("tagpup.services.sync", level="DEBUG") as logged:
+            result = self.run_sync(apply=True, **sync_args)
+        self.assertTrue(result.ok, result.message())
+        return [(record.levelno, record.getMessage()) for record in logged.records if record.levelno >= level]
+
+    def test_a_folder_sync_that_changed_a_row_ends_at_info_though_its_record_failed(self):
+        path = self.photo(self.meet, "IMG_0001.jpg", **{"XMP:Subject": ["Events/Invitational"]})
+        self.indexed(path)
+        self.photo(self.meet, "IMG_0001.jpg", body=b"jpeg, edited", **{"XMP:Subject": ["Weather/Rain"]})
+        with mock.patch("tagpup.store.job_runs.record_sync", side_effect=OSError("locked")):
+            said = self.lines(logging.INFO, folder=self.meet)
+        self.assertEqual(1, len(said), said)
+        self.assertTrue(said[0][1].startswith("Sync of %s ended in " % self.meet), said)
+        self.assertIn("changed 1 row(s)", said[0][1])
+
+    def test_a_folder_sync_writes_no_begin_line_and_one_that_found_nothing_ends_at_debug(self):
+        self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
+        self.run_sync(apply=True)     # the newest record says in step: a folder settling on nothing is not worth one
+        said = self.lines(logging.DEBUG, folder=self.meet)
+        self.assertEqual([logging.DEBUG], [level for level, _message in said], said)
+        self.assertIn(" ended in ", said[0][1])
+
+    def test_a_whole_sync_writes_its_begin_and_its_end(self):
+        self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
+        said = self.lines(logging.INFO)
+        self.assertEqual(["Sync of the whole library began.", "Sync of the whole library ended"],
+                         [message[:len("Sync of the whole library ended")] if " ended" in message else message
+                          for _level, message in said])
 
 
 class NewFiles(SyncTestCase):
