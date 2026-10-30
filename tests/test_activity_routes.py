@@ -415,8 +415,8 @@ class RunNow(Base):
         try:
             first = client.post("/api/activity/jobs/run", json={"job": "tidy", "library": "harbour"}).get_json()
             second = client.post("/api/activity/jobs/run", json={"job": "tidy", "library": "harbour"}).get_json()
-            self.assertEqual([{"job": "tidy", "library": "harbour", "run_id": first["run_id"]}],
-                             [{k: each[k] for k in ("job", "library", "run_id")} for each in runner.status()])
+            self.assertEqual([(first["run_id"], "running")],
+                             [(run.id, run.outcome) for run in job_runs.runs(self.harbour.path, "tidy")])
         finally:
             gate.set()
         self.assertTrue(first["started"])

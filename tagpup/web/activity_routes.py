@@ -274,8 +274,7 @@ def jobs():
         except Exception as e:
             logger.warning("Could not read the jobs of %s: %s", library.name, e)
             listed.append({"name": library.name, "jobs": [], "last_finished": None, "error": str(e)})
-    return jsonify({"runs_jobs": runner is not None, "check_every": recurring.CHECK_EVERY,
-                    "running_here": runner.status() if runner is not None else [], "libraries": listed,
+    return jsonify({"runs_jobs": runner is not None, "check_every": recurring.CHECK_EVERY, "libraries": listed,
                     "needs_you": needs_you})
 
 
