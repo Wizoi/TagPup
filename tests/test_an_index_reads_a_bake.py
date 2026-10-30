@@ -77,7 +77,7 @@ from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
-from tagpup.core import fields, orientation, paths, processes, validation  # noqa: E402
+from tagpup.core import fields, orientation, paths, processes, progress_line, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -790,9 +790,26 @@ class AnIndexReadsABake(unittest.TestCase):
         folder = self.folder("Harbour Job")
         path = self.picture(folder, "job.jpg", "navy")
         self.bake(path, [baked_files.area(0)])
-        printed = self.index(folder).output
-        (line,) = self.said(printed)
-        self.assertGreater(len(line), 90, "the bar cuts a line at 90 characters")
+        # The bake the index writes after it records is left out (setUp): it says a run that wrote nothing.
+        bake_after_index.bake_folders.return_value = bake_after_index.Baked()
+        # Matching the faces fails with an error that names a path in letters the pipe's code page may not hold, over
+        # two lines (#2150): its sentence is what the message ends with.
+        failure = OSError("Kein Zugriff: %s\nZeile zwei" % os.path.join(
+            self.home.root, "\u00c6r\u00f8sk\u00f8bing Strand", "job.jpg"))
+        # The server asks for facts (tagpup.core.progress_line), as indexing.index_folder does in the child's environment.
+        with mock.patch.dict(os.environ, {progress_line.ASKED: "1"}), \
+                mock.patch.object(face_service, "automatch_new", side_effect=failure), \
+                self.assertLogs("tagpup_cli", "ERROR"):
+            printed = self.index(folder).output
+        self.assertEqual([], self.said(printed), "asked for facts, the CLI prints no person's bake line")
+        heard = [progress_line.heard(line) for line in printed.splitlines()]
+        (read,) = [fact["sentence"] for fact in heard if fact and fact["kind"] == "bake_read"]
+        (faces,) = [fact["sentence"] for fact in heard if fact and fact["kind"] == "new_faces"]
+        self.assertTrue(read.startswith(bake_reading.SAID), read)
+        self.assertGreater(len(read), 90, "a person's line is cut at 90 characters")
+        self.assertIn(str(failure), faces)
+        self.assertTrue(all(line.isascii() for line in printed.splitlines() if line.startswith(progress_line.PREFIX)),
+                        "a fact is ASCII on the pipe")
 
         # The server's index job runs the CLI as a process of its own: what it printed, line by line as a pipe gives it
         # (a bar's frames joined by carriage returns), is what it hears.
@@ -809,8 +826,7 @@ class AnIndexReadsABake(unittest.TestCase):
             queue.run_pending()
         status = queue.status(folder)
         self.assertEqual("completed", status["status"], status)
-        self.assertTrue(status["message"].startswith("Folder indexed. "), status["message"])
-        self.assertTrue(status["message"].endswith(" " + line), status["message"])
+        self.assertEqual(" ".join(["Folder indexed. " + faces, read, bake_after_index.Baked().said()]), status["message"])
 
     def test_a_turned_photos_faces_read_from_its_bake_are_the_boxes_a_detection_stores(self):
         folder = self.folder("Harbour Turned")
