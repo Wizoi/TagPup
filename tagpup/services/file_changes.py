@@ -275,6 +275,11 @@ PRESENT, GONE, AWAY = "present", "gone", "away"
 AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
 
 
+#: What a forward write's file found holding its after since the plan comes to (_held_or_conflict's `held_out`): out of
+#: the change, its row recorded.
+OUT = "out"
+
+
 class _Stalled(Exception):
     """ExifTool did not answer for a file of a forward write (field_values.NotAnswered: a share gone away, a disk that
     stopped). A stop, as a Ctrl+C is, never a conflict: ExifTool writes beside a file and renames, so the file under way
@@ -477,19 +482,15 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             now = planned[n][1] if fresh is not None else None
             try:
                 outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
-                                      wrote=wrote, now=now, whole=read_whole, stall_stops=True)
+                                      wrote=wrote, now=now, whole=read_whole, stall_stops=True,
+                                      held_out=not (alongside is not None and alongside.wants(path)))
             except _Stalled:
                 stalled = row
                 result.details["stopped"] = {"after": n, "of": len(rows), "share": True}
                 not_answered.extend(each[0] for each in planned[n:])
                 break
-            if outcome == "done" and row.found_holding and not (alongside is not None and alongside.wants(path)):
-                # Written since the plan by another program (a second CLI window's bake of the folder): left alone and not
-                # in this change, as a file found holding it at the plan is, or it is done in two changes and each's undo
-                # takes back the other's write.
-                db.write_with_connection(library.path, lambda conn, row=row: _take_out_in(conn, row),
-                                         label="%s: written by another program" % row.named())
-                written[path] = detail
+            if outcome == OUT:
+                written[path] = detail      # held already, as a file found holding it at the plan is
                 continue
             if outcome == "done":
                 if not fields.reads_same(planned[n][1], planned[n][2]):
@@ -730,7 +731,8 @@ def _conflict(library, row, why):
     return "conflict", "%s: %s" % (row.named(), why)
 
 
-def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, now=None, whole=None, stall_stops=False):
+def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, now=None, whole=None, stall_stops=False,
+           held_out=False):
     """Bring a file holding `origin` to `target`, and mark it `finished`: forward (before
     to after, done) and in an undo (after to before, undone). A file holding `target`
     already is recorded as it is; one holding neither is a conflict. A write that fails
@@ -738,10 +740,9 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     a conflict. A file written goes in `wrote`, for _read_back. `now` is what the file
     holds when the caller has just read it in this session; otherwise it is read here.
     `whole`, a dict, asks for the file written to be read back whole and recorded so
-    (_read_whole). Returns (outcome, why): `finished`, "conflict" or "failed". `stall_stops`, a forward write's: a file
-    ExifTool does not answer for raises _Stalled (_read_now)."""
-    settled = _held_or_conflict(et, library, row, origin, target, finished, now, stall_stops=stall_stops)
-    row.found_holding = settled is not None and settled[0] == finished
+    (_read_whole). Returns (outcome, why): `finished`, "conflict" or "failed"; OUT, with `held_out`, as _held_or_conflict
+    says. `stall_stops`, a forward write's: a file ExifTool does not answer for raises _Stalled (_read_now)."""
+    settled = _held_or_conflict(et, library, row, origin, target, finished, now, stall_stops=stall_stops, held_out=held_out)
     if settled is not None:
         return settled
     # One look before the write, two projections: the vectors' stamp and the journal's fingerprint describe one file.
@@ -839,11 +840,19 @@ def _removed_scratch(path, saw, interrupted):
     return why
 
 
-def _held_or_conflict(et, library, row, origin, target, finished, now=None, unread_stays=False, stall_stops=False):
+def _held_or_conflict(et, library, row, origin, target, finished, now=None, unread_stays=False, stall_stops=False,
+                      held_out=False):
     """The one rule of a file settled by what it holds, before anything is written to it: holding `target`, it is recorded
     `finished` as it holds it; holding neither, or unreadable, a conflict. Returns (outcome, why) so; or None when it holds
     `origin`: still to be written (_carry writes it, a stop takes it out). `now`, as _carry's. `unread_stays` (a stop, whose
-    session a Ctrl+C may have ended, not a read that waited its deadline): unreadable, it is left as it is, ("writing", why)."""
+    session a Ctrl+C may have ended, not a read that waited its deadline): unreadable, it is left as it is, ("writing", why).
+
+    `held_out`, a forward write's file that is to be in the change for its file alone (not a bulk assignment's kept for its
+    rows): holding `target`, it was written since the plan by another program (a second CLI window's bake of the folder),
+    and is left alone and taken out of the change, (OUT, None), as a file found holding it at the plan is never in it;
+    recorded done, it would be done in two changes and each's undo take back the other's write (#1937). Its row is made to
+    say what it holds in the one transaction that takes it out, never done first (#1947): a crash before it leaves the file
+    planned, settled at the next start as any planned file is."""
     seen = None
     if now is None:
         # The stat before the read: a file found holding `target` is recorded stamped as it was before what was read of it.
@@ -854,6 +863,9 @@ def _held_or_conflict(et, library, row, origin, target, finished, now=None, unre
             if unread_stays:
                 return "writing", str(e)
             return _conflict(library, row, "could not be read: %s" % e)
+    if fields.reads_same(now, target) and held_out:
+        _take_held_out(library, row, now, target, seen)
+        return OUT, None
     if fields.reads_same(now, target):
         # Written already: by a run a crash (or a stop) cut off before it recorded the row, whose
         # stamp from before the write was recorded with it (#265).
@@ -910,6 +922,19 @@ def _record_held(library, row, now, target, finished, stamp, stat):
     # A file that was not to change (its faces were) is not stamped as written.
     wrote = not fields.reads_same(row.before, row.after)
     _record(library, row, held, finished, stamp, wrote=wrote, after=after, stat=stat if wrote else None)
+
+
+def _take_held_out(library, row, now, target, stat):
+    """Take the file of `row`, planned and found holding `target` (_held_or_conflict's `held_out`), out of its change, and
+    make its row say what the file holds, stamped with `stat` (taken before `now` was read), in one transaction. Nothing it
+    brings when done (_followers) is made: it is not this change's write."""
+    held = {field: now.get(field, []) for field in target}
+
+    def work(conn):
+        photos.follow_fields(conn, row.path, held, stat)
+        file_journal.withdraw_in(conn, [row.id])
+
+    db.write_with_connection(library.path, work, label="%s: written by another program" % row.named())
 
 
 def _after_failure(et, library, row, origin, target, finished, on_failure, error, stall_stops=False):

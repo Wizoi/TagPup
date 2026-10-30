@@ -23,7 +23,8 @@ from view_library import ViewLibrary  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.services import activity, batches, bulk_edit, file_changes  # noqa: E402
-from tagpup.store import job_runs  # noqa: E402
+from tagpup.services import journal  # noqa: E402
+from tagpup.store import db, job_runs  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
@@ -297,6 +298,42 @@ class WhilePhotosMove(Bulk):
         self.assertEqual(self.ids[10], done["errors"][0]["id"])
         self.assertIn("changed since it was read", done["errors"][0]["why"])
         self.assertEqual(["Changed By Another Program"], self.files.tags_of(target), "never overwritten")
+
+    def test_a_file_another_program_wrote_the_same_keyword_into_since_the_plan_is_taken_out_in_one_step(self):
+        """Another program (a second window's edit) adds the keyword to one photo between the plan and its write. It is left
+        alone, out of this change, its row saying what it holds, in one transaction: the process dying as that is recorded
+        leaves no state between (done in this change too, whose undo would take back the other program's write); the
+        undo of the change takes back only what it wrote. Break: done in one transaction and taken out in a second
+        (the trunk before #1947: the crash at the second leaves it done)."""
+        target, named = self.path(self.ids[10]), "photo %d:" % self.ids[10]
+
+        def other_program(path, n):
+            if paths.key(path) == paths.key(target) and n == 2:      # the write's own read, after the plan's
+                self.files.keep_tags(target, ["Trips/Coast"])
+        self.files.on_read = other_program
+        real, recorded = db.write_with_connection, []
+
+        def dies_at_its_second_write(path, work, label="database write"):
+            if label.startswith(named):
+                recorded.append(label)
+                if len(recorded) == 2:
+                    raise Crash()
+            return real(path, work, label=label)
+        try:
+            with mock.patch.object(db, "write_with_connection", dies_at_its_second_write):
+                done = self.tags_edit(add=["Trips/Coast"])
+        except Crash:
+            done = None
+        states = self.vl.rows("SELECT state FROM change_files WHERE photo_id = ?", self.ids[10])
+        self.assertEqual([], states, "the photo another program wrote is in the change")
+        self.assertEqual((self.PHOTOS - 1, 0), (done["changed"], done["error_count"]))
+        self.assertEqual(["Trips/Coast"], self.row_tags(self.ids[10]), "its row says what it holds")
+        ((change_id, _op, status),) = self.changes("bulk tags%")
+        self.assertEqual("applied", status)
+        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        self.assertEqual((None, self.PHOTOS - 1), (undone.refused, undone.changed))
+        self.assertEqual(["Trips/Coast"], self.tags(self.ids[10]), "the undo took back the other program's write")
+        self.assertEqual([], self.tags(self.ids[11]))
 
     def test_a_file_replaced_by_another_is_written_as_the_file_it_now_is(self):
         replaced = self.path(self.ids[4])
