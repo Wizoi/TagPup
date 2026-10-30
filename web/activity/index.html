@@ -75,7 +75,15 @@
         <section id="logs" aria-labelledby="logs-title">
             <details class="fold" data-fold="logs">
                 <summary aria-describedby="logs-folded logs-status"><h2 id="logs-title">Logs</h2></summary>
-                <div id="log-tabs" class="tabs" role="tablist" aria-label="Logs"></div>
+                <h3 id="log-system-title" class="log-group">The programs' own logs</h3>
+                <div id="log-system" class="log-files" role="group" aria-labelledby="log-system-title"></div>
+                <h3 id="log-runs-title" class="log-group">Runs' logs</h3>
+                <div class="log-controls">
+                    <label>Library <select id="log-library"></select></label>
+                    <label>Kind <select id="log-kind"></select></label>
+                    <span id="log-kept" class="about"></span>
+                </div>
+                <div id="log-runs" class="log-files" role="group" aria-labelledby="log-runs-title"></div>
                 <div class="log-controls">
                     <label>Level <select id="log-level"></select></label>
                     <label>Text <input id="log-text" type="search" placeholder="Filter the lines" autocomplete="off"></label>
@@ -85,7 +93,6 @@
                     <button id="log-older" type="button" class="btn" disabled>Older</button>
                     <a id="log-raw" class="btn" href="#" target="_blank" rel="noopener">Raw</a>
                     <a id="log-download" class="btn" href="#" download>Download</a>
-                    <span id="log-status" class="status"></span>
                 </div>
                 <div class="table-wrap">
                     <table class="log-table">

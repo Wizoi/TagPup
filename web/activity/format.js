@@ -40,6 +40,13 @@ export function duration(seconds) {
     return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 
+/** Seconds since the epoch (a file's last write, as the server sends it) as this PC's "YYYY-MM-DD HH:MM". */
+export function clock(seconds) {
+    const date = new Date(Number(seconds) * 1000);
+    const two = (number) => String(number).padStart(2, '0');
+    return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
 /** A number of bytes as "1.4 GB". */
 export function bytes(count) {
     let value = Number(count) || 0;
