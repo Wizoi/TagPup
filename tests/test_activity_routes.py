@@ -623,10 +623,13 @@ class Logs(Base):
         self.assertEqual(["tagpup_web.log.1"], [each["name"] for each in by_name["tagpup_web.log"]["rotated"]])
 
     def test_the_installed_servers_start_up_output_is_said_in_words(self):
-        """What a server an install started printed before its own log (tagpup.launcher.STARTED_LOG) is a program's
-        own log, said in words, not by its file's name."""
-        self.write(launcher.STARTED_LOG, "Traceback (most recent call last):\nOSError: port 8080 is held\n")
-        (entry,) = [each for each in self.get("/api/activity/logs")["logs"] if each["name"] == launcher.STARTED_LOG]
+        """What a server an install started printed before its own log, in the file the launcher writes it to, is a
+        program's own log, said in words, not by its file's name (#2291: the launcher named the file and the listing
+        matched its own spelling of it, so a rename of one listed it by its file's name; both read logs.STARTED_LOG)."""
+        name = os.path.basename(launcher.started_log(self.home.root))
+        self.assertEqual(logs.STARTED_LOG, name)
+        self.write(name, "Traceback (most recent call last):\nOSError: port 8080 is held\n")
+        (entry,) = [each for each in self.get("/api/activity/logs")["logs"] if each["name"] == name]
         self.assertEqual(("system", "Server start-up output (installed copy)"), (entry["group"], entry["source"]))
 
     def test_a_programs_own_logs_apart_from_the_runs_and_the_runs_by_library_and_kind(self):

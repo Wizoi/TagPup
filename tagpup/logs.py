@@ -55,6 +55,11 @@ TEST_RUN, TESTS = re.compile(r"^run_tests-\d{8}-\d{6}(?:-\d+)?$"), "run_tests"
 SERVER_PROGRAM = "tagpup_web"
 SERVER_LOG = SERVER_PROGRAM + ".log"
 
+#: What a server an install started prints before its own log (a traceback that stops it starting): the launcher
+#: writes it (tagpup.launcher.started_log) and SOURCES says it in words, both by this one name.
+STARTED_PROGRAM = SERVER_PROGRAM + ".installed"
+STARTED_LOG = STARTED_PROGRAM + ".log"
+
 #: Where the servers log slow and failed requests.
 REQUESTS = "tagpup.requests"
 
@@ -255,8 +260,7 @@ FIRST_LOOK = 64 * 1024
 SOURCES = (
     (re.compile(r"^tagpup_web\.console$"), "Server console"),
     (re.compile(r"^tagpup_web$"), "Web server"),
-    # What a server an install started printed before its own log (tagpup.launcher.STARTED_LOG).
-    (re.compile(r"^tagpup_web\.installed$"), "Server start-up output (installed copy)"),
+    (re.compile("^%s$" % re.escape(STARTED_PROGRAM)), "Server start-up output (installed copy)"),
     (re.compile(r"^indexer-(.+)-(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)\d\d-\d+-\d+$"), "Indexer ({0}, {2}-{3} {4}:{5})"),
     (re.compile(r"^tagpup_mcp$"), "MCP server"),
     (re.compile(r"^runner$"), "Desktop runner"),
