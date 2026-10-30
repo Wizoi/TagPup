@@ -25,12 +25,20 @@ class ColorFormatter(logging.Formatter):
         record.levelname = orig_levelname
         return val
 
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(ColorFormatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[handler]
-)
+from tagpup.core import progress_line  # noqa: E402
+
+if progress_line.asked():
+    # Started by the server, which reads this process's stdout as facts (tagpup.core.progress_line): the log goes to
+    # the run's own file alone (TAGPUP_LOG_TO, below), a library's warnings with it.
+    logging.basicConfig(level=logging.INFO, handlers=[])
+    logging.captureWarnings(True)
+else:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(ColorFormatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s"))
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[handler]
+    )
 logger = logging.getLogger("tagpup_cli")
 
 # Started for a run -- the index queue's indexer (tagpup.services.indexing) -- the CLI
@@ -432,11 +440,16 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     all_metadata = []
     
     from tqdm import tqdm
-    for i in tqdm(range(0, len(images_to_process), batch_size), desc=indexing_service.READING_METADATA):
+    # The bar for a person; the server is told the photos read, a batch at a time (tagpup.core.progress_line).
+    _say(indexing_service.phase_fact("metadata", 0, len(images_to_process)))
+    for i in tqdm(range(0, len(images_to_process), batch_size), desc=indexing_service.READING_METADATA,
+                  disable=progress_line.asked()):
         batch = images_to_process[i:i+batch_size]
         # The bakes in the files are read in the same command (bake_reading).
         batch_meta = extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path), bakes=True)
         all_metadata.extend(batch_meta)
+        _say(indexing_service.phase_fact("metadata", min(i + batch_size, len(images_to_process)),
+                                         len(images_to_process)))
 
     # Every scanned photo is indexed, tagged or not.
     #
@@ -519,7 +532,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
         def say_waiting(line):
             waited.append(line)
-            console.print(line, markup=False, soft_wrap=True)
+            _say(progress_line.fact("waiting", sentence=line), line)
         try:
             # Not taken when every photo is kept with no model (`complete`).
             turn = None if complete else runtime.gpu_turn(
@@ -641,9 +654,16 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                                       budget=READ_AHEAD_BYTES)
         # The bar is moved by hand: tqdm iterating `photos` kept the last photo it handed on, and its pictures, while
         # it waited for the next one -- outside what the read-ahead counts.
-        bar = tqdm(total=len(to_index_meta), desc=indexing_service.GENERATING_EMBEDDINGS)
+        bar = tqdm(total=len(to_index_meta), desc=indexing_service.GENERATING_EMBEDDINGS, disable=progress_line.asked())
+        # The server is told each time the whole percent moves: a fact a photo would be thousands of lines.
+        embedded, percent_said = 0, 0
+        _say(indexing_service.phase_fact("embeddings", 0, len(to_index_meta)))
         for meta, begun, result in photos:
             bar.update(1)
+            embedded += 1
+            if embedded * 100 // len(to_index_meta) != percent_said:
+                percent_said = embedded * 100 // len(to_index_meta)
+                _say(indexing_service.phase_fact("embeddings", embedded, len(to_index_meta)))
             if begun is None:
                 continue
             path = meta["path"]
@@ -804,13 +824,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             )
 
         if failed_photos:
-            console.print(indexing_service.FAILED + str(len(failed_photos)), markup=False, highlight=False)
+            _say(progress_line.fact("failed", photos=len(failed_photos)), indexing_service.FAILED + str(len(failed_photos)))
         if total_new_indexed > 0:
             console.print("[bold green]Indexing successfully completed![/bold green]")
         else:
             console.print("[yellow]No new embeddings generated.[/yellow]")
         if tally.said():
-            console.print(tally.said(), markup=False, soft_wrap=True, highlight=False)
+            _say(progress_line.fact("bake_read", sentence=tally.said()), tally.said())
         console.print(KEPT_LINE % (vectors["stamp"], vectors["same"], vectors["baked"], vectors["made"],
                                    vectors["examined"]),
                       markup=False, soft_wrap=True, highlight=False)
@@ -859,7 +879,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # does not leave this run's faces unmatched.
     if total_new_indexed:
         try:
-            console.print(indexing_service.MATCHING, markup=False, soft_wrap=True, highlight=False)
+            _say(indexing_service.phase_fact("faces"), indexing_service.MATCHING)
             _match_new_faces(db_path, after, upto)
         except (Exception, KeyboardInterrupt):
             _owe_the_recorded(db_path, touched, handed)
@@ -900,18 +920,41 @@ def _owe_the_recorded(db_path, touched, handed):
         logger.exception("The fingerprints the index recorded could not be taken away")
 
 
+#: The first line that could not be said (_say), after which none is.
+_NOT_SAYING = []
+
+
+def _say(fact, person=None):
+    """Say `fact` (tagpup.core.progress_line) to the server that asked for facts; run by hand, say `person`, the words a
+    person reads, or nothing when a bar or the log already tells them. Best effort: a line that cannot be said -- a pipe
+    whose reader is gone, the indexer of a repo-run server restarted on a .py save (#1564) -- is logged once, and
+    nothing more is said; the work goes on."""
+    if _NOT_SAYING:
+        return
+    try:
+        if progress_line.asked():
+            print(progress_line.say(fact), flush=True)
+        elif person is not None:
+            console.print(person, markup=False, soft_wrap=True, highlight=False)
+    except (OSError, ValueError) as error:
+        _NOT_SAYING.append(error)
+        logger.warning("The index's progress lines stop here, its work goes on: %s: %s", type(error).__name__, error)
+
+
 def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_file):
     """The bake after an index (tagpup.services.bake_after_index), its line said in counts. One that fails is logged
-    and said, and the index stands: the next index of the folder bakes it. A Ctrl+C keeps what was written."""
-    def say(line):
-        console.print(line, markup=False, soft_wrap=True, highlight=False)
+    and said, and the index stands: the next index of the folder bakes it. A Ctrl+C keeps what was written. Each
+    folder's line is a fact for the server; by hand the log alone shows it."""
     try:
-        bake_after_index.bake_folders(library, exiftool_path, detector, folders, handed,
-                                      stop=lambda: bool(stop_file) and os.path.exists(stop_file), told=say, each=say)
+        baked = bake_after_index.bake_folders(library, exiftool_path, detector, folders, handed,
+                                              stop=lambda: bool(stop_file) and os.path.exists(stop_file), each=_say)
     except Exception as error:
         logger.exception("The bake after the index stopped")
-        say(bake_after_index.SAID + "stopped (%s); the photos are indexed, and the next index of their folders "
-            "writes it." % type(error).__name__)
+        line = (bake_after_index.SAID + "stopped (%s); the photos are indexed, and the next index of their folders "
+                "writes it." % type(error).__name__)
+        _say(progress_line.fact("baked", sentence=line), line)
+        return
+    _say(baked.fact(), baked.said())
 
 
 def _read_again(conn, metas, given, exiftool_path):
@@ -942,7 +985,7 @@ def _match_new_faces(db_path, after, upto):
         logger.exception("Matching the new faces after the index failed")
         said = ("The photos are indexed, but matching their faces failed: %s: %s. Open Re-examine on their folder, or run %s."
                 % (type(e).__name__, e, indexing_service.CLUSTER_AGAIN))
-    console.print(indexing_service.NEW_FACES + said, markup=False, soft_wrap=True, highlight=False)
+    _say(progress_line.fact("new_faces", sentence=said), indexing_service.NEW_FACES + said)
 
 @cli.command()
 @click.option("--apply", "apply_", is_flag=True, help="Back the library up, then compact it. Without it, only says how much would be freed.")
