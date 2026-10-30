@@ -9,6 +9,7 @@ way. No library of the owner's is touched: the libraries here are stand-ins, or 
 the test's own home.
 """
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -785,9 +786,16 @@ class AWholeSyncOverASlowShare(unittest.TestCase):
             self.assertEqual([], job_runs.under_way(library.path), "the walk's run ended with it")
             # A short walk, fewer than LOG_FOLDERS folders (one with no subfolder): no progress line, and once it is
             # over the folder it was at is no longer said.
-            with self.assertLogs("tagpup.services.sync", level="INFO") as short:
+            # (the library holds a photo of Dunes, or the folder's sync would be refused before any walk; a sync that found
+            # nothing says its closing line at DEBUG)
+            seed(library.path, os.path.join(root, "Dunes", "one.jpg"))
+            with self.assertLogs("tagpup.services.sync", level="DEBUG") as short:
                 watcher._run(library, os.path.join(root, "Dunes"))
-            self.assertNotIn("folder(s) and", "\n".join(short.output), "a short walk said how far it got")
+            lines = short.output
+            self.assertTrue(any("looked at 1 folder(s) and 1 photo file(s)" in line for line in lines),
+                            "the folder was really walked: %s" % lines)
+            self.assertEqual([], [line for line in lines if "so far" in line or re.search(r"Sync, \w+: \d+ folder", line)],
+                             "a short walk said how far it got")
             self.assertIsNone(page.get("/api/activity/now").get_json()["syncing"])
 
 
