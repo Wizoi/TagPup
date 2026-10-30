@@ -866,7 +866,7 @@ class AnIndexReadsABake(unittest.TestCase):
         bake_after_index.bake_folders.return_value = bake_after_index.Baked()
         ticks = itertools.count()
         clock = mock.Mock(monotonic=lambda: next(ticks) * job_runs.PROGRESS_EVERY)
-        with mock.patch.dict(os.environ, {progress_line.ASKED: "1"}), mock.patch.object(tagpup_cli, "time", clock):
+        with mock.patch.dict(os.environ, {progress_line.ASKED: "1"}), mock.patch.object(tagpup_cli, "time", clock, create=True):
             printed = self.index(folder).output
         heard = [progress_line.heard(line) for line in printed.splitlines()]
         said = [fact["done"] for fact in heard if fact and fact["kind"] == "phase" and fact["phase"] == "embeddings"]
