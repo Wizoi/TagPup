@@ -231,8 +231,9 @@ class Job:
 
     def _plan(self, run):
         what = "name faces from tags: plan"
-        try:
-            with runs.running(runs.job_tag(self.library.name, run.run_id)):
+        # The run's tag held over its failure's line too: "Logs for this run" shows why it failed (#2301).
+        with runs.running(runs.job_tag(self.library.name, run.run_id)):
+            try:
                 library_counts = face_service.named_counts(self.library)
                 if not library_counts["named"] and not library_counts["unnamed"]:
                     self.in_folder = None
@@ -261,12 +262,13 @@ class Job:
                     self.state, self.asked = ASKING, time.time()
                     self.done = self.total = 1
                 self._end_run(what)
-        except Stopped:
-            self._finish(CANCELLED, "Cancelled: nothing was changed.", what)
-        except BaseException as problem:   # a thread that raised leaves a job that says why, not one still 'planning'
-            logger.exception("Name faces from tags in %s: the plan failed", self.library.name)
-            said = "The plan could not be read (%s); the server's log says why. Nothing was changed." % type(problem).__name__
-            self._finish(FAILED, said, what, runs_service.failure(error=problem, sentence=said))
+            except Stopped:
+                self._finish(CANCELLED, "Cancelled: nothing was changed.", what)
+            except BaseException as problem:   # a thread that raised leaves a job that says why, not one still 'planning'
+                logger.exception("Name faces from tags in %s: the plan failed", self.library.name)
+                said = "The plan could not be read (%s); the server's log says why. Nothing was changed." % (
+                    type(problem).__name__)
+                self._finish(FAILED, said, what, runs_service.failure(error=problem, sentence=said))
 
     def run_apply(self):
         """Phase 2's thread: the change of the names. Writes of faces are refused meanwhile (`writing`)."""
@@ -275,8 +277,8 @@ class Job:
 
     def _apply(self):
         what = "name faces from tags"
-        try:
-            with runs.running(runs.job_tag(self.library.name, self.run.run_id)):
+        with runs.running(runs.job_tag(self.library.name, self.run.run_id)):
+            try:
                 written = 0
                 if self.planned is not None and self.planned.size:
                     if self.cancel.is_set():
@@ -298,10 +300,11 @@ class Job:
                         self.applied = {"changed": written, "change": result.details.get("change")}
                     self._record(what)
                 self._after(what)
-        except BaseException as problem:
-            logger.exception("Name faces from tags in %s failed", self.library.name)
-            said = "It could not go on (%s); the server's log says why. %s" % (type(problem).__name__, self._said_written(""))
-            self._finish(FAILED, said, what, runs_service.failure(error=problem, sentence=said))
+            except BaseException as problem:
+                logger.exception("Name faces from tags in %s failed", self.library.name)
+                said = "It could not go on (%s); the server's log says why. %s" % (
+                    type(problem).__name__, self._said_written(""))
+                self._finish(FAILED, said, what, runs_service.failure(error=problem, sentence=said))
 
     def _said_written(self, then):
         """What was written before the job stopped, then `then`."""

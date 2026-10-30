@@ -34,7 +34,7 @@ mapper gives it (job_runs.failure).
 import logging
 import time
 
-from tagpup.core import paths
+from tagpup.core import paths, runs
 from tagpup.core.result import NotFound, Result
 from tagpup.store import file_journal, job_runs, root_rows
 from tagpup.store import roots as store_roots
@@ -240,26 +240,28 @@ def change_location(library, name, location, machine, apply=False, override=Fals
             result.refuse("Not changed: " + (BEHIND if run.why == "behind" else
                                              "another change of %s is under way; try again in a moment." % name))
             return result
-        try:
-            written = machine.set_location(name, location, expected=expected, must_exist=False)
-        except ValueError as problem:
-            run.ends(failed=runs_service.Failure(runs_service.REFUSED, str(problem)),
-                     counts={"what": "change of location of root %s refused" % name})
-            result.details["conflict"] = "changed since you looked" in str(problem)
-            result.refuse(str(problem))
-            return result
-        result.attempted = 1
-        result.details["places"] = written["places"]
-        if not written["changed"]:
-            run.ends(counts={"what": "change of location of root %s: it was at %s already" % (name, location)})
-            result.details["unchanged"] = True
-            result.details["message"] = "%s is at %s already; nothing to change." % (name, location)
-            return result
-        before = written["previous"][0] if written["previous"] else None
-        what = "moved root %s to %s%s" % (name, written["places"][0], " (was %s)" % before if before else "")
-        run.ends(counts={"what": what, "rows": checked["rows"], "checked": checked["checked"],
-                         "missing": checked["missing"], "override": int(bool(override and checked["poor"]))})
+        # The run's tag on its lines: "Logs for this run" of a move shows them (#2301).
+        with runs.running(runs.job_tag(library.name, run.run_id)):
+            try:
+                written = machine.set_location(name, location, expected=expected, must_exist=False)
+            except ValueError as problem:
+                run.ends(failed=runs_service.Failure(runs_service.REFUSED, str(problem)),
+                         counts={"what": "change of location of root %s refused" % name})
+                result.details["conflict"] = "changed since you looked" in str(problem)
+                result.refuse(str(problem))
+                return result
+            result.attempted = 1
+            result.details["places"] = written["places"]
+            if not written["changed"]:
+                run.ends(counts={"what": "change of location of root %s: it was at %s already" % (name, location)})
+                result.details["unchanged"] = True
+                result.details["message"] = "%s is at %s already; nothing to change." % (name, location)
+                return result
+            before = written["previous"][0] if written["previous"] else None
+            what = "moved root %s to %s%s" % (name, written["places"][0], " (was %s)" % before if before else "")
+            run.ends(counts={"what": what, "rows": checked["rows"], "checked": checked["checked"],
+                             "missing": checked["missing"], "override": int(bool(override and checked["poor"]))})
+            logger.info("%s in %s", what, library.name)
     result.changed = 1
-    logger.info("%s in %s", what, library.name)
     result.details["message"] = what
     return result

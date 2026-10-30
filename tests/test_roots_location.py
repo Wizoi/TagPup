@@ -15,6 +15,7 @@ place kept (#472), one owner of "a share is away" (#474). Its unplaced-root chec
 test_roots_unplaced; its test that roots_sample holds no thread of its own read source text and is gone.
 """
 import json
+import logging
 import os
 import shutil
 import sys
@@ -30,8 +31,10 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
 import share_waits  # noqa: E402
+from test_log_runs import Lines  # noqa: E402
 
 from tagpup import config  # noqa: E402
+from tagpup.core import runs  # noqa: E402
 from tagpup.core.result import NotFound  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.services import activity, file_changes, roots_location, roots_sample, tagging  # noqa: E402
@@ -190,11 +193,22 @@ class ChangingTheLocation(RootsCase):
             "roots"][0]["writes_to"])
 
     def test_it_is_logged_for_the_activity_page(self):
+        """The move is a run in the timeline, and its line carries the run's tag, so its "Logs for this run" shows it
+        (#2301: the move held no tag, and the run's logs were empty)."""
+        lines, logger = Lines(), logging.getLogger(roots_location.__name__)
+        logger.addHandler(lines)
+        self.addCleanup(logger.removeHandler, lines)
+        self.addCleanup(logger.setLevel, logger.level)
+        logger.setLevel(logging.INFO)   # the server's log takes INFO (tagpup.logs.to_file)
         self.move(apply=True)
         entries = [entry for entry in activity.timeline(self.library) if entry["kind"] == "job"]
         said = [entry["what"] for entry in entries]
         self.assertTrue(any(text.startswith("moved root pictures to %s" % self.copy) for text in said), said)
-        self.assertEqual("done", [e for e in entries if e["what"].startswith("moved")][0]["outcome"])
+        (moved,) = [e for e in entries if e["what"].startswith("moved")]
+        self.assertEqual("done", moved["outcome"])
+        tag = runs.job_tag(self.library.name, moved["id"])
+        self.assertEqual(tag, moved["run"])
+        self.assertTrue(any("[run %s] - moved root pictures" % tag in line for line in lines.lines), lines.lines)
 
     def test_a_refusal_is_not_logged_as_a_change(self):
         other = os.path.join(self.home.root, "Elsewhere")

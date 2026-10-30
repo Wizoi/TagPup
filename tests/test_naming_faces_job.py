@@ -7,6 +7,7 @@ libraries, and the other work that must finish first.
 """
 import contextlib
 import json
+import logging
 import os
 import sys
 import threading
@@ -17,7 +18,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
 from face_rows import FACE_MODEL  # noqa: E402
 from test_faces_from_tags import ODA, WREN, Case, at, look, write  # noqa: E402
+from test_log_runs import Lines  # noqa: E402
 
+from tagpup.core import runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Conflict, NotFound, Refused  # noqa: E402
 from tagpup.jobs import naming_faces  # noqa: E402
@@ -121,6 +124,36 @@ class ThePlanIsAJobAndWritesNothing(Case789):
         self.assertEqual(0, job.status()["plan"]["faces"])
         with self.assertRaises(Refused):
             naming_faces.confirm(self.library, job.handle)
+
+
+class AFailureIsInItsRunsLogs(Case789):
+    """A plan or a write that fails says so in the server's log under the run's tag, so the run's "Logs for this run"
+    on the Activity page shows why (#2301: both lines were logged outside the tag)."""
+
+    def setUp(self):
+        super().setUp()
+        self.lines = Lines()
+        logging.getLogger(naming_faces.__name__).addHandler(self.lines)
+        self.addCleanup(logging.getLogger(naming_faces.__name__).removeHandler, self.lines)
+
+    def said_under_its_run(self, words):
+        (run,) = [each for each in self.runs() if each.outcome == "failed"]
+        tag = runs.job_tag(self.library.name, run.id)
+        self.assertTrue(any("[run %s] - %s" % (tag, words) in line for line in self.lines.lines), self.lines.lines)
+
+    def test_a_plan_that_fails(self):
+        self.seed()
+        with mock.patch.object(faces_from_tags, "plan", side_effect=OSError("the disk is gone")):
+            self.assertEqual(naming_faces.FAILED, self.start().status()["state"])
+        self.said_under_its_run("Name faces from tags in %s: the plan failed" % self.library.name)
+
+    def test_a_write_that_fails(self):
+        self.seed()
+        job = self.start()
+        with mock.patch.object(faces_from_tags, "faces_from_tags", side_effect=OSError("the disk is gone")):
+            naming_faces.confirm(self.library, job.handle)
+            self.assertEqual(naming_faces.FAILED, wait(job)["state"])
+        self.said_under_its_run("Name faces from tags in %s failed" % self.library.name)
 
 
 class YesWritesTheChange(Case789):
