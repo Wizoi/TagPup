@@ -16,8 +16,10 @@ queue holds what waits and the run under way, as long as the process lives.
 Each run of the indexer is a run of the job `index` (job_runs.INDEX) in the library's `job_runs` too (DECISIONS 2026-10-28, ACTIVITY REWORK),
 a recorded run (tagpup.services.job_runs.run, whose lifecycle it is) claimed by this process as it takes the job -- under the run that queued it (a sync's), from the tags it was queued under
 -- told how far it got from the indexer's lines (tagpup.services.job_runs.tell, through index_folder), and ended with its
-counts and its message -- every end that could not be written is tried again as the queue's next index of the library is
-claimed (job_runs.run), and stays to be tried at each after (so a run of this live server stays `running` only while the library cannot be
+counts and its message -- tried for job_runs.RECORD_WITHIN, as its claim is, so the next index never waits a writer out,
+and one the library was being written for then written once it is free, on a thread of its own; every end that could
+not be written is tried again as the queue's next index of the library is claimed (job_runs.run), and stays to be tried
+at each after (so a run of this live server stays `running` only while the library cannot be
 written); its row holds, from the claim on, the run's tag (`changed["run"]`), which the indexer's own log is named by, how
 many folders it indexes (`folders`) and the tags of the syncs it is part of (`syncs`, tagpup.core.runs.syncs: a sync's
 own record is written as it ends, so no parent names it), which the Activity page finds the run's lines by. Only

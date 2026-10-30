@@ -7,7 +7,8 @@ got from the indexer's lines (a phase and counts, never a path, at most every 10
 sentence, or done and counted cancelled. The indexer it starts (the CLI, faked here: it prints what the real one prints)
 claims nothing. A library behind this version's schema, a library being written by the bake, a row pruned mid-run: the
 index runs as it would have; another process writing the library as an index starts leaves it unrecorded, started at
-once; an end that cannot be written is written as the next index begins. Two processes indexing one library (the app and
+once, and as an index ends lets the next start at once, the end written once the library is free; an end that cannot be
+written is written as the next index begins. Two processes indexing one library (the app and
 a CLI sync) each record their own. The daily sync's walk says how far it got in its own run. A server killed mid-index
 leaves its run to the sweep at the next start, under its sync still.
 
@@ -435,8 +436,9 @@ held.close()
 
 
 class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
-    def test_a_library_another_process_holds_is_indexed_at_once_and_unrecorded(self):
-        """#2196: the claim waited out the other's write, up to four times 30 s, before the indexer started."""
+    def another_writer(self):
+        """Another process holding the library's write lock until the file it returns is made (at the latest when the
+        test ends)."""
         ready, release = os.path.join(self.home.root, "READY"), os.path.join(self.home.root, "RELEASE")
         script = os.path.join(self.home.root, "writer.py")
         with open(script, "w", encoding="utf-8") as handle:
@@ -449,6 +451,11 @@ class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
             self.assertIsNone(writer.poll(), "the writer ended before it held the library")
             self.assertLess(time.monotonic(), deadline)
             time.sleep(0.05)
+        return release
+
+    def test_a_library_another_process_holds_is_indexed_at_once_and_unrecorded(self):
+        """#2196: the claim waited out the other's write, up to four times 30 s, before the indexer started."""
+        release = self.another_writer()
         began, first = time.monotonic(), []
 
         def report(message, percent):
@@ -459,6 +466,54 @@ class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
         self.assertEqual("completed", status["status"], status)
         self.assertLess(first[0], 15, "the indexer started only once the other's write was waited out")
         self.assertEqual([], [run for run in self.runs() if run.job == "index"])
+
+    def test_an_index_ending_while_another_process_writes_lets_the_next_start_and_is_ended_once_it_is_free(self):
+        """#2200: the end waited the other's write out, up to four times 30 s, on the queue's worker: the next queued
+        index started only then."""
+        go = os.path.join(self.home.root, "GO")
+        queue = indexing_jobs.queue_for(self.library)
+        held, seen = [], {}
+
+        def first_said(message, percent):
+            # Its last line: the other process writes from here to after the next index has begun.
+            if not held and message and message.startswith("No new face"):
+                held.append(self.another_writer())
+                # Let go of it at the latest 20 s on, so the old code fails in time rather than in two minutes.
+                timer = threading.Timer(20, lambda: open(held[0], "w").close())
+                timer.start()
+                self.addCleanup(timer.cancel)
+                seen["first_ends"] = time.monotonic()
+                open(go, "w").close()
+
+        def second_said(message, percent):
+            if "second_begins" not in seen:
+                seen["second_begins"] = time.monotonic()
+                [first] = [run for run in self.runs() if run.job == runs_service.INDEX]
+                seen["first"] = first
+                seen["now"] = activity.runs_now([self.library], activity.Here())["runs"]
+                open(held[0], "w").close()
+        first_code = self.code(bars(1) + ["WAIT " + go], name="first")
+        self.assertTrue(queue.start([self.folder("Regatta")], self.index_with(self.library, first_code, first_said),
+                                    together=True).ok)
+        self.assertTrue(queue.start([self.folder("Lighthouse")],
+                                    self.index_with(self.library, self.code(bars(1), name="second"), second_said),
+                                    together=True).ok)
+        queue.wait()
+        waited = seen["second_begins"] - seen["first_ends"]
+        self.assertLess(waited, 2 * job_runs.RECORD_WITHIN + 8, "the next index waited for the first's end")
+        # While its end waited, the first read as running, under way on the Activity page, not stuck.
+        self.assertEqual(job_runs.RUNNING, seen["first"].outcome)
+        self.assertEqual([(seen["first"].id, activity.RUNNING)],
+                         [(run["run_id"], run["state"]) for run in seen["now"]])
+        deadline = time.monotonic() + 60
+        while True:
+            [first] = [run for run in self.runs() if run.id == seen["first"].id]
+            if first.outcome != job_runs.RUNNING or time.monotonic() > deadline:
+                break
+            time.sleep(0.05)
+        self.assertEqual((job_runs.DONE, 1, 1), (first.outcome, first.changed["folders"], first.changed["attempted"]),
+                         first.changed)
+        self.assertEqual([], roots_location._running_here(self.library))
 
 
 class TwoProcessesIndexingOneLibrary(_Indexing):

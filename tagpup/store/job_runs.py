@@ -43,10 +43,12 @@ INDEX = "index"
 #: (tagpup.core.gpu_turns) and the index queue one at a time in a process. Its claim excludes no other process's running
 #: run of it -- the server's and a CLI's `sync --apply` index of one library are two rows, each its owner's -- and is made
 #: now or within RECORD_WITHIN seconds, never waited out: a library written by another for longer leaves the run
-#: unrecorded ("busy"), and it runs all the same. Every other job's claim is refused while a live process holds a run of it.
+#: unrecorded ("busy"), and it runs all the same. Its end is tried as long (`finish`'s `within`), and one not made is
+#: written later (tagpup.services.job_runs), so the next index waits for neither. Every other job's claim is refused while
+#: a live process holds a run of it, and its end is waited for.
 RECORDS_ONLY = (INDEX,)
 
-#: The seconds a claim of a job of RECORDS_ONLY tries for while the library is being written.
+#: The seconds a claim or an end of a job of RECORDS_ONLY tries for while the library is being written.
 RECORD_WITHIN = 2.0
 
 #: The runs kept of each job for each library; older ones are deleted as a run finishes.
@@ -211,13 +213,19 @@ def claim(db_path, job, library, now, due=None, parent=None, changed=None):
     records_only = job in RECORDS_ONLY
     if not records_only:
         return db.write_with_connection(db_path, work, label="claim the job %s" % job)
-    deadline = time.monotonic() + RECORD_WITHIN
+    made = _within(db_path, work, "claim the job %s" % job, RECORD_WITHIN)
+    return Claim(why="busy") if made is db.BUSY else made
+
+
+def _within(db_path, work, label, within):
+    """`work` written now (db.write_if_free), or tried again for `within` seconds while the library is being written:
+    its result, or db.BUSY when it was not made. The one bound of the writes that must not wait a writer out (a claim and
+    an end of a job of RECORDS_ONLY, a run's progress)."""
+    deadline = time.monotonic() + within
     while True:
-        made = db.write_if_free(db_path, work, label="claim the job %s" % job)
-        if made is not db.BUSY:
+        made = db.write_if_free(db_path, work, label=label)
+        if made is not db.BUSY or time.monotonic() >= deadline:
             return made
-        if time.monotonic() >= deadline:
-            return Claim(why="busy")
         time.sleep(0.05)
 
 
@@ -243,11 +251,12 @@ def sweep_abandoned(db_path, now):
     return db.write_with_connection(db_path, work, label="sweep the abandoned runs")
 
 
-def finish(db_path, run_id, outcome, now, changed=None, note=None):
+def finish(db_path, run_id, outcome, now, changed=None, note=None, within=None):
     """End run `run_id`, this process's: `outcome` done or failed, `changed` its counts.
     False when it is no longer this process's to end -- taken over as abandoned, or the
     library restored from a snapshot without it. Older runs of the job beyond KEEP_RUNS
-    are deleted."""
+    are deleted. Waited for while the library is being written (db.write_with_connection); with `within`, seconds,
+    tried only that long (`_within`), db.BUSY when not made."""
     if outcome not in (DONE, FAILED):
         raise ValueError("a run ends done or failed, not %r" % (outcome,))
 
@@ -262,7 +271,9 @@ def finish(db_path, run_id, outcome, now, changed=None, note=None):
             _prune(conn, found[0], found[1], KEEP_RUNS)
         return ended
 
-    return db.write_with_connection(db_path, work, label="finish run %d" % run_id)
+    if within is None:
+        return db.write_with_connection(db_path, work, label="finish run %d" % run_id)
+    return _within(db_path, work, "finish run %d" % run_id, within)
 
 
 def discard(db_path, run_id):
@@ -305,12 +316,7 @@ def progress(db_path, run_id, phase, counts, now, within=0.0):
         return conn.execute("UPDATE job_runs SET heartbeat = ?, progress = ? WHERE id = ? AND outcome = 'running'"
                             " AND owner = ?", (stamp(now), text, run_id, file_journal.owner())).rowcount == 1
 
-    deadline = time.monotonic() + within
-    while True:
-        written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
-        if written is not db.BUSY or time.monotonic() >= deadline:
-            break
-        time.sleep(0.05)
+    written = _within(db_path, work, "progress of run %d" % run_id, within)
     if written is None:
         logger.debug("progress of run %d: not written, the library is not yet at schema 36 (a restore under way)", run_id)
         return False
