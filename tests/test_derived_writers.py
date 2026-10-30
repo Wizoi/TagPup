@@ -84,6 +84,25 @@ def writes_photos(text):
     return False
 
 
+def set_columns(text):
+    """The columns each `UPDATE photos SET` of this SQL sets ("%s" for a list built at run time)."""
+    found = set()
+    for each in PHOTO_WRITE.finditer(text):
+        columns = each.group("set")
+        if columns is not None:
+            found |= {"%s"} if "%s" in columns else set(re.findall(r"(\w+)\s*=", columns))
+    return found
+
+
+def module_constant(relative, name):
+    """The literal value of the module constant `name` of the module at `relative`."""
+    with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+        for node in ast.parse(handle.read()).body:
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                return ast.literal_eval(node.value)
+    raise AssertionError("%s has no %s" % (relative, name))
+
+
 def scan():
     """([(module, function, node)] writing photos, the same writing the tree, {(module, function): node} of
     every function, the first of a name)."""
@@ -125,6 +144,18 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
         self.assertFalse(writes_photos("UPDATE photos SET taken = ?, year = ? WHERE id = ?"))
         self.assertFalse(writes_photos("UPDATE photos SET document_id = ? WHERE path = ?"))
         self.assertFalse(writes_photos("SELECT tags FROM photos WHERE id = ?"))
+        self.assertEqual({"path"}, set_columns("UPDATE photos SET path = ? WHERE id = ?"))
+        self.assertEqual({"tags", "raw_metadata"}, set_columns("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?"))
+
+    def test_a_photos_path_is_set_by_move_rows_in_alone_and_it_sets_what_the_journal_reads_as_moved(self):
+        """The journal refuses to undo a change of rows once a later rename moved one of its photos, by the columns a
+        rename sets in the row (store.photos.MOVED, read by store.journal._files_since): MOVED and move_rows_in were kept
+        alike by convention only (#1962), as FOLLOWED and follow_fields are not (it asserts within FOLLOWED)."""
+        sets = {(module, name): set().union(*(set_columns(text) for text in strings(node))) for module, name, node in self.photos}
+        mover = ("tagpup/store/photos.py", "move_rows_in")
+        self.assertEqual([mover], sorted(key for key, columns in sets.items() if "path" in columns),
+                         "a photo's path is set outside store.photos.move_rows_in, which the journal's refusal reads as MOVED")
+        self.assertEqual(set(module_constant(mover[0], "MOVED")), sets[mover])
 
     def test_every_writer_of_a_photos_keywords_path_or_metadata_calls_derived(self):
         missing = []

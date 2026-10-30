@@ -111,6 +111,8 @@ def forget_photo(db_path, photo_path):
 #: The columns of a photo's row a journaled change of its file writes, in the transaction that marks the file done: a
 #: write of its fields (follow_fields) and a rename (move_rows_in, the derived `taken` and `year` aside). A change of rows
 #: that recorded one of them is not what it left once a later change wrote the file (tagpup.store.journal.refusal).
+#: follow_fields asserts it writes within FOLLOWED; MOVED is what move_rows_in sets, and nothing else sets a photo's path
+#: (tests/test_derived_writers.py).
 FOLLOWED = ("raw_metadata", "tags", "captions", "document_id", "mtime", "size")
 MOVED = ("path",)
 
