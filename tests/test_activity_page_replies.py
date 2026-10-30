@@ -20,6 +20,8 @@ The clocks are the scenarios' own (time.time is the scenario's throughout -- the
 of its run among it -- the journal's clock the day before while each library is made, an index's tag the scenario's
 time; the home's folder, the process id in a run's tag and in a log's name (tagpup.logs.run_log) and the count after it
 are renumbered), so the file is the same on every run: the test makes it twice, in two homes, and the two are one text.
+An index's tag holds the stand-in process id as it is made, not only in the text: the tag is in every line of the
+index's log, whose size the logs reply gives, and a process id of 3 or 4 digits made it a byte or two shorter.
 Fictional names only.
 """
 import itertools
@@ -52,6 +54,8 @@ from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "fixtures", "activity.json")
 MINUTE, HOUR = 60, 3600
 ROUTES = ("now", "jobs", "timeline", "logs")
+#: The process id the fixture holds wherever this process's is spelled.
+STAND_IN_PID = "4242"
 #: Set to 1 to write the fixture again from the replies, when a change of the server's is meant to change them.
 WRITE_FIXTURE = "TAGPUP_WRITE_FIXTURE"
 WRITE_COMMAND = ("%s=1 .venv/Scripts/python.exe -m unittest tests.test_activity_page_replies"
@@ -197,6 +201,7 @@ class RepliesForTheActivityPage(_Libraries):
         tag and the clock of a recorded run (job_runs.run, whose default is time.time as imported) read at it."""
         self.clock = Clock(NIGHT)
         tag, recorded = runs.index_tag, job_runs.run
+        pid = "-%d-" % os.getpid()
 
         def now():
             return time.time()
@@ -204,7 +209,8 @@ class RepliesForTheActivityPage(_Libraries):
         def run(library, job, run_for, clock=now, *rest, **kwargs):
             return recorded(library, job, run_for, clock, *rest, **kwargs)
         with mock.patch.object(runs, "_counter", itertools.count(1)), mock.patch("time.time", self.clock), \
-                mock.patch.object(runs, "index_tag", lambda library, at=None: tag(library, now() if at is None else at)), \
+                mock.patch.object(runs, "index_tag", lambda library, at=None: tag(
+                    library, now() if at is None else at).replace(pid, "-" + STAND_IN_PID + "-")), \
                 mock.patch.object(job_runs, "run", run):
             return self.mornings()
 
@@ -300,7 +306,8 @@ class RepliesForTheActivityPage(_Libraries):
                              (block["last_finished"]["what"], block["last_finished"]["finished"]), library.name)
         text = "{\n" + ",\n".join("%s: %s" % (json.dumps(key), json.dumps(found[key], sort_keys=True))
                                   for key in sorted(found)) + "\n}\n"
-        text = text.replace("-%d-" % os.getpid(), "-4242-").replace("-%d.log" % os.getpid(), "-4242.log")
+        text = text.replace("-%d-" % os.getpid(), "-%s-" % STAND_IN_PID).replace(
+            "-%d.log" % os.getpid(), "-%s.log" % STAND_IN_PID)
         for spelled in (self.home.root, self.home.root.replace("\\", "/")):
             text = text.replace(json.dumps(spelled)[1:-1], "D:\\\\TagPup")
         return text
