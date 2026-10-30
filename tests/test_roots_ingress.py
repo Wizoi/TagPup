@@ -381,7 +381,7 @@ class TheCliIndex(unittest.TestCase):
         later = os.path.join(self.old, "Only here")
         os.makedirs(later)
         result, seen = self.run_index([later])
-        self.assertEqual(1, result.exit_code)
+        self.assertEqual(2, result.exit_code)   # USAGE_EXIT: as _folders_now refuses the same folder (#2145)
         self.assertEqual([], seen, "the command went on")
         self.assertIn("previous place of root pictures", result.output)
         self.assertIn(later, result.output.replace("\n", ""))
