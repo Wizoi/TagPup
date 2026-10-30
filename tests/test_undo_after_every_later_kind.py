@@ -11,7 +11,7 @@ lifted by undoing that one first: undone in that order, both are.
 
 The kinds: a stamp of the settings, a change of the settings, a switch of face model, a face pass (by its
 writer: a kind the live journals hold, its command deleted), a migration's record (a synthetic additive step, tests/migration_names.py), a sync and a refresh of a row re-read from its
-file, Save on a photo, Smart Rename, a rotation (of the photo the later pass gave a face and its crop) and a bake of a
+file, a sync removing the row of a photo whose file another program deleted (with its named face), Save on a photo, Smart Rename, a rotation (of the photo the later pass gave a face and its crop) and a bake of a
 folder's photos (real ExifTool, changes of photo files; by its writer, as the face pass). The refresh's writer is
 deleted (DECISIONS 2026-10-28, THE MCP SERVER ONLY READS; kr-track holds one, change 2): it is recorded as that writer
 recorded it, a row re-read through refresh_rows.reread and edits_for on the maintenance scaffold. Left to the guard
@@ -23,7 +23,7 @@ tests/test_journal_through_the_services.py.
 Lifted (each scenario a pair here, their tests deleted): test_history_routes' listing agreeing with the rehearsal; test_journal's migration never undone; test_journal_through_the_services' refused undo writing
 nothing; the refusals of the face model's switch of P10 (now tests/test_a_library_indexes_and_suggests_with_its_face_model.py).
 
-One library is built (harbour: six photos read by the index, faces as the old detector and the new model's pass left
+One library is built (harbour: seven photos read by the index, faces as the old detector and the new model's pass left
 them, switched to the new model), copied after each earlier change, and the copy taken again for each later one, with
 the photo files put back as the earlier change left them. Fictional names; a home of the test's own; rows as the
 indexer and the pass store them.
@@ -126,6 +126,16 @@ def a_sync(case, library):
     return synced.details.get("change") if synced.changed else None
 
 
+def a_sync_removal(case, library):
+    """The seventh photo's file deleted by another program, then a sync of the whole library: its row removed with its
+    named face, the journal's (#2151; a removal the owner clicks is not journaled, DECISIONS 2026-10-30)."""
+    os.remove(case.photo[7])
+    synced = sync.sync(library, apply=True, exiftool_path=EXIFTOOL)
+    if not (synced.details.get("changed") or {}).get("removed"):
+        return None
+    return synced.details.get("change")
+
+
 def a_refresh(case, library):
     """A caption written into the fifth photo by another program, then its row re-read from the file and recorded as the
     deleted refresh_rows recorded it: one change, "refresh_rows", of rows from files, each held to what it was when
@@ -201,6 +211,7 @@ WRITERS = {
     "later pass": a_later_pass,
     "migration": a_migration,
     "sync": a_sync,
+    "sync removal": a_sync_removal,
     "refresh": a_refresh,
     "save photo": a_save,
     "smart rename": a_smart_rename,
@@ -257,7 +268,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
 
     @classmethod
     def build(cls, library):
-        """harbour: six photos (real JPEGs, their keywords written
+        """harbour: seven photos (real JPEGs, their keywords written
         by ExifTool), faces as the pass left them -- matched faces holding FaceNet's vector and the new model's, faces
         the old detector alone found holding FaceNet's, one alone in the sixth photo -- named automatically, by hand,
         nobody, excluded or undecided; the pass one change; switched to the new model after it. Stamped as the live
@@ -268,7 +279,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         library_actions.create(library.path)
         os.makedirs(cls.folder)
         library_actions.record_added(library, [cls.folder])
-        cls.photo = {n: os.path.join(cls.folder, "ferry %d.jpg" % n) for n in range(1, 7)}
+        cls.photo = {n: os.path.join(cls.folder, "ferry %d.jpg" % n) for n in range(1, 8)}
         fields = {n: {"XMP:Subject": ["Tamsin Okoro" if n == 1 else "Harbour/Ferry"]} for n in cls.photo}
         with ExifToolSession(executable=EXIFTOOL) as et:
             for n, path in cls.photo.items():
@@ -306,6 +317,7 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
             face(5, False, automatic=tamsin)
             face(5, True)
             face(6, False)
+            face(7, False, by_hand=odile)
             cls.pass_change = journal.record(conn, journal_service.FACE_PASS % NEW, [],
                                              {"folder": store_roots.to_row(conn, cls.folder), "matched": 0, "new": 0})
             for n, matched in matched_in.items():
@@ -438,14 +450,15 @@ class UndoAfterEveryLaterKind(unittest.TestCase):
         self.assertTrue(set(EXPECTED_REFUSED) <= made, "a pair the promise names was not made")
         self.assertEqual(set(), {pair for pair, refused in outcomes.items() if refused is None},
                          "a later kind's writer made nothing after an earlier kind")
-        # Every later kind after every earlier one, the diagonal not generated: 12 earlier by 9 later, less 9 (the
+        # Every later kind after every earlier one, the diagonal not generated: 13 earlier by 10 later, less 10 (the
         # retirings' kinds and Suggest's step left with retire-faces and retire-vectors, 2026-10-25; a rotation came in,
-        # 2026-10-27; the switch back went, 2026-10-28).
+        # 2026-10-27; the switch back went, 2026-10-28; a sync's removal came in, 2026-10-30, #2160).
         self.assertEqual(len(earlier) * len(later) - len(later), len(made), "the pairs a library can hold were not made")
-        self.assertEqual(99, len(made))
+        self.assertEqual(120, len(made))
         self.assertEqual(4, ordered, "the pairs undone in order: a bake and the rename or the save after it, a rename "
                                      "or a save and the bake after it")
-        # Measured 43 s alone (about 55 s in the gate); the suite's tier timing reports it, so no wall-clock assertion.
+        # Measured about 90 s alone with the sync's removal; the suite's tier timing reports it, so no wall-clock
+        # assertion.
 
     def test_a_sync_is_not_offered_once_a_save_wrote_its_photo(self):
         """Another program writes a caption into a photo and a sync re-reads its row; then the owner saves the photo
