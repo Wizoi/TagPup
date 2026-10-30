@@ -3,7 +3,7 @@
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
-import { asked } from './poll.js';
+import { asked, touched } from './poll.js';
 import { ago, duration, parseTime } from './format.js';
 import { foldLine } from './fold.js';
 import { badge, fill } from './view.js';
@@ -36,7 +36,7 @@ export function unloadModels() {
         state.unloaded = { text: `Could not unload them: ${err.message || err}`, ok: false };
     }).then(() => {
         state.unloading = false;
-        return loadServer();
+        return touched('server');
     }).then(() => { renderServer(); });
 }
 

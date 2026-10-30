@@ -7,8 +7,10 @@
 // each other section's under its heading (`#<section>-status`), and each poll's next answer
 // clears its own. A request that failed counts; an error drawing what was answered is the
 // page's, logged, and the poll goes on asking on time.
-// soon(name) asks a poller once more now, or once its answer is in: a button's follow-up
-// read is the poll's, never a second request beside it.
+// One poller a section, named for it, and a section is asked by its poller alone: one request
+// of it in flight at a time, so an older answer is never drawn over a newer one. A module that
+// has just changed what a section shows says so, touched(...sections), and each is asked once
+// more: now, or once the answer in flight is in, several touches of one section one more ask.
 import { state } from './state.js';
 
 /** The longest a failing poller waits before asking again, unless its own interval is longer. */
@@ -48,7 +50,7 @@ function say(section, nextAt) {
     if (line) line.textContent = nextAt ? `${title ? title.textContent : section} could not be refreshed; asking again at ${clock(nextAt)}.` : '';
 }
 
-/** One section's load: whether it failed (not answered, or answered success: false); an error drawing it is logged, not counted. */
+/** A section's load: whether it failed (not answered, or answered success: false); an error drawing it is logged, not counted. */
 function settle(section, load) {
     return Promise.resolve().then(load).then(answer => !!answer && answer.success === false, err => {
         if (err instanceof NoAnswer) {
@@ -61,12 +63,12 @@ function settle(section, load) {
 }
 
 /**
- * A poller of `loads` ({ section: load }, each load returning a promise) every `ms` milliseconds, called `name`: { start,
- * stop, wake, sleep, soon, busy }. `start()` asks now and then every `ms`; `sleep()` stops asking until `wake()`, which
- * asks at once; `soon()` asks now, or once the request in flight is answered, resolving when that answer is in; `stop()`
- * for good. Each is registered in state.pollers, paused when the page is hidden (pauseWhenHidden).
+ * The poller of section `name`, asking `load` (returning a promise) every `ms` milliseconds: { start, stop, wake, sleep,
+ * soon, busy }. `start()` asks now and then every `ms`; `sleep()` stops asking until `wake()`, which asks at once;
+ * `soon()` asks now, or once the request in flight is answered, resolving when that answer is in; `stop()` for good.
+ * Each is registered in state.pollers, paused when the page is hidden (pauseWhenHidden).
  */
-export function poller(loads, ms, name) {
+export function poller(name, load, ms) {
     const self = { name, ms, timer: null, asking: false, stopped: true, asked: 0, failures: 0, nextAt: null,
                    again: false, waiting: [] };
 
@@ -85,17 +87,14 @@ export function poller(loads, ms, name) {
         self.again = false;
         self.asked += 1;
         const answered = self.waiting.splice(0);
-        const sections = Object.keys(loads);
-        Promise.all(sections.map(section => settle(section, loads[section]))).then(failed => {
-            self.failures = failed.some(Boolean) ? self.failures + 1 : 0;
+        settle(name, load).then(failed => {
+            self.failures = failed ? self.failures + 1 : 0;
             self.asking = false;
             answered.forEach(resolve => resolve());
             if (self.again) ask();
             else schedule();
-            sections.forEach((section, i) => {
-                if (!failed[i]) say(section, null);
-                else if (self.timer) say(section, self.nextAt);
-            });
+            if (!failed) say(name, null);
+            else if (self.timer) say(name, self.nextAt);
         });
     }
 
@@ -130,9 +129,9 @@ export function poller(loads, ms, name) {
     return self;
 }
 
-/** Ask the poller `name` once more: now, or once the request it has in flight is answered. */
-export function soon(name) {
-    return state.pollers.find(each => each.name === name).soon();
+/** What a module just changed is shown by `sections`: ask each once more, now or once its answer in flight is in; resolving when all are. */
+export function touched(...sections) {
+    return Promise.all(sections.map(section => state.pollers.find(each => each.name === section).soon()));
 }
 
 /** Sleep every poller while the page is hidden; wake each, asking at once, when it is back. */

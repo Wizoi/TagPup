@@ -4,7 +4,8 @@
  * that run's lines (Logs unfolded), every request sent under no library, through api.js's form for what covers every
  * library; Scheduled jobs, Snapshots, Server and Logs folded, each with one line, the open ones remembered where the
  * browser may; a server that stops answering asked less and less often, Now's silence said in the top line and each
- * other section's in that section, a drawing's error never taken for the server's; Run now's read of the jobs the poll's.
+ * other section's in that section, a drawing's error never taken for the server's, one section's failing poll backing off
+ * alone; a section a module changed (Run now, a run ending in Now, More, Cancel, Unload) asked again by its own poll.
  *
  * Now, Needs you, Scheduled jobs, Recent activity and the list of Logs answer from fixtures/activity.json: the real
  * routes' replies on libraries seeded through the real writers (tests/test_activity_page_replies.py), one morning the
@@ -590,6 +591,13 @@ describe("an update hands the server over: each poll says its own silence, and o
     assert.match(status(document, "timeline"), /^Recent activity could not be refreshed; asking again at /);
     assert.match(document.getElementById("updated").textContent, /^Updated /, "one route failing said the whole server did not answer");
     for (const section of ["jobs", "sync", "snapshots", "server", "logs"]) assert.equal(status(document, section), "", section);
+    // The timeline backs off alone: every 200 ms the sync is asked about five times a second, the timeline (400, 800 ms) twice at most.
+    const timelineAsks = () => fake.urls().filter((url) => url.startsWith("/api/activity/timeline")).length;
+    const syncFrom = asked(fake, "/api/activity/sync");
+    const timelineFrom = timelineAsks();
+    await wait(1000);
+    assert.ok(asked(fake, "/api/activity/sync") - syncFrom >= 4, `the sync asked ${asked(fake, "/api/activity/sync") - syncFrom} times in 1 s`);
+    assert.ok(timelineAsks() - timelineFrom <= 2, `the failing timeline asked ${timelineAsks() - timelineFrom} times in 1 s`);
     refuse = false;
     await settled(() => status(document, "timeline") === "", "the timeline's next answer to clear its line");
     await flush(window, 2);
@@ -618,11 +626,11 @@ describe("an update hands the server over: each poll says its own silence, and o
     await flush(window, 6);
     refuse = true;
     const { state } = pageExports(window, "web/activity/state.js");
-    const { soon } = pageExports(window, "web/activity/poll.js");
+    const { touched } = pageExports(window, "web/activity/poll.js");
     const now = state.pollers.find((each) => each.name === "now");
     const waits = [];
     for (let i = 0; i < 4; i += 1) {
-      await soon("now");
+      await touched("now");
       await flush(window, 2);
       waits.push(Math.round((now.nextAt - Date.now()) / 1000));
     }
@@ -631,7 +639,118 @@ describe("an update hands the server over: each poll says its own silence, and o
   });
 });
 
-describe("Run now's read of the jobs is the jobs poll's, never a second request beside it", () => {
+describe("a section a module changed is asked again by its own poll, at once, never beside it (touched, poll.js)", () => {
+  const timelineReads = (fake) => fake.urls().filter((url) => url.startsWith("/api/activity/timeline"));
+
+  test("no module asks a polled section itself: its load is called by its poller alone (main.js hands it over uncalled)", () => {
+    const folder = new URL("../../web/activity/", import.meta.url);
+    const loads = ["loadNow", "loadJobs", "loadSync", "loadServer", "loadTimeline", "loadSnapshots", "followLog"];
+    const called = [];
+    for (const file of fs.readdirSync(folder).filter((name) => name.endsWith(".js"))) {
+      const text = fs.readFileSync(new URL(file, folder), "utf8");
+      for (const load of loads) {
+        const calls = text.split(`${load}(`).length - 1 - text.split(`function ${load}(`).length + 1;
+        if (calls) called.push(`${file}: ${load}()`);
+      }
+    }
+    assert.deepEqual(called, [], "a section asked beside its poll: touched() asks it through the poll");
+  });
+
+  test("a run ends in Now: Scheduled jobs and What happened are read at once; the same runs, or a restarting server's refusal, read neither", async (t) => {
+    let now = SERVED.long_sync.now;
+    const fake = server("long_sync", { first: [["/api/activity/now", () => now]] });
+    // Every 15 s: no poll of the jobs or the timeline comes by itself while the test runs.
+    const { document, window } = await open(t, fake, 15000);
+    await flush(window, 6);
+    const { touched } = pageExports(window, "web/activity/poll.js");
+    const reads = () => [asked(fake, "/api/activity/jobs"), timelineReads(fake).length];
+    const from = reads();
+    await touched("now");
+    await flush(window, 4);
+    assert.deepEqual(reads(), from, "the same runs read the jobs again");
+
+    now = { success: false, error: "the server is moving onto a new version" };
+    await touched("now");
+    await flush(window, 4);
+    assert.deepEqual(reads(), from, "a refused answer read the jobs again");
+
+    now = SERVED.quiet.now;   // the sync and its index ended while the server was away
+    await touched("now");
+    await flush(window, 6);
+    assert.deepEqual(reads(), [from[0] + 1, from[1] + 1], "the ended run did not read the jobs and the timeline at once");
+    assert.match(card(document, "harbour").textContent, /Nothing is running/);
+  });
+
+  test("300 photos copied into a watched folder: Nows carrying a sync of one folder after another read nothing; a whole sync starting and ending does", async (t) => {
+    const quiet = SERVED.quiet.now;
+    const whole = SERVED.long_sync.now.syncing;
+    let now = quiet;
+    const fake = server("quiet", { first: [["/api/activity/now", () => now]] });
+    const { window } = await open(t, fake, 15000);
+    await flush(window, 6);
+    const { touched } = pageExports(window, "web/activity/poll.js");
+    const reads = () => [asked(fake, "/api/activity/jobs"), timelineReads(fake).length];
+    const from = reads();
+    for (let i = 0; i < 6; i += 1) {
+      now = { ...quiet, syncing: { library: "harbour", folder: "D:\\TagPup\\Pictures\\harbour\\Import", progress: null,
+                                   started: `2026-09-21 15:13:${String(10 + i).padStart(2, "0")}`, state: "running" } };
+      await touched("now");
+      await flush(window, 2);
+      now = quiet;
+      await touched("now");
+      await flush(window, 2);
+    }
+    assert.deepEqual(reads(), from, "a sync of one folder read the jobs or the timeline");
+
+    now = { ...quiet, syncing: whole };
+    await touched("now");
+    await flush(window, 6);
+    assert.deepEqual(reads(), [from[0] + 1, from[1] + 1], "a whole sync starting did not read at once");
+    now = quiet;
+    await touched("now");
+    await flush(window, 6);
+    assert.deepEqual(reads(), [from[0] + 2, from[1] + 2], "a whole sync ending did not read at once");
+  });
+
+  test("More while the timeline is being read: one read at a time, the longer one asked after it and drawn last", async (t) => {
+    let release = null;
+    let inFlight = 0;
+    let most = 0;
+    const entries = SERVED.morning.timeline.entries;
+    const timelineRead = (url) => {
+      const limit = Number(new URL(url, "http://localhost").searchParams.get("limit"));
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      const answer = limit > 50 ? { ...SERVED.morning.timeline, entries, more: false }
+        : { ...SERVED.morning.timeline, entries: entries.slice(0, 1), more: true };
+      const gate = limit > 50 || !release ? Promise.resolve() : new Promise((resolve) => { release = resolve; });
+      return gate.then(() => {
+        inFlight -= 1;
+        return answer;
+      });
+    };
+    const fake = server("morning", { first: [["/api/activity/timeline", timelineRead]] });
+    const { document, window } = await open(t, fake, 15000);
+    await flush(window, 6);
+    const drawn = () => document.querySelectorAll("#timeline-body li.entry").length;
+    const short = drawn();
+
+    // The timeline's poll asks, and the server is slow to answer it; More is clicked meanwhile.
+    release = true;
+    const { touched } = pageExports(window, "web/activity/poll.js");
+    touched("timeline");
+    await flush(window, 2);
+    click(window, document.getElementById("timeline-more"));
+    await flush(window, 2);
+    assert.equal(timelineReads(fake).length, 2, "More read the timeline beside the read in flight");
+
+    release();
+    await flush(window, 8);
+    assert.equal(most, 1, "two reads of the timeline at once");
+    assert.deepEqual(timelineReads(fake).map((url) => new URL(url, "http://localhost").searchParams.get("limit")), ["50", "50", "100"]);
+    assert.ok(drawn() > short, "the shorter answer was drawn over More's");
+  });
+
   test("two jobs run in quick succession while the jobs are being read: one more read, after the one in flight", async (t) => {
     let quick = true;
     let release;
