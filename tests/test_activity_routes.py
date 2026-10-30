@@ -239,6 +239,20 @@ class Now(Base):
         found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
         self.assertEqual({"folder": "D:/Photos/Regatta"}, found["syncing"]["progress"])
 
+    def test_a_sync_silent_for_12_minutes_in_a_phase_this_version_does_not_know_is_stuck(self):
+        """The watcher's whole sync is its row's run: stuck by the row's heartbeat, 700 s old, although the phase is a
+        newer version's (no counts to read) and the watcher is at a folder."""
+        now = time.time()
+        claim = job_runs.claim(self.harbour.path, recurring.SYNC, "harbour", now - 900)
+        job_runs.progress(self.harbour.path, claim.run_id, "somewhere_new", {"folders": 3}, now - 700)
+        whole = {"library": "Harbour", "folder": None, "started": "x", "walking_at": "D:/Photos/Regatta"}
+        watcher = FakeWatcher({"running": True, "roots": [], "libraries": {}, "syncing": whole})
+        found = self.get("/api/activity/now", tasks=[("folder watcher", watcher)])
+        self.assertEqual(({"folder": "D:/Photos/Regatta"}, "stuck"), (found["syncing"]["progress"], found["syncing"]["state"]))
+        (harbour,) = [each for each in found["libraries"] if each["name"] == "harbour"]
+        self.assertEqual([(claim.run_id, "watcher", "stuck")],
+                         [(row["run_id"], row["source"], row["state"]) for row in harbour["jobs"]])
+
     def index_here(self, library, tag, parents, progressed):
         """This process's index of `library` as its queue holds it (IndexQueue.now): run `tag`, queued under `parents`,
         last said how far it got at `progressed`; nothing waits behind it."""

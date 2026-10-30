@@ -217,7 +217,9 @@ def _watched(syncing, listed, rows, sync_job, now, name):
     library's running row of `sync_job` there (the same walk, one run), its phase and counts that row's and the folder its walk is
     at this process's, which shows before the row has said anything (its counts trail the folder by up to 10 s). Only the
     watcher's claim and the daily sync job hold that row, so while the watcher's claim waits for the job's run, the run
-    shown is the job's. A sync of one folder records no run while it runs: it says no progress, its folder names it."""
+    shown is the job's. A sync of one folder records no run while it runs: it says no progress, its folder names it.
+    A run with a row is stuck or running by the row's heartbeat (its `state`), whatever phase it says; only a run with
+    no row is by what the watcher holds."""
     syncing = dict(syncing)
     at = syncing.pop("walking_at")
     row = next((run for run in listed if run["job"] == sync_job and run["source"] == ROW), None)
@@ -228,11 +230,12 @@ def _watched(syncing, listed, rows, sync_job, now, name):
         syncing["progress"] = dict(walked or {}, folder=at) if walked is not None or at is not None else None
     if row is not None and syncing["folder"] is None:
         run = row
+        syncing["state"] = row["state"]
     else:
         run = {"run": None, "run_id": None, "job": sync_job, "library": name, "parent": None, "started":
                syncing["started"], "progress": None, "logs": []}
         listed.insert(0, run)
-    syncing["state"] = state_of((syncing["progress"] or {}).get("progressed"), now)
+        syncing["state"] = state_of((syncing["progress"] or {}).get("progressed"), now)
     run.update(source=WATCHER, here=syncing, state=syncing["state"])
 
 
