@@ -17,7 +17,6 @@ other way no longer matches its stamp, and is embedded again.
 """
 import collections
 
-from tagpup.core import paths
 from tagpup.store import roots as store_roots
 
 #: A photo's vector for one model, and the stamp of the file it was computed from.
@@ -73,20 +72,6 @@ def put_by_id(conn, photo_id, model, mtime, size, vector, fingerprint):
 def _follows(conn, photo_id, fingerprint):
     from tagpup.store import photo_fingerprints   # it imports photos, which imports this module
     photo_fingerprints.follows(conn, photo_id, fingerprint)
-
-
-def stamps_by_path(conn, photo_paths):
-    """{paths.key(path): {(mtime, size)}} of the vectors kept for `photo_paths`, under any
-    model: the files as they were when each was made. One indexed lookup a photo, as
-    photos.rows_of: a scan of every vector took 3 s on photo_index."""
-    found = {}
-    for photo_path in photo_paths:
-        where, params = store_roots.sql_equals(conn, "p.path", photo_path)
-        stamps = {(mtime, size) for mtime, size in conn.execute(
-            "SELECT e.mtime, e.size FROM photos p JOIN embeddings e ON e.photo_id = p.id WHERE " + where, params)}
-        if stamps:
-            found[paths.key(photo_path)] = stamps
-    return found
 
 
 def restamp(conn, photo_id, before, after):

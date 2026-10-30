@@ -24,7 +24,7 @@ import roots_library as rl  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import machine, paths  # noqa: E402
 from tagpup.store import db, faces, folders, inspection, journal  # noqa: E402
-from tagpup.store import added_folders, embeddings, file_journal  # noqa: E402
+from tagpup.store import added_folders, file_journal  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 from tagpup.store import settings as store_settings  # noqa: E402
@@ -140,8 +140,7 @@ class EveryReadAnswersNative(TwoLibraries):
                     store_photos.stored_spelling(conn, path), store_photos.row_as_recorded(conn, path) is not None,
                     faces.count_for_photo(conn, side.real[0]), faces.counts_on(conn, side.real[0]),
                     inspection.ids_of_stored(conn, [path]), inspection.ids_of_files(conn, [path, side.real[0]]),
-                    folders.holds(conn, os.path.dirname(path)),
-                    embeddings.stamps_by_path(conn, [path]), store_photos.count_under(conn, side.pictures))
+                    folders.holds(conn, os.path.dirname(path)), store_photos.count_under(conn, side.pictures))
         self.same(ask)
 
     def test_a_lookup_in_another_case_finds_the_row(self):
