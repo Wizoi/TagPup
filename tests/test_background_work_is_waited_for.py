@@ -22,9 +22,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOT_WAITED_FOR = {
     "tagpup.jobs.recurring": "the recurring jobs and the idle release run on tagpup.runtime.Background, which a drain stops and waits for (Lifecycle.busy)",
     "tagpup.jobs.watching": "the folder watcher is one of Background's tasks, stopped by the drain the same way",
-    "tagpup.services.job_runs": "its thread only writes an index's end the library was being written for (#2200), not a "
-                                "daemon, so a process that exits writes it first; one killed leaves the row to the next "
-                                "start's sweep, as a server killed mid-run always has: no work of the owner's is cut",
 }
 
 

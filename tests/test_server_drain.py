@@ -36,7 +36,10 @@ from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
+from tagpup.core.result import Result  # noqa: E402
+from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.store import db, job_runs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
@@ -427,6 +430,78 @@ class WhatALongRunIs(unittest.TestCase):
         while lifecycles.long_work() and time.time() < deadline:
             time.sleep(0.01)
         self.assertEqual([], lifecycles.long_work())
+
+
+class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
+    """#2200: an index ending while another writes the library leaves its end to a thread that waits for it, after the
+    queue is idle; a drain that did not ask for it let the launcher stop the server, the end unwritten. A writer that
+    never lets go holds the drain only as long as the thread waits (db's busy retries), then the end waits for the
+    library's next index, as before."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="drain_end_")
+        path = self.home.library("harbour.db")
+        library_actions.create(path)
+        self.library = Library(path)
+        self.addCleanup(indexing_jobs.forget, self.library)
+        self.lifecycle = Lifecycle(version="v", launcher_token=TOKEN, background=FakeBackground())
+        self.addCleanup(self.lifecycle.resume)
+        self.held = []
+        self.addCleanup(self.let_go)
+
+    def let_go(self):
+        while self.held:
+            conn = self.held.pop()
+            conn.rollback()
+            conn.close()
+
+    def index_ending_beside_another_writer(self):
+        """An index of one folder, the library written by another (a connection of its own, as a CLI's would be) from
+        its last moment on: once the queue is idle, the run, its end not yet written."""
+        def index(folders, report):
+            conn = db.connect(self.library.path, check_same_thread=False)
+            db.begin(conn, immediate=True)
+            self.held.append(conn)
+            return Result(attempted=1, changed=1)
+        queue = indexing_jobs.queue_for(self.library)
+        self.assertTrue(queue.start([self.home.root], index, together=True).ok)
+        queue.wait()
+        [run] = [run for run in runs_service.runs(self.library, runs_service.INDEX)]
+        self.assertEqual(job_runs.RUNNING, run.outcome)
+        return run
+
+    def wait_for_no_long_work(self, seconds):
+        deadline = time.time() + seconds
+        while lifecycles.long_work() and time.time() < deadline:
+            time.sleep(0.02)
+
+    def test_refuses_a_drain_until_it_is_written(self):
+        run = self.index_ending_beside_another_writer()
+        answer = self.lifecycle.drain(5, 0, lease=LEASE)
+        self.assertEqual((False, ["indexing in 1 library(ies)"]), (answer["drained"], answer.get("waiting_for")), answer)
+        self.assertEqual([work for work in lifecycles.under_way() if work.library == "harbour"],
+                         [lifecycles.Work(lifecycles.INDEX, "harbour", "an index's end waits for the library")])
+        self.let_go()
+        self.wait_for_no_long_work(30)
+        self.assertEqual((job_runs.DONE, 1), (runs_service.get(self.library, run.id).outcome,
+                                              runs_service.get(self.library, run.id).changed["changed"]))
+        self.assertEqual({"drained": True}, self.lifecycle.drain(5, 0, lease=LEASE))
+
+    def test_a_writer_that_never_lets_go_holds_the_drain_only_while_the_end_is_waited_for(self):
+        with mock.patch.object(db, "BUSY_TIMEOUT_MS", 200):
+            run = self.index_ending_beside_another_writer()
+            self.assertTrue(lifecycles.long_work())
+            self.wait_for_no_long_work(30)
+            self.assertEqual({"drained": True}, self.lifecycle.drain(5, 0, lease=LEASE),
+                             "a writer that never let go held the drain for good")
+        self.lifecycle.resume()
+        self.assertEqual(job_runs.RUNNING, runs_service.get(self.library, run.id).outcome)
+        # Its end is kept, written as the library's next index begins.
+        self.let_go()
+        queue = indexing_jobs.queue_for(self.library)
+        self.assertTrue(queue.start([self.home.root], lambda folders, report: Result(), together=True).ok)
+        queue.wait()
+        self.assertEqual(job_runs.DONE, runs_service.get(self.library, run.id).outcome)
 
 
 if __name__ == "__main__":

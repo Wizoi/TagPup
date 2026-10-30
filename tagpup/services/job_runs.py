@@ -314,6 +314,9 @@ UNCLAIMED = "unclaimed"
 #: unwritable as the run ends.
 _unended = {}
 _unended_lock = threading.Lock()
+#: The threads waiting for a library being written by another to write the ends kept for it, {thread: the library's
+#: name}, under _unended_lock: what a drain waits for (ends_waiting).
+_waiting = {}
 
 
 def _end_within(job):
@@ -339,7 +342,10 @@ def _write_end(library, job, run_id, when, counts, failed, note, within=None):
                     " free.", run_id, job, library.name)
         # Not a daemon, so a CLI's run ending meanwhile writes it before the process ends; said, because a thread takes
         # its flag from the thread that makes it, here the index queue's worker, a daemon (#2200).
-        threading.Thread(target=_write_ends_kept, args=(library, job), name="RunEnd", daemon=False).start()
+        thread = threading.Thread(target=_write_ends_waited, args=(library, job), name="RunEnd", daemon=False)
+        with _unended_lock:
+            _waiting[thread] = library.name
+        thread.start()
         return
     if not ended:
         logger.info("Run %d of %s in %s was no longer this process's to end.", run_id, job, library.name)
@@ -357,6 +363,24 @@ def _write_ends_kept(library, job, within=None):
         kept = _unended.pop((db.key(library.path), job), {})
     for each in kept.values():
         _write_end(each[0], job, *each[1:], within=within)
+
+
+def _write_ends_waited(library, job):
+    """The RunEnd thread: the ends kept for `job` in `library`, each waited for (db's busy retries); one still not
+    written is kept for the next claim, and no longer waited for by a drain."""
+    try:
+        _write_ends_kept(library, job)
+    finally:
+        with _unended_lock:
+            _waiting.pop(threading.current_thread(), None)
+
+
+def ends_waiting():
+    """The names of the libraries an end of a run waits for in this process, on its thread (#2200): what a drain must
+    not cut (tagpup.web.lifecycle.under_way). Not an end that thread gave up on, nor one kept from an end that failed:
+    each waits for the next claim of its job, which no drain holds for."""
+    with _unended_lock:
+        return sorted(set(_waiting.values()))
 
 
 class Recorded:
