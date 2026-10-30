@@ -41,6 +41,7 @@ import photo_rows  # noqa: E402
 import tuner_client  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
+from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -104,6 +105,25 @@ class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
             "COVERING", plan.upper(),
             "the count still reaches the table rows; plan was: %s" % plan,
         )
+
+    def test_the_queue_reads_no_vector(self):
+        """#2143: the queue groups faces by the people their photo names and counts them; selecting the vectors read 380 MB
+        of BLOB on photo_index to answer a question about integers. The statement it runs names neither the vector table
+        nor its column. Break: WITH_VECTOR joined into store.faces.identify_candidates."""
+        pi = PhotoIndex(db_path=self.db)
+        pi.load()
+        pi.close()
+        statements = []
+        conn = db.connect(self.db)
+        try:
+            conn.set_trace_callback(statements.append)
+            store_faces.identify_candidates(conn)
+        finally:
+            conn.close()
+        asked = " ".join(statements).lower()
+        self.assertIn("from faces", asked, "the queue's statement was not seen")
+        self.assertNotIn("vector", asked)
+        self.assertNotIn("face_embeddings", asked)
 
 
 def unit_vector(seed):
