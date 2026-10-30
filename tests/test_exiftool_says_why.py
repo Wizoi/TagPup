@@ -8,8 +8,10 @@ carries ExifTool's first lines, each photo named "<file>" (a file's name can hol
 caption, and so a name); the log has all of it.
 
 Real ExifTool: a file named as ExifTool names its temporary file, in the way of the
-write, is what makes it refuse. One written in the last minutes may be another write's under
-way, and stays; one an interrupted write left long ago is removed and the photo written (#2180).
+write, is what makes it refuse. AFailedWrite's is written as each test begins: it may be another
+write's under way, and stays (file_changes._removed_scratch, rule 3; DECISIONS 2026-10-29), the
+owner told to try again later; one an interrupted write left long ago is removed and the photo
+written (#2180).
 """
 import logging
 import os
@@ -74,6 +76,9 @@ class AFailedWrite(unittest.TestCase):
         self.assertEqual(500, status, reply)
         self.assertIn("Temporary file already exists", reply["error"])
         self.assertNotIn("non-zero exit status", reply["error"])
+        # Written this moment, it may be another write's under way: not one to delete (rule 3).
+        self.assertIn("try again after 5 minutes", reply["error"])
+        self.assertNotIn("delete that file", reply["error"])
 
 
 @requires_exiftool

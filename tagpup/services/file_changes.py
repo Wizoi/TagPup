@@ -755,8 +755,12 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     file_journal.writing(library.path, row.id, stamp)
     _reached("file writing")
     failed = _written(et, row.path, target)
-    if exiftool_session.scratch_in_the_way(failed) and _removed_scratch(row.path, stamp, interrupted):
-        failed = _written(et, row.path, target)      # once: a second failure is the write's own
+    if exiftool_session.scratch_in_the_way(failed):
+        left = _removed_scratch(row.path, stamp, interrupted)
+        if left is None:
+            failed = _written(et, row.path, target)      # once: a second failure is the write's own
+        elif left == SCRATCH_UNDER_WAY:
+            failed = exiftool_session.written_lately(failed)
     if failed is not None:
         return _after_failure(et, library, row, origin, target, finished, on_failure, failed, stall_stops)
     _reached("file written")
@@ -783,6 +787,8 @@ def _written(et, path, target):
 #: How long ago the scratch file of a photo must have been written for it to be no write's under way: longer than any
 #: ExifTool command of TagPup's runs, since each is killed, its process with it, at that deadline (exiftool_session).
 SCRATCH_STALE = exiftool_session.DEFAULT_TIMEOUT
+#: Why _removed_scratch leaves a scratch file written in the last SCRATCH_STALE seconds; the owner is told to try again.
+SCRATCH_UNDER_WAY = "it was written in the last %d s, by a write that may be under way" % SCRATCH_STALE
 
 
 def _removed_so_far():
@@ -800,24 +806,27 @@ def _said_removed(result, since):
 
 def _removed_scratch(path, saw, interrupted):
     """Remove the scratch file an interrupted write of the photo at `path` left beside it (exiftool_session.scratch_of),
-    which made ExifTool refuse this write ("Temporary file already exists"; #2180): True when it was removed, and the
-    write is made once more. Only when all of these hold (owner, 2026-10-29): it is that photo's, never one a listing
-    found; the photo is there with the stamp this write saw before it began (`saw`) and, when the journal has one, the
-    stamp of the write it interrupted (`interrupted`), and was not modified after the scratch file was last written (a
-    write of it renames the scratch file over it, and takes a new modified time): so it is not the photo's only copy
-    (#1410) and the photo is not changed since; no write of the photo is under way: this process's are held by the one lock (exclusively), and one of
-    another process (the CLI, a second library holding the folder) would have written it in the last SCRATCH_STALE
-    seconds; and both looks answered (shares.stamp_of: a share away is not "no scratch file"). It is ExifTool's file, not
-    the photo: the photo and its row are untouched here. Logged, and counted in the write's Result (_said_removed)."""
+    which made ExifTool refuse this write ("Temporary file already exists"; #2180): None when it was removed, and the
+    write is made once more; else why it was left (SCRATCH_UNDER_WAY: the owner is told to try again later). Only when
+    all four of these hold (DECISIONS 2026-10-29): 1. it is that photo's, never one a listing found; 2. the photo is there
+    and described (photos.describes) by the stamp this write saw before it began (`saw`) and, when the journal has one,
+    the stamp of the write it interrupted (`interrupted`), and was not modified after the scratch file was last written
+    (a write of it renames the scratch file over it, and takes a new modified time): so it is not the photo's only copy
+    (#1410) and the photo is not changed since; 3. no write of the photo is under way: this process's are held by the
+    one lock (exclusively), and one of another process (the CLI, a second library holding the folder) would have written
+    it in the last SCRATCH_STALE seconds (by the share's clock against ours: the residual DECISIONS accepts); 4. both
+    looks answered (shares.stamp_of: a share away is not "no scratch file"). It is ExifTool's file, not the photo: the
+    photo and its row are untouched here. Logged, and counted in the write's Result (_said_removed)."""
     scratch = exiftool_session.scratch_of(path)
     left, photo = shares.stamp_of(scratch), shares.stamp_of(path)
     if not isinstance(left, tuple) or not isinstance(photo, tuple):
         why = "it or its photo could not be looked at"
-    elif saw is None or tuple(saw) != photo or (interrupted is not None and tuple(interrupted) != photo) \
+    elif saw is None or not photos.describes(saw[0], saw[1], photo) \
+            or (interrupted is not None and not photos.describes(interrupted[0], interrupted[1], photo)) \
             or photo[0] > left[0]:
         why = "the photo has changed since the write that left it"
     elif time.time() - left[0] < SCRATCH_STALE:
-        why = "it was written in the last %d s, by a write that may be under way" % SCRATCH_STALE
+        why = SCRATCH_UNDER_WAY
     else:
         try:
             os.remove(scratch)
@@ -826,9 +835,9 @@ def _removed_scratch(path, saw, interrupted):
         else:
             logger.warning("Removed %s (%d bytes), the scratch file an interrupted write left beside its photo", scratch, left[1])
             _running.scratch_removed = _removed_so_far() + 1
-            return True
+            return None
     logger.info("Left %s beside its photo: %s", scratch, why)
-    return False
+    return why
 
 
 def _held_or_conflict(et, library, row, origin, target, finished, now=None, unread_stays=False, stall_stops=False):

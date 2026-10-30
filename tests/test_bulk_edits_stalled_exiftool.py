@@ -308,8 +308,9 @@ def aged(path, minutes):
 class AScratchFileAnInterruptedWriteLeft(T.Bulk):
     """#2180: a share that dropped mid-write left ExifTool's scratch file beside the photo (part written), and every later
     write of the photo failed "Temporary file already exists" until it was deleted by hand. The next write of the photo
-    removes it, by the owner's rules (2026-10-29), and tries once more; any other scratch file stays. Break: _carry not
-    calling _removed_scratch (the trunk before #2180: the first, second and fourth tests fail)."""
+    removes it, by the owner's four rules (DECISIONS 2026-10-29), and tries once more; any other scratch file stays. Break:
+    _carry not calling _removed_scratch (the trunk before #2180: the first, second and fourth tests fail); the scratch file
+    of a write that may be under way told as one to delete (the trunk before the Files review: the fifth fails)."""
 
     def setUp(self):
         super().setUp()
@@ -391,22 +392,23 @@ class AScratchFileAnInterruptedWriteLeft(T.Bulk):
         self.assertFalse(os.path.exists(self.scratch))
         self.assertIn("Trips/Coast", self.tags(self.ids[0]))
 
-    def test_the_write_is_tried_once_more_and_no_more(self):
-        open(self.scratch, "wb").close()
-        aged(self.scratch, 10)
-        real, calls = file_changes._removed_scratch, []
-
-        def comes_back(*args):
-            calls.append(args)
-            removed = real(*args)
-            open(self.scratch, "wb").close()     # another write's, made at once
-            return removed
-        writes = self.files.writes
-        with mock.patch.object(file_changes, "_removed_scratch", comes_back):
+    def test_a_scratch_file_a_write_holds_open_is_left_and_the_owner_told_to_try_again_later(self):
+        """Rule 3, no write of the photo under way: another process's write of it (the CLI's bake, a second library
+        holding the folder) holds its scratch file open, written this moment (on Windows a removal is then refused). The
+        write fails telling the owner to try again in five minutes, not to delete the file, and the file is as it was."""
+        with open(self.scratch, "wb") as writer:
+            writer.write(b"another write's, under way")
+            writer.flush()
+            held = os.stat(self.scratch)
             result = self.tag(self.photo)
-        self.assertFalse(result.ok)
-        self.assertIn("Temporary file already exists", str(result.errors[0][1]))
-        self.assertEqual((1, 2), (len(calls), self.files.writes - writes))
+            after = os.stat(self.scratch)
+        self.leaves_it(result)
+        why = str(result.errors[-1][1])
+        self.assertIn("try again after 5 minutes", why)
+        self.assertNotIn("delete that file", why)
+        self.assertEqual((held.st_mtime, held.st_size), (after.st_mtime, after.st_size))
+        with open(self.scratch, "rb") as handle:
+            self.assertEqual(b"another write's, under way", handle.read())
 
 
 if __name__ == "__main__":

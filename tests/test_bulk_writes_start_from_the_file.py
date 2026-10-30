@@ -115,6 +115,8 @@ class TestAWriteStoppedPartWay(unittest.TestCase):
         return [paths.key(p) for p in reply["written"]]
 
     def test_a_file_exiftool_refuses_stops_the_run_and_the_reply_names_the_photos_before_it(self):
+        """ExifTool refuses the second photo for the scratch file in its way, which stays: written this moment, it may be
+        another write's under way (file_changes._removed_scratch, rule 3; DECISIONS 2026-10-29)."""
         with open(self.second + "_exiftool_tmp", "wb") as handle:    # in the way of the second photo's write
             handle.write(b"left by another write")
         status, reply = self.lib.post("/api/photos/bulk-tags", {

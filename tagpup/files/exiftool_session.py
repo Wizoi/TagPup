@@ -109,6 +109,11 @@ TEMPORARY_IN_THE_WAY = "Temporary file already exists"
 TEMPORARY_SENTENCE = (". A file named as the photo with _exiftool_tmp after it, left beside it by a write that failed, "
                       "is in the way; the server's log names both. If the photo is there and opens, delete that file; "
                       "if the photo is gone, that file is its only copy: rename it back. Then try again.")
+#: What the owner is told instead when file_changes leaves the scratch file because it was written within the deadline of
+#: a command: it may be another write's of the photo, under way, and deleting it could lose that write (#2180).
+LATELY_SENTENCE = (". A file named as the photo with _exiftool_tmp after it, written in the last %d minutes, is in the "
+                   "way; another write of the photo may be under way. Leave it, and try again after %d minutes."
+                   % (DEFAULT_TIMEOUT // 60, DEFAULT_TIMEOUT // 60))
 
 
 def scratch_of(photo_path):
@@ -119,6 +124,13 @@ def scratch_of(photo_path):
 def scratch_in_the_way(error):
     """Did ExifTool refuse a write because the photo's scratch file is there already (TEMPORARY_IN_THE_WAY)?"""
     return isinstance(error, ExifToolFailed) and TEMPORARY_IN_THE_WAY in str(error)
+
+
+def written_lately(error):
+    """`error`, a refusal for a scratch file in the way (scratch_in_the_way), telling the owner to leave the file and try
+    again later (LATELY_SENTENCE) rather than what to do with a failed write's (TEMPORARY_SENTENCE)."""
+    error.args = (str(error).replace(TEMPORARY_SENTENCE, LATELY_SENTENCE),) + error.args[1:]
+    return error
 
 
 class ExifToolFailed(ExifToolExecuteError):

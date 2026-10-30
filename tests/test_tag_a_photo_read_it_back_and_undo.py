@@ -223,8 +223,9 @@ class TaggingAPhoto(ReadFilesCase):
 
     def test_a_write_exiftool_fails_after_deleting_the_original_leaves_its_temporary_file_alone(self):
         """#1410: ExifTool can fail after deleting the original ("Error renaming temporary file after deleting
-        original"), and then its temporary file is the photo's only copy: nothing here deletes it. Stood in for: the
-        one command of b's write does what that failure does."""
+        original"), and then its temporary file is the photo's only copy: nothing here deletes it. file_changes'
+        _removed_scratch is asked only when ExifTool refuses for a scratch file already there, and leaves one whose photo
+        is gone (rule 2, DECISIONS 2026-10-29). Stood in for: the one command of b's write does what that failure does."""
         a, b = self.make_read("a.jpg"), self.make_read("b.jpg")
         with open(b, "rb") as handle:
             held = handle.read()
