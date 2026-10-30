@@ -18,7 +18,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
-from tagpup import logs  # noqa: E402
+from tagpup import launcher, logs  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -620,6 +620,13 @@ class Logs(Base):
         self.assertEqual("Web server", by_name["tagpup_web.log"]["source"])
         self.assertEqual("Indexer (harbour, 09-26 08:00)", by_name[INDEXED]["source"])
         self.assertEqual(["tagpup_web.log.1"], [each["name"] for each in by_name["tagpup_web.log"]["rotated"]])
+
+    def test_the_installed_servers_start_up_output_is_said_in_words(self):
+        """What a server an install started printed before its own log (tagpup.launcher.STARTED_LOG) is a program's
+        own log, said in words, not by its file's name."""
+        self.write(launcher.STARTED_LOG, "Traceback (most recent call last):\nOSError: port 8080 is held\n")
+        (entry,) = [each for each in self.get("/api/activity/logs")["logs"] if each["name"] == launcher.STARTED_LOG]
+        self.assertEqual(("system", "Server start-up output (installed copy)"), (entry["group"], entry["source"]))
 
     def test_a_programs_own_logs_apart_from_the_runs_and_the_runs_by_library_and_kind(self):
         """The owner tells what a file is: a program's own log, or a run's, of which library and kind; and lists one
