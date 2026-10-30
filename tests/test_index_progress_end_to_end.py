@@ -1,18 +1,19 @@
 """The server's progress bar, end to end: the real `tagpup_cli.py index` in a process, read by
 tagpup.services.indexing.index_folder as the server reads it.
 
-The progress text is scraped from the CLI's stdout (summarize_indexer_line), and every
-test of the reader fed it a line a person had typed; a change to what the CLI prints (a tqdm
-version, a console line) would leave a bar stuck at 0% with all of them green. Here the CLI is
-run for three small generated photos in a home of its own, its models stood in for by a
+The progress is the CLI's facts, one a line on its stdout (tagpup.core.progress_line), and every
+test of the reader feeds it lines made by the builders the CLI uses; a change to what the CLI says
+would leave a bar stuck at 0% with all of them green. Here the CLI is run for three small generated photos in a home of its own, its models stood in for by a
 sitecustomize the child imports (the weights refuse under test; the protocol -- arguments,
 environment, exit code, stdout -- is the real one). The library is a new one, so on the new face model (SCRFD and
 AdaFace, validation.SCRFD_ADAFACE): the stand-in is that model's. FaceNet's stood in here until the new models became
 every library's baseline, and the refused load then failed each photo, logged, and the run said nothing was added.
 
 The index recorded photos, so the CLI matches the faces it made after it (the stand-in finds none), saying so on the
-line the server ends its message with (indexing.NEW_FACES; owner, DECISIONS 2026-10-23). Then the same folder is added
-again: nothing changed on disk, so the CLI reads no file, says the index is current, and says nothing of faces.
+fact whose sentence the server ends its message with (owner, DECISIONS 2026-10-23), and no fact's text and no log line
+reaches the bar. Then the same folder is added again: nothing changed on disk, so the CLI reads no file, says the index
+is current, and says nothing of faces. Run by hand, the same CLI prints no fact: the person's words, and each bake folder
+line once (#2169: the log's copy and the console's).
 
 Lifted: test_functional_cli (which built exiftool.ExifToolHelper and called sqlite3.connect itself, against the rules, and
 tested the same two runs): every photo is indexed, tagged or not (three untagged photos), and an index again reads nothing.
@@ -24,10 +25,10 @@ command line they passed Windows's 32,767 characters and the indexer never start
 Failed on the old code: `FileNotFoundError: [WinError 206]` from processes.start.
 
 The owner watches a sync's new folders being indexed and baked (#1915: a 3 h bake showed nothing but the indexer's last
-line, at 100%): the bake says each folder as it begins (bake_after_index.folder_said), and the Activity page's Now reads
+line, at 100%): the bake says each folder as it begins (bake_after_index.folder_told), and the Activity page's Now reads
 "Bake folder 2 of 3", the folder's path whole and the percent of the folders done, while the run is at its second folder.
-The indexer is a stand-in child that prints the real lines -- and a line cut short and one of no folders among them,
-passed over -- and holds at the second folder until the test lets it go. Failed on the old code: the line was cut at 90
+The indexer is a stand-in child that prints the real facts -- and a fact cut short and one of a kind no reader knows
+among them, passed over -- and holds at the second folder until the test lets it go. Failed on the old code: the line was cut at 90
 characters and the bar stayed where the last indexer bar left it.
 
 A folder of many photos is baked a chunk at a time, and the queue's `progressed` moves as each chunk ends, not only as the
@@ -54,6 +55,8 @@ from PIL import Image  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
+from tagpup.core import processes  # noqa: E402
+from tagpup.core import progress_line  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.services import bake_after_index, indexing, sync  # noqa: E402
@@ -115,6 +118,9 @@ class TheBarReachesTheEnd(unittest.TestCase):
         # Each bar the CLI draws is read as "label: N% (done/total)", at its own percent.
         self.assertIn(100, percents, heard)
         self.assertTrue(any(indexing.GENERATING_EMBEDDINGS + ": 100% (3/3)" == message for message, _p in heard), heard)
+        # Neither a fact's text nor a log line reaches the bar: the log is the run's file alone.
+        self.assertFalse([message for message, _p in heard
+                          if progress_line.PREFIX.strip() in message or "[INFO]" in message or "%|" in message], heard)
         self.assertEqual(100, result.details["percent"])
         self.assertEqual("Folder indexed. No new face is waiting for a name. Bake: 3 file(s) written, 0 already held it.",
                          result.details["message"])
@@ -206,6 +212,31 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertTrue(result.ok, result.errors)
         self.assertTrue(result.details["message"].startswith("3 photo(s) failed and were not indexed"),
                         result.details["message"])
+        self.assertEqual(3, result.details["failed_photos"])
+
+    def test_run_by_hand_it_prints_words_and_each_bake_folder_once(self):
+        """The owner runs `TagPup CLI.cmd` by hand: no fact reaches the console, the person's lines do, and each bake
+        folder's line is printed once (#2169: the log's copy and the console's, twice)."""
+        home = own_home.for_test(self, "index_by_hand_")
+        shim = os.path.join(home.root, "shim")
+        os.makedirs(shim)
+        with open(os.path.join(shim, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(SITECUSTOMIZE % {"root": ROOT})
+        folder = os.path.join(home.root, "Regatta")
+        os.makedirs(folder)
+        for name in ("one.jpg", "two.jpg", "three.jpg"):
+            Image.new("RGB", (64, 64), "navy").save(os.path.join(folder, name), "JPEG")
+        env = {name: value for name, value in os.environ.items() if name != progress_line.ASKED}
+        env.update(PYTHONPATH=shim, NO_COLOR="1", TERM="dumb", PYTHONIOENCODING="utf-8")
+        ran = processes.run([sys.executable, "tagpup_cli.py", "--db", home.library("harbour.db"), "index", folder],
+                            cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=300)
+        self.assertEqual(0, ran.returncode, ran.stdout + ran.stderr)
+        printed = ran.stdout.splitlines()
+        self.assertFalse([line for line in printed if progress_line.PREFIX.strip() in line], ran.stdout)
+        self.assertEqual(1, len([line for line in printed if bake_after_index.FOLDER_SAID + "1 of 1" in line]), ran.stdout)
+        self.assertIn(indexing.NEW_FACES + "No new face is waiting for a name.", printed)
+        self.assertIn("Bake: 3 file(s) written, 0 already held it.", printed)
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
@@ -257,8 +288,8 @@ class TheOwnerWatchesALargeFolderBaked(unittest.TestCase):
                          if (message or "").startswith(bake_after_index.FOLDER_SAID + "1 of 1")]
         self.assertEqual(3, len({progressed for _m, _p, progressed in in_the_folder}), ("progressed moved within the folder",
                                                                                          heard))
-        self.assertEqual([None, 2, 4], [bake_after_index.folder_heard(message)["files_done"]
-                                        for message, _p, _at in in_the_folder], heard)
+        self.assertEqual([False, True, True], [", %d of 5 of its files reached: " % (2 * n) in message
+                                               for n, (message, _p, _at) in enumerate(in_the_folder)], heard)
         self.assertEqual([0, 40, 80], [percent for _m, percent, _at in in_the_folder])
         self.assertEqual([(2, 5), (4, 5)], [(counts["files_done"], counts["files"]) for phase, counts in told
                                             if phase == "bake" and "files_done" in counts])
@@ -337,23 +368,24 @@ class ASyncOfManyFolders(unittest.TestCase):
 STUB_CLI = '''
 import os, sys, time
 sys.path.insert(0, %(root)r)
+from tagpup.core import progress_line
 from tagpup.services import bake_after_index, indexing
 args = sys.argv[1:]
 with open(args[args.index("--folders-file") + 1], encoding="utf-8") as handle:
     folders = handle.read().splitlines()
-print(indexing.READING_METADATA + ": 100%%|##########| 3/3 [00:00<00:00, 9.00it/s]", flush=True)
-print("Bake folder 2 of", flush=True)
-print("Bake folder 1 of 0, 0 written, 0 current, 0 conflicts: nowhere", flush=True)
+print(progress_line.say(indexing.phase_fact("metadata", 3, 3)), flush=True)
+print(progress_line.say(bake_after_index.folder_told(2, 3, bake_after_index.Baked(), "nowhere"))[:40], flush=True)
+print(progress_line.PREFIX + '{"kind":"dance","sentence":"Bake folder 1 of 0"}', flush=True)
 baked = bake_after_index.Baked()
 for number, folder in enumerate(folders, 1):
-    print(bake_after_index.folder_said(number, len(folders), baked, folder), flush=True)
+    print(progress_line.say(bake_after_index.folder_told(number, len(folders), baked, folder)), flush=True)
     if number == 2:
         release = os.path.join(os.path.dirname(os.path.abspath(__file__)), "RELEASE")
         deadline = time.time() + 60
         while not os.path.exists(release) and time.time() < deadline:
             time.sleep(0.05)
     baked.written += 1
-print(baked.said(), flush=True)
+print(progress_line.say(baked.fact()), flush=True)
 '''
 
 
@@ -416,9 +448,9 @@ class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
         open(os.path.join(stub, "RELEASE"), "w").close()
         queue.wait()
         self.assertEqual("completed", queue.status(folders[0])["status"])
-        # The line cut short and the line of no folders were passed over; nothing raised.
-        self.assertFalse([message for message, _p in heard if message and message.startswith("Bake folder")
-                          and bake_after_index.folder_heard(message) is None], heard)
+        # The fact cut short and the one of no kind a reader knows were passed over; nothing raised.
+        self.assertFalse([message for message, _p in heard if progress_line.PREFIX.strip() in message
+                          or "1 of 0" in message], heard)
         self.assertEqual([0, 33, 66], [percent for message, percent in heard if message.startswith("Bake folder")])
 
 

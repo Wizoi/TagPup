@@ -278,6 +278,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
             later = os.stat(a).st_mtime + 5
             os.utime(a, (later, later))
             ran.append(bake_folders(*args, **kwargs))
+            return ran[-1]
         with mock.patch.object(bake_after_index, "bake_folders", after_a_change):
             self.index()
         (baked,) = ran
@@ -297,7 +298,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
 
         said = []
         with mock.patch.object(batches, "MAX_BATCH", 1):
-            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {}, told=said.append)
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {})
+        said.append(baked.said())
         self.assertEqual((0, {"Select up to 1 photos at a time (2 were named)": 2}),
                          (baked.written, {why.rstrip("."): n for why, n in baked.refused.items()}))
         self.assertIn("2 folder(s) refused: Select up to 1 photos at a time (2 were named)", said[0])
@@ -310,7 +312,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
             return real_planned(library, et, detector, folder, *args)
         with mock.patch.object(file_changes.roots_service, "pinned", side_effect=roots_service.RootsChanged("moved")), \
                 mock.patch.object(bake_after_index, "_planned", side_effect=planning):
-            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {}, told=said.append)
+            baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder, quay], {})
+        said.append(baked.said())
         self.assertEqual([self.folder], planned, "the run went on after the roots changed")
         self.assertTrue(baked.roots_changed)
         self.assertIn("1 folder(s) refused: %s" % bake_after_index.ROOTS_CHANGED, said[1])
@@ -337,8 +340,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
         photos = [self.picture("heat %d.jpg" % number, (40 * number, 90, 160)) for number in range(5)]
         with mock.patch.object(bake_after_index, "bake_folders"):
             self.index()
-        heard = lambda lines: [(found.get("files_done"), found.get("files"))
-                               for found in map(bake_after_index.folder_heard, lines) if found is not None]
+        heard = lambda facts: [(found.get("files_done"), found.get("files")) for found in facts]
         real = field_values.read_one
 
         def read_one(et, path, *args, **kwargs):
@@ -351,7 +353,7 @@ class TheIndexWritesTheBake(unittest.TestCase):
             baked = bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {}, each=lines.append)
         self.assertTrue(baked.stalled)
         self.assertEqual([(None, None), (2, 5)], heard(lines), "no line after the share stopped answering")
-        self.assertIn(", 2 of 5 of its files reached: ", lines[1])
+        self.assertIn(", 2 of 5 of its files reached: ", lines[1]["sentence"])
         self.assertEqual(3, baked.written, baked)
         for path in photos[:3]:
             self.assertBaked(path, 0)

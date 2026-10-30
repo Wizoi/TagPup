@@ -33,6 +33,7 @@ from PIL import Image  # noqa: E402
 from tagpup import logs  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import processes  # noqa: E402
+from tagpup.core import progress_line  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
@@ -75,15 +76,21 @@ sys.exit(plan.get("exit", 0))
 
 
 def bars(photos):
-    return [indexing.READING_METADATA + ": 100%%|##########| %d/%d [00:01<00:00]" % (photos, photos),
-            indexing.GENERATING_EMBEDDINGS + ": 100%%|##########| %d/%d [00:02<00:00]" % (photos, photos),
-            indexing.MATCHING, indexing.NEW_FACES + "No new face is waiting for a name."]
+    """The facts an index of `photos` says before its bake, made as the CLI makes them."""
+    return [progress_line.say(fact) for fact in (
+        indexing.phase_fact("metadata", photos, photos), indexing.phase_fact("embeddings", photos, photos),
+        indexing.phase_fact("faces"), progress_line.fact("new_faces", sentence="No new face is waiting for a name."))]
 
 
 def bake(folders, of=None):
     of = of or len(folders)
-    return [bake_after_index.folder_said(number, of, bake_after_index.Baked(written=number - 1), each)
+    return [progress_line.say(bake_after_index.folder_told(number, of, bake_after_index.Baked(written=number - 1), each))
             for number, each in enumerate(folders, 1)]
+
+
+def baked(**counts):
+    """The fact of what a bake wrote, as the CLI says it."""
+    return progress_line.say(bake_after_index.Baked(**counts).fact())
 
 
 def rows(db_path, sql, params=()):
@@ -190,8 +197,7 @@ class _Indexing(unittest.TestCase):
 class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
     def test_the_daily_sync_s_index_is_its_child_says_how_far_it_got_and_ends_with_its_counts_and_message(self):
         folders = [self.folder("Regatta"), self.folder("Lighthouse")]
-        code = self.code(bars(3) + bake(folders) + [
-            bake_after_index.Baked(written=3, conflicts=1).said()])
+        code = self.code(bars(3) + bake(folders) + [baked(written=3, conflicts=1)])
         queue = indexing_jobs.queue_for(self.library)
         index = self.index_with(self.library, code)
         synced = recurring.run_claimed(recurring.JOBS.get(recurring.SYNC), self.library, self.library.name,
@@ -375,7 +381,7 @@ class AnIndexWhoseRowCannotBeWrittenRunsAsItWould(_Indexing):
         folders = [self.folder("Quay %d" % number) for number in range(5)]
         heard = os.path.join(self.home.root, "HEARD")
         code = self.code(bars(5) + ["HOLD"] + bake(folders) + ["WAIT " + heard, "LET_GO",
-                                                               bake_after_index.Baked(written=4).said()])
+                                                               baked(written=4)])
 
         def report(message, percent):
             # The last bake line has been told (job_runs.tell runs before the report): the bake may let go.
