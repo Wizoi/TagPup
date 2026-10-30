@@ -41,6 +41,11 @@ class PerLibrary:
         with self._lock:
             return list(self._held)
 
+    def values(self):
+        """Every library's value held now."""
+        with self._lock:
+            return list(self._held.values())
+
     def held(self, library_key):
         """The value kept for the library with that key, or None; makes nothing."""
         with self._lock:
