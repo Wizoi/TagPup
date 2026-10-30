@@ -337,8 +337,9 @@ def _write_end(library, job, run_id, when, counts, failed, note, within=None):
         _keep(library, job, run_id, when, counts, failed, note)
         logger.info("The end of run %d of %s in %s waits for the library, which is being written: written once it is"
                     " free.", run_id, job, library.name)
-        # Not a daemon: a CLI run ending meanwhile writes it before the process ends.
-        threading.Thread(target=_write_ends_kept, args=(library, job), name="RunEnd").start()
+        # Not a daemon, so a CLI's run ending meanwhile writes it before the process ends; said, because a thread takes
+        # its flag from the thread that makes it, here the index queue's worker, a daemon (#2200).
+        threading.Thread(target=_write_ends_kept, args=(library, job), name="RunEnd", daemon=False).start()
         return
     if not ended:
         logger.info("Run %d of %s in %s was no longer this process's to end.", run_id, job, library.name)

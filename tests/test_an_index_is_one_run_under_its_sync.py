@@ -156,11 +156,14 @@ class _Indexing(unittest.TestCase):
 
     def indexing_in_another_process(self):
         """Another process -- the server, a CLI's sync -- whose daily sync has queued an index of the library, which
-        hangs once it has begun: the process, its index under way."""
-        ready = os.path.join(self.home.root, "READY")
+        hangs once it has begun until SERVER_GO is made in the home: the process, its index under way. It makes
+        SERVER_ENDED once its queue is done, and then ends."""
+        ready = os.path.join(self.home.root, "SERVER_READY")
         script = os.path.join(self.home.root, "server.py")
         with open(script, "w", encoding="utf-8") as handle:
             handle.write(SERVER % {"root": ROOT, "library": self.library.path, "ready": ready,
+                                   "go": os.path.join(self.home.root, "SERVER_GO"),
+                                   "ended": os.path.join(self.home.root, "SERVER_ENDED"),
                                    "folder": self.folder("Regatta")})
         server = processes.start([sys.executable, script], cwd=self.home.root)
         try:
@@ -515,6 +518,32 @@ class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
                          first.changed)
         self.assertEqual([], roots_location._running_here(self.library))
 
+    def test_a_cli_index_ending_while_another_process_writes_is_ended_before_its_process_ends(self):
+        """#2200: the thread that waits out the other's write took its daemon flag from the queue's worker, a daemon, so a
+        CLI's sync ending meanwhile ended with the index's row still running, swept abandoned by the next start with its
+        counts lost."""
+        cli = self.indexing_in_another_process()
+        self.addCleanup(lambda: cli.poll() is None and processes.kill_tree(cli.pid))
+        release = self.another_writer()
+        open(os.path.join(self.home.root, "SERVER_GO"), "w").close()
+        ended = os.path.join(self.home.root, "SERVER_ENDED")
+        deadline = time.monotonic() + 60
+        while not os.path.exists(ended):
+            self.assertLess(time.monotonic(), deadline, "the CLI's queue never ended")
+            time.sleep(0.05)
+        # Its queue is done and its last line run: a process with nothing left to wait for is gone within a few
+        # seconds. The other process still writes, longer than an end is tried for (RECORD_WITHIN).
+        gone_by = time.monotonic() + 3 + job_runs.RECORD_WITHIN
+        while cli.poll() is None and time.monotonic() < gone_by:
+            time.sleep(0.05)
+        alive = cli.poll() is None
+        open(release, "w").close()
+        cli.wait(60)
+        run = self.index_run()
+        self.assertEqual((job_runs.DONE, 1, 1), (run.outcome, run.changed.get("attempted"), run.changed.get("changed")),
+                         run.changed)
+        self.assertTrue(alive, "the CLI ended while its index's end waited for the library")
+
 
 class TwoProcessesIndexingOneLibrary(_Indexing):
     def test_the_server_and_a_cli_sync_each_record_their_index_and_a_root_move_waits_for_both(self):
@@ -634,22 +663,27 @@ class TheDailySyncSaysHowFarItsWalkGot(_Indexing):
         progress.assert_not_called()
 
 
-#: The server, as far as a killed index goes: the daily sync queues an index, which hangs once it has begun.
+#: The server or a CLI's sync, as far as its index goes: the daily sync queues an index, which hangs once it has begun
+#: until GO is made, then has indexed its folders; ENDED is made once the queue is done, and the process ends.
 SERVER = '''
 import os, sys, time
 sys.path.insert(0, %(root)r)
 from tagpup.core.library import Library
+from tagpup.core.result import Result
 from tagpup.jobs import indexing, recurring
 library = Library(%(library)r)
 queue = indexing.queue_for(library)
 
 def index(folders, report):
     open(%(ready)r, "w").close()
-    time.sleep(600)
+    while not os.path.exists(%(go)r):
+        time.sleep(0.02)
+    return Result(attempted=len(folders), changed=len(folders))
 
 recurring.run_claimed(recurring.JOBS.get(recurring.SYNC), library, library.name,
                       lambda now: queue.start([%(folder)r], index, together=True))
 queue.wait()
+open(%(ended)r, "w").close()
 '''
 
 
