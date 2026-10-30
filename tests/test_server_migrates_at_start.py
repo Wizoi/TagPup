@@ -82,8 +82,11 @@ class TheServerMigratesAtStart(unittest.TestCase):
         self.assertTrue(any("database is locked" in line for line in said.output), said.output)
 
     def test_main_starts_it_with_the_libraries_it_serves_before_serving(self):
+        # The ports are not bound: ports 1 and 2 bound for real were every run's, and a second process running this
+        # at once found them held and exited PORTS_TAKEN (docs/findings.md, #2217).
         order = []
         with mock.patch.dict(os.environ, {"TAGPUP_WEB_NO_WARMUP": "1"}), \
+                mock.patch.object(tagpup_web.web, "bind_all", side_effect=lambda ports, listen: []), \
                 mock.patch.object(tagpup_web.logs, "to_file", return_value="(no log file)"), \
                 mock.patch.object(library_actions, "bring_up_to_date_in_background",
                                   side_effect=lambda libraries: order.append(("bring", [lib.path for lib in libraries]))), \

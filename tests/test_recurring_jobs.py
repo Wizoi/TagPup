@@ -394,7 +394,9 @@ class TheWebServersThread(Base):
     def test_the_launcher_starts_none_under_test_and_stops_it_after_serving(self):
         import tagpup_web
         order = []
+        # Not bound: ports bound for real are every process's, and one running this beside it finds them held (#2217).
         with mock.patch.dict(os.environ, {"TAGPUP_WEB_NO_WARMUP": "1"}), \
+                mock.patch.object(tagpup_web.web, "bind_all", side_effect=lambda ports, listen: []), \
                 mock.patch.object(tagpup_web.web, "serve", side_effect=lambda *a, **k: order.append("serve")), \
                 mock.patch.object(tagpup_web.logs, "to_file", return_value="(no log file)"), \
                 mock.patch.object(recurring.Runner, "start", side_effect=lambda *a, **k: order.append("start")), \

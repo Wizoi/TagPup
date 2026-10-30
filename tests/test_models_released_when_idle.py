@@ -267,7 +267,10 @@ class TheWebServerRunsIt(unittest.TestCase):
     def setUp(self):
         own_home.for_test(self, prefix="web_background_")
         for patch in (mock.patch.dict(os.environ, {"TAGPUP_WEB_NO_WARMUP": "1", "TAGPUP_WEB_RELOADED": "1"}),
-                      mock.patch.object(tagpup_web.logs, "to_file", return_value="(no log file)")):
+                      mock.patch.object(tagpup_web.logs, "to_file", return_value="(no log file)"),
+                      # Not bound: ports bound for real are every process's, and one running this beside it
+                      # finds them held (docs/findings.md, #2217).
+                      mock.patch.object(tagpup_web.web, "bind_all", side_effect=lambda ports, listen: [])):
             patch.start()
             self.addCleanup(patch.stop)
         self.args = ["--tagpup-port", "1", "--tuner-port", "2"]
