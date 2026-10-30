@@ -375,14 +375,14 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
     if len(photo_paths) > batches.CHUNK and batches.current() is None:
         raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
     since = _removed_so_far()
-    if et is None:
-        # Dead for good after a command timed out: a share that went away costs its deadline once, not once a file.
-        with field_values.session(exiftool_path) as session:
-            result = _write_fields(exiftool_session.StaysDead(session), library, operation, exiftool_path, photo_paths, read,
-                                   plan_one, summary, unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
-    else:
-        result = _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                               unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
+    with contextlib.ExitStack() as own:
+        if et is None:
+            et = own.enter_context(field_values.session(exiftool_path))
+        # Dead for good after a command timed out, a caller's session (a save's) for this write too: a share that went away
+        # costs its deadline once, not once a file, nor again for the read that settles the file whose write timed out
+        # (_after_failure, #1927). The caller's session itself is untouched: its next command starts ExifTool again.
+        result = _write_fields(exiftool_session.StaysDead(et), library, operation, exiftool_path, photo_paths, read,
+                               plan_one, summary, unreadable, stop_at_first_error, held, whole, on_planned, alongside, on_chunk)
     return _said_removed(result, since)
 
 
@@ -558,8 +558,8 @@ def _share_stopped(library, internal, change_id, result, stopped, stalled):
     """A forward write ExifTool stopped answering for part-way at the file of `stalled` (_Stalled), ended as a Ctrl+C ends
     one (_settle_stopped): the files not reached are taken out, the change is applied with what was written, and the write
     is refused saying so. The file whose write was under way, if it was, cannot be read now: it stays `writing`, the change
-    unfinished, for the next settle to decide by what it holds (as a crash leaves it); it is not read again, which would
-    wait another deadline in a session not kept dead (a caller's, as a save's). What stopped answering is ExifTool: a share
+    unfinished, for the next settle to decide by what it holds (as a crash leaves it); it is not read again: the write's
+    session is dead (StaysDead) and would only say so. What stopped answering is ExifTool: a share
     gone away, a drive that stopped, or ExifTool itself exiting (exiftool_session); the sentences say no more than that."""
     _settle_stopped(library, change_id)
     left = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "writing")

@@ -261,23 +261,27 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
         self.assertEqual((None, k), (undone.refused, undone.changed))
 
-    def test_a_save_whose_write_the_share_stops_says_so(self):
-        """A save reports a write's errors, not its refusal: the photo under way is its error. Its session is its own, not
-        kept dead, so the share stays away for the read after the write too."""
-        away = []
+    def test_a_save_whose_write_the_share_stops_says_so_after_one_deadline(self):
+        """A save reports a write's errors, not its refusal: the photo under way is its error. The save passes its own
+        session, kept dead for the write all the same: the read that settles the file after its write timed out answers at
+        once, and the owner waits one deadline (five minutes on a share), not two. Break: the caller's session not
+        wrapped in StaysDead (the trunk before #1927: the read after the write waited a second deadline)."""
+        waited = []
 
         def write(_path, _n):
-            away.append(True)
+            waited.append("write")
             raise exiftool_session.ExifToolTimeout(STALLED)
 
         def read(_path, _n):
-            if away:
+            if waited:
+                waited.append("read")
                 raise exiftool_session.ExifToolTimeout(STALLED)
         self.files.on_write, self.files.on_read = write, read
         path = self.path(self.ids[0])
         saved = tagging.save_photo(self.library, path, "", ["Trips/Coast"], None, "exiftool", "")
         self.assertFalse(saved.ok)
         self.assertIn("ExifTool stopped answering as it was written", str(saved.errors[0][1]))
+        self.assertEqual(["write"], waited, "the commands that waited out a deadline")
         self.assertEqual([("writing", 1)], self.change_files())
 
     def test_the_photo_a_stall_came_before_the_write_of_is_said_not_begun(self):
