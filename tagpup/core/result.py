@@ -34,7 +34,7 @@ class Result:
     #: set, say. A web route answers it with 400, where an error is a 500.
     refused: Optional[str] = None
     #: What kind of refusal it is (REFUSED, SHARE_AWAY, CHANGED_ON_DISK), which the web route's status is read from
-    #: (tagpup.web.responses.STATUS). A Result that hands up another's refusal hands up its kind with it.
+    #: (tagpup.web.responses.STATUS). A step that hands up a refusal whose source can refuse with a kind (shares.folder_refusal, tagging.save_photo) hands the kind up with it; the others' sources only refuse as REFUSED.
     refused_kind: str = REFUSED
     #: Anything else the caller needs back, by name.
     details: Dict[str, Any] = field(default_factory=dict)
