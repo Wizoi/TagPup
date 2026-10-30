@@ -1199,6 +1199,24 @@ describe("Logs", () => {
     assert.doesNotMatch(fake.urls().at(-1), /run=/);
   });
 
+  test("a log with no line to show says so: of the run asked for, or under the filters", async (t) => {
+    // #2299: a roots move or a CLI's sync whose log holds none of its lines answers with "No line of this run's
+    // matches."; a log the filters leave empty with "No lines match.". Each in its own situation, back again when the
+    // run is let go.
+    const fake = server("morning", { first: [["/api/activity/logs/", records([])]] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 8);
+    const said = () => document.getElementById("log-records").textContent;
+    assert.equal(said(), "No lines match.");
+    click(window, document.querySelector(`#timeline-body button.run-logs[data-run="${INDEX_RUN}"][data-log="${INDEX_LOG}"]`));
+    await flush(window, 6);
+    assert.ok(fake.urls().some((url) => url.startsWith(`/api/activity/logs/${INDEX_LOG}?`) && url.includes("run=")));
+    assert.equal(said(), "No line of this run's matches.");
+    click(window, document.getElementById("log-run-clear"));
+    await flush(window, 6);
+    assert.equal(said(), "No lines match.");
+  });
+
   test("a run's log is the one the server names, never one the page spells", async (t) => {
     // The indexer's log is named from the run's tag, where a library called "Harbour Photos"
     // is Harbour_Photos (tagpup.logs.run_log); a page spelling it from the library's name
