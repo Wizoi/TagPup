@@ -172,8 +172,9 @@ def write(et, photo_path, values):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
     field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
     with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
-    when ExifTool fails. Nothing beside the photo is deleted, a temporary file ExifTool left included: one ExifTool
-    fails after deleting the original is the photo's only copy (#1410).
+    when ExifTool fails. Nothing beside the photo is deleted here: the scratch file an interrupted write left is removed
+    only by file_changes, by the owner's rules (#2180); one ExifTool fails after deleting the original is the photo's
+    only copy (#1410).
 
     A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
     (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,

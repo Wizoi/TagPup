@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -295,6 +296,139 @@ class AShareThatStopsAnsweringMidWrite(T.Bulk):
         self.assertEqual([], self.change_files())
         self.assertEqual(["failed"], [status for _id, _op, status in self.changes("bulk tags%")])
         self.assertEqual(0, self.coast())
+
+
+def aged(path, minutes):
+    """`path` last written `minutes` ago."""
+    when = time.time() - minutes * 60
+    os.utime(path, (when, when))
+    return path
+
+
+class AScratchFileAnInterruptedWriteLeft(T.Bulk):
+    """#2180: a share that dropped mid-write left ExifTool's scratch file beside the photo (part written), and every later
+    write of the photo failed "Temporary file already exists" until it was deleted by hand. The next write of the photo
+    removes it, by the owner's four rules (DECISIONS 2026-10-29), and tries once more; any other scratch file stays. Break:
+    _carry not calling _removed_scratch (the trunk before #2180: the first, second and fourth tests fail); the scratch file
+    of a write that may be under way told as one to delete (the trunk before the Files review: the fifth fails)."""
+
+    def setUp(self):
+        super().setUp()
+        self.photo, self.other = aged(self.path(self.ids[0]), 60), aged(self.path(self.ids[1]), 60)
+        self.scratch = exiftool_session.scratch_of(self.photo)
+
+    def interrupt(self, times=1):
+        """The share drops in each of the next `times` writes of the photo: ExifTool leaves its scratch file, part written."""
+        dropped = []
+
+        def write(path, _n):
+            if paths.key(path) == paths.key(self.photo) and len(dropped) < times:
+                dropped.append(path)
+                with open(exiftool_session.scratch_of(path), "wb") as handle:
+                    handle.write(b"part of a photo")
+                raise exiftool_session.ExifToolTimeout(STALLED)
+        self.files.on_write = write
+
+    def tag(self, *photos):
+        return tagging.change_tags(self.library, list(photos), ["Trips/Coast"], [], "exiftool", stop_at_first_error=False)
+
+    def test_the_share_back_the_next_write_removes_the_scratch_file_and_writes_the_photo(self):
+        self.interrupt()
+        self.assertFalse(self.tag(self.photo).ok)
+        self.assertTrue(os.path.exists(self.scratch))
+        aged(self.scratch, 10)      # the share is back, minutes later
+        with self.assertLogs(file_changes.logger, "WARNING") as logged:
+            again = self.tag(self.photo)
+        self.assertTrue(again.ok, again.errors)
+        self.assertEqual(1, again.details.get("scratch_removed"))
+        self.assertFalse(os.path.exists(self.scratch))
+        self.assertIn("Trips/Coast", self.tags(self.ids[0]))
+        self.assertTrue(any(self.scratch in line and "15 bytes" in line for line in logged.output), logged.output)
+        self.assertEqual([("done", 1)], self.vl.rows("SELECT state, COUNT(*) FROM change_files GROUP BY state"))
+
+    def test_only_the_scratch_file_of_the_photo_written_is_removed(self):
+        open(self.scratch, "wb").close()
+        mine = aged(self.scratch, 10)
+        theirs = exiftool_session.scratch_of(self.other)
+        with open(theirs, "wb") as handle:
+            handle.write(b"another photo's")
+        aged(theirs, 10)
+        result = self.tag(self.photo)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual((False, True), (os.path.exists(mine), os.path.exists(theirs)))
+
+    def leaves_it(self, result):
+        self.assertFalse(result.ok)
+        self.assertIn("Temporary file already exists", str(result.errors[-1][1]))
+        self.assertTrue(os.path.exists(self.scratch), "the scratch file was removed")
+        self.assertNotIn("scratch_removed", result.details)
+
+    def test_a_scratch_file_is_left_when_the_photo_changed_since_or_a_write_may_be_under_way_or_the_share_is_away(self):
+        self.interrupt()
+        self.tag(self.photo)
+        aged(self.scratch, 10)
+        aged(self.photo, 5)     # another program wrote the photo since
+        self.leaves_it(self.tag(self.photo))
+        aged(self.photo, 60)
+        aged(self.scratch, 0)   # two writers: another process's write of it is under way
+        self.leaves_it(self.tag(self.photo))
+        aged(self.scratch, 10)
+        real = shares.stamp_of
+        with mock.patch.object(shares, "stamp_of",
+                               lambda path: shares.UNANSWERED if paths.key(path) == paths.key(self.scratch) else real(path)):
+            self.leaves_it(self.tag(self.photo))
+
+    def test_a_write_interrupted_twice_is_written_the_third_time(self):
+        self.interrupt(times=2)
+        self.tag(self.photo)
+        aged(self.scratch, 10)
+        second = self.tag(self.photo)        # removes the first scratch file, and the share drops again
+        self.assertFalse(second.ok)
+        self.assertEqual(1, second.details.get("scratch_removed"))
+        aged(self.scratch, 10)
+        third = self.tag(self.photo)
+        self.assertTrue(third.ok, third.errors)
+        self.assertEqual(1, third.details.get("scratch_removed"))
+        self.assertFalse(os.path.exists(self.scratch))
+        self.assertIn("Trips/Coast", self.tags(self.ids[0]))
+
+    def test_a_scratch_file_written_this_moment_is_left_and_the_owner_told_to_try_again_later(self):
+        """Rule 3 (not the removal failing): the scratch file was written this moment, no handle on it, so it may be
+        another write's under way (the CLI's bake, a second library holding the folder). The write fails telling the
+        owner to try again in five minutes, not to delete the file, and the file is as it was."""
+        with open(self.scratch, "wb") as writer:
+            writer.write(b"another write's, under way")
+        held = os.stat(self.scratch)
+        result = self.tag(self.photo)
+        after = os.stat(self.scratch)
+        self.leaves_it(result)
+        why = str(result.errors[-1][1])
+        self.assertIn("try again after 5 minutes", why)
+        self.assertNotIn("delete that file", why)
+        self.assertEqual((held.st_mtime, held.st_size), (after.st_mtime, after.st_size))
+        with open(self.scratch, "rb") as handle:
+            self.assertEqual(b"another write's, under way", handle.read())
+
+    @unittest.skipUnless(os.name == "nt", "a file open for writing is refused its removal only on Windows")
+    def test_a_stale_scratch_file_the_share_will_not_let_go_of_is_left_and_the_owner_told_to_delete_it(self):
+        """The removal itself failing: the scratch file is old enough to be removed (rule 3 passes) but a program holds
+        it open, so the share refuses the removal. The write fails, the file stays with its bytes, and the owner is told
+        what to do with a scratch file left (delete it), not to wait: nothing is writing it."""
+        with open(self.scratch, "wb") as holder:
+            holder.write(b"held by a program")
+            holder.flush()
+            aged(self.scratch, 10)
+            result = self.tag(self.photo)
+        self.assertFalse(result.ok)
+        self.assertTrue(os.path.exists(self.scratch), "the scratch file was removed")
+        self.assertNotIn("scratch_removed", result.details)
+        why = str(result.errors[-1][1])
+        self.assertIn("Temporary file already exists", why)
+        self.assertIn("delete that file", why)
+        self.assertNotIn("try again after", why)
+        with open(self.scratch, "rb") as handle:
+            self.assertEqual(b"held by a program", handle.read())
+        self.assertNotIn("Trips/Coast", self.tags(self.ids[0]))
 
 
 if __name__ == "__main__":

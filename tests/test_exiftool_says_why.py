@@ -8,15 +8,19 @@ carries ExifTool's first lines, each photo named "<file>" (a file's name can hol
 caption, and so a name); the log has all of it.
 
 Real ExifTool: a file named as ExifTool names its temporary file, in the way of the
-write, is what makes it refuse.
+write, is what makes it refuse. AFailedWrite's is written as each test begins: it may be another
+write's under way, and stays (file_changes._removed_scratch, rule 3; DECISIONS 2026-10-29), the
+owner told to try again later; one an interrupted write left long ago is removed and the photo
+written (#2180).
 """
 import logging
 import os
+import time
 import unittest
 from unittest import mock
 
 from tests.handler_harness import Library
-from tests.test_bulk_writes_start_from_the_file import make_photo
+from tests.test_bulk_writes_start_from_the_file import make_photo, tags_in
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
 from exiftool.exceptions import ExifToolExecuteError
@@ -55,12 +59,26 @@ class AFailedWrite(unittest.TestCase):
         # The log has all of it, the photo named.
         self.assertTrue(any("Rowan at the quay.jpg_exiftool_tmp" in line for line in logged.output), logged.output)
 
+    def test_a_scratch_file_an_interrupted_write_left_long_ago_is_removed_and_the_photo_written(self):
+        """The live case (#2180): a share that dropped mid-write left it days before, beside the photo as it was."""
+        long_ago = time.time() - 3 * 86400
+        os.utime(self.photo, (long_ago, long_ago))
+        os.utime(self.photo + "_exiftool_tmp", (long_ago + 60, long_ago + 60))
+        status, reply = self.lib.post("/api/photos/bulk-tags", {
+            "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
+        self.assertEqual(200, status, reply)
+        self.assertFalse(os.path.exists(self.photo + "_exiftool_tmp"))
+        self.assertIn("Sunset", tags_in(self.photo))
+
     def test_the_bulk_write_route_says_it(self):
         status, reply = self.lib.post("/api/photos/bulk-tags", {
             "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
         self.assertEqual(500, status, reply)
         self.assertIn("Temporary file already exists", reply["error"])
         self.assertNotIn("non-zero exit status", reply["error"])
+        # Written this moment, it may be another write's under way: not one to delete (rule 3).
+        self.assertIn("try again after 5 minutes", reply["error"])
+        self.assertNotIn("delete that file", reply["error"])
 
 
 @requires_exiftool

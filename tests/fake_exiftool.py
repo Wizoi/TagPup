@@ -8,14 +8,18 @@ tagpup.files.exiftool_session.ExifToolSession, and a test reaches into the middl
   and the write's;
 * `on_write(path, n)`: called before the n-th write of any file (a test pauses a job here: set an event, wait for another);
 * `unreadable`, `fails`: the keys (tagpup.core.paths.key) of paths ExifTool answers as not a photo, and whose write it refuses;
+* a write of a photo whose scratch file (exiftool_session.scratch_of) is on disk is refused as ExifTool refuses it, before
+  `on_write` is called;
 
 A file is also a real one on disk when the test made it so (tests/view_library.py make_jpeg), which the lock-free parts of a write
 (the stat, the tail check, the Recycle Bin) look at.
 """
+import os
 import threading
 from unittest import mock
 
 from tagpup.core import fields, paths
+from tagpup.files import exiftool_session
 
 
 def standing_in(testcase):
@@ -107,12 +111,20 @@ class Files:
             rows.append(row)
         return rows
 
+    @staticmethod
+    def refuse_in_the_way(path):
+        """What ExifTool answers a write of a photo whose scratch file is there (exiftool.pl, 13.59)."""
+        scratch = exiftool_session.scratch_of(path)
+        if os.path.exists(scratch):
+            raise exiftool_session.ExifToolFailed(1, "", "Error: Temporary file already exists: %s\n" % scratch, [path])
+
     def set_tags(self, photo_paths, tags=None, params=None):
         for path in photo_paths:
             key = paths.key(path)
             with self.lock:
                 self.writes += 1
                 n = self.writes
+            self.refuse_in_the_way(path)
             if self.on_write is not None:
                 self.on_write(path, n)
             if key in self.fails:
@@ -128,6 +140,7 @@ class Files:
                 held[fields.read_key(answered_as.get(field, field))] = value
 
     def execute(self, *args):
+        self.refuse_in_the_way(args[-1])
         held = self.fields.setdefault(paths.key(args[-1]), {})
         for field in args:
             if field.startswith("-") and field.endswith("="):
