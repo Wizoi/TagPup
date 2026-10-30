@@ -177,15 +177,21 @@ def _now():
     return dates.recorded()
 
 
+def _native(value, roots):
+    """A path change_files holds, as this machine spells it: the row form or, recorded before the library's roots were
+    adopted, the native path, either read by the first place of its root -- a change recorded before the adoption holds
+    the path as it was then (the place the library lived at); after a move an undo must write where writes go now. The
+    one reading of a journaled path (_row, follow_renamed)."""
+    return paths.canonical(paths.from_row(value, roots), roots)
+
+
 def _row(found, roots):
     """A FileRow of a change_files row, its paths as this machine spells them. A change
     recorded before the library's roots were adopted holds native paths, and one recorded
     after holds the row form: either reads as the native path (paths.from_row)."""
     file_id, change_id, photo_id, path, new_path, before, after, state, note, stamp = found
-    # By the first place of its root: a change recorded before the adoption holds the path as it was then
-    # (the place the library lived at); after a move an undo must write where writes go now.
-    path = paths.canonical(paths.from_row(path, roots), roots)
-    new_path = paths.canonical(paths.from_row(new_path, roots), roots) if new_path else new_path
+    path = _native(path, roots)
+    new_path = _native(new_path, roots) if new_path else new_path
     return FileRow(file_id, change_id, photo_id, path, new_path, json.loads(before or "{}"),
                    json.loads(after or "{}"), state, note, tuple(json.loads(stamp)) if stamp else None)
 
@@ -248,11 +254,14 @@ def writing(db_path, file_id, stamp):
     db.write_with_connection(db_path, work, label="file %d writing" % file_id)
 
 
-def _renames_knowing(was):
-    """(SQL, params): a file of a rename done (RENAMES) that knows its file by `was`, a fingerprint. The one statement of it,
-    for the write that follows it and the look before a write outside the journal (follow_renamed, renamed_known_by)."""
-    return ("change_id IN (SELECT id FROM changes WHERE operation IN (%s)) AND new_path IS NOT NULL AND state = 'done'"
-            " AND fields_before = ?" % ", ".join("?" * len(RENAMES)), RENAMES + (json.dumps(was, sort_keys=True),))
+#: The files of renames done (RENAMES): sought by their change, the change_id index, never a scan of change_files.
+_RENAMED = ("change_id IN (SELECT id FROM changes WHERE operation IN (%s)) AND new_path IS NOT NULL AND state = 'done'"
+            % ", ".join("?" * len(RENAMES)))
+
+
+def fingerprint_key(was):
+    """`was`, a file's fingerprint (size, modified time, file id), as a rename's file holds it (fields_before)."""
+    return json.dumps(was, sort_keys=True)
 
 
 def follow_renamed(conn, path, was, now):
@@ -261,22 +270,29 @@ def follow_renamed(conn, path, was, now):
     `now`, what the write left, from here on. A field write -- ExifTool's, beside the file and renamed over it -- changes
     all three for good, and the rename's undo, after the write's own undo, did not find its file (#1952); after the mint,
     which no undo takes back, it never did (#1957). A rename that knows another file there -- one put in its place since --
-    is left as it is, and its undo refuses this one. In the caller's transaction, the one that records the write. Returns
-    the files of renames followed."""
-    where, params = store_roots.sql_equals(conn, "new_path", path)
-    known, known_params = _renames_knowing(was)
-    now = json.dumps(now, sort_keys=True)
-    return conn.execute("UPDATE change_files SET fields_before = ?, fields_after = ? WHERE " + where + " AND " + known,
-                        (now, now) + tuple(params) + known_params).rowcount
+    is left as it is, and its undo refuses this one. The renames knowing `was` are sought by it, and their new names read
+    as _row reads them (_native): one recorded before the library's roots were adopted holds the native spelling, which a
+    comparison in the row form does not match (photo_index's nine). In the caller's transaction, the one that records the
+    write. Returns the files of renames followed."""
+    roots = store_roots.roots_for(conn)
+    here = paths.canonical(path, roots)
+    followed = [file_id for file_id, new_path in conn.execute(
+        "SELECT id, new_path FROM change_files WHERE " + _RENAMED + " AND fields_before = ?",
+        RENAMES + (fingerprint_key(was),)) if paths.same(_native(new_path, roots), here)]
+    now = fingerprint_key(now)
+    for file_id in followed:
+        conn.execute("UPDATE change_files SET fields_before = ?, fields_after = ? WHERE id = ?", (now, now, file_id))
+    return len(followed)
 
 
-def renamed_known_by(db_path, was):
-    """Does a rename done know a file by `was`, its fingerprint (follow_renamed)? One seek of the renames' files, on a read
-    connection: asked before a write outside the journal takes a write transaction for it, which almost none needs."""
-    known, params = _renames_knowing(was)
+def renamed_fingerprints(db_path):
+    """The fingerprints (fingerprint_key) the renames done know their files by (follow_renamed): one read of the renames'
+    files, on a read connection, for a run of writes outside the journal to ask of each file without a query (a few
+    hundred in a library; nine in photo_index)."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        return conn.execute("SELECT 1 FROM change_files WHERE " + known + " LIMIT 1", params).fetchone() is not None
+        return frozenset(known for (known,) in conn.execute(
+            "SELECT fields_before FROM change_files WHERE " + _RENAMED, RENAMES))
     finally:
         conn.close()
 

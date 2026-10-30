@@ -39,7 +39,8 @@ from tagpup.files import names as file_names  # noqa: E402
 from tagpup.services import file_changes, tagging, photos as photo_actions  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, file_journal  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 FORMAT = "{grouping} - {index} - {caption}"
 NEW_NAME = "Regatta - 1 - Start.jpg"
@@ -343,16 +344,26 @@ class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
         return renamed.details["change"]
 
     def index(self):
-        """The index of the folder, as the queue runs it; the mint is its own (tagpup_cli's IdentityWriter)."""
+        """The index of the folder, as the queue runs it; the mint is its own (tagpup_cli's IdentityWriter). Returns how
+        often the run read what the renames know."""
         known = {path: os.stat(path).st_ino for path in self.new}
         with mock.patch("tagpup.ml.clip.ClipModel._init_model"), \
                 mock.patch("tagpup.ml.clip.ClipModel.picture_input"), \
-                mock.patch("tagpup.ml.clip.ClipModel.embed_input", return_value=[0.1] * 8):
+                mock.patch("tagpup.ml.clip.ClipModel.embed_input", return_value=[0.1] * 8), \
+                mock.patch.object(file_journal, "renamed_fingerprints", wraps=file_journal.renamed_fingerprints) as read:
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path, "index", self.folder, "--skip-faces"])
         self.assertEqual(0, result.exit_code, result.output)
         for path in self.new:
             self.assertTrue(str(field_of(path, "XMP-xmpMM:DocumentID") or "").startswith("xmp.did:"), "no identity minted")
             self.assertNotEqual(known[path], os.stat(path).st_ino, "the mint did not write the file anew")
+        return read.call_count
+
+    def photo_rows_at(self, photo_paths):
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            return store_roots.photo_ids_at(conn, photo_paths)
+        finally:
+            conn.close()
 
     def assert_undone(self, rename):
         self.assertIsNone(journal_service.refusals(self.library, [{"id": rename}])[rename], "History offers no Undo")
@@ -362,11 +373,31 @@ class AnIdentityTheIndexGivesTheRenamedPhotos(FilesCase):
         undone = self.undo(rename)
         self.assertEqual((None, 3), (undone.refused or None, undone.changed), undone.message())
         self.assertEqual(["IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg"], sorted(os.listdir(self.folder)))
-        self.assertEqual(3, len(self.rows("SELECT id FROM photos WHERE path IN (?, ?, ?)", tuple(self.old))))
+        self.assertEqual(3, len(self.photo_rows_at(self.old)))
         self.assertEqual("undone", self.status(rename))
 
     def test_minted_after_the_rename_the_rename_is_undone(self):
         rename = self.rename()
+        # What the renames know is the run's answer: read once for the three photos minted, not once a photo.
+        self.assertEqual(1, self.index(), "the renames' fingerprints are read once a run")
+        self.assert_undone(rename)
+
+    def test_a_rename_recorded_before_the_roots_were_adopted_is_undone(self):
+        # photo_index's nine done rename files hold their new names in native spelling, recorded before its roots were
+        # adopted (counted 2026-10-29); _row reads either spelling, and so does the carry.
+        rename = self.rename()
+        import roots_library
+        roots_library.convert_to_root(self.library.path, self.folder)
+        conn = db.connect(self.library.path)
+        try:
+            roots = store_roots.roots_for(conn)
+            for file_id, new_path in conn.execute("SELECT id, new_path FROM change_files WHERE change_id = ?",
+                                                  (rename,)).fetchall():
+                self.assertTrue(new_path.startswith(paths.ROOT_MARK), "the library is not held under its root")
+                conn.execute("UPDATE change_files SET new_path = ? WHERE id = ?", (paths.from_row(new_path, roots), file_id))
+            conn.commit()
+        finally:
+            conn.close()
         self.index()
         self.assert_undone(rename)
 
