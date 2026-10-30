@@ -85,7 +85,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     The library's own answer decides, here, now. A photo that does not decode is refused.
 
     `stamp`, (mtime, size), is the file's stamp as the record the page built the save from had it: a file whose stamp
-    is not that has changed since the page read it, and the save is refused (details `changed_on_disk`, the web route's
+    is not that has changed since the page read it, and the save is refused (as CHANGED_ON_DISK, the web route's
     409) and writes nothing -- the whole tag list it carries may be missing what the file now holds. None (the CLI,
     the MCP) is no check, as it was.
 
@@ -108,8 +108,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         wanted.update(fields.date_taken_fields(date_taken))
     photo_path = paths.stored(photo_path)
     if stamp is not None and photo_actions.changed_on_disk(photo_path, stamp):
-        result.refuse(CHANGED_ON_DISK_SENTENCE)
-        result.details[CHANGED_ON_DISK] = True
+        result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
         return result
     # One ExifTool session and one read before the write: the tags the file holds, the
     # plan's before, and the name Smart Rename kept.
@@ -117,12 +116,10 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         now = field_values.read_one(et, photo_path, read)
         if base is None:
-            result.refuse(UNREADABLE_BASE_SENTENCE)
-            result.details[CHANGED_ON_DISK] = True
+            result.refuse(UNREADABLE_BASE_SENTENCE, CHANGED_ON_DISK)
             return result
         if base is not NO_BASE and _differs_from_base(now, base):
-            result.refuse(CHANGED_ON_DISK_SENTENCE)
-            result.details[CHANGED_ON_DISK] = True
+            result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
             return result
         held = set(_tags_held(now))
         problem = (validation.first_problem("tag", (t for t in tags if t not in held))

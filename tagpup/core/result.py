@@ -17,6 +17,9 @@ REFUSED = "refused"
 #: A folder's network share did not answer: a web route answers 503 (try again later), not the 400 of a folder that is
 #: not there (tagpup.files.shares.folder_refusal, #2129).
 SHARE_AWAY = "share_away"
+#: The file is no longer the one the page built its record from (the stamp the page sent differs from the file's): a
+#: web route answers 409, and the page reads the file again.
+CHANGED_ON_DISK = "changed_on_disk"
 
 
 @dataclass
@@ -30,7 +33,7 @@ class Result:
     #: Why the request was refused before anything was written -- a tag that may not be
     #: set, say. A web route answers it with 400, where an error is a 500.
     refused: Optional[str] = None
-    #: What kind of refusal it is (REFUSED, SHARE_AWAY), which the web route's status is read from
+    #: What kind of refusal it is (REFUSED, SHARE_AWAY, CHANGED_ON_DISK), which the web route's status is read from
     #: (tagpup.web.responses.STATUS). A Result that hands up another's refusal hands up its kind with it.
     refused_kind: str = REFUSED
     #: Anything else the caller needs back, by name.
@@ -61,9 +64,7 @@ class Result:
 
 
 
-#: What a Result refused because the file is no longer the one the page built its record from (the stamp the
-#: page sent differs from the file's) carries: a web route answers 409, and the page reads the file again.
-CHANGED_ON_DISK = "changed_on_disk"
+#: What a Result refused as CHANGED_ON_DISK says.
 CHANGED_ON_DISK_SENTENCE = "This photo changed on disk since you opened it: reload it first."
 #: Refused because the page's record was of a photo ExifTool could not read when it was opened: what the file holds is
 #: not known, so a save that carries the whole tag list is not made from it.
