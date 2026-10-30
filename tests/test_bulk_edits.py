@@ -25,6 +25,7 @@ from tagpup.files import shares  # noqa: E402
 from tagpup.services import activity, batches, bulk_edit, file_changes  # noqa: E402
 from tagpup.services import journal  # noqa: E402
 from tagpup.store import db, job_runs  # noqa: E402
+from test_file_journal import Crash as StoppedAt, crash_at  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
@@ -334,6 +335,45 @@ class WhilePhotosMove(Bulk):
         self.assertEqual((None, self.PHOTOS - 1), (undone.refused, undone.changed))
         self.assertEqual(["Trips/Coast"], self.tags(self.ids[10]), "the undo took back the other program's write")
         self.assertEqual([], self.tags(self.ids[11]))
+
+    def test_and_so_is_one_written_after_a_crash_between_the_plan_and_its_write_when_the_next_start_settles(self):
+        """The same, when the process dies after the plan is committed and before the photo's write: another program adds the
+        same keyword to it, and the next start settles the change. A planned file was never written by this change (it is
+        marked writing before its write), so one holding the change's after was written by another program: it is taken out,
+        not done in this change too (whose undo would take the other program's keyword out). The settle itself dying as it
+        takes the photo out leaves it planned, and the settle after that takes it out. Break: settle carried a planned file
+        as one this change wrote."""
+        target, named = self.path(self.ids[10]), "photo %d:" % self.ids[10]
+        edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]})
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("plan committed")):
+            with self.assertRaises(StoppedAt):
+                bulk_edit.run(self.library, edit, self.ids, "exiftool")
+        self.files.keep_tags(target, self.tags(self.ids[10]) + ["Trips/Coast"])      # a second window's edit
+        ((change_id, _op, status),) = self.changes("bulk tags%")
+        self.assertEqual("planned", status)
+        real = db.write_with_connection
+
+        def dies_taking_it_out(path, work, label="database write"):
+            if label.startswith(named):
+                raise Crash()
+            return real(path, work, label=label)
+        with mock.patch.object(db, "write_with_connection", dies_taking_it_out):
+            with self.assertRaises(Crash):
+                file_changes.settle(self.library, "exiftool")
+        self.assertEqual([("planned",)], self.vl.rows("SELECT state FROM change_files WHERE photo_id = ?", self.ids[10]),
+                         "the settle that died left the photo as it found it")
+        self.vl.conn.execute("UPDATE changes SET owner = ? WHERE id = ?", (GHOST, change_id))   # that process is gone
+        self.vl.conn.commit()
+        self.assertEqual(1, file_changes.settle(self.library, "exiftool"))
+        self.assertEqual([], self.vl.rows("SELECT state FROM change_files WHERE photo_id = ?", self.ids[10]),
+                         "the photo another program wrote is in the change")
+        self.assertEqual(self.row_tags(self.ids[10]), self.tags(self.ids[10]), "its row says what it holds")
+        self.assertEqual(0, self.files.writes_of.get(paths.key(target), 0), "and it was never written by the change")
+        self.assertEqual("applied", self.changes("bulk tags%")[0][2])
+        undone = journal.undo(self.library, change_id, apply=True, exiftool_path="exiftool")
+        self.assertEqual((None, self.PHOTOS - 1), (undone.refused, undone.changed))
+        self.assertIn("Trips/Coast", self.tags(self.ids[10]), "the undo took the other program's keyword out")
+        self.assertNotIn("Trips/Coast", self.tags(self.ids[11]))
 
     def test_a_file_replaced_by_another_is_written_as_the_file_it_now_is(self):
         replaced = self.path(self.ids[4])

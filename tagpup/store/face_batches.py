@@ -55,6 +55,21 @@ def recorded(conn, change_id, face_ids):
     return found
 
 
+def photos_of(conn, change_id):
+    """The ids of the photos whose faces change `change_id` records: the photos a bulk assignment holds for their faces as well
+    as their files (tagpup.services.face_batch.Work.wants, read back from the journal by a settle). One read of the change's rows,
+    then the faces by id."""
+    ids = [json.loads(key)[0] for (key,) in conn.execute(
+        "SELECT DISTINCT row_key FROM change_rows INDEXED BY idx_change_rows_change WHERE table_name = 'faces' AND change_id = ?",
+        (change_id,))]
+    found = set()
+    for start in range(0, len(ids), CHUNK):
+        chunk = ids[start:start + CHUNK]
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT photo_id FROM faces WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
 def _forget(conn, change_id, face_ids):
     face_ids = list(face_ids)
     for start in range(0, len(face_ids), CHUNK):

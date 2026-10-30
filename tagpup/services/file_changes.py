@@ -1243,6 +1243,12 @@ def _finish(library, change, exiftool_path):
         _settle_renames(library, renames, forward=not undoing, redo=True)
     changed = [row for row in pending if not row.is_rename]
     left = False
+    # A planned file was never written by this change (it is marked writing before its write): one found holding the change's
+    # after was written by another program and is taken out, as the forward loop takes it out (#1937), unless the change holds
+    # it for its faces too (a bulk assignment's, face_batch.Work.wants). A file left writing that holds the after is this
+    # change's own write a crash cut off, told from no other, and is done.
+    kept = (face_batch.photos_kept(library, change.id)
+            if not undoing and any(row.state == "planned" for row in changed) else set())
     if changed:
         away = {paths.key(path) for path, state in file_states([row.path for row in changed]) if state == AWAY}
         with field_values.session(exiftool_path) as session:
@@ -1256,7 +1262,7 @@ def _finish(library, change, exiftool_path):
                         _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict", stall_stops=True)
                     else:
                         _carry(et, library, row, row.before, row.after, "done", on_failure="conflict", wrote=wrote,
-                               stall_stops=True)
+                               stall_stops=True, held_out=row.state == "planned" and row.photo_id not in kept)
                 except _Stalled:
                     left = True
                     break
