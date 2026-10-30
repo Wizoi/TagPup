@@ -908,8 +908,8 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
             queued = outcome.changed
             for what, why in outcome.skipped:
                 result.skip(what, why)
-            for gone in outcome.details.get("invalid", ()):
-                # Some folders were queued and these were not: said, not dropped (#2229).
+            for gone in () if outcome.refused else outcome.details.get("invalid", ()):
+                # Some folders were queued and these were not: said, not dropped (#2229). A refusal says it already.
                 result.skip(gone, GONE_BEFORE_QUEUED)
             if outcome.details.get(SHARE_AWAY):
                 # The share stopped answering between the walk and the queue: the new files are not indexed, and the
