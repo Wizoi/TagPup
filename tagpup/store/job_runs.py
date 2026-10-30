@@ -21,7 +21,6 @@ Times are the journal's: local time, "YYYY-MM-DD HH:MM:SS".
 import json
 import logging
 import os
-import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -181,7 +180,8 @@ def claim(db_path, job, library, now, due=None, parent=None, changed=None):
 
     A library behind this version's schema is left alone ("behind"), not migrated: a job
     run by hand from the CLI is no reason to migrate one (docs/findings.md, #243). Its
-    jobs run once an app has opened it."""
+    jobs run once an app has opened it. That is schema's question (every migration this version knows), not whether the
+    library has the runs' columns of migration 36 (`_runs_nest`), which a library it lets by always has."""
     if schema.pending(db_path):
         return Claim(why="behind")
     # Whether each owner lives is asked before the write lock is taken -- it may start
@@ -287,35 +287,28 @@ def counts_so_far(db_path, run_id, changed):
     return db.write_with_connection(db_path, work, label="counts so far of run %d" % run_id)
 
 
-#: The columns migration 36 added: a write of them meets a library still at 35 only in the gap snapshots.restore leaves
-#: between putting a snapshot at 35 back and bringing it to the current schema.
-_AT_36 = ("parent", "heartbeat", "progress")
-
-
 def progress(db_path, run_id, phase, counts, now, within=0.0):
     """Record how far run `run_id`, this process's and running, has got: `heartbeat` the time `now` (seconds since the
     epoch), `progress` {"phase": phase, "counts": counts}, as the caller checked them (tagpup.services.job_runs.progress).
     Made now or not at all (db.write_if_free): db.BUSY while the library is being written; `within` seconds, tried again
     for that long (as the claim of a job of RECORDS_ONLY is), for the write that must be made once. False when the run is no longer
-    this process's and running -- abandoned, ended, gone with a restore -- or the library is a snapshot at 35 a restore
-    has put back and not yet migrated. Never raises for either."""
+    this process's and running -- abandoned, ended, gone with a restore -- or the library has not the columns of
+    migration 36 (`_runs_nest`: a snapshot at 35 a restore has put back and not yet migrated). Never raises for either."""
     text = json.dumps({"phase": phase, "counts": counts}, sort_keys=True)
 
     def work(conn):
+        if not _runs_nest(conn):
+            return None
         return conn.execute("UPDATE job_runs SET heartbeat = ?, progress = ? WHERE id = ? AND outcome = 'running'"
                             " AND owner = ?", (stamp(now), text, run_id, file_journal.owner())).rowcount == 1
 
     deadline = time.monotonic() + within
-    try:
-        while True:
-            written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
-            if written is not db.BUSY or time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
-    except sqlite3.OperationalError as e:
-        message = str(e).lower()
-        if "no such column" not in message or not any(column in message for column in _AT_36):
-            raise
+    while True:
+        written = db.write_if_free(db_path, work, label="progress of run %d" % run_id)
+        if written is not db.BUSY or time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    if written is None:
         logger.debug("progress of run %d: not written, the library is not yet at schema 36 (a restore under way)", run_id)
         return False
     if written is False:
@@ -442,8 +435,9 @@ def last_sync(conn):
 
 def _rows(conn, where, params=(), with_=""):
     """The runs `where` (the SQL after FROM job_runs, under the WITH clause `with_`) selects on `conn`, each with its
-    `parent`, `heartbeat` and `progress` (parsed) when the library has had migration 36; without them before it."""
-    if not _has_parents(conn):
+    `parent`, `heartbeat` and `progress` (parsed) when the library has had migration 36 (`_runs_nest`); without them
+    before it."""
+    if not _runs_nest(conn):
         return [_run(row) for row in conn.execute(with_ + " SELECT " + _COLUMNS + " FROM job_runs " + where, params)]
     found = []
     for row in conn.execute(with_ + " SELECT " + _COLUMNS + ", parent, heartbeat, progress FROM job_runs " + where,
@@ -489,8 +483,10 @@ _TREE = ("WITH RECURSIVE tops(id) AS (" + _TOPS + "),"
          " SELECT c.id FROM job_runs AS c JOIN tree ON c.parent = tree.id AND c.id > tree.id)")
 
 
-def _has_parents(conn):
-    """Has the library open on `conn` had migration 36 (job_runs.parent, heartbeat, progress)?"""
+def _runs_nest(conn):
+    """Has the library open on `conn` had migration 36 (job_runs.parent, heartbeat, progress)? The one answer: the
+    readers (`_rows`, `tree`) and the write of a run's progress ask it, for a library at 35 -- one the Activity page's
+    look and the MCP server read without migrating it, a snapshot a restore has put back and not yet migrated."""
     return any(column[1] == "parent" for column in conn.execute("PRAGMA table_info(job_runs)"))
 
 
@@ -502,7 +498,7 @@ def tree(db_path, limit=20):
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         limit = max(0, int(limit))
-        if not _has_parents(conn):
+        if not _runs_nest(conn):
             return _rows(conn, "ORDER BY id DESC LIMIT ?", (limit,))
         return _rows(conn, "WHERE id IN (SELECT id FROM tree) ORDER BY id DESC", (limit,), _TREE)
     finally:
