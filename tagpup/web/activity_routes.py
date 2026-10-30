@@ -24,8 +24,9 @@ raw, downloaded) show background work. What it asks:
   what is loaded.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
   watched folders, its snapshots, the server, and one timeline of what was done.
-- GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
-  data/logs, read from the end and never whole (tagpup.logs.read).
+- GET /api/activity/logs[?library=&kind=] and /api/activity/logs/<name>[/raw|/download]: the logs in
+  data/logs, each in its group (a program's own, a run's: tagpup.logs.group_of), read from the end and never whole
+  (tagpup.logs.read).
 
 It answers this PC alone: a request from any other address is refused 403 whatever
 address the server listens on (it listens on loopback: tagpup.web.app.bind). What it
@@ -436,8 +437,14 @@ def timeline():
 
 @routes.get("/api/activity/logs")
 def log_list():
-    return jsonify({"folder": logs.log_dir(), "server": logs.SERVER_LOG, "logs": logs.log_files(),
-                    "levels": list(logs.LEVELS)})
+    """The logs in data/logs, each with its group, and a run's kind and library; only a run's of the `library` and of
+    the `kind` asked for (either, both, or neither: every log), and how many runs' logs of a library and kind are kept."""
+    library, kind = request.args.get("library") or None, request.args.get("kind") or None
+    found = [entry for entry in logs.log_files()
+             if (library is None or (entry["library"] or "").lower() == library.lower())
+             and (kind is None or entry["kind"] == kind)]
+    return jsonify({"folder": logs.log_dir(), "server": logs.SERVER_LOG, "logs": found, "levels": list(logs.LEVELS),
+                    "groups": [logs.SYSTEM, logs.RUN], "keep_runs": logs.KEEP_RUN_LOGS})
 
 
 def _offset(name, value):
@@ -462,7 +469,8 @@ def log_lines(name):
                       before=_offset("before", request.args.get("before")),
                       after=_offset("after", request.args.get("after")))
     if found is None:
-        return responses.error(404, "There is no log called %s in data/logs" % name)
+        why, removed = logs.why_missing(name)
+        return responses.error(404, why, removed=removed)
     for record in found["records"]:
         record.pop("text", None)
     return jsonify(found)

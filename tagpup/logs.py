@@ -13,10 +13,15 @@ name, so the Activity page can show one run's lines. A process started for a run
 a file of that run's own, <kind>-<library>-<run>.log (run_log): the indexer the index
 queue starts writes indexer-<library>-<started>-<pid>-<n>.log. Two processes may index
 one library at once -- the server's queue and a sync run by hand -- and one
-file written and rotated by two fails on Windows; so each run has its own, and the oldest
-beyond KEEP_RUN_LOGS of a kind are removed as a new one starts (prune_run_logs). Such a
+file written and rotated by two fails on Windows; so each run has its own. Such a
 process writes its log quietly (to_file's `quiet`): its stdout and stderr are the pipe
 its parent turns into a progress bar, where logging's "--- Logging error ---" showed.
+
+Two groups of file (group_of): a program's own log (SYSTEM: the web server, its console, the
+MCP server, TagTuner), which rotates and never grows past its copies; and a run's (RUN: each
+run of the indexer, each failed test run), which keep coming. The runs' logs are kept the
+last KEEP_RUN_LOGS of each library and kind, removed as the server starts (retire_run_logs;
+owner, DECISIONS 2026-10-28); a failed test run's are tools/run_tests.py's, which keeps ten.
 """
 import logging
 import logging.handlers
@@ -33,8 +38,16 @@ KEEP = 5
 #: What a program's log may be called: letters, digits, `_`, `.` and `-`.
 _UNSAFE = re.compile(r"[^\w.-]")
 
-#: How many runs' logs of one kind are kept (the indexer's: one a run).
-KEEP_RUN_LOGS = 30
+#: How many runs' logs of one library and kind are kept (owner, DECISIONS 2026-10-28).
+KEEP_RUN_LOGS = 5
+
+#: The groups of file in data/logs (group_of): a program's own log, and a run's.
+SYSTEM, RUN = "system", "run"
+
+#: A run's own log, as run_log names it for a run of the indexer (tagpup.core.runs.index_tag):
+#: <kind>-<library>-<started>-<pid>-<n>; and a failed test run's, tools/run_tests.py's.
+RUN_LOG = re.compile(r"^(?P<kind>[A-Za-z_]+)-(?P<library>[\w.-]+)-(?P<ident>\d{8}T\d{6}-\d+-\d+)$")
+TEST_RUN, TESTS = re.compile(r"^run_tests-\d{8}-\d{6}(?:-\d+)?$"), "run_tests"
 
 #: The web server's log: its program's name, and the file (tagpup_web.py writes it; the
 #: Activity page is told it, and never spells it).
@@ -73,36 +86,82 @@ def run_log(kind, tags):
     return "%s-%s-%s.log" % (_UNSAFE.sub("_", kind), library, ident)
 
 
-def prune_run_logs(kind, keep=None):
-    """Remove the oldest runs' logs of `kind` beyond `keep` (KEEP_RUN_LOGS), each with its
-    rotated copies. One another process still has open is left for the next time."""
-    keep = KEEP_RUN_LOGS if keep is None else keep
+def group_of(program):
+    """Which group the log of `program` (its file name without .log) is in, with its run's kind and library:
+    (RUN, "indexer", "photo_index") for a run of the indexer, (RUN, TESTS, None) for a failed test run, (SYSTEM, None,
+    None) for any program's own log."""
+    found = RUN_LOG.match(program)
+    if found:
+        return RUN, found["kind"], found["library"]
+    if TEST_RUN.match(program):
+        return RUN, TESTS, None
+    return SYSTEM, None, None
+
+
+def _base(name):
+    """The log a file in data/logs is, or a rotated copy of: `x.log` for `x.log.2`."""
+    return name if name.endswith(".log") else name.rsplit(".", 1)[0]
+
+
+def retire_run_logs(spared=(), unread=(), keep=KEEP_RUN_LOGS):
+    """Remove the runs' logs beyond the newest `keep` (by when each was last written) of each library and kind, each
+    with its rotated copies: the server's start does it (tagpup.runtime.retire_run_logs). Never a log in `spared` (the
+    logs of runs a library's rows say are running), nor any of a library named in `unread` (one whose rows could not be
+    read, so nothing says which of its runs are running); a test run's are tools/run_tests.py's. A file gone already --
+    another server starting at the same moment removed it -- or held open by its writer (Windows refuses to remove it)
+    is passed over, left for the next start. Returns how many files this call removed."""
     folder = log_dir()
     try:
         names = os.listdir(folder)
     except OSError:
         return 0
-    pattern = re.compile(r"^%s-.+\.log(?:\.\d+)?$" % re.escape(_UNSAFE.sub("_", kind)))
+    spared, unread = set(spared), {name.lower() for name in unread}
     families = {}
     for name in names:
-        if pattern.match(name):
-            base = name if name.endswith(".log") else name.rsplit(".", 1)[0]
-            try:
-                modified = os.path.getmtime(os.path.join(folder, name))
-            except OSError:
-                continue
-            family = families.setdefault(base, [0.0, []])
-            family[0] = max(family[0], modified)
-            family[1].append(name)
+        if not LOG_FILE.match(name):
+            continue
+        base = _base(name)
+        group, kind, library = group_of(base[:-len(".log")])
+        if group != RUN or library is None or library.lower() in unread:
+            continue
+        try:
+            modified = os.path.getmtime(os.path.join(folder, name))
+        except OSError:
+            continue
+        family = families.setdefault((kind, library.lower()), {}).setdefault(base, [0.0, []])
+        family[0] = max(family[0], modified)
+        family[1].append(name)
     removed = 0
-    for _base, (_modified, members) in sorted(families.items(), key=lambda item: -item[1][0])[keep:]:
-        for name in members:
-            try:
-                os.remove(os.path.join(folder, name))
-                removed += 1
-            except OSError:
-                pass
+    for logs_of in families.values():
+        for base, (_modified, members) in sorted(logs_of.items(), key=lambda item: -item[1][0])[keep:]:
+            if base in spared:
+                continue
+            for name in members:
+                try:
+                    os.remove(os.path.join(folder, name))
+                    removed += 1
+                except OSError:
+                    pass
     return removed
+
+
+def why_missing(name):
+    """Why there is no log called `name` in data/logs, as (a sentence the Activity page shows, whether it was removed):
+    a run's log with KEEP_RUN_LOGS newer of its library and kind was removed (retire_run_logs); any other run's has not
+    been written (its indexer has not started, or never did)."""
+    group, kind, library = group_of(_base(str(name))[:-len(".log")]) if LOG_FILE.match(str(name)) else (SYSTEM, None, None)
+    if group != RUN or library is None:
+        return "There is no log called %s in data/logs" % name, False
+    try:
+        names = os.listdir(log_dir())
+    except OSError:
+        names = []
+    newer = {base for base in map(_base, names)
+             if base > name and group_of(base[:-len(".log")])[1:] == (kind, library)}
+    if len(newer) >= KEEP_RUN_LOGS:
+        return ("The log of this run was removed: the last %d runs' logs of each library and kind are kept."
+                % KEEP_RUN_LOGS), True
+    return "This run has written no log of its own (yet).", False
 
 
 class _QuietRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -168,7 +227,6 @@ SOURCES = (
     (re.compile(r"^tagpup_web\.console$"), "Server console"),
     (re.compile(r"^tagpup_web$"), "Web server"),
     (re.compile(r"^indexer-(.+)-(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)\d\d-\d+-\d+$"), "Indexer ({0}, {2}-{3} {4}:{5})"),
-    (re.compile(r"^indexer-(.+)$"), "Indexer ({0})"),
     (re.compile(r"^tagpup_mcp$"), "MCP server"),
     (re.compile(r"^runner$"), "Desktop runner"),
     (re.compile(r"^run_tests-.*$"), "Test run"),
@@ -185,9 +243,10 @@ def source_of(program):
 
 
 def log_files():
-    """The logs in data/logs, newest written first: {"name", "program", "source", "bytes",
-    "modified" (seconds), "rotated": [{"name", "bytes"}]} -- each program's current file,
-    with its rotated copies (<name>.1 ... <name>.KEEP) beside it."""
+    """The logs in data/logs, newest written first: {"name", "program", "source", "group" (SYSTEM or RUN), "kind" and
+    "library" (a run's, group_of; None for a program's own log and a test run's library), "bytes", "modified"
+    (seconds), "rotated": [{"name", "bytes"}]} -- each program's current file, with its rotated copies (<name>.1 ...
+    <name>.KEEP) beside it."""
     folder = log_dir()
     try:
         names = os.listdir(folder)
@@ -206,8 +265,10 @@ def log_files():
             rotated.setdefault(base, []).append((int(number), {"name": name, "bytes": stat.st_size}))
         else:
             program = name[:-len(".log")]
-            current[name] = {"name": name, "program": program, "source": source_of(program),
-                             "bytes": stat.st_size, "modified": stat.st_mtime, "rotated": []}
+            group, kind, library = group_of(program)
+            current[name] = {"name": name, "program": program, "source": source_of(program), "group": group,
+                             "kind": kind, "library": library, "bytes": stat.st_size, "modified": stat.st_mtime,
+                             "rotated": []}
     for base, copies in rotated.items():
         if base in current:
             current[base]["rotated"] = [entry for _n, entry in sorted(copies, key=lambda each: each[0])]

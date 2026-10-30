@@ -147,6 +147,8 @@ def main(argv=None):
     # and two processes rotating one file fail on Windows.
     if os.environ.get(RELOADER + "_CHILD"):
         logger.info("Logging to %s", logs.to_file(logs.SERVER_PROGRAM))
+        # The runs' logs kept to the last few of each library and kind, as the server starts (DECISIONS 2026-10-28).
+        runtimes.retire_run_logs()
 
     ports = {"tagpup": args.tagpup_port, "tuner": args.tuner_port}
     version = tagpup_config.code_version()

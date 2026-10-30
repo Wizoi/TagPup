@@ -3,7 +3,9 @@ tagpup.logs): a recurring job's run, a sync, a run of the indexer -- so the Acti
 "Logs for this run" shows that run's lines and no others. And the indexer the index queue
 starts writes a log of its own, data/logs/indexer-<library>-<run>.log -- one per run, so
 no two processes ever write or rotate one file -- not only the pipe its parent reads, and a
-log it cannot write never says so on that pipe, which is the progress bar (phase 8.5).
+log it cannot write never says so on that pipe, which is the progress bar (phase 8.5). The
+server's start keeps the runs' logs to the last five of each library and kind, and never takes the
+log of a run still running (DECISIONS 2026-10-28).
 """
 import logging
 import os
@@ -17,12 +19,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup import logs  # noqa: E402
+from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import processes, runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
+from tagpup.services import job_runs as recorded_runs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync as sync_service  # noqa: E402
 from tagpup.store import job_runs  # noqa: E402
@@ -211,25 +215,6 @@ class TheIndexerWritesItsOwnLog(unittest.TestCase):
         self.assertEqual("indexer-harbour-20260926T101500-1-3.log",
                          logs.run_log("indexer", ("sync:harbour:20260926T101400", "index:harbour:20260926T101500-1-3")))
 
-    def test_the_oldest_runs_logs_are_pruned(self):
-        home = own_home.for_test(self)
-        folder = os.path.join(home.data, "logs")
-        os.makedirs(folder)
-        for i in range(8):
-            for name in ("indexer-harbour-2026092%dT000000-1-1.log" % i, "indexer-harbour-2026092%dT000000-1-1.log.1" % i):
-                path = os.path.join(folder, name)
-                with open(path, "w", encoding="utf-8") as handle:
-                    handle.write("x")
-                os.utime(path, (1000000 + i, 1000000 + i))
-        with open(os.path.join(folder, "tagpup_web.log"), "w", encoding="utf-8") as handle:
-            handle.write("x")
-        logs.prune_run_logs("indexer", keep=3)
-        left = sorted(os.listdir(folder))
-        self.assertEqual(["indexer-harbour-20260925T000000-1-1.log", "indexer-harbour-20260925T000000-1-1.log.1",
-                          "indexer-harbour-20260926T000000-1-1.log", "indexer-harbour-20260926T000000-1-1.log.1",
-                          "indexer-harbour-20260927T000000-1-1.log", "indexer-harbour-20260927T000000-1-1.log.1",
-                          "tagpup_web.log"], left)
-
     def test_a_log_it_cannot_write_says_nothing_on_the_pipe(self):
         """The indexer's stdout and stderr are the pipe the parent turns into the progress
         bar: logging's "--- Logging error ---" and its traceback would show there."""
@@ -260,6 +245,89 @@ class TheIndexerWritesItsOwnLog(unittest.TestCase):
                              stderr=subprocess.STDOUT, timeout=120)
         self.assertEqual(0, done.returncode, done.stdout)
         self.assertFalse(os.path.exists(os.path.join(home.data, "logs")))
+
+
+class TheServersStartKeepsTheLastRunsLogs(unittest.TestCase):
+    """As the web server starts (tagpup.runtime.retire_run_logs): the last five runs' logs of each library and kind are
+    kept, with their rotated copies; a program's own log and a failed test run's (tools/run_tests.py keeps its own) are
+    not touched; the log of a run a library says is running -- an index the CLI runs while the server restarts -- is
+    never taken, however old; a library whose runs cannot be read keeps all of its; a library dropped from the home ages
+    out by the same rule."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.folder = os.path.join(self.home.data, "logs")
+        os.makedirs(self.folder)
+        path = self.home.library("harbour.db")
+        library_actions.create(path)
+        self.library = Library(path)
+        for day in range(1, 9):
+            self.write("indexer-harbour-202609%02dT000000-1-1.log" % day, day)
+            self.write("indexer-harbour-202609%02dT000000-1-1.log.1" % day, day)
+        # A library no longer in the home: no rows say anything of its runs.
+        for day in range(1, 8):
+            self.write("indexer-lighthouse-202609%02dT000000-1-1.log" % day, day)
+        for name in ("tagpup_web.log", "tagpup_web.log.1", "tagpup_web.console.log", "tagpup_mcp.log", "tagtuner.log"):
+            self.write(name, 0)
+        for day in range(1, 8):
+            self.write("run_tests-202609%02d-000000.log" % day, day)
+
+    def write(self, name, day):
+        path = os.path.join(self.folder, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("x")
+        os.utime(path, (1000000 + day * 86400, 1000000 + day * 86400))
+
+    def left(self, prefix):
+        return sorted(name for name in os.listdir(self.folder) if name.startswith(prefix))
+
+    def harbour(self, *days):
+        return sorted(name % day for day in days for name in ("indexer-harbour-202609%02dT000000-1-1.log",
+                                                             "indexer-harbour-202609%02dT000000-1-1.log.1"))
+
+    def test_the_last_five_of_each_library_and_kind_and_the_running_one(self):
+        # The oldest harbour run is still running: its row, as the index queue claims it, names its log.
+        running = "index:harbour:20260901T000000-1-1"
+        with recorded_runs.run(self.library, recorded_runs.INDEX, "harbour", changed={"run": running, "folders": 1}):
+            removed = runtimes.retire_run_logs()
+        self.assertEqual(self.harbour(1, 4, 5, 6, 7, 8), self.left("indexer-harbour-"))
+        self.assertEqual(["indexer-lighthouse-202609%02dT000000-1-1.log" % day for day in range(3, 8)],
+                         self.left("indexer-lighthouse-"))
+        self.assertEqual(7, len(self.left("run_tests-")))
+        self.assertEqual(["tagpup_mcp.log", "tagpup_web.console.log", "tagpup_web.log", "tagpup_web.log.1",
+                          "tagtuner.log"], self.left("tag"))
+        self.assertEqual(2 * 2 + 2, removed, "a start reports the files it removed")
+        # The next start has nothing more to take; once the run ended, its log goes with the rule.
+        self.assertEqual(2, runtimes.retire_run_logs())
+        self.assertEqual(self.harbour(4, 5, 6, 7, 8), self.left("indexer-harbour-"))
+
+    def test_a_library_whose_runs_cannot_be_read_keeps_all_of_its_logs(self):
+        with mock.patch.object(runtimes.activity, "under_way", side_effect=OSError("database is locked")), \
+                self.assertLogs("tagpup.runtime", "WARNING") as said:
+            runtimes.retire_run_logs()
+        self.assertEqual(self.harbour(*range(1, 9)), self.left("indexer-harbour-"))
+        self.assertIn("Kept every run log of harbour", said.output[0])
+        self.assertEqual(5, len(self.left("indexer-lighthouse-")), "a dropped library has no rows to read")
+
+    def test_two_servers_starting_at_once_each_file_is_removed_once(self):
+        """The other server took each file the moment before this one did: passed over, not counted, nothing raised."""
+        real = os.remove
+
+        def the_other_took_it(path):
+            real(path)
+            real(path)
+
+        with mock.patch.object(logs.os, "remove", side_effect=the_other_took_it):
+            self.assertEqual(0, runtimes.retire_run_logs())
+        self.assertEqual(self.harbour(4, 5, 6, 7, 8), self.left("indexer-harbour-"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows refuses to remove a file another handle has open")
+    def test_a_log_its_writer_holds_open_is_left_for_the_next_start(self):
+        with open(os.path.join(self.folder, "indexer-harbour-20260902T000000-1-1.log"), "a", encoding="utf-8"):
+            removed = runtimes.retire_run_logs()
+        self.assertEqual(sorted(self.harbour(4, 5, 6, 7, 8) + ["indexer-harbour-20260902T000000-1-1.log"]),
+                         sorted(self.left("indexer-harbour-")))
+        self.assertEqual(3 * 2 - 1 + 2, removed, "the one held open is not counted")
 
 
 if __name__ == "__main__":

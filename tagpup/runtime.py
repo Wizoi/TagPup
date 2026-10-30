@@ -44,6 +44,7 @@ import threading
 import time
 
 from tagpup import config as tagpup_config
+from tagpup import logs
 from tagpup.core import gpu_turns
 from tagpup.core import library as libraries
 from tagpup.core.idle import IdleCaches
@@ -53,7 +54,8 @@ from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
-from tagpup.services import file_changes, indexing, search
+from tagpup.services import activity, file_changes, indexing, search
+from tagpup.services import job_runs as recorded_runs
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester
 from tagpup.services import sync as sync_service
@@ -109,6 +111,29 @@ def home_libraries(test_mode=False):
     found = [Library(tagpup_config.library_path(libraries.for_mode(name + ".db", test_mode)))
              for name in libraries.picker_names(files, test_mode)]
     return [library for library in found if os.path.exists(library.path)]
+
+
+def retire_run_logs():
+    """As the web server starts: the runs' logs beyond the last logs.KEEP_RUN_LOGS of each library and kind removed
+    (tagpup.logs.retire_run_logs), never the log of a run any library in the home says is running (its `running` rows:
+    an index the CLI runs while the server restarts), nor any of a library whose rows cannot be read now. A library no
+    longer in the home has no rows to say so: its logs age out by the same rule. Returns how many files were removed."""
+    spared, unread = set(), set()
+    for library in home_libraries(False) + home_libraries(True):
+        try:
+            running = activity.under_way(library)
+        except Exception as e:
+            logger.warning("Kept every run log of %s: its runs could not be read (%s: %s)", library.name,
+                           type(e).__name__, e)
+            unread.add(library.name)
+            continue
+        spared.update(logs.run_log(indexing.INDEXER_LOG, run["run"]) for run in running
+                      if run["job"] == recorded_runs.INDEX and run["run"])
+    removed = logs.retire_run_logs(spared, unread)
+    if removed:
+        logger.info("Removed %d file(s) of the runs' logs beyond the last %d of each library and kind", removed,
+                    logs.KEEP_RUN_LOGS)
+    return removed
 
 
 def recurring_jobs(runtime=None, libraries=None, clock=None):
