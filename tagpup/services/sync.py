@@ -864,6 +864,10 @@ def not_run(why, apply, waited=False):
     return result
 
 
+#: Why a new files' folder the walk found was not queued: the queue found it gone, or its share away, when asked.
+GONE_BEFORE_QUEUED = "gone or away before it was queued"
+
+
 def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started):
     held = {}
 
@@ -904,6 +908,9 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
             queued = outcome.changed
             for what, why in outcome.skipped:
                 result.skip(what, why)
+            for gone in outcome.details.get("invalid", ()):
+                # Some folders were queued and these were not: said, not dropped (#2229).
+                result.skip(gone, GONE_BEFORE_QUEUED)
             if outcome.details.get(SHARE_AWAY):
                 # The share stopped answering between the walk and the queue: the new files are not indexed, and the
                 # sync says so with the share's sentence, not done.

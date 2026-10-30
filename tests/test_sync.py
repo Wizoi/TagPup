@@ -345,6 +345,22 @@ class NewFiles(SyncTestCase):
         asked.clear()
         self.assertTrue(sync.include(self.library, sub, [], queue, ignored=[self.home.root + "-elsewhere"]).changed)
 
+    def test_a_new_folder_the_queue_found_gone_is_skipped_and_said_so(self):
+        """#2229: the queue's `invalid` folders (gone or away between the walk and the queue, others queued) were never
+        read; the run's skipped list names each. Break: dropping outcome.details["invalid"] on the floor."""
+        self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
+        self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
+        self.photo(self.trip, "IMG_0100.jpg")
+
+        def queue(folders):
+            queued = Result(attempted=len(folders), changed=0)
+            queued.details["invalid"] = list(folders)
+            return queued
+
+        result = self.run_sync(apply=True, queue=queue, roots=[self.pictures])
+        self.assertEqual([(self.trip, sync.GONE_BEFORE_QUEUED)], result.skipped)
+        self.assertEqual(0, result.details["queued"])
+
     def test_without_a_queue_new_files_are_reported(self):
         self.indexed(self.photo(self.meet, "IMG_0001.jpg"))
         self.photo(self.meet, "IMG_0100.jpg")
