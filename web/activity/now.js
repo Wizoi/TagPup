@@ -3,8 +3,9 @@
 // running sync row, at the folder its walk is at), each with its phase in the server's words (`said`), how far, how
 // long and since it last moved; its Suggest runs, the folders waiting and its batches of photo files -- and the server
 // draining for an update. Asked every few seconds while the page is in view (/api/activity/now). Every time is by the
-// server's clock (`at`). The folders are shown as the server names them: the page is served to this PC only (owner). A run whose last progress is older than STUCK_AFTER says so; one that has said nothing yet is
-// not called stuck. A library whose jobs could not be read (/api/activity/jobs) says why on its card, and the others are
+// server's clock (`at`). The folders are shown as the server names them: the page is served to this PC only (owner). A run
+// the server calls stuck (its `state`: no progress for 5 minutes, tagpup.services.activity.STUCK_AFTER) says so and for
+// how long; one that has said nothing yet is not stuck. A library whose jobs could not be read (/api/activity/jobs) says why on its card, and the others are
 // drawn; one with nothing running says what finished in it last (its `last_finished`, /api/activity/jobs). A line read
 // aloud (#now-summary) says what runs, in tens of percent, changed only when its words change; the cards are not read.
 import { api } from './common/api.js';
@@ -13,9 +14,6 @@ import { state } from './state.js';
 import { asked } from './poll.js';
 import { ago, duration, parseTime, secondsBetween } from './format.js';
 import { badge, fill, none, runLinks, runTree } from './view.js';
-
-/** The seconds without progress after which a running run is said to be stuck (docs/PLAN_ACTIVITY.md, "Design"). */
-const STUCK_AFTER = 300;
 
 /** Ask what runs now, and show it. */
 export function loadNow() {
@@ -62,12 +60,12 @@ function count(value) {
     return Number(value || 0).toLocaleString('en-US');
 }
 
-/** How long a run has run and since it last moved, by the server's time `at`: { text, stuck }. Stuck only with a
- *  progress older than STUCK_AFTER; `saysNone` for a run that says no progress (a sync of one folder). */
-function timing(at, started, progressed, saysNone = false) {
+/** How long a run has run and since it last moved, by the server's time `at`: { text, stuck }, stuck as the server's
+ *  `state` says; `saysNone` for a run that says no progress (a sync of one folder). */
+function timing(at, started, progressed, state, saysNone = false) {
     const ran = secondsBetween(started, at);
     const still = secondsBetween(progressed, at);
-    const stuck = !!progressed && still !== null && still > STUCK_AFTER;
+    const stuck = state === 'stuck' && still !== null;
     const parts = [];
     if (ran !== null) parts.push(`running ${duration(ran)}`);
     if (stuck) parts.push(`no progress for ${Math.floor(still / 60)} min; the share may be away`);
@@ -97,14 +95,15 @@ function fromRow(row) {
     const progress = row.progress || {};
     const counts = progress.counts || {};
     return { label: row.job, said: progress.said || '', far: howFar(counts), percent: counts.percent,
-             started: row.started, progressed: progress.progressed || null, run: row.run, logs: row.logs };
+             started: row.started, progressed: progress.progressed || null, state: row.state, run: row.run, logs: row.logs };
 }
 
 /** This process's own index (its queue's `indexing.running`), as a line says it. */
 function fromQueue(running) {
     const more = running.folders > 1 ? ` and ${running.folders - 1} more folder(s)` : '';
     return { label: `index of ${running.name}${more}`, said: running.said || '', far: running.message || '', percent: running.percent || 0,
-             started: running.started, progressed: running.progressed || null, run: running.run, logs: running.logs };
+             started: running.started, progressed: running.progressed || null, state: running.state, run: running.run,
+             logs: running.logs };
 }
 
 /** The folder watcher's sync with no row of its own to join: a sync of one folder (no run while it runs), or a whole
@@ -113,7 +112,7 @@ function fromWatcher(syncing) {
     const progress = syncing.progress || {};
     return { label: syncing.folder ? 'sync of one folder' : 'sync (folder watcher)', said: progress.phase || '',
              far: progress.phase ? howFar(progress) : '', detail: syncing.folder || '', started: syncing.started,
-             progressed: progress.progressed || null, at: progress.folder || '', quiet: !!syncing.folder };
+             progressed: progress.progressed || null, state: syncing.state, at: progress.folder || '', quiet: !!syncing.folder };
 }
 
 /** The library's runs as a tree: [{ item, children }], each run under the run its row names as `parent`. */
@@ -127,8 +126,8 @@ function treeOf(library, data) {
     }
     const syncing = data.syncing;
     if (syncing && syncing.library === library.name) {
-        // The watcher's whole sync is a run of the sync job: the same walk as the library's running sync row.
-        const row = syncing.folder === null ? [...nodes.values()].find(node => node.row.job === 'sync') : null;
+        // The watcher's whole sync is the row the server names its (`source`), the same walk as that run.
+        const row = [...nodes.values()].find(node => node.row.source === 'watcher');
         if (row) Object.assign(row.item, { label: 'sync (folder watcher)', at: (syncing.progress || {}).folder || '' });
         else roots.unshift({ item: fromWatcher(syncing), children: [] });
     }
@@ -142,7 +141,7 @@ function treeOf(library, data) {
 
 /** One run's line, and under it the folder its walk is at. */
 function runLine(item, at) {
-    const times = timing(at, item.started, item.progressed, item.quiet);
+    const times = timing(at, item.started, item.progressed, item.state, item.quiet);
     const hasPercent = item.percent !== undefined && item.percent !== null;
     const line = buildElement('div', { className: `activity run-line${times.stuck ? ' stuck' : ''}` }, [
         badge(times.stuck ? 'stuck' : 'running', times.stuck ? 'bad' : 'busy'),
@@ -242,7 +241,7 @@ export function summaryOf(data) {
     for (const library of data.libraries || []) {
         for (const item of flat(treeOf(library, data))) {
             const tens = item.percent !== undefined && item.percent !== null ? `, ${Math.floor(item.percent / 10) * 10}%` : '';
-            const stuck = timing(data.at, item.started, item.progressed).stuck ? ', stuck' : '';
+            const stuck = timing(data.at, item.started, item.progressed, item.state).stuck ? ', stuck' : '';
             parts.push(`${library.name}: ${item.label}${item.said ? `, ${item.said}` : ''}${tens}${stuck}`);
         }
     }

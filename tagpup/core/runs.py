@@ -105,11 +105,17 @@ def running(*run_tags):
 
 
 def parent_run(library):
-    """The id of the run of `library` (a library's name) that what is claimed here is part of: the innermost job tag of
-    that library among the runs under way (`current`), a row of its `job_runs`; None when there is none. A sync's tag names
-    no row (its run is recorded as it ends) and a tag of another library names a row of another file: neither is a parent."""
+    """The id of the run of `library` (a library's name) that what is claimed here is part of: parent_of the runs under
+    way (`current`)."""
+    return parent_of(library, current())
+
+
+def parent_of(library, tags):
+    """The id of the run of `library` (a library's name) that a run under `tags` is part of: the innermost job tag of that
+    library among them, a row of its `job_runs`; None when there is none. A sync's tag names no row (its run is recorded
+    as it ends) and a tag of another library names a row of another file: neither is a parent."""
     want = _part(library)
-    for each in reversed(current()):
+    for each in reversed(tuple(tags)):
         kind, of, ident = each.split(":", 2)
         if kind == "job" and of == want:
             return int(ident)

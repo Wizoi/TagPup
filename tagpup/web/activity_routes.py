@@ -7,10 +7,11 @@ Modelled on how Immich (Jobs), Jellyfin (Scheduled Tasks, Logs), Hangfire and Si
 raw, downloaded) show background work. What it asks:
 
 - GET /api/activity/now, which the page asks every few seconds while it is in view: what
-  runs now -- each library's index queue and Suggest runs, the runs running in any process
-  (their `running` rows, an index the CLI runs among them, each with its parent and how far
-  it got), the folder watcher's sync, and whether the server takes work or waits to move onto
-  a new version. Cheap: memory, and small reads of each library's `job_runs`. Each library also lists its batches of photo files, running or
+  runs now (activity.runs_now: the runs running in any process -- their `running` rows, an
+  index the CLI runs among them, each with its parent, how far it got and whether it is
+  stuck -- with what this process's index queue and folder watcher add), each library's
+  Suggest runs, and whether the server takes work or waits to move onto a new version,
+  serialised as the page reads it. Cheap: memory, and small reads of each library's `job_runs`. Each library also lists its batches of photo files, running or
   waiting (tagpup.services.batches), with the counts of their files.
 - GET /api/activity/batches: those batches alone, of every library; POST
   /api/activity/batches/cancel stops one of this process's at its chunk, or never starts it.
@@ -48,7 +49,6 @@ from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import activity, batches
 from tagpup.services import indexing
 from tagpup.services import job_runs
-from tagpup.services import sync as sync_service
 from tagpup.web import lifecycle as lifecycles
 from tagpup.web import responses, security
 
@@ -194,79 +194,38 @@ def _logs_for(run, children=None):
 
 # ---- Now -----------------------------------------------------------------------------------
 
-def _syncing(syncing, walks):
-    """The folder watcher's sync under way (Watcher.status), or None, with how far it got: a sync of the whole library
-    is a run of the `sync` job (recurring.sync_whole), one at a time a library, so its phase and counts are that
-    library's running `sync` row in `walks` ({library name, lower case: its run, or None when its runs could not be
-    read}, as activity.under_way reads them), the folder its walk is at added from this process's memory, which shows
-    before the row has said anything (its counts trail the folder by up to 10 s). A CLI's sync claims no `sync` run (it records one only
-    as it ends); the only other holder of the library's running `sync` row is the daily sync job, so while the watcher's
-    claim waits for it Now shows that run's counts under the watcher's line (and in the library's jobs). A sync of one
-    folder records no run while it runs: null, its line names the folder already."""
-    if syncing is None:
-        return None
-    syncing = dict(syncing)
-    at = syncing.pop("walking_at")
-    if syncing["folder"] is not None:
-        syncing["progress"] = None
-        return syncing
-    name = syncing["library"].lower()
-    run = walks.get(name)
-    if name in walks and run is None:
-        syncing["progress"] = None  # the library's runs could not be read: no word of how far, not the folder alone
-        return syncing
-    walked = sync_service.walked(run["progress"]) if run is not None else None
-    syncing["progress"] = dict(walked or {}, folder=at) if walked is not None or at is not None else None
-    return syncing
+def _row(run):
+    """A run that has a row, as Now's `jobs` lists it: the run without what this process holds of it."""
+    return {key: value for key, value in run.items() if key != "here"}
 
 
 @routes.get("/api/activity/now")
 def now():
-    """What runs now, in this process and -- for the recurring jobs -- in any."""
+    """What runs now, in this process and any (activity.runs_now), by library: its rows (`jobs`, but this process's own
+    index), this process's index (`indexing`: the run under way and the folders waiting), its Suggest runs, its batches
+    and, for one whose runs could not be read, why (`error`); the folder watcher's sync (`syncing`)."""
     every = _libraries()
-    queues = {name.lower(): queue for name, queue in indexing_jobs.every_queue() if name}
-    suggesting = suggestion_jobs.under_way()
-    found, walks = [], {}
-    for library in every:
-        queue = queues.get(library.name.lower())
-        indexed = queue.now() if queue is not None else {"running": None, "queued": []}
-        if indexed["running"]:
-            # Its row's id, the id of the run it is part of and its phase in words, as every other run's (its row
-            # below, by its tag; all null while the row is not read, or was never claimed: RECORDS_ONLY).
-            indexed["running"].update(logs=_logs_for(indexed["running"]["run"]), run_id=None, parent=None, said=None)
-        # This process's index is `indexing` above, from its queue: its row is not listed again.
-        mine = (indexed["running"] or {}).get("run")
-        running = []
-        try:
-            under_way = activity.under_way(library)
-        except Exception as e:
-            # Only a library whose runs cannot be read has a sync whose row is not known (null, not "none under way").
-            logger.warning("Could not read the running jobs of %s: %s", library.name, e)
-            walks[library.name.lower()] = None
-            under_way = []
-        try:
-            children = None
-            for run in under_way:
-                if run["job"] == recurring.SYNC:
-                    walks[library.name.lower()] = run
-                if mine is not None and run["run"] == mine:
-                    indexed["running"].update(run_id=run["run_id"], parent=run["parent"],
-                                              said=(run["progress"] or {}).get("said"))
-                    continue
-                if run["job"] != job_runs.INDEX and children is None:
-                    children = activity.index_runs_under(library)
-                run["logs"] = _logs_for(run["run"], children)
-                running.append(run)
-        except Exception as e:
-            logger.warning("Could not list the running jobs of %s: %s", library.name, e)
-        found.append({"name": library.name, "indexing": indexed,
-                      "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
-                      "jobs": running, "batches": batches.listing(library)})
     watcher = _lifecycle().watcher()
     watching = watcher.status() if watcher is not None else None
+    here = activity.Here(queues={name.lower(): queue.now() for name, queue in indexing_jobs.every_queue() if name},
+                         syncing=watching["syncing"] if watching else None, sync_job=recurring.SYNC, logs_of=_logs_for)
+    told = activity.runs_now(every, here)
+    suggesting = suggestion_jobs.under_way()
+    found = []
+    for library in every:
+        mine = [run for run in told["runs"] if run["library"] == library.name]
+        own = [run for run in mine if run["source"] == activity.QUEUE]
+        found.append({"name": library.name,
+                      "indexing": {"running": next((run["here"] for run in own if run["state"] != activity.QUEUED), None),
+                                   "queued": [run["here"] for run in own if run["state"] == activity.QUEUED]},
+                      "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
+                      "jobs": [_row(run) for run in mine if run["run_id"] is not None and run["source"] != activity.QUEUE],
+                      "batches": batches.listing(library)})
+        if library.name in told["unreadable"]:
+            found[-1]["error"] = told["unreadable"][library.name]
     status = _lifecycle().status()
     return jsonify({"at": _stamp(time.time()), "libraries": found,
-                    "syncing": _syncing(watching["syncing"], walks) if watching else None,
+                    "syncing": next((run["here"] for run in told["runs"] if run["source"] == activity.WATCHER), None),
                     "watching": bool(watching and watching["running"]),
                     "server": {"version": status["version"], "taking_work": status["taking_work"],
                                "requests": status["requests"], "busy": status["busy"]}})
@@ -315,8 +274,7 @@ def jobs():
         except Exception as e:
             logger.warning("Could not read the jobs of %s: %s", library.name, e)
             listed.append({"name": library.name, "jobs": [], "last_finished": None, "error": str(e)})
-    return jsonify({"runs_jobs": runner is not None, "check_every": recurring.CHECK_EVERY,
-                    "running_here": runner.status() if runner is not None else [], "libraries": listed,
+    return jsonify({"runs_jobs": runner is not None, "check_every": recurring.CHECK_EVERY, "libraries": listed,
                     "needs_you": needs_you})
 
 

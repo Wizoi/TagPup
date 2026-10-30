@@ -328,8 +328,6 @@ class Runner:
         #: How many jobs are running now, on any thread: busy() while one is.
         self._running = 0
         self._running_lock = threading.Lock()
-        #: {run id: {"job", "library", "run_id", "started", "forced"}} of the runs under way here.
-        self._current = {}
 
     @property
     def registry(self):
@@ -355,16 +353,12 @@ class Runner:
         def under_way(outcome, now):
             with self._running_lock:
                 self._running += 1
-                self._current[outcome.run_id] = {"job": job.name, "library": run_for, "run_id": outcome.run_id,
-                                                 "started": job_runs.stamp(now), "forced": force,
-                                                 "run": runs.job_tag(run_for, outcome.run_id)}
             told(outcome)
             try:
                 yield
             finally:
                 with self._running_lock:
                     self._running -= 1
-                    self._current.pop(outcome.run_id, None)
         outcome = run_claimed(job, where, run_for,
                               lambda now: job.call(target, Run(now=now, forced=force, given=self._given)),
                               self._clock, None if force else (lambda last, now: is_due(job, last, now)), under_way)
@@ -410,12 +404,6 @@ class Runner:
         threading.Thread(target=work, name="RunNowThread", daemon=True).start()
         told.wait(wait)
         return box.get("outcome")
-
-    def status(self):
-        """The runs under way in this process: [{"job", "library", "run_id", "started",
-        "forced", "run"}]."""
-        with self._running_lock:
-            return [dict(each) for each in self._current.values()]
 
     def run_due(self):
         """Run every job that is due, for every library. [Outcome], one per job and library

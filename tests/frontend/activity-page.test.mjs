@@ -131,6 +131,18 @@ describe("Now: a card a library, its runs as a tree, in the server's words", () 
     assert.equal(document.getElementById("updated").textContent, "Updated 15:27:20");
   });
 
+  test("the watcher's line joins the row the server says is its, not any sync row", async (t) => {
+    // The server names the watcher's run (`source: "watcher"`); a sync row it does not name is a run of its own.
+    const long = SERVED.long_sync.now;
+    const harbour = long.libraries[0];
+    const jobs = harbour.jobs.map((row) => ({ ...row, source: "row" }));
+    const apart = { ...long, libraries: [{ ...harbour, jobs }, ...long.libraries.slice(1)] };
+    const { document, window } = await open(t, server("long_sync", { first: [["/api/activity/now", apart]] }));
+    await flush(window, 8);
+    const top = [...card(document, "harbour").querySelectorAll(":scope > ul.run-tree > li.run")];
+    assert.deepEqual(top.map((li) => li.dataset.label), ["sync (folder watcher)", "sync"]);
+  });
+
   test("a run is stuck only when its last progress is over five minutes old; one that said none is not", async (t) => {
     const stuck = SERVED.stuck.now;
     const [harbourNow, lighthouseNow] = stuck.libraries;
