@@ -821,8 +821,7 @@ class AnIndexReadsABake(unittest.TestCase):
             proc.stdout.readline.side_effect = iter([line + "\n" for line in printed.split("\n")] + [""])
             return proc
         library = Library(self.db_path)
-        queue = indexing_jobs.queue_for(library)
-        self.addCleanup(indexing_jobs.forget, library)
+        queue = indexing_jobs.IndexQueue(library.name, library)
         with mock.patch.object(indexing_jobs.IndexQueue, "_ensure_runner"), mock.patch("subprocess.Popen", cli):
             queue.start([folder], lambda each, report: indexing.index_folder(library, each, self.home.root, report))
             queue.run_pending()

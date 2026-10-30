@@ -20,7 +20,6 @@ from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import NotHeld, Result  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services import settings as settings_service  # noqa: E402
@@ -75,11 +74,11 @@ class AnAddedFolder(unittest.TestCase):
         patcher = mock.patch("tagpup.runtime.index_folder", side_effect=index_folder)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.addCleanup(indexing_jobs.forget, self.library)
 
     def sync(self):
-        result = runtimes.sync(self.library, apply=True)
-        indexing_jobs.queue_for(self.library).wait()
+        runtime = runtimes.Runtime()
+        result = runtime.sync(self.library, apply=True)
+        runtime.index_queues.of(self.library).wait()
         return result
 
     def test_sync_walks_it_and_queues_its_files(self):

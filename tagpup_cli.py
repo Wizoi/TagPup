@@ -93,7 +93,6 @@ from tagpup.core.result import SHARE_AWAY, NotFound
 from tagpup.services import maintenance
 from tagpup.services import refresh_rows
 from tagpup.services import file_changes
-from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex
 from tagpup.store.locks import PathLocker
 from tagpup.store import taxonomy as store_taxonomy
@@ -1208,7 +1207,8 @@ def sync(ctx, folder, apply_):
     was looked at and their root is there; a sync of one --folder never removes. A dry run
     unless --apply; counts only."""
     library = _existing_library(ctx)
-    result = runtimes.sync(library, folder=folder, apply=apply_)
+    runtime = get_runtime()
+    result = runtime.sync(library, folder=folder, apply=apply_)
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
         raise SystemExit(1)
@@ -1258,7 +1258,7 @@ def sync(ctx, folder, apply_):
         console.print(line, markup=False, soft_wrap=True)
     if result.details["queued"]:
         console.print("Indexing %d folder(s) with new files or work owed, one at a time..." % result.details["queued"])
-        queue = indexing_jobs.queue_for(library)
+        queue = runtime.index_queues.of(library)
         queue.wait()
         for folder_path in result.details["reveal"]["new_folders"]:
             console.print("  %s" % queue.status(folder_path)["message"], markup=False)

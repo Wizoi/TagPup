@@ -7,7 +7,7 @@ home of their own with ports of their own; the writer in the first test is a pro
 CLI index does, since a real index cannot be held part-way without the card.
 
 Lifted: test_sync_entry_points' TheCli.test_a_dry_run_says_what_it_found_and_changes_nothing (the dry run of the real CLI is the
-first step of the sync test here). Broken in a scratch copy and this file fails: runtime.sync applying on a dry run (the
+first step of the sync test here). Broken in a scratch copy and this file fails: Runtime.sync applying on a dry run (the
 CLI's dry run wrote a change: the sync test), the MCP server's find_library calling `schema.ensure` (the library migrated by a
 look), the launcher's drain start not saying to finish the CLI's work first (the update test). The server's stale second apply is
 idempotent today (the row already holds the path the plan moved it to), which the sync test pins; no break of the journal's
@@ -182,8 +182,9 @@ class OneLibrary(Waits, unittest.TestCase):
             release.wait(60)
             return seen
 
+        server = runtime.Runtime()      # the server's
         with mock.patch.object(sync_service, "look", held_after_looking):
-            servers = threading.Thread(target=lambda: answer.update(result=runtime.sync(library, apply=True)))
+            servers = threading.Thread(target=lambda: answer.update(result=server.sync(library, apply=True)))
             servers.start()
             self.assertTrue(planned.wait(60), "the server's sync never planned")
             applied = self.cli("sync", "--apply")

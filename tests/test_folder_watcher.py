@@ -574,6 +574,7 @@ class TagPupsOwnWrites(Base):
         self.photos = [a_jpeg(os.path.join(self.regatta, "Regatta - %03d.jpg" % n)) for n in range(self.PHOTOS)]
         self.harbour = self.made("harbour.db", self.photos)
         self.results, self.reads = [], []
+        self.runtime = Runtime()      # the server's: its sync is the watcher's
 
     def made(self, name, photos):
         """A library holding `photos` as a whole index leaves them, synced whole just now: no catch-up at start."""
@@ -593,7 +594,7 @@ class TagPupsOwnWrites(Base):
             return call
 
         with mock.patch.object(refresh_rows, "read_files", counted(refresh_rows.read_files)):
-            result = runtimes.sync(library, folder=folder, apply=True, index_new=False)
+            result = self.runtime.sync(library, folder=folder, apply=True, index_new=False)
         self.synced.append((library.name, folder))
         self.results.append(result)
 
@@ -750,11 +751,12 @@ class AWholeSyncOverASlowShare(unittest.TestCase):
             listed.append(folder)
             return real_listing(folder)
 
+        runtime = Runtime()
         watcher = watching.Watcher(lambda: [library], lambda lib: [root],
-                                   lambda lib, folder: runtimes.sync(lib, folder=folder, apply=False),
+                                   lambda lib, folder: runtime.sync(lib, folder=folder, apply=False),
                                    images.is_photo, whole=recurring.sync_whole, debounce=0.5, recheck=0.2, tick=0.05)
-        app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background(
-            [(runtimes.FOLDER_WATCHER, watcher)])))
+        app = web.create_app("tagpup", runtime=runtime, lifecycle=Lifecycle(background=runtimes.Background(
+            [(runtimes.FOLDER_WATCHER, watcher)]), runtime=runtime))
         app.testing = True
         page = app.test_client()
         # Every count told is written: the 10 s between two writes of a run's progress is not what this is about.

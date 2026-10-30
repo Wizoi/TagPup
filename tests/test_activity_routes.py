@@ -23,7 +23,6 @@ from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import runs  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import activity  # noqa: E402
 from tagpup.services import job_runs as job_runs_service  # noqa: E402
@@ -62,6 +61,8 @@ class FakeWatcher:
 class Base(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="activity_")
+        #: The server's runtime: its index queues.
+        self.runtime = runtimes.Runtime()
         self.harbour = self.made("harbour")
         self.regatta = self.made("regatta")
 
@@ -72,7 +73,8 @@ class Base(unittest.TestCase):
 
     def client(self, tasks=(), kind="tagpup"):
         background = runtimes.Background(list(tasks))
-        app = web.create_app(kind, ports=PORTS, lifecycle=Lifecycle(background=background))
+        app = web.create_app(kind, ports=PORTS, runtime=self.runtime,
+                             lifecycle=Lifecycle(background=background, runtime=self.runtime))
         app.testing = True
         return app.test_client()
 
@@ -131,7 +133,7 @@ class ThePage(Base):
             self.assertEqual(404, client.get(url).status_code, url)
 
     def test_a_server_started_on_a_library_serves_it_too(self):
-        app = web.create_app("tagpup", startup=self.harbour, ports=PORTS)
+        app = web.create_app("tagpup", startup=self.harbour, ports=PORTS, runtime=self.runtime)
         app.testing = True
         client = app.test_client()
         self.assertEqual(200, client.get("/activity/").status_code)
@@ -141,8 +143,7 @@ class ThePage(Base):
 class Now(Base):
     def test_the_index_queue_the_running_jobs_and_suggest_by_library(self):
         release = threading.Event()
-        queue = indexing_jobs.queue_for(self.harbour)
-        self.addCleanup(indexing_jobs.forget, self.harbour)
+        queue = self.runtime.index_queues.of(self.harbour)
 
         def index(folder, report):
             report("Indexing: 40% (4/10)", 40)
@@ -260,8 +261,9 @@ class Now(Base):
         running = {"run": tag, "parents": parents, "started": job_runs.stamp(progressed - 60), "folders": 1,
                    "name": "Regatta 2019", "percent": 15, "message": "Reading metadata: 15% (120/800)",
                    "progressed": job_runs.stamp(progressed)}
-        queue = mock.Mock(now=mock.Mock(return_value={"running": running, "queued": [{"name": "Harbour Walk", "folders": 1}]}))
-        return mock.patch.object(indexing_jobs, "every_queue", return_value=[(library.name, queue)])
+        queue = mock.Mock(library=library.name,
+                          now=mock.Mock(return_value={"running": running, "queued": [{"name": "Harbour Walk", "folders": 1}]}))
+        return mock.patch.object(self.runtime.index_queues, "values", return_value=[queue])
 
     def test_the_own_index_before_its_row_is_read_is_under_the_run_that_queued_it(self):
         """#2253: the queue's own index has no row yet (its claim not committed, retried on a busy library, or never
@@ -540,8 +542,7 @@ class SyncSnapshotsAndTheTimeline(Base):
         started = "2026-09-26 09:00:00"
         sync_tag = runs.sync_tag("harbour", started)
         job_runs.record_sync(self.harbour.path, started, whole=True, in_step=True, found={}, changed={})
-        queue = indexing_jobs.queue_for(self.harbour)
-        self.addCleanup(indexing_jobs.forget, self.harbour)
+        queue = self.runtime.index_queues.of(self.harbour)
         seen = {}
 
         def index(folder, report):

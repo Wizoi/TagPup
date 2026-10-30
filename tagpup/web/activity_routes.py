@@ -44,7 +44,6 @@ from tagpup import logs
 from tagpup import runtime as runtimes
 from tagpup.core import library as libraries
 from tagpup.core import paths, runs
-from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import activity, batches
@@ -209,7 +208,8 @@ def now():
     every = _libraries()
     watcher = _lifecycle().watcher()
     watching = watcher.status() if watcher is not None else None
-    here = activity.Here(queues={name.lower(): queue.now() for name, queue in indexing_jobs.every_queue() if name},
+    queues = current_app.config["RUNTIME"].index_queues.values()     # this process's runtime's
+    here = activity.Here(queues={queue.library.lower(): queue.now() for queue in queues if queue.library},
                          syncing=watching["syncing"] if watching else None, sync_job=recurring.SYNC, logs_of=_logs_for)
     told = activity.runs_now(every, here)
     suggesting = suggestion_jobs.under_way()

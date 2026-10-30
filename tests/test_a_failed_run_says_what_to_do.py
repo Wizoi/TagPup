@@ -26,7 +26,6 @@ from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import shares  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import activity, job_runs, maintenance  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -55,6 +54,8 @@ class Clock:
 class _Libraries(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="failed_run_")
+        #: The process's runtime, as the server's: its index queues.
+        self.runtime = runtimes.Runtime()
         self.pictures = os.path.join(self.home.root, "Pictures")
         shares.forget()
         self.addCleanup(shares.forget)
@@ -84,7 +85,6 @@ class _Libraries(unittest.TestCase):
         finally:
             conn.close()
         library = Library(db_path)
-        self.addCleanup(indexing_jobs.forget, library)
         return library
 
     def away_of(self, name):
@@ -106,7 +106,7 @@ class _Libraries(unittest.TestCase):
 
     def share_drops(self, library):
         """An index queue of `library` that finds the share not answering: the sync's walk saw it, the queue does not."""
-        queue = indexing_jobs.queue_for(library)
+        queue = self.runtime.index_queues.of(library)
 
         def queued(folders):
             with mock.patch.object(photo_actions, "folder_state", lambda folder: "unanswered"):
@@ -130,10 +130,10 @@ class AFailedRunRecordsWhatHappened(_Libraries):
         self.assertEqual((job_runs.FAILED, job_runs.SHARE), (run.outcome, job_runs.kind_of(run)))
         self.assertTrue(run.note.startswith("The network share"), run.note)
         self.assertFalse(sync.last(harbour)["last_run"]["in_step"])
-        self.assertFalse(indexing_jobs.queue_for(harbour).busy(), "a folder of the share away was queued")
+        self.assertFalse(self.runtime.index_queues.of(harbour).busy(), "a folder of the share away was queued")
 
         lighthouse = self.library("lighthouse", new=("IMG_0002.jpg",))
-        queue = indexing_jobs.queue_for(lighthouse)
+        queue = self.runtime.index_queues.of(lighthouse)
 
         def gone_first(folders):
             shutil.rmtree(self.folder_of("lighthouse"))             # moved away between the walk and the queue
@@ -304,7 +304,8 @@ class NeedsYouInTheMorning(_Libraries):
         self.assertIn("run it now", held["next_step"])
         self.assertEqual("RuntimeError: the walk stopped", found[2]["items"][1]["sentence"])
 
-        app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background([])))
+        app = web.create_app("tagpup", runtime=self.runtime,
+                             lifecycle=Lifecycle(background=runtimes.Background([]), runtime=self.runtime))
         app.testing = True
         reply = app.test_client().get("/api/activity/jobs?runs=1")
         self.assertEqual(200, reply.status_code)

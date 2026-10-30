@@ -46,7 +46,6 @@ import numpy as np
 
 from tagpup.core import paths
 from tagpup.core.gpu_turns import Cancelled, OtherModelsInUse
-from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import libraries, suggester
 
 logger = logging.getLogger(__name__)
@@ -77,12 +76,13 @@ _runs_lock = threading.Lock()
 _Event = threading.Event
 
 
-def work_for(library, photos, models, looking=False, held_now=None):
+def work_for(library, photos, models, queue, looking=False, held_now=None):
     """What a run over one folder of `library` runs (SuggestionRuns.start): `photos()`,
     the folder's photos as {key: metadata with "path"}, and the model `models` readies
     for the library -- something with `begin(library)` (tagpup.runtime.Runtime), which
     returns what a run calls (`suggest`, `offered`, `consensus`, `model_key`; see
-    SuggestionRuns.start). Everything the run's thread needs is handed to it here; it
+    SuggestionRuns.start) -- and `queue`, the library's index queue in this process (Runtime.index_queues), which a
+    run waits on while it indexes the folder. Everything the run's thread needs is handed to it here; it
     never asks which library a request was for (docs/findings.md, #44). `looking`: the folder is
     not the library's, and the run keeps what it finds in memory and adds nothing to the
     library (decided by the route, from the library's own answer). `held_now()`, for such a run: does
@@ -98,7 +98,7 @@ def work_for(library, photos, models, looking=False, held_now=None):
         def indexing(self, folder):
             """The index of `folder` this process runs or has queued, or None
             (tagpup.jobs.indexing.IndexQueue.indexing)."""
-            return indexing_jobs.queue_for(library).indexing(folder)
+            return queue.indexing(folder)
 
         def watch(self, folder, cancelled, report):
             """How the run's wait for the graphics card is named, stopped and told of

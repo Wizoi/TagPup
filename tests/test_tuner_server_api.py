@@ -30,7 +30,7 @@ from tagpup.core import clustering  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 FACE_DIM = 512
@@ -64,7 +64,8 @@ class TunerAPITestBase(unittest.TestCase):
         pi = PhotoIndex(db_path=cls.TEST_DB)
         pi.load()
         pi.close()
-        cls.app = tuner_client.app_on(cls.TEST_DB)
+        cls.runtime = Runtime()
+        cls.app = tuner_client.app_on(cls.TEST_DB, runtime=cls.runtime)
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagtuner_api_")
@@ -72,6 +73,7 @@ class TunerAPITestBase(unittest.TestCase):
         # What the server keeps of the library outlives the rows: a cached grid or the
         # index queue an earlier test left would be served to this one.
         tuner_client.forget(self.TEST_DB)
+        self.clear_index_status()
         self.requests = tuner_client.Requests(self.app)
         conn = db.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
@@ -83,14 +85,14 @@ class TunerAPITestBase(unittest.TestCase):
     def clear_index_status(self):
         """Forget any indexing job or queue an earlier test left behind.
 
-        The queue lives as long as the process, so a test that plants a "running" job
-        or queues folders leaves them there for every test after it. The next test then
+        The queue lives as long as the app's runtime, which the class's tests share, so a test that plants a
+        "running" job or queues folders leaves them there for every test after it. The next test then
         sees a busy server it never asked for.
         """
-        indexing_jobs.forget(Library(self.TEST_DB))
+        self.runtime.index_queues.forget(Library(self.TEST_DB))
 
     def index_queue(self):
-        return indexing_jobs.queue_for(Library(self.TEST_DB))
+        return self.runtime.index_queues.of(Library(self.TEST_DB))
 
     def plant_status(self, folder, **status):
         """Say a folder has got somewhere -- running, say -- without indexing it."""

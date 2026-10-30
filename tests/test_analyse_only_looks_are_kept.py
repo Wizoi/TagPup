@@ -23,7 +23,6 @@ import library_dump  # noqa: E402
 import test_analyse_only_suggest as base  # noqa: E402
 
 from tagpup.core.result import Result  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import indexing, suggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -55,7 +54,6 @@ class WithIndexing(Base):
         patcher = mock.patch.object(indexing, "index_folder", self.index)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.addCleanup(indexing_jobs.forget, self.library)
         self.runs = suggestion_jobs.runs_for(self.library)
 
     def add(self, folder):
@@ -71,7 +69,7 @@ class TheLookIsLetGoWhenTheFolderBecomesTheLibrarys(WithIndexing):
         self.start(self.cup)
         self.assertTrue(self.status(self.cup)["in_memory"])
         self.add(self.cup)
-        indexing_jobs.queue_for(self.library).wait()
+        self.runtime.index_queues.of(self.library).wait()
         found = self.status(self.cup)
         self.assertEqual("idle", found["status"])
         self.assertNotIn("in_memory", found)
@@ -87,7 +85,7 @@ class TheLookIsLetGoWhenTheFolderBecomesTheLibrarys(WithIndexing):
                                types.SimpleNamespace(Lock=threading.Lock, Thread=base.Deferred)):
             self.start(self.cup)
             self.add(self.cup)
-            indexing_jobs.queue_for(self.library).wait()
+            self.runtime.index_queues.of(self.library).wait()
             base.Deferred.waiting[0].run()
         self.assertEqual("idle", self.status(self.cup)["status"])
         self.assertEqual({}, self.runs.looks)
@@ -103,9 +101,9 @@ class TheLookIsLetGoWhenTheFolderBecomesTheLibrarys(WithIndexing):
         self.start(extra)
         self.assertTrue(self.status(extra)["in_memory"], "Extra is not the library's: it is looked at")
         # As sync queues a folder: the indexer is handed the folder, not the library.
-        indexing_jobs.queue_for(self.library).start(
+        self.runtime.index_queues.of(self.library).start(
             [self.regatta], lambda folder, report: self.index(self.library, folder, None), together=False)
-        indexing_jobs.queue_for(self.library).wait()
+        self.runtime.index_queues.of(self.library).wait()
         self.assertTrue(self.status(extra)["in_memory"], "the index of the parent dropped its subfolder's look")
         self.assertIn(self.regatta, self.index.folders)
 
@@ -117,7 +115,7 @@ class TheLookIsLetGoWhenTheFolderBecomesTheLibrarys(WithIndexing):
         for folder in (self.cup, later, other):
             self.start(folder)
         self.add(self.cup)
-        indexing_jobs.queue_for(self.library).wait()
+        self.runtime.index_queues.of(self.library).wait()
         self.assertEqual("idle", self.status(self.cup)["status"])
         self.assertEqual("idle", self.status(later)["status"], "added with its subfolders")
         self.assertTrue(self.status(other)["in_memory"])
@@ -143,7 +141,7 @@ class TheLookIsLetGoWhenTheFolderBecomesTheLibrarys(WithIndexing):
         self.start(self.cup)
         self.start(other)
         self.add(self.cup)
-        indexing_jobs.queue_for(self.library).wait()
+        self.runtime.index_queues.of(self.library).wait()
         self.assertTrue(self.status(other)["in_memory"])
 
 

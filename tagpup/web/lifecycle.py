@@ -36,7 +36,6 @@ from typing import NamedTuple, Optional
 
 from flask import Blueprint, current_app, jsonify, request
 
-from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces as naming_faces_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup import launcher
@@ -109,13 +108,13 @@ class Work(NamedTuple):
     sentence: str
 
 
-def under_way(watcher=None):
+def under_way(watcher=None, queues=None):
     """The one list of what runs in this process beside its requests: [Work]. Each index queue busy (or its last run's
     end waiting for the library) and each Suggest run by its library, the naming of faces, the batches of photo files and the startup migrations (#664) counted, and
     the sync of `watcher` (the folder watcher this process runs, Lifecycle.watcher), when it is given. A drain reads it
     (long_work), and so do the Activity page, the roots' moves and Name faces from tags (Lifecycle.under_way)."""
-    found = [Work(INDEX, name, "an index run is running or queued")
-             for name, queue in indexing_jobs.every_queue() if queue.busy()]
+    found = [Work(INDEX, queue.library, "an index run is running or queued")
+             for queue in (queues.values() if queues is not None else []) if queue.busy()]
     # An index whose end waits for the library, after its queue is idle (#2200): once per library with an index.
     indexed = {work.library for work in found}
     found += [Work(INDEX, name, "an index's end waits for the library")
@@ -138,10 +137,11 @@ def under_way(watcher=None):
 COUNTED = {SUGGEST: "%d Suggest run(s)", INDEX: "indexing in %d library(ies)"}
 
 
-def long_work():
+def long_work(queues=None):
     """The work under way in this process beside its requests, by what it is: what a drain will not interrupt, [Work],
-    the runs of one kind counted together (COUNTED). The folder watcher's sync is its background task's (Lifecycle.busy)."""
-    found = under_way()
+    the runs of one kind counted together (COUNTED); the index queues are `queues` (the runtime's, Lifecycle's). The
+    folder watcher's sync is its background task's (Lifecycle.busy)."""
+    found = under_way(queues=queues)
     counted = []
     for kind, said in COUNTED.items():
         count = sum(1 for work in found if work.kind == kind)
@@ -163,8 +163,8 @@ class Lifecycle:
     stopped by a drain and started again by a resume), `work()` (long_work, or a test's: [Work])
     and `clock`."""
 
-    def __init__(self, version=None, background=None, work=long_work, clock=time.monotonic,
-                 launcher_token=None):
+    def __init__(self, version=None, background=None, work=None, clock=time.monotonic,
+                 launcher_token=None, runtime=None):
         self.version = version
         #: What X-TagPup-Version says: the version, or that it runs from a checkout.
         self.version_label = version or launcher.FROM_A_CHECKOUT
@@ -172,7 +172,10 @@ class Lifecycle:
         self.started = time.time()
         self._launcher_token = launcher_token or None
         self._background = background
-        self._work = work
+        #: The index queues of this process's runtime (tagpup.runtime.Runtime.index_queues), or None for an app made
+        #: without one (a test's).
+        self._queues = runtime.index_queues if runtime is not None else None
+        self._work = work if work is not None else (lambda: long_work(self._queues))
         self._clock = clock
         self._changed = threading.Condition()
         self._in_flight = 0
@@ -199,7 +202,7 @@ class Lifecycle:
 
     def under_way(self, library=None):
         """under_way, with this process's watcher: [Work], only `library`'s when it is given."""
-        found = under_way(self.watcher())
+        found = under_way(self.watcher(), self._queues)
         if library is None:
             return found
         return [work for work in found if work.library is not None and work.library.lower() == library.name.lower()]

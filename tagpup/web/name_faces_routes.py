@@ -44,7 +44,7 @@ GUARDED = frozenset((
 
 #: Routes of GUARDED that only write when the body says so: a rehearsal (Undo, sync without `apply`).
 #: A run-now of the recurring `sync` is not here: the Activity page names the library in the body, not the URL, so no route
-#: guard sees it; tagpup.runtime.sync refuses an applied sync itself, for that and the scheduled job and the watcher.
+#: guard sees it; tagpup.runtime.Runtime.sync refuses an applied sync itself, for that and the scheduled job and the watcher.
 WRITES_WHEN = {
     "/api/sync": lambda body: body.get("apply") is True,
     "/api/history/<int:change_id>/undo": lambda body: body.get("apply") is True,

@@ -34,9 +34,9 @@ import own_home  # noqa: E402
 from tagpup import launcher  # noqa: E402
 from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db, job_runs  # noqa: E402
@@ -354,17 +354,20 @@ class WhatARealDrainRefusesBeside(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="drain_kinds_")
         self.background = FakeBackground()
-        self.lifecycle = Lifecycle(version="v", launcher_token=TOKEN, background=self.background)
+        self.runtime = Runtime()
+        self.lifecycle = Lifecycle(version="v", launcher_token=TOKEN, background=self.background, runtime=self.runtime)
 
     def test_an_index_a_naming_a_migration_and_a_suggest_run_each_refuse_it(self):
         class Busy:
+            library = "harbour"
+
             def busy(self):
                 return True
-        every = (lifecycles.indexing_jobs, "every_queue")
+        every = (self.runtime.index_queues, "values")
         runs = (lifecycles.suggestion_jobs, "under_way")
         naming = (lifecycles.naming_faces_jobs, "running")
         migrating = (lifecycles.library_actions, "bringing_up_to_date")
-        for kind, source, value in ((lifecycles.INDEX, every, [("harbour", Busy())]),
+        for kind, source, value in ((lifecycles.INDEX, every, [Busy()]),
                                     (lifecycles.SUGGEST, runs, [{"library": "harbour"}]),
                                     (lifecycles.NAMING, naming, 1), (lifecycles.MIGRATING, migrating, 1)):
             with self.subTest(kind):
@@ -394,7 +397,7 @@ class WhatALongRunIs(unittest.TestCase):
         path = self.home.library("harbour.db")
         library_actions.create(path)
         self.library = Library(path)
-        self.addCleanup(indexing_jobs.forget, self.library)
+        self.runtime = Runtime()
         self.addCleanup(suggestion_jobs.forget, self.library)
         self.go = threading.Event()
         self.addCleanup(self.go.set)
@@ -404,14 +407,14 @@ class WhatALongRunIs(unittest.TestCase):
             self.go.wait(30)
             from tagpup.core.result import Result
             return Result()
-        self.assertEqual([], lifecycles.long_work())
-        indexing_jobs.queue_for(self.library).start([self.home.root], index)
-        self.assertEqual(["indexing in 1 library(ies)"], [work.sentence for work in lifecycles.long_work()])
+        self.assertEqual([], lifecycles.long_work(self.runtime.index_queues))
+        self.runtime.index_queues.of(self.library).start([self.home.root], index)
+        self.assertEqual(["indexing in 1 library(ies)"], [work.sentence for work in lifecycles.long_work(self.runtime.index_queues)])
         self.go.set()
         deadline = time.time() + 10
-        while lifecycles.long_work() and time.time() < deadline:
+        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
             time.sleep(0.01)
-        self.assertEqual([], lifecycles.long_work())
+        self.assertEqual([], lifecycles.long_work(self.runtime.index_queues))
 
     def test_a_suggest_run_under_way(self):
         go = self.go
@@ -424,12 +427,12 @@ class WhatALongRunIs(unittest.TestCase):
             def begin(self):
                 raise AssertionError("no photos, no model")
         suggestion_jobs.runs_for(self.library).start(self.home.root, Work())
-        self.assertEqual(["1 Suggest run(s)"], [work.sentence for work in lifecycles.long_work()])
+        self.assertEqual(["1 Suggest run(s)"], [work.sentence for work in lifecycles.long_work(self.runtime.index_queues)])
         self.go.set()
         deadline = time.time() + 10
-        while lifecycles.long_work() and time.time() < deadline:
+        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
             time.sleep(0.01)
-        self.assertEqual([], lifecycles.long_work())
+        self.assertEqual([], lifecycles.long_work(self.runtime.index_queues))
 
 
 class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
@@ -443,8 +446,8 @@ class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
         path = self.home.library("harbour.db")
         library_actions.create(path)
         self.library = Library(path)
-        self.addCleanup(indexing_jobs.forget, self.library)
-        self.lifecycle = Lifecycle(version="v", launcher_token=TOKEN, background=FakeBackground())
+        self.runtime = Runtime()
+        self.lifecycle = Lifecycle(version="v", launcher_token=TOKEN, background=FakeBackground(), runtime=self.runtime)
         self.addCleanup(self.lifecycle.resume)
         self.held = []
         self.addCleanup(self.let_go)
@@ -463,7 +466,7 @@ class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
             db.begin(conn, immediate=True)
             self.held.append(conn)
             return Result(attempted=1, changed=1)
-        queue = indexing_jobs.queue_for(self.library)
+        queue = self.runtime.index_queues.of(self.library)
         self.assertTrue(queue.start([self.home.root], index, together=True).ok)
         queue.wait()
         [run] = [run for run in runs_service.runs(self.library, runs_service.INDEX)]
@@ -472,14 +475,14 @@ class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
 
     def wait_for_no_long_work(self, seconds):
         deadline = time.time() + seconds
-        while lifecycles.long_work() and time.time() < deadline:
+        while lifecycles.long_work(self.runtime.index_queues) and time.time() < deadline:
             time.sleep(0.02)
 
     def test_refuses_a_drain_until_it_is_written(self):
         run = self.index_ending_beside_another_writer()
         answer = self.lifecycle.drain(5, 0, lease=LEASE)
         self.assertEqual((False, ["indexing in 1 library(ies)"]), (answer["drained"], answer.get("waiting_for")), answer)
-        self.assertEqual([work for work in lifecycles.under_way() if work.library == "harbour"],
+        self.assertEqual([work for work in lifecycles.under_way(queues=self.runtime.index_queues) if work.library == "harbour"],
                          [lifecycles.Work(lifecycles.INDEX, "harbour", "an index's end waits for the library")])
         self.let_go()
         self.wait_for_no_long_work(30)
@@ -490,7 +493,7 @@ class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
     def test_a_writer_that_never_lets_go_holds_the_drain_only_while_the_end_is_waited_for(self):
         with mock.patch.object(db, "BUSY_TIMEOUT_MS", 200):
             run = self.index_ending_beside_another_writer()
-            self.assertTrue(lifecycles.long_work())
+            self.assertTrue(lifecycles.long_work(self.runtime.index_queues))
             self.wait_for_no_long_work(30)
             self.assertEqual({"drained": True}, self.lifecycle.drain(5, 0, lease=LEASE),
                              "a writer that never let go held the drain for good")
@@ -498,7 +501,7 @@ class AnIndexsEndWaitingForTheLibrary(unittest.TestCase):
         self.assertEqual(job_runs.RUNNING, runs_service.get(self.library, run.id).outcome)
         # Its end is kept, written as the library's next index begins.
         self.let_go()
-        queue = indexing_jobs.queue_for(self.library)
+        queue = self.runtime.index_queues.of(self.library)
         self.assertTrue(queue.start([self.home.root], lambda folders, report: Result(), together=True).ok)
         queue.wait()
         self.assertEqual(job_runs.DONE, runs_service.get(self.library, run.id).outcome)

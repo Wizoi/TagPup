@@ -89,7 +89,8 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
         tagpup_routes.idle_caches(runtime.idle)
         tuner_routes.idle_caches(runtime.idle)
     app.config["PORTS"] = dict(ports or {})
-    app.config["LIFECYCLE"] = lifecycle = lifecycle or lifecycles.Lifecycle(version=tagpup_config.code_version())
+    app.config["LIFECYCLE"] = lifecycle = lifecycle or lifecycles.Lifecycle(version=tagpup_config.code_version(),
+                                                                                    runtime=runtime)
     app.config["PAGES"] = pages or os.path.join(tagpup_config.CODE_ROOT, PAGES[kind])
     app.config["COMMON"] = os.path.join(os.path.dirname(app.config["PAGES"]), COMMON)
     app.json.sort_keys = False

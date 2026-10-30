@@ -16,7 +16,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_from_tags import ODA, WREN, Case, at, look  # noqa: E402
 
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.jobs import naming_faces  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import name_faces_routes, tuner_routes  # noqa: E402
@@ -44,8 +44,9 @@ class RoutesCase(Case):
         super().setUp()
         self.addCleanup(naming_faces.forget, self.library)
         self.apps = {}
+        self.runtime = Runtime()      # both apps', as the server's
         for kind in ("tagpup", "tuner"):
-            app = web.create_app(kind, startup=self.library)
+            app = web.create_app(kind, startup=self.library, runtime=self.runtime)
             app.testing = True
             self.apps[kind] = app.test_client()
         fill(self)
@@ -139,7 +140,7 @@ class TwoClicksAndBusyLibraries(RoutesCase):
             self.join(first["job"])
 
     def test_a_library_being_indexed_refuses_it(self):
-        with mock.patch.object(indexing_jobs.queue_for(self.library), "busy", return_value=True):
+        with mock.patch.object(self.runtime.index_queues.of(self.library), "busy", return_value=True):
             answer = self.apps["tuner"].post(START, json={})
         self.assertEqual(409, answer.status_code)
         self.assertIn("index run", answer.get_json()["error"])
@@ -207,24 +208,24 @@ class TwoClicksAndBusyLibraries(RoutesCase):
 
     def test_an_applied_sync_does_not_run_while_names_are_given_however_it_is_asked(self):
         """The Activity page's Run now names the library in the body, not the URL, so no route guard sees it; the scheduled job
-        and the folder watcher call the same runtime.sync. It refuses itself, and runs after."""
+        and the folder watcher call the same Runtime.sync. It refuses itself, and runs after."""
         from types import SimpleNamespace
 
-        from tagpup import runtime
+        from tagpup import runtime as the_runtime
         from tagpup.jobs import recurring
         from tagpup.services import sync as sync_service
         from tagpup.web import lifecycle as web_lifecycle
 
         def run_now(name, library=None):
             job = recurring.JOBS.get(name)
-            result = job.call(library, SimpleNamespace(given={"runtime": SimpleNamespace(sync=runtime.sync)}))
+            result = job.call(library, SimpleNamespace(given={"runtime": SimpleNamespace(sync=self.runtime.sync)}))
             ran.append(result)
             return SimpleNamespace(ran=True, run_id=1, library=library)
 
         ran = []
         tasks = {"recurring jobs": SimpleNamespace(registry=recurring.JOBS, start_job=run_now)}
         background = SimpleNamespace(task=tasks.get, busy=lambda: [])
-        app = web.create_app("tagpup", startup=None, lifecycle=web_lifecycle.Lifecycle(background=background))
+        app = web.create_app("tagpup", startup=None, lifecycle=web_lifecycle.Lifecycle(background=background, runtime=self.runtime))
         app.testing = True
         page = app.test_client()      # as the page posts: no library in the URL, the library in the body
         asked = {"job": "sync", "library": self.library.name}
@@ -232,14 +233,14 @@ class TwoClicksAndBusyLibraries(RoutesCase):
         with mock.patch.object(sync_service, "sync", wraps=real) as service:
             with self.while_names_are_given():
                 self.assertEqual(200, page.post("/api/activity/jobs/run", json=asked).status_code)
-                refused = runtime.sync(self.library, folder=None, apply=True)         # what the watcher calls
-                self.assertEqual(runtime.NAMING_SAYS, ran[-1].refused)
-                self.assertEqual(runtime.NAMING_SAYS, refused.refused)
+                refused = self.runtime.sync(self.library, folder=None, apply=True)         # what the watcher calls
+                self.assertEqual(the_runtime.NAMING_SAYS, ran[-1].refused)
+                self.assertEqual(the_runtime.NAMING_SAYS, refused.refused)
                 self.assertEqual(0, service.call_count, "no sync was begun")
-                self.assertFalse(runtime.sync(self.library, apply=False).refused, "a rehearsal reads")
+                self.assertFalse(self.runtime.sync(self.library, apply=False).refused, "a rehearsal reads")
             self.assertEqual(1, service.call_count)
-            after = runtime.sync(self.library, apply=True)
-            self.assertNotEqual(runtime.NAMING_SAYS, after.refused, "and runs when the names are written")
+            after = self.runtime.sync(self.library, apply=True)
+            self.assertNotEqual(the_runtime.NAMING_SAYS, after.refused, "and runs when the names are written")
             self.assertEqual(2, service.call_count)
 
 class FolderRoutes(RoutesCase):

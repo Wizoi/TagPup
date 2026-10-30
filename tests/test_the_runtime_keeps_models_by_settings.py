@@ -261,7 +261,8 @@ class TheRuntimeLetsGoOfWhatNoLibraryUses(ALibrary):
 
         with mock.patch("tagpup.services.suggester.model_for_run", make_run), \
                 mock.patch.object(suggestion_jobs, "WORKERS", 1):
-            runs.run(folder, suggestion_jobs.work_for(library, lambda: photos, self.runtime))
+            runs.run(folder, suggestion_jobs.work_for(library, lambda: photos, self.runtime,
+                                                      self.runtime.index_queues.of(library)))
 
         [run] = started
         self.assertEqual([], run.failed, "the run's index was closed under it")

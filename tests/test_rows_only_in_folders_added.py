@@ -29,7 +29,7 @@ import web_client  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Conflict, Result  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -164,13 +164,13 @@ class FakeIndex:
 
 class TheSuggestRoute(Folders, unittest.TestCase):
     def setUp(self):
-        self.app, self.home = web_client.app_for(self, "tagpup", runtime=mock.Mock())
+        self.runtime = Runtime()
+        self.app, self.home = web_client.app_for(self, "tagpup", runtime=self.runtime)
         self.client = self.app.test_client()
         self.library = Library(self.home.library("library.db"))
         self.make(self.home.root, self.library.path)
         self.addCleanup(suggestion_jobs.forget, self.library)
         self.addCleanup(tagpup_routes.folders.forget, self.library)
-        self.addCleanup(indexing_jobs.forget, self.library)
         self.started = []
         self.looking = []
         patcher = mock.patch.object(suggestion_jobs.SuggestionRuns, "start",
@@ -215,7 +215,7 @@ class TheSuggestRoute(Folders, unittest.TestCase):
                          (answer["success"], answer["library"], answer["folder"], answer["added"], answer["queued"]))
         # No row is made by the add: the indexer makes each as it reads the photo.
         self.assertEqual(1, all_rows(self.library.path))
-        indexing_jobs.queue_for(self.library).wait()
+        self.runtime.index_queues.of(self.library).wait()
         self.assertEqual([self.lighthouse], self.indexed.folders)
         reply = self.suggest(self.lighthouse)
         self.assertEqual(200, reply.status_code, reply.data)
@@ -231,15 +231,15 @@ class TagTunersAddFolder(Folders, unittest.TestCase):
     """TagTuner's Add Folder adds as TagPup's Add does: recorded, then indexed."""
 
     def test_records_and_queues_the_folder(self):
-        app, self.home = web_client.app_for(self, "tuner")
+        runtime = Runtime()
+        app, self.home = web_client.app_for(self, "tuner", runtime=runtime)
         library = Library(self.home.library("library.db"))
         self.make(self.home.root, library.path)
-        self.addCleanup(indexing_jobs.forget, library)
         indexed = FakeIndex()
         with mock.patch("tagpup.services.indexing.index_folder", indexed):
             reply = app.test_client().post("/library/api/folder/index-start", json={"folder_paths": [self.lighthouse]})
             self.assertEqual(200, reply.status_code, reply.data)
-            indexing_jobs.queue_for(library).wait()
+            runtime.index_queues.of(library).wait()
         self.assertEqual(([self.lighthouse], 1), (reply.get_json()["queued"], reply.get_json()["added"]))
         self.assertEqual(0, rows_under(library.path, self.lighthouse))
         self.assertEqual((None, False), library_actions.suggest_how(library, self.lighthouse))
@@ -274,7 +274,6 @@ class TheClisSync(Folders, unittest.TestCase):
                     done = CliRunner().invoke(cli, ["--db", self.db_path, "sync"] + arguments)
                     self.assertEqual(exit_code, done.exit_code, done.output)
                     self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
-        indexing_jobs.forget(Library(self.db_path))
         self.assertEqual([self.regatta], indexed, "only the library's own folder is indexed")
         self.assertEqual({paths.key(self.held[0])}, {paths.key(p) for p in self.rows()})
 

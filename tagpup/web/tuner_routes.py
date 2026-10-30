@@ -22,7 +22,6 @@ from tagpup import runtime as runtimes
 from tagpup.core import paths
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import identify as identify_jobs
-from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import face_assignment, face_people
@@ -514,7 +513,7 @@ def folder_index_active():
     """What is being indexed now, and what waits behind it (tagpup.jobs.indexing). The
     per-folder status can only answer about a folder the page knows of; a page that has
     just loaded knows none."""
-    return jsonify(indexing_jobs.queue_for(state.require()).active())
+    return jsonify(state.runtime().index_queues.of(state.require()).active())
 
 
 @routes.get("/api/folder/index-status")
@@ -523,7 +522,7 @@ def folder_index_status():
     wanted = request.args.get("path")
     if not wanted:
         _refuse(400, "Missing path parameter")
-    return jsonify(indexing_jobs.queue_for(library).status(wanted))
+    return jsonify(state.runtime().index_queues.of(library).status(wanted))
 
 
 @routes.post("/api/folder/index-start")
@@ -539,7 +538,7 @@ def folder_index_start():
     if not isinstance(requested, list):
         _refuse(400, "folder_paths must be a list")
     # Adding a folder, as TagPup's Add does (tagpup.services.libraries.add).
-    result = library_actions.add(library, requested, lambda folders: indexing_jobs.queue_for(library).start(
+    result = library_actions.add(library, requested, lambda folders: state.runtime().index_queues.of(library).start(
         folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, requested)
     if result.refused:
@@ -559,7 +558,7 @@ def folder_index_cancel():
     cancel_all = bool(body.get("all"))
     if not cancel_all and not wanted:
         _refuse(400, "Nothing to cancel")
-    result = indexing_jobs.queue_for(library).cancel(wanted or [], everything=cancel_all)
+    result = state.runtime().index_queues.of(library).cancel(wanted or [], everything=cancel_all)
     return jsonify({"success": True, **result.details})
 
 

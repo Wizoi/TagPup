@@ -2,7 +2,8 @@
 
 The queue is driven directly here, with indexing stood in for. What indexing does is
 test_service_indexing.py's; what the routes accept and answer is in
-test_tuner_server_api.py.
+test_tuner_server_api.py. Each library's queue is its runtime's (tagpup.runtime.Runtime.index_queues): one per library
+file however its path is spelled, and two runtimes in one process share none.
 """
 import inspect
 import os
@@ -13,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -21,6 +23,8 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing  # noqa: E402
 from tagpup.jobs.indexing import IndexQueue  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.web import lifecycle  # noqa: E402
 
 
 class QueueTest(unittest.TestCase):
@@ -292,8 +296,7 @@ class FilesArrivingDuringAnIndex(QueueTest):
         self.addCleanup(shutil.rmtree, root, True)
         one = Library(os.path.join(root, "one.db"))
         other = Library(os.path.join(root, "other.db"))
-        self.addCleanup(indexing.forget, one)
-        self.addCleanup(indexing.forget, other)
+        queues = Runtime(card=mock.Mock()).index_queues
         folder = self.folders(1)[0]
         ran = {"one": [], "other": []}
         started, release = threading.Event(), threading.Event()
@@ -306,15 +309,15 @@ class FilesArrivingDuringAnIndex(QueueTest):
                     release.wait(10)
                 return Result(changed=1)
             return index
-        queue_one = indexing.queue_for(one)
+        queue_one = queues.of(one)
         queue_one.start([folder], index_for("one"))
         self.assertTrue(started.wait(10))
         # The owner switches library: the same folder is asked for in the other, and again in the first.
-        indexing.queue_for(other).start([folder], index_for("other"))
+        queues.of(other).start([folder], index_for("other"))
         queue_one.start([folder], index_for("one"))
         release.set()
         queue_one.wait()
-        indexing.queue_for(other).wait()
+        queues.of(other).wait()
         self.assertEqual((len(ran["one"]), len(ran["other"])), (2, 1))
 
     def test_a_folder_cancelled_while_it_was_asked_for_again_runs_once(self):
@@ -426,22 +429,48 @@ class TheQueueIsChangedAndReadUnderOneLock(QueueTest):
 
 
 class EachLibraryHasAQueue(unittest.TestCase):
-    def test_one_library_one_queue_however_it_is_spelled(self):
+    def setUp(self):
         root = tempfile.mkdtemp(prefix="index_queues_")
         self.addCleanup(shutil.rmtree, root, True)
-        one = Library(os.path.join(root, "one.db"))
-        other = Library(os.path.join(root, "other.db"))
-        self.addCleanup(indexing.forget, one)
-        self.addCleanup(indexing.forget, other)
-        self.assertIs(indexing.queue_for(one), indexing.queue_for(Library(one.path.replace(os.sep, "/"))))
-        self.assertIsNot(indexing.queue_for(one), indexing.queue_for(other))
+        self.root = root
+        self.one = Library(os.path.join(root, "one.db"))
+        self.other = Library(os.path.join(root, "other.db"))
 
-    def test_forgetting_a_library_starts_it_afresh(self):
-        library = Library(os.path.join(tempfile.gettempdir(), "forgotten.db"))
-        queue = indexing.queue_for(library)
-        indexing.forget(library)
-        self.assertIsNot(indexing.queue_for(library), queue)
-        indexing.forget(library)
+    def test_one_library_one_queue_however_it_is_spelled(self):
+        queues = Runtime(card=mock.Mock()).index_queues
+        self.assertIs(queues.of(self.one), queues.of(Library(self.one.path.replace(os.sep, "/"))))
+        self.assertIsNot(queues.of(self.one), queues.of(self.other))
+
+    def test_two_runtimes_in_one_process_share_no_queue(self):
+        """A test's runtime (or a CLI's beside a server's in one process) indexing a folder of a library: another
+        runtime's queue for that library is not busy with it, and a drain over the other's queues waits for no index.
+        One registry for the process shared them: the second runtime's drain waited for the first's index."""
+        first, second = Runtime(card=mock.Mock()), Runtime(card=mock.Mock())
+        folder = os.path.join(self.root, "Regatta")
+        os.makedirs(folder)
+        started, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def index(folder_, report):
+            started.set()
+            release.wait(10)
+            return Result(changed=1)
+        firsts = first.index_queues.of(self.one)
+        firsts.start([folder], index)
+        self.assertTrue(started.wait(10))
+        self.assertTrue(firsts.busy())
+        self.assertEqual(["indexing in 1 library(ies)"],
+                         [work.sentence for work in lifecycle.long_work(first.index_queues)])
+        self.assertEqual([], [work.sentence for work in lifecycle.long_work(second.index_queues)],
+                         "the second runtime's drain waits for the first's index")
+        self.assertEqual([], second.index_queues.values())
+        seconds = second.index_queues.of(Library(self.one.path))
+        self.assertIsNot(firsts, seconds)
+        self.assertFalse(seconds.busy())
+        self.assertIsNone(seconds.indexing(folder))
+        release.set()
+        firsts.wait()
+        self.assertFalse(firsts.busy())
 
 
 if __name__ == "__main__":
