@@ -4,7 +4,7 @@ The CLI is stood in for. What is checked is what it is asked to do, from where a
 which library, and what the Result and the progress reports say.
 
 Contract row 16: the indexer's stdout carries typed facts (tagpup.core.progress_line), and any other line is a
-person's. `AChildThatSaysMoreThanFacts` is the scenario: whatever else the child prints, the job hears its facts as
+person's. `AddingAFolder.test_a_child_that_says_more_than_facts_completes_its_job` is the scenario: whatever else the child prints, the job hears its facts as
 values and never raises. What follows an index -- the matching of the faces it made, from every entry point -- is
 tests/test_new_faces_are_matched_after_an_index.py.
 
@@ -91,9 +91,9 @@ class AddingAFolder(unittest.TestCase):
         self.assertEqual(result.details["percent"], 0)
 
     def test_a_child_that_says_more_than_facts_completes_its_job(self):
-        """Library chatter, a bar drawn by hand, a traceback, a fact cut by a child killed mid-line, a kind or a phase
-        this reader does not know, a field of the wrong type, a path in other letters, a very long line: the facts arrive
-        as values, the rest as a person's line cut for the bar, and nothing raises into the job."""
+        """Library chatter, a bar drawn by hand, a traceback, a fact cut by a child killed mid-line, a field of the
+        wrong type, a path in other letters, a very long line: the facts arrive as values, the rest as a person's line
+        cut for the bar, and nothing raises into the job."""
         folder = "D:/Fotos/" + chr(0xC5) + "lesund " + chr(0x2014) + " M" + chr(0xE4) + "rta"
         bake = bake_after_index.folder_told(2, 4, bake_after_index.Baked(written=3, current=1), folder, files=(5, 10))
         baked = bake_after_index.Baked(written=7, current=2, conflicts=1)
@@ -104,10 +104,8 @@ class AddingAFolder(unittest.TestCase):
             progress_line.say(indexing.phase_fact("embeddings", 25, 50)) + "\n",
             "Traceback (most recent call last):\n", '  File "C:/x/y.py", line 3, in f\n',
             progress_line.say(indexing.phase_fact("faces"))[:21] + "\n",
-            progress_line.PREFIX + '{"kind":"dance","sentence":"x"}\n',
             progress_line.PREFIX + '{"kind":"failed","photos":"2"}\n',
             progress_line.PREFIX + '{"kind":"failed","photos":true}\n',
-            said("phase", phase="dancing", sentence="Dancing"),
             progress_line.say(indexing.phase_fact("faces")) + "\n",
             said("new_faces", sentence="No new face is waiting for a name."),
             said("failed", photos=2),

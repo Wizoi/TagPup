@@ -182,7 +182,8 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                     continue
                 kind, counts = fact["kind"], progress_line.counts(fact)
                 if kind == "phase":
-                    # Only a phase a run has: tell raises for any other, and a line must never end the job.
+                    # By design, though the writer is this version's: a line must never end the job, and
+                    # `job_runs.tell` raises ValueError on a phase it does not know.
                     if fact["phase"] in job_runs.PHASES:
                         job_runs.tell(fact["phase"], counts)
                     if fact["phase"] == "embeddings" and "of" in counts:
