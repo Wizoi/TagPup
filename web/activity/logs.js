@@ -41,14 +41,16 @@ function logQuery(extra = {}) {
     return `?${params.toString()}`;
 }
 
-/** Read the list of logs, and draw the two lists. */
-export function loadLogFiles() {
+/** Read the list of logs, and draw the two lists. The chosen log that left the listing gives way to the server's log
+ *  unless `keepName`: its caller chooses a log itself, and may be overtaken (showRunLogs), the name then staying the one
+ *  whose lines are shown. */
+export function loadLogFiles({ keepName = false } = {}) {
     return api.site.json('/api/activity/logs').then(data => {
         state.logs.files = (data && data.logs) || [];
         state.logs.server = (data && data.server) || null;
         state.logs.keepRuns = (data && data.keep_runs) || null;
         state.logs.kinds = (data && data.kinds) || {};
-        if (!state.logs.name || !state.logs.files.some(file => file.name === state.logs.name)) {
+        if (!keepName && (!state.logs.name || !state.logs.files.some(file => file.name === state.logs.name))) {
             const web = state.logs.files.find(file => file.name === state.logs.server);
             state.logs.name = web ? web.name : (state.logs.files[0] || {}).name || null;
         }
@@ -157,6 +159,7 @@ function renderRunFiles() {
 export function chooseLog(name) {
     state.logs.name = name;
     state.logs.why = '';
+    state.logs.end = null;   // the previous log's end is no place in this one: not followed until it is read
     renderLogFiles();
     return readLog();
 }
@@ -247,7 +250,7 @@ export function showRunLogs(run, name) {
     // The listing again first: a run newer than the page has a log the first listing did not hold. A click (or any
     // read) asked meanwhile is newer than this one, and is the one shown.
     const asking = ++state.logs.asked;
-    return loadLogFiles().then(() => (asking === state.logs.asked ? chooseLog(name || state.logs.server) : null));
+    return loadLogFiles({ keepName: true }).then(() => (asking === state.logs.asked ? chooseLog(name || state.logs.server) : null));
 }
 
 function renderRecord(record) {

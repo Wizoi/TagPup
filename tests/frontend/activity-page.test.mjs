@@ -910,7 +910,8 @@ describe("Logs", () => {
     const removed = { success: false, removed: true,
                       error: "The log of this run was removed: the last 5 runs' logs of each library and kind are kept." };
     const fake = server().first(/tagpup_web\.log\?.*after=/, removed, { status: 404 });
-    const { document, window } = await open(t, fake, 20);
+    // A poll slower than the test looks: the next tick would clear a failure line, so it is read as the removal is said.
+    const { document, window } = await open(t, fake, 200);
     await flush(window, 8);
     click(window, document.querySelector('details.fold[data-fold="logs"] > summary'));
     const follow = document.getElementById("log-follow");
@@ -918,11 +919,64 @@ describe("Logs", () => {
     follow.dispatchEvent(new window.Event("change"));
     const followed = () => fake.urls().filter((url) => /tagpup_web\.log\?.*after=/.test(url)).length;
     await settled(() => document.getElementById("log-records").textContent === removed.error, "the removal to be said");
+    await flush(window, 6);
+    assert.equal(document.getElementById("logs-status").textContent, "", "a removed log read as the server failing");
     const asked = followed();
     await new Promise((resolve) => setTimeout(resolve, 150));
     assert.equal(followed(), asked, "a log that is not there was followed on");
     assert.equal(document.getElementById("logs-status").textContent, "", "a removed log read as the server failing");
     assert.equal(document.getElementById("log-raw").hasAttribute("href"), false);
+  });
+
+  test("a newly chosen log is not followed from the previous log's end while its first read is in flight", async (t) => {
+    let reads = 0;
+    const slowNewLog = (url) => {
+      if (url.includes("after=")) return { ...records(["a later line"]), end: 20500 };
+      reads += 1;
+      const reply = { ...records(["the new log's line"]), end: 777 };
+      return reads === 1 ? new Promise((resolve) => setTimeout(() => resolve(reply), 150)) : reply;
+    };
+    const fake = server().first(`/api/activity/logs/${RUN_LOGS[1]}?`, slowNewLog);
+    const { document, window } = await open(t, fake, 20);
+    await flush(window, 8);
+    click(window, document.querySelector('details.fold[data-fold="logs"] > summary'));
+    const follow = document.getElementById("log-follow");
+    follow.checked = true;
+    follow.dispatchEvent(new window.Event("change"));
+    await flush(window, 6);
+    click(window, document.querySelector(`#log-runs button[data-log="${RUN_LOGS[1]}"]`));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const onNew = () => fake.urls().filter((url) => url.startsWith(`/api/activity/logs/${RUN_LOGS[1]}?`) && url.includes("after="));
+    assert.deepEqual(onNew(), [], "the new log was followed before its first read answered");
+    await settled(() => onNew().length > 0, "the new log to be followed once read");
+    assert.ok(onNew().every((url) => url.includes("after=777")), onNew().join("\n"));
+  });
+
+  test("a log removed and shown as such stays the chosen one when Logs for this run is overtaken by a filter", async (t) => {
+    const removed = { success: false, removed: true,
+                      error: "The log of this run was removed: the last 5 runs' logs of each library and kind are kept." };
+    let listed = 0;
+    const withoutIt = () => {
+      listed += 1;
+      const reply = SERVED.morning.logs;
+      if (listed < 2) return reply;
+      const gone = { ...reply, logs: reply.logs.filter((file) => file.name !== RUN_LOGS[1]) };
+      return new Promise((resolve) => setTimeout(() => resolve(gone), 100));
+    };
+    const fake = server().first(/\/api\/activity\/logs$/, withoutIt)
+      .first(`/api/activity/logs/${RUN_LOGS[1]}?`, removed, { status: 404 });
+    const { document, window } = await open(t, fake);
+    await flush(window, 8);
+    click(window, document.querySelector(`#log-runs button[data-log="${RUN_LOGS[1]}"]`));
+    await flush(window, 6);
+    assert.equal(document.getElementById("log-records").textContent, removed.error);
+    click(window, document.querySelector(`#timeline-body button.run-logs[data-run="${INDEX_RUN}"][data-log="${INDEX_LOG}"]`));
+    choose(window, "log-level", "ERROR");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await flush(window, 6);
+    assert.equal(document.getElementById("log-records").textContent, removed.error);
+    assert.equal(document.querySelector("button.log-file.chosen"), null,
+                 "a button is chosen whose log is not the one shown");
   });
 
   test("Older on a log removed meanwhile says why where its lines would be", async (t) => {
