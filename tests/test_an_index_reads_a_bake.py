@@ -828,9 +828,10 @@ class AnIndexReadsABake(unittest.TestCase):
         self.assertEqual("completed", status["status"], status)
         self.assertEqual(" ".join(["Folder indexed. " + faces, read, bake_after_index.Baked().said()]), status["message"])
 
-    def test_a_server_gone_mid_index_leaves_the_index_whole_and_the_next_one_is_heard(self):
-        # A repo-run server restarted on a .py save (#1564): the pipe's reader is gone, and the first fact raises. The
-        # index goes on to its end, the failure logged once; the next index is heard from its first line.
+    def test_an_index_that_could_not_say_its_facts_does_not_silence_the_next_in_the_same_process(self):
+        # Two indexes in one process (a test's CliRunner): the first one's facts cannot be said, and the second is heard
+        # from its first line. The real pipe whose reader is gone, and the index going on to its end, are
+        # tests/test_index_progress_end_to_end.py's TheServerGoesMidIndex.
         folder = self.folder("Harbour Gone")
         path = self.picture(folder, "gone.jpg", "navy")
         self.bake(path, [baked_files.area(0)])
@@ -848,7 +849,6 @@ class AnIndexReadsABake(unittest.TestCase):
             self.assertNotIn(progress_line.PREFIX, printed)
             self.assertEqual(1, len([record for record in logged.records if "progress lines stop" in record.getMessage()]),
                              "the failure is logged once")
-            self.assertEqual(1, self.query("SELECT COUNT(*) FROM photos")[0][0], printed)
             self.picture(folder, "back.jpg", "teal")   # a photo added since, for the next index to read
             again = self.index(folder).output
         heard = [progress_line.heard(line) for line in again.splitlines()]

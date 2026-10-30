@@ -36,9 +36,17 @@ folder begins (photo_index, 2026-10-28: one folder of 759 files baked over 57 mi
 folders over the page's 5 minutes): the real CLI over five photos, its chunks two files (batches.CHUNK patched in the
 child), each line the queue hears stamped by a clock that moves. Failed on the old code: one line for the folder, one
 `progressed`, and no `files_done` told to the run's row.
+
+The server goes away mid-index (a repo-run server restarted on a .py save, #1564): the real CLI is held at its first
+photo, the read end of its pipe is closed after its first fact, and it goes on to its end -- its photos recorded, the
+faces it made matched, its folder baked, exit status 0 -- saying nothing more; the next index finds the folder current.
+Failed on the old code: the first person's line after the closed pipe ("Took the graphics card.") raised OSError 22 and
+the run ended (status 120: its traceback could not be written either) before the matching and the bake (the
+fact's own print alone was guarded).
 """
 import itertools
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -237,6 +245,84 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertEqual(1, len([line for line in printed if bake_after_index.FOLDER_SAID + "1 of 1" in line]), ran.stdout)
         self.assertIn(indexing.NEW_FACES + "No new face is waiting for a name.", printed)
         self.assertIn("Bake: 3 file(s) written, 0 already held it.", printed)
+
+
+#: Added to SITECUSTOMIZE: the photo's embedding waits for the file %(release)s, and the matching of new faces leaves a
+#: file beside it when it runs.
+HELD_AT_THE_FIRST_PHOTO = '''
+import os, time
+from tagpup.services import faces as _faces
+def _embed(*args, **kwargs):
+    deadline = time.time() + 60
+    while not os.path.exists(%(release)r) and time.time() < deadline:
+        time.sleep(0.05)
+    return [0.1] * 8
+mock.patch.object(clip.ClipModel, "embed_input", side_effect=_embed).start()
+_automatch_new = _faces.automatch_new
+def _matching(*args, **kwargs):
+    open(%(release)r + ".matched", "w").close()
+    return _automatch_new(*args, **kwargs)
+mock.patch.object(_faces, "automatch_new", side_effect=_matching).start()
+'''
+
+
+@unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
+class TheServerGoesMidIndex(unittest.TestCase):
+    def test_a_pipe_whose_reader_is_gone_leaves_the_index_to_its_end_and_the_next_one_finds_it_current(self):
+        home = own_home.for_test(self, "index_server_gone_")
+        release = os.path.join(home.root, "RELEASE")
+        shim = os.path.join(home.root, "shim")
+        os.makedirs(shim)
+        with open(os.path.join(shim, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(SITECUSTOMIZE % {"root": ROOT} + HELD_AT_THE_FIRST_PHOTO % {"release": release})
+        folder = os.path.join(home.root, "Regatta")
+        os.makedirs(folder)
+        for name in ("one.jpg", "two.jpg", "three.jpg"):
+            Image.new("RGB", (64, 64), "navy").save(os.path.join(folder, name), "JPEG")
+        before = {}
+        for name in os.listdir(folder):
+            with open(os.path.join(folder, name), "rb") as handle:
+                before[name] = handle.read()
+        library = Library(home.library("harbour.db"))
+        env = dict(os.environ, PYTHONPATH=shim, NO_COLOR="1", TERM="dumb")
+        progress_line.ask(env)
+        child = processes.start([sys.executable, "tagpup_cli.py", "--db", library.path, "index", folder], cwd=ROOT,
+                                env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                errors="replace")
+        try:
+            heard = []
+            for line in iter(child.stdout.readline, ""):
+                heard.append(line)
+                if progress_line.heard(line):
+                    break
+            self.assertTrue(heard and progress_line.heard(heard[-1]), heard)
+            child.stdout.close()   # the server is gone: the pipe has no reader
+            open(release, "w").close()
+            ended = child.wait(timeout=300)
+        finally:
+            if child.poll() is None:
+                processes.kill_tree(child.pid)
+        self.assertEqual(0, ended, "the index went on to its end")
+        self.assertTrue(os.path.exists(release + ".matched"), "the faces it made were matched")
+        for name, held in before.items():
+            with open(os.path.join(folder, name), "rb") as handle:
+                self.assertNotEqual(held, handle.read(), "%s was baked" % name)
+        conn = db.connect(library.path)
+        try:
+            self.assertEqual(3, conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0])
+        finally:
+            conn.close()
+        saved = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = shim
+        try:
+            again = indexing.index_folder(library, folder, ROOT, report=lambda message=None, percent=None: None)
+        finally:
+            if saved is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = saved
+        self.assertTrue(again.ok, again.errors)
+        self.assertEqual("Folder indexed: no photo was added or read again.", again.details["message"])
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")

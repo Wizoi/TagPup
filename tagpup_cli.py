@@ -322,6 +322,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run
     (sync hands it every folder of new files at once, so one indexer loads the models; the server, in --folders-file)."""
     del _NOT_SAYING[:]
+    if progress_line.asked():
+        sys.stdout, sys.stderr = _Pipe(sys.stdout), _Pipe(sys.stderr)
     runtime = get_runtime()
 
     test_mode = ctx.obj.get("test", False)
@@ -921,16 +923,50 @@ def _owe_the_recorded(db_path, touched, handed):
         logger.exception("The fingerprints the index recorded could not be taken away")
 
 
-#: The first line of this index that could not be said (_say), after which none is: emptied as each index begins, so an
-#: index run in-process after another (a test's CliRunner) says its lines.
+#: The first line of this index that could not be said (_say, _Pipe), after which none is: emptied as each index begins,
+#: so an index run in-process after another (a test's CliRunner) says its lines.
 _NOT_SAYING = []
+
+
+def _stop_saying(error):
+    """Nothing more of this index is said: `error` is logged once (to the run's own file), and the work goes on."""
+    if not _NOT_SAYING:
+        _NOT_SAYING.append(error)
+        logger.warning("The index's progress lines stop here, its work goes on: %s: %s", type(error).__name__, error)
+
+
+class _Pipe:
+    """The child's stdout, or its stderr (the same pipe: indexing.index_folder), while the server reads it: the one
+    writer of everything the index says there -- a fact, a person's line, a library's print. The first write the pipe
+    refuses (its reader gone: a repo-run server restarted on a .py save, #1564; Windows says OSError 22) silences the
+    index (_stop_saying), every writer with it, and the index goes on to its end; the process exits as it would have."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        if not _NOT_SAYING:
+            try:
+                return self._stream.write(text)
+            except (OSError, ValueError) as error:
+                _stop_saying(error)
+        return len(text)
+
+    def flush(self):
+        if not _NOT_SAYING:
+            try:
+                self._stream.flush()
+            except (OSError, ValueError) as error:
+                _stop_saying(error)
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
 
 
 def _say(fact, person=None):
     """Say `fact` (tagpup.core.progress_line) to the server that asked for facts; run by hand, say `person`, the words a
-    person reads, or nothing when a bar or the log already tells them. Best effort: a line that cannot be said -- a pipe
-    whose reader is gone, the indexer of a repo-run server restarted on a .py save (#1564) -- is logged once, and
-    nothing more is said; the work goes on."""
+    person reads, or nothing when a bar or the log already tells them. Best effort: a line that cannot be said
+    (_Pipe, and a console by hand that refuses it) silences the index; the work goes on."""
     if _NOT_SAYING:
         return
     try:
@@ -939,8 +975,7 @@ def _say(fact, person=None):
         elif person is not None:
             console.print(person, markup=False, soft_wrap=True, highlight=False)
     except (OSError, ValueError) as error:
-        _NOT_SAYING.append(error)
-        logger.warning("The index's progress lines stop here, its work goes on: %s: %s", type(error).__name__, error)
+        _stop_saying(error)
 
 
 def _bake_after_index(library, exiftool_path, detector, folders, handed, stop_file):
