@@ -816,7 +816,8 @@ def _removed_scratch(path, saw, interrupted):
     one lock (exclusively), and one of another process (the CLI, a second library holding the folder) would have written
     it in the last SCRATCH_STALE seconds (by the share's clock against ours: the residual DECISIONS accepts); 4. both
     looks answered (shares.stamp_of: a share away is not "no scratch file"). It is ExifTool's file, not the photo: the
-    photo and its row are untouched here. Logged, and counted in the write's Result (_said_removed)."""
+    photo and its row are untouched here. Logged; counted in a write's or an undo's result
+    (_said_removed), not in the settle of a change left `writing` (_finish), which has no result to carry it."""
     scratch = exiftool_session.scratch_of(path)
     left, photo = shares.stamp_of(scratch), shares.stamp_of(path)
     if not isinstance(left, tuple) or not isinstance(photo, tuple):

@@ -392,16 +392,15 @@ class AScratchFileAnInterruptedWriteLeft(T.Bulk):
         self.assertFalse(os.path.exists(self.scratch))
         self.assertIn("Trips/Coast", self.tags(self.ids[0]))
 
-    def test_a_scratch_file_a_write_holds_open_is_left_and_the_owner_told_to_try_again_later(self):
-        """Rule 3, no write of the photo under way: another process's write of it (the CLI's bake, a second library
-        holding the folder) holds its scratch file open, written this moment (on Windows a removal is then refused). The
-        write fails telling the owner to try again in five minutes, not to delete the file, and the file is as it was."""
+    def test_a_scratch_file_written_this_moment_is_left_and_the_owner_told_to_try_again_later(self):
+        """Rule 3 (not the removal failing): the scratch file was written this moment, no handle on it, so it may be
+        another write's under way (the CLI's bake, a second library holding the folder). The write fails telling the
+        owner to try again in five minutes, not to delete the file, and the file is as it was."""
         with open(self.scratch, "wb") as writer:
             writer.write(b"another write's, under way")
-            writer.flush()
-            held = os.stat(self.scratch)
-            result = self.tag(self.photo)
-            after = os.stat(self.scratch)
+        held = os.stat(self.scratch)
+        result = self.tag(self.photo)
+        after = os.stat(self.scratch)
         self.leaves_it(result)
         why = str(result.errors[-1][1])
         self.assertIn("try again after 5 minutes", why)
@@ -409,6 +408,27 @@ class AScratchFileAnInterruptedWriteLeft(T.Bulk):
         self.assertEqual((held.st_mtime, held.st_size), (after.st_mtime, after.st_size))
         with open(self.scratch, "rb") as handle:
             self.assertEqual(b"another write's, under way", handle.read())
+
+    @unittest.skipUnless(os.name == "nt", "a file open for writing is refused its removal only on Windows")
+    def test_a_stale_scratch_file_the_share_will_not_let_go_of_is_left_and_the_owner_told_to_delete_it(self):
+        """The removal itself failing: the scratch file is old enough to be removed (rule 3 passes) but a program holds
+        it open, so the share refuses the removal. The write fails, the file stays with its bytes, and the owner is told
+        what to do with a scratch file left (delete it), not to wait: nothing is writing it."""
+        with open(self.scratch, "wb") as holder:
+            holder.write(b"held by a program")
+            holder.flush()
+            aged(self.scratch, 10)
+            result = self.tag(self.photo)
+        self.assertFalse(result.ok)
+        self.assertTrue(os.path.exists(self.scratch), "the scratch file was removed")
+        self.assertNotIn("scratch_removed", result.details)
+        why = str(result.errors[-1][1])
+        self.assertIn("Temporary file already exists", why)
+        self.assertIn("delete that file", why)
+        self.assertNotIn("try again after", why)
+        with open(self.scratch, "rb") as handle:
+            self.assertEqual(b"held by a program", handle.read())
+        self.assertNotIn("Trips/Coast", self.tags(self.ids[0]))
 
 
 if __name__ == "__main__":
