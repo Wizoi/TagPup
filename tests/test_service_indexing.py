@@ -3,12 +3,12 @@
 The CLI is stood in for. What is checked is what it is asked to do, from where and for
 which library, and what the Result and the progress reports say.
 
-Contract row 16: the indexer's stdout is the interface, and `WhatTheProgressBarSays` is its table. What follows an
-index -- the matching of the faces it made, from every entry point -- is tests/test_new_faces_are_matched_after_an_index.py.
+Contract row 16: the indexer's stdout carries typed facts (tagpup.core.progress_line), and any other line is a
+person's. `AddingAFolder.test_a_child_that_says_more_than_facts_completes_its_job` is the scenario: whatever else the child prints, the job hears its facts as
+values and never raises. What follows an index -- the matching of the faces it made, from every entry point -- is
+tests/test_new_faces_are_matched_after_an_index.py.
 
-Lifted: test_tagpup_server_api's TestIndexerNoiseFiltering and TestIndexerProgressText (22 tests, one per line shape).
-Broken in a scratch copy and the table fails: _INDEXER_NOISE emptied (every chatter row), _INDEXER_TQDM's percent group
-dropped (every bar row), _INDEXER_MAX_MESSAGE ignored (the long row).
+Lifted: the table of line shapes the reader once scraped (WhatTheProgressBarSays), whose regexes are gone.
 """
 import os
 import sys
@@ -19,8 +19,9 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.core import paths  # noqa: E402
+from tagpup.core import progress_line  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import indexing  # noqa: E402
+from tagpup.services import bake_after_index, indexing  # noqa: E402
 
 
 def process(returncode=0, lines=("done\n",), each_line=None):
@@ -74,6 +75,7 @@ class AddingAFolder(unittest.TestCase):
         self.assertFalse(os.path.exists(listing), "the list of folders was left behind")
         self.assertEqual(calls[0].kwargs["cwd"], self.code)
         self.assertEqual(calls[0].kwargs["env"]["TAGPUP_DB_PATH"], self.library.path)
+        self.assertTrue(progress_line.asked(calls[0].kwargs["env"]), "the child was not asked for facts")
         self.assertEqual((result.ok, result.changed, result.details["percent"]), (True, 1, 100))
         self.assertIn("Folder indexed", result.details["message"])
 
@@ -88,44 +90,48 @@ class AddingAFolder(unittest.TestCase):
         self.assertEqual(result.message(), "Indexing failed with exit code 2.")
         self.assertEqual(result.details["percent"], 0)
 
-    def test_progress_is_reported_as_a_person_would_read_it(self):
-        self.index(process(lines=(
+    def test_a_child_that_says_more_than_facts_completes_its_job(self):
+        """Library chatter, a bar drawn by hand, a traceback, a fact cut by a child killed mid-line, a field of the
+        wrong type, a path in other letters, a very long line: the facts arrive as values, the rest as a person's line
+        cut for the bar, and nothing raises into the job."""
+        folder = "D:/Fotos/" + chr(0xC5) + "lesund " + chr(0x2014) + " M" + chr(0xE4) + "rta"
+        bake = bake_after_index.folder_told(2, 4, bake_after_index.Baked(written=3, current=1), folder, files=(5, 10))
+        baked = bake_after_index.Baked(written=7, current=2, conflicts=1)
+        said = lambda kind, **fields: progress_line.say(progress_line.fact(kind, **fields)) + "\n"
+        lines = (
             "2026-09-19 21:31:50,515 [INFO] root - Instantiating model\n",
-            "Generating embeddings:  50%|#####     | 25/50 [00:12<00:12]\n",
-            "Found 50 image(s) total.\n",
-        )))
-        self.assertEqual(self.reports, [("Generating embeddings: 50% (25/50)", 50),
-                                        ("Found 50 image(s) total.", None)])
-
-
-class WhatTheProgressBarSays(unittest.TestCase):
-    """One line of the CLI's stdout -> the text on the bar, or None for chatter nobody watching it wants (by shape, not wording)."""
-
-    BAR = "Generating embeddings:  %d%%|####  | %d/49 [00:30<00:40]"
-    CHATTER = (
-        "Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN.",
-        "WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub.",
-        "2026-09-19 22:55:30,914 [INFO] httpx - HTTP Request: HEAD https://x",
-        "2026-09-19 07:39:12,235 [INFO] tagpup_cli.index - Loaded 56959 entries",
-        "DEBUG:some.module:a message", "INFO:some.module:a message", "WARNING:some.module:a message",
-        "ERROR:some.module:a message", "CRITICAL:some.module:a message",
-        "C:" + chr(92) + "x" + chr(92) + "y.py:42: UserWarning: something happened",
-        "  warnings.warn(", '  File "C:/x/y.py", line 3, in f', "", "   " + chr(10), None)
-    SAID = (
-        (BAR % (42, 21), "Generating embeddings: 42% (21/49)"),
-        # tqdm redraws with carriage returns: the newest frame is the current one, and the bar's width is read from its percent
-        ((BAR % (10, 5)) + chr(13) + (BAR % (20, 10)), "Generating embeddings: 20% (10/49)"),
-        ("Scanning directory: D:/Training/Pictures", "Scanning directory: D:/Training/Pictures"),
-        ("Found 68083 image(s) total.", "Found 68083 image(s) total."),
-        ("Indexing 49 image(s) (24 already tagged, 25 untagged).", "Indexing 49 image(s) (24 already tagged, 25 untagged)."),
-        ("Indexing " + "x" * 300, "Indexing " + "x" * 80 + chr(0x2026)),
-    )
-
-    def test_chatter_is_dropped_and_progress_is_said_as_a_person_reads_it(self):
-        for line in self.CHATTER:
-            self.assertIsNone(indexing.summarize_indexer_line(line), repr(line))
-        for line, said in self.SAID:
-            self.assertEqual(said, indexing.summarize_indexer_line(line), repr(line[:40]))
+            "Generating embeddings:  50%|#####     | 25/50 [00:12<00:12]\r\n",
+            progress_line.say(indexing.phase_fact("embeddings", 25, 50)) + "\n",
+            "Traceback (most recent call last):\n", '  File "C:/x/y.py", line 3, in f\n',
+            progress_line.say(indexing.phase_fact("faces"))[:21] + "\n",
+            progress_line.PREFIX + '{"kind":"failed","photos":"2"}\n',
+            progress_line.PREFIX + '{"kind":"failed","photos":true}\n',
+            progress_line.say(indexing.phase_fact("faces")) + "\n",
+            said("new_faces", sentence="No new face is waiting for a name."),
+            said("failed", photos=2),
+            said("bake_read", sentence="Read: 3 photo(s) read from their file."),
+            progress_line.say(bake) + "\n",
+            progress_line.say(baked.fact()) + "\n",
+            "x" * 5000 + "\n",
+        )
+        told = []
+        with patch.object(indexing.job_runs, "tell", side_effect=lambda phase, counts: told.append((phase, counts))):
+            result, _calls = self.index(process(lines=lines))
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual("2 photo(s) failed and were not indexed (the indexer's log says why). Folder indexed. No new "
+                         "face is waiting for a name. Read: 3 photo(s) read from their file. " + baked.said(),
+                         result.details["message"])
+        self.assertEqual((50, 2, 7, 2, 1), tuple(result.details[name] for name in (
+            "photos_read", "failed_photos", "baked_written", "baked_current", "baked_conflicts")))
+        self.assertEqual([("embeddings", {"done": 25, "of": 50, "percent": 50}), ("faces", {}),
+                          ("bake", {"folders_done": 1, "folders": 4, "written": 3, "current": 1, "conflicts": 0,
+                                    "percent": 37, "files_done": 5, "files": 10})], told)
+        self.assertIn(("Generating embeddings: 50% (25/50)", 50), self.reports)
+        self.assertIn((bake["sentence"], 37), self.reports)
+        self.assertTrue(bake["sentence"].endswith(": " + folder), bake["sentence"])
+        self.assertIn(("x" * 89 + chr(0x2026), None), self.reports)
+        self.assertFalse([message for message, _p in self.reports if progress_line.PREFIX.strip() in message],
+                         "a fact reached the bar as text")
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ from test_an_index_is_one_run_under_its_sync import FAKE_CLI, ROOT  # noqa: E402
 
 from tagpup import logs  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
-from tagpup.core import dates, runs  # noqa: E402
+from tagpup.core import dates, progress_line, runs  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
@@ -136,7 +136,7 @@ class RepliesForTheActivityPage(_Libraries):
         for each in folders:
             os.makedirs(each, exist_ok=True)
         go = [os.path.join(self.home.root, "go-%d" % number) for number in (1, 2)]
-        bar = indexing.READING_METADATA + ": 15%|#5        | 120/800 [00:01<00:05]"
+        bar = progress_line.say(indexing.phase_fact("metadata", 120, 800))
         running = self.indexer("indexer-regatta", ["WAIT " + go[0], bar, "WAIT " + go[1]])
         waiting = self.indexer("indexer-walk", [])
         queue = indexing_jobs.queue_for(library)
@@ -166,7 +166,7 @@ class RepliesForTheActivityPage(_Libraries):
         held = {"run": runs.index_tag(library.name, started), "folders": 1}
         cli = job_runs.claim(library, job_runs.INDEX, library.name, started, changed=held)
         folder = self.folder_of(library.name)
-        line = bake_after_index.folder_said(3, 9, bake_after_index.Baked(written=14, current=40), folder)
+        line = progress_line.say(bake_after_index.folder_told(3, 9, bake_after_index.Baked(written=14, current=40), folder))
         self.clock.now = said_at
         with job_runs.recording(library, cli.run_id):
             self.assertTrue(indexing.index_folder(library, [folder], self.indexer("indexer-cli", [line])).ok)

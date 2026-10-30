@@ -32,6 +32,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Writing a photo file's fields | `tagpup/files/field_values.py`, `tagpup/services/file_changes.py` | `tests/test_file_journal.py` |
 | The bake the index writes after it records a folder (each photo `baking.plan_photo` marks ToBake, the folder one internal change of `write_fields`, listed in no History and erased once finished; the index's rows win) | `tagpup/services/bake_after_index.py` | `tests/test_the_index_writes_the_bake.py` |
 | Child processes | `tagpup/core/processes.py` | `tests/test_processes_single_owner.py` |
+| The indexer's progress on its pipe: typed facts (`kind`, a sentence, whole-number counts), one `@tagpup ` JSON line each in ASCII, said only when the server asks (`TAGPUP_PROGRESS_LINES`; by hand the CLI prints a person's words), read as values, never scraped from text | `tagpup/core/progress_line.py` (said by `tagpup_cli.py`, heard by `tagpup/services/indexing.py`) | `tests/test_index_progress_end_to_end.py`, `tests/test_an_index_reads_a_bake.py` |
 | The graphics card, one process at a time | `tagpup/ml/gpu.py` (turns through `tagpup/runtime.py`) | `tests/test_gpu_single_owner.py` |
 | Models built once, from a library's settings | `tagpup/runtime.py` | `tests/test_gpu_single_owner.py` |
 | The photo models TagPup knows: each one's zero-shot word cut and whether a library may force an image size (`tagpup/ml/photo_models.py`, no torch); SigLIP 2's tokenizer (`tagpup.ml.clip.HubTokenizer`, `tokenizers` alone from the model's `tokenizer.json`, the same ids as open_clip's on 5,086 prompts); the readiness gate on a photo-model switch (`settings.photo_switch_on`, also asked of an undo: refused while more than `UNPASSED_SHARE_ALLOWED`, 5%, of the photos hold no vector under the new key; the faces switch's rule until 2026-10-28, when a face-model switch stopped counting: FaceNet is refused, `settings.NOT_FACENET`) | `tagpup/ml/photo_models.py`, `tagpup/ml/clip.py`, `tagpup/services/settings.py` | `tests/test_switching_a_librarys_photo_model.py` (V12) |
@@ -174,7 +175,8 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 ```
 tagpup/                config (where the libraries are), logs, runtime (composition root), launcher
   core/                pure rules: paths, vocabulary, validation, clustering, dates, fields, renaming, library,
-                       machine, result, per_library, processes, byte_lock, idle, runs, gpu_turns, photo_meta, read_ahead
+                       machine, result, per_library, processes, byte_lock, idle, runs, gpu_turns, photo_meta, read_ahead,
+                       progress_line (the indexer's facts on its pipe)
   store/               the only SQL. db (connections, locks), schema (migrations), one module per table or
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, face_batches, settings, roots + roots_check + root_rows, derived, search_index, folders,
@@ -222,7 +224,8 @@ programs only. A moved module takes every importer with it and leaves nothing at
   warmed on a thread, released after an idle period; each library's job runners; `begin`/`gpu_turn` take the
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
-  process, via the CLI's `index`; each run its `index` row of `job_runs`, which the Activity page reads -- the queue
+  process, via the CLI's `index`, asked for its progress as typed facts on its stdout, `tagpup.core.progress_line`, and
+  its log to its run's own file; each run its `index` row of `job_runs`, which the Activity page reads -- the queue
   keeps no history), Suggest runs, Name faces from tags, Identify caches. **Recurring jobs**
   (`tagpup.jobs.recurring`: snapshots, sync) are run by the web server only; the
   folder **watcher** syncs a folder when it changes -- not when its notifications named only photos the library's rows

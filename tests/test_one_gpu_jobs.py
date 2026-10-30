@@ -279,12 +279,16 @@ class SuggestWaitsForTheCard(_Library):
 
 
 #: A stand-in for tagpup_cli.py, run by tagpup.services.indexing as the indexer is: it waits
-#: for the graphics card as the real one does -- saying so -- until its stop file appears.
+#: for the graphics card as the real one does -- saying so, a `waiting` fact -- until its stop file appears.
 FAKE_INDEXER = '''
 import os, sys, time
+sys.path.insert(0, %(root)r)
+from tagpup.core import progress_line
 stop = os.environ["TAGPUP_STOP_FILE"]
 print("Scanning directory: " + sys.argv[2], flush=True)
-print("Waiting for the graphics card (in use by: Suggest Regatta (harbour), since 15:41)...", flush=True)
+print(progress_line.say(progress_line.fact(
+    "waiting", sentence="Waiting for the graphics card (in use by: Suggest Regatta (harbour), since 15:41)...")),
+    flush=True)
 while not os.path.exists(stop):
     time.sleep(0.05)
 print("Cancelled while it waited for the graphics card; nothing was indexed.", flush=True)
@@ -297,7 +301,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
         code = os.path.join(self.home.root, "code")
         os.makedirs(code)
         with open(os.path.join(code, "tagpup_cli.py"), "w", encoding="utf-8") as handle:
-            handle.write(FAKE_INDEXER)
+            handle.write(FAKE_INDEXER % {"root": os.path.dirname(os.path.dirname(os.path.abspath(__file__)))})
         queue = indexing_jobs.queue_for(self.library)
 
         def index(folder, report):

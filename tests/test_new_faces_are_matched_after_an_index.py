@@ -9,16 +9,16 @@ it by hand for long indexes:
   while it held the card's turn) are matched with the faces a person decided by Re-examine's matcher
   (tagpup.services.faces.automatch_new), and it says, counted, how many have a likely name, or that none does, or that
   no new face waits, and how many photos carry a person's keyword no face has; the server ends the folder's message
-  with that sentence, read whole however long it is (indexing.NEW_FACES);
+  with that sentence, read whole however long it is (its `new_faces` fact, tagpup.core.progress_line);
 - it writes no face, no row and no file: a face named in Identify meanwhile keeps its name and nothing is refused;
 - a matching that fails says so on the same line, names Re-examine and cluster-faces, and the run exits 0: the photos
   are indexed;
 - two libraries holding one folder each count only the faces their own index made;
 - an index that recorded nothing says nothing of faces; stopped while it waited for the card, it indexed nothing;
-- the roots changed while it indexes is the one roots stop; the line is read however the server's environment asks
-  for colour.
+- the roots changed while it indexes is the one roots stop.
 
-The server's half stands in for the CLI's process (its stdout is the interface, contract row 16); the CLI's half is the
+The server's half stands in for the CLI's process (its stdout's facts are the interface, contract row 16), its lines
+made by the builders the CLI uses; the CLI's half is the
 real command in this process with its models stood in for (nothing loads; a face detector whose vectors are the test's)
 and the real ExifTool. Each CLI test here was run against the code before this change and failed there, except the
 cancelled one.
@@ -26,7 +26,6 @@ cancelled one.
 Gone with the clustering: its exit code (77), the bar at 95 while it ran, the flag that refused writes of faces from
 its line on, and the clustering run once with the card's turn let go.
 """
-import io
 import os
 import sys
 import unittest
@@ -43,17 +42,16 @@ from stand_in_models import NewFaces  # noqa: E402
 
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
-from rich.console import Console  # noqa: E402
 
 import tagpup_cli  # noqa: E402
-from tagpup.core import fields, gpu_turns, paths  # noqa: E402
+from tagpup.core import fields, gpu_turns, paths, progress_line  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.ml import clip  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
-from tagpup.services import indexing  # noqa: E402
+from tagpup.services import bake_after_index, indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import roots  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -90,7 +88,8 @@ class _TheCli:
 #: What the CLI says of the faces it made: longer than the bar shows (90 characters).
 MATCHED = ("2 of the 3 new faces have a likely name: open Re-examine on their folder to confirm them. 1 photo(s) carry a "
            "person's keyword that no face has: %s, or %s, names them." % (indexing.CLUSTER_ELSEWHERE, indexing.CLUSTER_AGAIN))
-INDEXED = ["Generating embeddings: 100%|##########| 1/1 [00:01<00:00]\n", indexing.NEW_FACES + MATCHED + "\n"]
+INDEXED = [progress_line.say(indexing.phase_fact("embeddings", 1, 1)) + "\n",
+           progress_line.say(progress_line.fact("new_faces", sentence=MATCHED)) + "\n"]
 NOTHING_NEW = ["All images are up to date! Index is current.\n"]
 
 
@@ -175,26 +174,15 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
         self.assertEqual("failed", status["status"], status)
         self.assertEqual(roots.STOPPED, status["message"])
 
-    def test_the_line_is_read_when_the_servers_environment_asks_for_colour(self):
-        """rich colours a line when it takes the pipe for a terminal (FORCE_COLOR): the line the CLI prints, as it prints
-        it, under the environment the server hands it, is read whole."""
-        probe = _TheCli(NOTHING_NEW)
-        with mock.patch.dict(os.environ, {"FORCE_COLOR": "1"}), mock.patch("subprocess.Popen", side_effect=probe):
-            indexing.index_folder(self.library, self.folder, self.home.root)
-        printed = io.StringIO()
-        Console(file=printed, _environ=probe.environments[0]).print(indexing.NEW_FACES + MATCHED, markup=False,
-                                                                    soft_wrap=True, highlight=False)
-        with mock.patch("subprocess.Popen", side_effect=_TheCli([printed.getvalue()])):
-            result = indexing.index_folder(self.library, self.folder, self.home.root)
-        self.assertEqual("Folder indexed. " + MATCHED, result.details["message"])
-
     def test_what_the_index_bake_wrote_ends_the_message(self):
-        for line in ("Bake: 2 file(s) written, 1 already held it.",
-                     "Bake: stopped (OSError); the photos are indexed, and the next index of their folders writes it."):
-            with self.subTest(line=line), mock.patch("subprocess.Popen", side_effect=_TheCli(
-                    [indexing.NEW_FACES + MATCHED + "\n", line + "\n"])):
+        for fact in (bake_after_index.Baked(written=2, current=1).fact(), progress_line.fact(
+                "baked", sentence="Bake: stopped (OSError); the photos are indexed, and the next index of their folders "
+                                  "writes it.")):
+            with self.subTest(line=fact["sentence"]), mock.patch("subprocess.Popen", side_effect=_TheCli(
+                    [INDEXED[1], progress_line.say(fact) + "\n"])):
                 result = indexing.index_folder(self.library, self.folder, self.home.root)
-            self.assertEqual("Folder indexed. " + MATCHED + " " + line, result.details["message"])
+            self.assertEqual("Folder indexed. " + MATCHED + " " + fact["sentence"], result.details["message"])
+        self.assertEqual("Bake: 2 file(s) written, 1 already held it.", bake_after_index.Baked(written=2, current=1).said())
 
 
 class _Hold:

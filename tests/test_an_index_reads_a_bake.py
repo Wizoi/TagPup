@@ -57,6 +57,7 @@ and is noted. Pillow and ExifTool are real; the bakes are written through the on
 planned and written as a bake run does: bake_as_planned); the library is made by the picker's Create alone, in a home of
 its own.
 """
+import itertools
 import json
 import os
 import shutil
@@ -77,7 +78,7 @@ from stand_in_models import Hold, NewFaces, RefusableFaces  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
-from tagpup.core import fields, orientation, paths, processes, validation  # noqa: E402
+from tagpup.core import fields, orientation, paths, processes, progress_line, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import bake, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -87,6 +88,7 @@ from tagpup.ml import clip  # noqa: E402
 from tagpup.ml.clip import ClipModel  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import face_people  # noqa: E402
+from tagpup.services import job_runs  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import bake_after_index, bake_reading, baking, file_changes, file_only, indexing, search, tagging  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -790,9 +792,26 @@ class AnIndexReadsABake(unittest.TestCase):
         folder = self.folder("Harbour Job")
         path = self.picture(folder, "job.jpg", "navy")
         self.bake(path, [baked_files.area(0)])
-        printed = self.index(folder).output
-        (line,) = self.said(printed)
-        self.assertGreater(len(line), 90, "the bar cuts a line at 90 characters")
+        # The bake the index writes after it records is left out (setUp): it says a run that wrote nothing.
+        bake_after_index.bake_folders.return_value = bake_after_index.Baked()
+        # Matching the faces fails with an error that names a path in letters the pipe's code page may not hold, over
+        # two lines (#2150): its sentence is what the message ends with.
+        failure = OSError("Kein Zugriff: %s\nZeile zwei" % os.path.join(
+            self.home.root, "\u00c6r\u00f8sk\u00f8bing Strand", "job.jpg"))
+        # The server asks for facts (tagpup.core.progress_line), as indexing.index_folder does in the child's environment.
+        with mock.patch.dict(os.environ, {progress_line.ASKED: "1"}), \
+                mock.patch.object(face_service, "automatch_new", side_effect=failure), \
+                self.assertLogs("tagpup_cli", "ERROR"):
+            printed = self.index(folder).output
+        self.assertEqual([], self.said(printed), "asked for facts, the CLI prints no person's bake line")
+        heard = [progress_line.heard(line) for line in printed.splitlines()]
+        (read,) = [fact["sentence"] for fact in heard if fact and fact["kind"] == "bake_read"]
+        (faces,) = [fact["sentence"] for fact in heard if fact and fact["kind"] == "new_faces"]
+        self.assertTrue(read.startswith(bake_reading.SAID), read)
+        self.assertGreater(len(read), 90, "a person's line is cut at 90 characters")
+        self.assertIn(str(failure), faces)
+        self.assertTrue(all(line.isascii() for line in printed.splitlines() if line.startswith(progress_line.PREFIX)),
+                        "a fact is ASCII on the pipe")
 
         # The server's index job runs the CLI as a process of its own: what it printed, line by line as a pipe gives it
         # (a bar's frames joined by carriage returns), is what it hears.
@@ -809,8 +828,49 @@ class AnIndexReadsABake(unittest.TestCase):
             queue.run_pending()
         status = queue.status(folder)
         self.assertEqual("completed", status["status"], status)
-        self.assertTrue(status["message"].startswith("Folder indexed. "), status["message"])
-        self.assertTrue(status["message"].endswith(" " + line), status["message"])
+        self.assertEqual(" ".join(["Folder indexed. " + faces, read, bake_after_index.Baked().said()]), status["message"])
+
+    def test_an_index_that_could_not_say_its_facts_does_not_silence_the_next_in_the_same_process(self):
+        # Two indexes in one process (a test's CliRunner): the first one's facts cannot be said, and the second is heard
+        # from its first line. The real pipe whose reader is gone, and the index going on to its end, are
+        # tests/test_index_progress_end_to_end.py's TheServerGoesMidIndex.
+        folder = self.folder("Harbour Gone")
+        path = self.picture(folder, "gone.jpg", "navy")
+        self.bake(path, [baked_files.area(0)])
+        bake_after_index.bake_folders.return_value = bake_after_index.Baked()
+        said = print
+
+        def closed(*args, **kwargs):
+            if args and str(args[0]).startswith(progress_line.PREFIX):
+                raise OSError(22, "Invalid argument")
+            said(*args, **kwargs)
+        with mock.patch.dict(os.environ, {progress_line.ASKED: "1"}):
+            with mock.patch("builtins.print", side_effect=closed), \
+                    self.assertLogs("tagpup_cli", "WARNING") as logged:
+                printed = self.index(folder).output
+            self.assertNotIn(progress_line.PREFIX, printed)
+            self.assertEqual(1, len([record for record in logged.records if "progress lines stop" in record.getMessage()]),
+                             "the failure is logged once")
+            self.picture(folder, "back.jpg", "teal")   # a photo added since, for the next index to read
+            again = self.index(folder).output
+        heard = [progress_line.heard(line) for line in again.splitlines()]
+        self.assertIn("new_faces", [fact["kind"] for fact in heard if fact], again)
+
+    def test_a_slow_index_whose_percent_stands_still_is_heard_every_progress_every_seconds(self):
+        # photo_index's 59,523 photos at under 2 a second: a whole percent is over activity.STUCK_AFTER, and the run read
+        # as stuck. Here 120 photos, each read as the CLI's clock moves PROGRESS_EVERY: every photo is said, though the
+        # percent stands still between some of them. Failed on the old code: 101 facts, the percent's moves alone.
+        folder = self.folder("Harbour Slow")
+        for number in range(120):
+            self.picture(folder, "heat %03d.jpg" % number, (number, 90, 160), size=(48, 32))
+        bake_after_index.bake_folders.return_value = bake_after_index.Baked()
+        ticks = itertools.count()
+        clock = mock.Mock(monotonic=lambda: next(ticks) * job_runs.PROGRESS_EVERY)
+        with mock.patch.dict(os.environ, {progress_line.ASKED: "1"}), mock.patch.object(tagpup_cli, "time", clock, create=True):
+            printed = self.index(folder).output
+        heard = [progress_line.heard(line) for line in printed.splitlines()]
+        said = [fact["done"] for fact in heard if fact and fact["kind"] == "phase" and fact["phase"] == "embeddings"]
+        self.assertEqual(list(range(121)), said)
 
     def test_a_turned_photos_faces_read_from_its_bake_are_the_boxes_a_detection_stores(self):
         folder = self.folder("Harbour Turned")

@@ -38,9 +38,9 @@ import collections
 import dataclasses
 import logging
 import os
-import re
 
 from tagpup.core import paths
+from tagpup.core import progress_line
 from tagpup.files import bake, exiftool_session, field_values, images, shares
 from tagpup.services import baking, file_changes, settings
 from tagpup.services import snapshots as snapshot_service
@@ -49,72 +49,39 @@ from tagpup.store import roots as store_roots
 
 logger = logging.getLogger(__name__)
 
-#: The start of each line the index's bake says (Baked.said, and the CLI's when it stops): the index queue keeps it in
-#: the job's message (tagpup.services.indexing).
+#: The start of each line the index's bake says (Baked.said, and the CLI's when it stops), the sentence of its `baked`
+#: fact (Baked.fact), which the index queue keeps in the job's message (tagpup.services.indexing).
 SAID = "Bake: "
 
-def _heard_as(said):
-    """The pattern that reads what a format made (`said`, with %d for each number): one spelling, said and heard."""
-    return re.escape(said).replace("%d", r"(\d+)")
-
-
-#: The start of the line the bake says as it begins each folder, and again as each chunk of the folder's files is
-#: written (folder_said): which of how many, the run's counts of the folders done, how many of the folder's files are
-#: reached when a chunk ends (written, found current, or left as a conflict or a failure: of the files to write), and the folder (owner, DECISIONS 2026-10-28: the live line shows folder paths). The index queue
-#: reads it into the job's live line (tagpup.services.indexing, folder_heard), and the run's log holds it: a long bake,
-#: and a long folder (759 files over 57 minutes, photo_index 2026-10-28), is seen to move.
+#: The start of the sentence the bake says as it begins each folder, and again as each chunk of the folder's files is
+#: written (folder_told): which of how many, the run's counts of the folders done, how many of the folder's files are
+#: reached when a chunk ends (written, found current, or left as a conflict or a failure: of the files to write), and
+#: the folder (owner, DECISIONS 2026-10-28: the live line shows folder paths). The index queue shows it in the job's live
+#: line (tagpup.services.indexing), and the run's log holds it: a long bake, and a long folder (759 files over 57
+#: minutes, photo_index 2026-10-28), is seen to move.
 FOLDER_SAID = "Bake folder "
 _FOLDER_COUNTS = "%d of %d, %d written, %d current, %d conflicts"
 _FOLDER_FILES = ", %d of %d of its files reached"
-_FOLDER_LINE = re.compile("^" + re.escape(FOLDER_SAID) + _heard_as(_FOLDER_COUNTS)
-                          + "(?:" + _heard_as(_FOLDER_FILES) + ")?: (.+)$")
 
 
-def folder_said(number, of, baked, folder, files=None):
-    """The line of the `number`th folder of `of` as the bake begins it, with `baked`'s counts so far (Baked); with
-    `files`, (done, of the folder's files to write), the line as a chunk of its write ends."""
-    return (FOLDER_SAID + _FOLDER_COUNTS % (number, of, baked.written, baked.current, baked.conflicts)
-            + (_FOLDER_FILES % files if files is not None else "") + ": " + folder)
+def folder_told(number, of, baked, folder, files=None):
+    """The `phase` fact (tagpup.core.progress_line) of the `number`th folder of `of` as the bake begins it, with
+    `baked`'s counts so far (Baked); with `files`, (done, of the folder's files to write), as a chunk of its write ends.
+    Its counts are named as the run's row names them -- `folders_done` (before this one), `folders`, `written`,
+    `current`, `conflicts`, `percent` (of the folders done before this one and this one's files reached, of all), and
+    with `files`, `files_done` and `files` -- and its sentence names the folder whole."""
+    done, total = files if files is not None else (None, None)
+    percent = (number - 1) * 100 // of if files is None else ((number - 1) * total + done) * 100 // (of * total)
+    sentence = (FOLDER_SAID + _FOLDER_COUNTS % (number, of, baked.written, baked.current, baked.conflicts)
+                + (_FOLDER_FILES % files if files is not None else "") + ": " + folder)
+    return progress_line.fact("phase", phase="bake", sentence=sentence, folders_done=number - 1, folders=of,
+                              written=baked.written, current=baked.current, conflicts=baked.conflicts, percent=percent,
+                              files_done=done, files=total)
 
 
-def folder_heard(line):
-    """What a line folder_said made says: {"number", "of", "written", "current", "conflicts", "files_done", "files",
-    "folder", "percent"} -- the run's counts of the folders done, the folder's files reached and to write (None in the line
-    as the folder begins), and the percent the folders done before this one, and this one's files reached, are of all --
-    or None for any other line, and for one that is not whole in that shape (cut short, garbled, a number not within
-    1..of, files reached not within 1..files)."""
-    found = _FOLDER_LINE.match(line or "")
-    if not found:
-        return None
-    number, of = int(found.group(1)), int(found.group(2))
-    if not 1 <= number <= of:
-        return None
-    done, files = (None, None) if found.group(6) is None else (int(found.group(6)), int(found.group(7)))
-    if files is not None and not 1 <= done <= files:
-        return None
-    percent = (number - 1) * 100 // of if files is None else ((number - 1) * files + done) * 100 // (of * files)
-    return {"number": number, "of": of, "written": int(found.group(3)), "current": int(found.group(4)),
-            "conflicts": int(found.group(5)), "files_done": done, "files": files, "folder": found.group(8),
-            "percent": percent}
-
-
-#: The parts of a line Baked.said makes, each a format said with and heard by: the counts every line has, and the
-#: conflicts it adds when there are any.
+#: The parts of a line Baked.said makes: the counts every line has, and the conflicts it adds when there are any.
 _SAID_COUNTS = "%d file(s) written, %d already held it"
 _SAID_CONFLICTS = "%d conflict(s), left as they are"
-_SAID_LINE = re.compile("^" + re.escape(SAID) + _heard_as(_SAID_COUNTS))
-_SAID_CONFLICTS_HEARD = re.compile("; " + _heard_as(_SAID_CONFLICTS))
-
-
-def said_heard(line):
-    """What a line Baked.said made says, as counts: {"written", "current", "conflicts"}; None for any other line (the
-    CLI's line of a bake that stopped among them)."""
-    found = _SAID_LINE.match(line or "")
-    if not found:
-        return None
-    conflicts = _SAID_CONFLICTS_HEARD.search(line)
-    return {"written": int(found.group(1)), "current": int(found.group(2)),
-            "conflicts": int(conflicts.group(1)) if conflicts else 0}
 
 
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
@@ -156,14 +123,20 @@ class Baked:
             line += "; ended where the library's roots changed, the rest are baked by the next index"
         return line + "."
 
+    def fact(self):
+        """The `baked` fact of the run (tagpup.core.progress_line): its line, and its counts written, current and
+        conflicts."""
+        return progress_line.fact("baked", sentence=self.said(), written=self.written, current=self.current,
+                                  conflicts=self.conflicts)
 
-def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, told=None, each=None):
+
+def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, each=None):
     """Bake the photos of each of `folders` (native folder paths, the photos directly in each) that plan ToBake, a
     folder at a time: Baked. `detector`, the name the library's face detector records its looks under
     (tagpup.services.faces.detector_named); `handed`, {paths.key(path): ((mtime, size), digest of the upright decode)}
-    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder; `told(line)`, a line of what the run did;
-    `each(line)`, the line of each folder as it begins and as each chunk of its write ends (folder_said), which the
-    run's log holds too: nothing between two is said, so a share that stops answering mid-chunk stops the lines.
+    the index took of the photos it recorded, with the stamp it recorded each under; `stop()`, asked before each folder;
+    `each(fact)`, the fact of each folder as it begins and as each chunk of its write ends (folder_told), whose sentence
+    the run's log holds too: nothing between two is said, so a share that stops answering mid-chunk stops the lines.
     A handed photo keeps its row only when its file is written, holds the current bake or is read-only (owe_first)."""
     baked, snapshot, walk, chunk_lines = Baked(), [], baking.walk(stop), [True]
     owe_first(library, folders, handed)
@@ -173,10 +146,10 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
             if stop is not None and stop():
                 break
             def say(files=None, number=number, folder=folder):
-                line = folder_said(number, len(folders), baked, folder, files)
-                logger.info("%s", line)
+                told = folder_told(number, len(folders), baked, folder, files)
+                logger.info("%s", told["sentence"])
                 if each is not None:
-                    each(line)
+                    each(told)
             say()
 
             def say_chunk(done, of, say=say):
@@ -203,8 +176,6 @@ def bake_folders(library, exiftool_path, detector, folders, handed, stop=None, t
                 break
             if baked.roots_changed:
                 break
-    if told is not None:
-        told(baked.said())
     return baked
 
 

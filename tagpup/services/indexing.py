@@ -5,19 +5,17 @@ Both apps ran their own copy of these steps, until TagTuner's called TagPup's. W
 folder is indexed is tagpup.jobs.indexing's to decide.
 """
 import os
-import re
 import subprocess
 import sys
 import tempfile
 import uuid
 
-from tagpup.core import gpu_turns
 from tagpup.core import paths
 from tagpup.core import processes
+from tagpup.core import progress_line
 from tagpup.core import runs
 from tagpup.core import validation
 from tagpup.core.result import Result
-from tagpup.services import bake_after_index, bake_reading
 from tagpup.services import job_runs
 from tagpup.services import roots as roots_service
 
@@ -47,19 +45,32 @@ _FOLDERS_FILE_NAME = "tagpup-folders-%s.txt"
 #: What a run stopped while it waited says.
 CANCELLED_WAITING = "Cancelled while it waited for the graphics card; nothing was indexed."
 
-#: What the CLI's `index` begins a line of its own with, after an index that recorded a photo: what Re-examine would name
-#: among the faces it made, matched with the named ones and written nowhere (owner, DECISIONS 2026-10-23;
-#: tagpup.services.faces.automatch_new), as new_faces_said says it, or that the matching failed. index_folder reads the
-#: line whole, before the bar cuts it, and ends its message with it.
+#: What the CLI's `index`, run by hand, begins a line of its own with after an index that recorded a photo: what
+#: Re-examine would name among the faces it made, matched with the named ones and written nowhere (owner, DECISIONS
+#: 2026-10-23; tagpup.services.faces.automatch_new), as new_faces_said says it, or that the matching failed. To the server
+#: it is a `new_faces` fact (tagpup.core.progress_line), whose sentence ends the message.
 NEW_FACES = "New faces: "
-#: The line the CLI prints when photos failed in its per-photo loop (#1995), read whole like NEW_FACES: the message says
-#: how many, since a run whose every photo failed exits 0 having recorded nothing.
+#: The line the CLI prints by hand when photos failed in its per-photo loop (#1995); the server hears a `failed` fact,
+#: and the message says how many, since a run whose every photo failed exits 0 having recorded nothing.
 FAILED = "Photos that failed: "
 #: What the CLI's `index` says as it begins matching the faces it made (before NEW_FACES): the faces phase of the live line.
 MATCHING = "Matching the new faces with the named ones..."
-#: The labels of the two bars the CLI's `index` draws (tqdm `desc`), which the live line and a run's phase are read from.
+#: The labels of the two bars the CLI's `index` draws by hand (tqdm `desc`), and the words of its phase facts.
 READING_METADATA = "Reading metadata"
 GENERATING_EMBEDDINGS = "Generating embeddings"
+#: The words each phase of the CLI's `index` is said in (phase_fact).
+_PHASE_LABEL = {"metadata": READING_METADATA, "embeddings": GENERATING_EMBEDDINGS, "faces": MATCHING}
+
+
+def phase_fact(phase, done=None, of=None):
+    """The fact of how far the CLI's `index` has got in `phase` (metadata, embeddings, faces): `done` of `of`, and the
+    percent, in the words of the bar a person sees by hand: `Generating embeddings: 100% (3/3)`."""
+    label = _PHASE_LABEL[phase]
+    if of is None:
+        return progress_line.fact("phase", phase=phase, sentence=label)
+    percent = done * 100 // of if of else 100
+    return progress_line.fact("phase", phase=phase, sentence="%s: %d%% (%d/%d)" % (label, percent, done, of),
+                              done=done, of=of, percent=percent)
 
 
 def new_faces_said(matched):
@@ -78,66 +89,19 @@ def new_faces_said(matched):
                  % (keyword, CLUSTER_ELSEWHERE, CLUSTER_AGAIN))
     return said
 
-_INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
-
-#: The phase of an index (job_runs.PHASES) each of the CLI's bars is, by its label.
-_BAR_PHASES = {READING_METADATA: "metadata", GENERATING_EMBEDDINGS: "embeddings"}
-
 #: Each phase of an index (job_runs.PHASES) in the words the Activity page shows it in (tagpup.services.activity.PHASE_SAID).
 PHASE_SAID = {"metadata": "reading metadata", "embeddings": "making each photo's vector",
               "faces": "matching the new faces with the named ones", "bake": "writing the tags into the files"}
 
-#: Longest message worth putting on a progress bar. Past this it is ellipsised in
-#: the page anyway, so a truncated sentence is all anyone can read.
+#: Longest person's line worth putting on a progress bar. Past this it is ellipsised in the page anyway, so a truncated
+#: sentence is all anyone can read. A fact's sentence is shown whole.
 _INDEXER_MAX_MESSAGE = 90
 
-#: The shapes library chatter arrives in. These are forms, not particular messages:
-#: blacklisting the text of one warning only waits for the next library to add one.
-_INDEXER_NOISE = (
-    # "2026-09-19 21:31:50,515 [INFO] root - Instantiating..."
-    re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+\s+\["),
-    # "WARNING:huggingface_hub.utils._http:Warning: You are sending..."
-    re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL):[\w.]+:"),
-    # "Warning: You are sending unauthenticated requests to the HF Hub."
-    # Printed bare, with no prefix at all, which is how it reached the progress bar.
-    re.compile(r"^(User|Future|Deprecation|Runtime|Import|Resource)?Warning:", re.I),
-    # warnings.warn's source line, and the echoed statement under it.
-    re.compile(r"^.*:\d+:\s*\w*Warning:"),
-    re.compile(r"^\s*warnings\.warn\("),
-    # A bare traceback frame, which without its exception says nothing useful here.
-    # The line is stripped before matching, so its indentation is already gone.
-    re.compile(r"^File \".*\", line \d+"),
-)
 
-
-def summarize_indexer_line(line):
-    """Turn one line of indexer output into progress text, or None to ignore it.
-
-    The indexer's stdout carries three kinds of line: console output written for a
-    person, tqdm progress bars, and library chatter. Only the first two say anything
-    about progress, and the third is the bulk of it -- model loading alone logs
-    dozens of lines nobody watching a progress bar wants.
-    """
-    if not line:
-        return None
-    # tqdm redraws with carriage returns; only the newest frame matters.
-    clean = line.split("\r")[-1].strip()
-    if not clean:
-        return None
-    if any(pattern.match(clean) for pattern in _INDEXER_NOISE):
-        return None
-    if gpu_turns.is_waiting(clean):
-        # Whole: who has the card and since when is the line's point.
-        return clean
-
-    match = _INDEXER_TQDM.match(clean)
-    if match:
-        label, percent, done, total = match.groups()
-        return f"{label.strip()}: {percent}% ({done}/{total})"
-
-    if len(clean) > _INDEXER_MAX_MESSAGE:
-        return clean[:_INDEXER_MAX_MESSAGE - 1].rstrip() + "\u2026"
-    return clean
+def _shortened(line):
+    if len(line) > _INDEXER_MAX_MESSAGE:
+        return line[:_INDEXER_MAX_MESSAGE - 1].rstrip() + "\u2026"
+    return line
 
 
 def index_folder(library, folder, code_folder, report=None, subfolders=True):
@@ -147,22 +111,21 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
 
     The CLI runs in a process of its own, from `code_folder` -- the code this program
     runs, which the caller has from tagpup.config -- so the GPU work stays out of the
-    server. It reads the library's settings itself (tagpup.runtime). What the CLI says of the faces it made (NEW_FACES)
-    ends the message, and after it what it read from the photos' bakes (bake_reading.SAID) and what its bake wrote
-    (bake_after_index.SAID), each read whole.
+    server. It reads the library's settings itself (tagpup.runtime), and is asked for facts (tagpup.core.progress_line),
+    which it says one a line: what it says of the faces it made (`new_faces`) ends the message, and after it what it read
+    from the photos' bakes (`bake_read`) and what its bake wrote (`baked`).
 
-    `report(message, percent)` hears progress as it comes, each message naming its phase: the percent of each of the
-    CLI's bars (metadata, embeddings), the faces' matching (MATCHING), and each folder of the bake as it begins and as
-    each chunk of its files is written, whole, with the percent of the folders and files done (bake_after_index.folder_heard). A line cut short or garbled is passed
-    over. The run under way on this thread, when one is recorded (job_runs.recording: the index queue's), is told the
-    same as a phase and counts, never a path (job_runs.tell): a bar's `done`, `of` and `percent`; a bake folder's
-    `folders_done`, `folders`, `written`, `current`, `conflicts` and `percent`, and as a chunk ends `files_done` and
-    `files`, the folder's.
+    `report(message, percent)` hears progress as it comes, each fact's sentence whole and its percent: each phase
+    (metadata, embeddings, the faces' matching, each folder of the bake as it begins and as each chunk of its files is
+    written: bake_after_index.folder_told), and the line of a wait for the graphics card. Any other line is a person's
+    (a log line, a traceback), shown cut at 90 characters; a fact cut short is passed over. The run under way on this
+    thread, when one is recorded (job_runs.recording: the index queue's), is told each phase fact's phase and counts,
+    never a path (job_runs.tell).
 
     details: `message`, what to tell the person; `percent`, where the bar stops;
     `cancelled`, true when the indexer was stopped while it waited for the graphics card; and, as counts, what the CLI
-    said it did: `photos_read` (its embeddings bar's total), `baked_written`, `baked_current`, `baked_conflicts` (its
-    bake's line, bake_after_index.said_heard), `failed_photos` (FAILED).
+    said it did: `photos_read` (its embeddings fact's `of`), `baked_written`, `baked_current`, `baked_conflicts` (its
+    `baked` fact's), `failed_photos` (its `failed` fact's).
     `folder` may be a list of folders, indexed in one run of the indexer.
 
     A `report` with a `stop_file` attribute (tagpup.jobs.indexing) is told the file that
@@ -185,8 +148,9 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         return result
     env = os.environ.copy()
     env["TAGPUP_DB_PATH"] = library.path
-    # A line read whole (NEW_FACES) arrives as printed: rich colours a line when told the pipe is a terminal
-    # (FORCE_COLOR), and no colour is wanted on a progress bar.
+    # Its facts, not the words and bars it prints for a person (tagpup.core.progress_line); a person's line it still
+    # prints (rich's console) arrives with no colour, which is not wanted on a progress bar.
+    progress_line.ask(env)
     env.update(NO_COLOR="1", TERM="dumb")
     # The indexer logs to a file of its run's own in data/logs as well as to this pipe, each
     # line carrying the tags of the run it is part of (tagpup.core.runs).
@@ -210,43 +174,32 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
         )
         with proc.stdout:
             for line in iter(proc.stdout.readline, ""):
-                whole = line.split("\r")[-1].strip()
-                if whole.startswith(bake_after_index.FOLDER_SAID):
-                    heard = bake_after_index.folder_heard(whole)
-                    if heard is not None:
-                        told = {"folders_done": heard["number"] - 1, "folders": heard["of"], "written": heard["written"],
-                                "current": heard["current"], "conflicts": heard["conflicts"], "percent": heard["percent"]}
-                        if heard["files"] is not None:
-                            told.update(files_done=heard["files_done"], files=heard["files"])
-                        job_runs.tell("bake", told)
-                        # Whole, path and all: the bar's summary would cut it at 90 characters.
-                        report(whole, heard["percent"])
+                fact = progress_line.heard(line)
+                if fact is None:
+                    text = progress_line.plain(line)
+                    if text:
+                        report(_shortened(text), None)
                     continue
-                bar = _INDEXER_TQDM.match(whole)
-                if bar and bar.group(1).strip() in _BAR_PHASES:
-                    phase, of = _BAR_PHASES[bar.group(1).strip()], int(bar.group(4))
-                    job_runs.tell(phase, {"done": int(bar.group(3)), "of": of, "percent": int(bar.group(2))})
-                    if phase == "embeddings":
-                        counted["photos_read"] = of
-                elif whole.startswith(MATCHING):
-                    job_runs.tell("faces", {})
-                if whole.startswith(NEW_FACES):
-                    # Whole: the bar's summary cuts a line at 90 characters.
-                    said.append(whole[len(NEW_FACES):])
-                elif whole.startswith(FAILED):
-                    failed.append(whole[len(FAILED):])
-                    if failed[-1].isdigit():
-                        counted["failed_photos"] = int(failed[-1])
-                elif whole.startswith(bake_reading.SAID):
-                    baked.append(whole)
-                elif whole.startswith(bake_after_index.SAID):
-                    wrote.append(whole)
-                    for name, value in (bake_after_index.said_heard(whole) or {}).items():
-                        counted["baked_" + name] = value
-                clean = summarize_indexer_line(line)
-                if clean:
-                    match = re.search(r"(\d+)%", clean)
-                    report(clean, int(match.group(1)) if match else None)
+                kind, counts = fact["kind"], progress_line.counts(fact)
+                if kind == "phase":
+                    # By design, though the writer is this version's: a line must never end the job, and
+                    # `job_runs.tell` raises ValueError on a phase it does not know.
+                    if fact["phase"] in job_runs.PHASES:
+                        job_runs.tell(fact["phase"], counts)
+                    if fact["phase"] == "embeddings" and "of" in counts:
+                        counted["photos_read"] = counts["of"]
+                elif kind == "new_faces":
+                    said.append(fact["sentence"])
+                elif kind == "failed":
+                    failed.append(counts["photos"])
+                    counted["failed_photos"] = counts["photos"]
+                elif kind == "bake_read":
+                    baked.append(fact["sentence"])
+                elif kind == "baked":
+                    wrote.append(fact["sentence"])
+                    counted.update(("baked_" + name, value) for name, value in counts.items())
+                if "sentence" in fact:
+                    report(fact["sentence"], counts.get("percent"))
             proc.wait()
         return proc.returncode
 
