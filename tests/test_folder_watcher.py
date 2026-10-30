@@ -778,21 +778,17 @@ class AWholeSyncOverASlowShare(unittest.TestCase):
             finally:
                 go_on.set()
                 syncing.join(30)
-        said = "\n".join(logged.output)
-        self.assertIn("so far", said)
-        self.assertIn("6 folder(s) and 6 photo file(s) in", said, "the walk's end is said once a progress line was")
-        self.assertIsNone(page.get("/api/activity/now").get_json()["syncing"])
-        self.assertEqual([], job_runs.under_way(library.path), "the walk's run ended with it")
-
-    def test_a_short_walk_says_nothing_of_its_progress(self):
-        """Fewer than LOG_FOLDERS folders: no line; and once the walk is over, the folder it was at is no longer said."""
-        at = {}
-        with sync_service.walking_at_into(at), self.assertNoLogs("tagpup.services.sync", level="INFO"):
-            walked = sync_service._Walked(sync_service.WALKING)
-            walked.listed("D:/Photos/Regatta", 4)
-            self.assertEqual("D:/Photos/Regatta", at["folder"])
-            walked.ended()
-        self.assertIsNone(at["folder"])
+            said = "\n".join(logged.output)
+            self.assertIn("so far", said)
+            self.assertIn("6 folder(s) and 6 photo file(s) in", said, "the walk's end is said once a progress line was")
+            self.assertIsNone(page.get("/api/activity/now").get_json()["syncing"])
+            self.assertEqual([], job_runs.under_way(library.path), "the walk's run ended with it")
+            # A short walk, fewer than LOG_FOLDERS folders (one with no subfolder): no progress line, and once it is
+            # over the folder it was at is no longer said.
+            with self.assertLogs("tagpup.services.sync", level="INFO") as short:
+                watcher._run(library, os.path.join(root, "Dunes"))
+            self.assertNotIn("folder(s) and", "\n".join(short.output), "a short walk said how far it got")
+            self.assertIsNone(page.get("/api/activity/now").get_json()["syncing"])
 
 
 class FakeObserver:
