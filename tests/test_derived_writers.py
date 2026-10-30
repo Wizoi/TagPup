@@ -147,14 +147,19 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
         self.assertEqual({"path"}, set_columns("UPDATE photos SET path = ? WHERE id = ?"))
         self.assertEqual({"tags", "raw_metadata"}, set_columns("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?"))
 
-    def test_a_photos_path_is_set_by_move_rows_in_alone_and_it_sets_what_the_journal_reads_as_moved(self):
+    def test_of_the_update_photos_statements_only_move_rows_in_sets_a_path_and_it_sets_what_the_journal_reads_as_moved(self):
         """The journal refuses to undo a change of rows once a later rename moved one of its photos, by the columns a
         rename sets in the row (store.photos.MOVED, read by store.journal._files_since): MOVED and move_rows_in were kept
-        alike by convention only (#1962), as FOLLOWED and follow_fields are not (it asserts within FOLLOWED)."""
+        alike by convention only (#1962), as FOLLOWED and follow_fields are not (it asserts within FOLLOWED).
+
+        Its scope is the `UPDATE photos` SQL written out in tagpup/. The journal's generic writer (GENERIC_WRITERS) sets a
+        path too, for a change of rows (a relink, tagpup.services.relink_photos), which the refusal reads as a change of rows;
+        a `SET %s` whose columns are made at run time is covered only by follow_fields' own assert."""
         sets = {(module, name): set().union(*(set_columns(text) for text in strings(node))) for module, name, node in self.photos}
         mover = ("tagpup/store/photos.py", "move_rows_in")
         self.assertEqual([mover], sorted(key for key, columns in sets.items() if "path" in columns),
-                         "a photo's path is set outside store.photos.move_rows_in, which the journal's refusal reads as MOVED")
+                         "an `UPDATE photos` outside store.photos.move_rows_in sets a photo's path, which the journal's refusal"
+                         " reads as MOVED only from move_rows_in")
         self.assertEqual(set(module_constant(mover[0], "MOVED")), sets[mover])
 
     def test_every_writer_of_a_photos_keywords_path_or_metadata_calls_derived(self):
