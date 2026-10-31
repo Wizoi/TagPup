@@ -23,6 +23,7 @@ from tagpup import config  # noqa: E402
 from tagpup.files import images, thumbs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import roots_gate  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
 class Routes(unittest.TestCase):
@@ -161,7 +162,7 @@ class ARootedLibrary(unittest.TestCase):
         self.home = own_home.for_test(self, prefix="views_roots_")
         self.side = rl.Side(self.home, "harbour", real=3, bulk=1, outside=1)
         self.assertIsNone(self.side.adopt().refused)
-        self.app = web.create_app("tagpup", startup=self.side.library)
+        self.app = web.create_app("tagpup", startup=self.side.library, runtime=Runtime())
         self.app.testing = True
         self.client = self.app.test_client()
         roots_gate.forget(self.side.library)

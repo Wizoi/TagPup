@@ -84,9 +84,10 @@ class Base(unittest.TestCase):
         self.long = []
         self.background = FakeBackground()
         self.clock = Clock()
+        self.runtime = Runtime()
         self.lifecycle = Lifecycle(version="20260926-101500-abc1234", launcher_token=TOKEN, background=self.background,
-                                   work=lambda: list(self.long))
-        self.app = web.create_app("tagpup", startup=self.library, lifecycle=self.lifecycle)
+                                   work=lambda: list(self.long), runtime=self.runtime)
+        self.app = web.create_app("tagpup", startup=self.library, runtime=self.runtime, lifecycle=self.lifecycle)
         self.app.testing = True
         self.addCleanup(self.lifecycle.resume)      # a drain asks the batches to stop, and keeps asking until it resumes
         # A write that takes a while: what is in flight when the drain begins.
@@ -187,8 +188,9 @@ class ADrain(Base):
 
     def test_is_refused_while_the_startup_migrations_run(self):
         """#664: the startup migration thread is long work."""
-        lifecycle = Lifecycle(version="v", launcher_token=TOKEN)
-        app = web.create_app("tagpup", lifecycle=lifecycle)
+        runtime = Runtime()
+        lifecycle = Lifecycle(version="v", launcher_token=TOKEN, runtime=runtime)
+        app = web.create_app("tagpup", runtime=runtime, lifecycle=lifecycle)
         with mock.patch.object(lifecycles.library_actions, "bringing_up_to_date", return_value=1):
             reply = app.test_client().post("/api/server/drain", json={"seconds": 5, "lease": LEASE}, headers=HEADERS)
         self.assertEqual({"drained": False, "success": True,
@@ -298,7 +300,7 @@ class OnlyTheLauncher(Base):
         self.assertTrue(here.get_json()["drained"])
 
     def test_and_a_server_it_did_not_start_is_drained_by_nobody(self):
-        app = web.create_app("tagpup", startup=self.library)
+        app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={}, headers=HEADERS).status_code)
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={},
                                                      headers={launcher.HEADER: ""}).status_code)
@@ -316,7 +318,7 @@ class OnlyTheLauncher(Base):
 
 class WhichVersionAnswers(Base):
     def test_both_apps_say_it_with_or_without_a_library(self):
-        tuner = web.create_app("tuner", startup=self.library, lifecycle=self.lifecycle)
+        tuner = web.create_app("tuner", startup=self.library, runtime=self.runtime, lifecycle=self.lifecycle)
         for app in (self.app, tuner):
             for url in ("/api/server", "/harbour/api/server"):
                 status = app.test_client().get(url).get_json()
@@ -332,12 +334,13 @@ class WhichVersionAnswers(Base):
         self.assertEqual(self.lifecycle.version, refused.headers.get(launcher.VERSION_HEADER))
 
     def test_one_run_from_a_checkout_says_so(self):
-        client = web.create_app("tuner", lifecycle=Lifecycle(version=None)).test_client()
+        runtime = Runtime()
+        client = web.create_app("tuner", runtime=runtime, lifecycle=Lifecycle(version=None, runtime=runtime)).test_client()
         self.assertEqual(launcher.FROM_A_CHECKOUT, client.get("/api/server").headers.get(launcher.VERSION_HEADER))
 
     def test_an_app_made_without_a_lifecycle_says_its_code_folders(self):
         from tagpup import config as tagpup_config
-        app = web.create_app("tagpup", startup=self.library)
+        app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         self.assertEqual(tagpup_config.code_version(), app.test_client().get("/api/server").get_json()["version"])
 
 

@@ -180,7 +180,7 @@ class TheFolderRoutesNameTheTwoPlaces(AfterAMove):
         self.assert_two_places(self.get("/api/folder/subfolders", query_string={"path": later}), later)
 
     def test_the_tuner_says_it_too(self):                                                    # #490
-        self.app = web.create_app("tuner", startup=self.library)
+        self.app = web.create_app("tuner", startup=self.library, runtime=Runtime())
         self.app.testing = True
         self.client = self.app.test_client()
         later = self.only_at_the_old_place()
@@ -427,7 +427,7 @@ class AWriteStoppedByARootChange(unittest.TestCase):
         self.assertEqual([], file_journal.unfinished(self.side.db_path))
 
     def test_the_route_answers_refused_with_written_and_the_change(self):                          # #486
-        app = web.create_app("tagpup", startup=self.library)
+        app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         app.testing = True
         reply = self.stopped(lambda: app.test_client().post(
             "/photo_index/api/photos/bulk-tags", data=json.dumps({"paths": self.side.real[:3], "add_tags": ["Harbour"],

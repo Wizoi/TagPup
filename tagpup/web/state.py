@@ -24,8 +24,8 @@ def require():
 
 
 def runtime():
-    """The process's models (tagpup.runtime.Runtime) the app was made with, or None."""
-    return current_app.config.get("RUNTIME")
+    """The process's models and index queues (tagpup.runtime.Runtime) the app was made with."""
+    return current_app.config["RUNTIME"]
 
 
 def settings(library):

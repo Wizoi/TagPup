@@ -80,9 +80,7 @@ def idle_caches(idle):
 
 
 def _used(name):
-    runtime = state.runtime()
-    if runtime is not None:
-        runtime.idle.used(name)
+    state.runtime().idle.used(name)
 
 
 _refuse = face_routes.refuse

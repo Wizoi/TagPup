@@ -32,6 +32,7 @@ import fake_exiftool  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, faces, people, taxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 WREN = "Wren Halloway"
 ODA = "Oda Castellane"
@@ -109,7 +110,7 @@ class Case(unittest.TestCase):
         return self.look("SELECT name, name_source, excluded, tag_id FROM faces WHERE id = ?", (face_id,))[0]
 
     def tuner(self):
-        app = web.create_app("tuner", startup=self.library)
+        app = web.create_app("tuner", startup=self.library, runtime=Runtime())
         app.testing = True
         return app.test_client()
 

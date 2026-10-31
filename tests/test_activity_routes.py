@@ -886,7 +886,7 @@ class TheActivityPageIsNotSomebodyUsingTheApp(unittest.TestCase):
 
     def test_its_reads_leave_the_quiet_moment_and_an_action_does_not(self):
         clock = [1000.0]
-        lifecycle = Lifecycle(clock=lambda: clock[0], work=lambda: [])
+        lifecycle = Lifecycle(clock=lambda: clock[0], work=lambda: [], runtime=runtimes.Runtime())
         app = lambda environ, start_response: start_response("200 OK", []) or [b""]  # noqa: E731
         gate = lifecycle.wrap(app)
 

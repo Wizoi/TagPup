@@ -24,12 +24,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
 def app_on(db_path, runtime=None):
-    """The TagTuner app started on the library at `db_path`, given `runtime` (tagpup.runtime.Runtime) when one is. In
+    """The TagTuner app started on the library at `db_path`, given `runtime` (tagpup.runtime.Runtime), or one of its own. In
     testing mode: a route that raises, raises."""
-    app = web.create_app("tuner", startup=Library(db_path), runtime=runtime)
+    app = web.create_app("tuner", startup=Library(db_path), runtime=runtime or Runtime())
     app.testing = True
     return app
 

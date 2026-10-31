@@ -26,9 +26,10 @@ PROBE = """\
 import sys
 sys.path.insert(0, %r)
 sys.path.insert(0, %r)
+from tagpup.runtime import Runtime
 from tagpup.web import app as web
-web.create_app("tagpup")
-web.create_app("tuner")
+web.create_app("tagpup", runtime=Runtime())
+web.create_app("tuner", runtime=Runtime())
 import tagpup.store.db
 print(tagpup.store.db.__file__)
 """

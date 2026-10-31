@@ -17,6 +17,7 @@ import tagpup_web  # noqa: E402
 from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import tagpup_routes, taxonomy_routes  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 TREE_ROUTES = ("/api/taxonomy/tree", "/api/taxonomy/create", "/api/taxonomy/update",
                "/api/taxonomy/delete-check", "/api/taxonomy/delete-confirm", "/api/taxonomy/rename")
@@ -29,7 +30,7 @@ def routes_of(app):
 class BothAppsServeTheTree(unittest.TestCase):
     def test_each_app_has_the_trees_routes_from_one_blueprint(self):
         for kind in ("tagpup", "tuner"):
-            found = routes_of(web.create_app(kind))
+            found = routes_of(web.create_app(kind, runtime=Runtime()))
             for route in TREE_ROUTES:
                 self.assertIn(route, found, "%s does not serve %s" % (kind, route))
                 self.assertEqual(taxonomy_routes.__name__, found[route].__module__,
@@ -37,7 +38,7 @@ class BothAppsServeTheTree(unittest.TestCase):
 
     def test_an_edit_made_from_tagtuner_is_the_librarys(self):
         tuner, home = web_client.app_for(self, "tuner")
-        tagpup = web.create_app("tagpup", startup=tuner.config["STARTUP_LIBRARY"])
+        tagpup = web.create_app("tagpup", startup=tuner.config["STARTUP_LIBRARY"], runtime=Runtime())
         tagpup.testing = True
         made = tuner.test_client().post("/library/api/taxonomy/create",
                                         json={"name": "Places/Harbour", "parent_id": None, "has_face": 0})
@@ -115,7 +116,7 @@ PORTS = tagpup_web.PORTS
 def served(testcase, kind, ports=PORTS):
     """An app told the process's ports, as tagpup_web.main makes them."""
     app, _home = web_client.app_for(testcase, kind)
-    told = web.create_app(kind, startup=app.config["STARTUP_LIBRARY"], ports=ports)
+    told = web.create_app(kind, startup=app.config["STARTUP_LIBRARY"], runtime=Runtime(), ports=ports)
     told.testing = True
     return told
 

@@ -67,12 +67,12 @@ SLOW_REQUEST_SECONDS = 1.0
 THREADS = 16
 
 
-def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecycle=None):
+def create_app(kind, startup=None, pages=None, *, runtime, ports=None, lifecycle=None):
     """The Flask app for `kind` ("tagpup" or "tuner"): its page from `pages` (the
     page's folder, by default the one beside the package), `startup`, the Library a
     request naming none is served, and `runtime`, the process's models
-    (tagpup.runtime.Runtime), which the routes take from app.config["RUNTIME"]. An app
-    made without one answers everything but Suggest. `ports` is {kind: port} for the
+    (tagpup.runtime.Runtime), which the routes take from app.config["RUNTIME"]: the two
+    apps of one process are given the same one. `ports` is {kind: port} for the
     apps the process serves, which the launcher knows (tagpup_web.PORTS, or the ports
     it was told): /api/apps tells a page where the other app is, and an app made
     without them knows of none. `lifecycle` is the process's gate and version
@@ -84,10 +84,9 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.config["APP_KIND"] = kind
     app.config["STARTUP_LIBRARY"] = startup
     app.config["RUNTIME"] = runtime
-    if runtime is not None:
-        # What the pages keep only while used, let go on the runtime's idle timer.
-        tagpup_routes.idle_caches(runtime.idle)
-        tuner_routes.idle_caches(runtime.idle)
+    # What the pages keep only while used, let go on the runtime's idle timer.
+    tagpup_routes.idle_caches(runtime.idle)
+    tuner_routes.idle_caches(runtime.idle)
     app.config["PORTS"] = dict(ports or {})
     app.config["LIFECYCLE"] = lifecycle = lifecycle or lifecycles.Lifecycle(version=tagpup_config.code_version(),
                                                                                     runtime=runtime)

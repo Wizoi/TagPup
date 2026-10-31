@@ -299,7 +299,9 @@ class TheSyncRouteSaysWhetherItIsSyncing(unittest.TestCase):
         busy = dict(idle, syncing={"library": "harbour", "folder": "x", "started": "y"})
         for tasks, harbour_syncs, regatta_syncs in (([], False, False), ([("folder watcher", FakeWatcher(idle))], False, False),
                                                     ([("folder watcher", FakeWatcher(busy))], True, False)):
-            app = web.create_app("tagpup", startup=Library(harbour), lifecycle=Lifecycle(background=runtimes.Background(list(tasks))))
+            runtime = Runtime()
+            app = web.create_app("tagpup", startup=Library(harbour), runtime=runtime,
+                                 lifecycle=Lifecycle(background=runtimes.Background(list(tasks)), runtime=runtime))
             app.testing = True
             client = app.test_client()
             self.assertEqual(harbour_syncs, client.get("/harbour/api/sync").get_json()["syncing"], tasks)

@@ -22,6 +22,7 @@ from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import schema  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
 class Library:
@@ -43,7 +44,7 @@ class Library:
         self.db_path = self.home.library(name + ".db")
         schema.ensure(self.db_path)
         self.library = PathLibrary(self.db_path)
-        self.app = web.create_app("tagpup", startup=self.library)
+        self.app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         self.app.testing = True
         self.client = self.app.test_client()
         testcase.addCleanup(self.close)

@@ -23,6 +23,7 @@ from tagpup.services import faces_from_tags, folder_scope  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import faces, journal, people, schema, taxonomy  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
 def wait(job):
@@ -191,7 +192,7 @@ class TheJournalSaysWhatItWasFor(InFolders):
     def test_the_history_dialog_never_gets_the_folder(self):
         from tagpup.web import app as web
         from_tags(self.library, apply=True, folder=self.sibling)
-        app = web.create_app("tagpup", startup=self.library)
+        app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         app.testing = True
         body = app.test_client().get("/harbour/api/history").get_json()
         self.assertEqual("folder", body["changes"][0]["summary"]["scope"])

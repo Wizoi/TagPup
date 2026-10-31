@@ -357,10 +357,7 @@ def snapshot_list():
 
 def _models():
     """What the server has loaded, for the page: names, whether a run uses them, and since when."""
-    runtime = current_app.config.get("RUNTIME")
-    if runtime is None:
-        return None
-    state = runtime.models_state()
+    state = current_app.config["RUNTIME"].models_state()
     after = state["release_after"]
     if state["loaded"]:
         used = state["last_used"]
@@ -388,10 +385,7 @@ def _span(seconds):
 def unload_models():
     """Unload models now: every model let go and the graphics card given up at once, unless
     a run is using them (a Suggest, the startup warm-up), which is named in a sentence and nothing touched."""
-    runtime = current_app.config.get("RUNTIME")
-    if runtime is None:
-        return responses.error(409, "This server keeps no models.")
-    done = runtime.unload_models_now()
+    done = current_app.config["RUNTIME"].unload_models_now()
     if done["busy"]:
         return responses.error(409, "In use by %s: they are let go when it ends." % " and ".join(done["held_by"]),
                                unloaded=[])

@@ -621,7 +621,7 @@ class TheMachineThatDoesNotPlaceTheRoot(RootsDialogCase):
         self.assertEqual("1", refused.headers["X-TagPup-Roots-Problem"])
         for words in ("machine_roots.json", '"pictures"'):
             self.assertIn(words, refused.get_json()["error"])
-        tagpup = web.create_app("tagpup", startup=self.side.library).test_client()
+        tagpup = web.create_app("tagpup", startup=self.side.library, runtime=runtimes.Runtime()).test_client()
         self.assertEqual(409, tagpup.get("/%s/api/taxonomy/tree" % LIBRARY).status_code)
         self.assertEqual(200, self.client.get("/api/databases").status_code)
         self.assertEqual(200, self.get("/api/history").status_code)
