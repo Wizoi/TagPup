@@ -225,7 +225,8 @@ class TwoClicksAndBusyLibraries(RoutesCase):
         ran = []
         tasks = {"recurring jobs": SimpleNamespace(registry=recurring.JOBS, start_job=run_now)}
         background = SimpleNamespace(task=tasks.get, busy=lambda: [])
-        app = web.create_app("tagpup", startup=None, lifecycle=web_lifecycle.Lifecycle(background=background, runtime=self.runtime))
+        app = web.create_app("tagpup", startup=None, runtime=self.runtime,
+                             lifecycle=web_lifecycle.Lifecycle(background=background, runtime=self.runtime))
         app.testing = True
         page = app.test_client()      # as the page posts: no library in the URL, the library in the body
         asked = {"job": "sync", "library": self.library.name}
