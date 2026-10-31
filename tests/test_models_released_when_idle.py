@@ -211,11 +211,6 @@ class TheUnloadButton(TheServer):
         self.load_both()                                           # a Suggest straight after loads them again
         self.assertEqual((BOTH, True), (self.runtime.models_state()["loaded"], self.card.holds()))
 
-    def test_a_server_with_no_runtime_says_so(self):
-        app, _home = web_client.app_for(self, "tagpup")
-        reply = app.test_client().post("/api/activity/models/unload")
-        self.assertEqual(409, reply.status_code)
-
 
 class OnTheCpu(TheServer):
     device = "cpu"

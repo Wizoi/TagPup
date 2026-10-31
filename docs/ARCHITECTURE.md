@@ -221,7 +221,9 @@ programs only. A moved module takes every importer with it and leaves nothing at
 - **One composition root** (`tagpup.runtime.Runtime`): models built once from the library's own settings (the
   one other: `embed-photos`'s new photo model, `photo_reembed.run`, writing under a key the library does not read
   until its switch),
-  warmed on a thread, released after an idle period; each library's job runners; `begin`/`gpu_turn` take the
+  warmed on a thread, released after an idle period; each library's job runners, its index queue among them
+  (`Runtime.index_queues`, one per library file, two runtimes sharing none; `Runtime.sync` and `include` queue on
+  it); `begin`/`gpu_turn` take the
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
   process, via the CLI's `index`, asked for its progress as typed facts on its stdout, `tagpup.core.progress_line`, and

@@ -223,7 +223,7 @@ def main(argv=None):
     # A launcher of another version drains this server with the token in its record
     # (tagpup.launcher), written once it serves.
     launch_token = secrets.token_hex(16)
-    lifecycle = Lifecycle(version=version, background=background, launcher_token=launch_token)
+    lifecycle = Lifecycle(version=version, background=background, launcher_token=launch_token, runtime=runtime)
     apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime, ports=ports, lifecycle=lifecycle)
             for kind in ("tagpup", "tuner")}
     # Each library's migrations now, beside the serving, not in the first request (#661); a drain

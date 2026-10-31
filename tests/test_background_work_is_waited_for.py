@@ -4,7 +4,9 @@
 `tagpup.web.lifecycle.under_way` is the list a drain refuses to end the server beside (long_work): a Suggest run, an index, the
 naming of faces, an assignment of faces, the startup migrations. It was a hand list, and a new job joined it only if somebody
 remembered. A module under tagpup/jobs or tagpup/services that starts a thread, or has a `running()` of its own, fails here until
-`long_work` asks it, or it is listed below with the reason a drain need not wait for it.
+`long_work` asks it, or it is listed below with the reason a drain need not wait for it. A module whose work lives on the runtime
+is asked through what `under_way` is handed (ASKED_THROUGH_THE_RUNTIME), with the argument that hands it, which `under_way`
+must read: a parameter it only declares asks nothing.
 """
 import ast
 import os
@@ -22,6 +24,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOT_WAITED_FOR = {
     "tagpup.jobs.recurring": "the recurring jobs and the idle release run on tagpup.runtime.Background, which a drain stops and waits for (Lifecycle.busy)",
     "tagpup.jobs.watching": "the folder watcher is one of Background's tasks, stopped by the drain the same way",
+}
+
+#: Modules whose work `under_way` reads from the runtime it is handed, not by calling the module: {module: (the argument of
+#: under_way that hands it, why)}.
+ASKED_THROUGH_THE_RUNTIME = {
+    "tagpup.jobs.indexing": ("queues", "its queues are the runtime's (Runtime.index_queues), handed to under_way as queues"),
 }
 
 
@@ -43,8 +51,8 @@ def starts_background_work(path):
 
 
 def asked_by_long_work():
-    """The modules `lifecycle.under_way` calls something of (`every_queue`, `running`, `bringing_up_to_date`), by their full
-    names."""
+    """The modules `lifecycle.under_way` calls something of (`under_way`, `running`, `bringing_up_to_date`), by their full
+    names, and those it is handed the work of by an argument it reads (ASKED_THROUGH_THE_RUNTIME)."""
     with open(lifecycle.__file__, encoding="utf-8") as handle:
         tree = ast.parse(handle.read())
     aliases = {}
@@ -53,9 +61,12 @@ def asked_by_long_work():
             for each in node.names:
                 aliases[each.asname or each.name] = "%s.%s" % (node.module, each.name)
     work = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "under_way")
-    return {aliases[call.func.value.id] for call in ast.walk(work)
-            if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)
-            and call.func.value.id in aliases}
+    read = {node.id for node in ast.walk(work) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    handed = {argument.arg for argument in work.args.args} & read
+    called = {aliases[call.func.value.id] for call in ast.walk(work)
+              if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)
+              and call.func.value.id in aliases}
+    return called | {name for name, (argument, _why) in ASKED_THROUGH_THE_RUNTIME.items() if argument in handed}
 
 
 class EveryJobIsWaitedFor(unittest.TestCase):
@@ -70,6 +81,8 @@ class EveryJobIsWaitedFor(unittest.TestCase):
         self.assertEqual([], sorted(set(NOT_WAITED_FOR) - found), "listed, but it starts nothing")
         self.assertEqual([], sorted(set(NOT_WAITED_FOR) & asked_by_long_work()), "listed, but long_work asks it")
         self.assertTrue(all(NOT_WAITED_FOR.values()))
+        self.assertTrue(all(why for _argument, why in ASKED_THROUGH_THE_RUNTIME.values()))
+        self.assertEqual([], sorted(set(ASKED_THROUGH_THE_RUNTIME) - found), "asked through the runtime, but it starts nothing")
 
     def test_the_scan_sees_the_jobs_long_work_names_today(self):
         asked = asked_by_long_work()

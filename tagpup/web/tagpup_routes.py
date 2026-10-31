@@ -24,7 +24,6 @@ from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.core.result import Conflict, NotFound, Refused
-from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit
 from tagpup.services import file_changes, file_only
@@ -296,7 +295,7 @@ def folder_index_status():
     folder = _wanted_path()
     if not folder:
         return responses.error(400, "Missing path parameter")
-    return jsonify(indexing_jobs.queue_for(library).status(folder))
+    return jsonify(state.runtime().index_queues.of(library).status(folder))
 
 
 @routes.post("/api/folder/index-start")
@@ -306,7 +305,7 @@ def folder_index_start():
     of the faces it made when it recorded a photo, as every index is (tagpup.services.indexing.index_folder)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    result = library_actions.add(library, [body.get("folder_path")], lambda folders: indexing_jobs.queue_for(
+    result = library_actions.add(library, [body.get("folder_path")], lambda folders: state.runtime().index_queues.of(
         library).start(folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, [body.get("folder_path")])
     if result.refused:
@@ -325,7 +324,7 @@ def folder_add():
     refused = responses.folder_refused(folder)
     if refused:
         return refused
-    result = library_actions.add(library, [folder], lambda folders: indexing_jobs.queue_for(library).start(
+    result = library_actions.add(library, [folder], lambda folders: state.runtime().index_queues.of(library).start(
         folders, runtimes.index_folder(library)))
     suggestion_jobs.dropped_by_add(library, [folder])
     if result.refused:
@@ -376,7 +375,8 @@ def folder_suggest_start():
     def photos():
         return {key: meta for key, meta in _folder_photos(library, folder).items()
                 if not library_actions.is_ignored(meta["path"], ignored)}
-    work = suggestion_jobs.work_for(library, photos, state.runtime(), looking=looking,
+    runtime = state.runtime()
+    work = suggestion_jobs.work_for(library, photos, runtime, runtime.index_queues.of(library), looking=looking,
                                     held_now=(lambda: not library_actions.suggest_how(library, folder, ignored)[1])
                                     if looking else None)
     return jsonify({"success": True, "status": suggestion_jobs.runs_for(library).start(folder, work),

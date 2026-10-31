@@ -54,10 +54,9 @@ def change_settings():
         return responses.error(500, str(e))
     if result.refused:
         return responses.error(400, result.refused)
-    runtime = state.runtime()
-    if result.changed and runtime is not None:
+    if result.changed:
         try:
-            runtime.settings_changed(library)
+            state.runtime().settings_changed(library)
         except Exception as e:
             # Saved either way; what it let go of is let go at the library's next ask.
             logger.error("Could not let go of what %s no longer uses: %s", library.name, e)

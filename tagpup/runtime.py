@@ -49,6 +49,7 @@ from tagpup.core import gpu_turns
 from tagpup.core import library as libraries
 from tagpup.core.idle import IdleCaches
 from tagpup.core.library import Library
+from tagpup.core.per_library import PerLibrary
 from tagpup.files import images
 from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
@@ -235,23 +236,22 @@ def _idle_caches_task(runtime):
 
 @background_task(FOLDER_WATCHER)
 def _folder_watcher_task(runtime):
-    """Each library's folders watched, and a folder synced when its notifications settle
+    """Each library's folders watched, and a folder synced, applied, by `runtime` when its notifications settle
     (tagpup.jobs.watching); the whole library at start. In the process that runs the
     recurring jobs, and never in one a test started unless it asks (runs_recurring_jobs):
     NO_JOBS means no watcher either."""
     if not runs_recurring_jobs():
         return None
-    return folder_watcher()
+    return folder_watcher(home_libraries, lambda library, folder: runtime.sync(library, folder=folder, apply=True))
 
 
-def folder_watcher(libraries=home_libraries, sync_with=None, **timings):
+def folder_watcher(libraries, sync_with, **timings):
     """The folder watcher (tagpup.jobs.watching.Watcher) over `libraries()`, each folder synced by `sync_with(library,
-    folder)` -- this module's sync, applied, by default -- and a whole library's sync claimed as a run of the daily
+    folder)` -- a Runtime's sync, applied -- and a whole library's sync claimed as a run of the daily
     `sync` job (recurring.sync_whole), so the watcher and the recurring runner never walk one library at once (#2102).
     The catch-up at start is skipped for a library in step within CATCH_UP_SKIP, and a folder whose notifications were
     TagPup's own writes is not synced (sync.followed). `timings`: the Watcher's own (a test's shorter ones, its observer
     and clock)."""
-    sync_with = sync_with or (lambda library, folder: sync(library, folder=folder, apply=True))
     return watching.Watcher(libraries, watch_folders, sync_with, images.is_photo,
                             recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP),
                             whole=recurring.sync_whole, followed=sync_service.followed, **timings)
@@ -328,38 +328,8 @@ def index_folder(library, subfolders=True):
     return index
 
 
-#: Why an applied sync did not run (see sync).
+#: Why an applied sync did not run (see Runtime.sync).
 NAMING_SAYS = "Names are being given from tags; a sync waits until it finishes."
-
-
-def sync(library, folder=None, apply=False, index_new=True):
-    """Bring `library` in step with its folders, or with `folder` (tagpup.services.sync):
-    a dry run unless `apply`, with the ExifTool the library names. A dry run reads the
-    library's settings without stamping them, and writes nothing. Applied, the folders of
-    new files go on this process's index queue for the library (tagpup.jobs.indexing),
-    unless not `index_new`; they are indexed one at a time, after the sync returns.
-
-    What the entry points call -- the CLI's `sync`, the route --
-    and what a recurring job calls as sync(library, apply=True), and the folder watcher.
-
-    An applied sync is refused, nothing read or written, while "Name faces from tags" writes names in THIS process
-    (naming_faces.writing): a sync that deletes, re-points or
-    adds photos beside it changes what it read. Here, not in a route, so the run-now, the scheduled job and the watcher are
-    closed alike whatever library the request named. The watcher's folder is brought in by its next notification or the daily
-    catch-up. Another process's apply (the CLI) cannot see this process's job."""
-    if apply and naming_faces.writing(library):
-        return sync_service.not_run(NAMING_SAYS, apply, waited=True)
-    settings = library_settings(library) if apply else peek_settings(library)
-    queue = None
-    if index_new:
-        # A folder the library holds is indexed without its subfolders: they may be
-        # folders to review, or ignored.
-        # One job, one run of the indexer, for every folder of new files.
-        def queue(folders):
-            return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False),
-                                                          together=True)
-    return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
-                             roots=settings.roots, ignored=settings.ignored)
 
 
 def review(library):
@@ -367,16 +337,6 @@ def review(library):
     its settings, read without stamping them."""
     settings = peek_settings(library)
     return sync_service.review(library, settings.roots, settings.ignored)
-
-
-def include(library, folder):
-    """Index a folder to review, with its subfolders, on this process's index queue
-    (tagpup.services.sync.include)."""
-    settings = library_settings(library)
-
-    def queue(folders):
-        return indexing_jobs.queue_for(library).start(folders, index_folder(library))
-    return sync_service.include(library, folder, settings.roots, queue, settings.ignored)
 
 
 def _frozen(settings):
@@ -612,6 +572,10 @@ class Runtime:
         self._retired = {}
         #: The runs under way: each its _Lease, until it ends. The models and the indexes held are theirs.
         self._leases = []
+        #: Each library's index queue (tagpup.jobs.indexing.IndexQueue), one per library file (its key), made at its
+        #: first ask and kept as long as this runtime: what the routes, the syncs, the watcher, Suggest's wait for an
+        #: index and the drain (tagpup.web.lifecycle.under_way) reach. A test's runtime keeps its own.
+        self.index_queues = PerLibrary(lambda library: indexing_jobs.IndexQueue(library.name, library))
 
     # ---- A library's settings --------------------------------------------------------
 
@@ -633,10 +597,44 @@ class Runtime:
         """The ExifTool program to run for `library`."""
         return tagpup_config.exiftool_path(self.settings(library).exiftool)
 
-    def sync(self, library, folder=None, apply=False):
-        """Sync `library` (the module's sync): what the recurring sync job calls, handed
-        this Runtime by the entry point that runs the jobs."""
-        return sync(library, folder=folder, apply=apply)
+    def sync(self, library, folder=None, apply=False, index_new=True):
+        """Bring `library` in step with its folders, or with `folder` (tagpup.services.sync):
+        a dry run unless `apply`, with the ExifTool the library names. A dry run reads the
+        library's settings without stamping them, and writes nothing. Applied, the folders of
+        new files go on this runtime's index queue for the library (index_queues),
+        unless not `index_new`; they are indexed one at a time, after the sync returns.
+
+        What the entry points call -- the CLI's `sync`, the route --
+        and what a recurring job calls as sync(library, apply=True), handed this Runtime by the entry point that runs
+        the jobs, and the folder watcher.
+
+        An applied sync is refused, nothing read or written, while "Name faces from tags" writes names in THIS process
+        (naming_faces.writing): a sync that deletes, re-points or
+        adds photos beside it changes what it read. Here, not in a route, so the run-now, the scheduled job and the watcher
+        are closed alike whatever library the request named. The watcher's folder is brought in by its next notification
+        or the daily catch-up. Another process's apply (the CLI) cannot see this process's job."""
+        if apply and naming_faces.writing(library):
+            return sync_service.not_run(NAMING_SAYS, apply, waited=True)
+        settings = library_settings(library) if apply else peek_settings(library)
+        queue = None
+        if index_new:
+            # A folder the library holds is indexed without its subfolders: they may be
+            # folders to review, or ignored.
+            # One job, one run of the indexer, for every folder of new files.
+            def queue(folders):
+                return self.index_queues.of(library).start(folders, index_folder(library, subfolders=False),
+                                                           together=True)
+        return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
+                                 roots=settings.roots, ignored=settings.ignored)
+
+    def include(self, library, folder):
+        """Index a folder to review, with its subfolders, on this runtime's index queue
+        (tagpup.services.sync.include)."""
+        settings = library_settings(library)
+
+        def queue(folders):
+            return self.index_queues.of(library).start(folders, index_folder(library))
+        return sync_service.include(library, folder, settings.roots, queue, settings.ignored)
 
     def settings_changed(self, library):
         """The library's settings have changed (tagpup.web.settings_routes, after a save):

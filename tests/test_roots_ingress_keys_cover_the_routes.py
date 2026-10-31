@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import roots_gate, roots_ingress  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -185,7 +186,7 @@ def reads_of_routes():
 
     routes = {}
     for kind in ("tagpup", "tuner"):
-        app = web.create_app(kind)
+        app = web.create_app(kind, runtime=Runtime())
         for rule in app.url_map.iter_rules():
             if rule.rule.startswith("/api/"):
                 view = app.view_functions[rule.endpoint]

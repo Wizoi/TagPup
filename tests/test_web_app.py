@@ -30,6 +30,7 @@ from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import state  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
 def which_library(app):
@@ -76,7 +77,7 @@ class TheLibraryAUrlNames(unittest.TestCase):
         os.makedirs(os.path.dirname(elsewhere))
         open(elsewhere, "wb").close()
         for kind in ("tagpup", "tuner"):
-            app = web.create_app(kind, startup=Library(elsewhere))
+            app = web.create_app(kind, startup=Library(elsewhere), runtime=Runtime())
             app.testing = True
             client = which_library(app)
             for url in ("/api/which-library", "/harbour/api/which-library"):

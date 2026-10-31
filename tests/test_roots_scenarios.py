@@ -488,7 +488,8 @@ class RootsDialogCase(unittest.TestCase):
         self.assertIsNone(self.second.adopt().refused)
         self.copy = os.path.join(self.home.root, "Copy", "Pictures")
         shutil.copytree(self.side.pictures, self.copy, copy_function=shutil.copy2)
-        app = web.create_app(self.KIND, startup=self.side.library)
+        self.runtime = runtimes.Runtime()
+        app = web.create_app(self.KIND, startup=self.side.library, runtime=self.runtime)
         app.testing = True
         self.client = app.test_client()
         roots_gate.forget(self.side.library)
@@ -560,15 +561,13 @@ class TheOwnerMovesTheLocationInTheDialog(RootsDialogCase):
 
     def test_an_index_run_in_either_library_of_the_root_holds_the_move_up(self):
         mapped = self.map_file()
-        indexing_jobs.queue_for(self.side.library)      # a run queued here: its queue is this process's
-        self.addCleanup(indexing_jobs.forget, self.side.library)
+        self.runtime.index_queues.of(self.side.library)      # a run queued here: its queue is this process's
         with mock.patch.object(indexing_jobs.IndexQueue, "busy", lambda queue: True):
             reply, listed = self.move(self.copy), self.get("/api/roots").get_json()
         self.assertEqual(409, reply.status_code)
         self.assertIn("an index run is running or queued", reply.get_json()["error"])
         self.assertIn("an index run is running or queued", listed["busy"])
-        queue = indexing_jobs.queue_for(self.second.library)
-        self.addCleanup(indexing_jobs.forget, self.second.library)
+        queue = self.runtime.index_queues.of(self.second.library)
         with mock.patch.object(type(queue), "busy", lambda q: q is queue):
             reply = self.move(self.copy)
         self.assertEqual(409, reply.status_code)
@@ -622,7 +621,7 @@ class TheMachineThatDoesNotPlaceTheRoot(RootsDialogCase):
         self.assertEqual("1", refused.headers["X-TagPup-Roots-Problem"])
         for words in ("machine_roots.json", '"pictures"'):
             self.assertIn(words, refused.get_json()["error"])
-        tagpup = web.create_app("tagpup", startup=self.side.library).test_client()
+        tagpup = web.create_app("tagpup", startup=self.side.library, runtime=runtimes.Runtime()).test_client()
         self.assertEqual(409, tagpup.get("/%s/api/taxonomy/tree" % LIBRARY).status_code)
         self.assertEqual(200, self.client.get("/api/databases").status_code)
         self.assertEqual(200, self.get("/api/history").status_code)
@@ -680,11 +679,11 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
     libraries._read answering `default` for a library it cannot read fails test_a_library_that_cannot_be_read_fails_a_write_it_does_not_refuse_it."""
 
     def setUp(self):
-        self.app, self.home = web_client.app_for(self, "tagpup")
+        self.runtime = runtimes.Runtime()
+        self.app, self.home = web_client.app_for(self, "tagpup", runtime=self.runtime)
         self.client = self.app.test_client()
         self.library = Library(self.home.library("library.db"))
         self.addCleanup(tagpup_routes.folders.forget, self.library)
-        self.addCleanup(indexing_jobs.forget, self.library)
         self.regatta = os.path.join(self.home.root, "Pictures", "Regatta")
         self.held = make_photo(os.path.join(self.regatta, "regatta_01.jpg"))
         conn = db.connect(self.library.path)
@@ -749,8 +748,8 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
     def test_suggest_sync_and_the_watcher_leave_the_folder_alone_until_it_is_added(self):
         with contextlib.suppress(Conflict):      # refused now; kept, and a row made, before
             suggester.keep(self.library.path, self.photo, {"tags": ["Family/Work"]})
-        runtimes.sync(self.library, apply=True)
-        indexing_jobs.queue_for(self.library).wait()
+        self.runtime.sync(self.library, apply=True)
+        self.runtime.index_queues.of(self.library).wait()
         self.assertEqual([], [f for f in self.queued if paths.same(f, self.lighthouse) or paths.is_under(f, self.lighthouse)],
                          "the indexer was queued for a folder never added")
         self.assertFalse(any(paths.same(w, self.lighthouse) or paths.is_under(self.lighthouse, w)
@@ -762,8 +761,8 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
             conn.close()
         # Added, it is the library's: sync queues its files for the indexer and reads none of them itself.
         library_actions.record_added(self.library, [self.lighthouse])
-        found = runtimes.sync(self.library, apply=True).details["counts"]
-        indexing_jobs.queue_for(self.library).wait()
+        found = self.runtime.sync(self.library, apply=True).details["counts"]
+        self.runtime.index_queues.of(self.library).wait()
         self.assertEqual((0, 0, 0), (found["changed"], found["never_stamped"], found["to_write"]))
         self.assertTrue(any(paths.same(folder, self.lighthouse) for folder in self.queued))
 

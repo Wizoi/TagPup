@@ -42,6 +42,7 @@ from tagpup.services import photos as photos_service  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import db, faces, people, taxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 WREN = "Wren Halloway"
 ODA = "Oda Castellane"
@@ -133,7 +134,7 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
 
     def card(self, face_id, person):
         """The face's card in Identify's grid of `person`."""
-        tuner = web.create_app("tuner", startup=self.library)
+        tuner = web.create_app("tuner", startup=self.library, runtime=Runtime())
         tuner.testing = True
         answer = tuner.test_client().get("/api/unmatched-faces/person-matches",
                                           query_string={"person_id": self.node(person)}).get_json()
@@ -176,7 +177,7 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
         alike = self.face(self.photo("harbour/pier.jpg", 2020, ["People/" + WREN]), 60)
         child_like = self.face(self.photo("harbour/jetty.jpg", 2020, ["People/" + WREN]), 2)
         with mock.patch.object(identify, "UNCLUSTERED_LIMIT", 1):
-            tuner = web.create_app("tuner", startup=self.library)
+            tuner = web.create_app("tuner", startup=self.library, runtime=Runtime())
             tuner.testing = True
             answer = tuner.test_client().get("/api/unmatched-faces/person-matches",
                                               query_string={"person_id": self.node(WREN)}).get_json()
@@ -192,7 +193,7 @@ class AFaceGetsOneNearestPersonEverywhere(unittest.TestCase):
         child_like = self.face(self.photo("harbour/jetty.jpg", 2020), -10)
         alike = self.face(self.photo("harbour/pier.jpg", 2020), 75)
         with mock.patch.object(identify, "UNCLUSTERED_LIMIT", 1):
-            tuner = web.create_app("tuner", startup=self.library)
+            tuner = web.create_app("tuner", startup=self.library, runtime=Runtime())
             tuner.testing = True
             answer = tuner.test_client().get("/api/unmatched-faces/person-matches",
                                               query_string={"name": "Unknown Faces"}).get_json()

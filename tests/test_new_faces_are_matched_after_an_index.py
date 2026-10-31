@@ -101,10 +101,10 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
         self.home = own_home.for_test(self, prefix="index_matches_")
         self.library = Library(self.home.library("harbour.db"))
         library_actions.create(self.library.path)
-        self.addCleanup(indexing_jobs.forget, self.library)
         self.apps = {}
+        self.runtime = Runtime()      # both apps', as the server's
         for kind in ("tagpup", "tuner"):
-            app = web.create_app(kind, startup=self.library)
+            app = web.create_app(kind, startup=self.library, runtime=self.runtime)
             app.testing = True
             self.apps[kind] = app.test_client()
         self.folder = paths.stored(os.path.join(self.home.root, "Harbourview Regatta"))
@@ -131,7 +131,7 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
         body = {"apply": True} if key is None else {key: [self.folder] if key == "folder_paths" else self.folder}
         answer = self.apps[kind].post(route, json=body)
         self.assertEqual(200, answer.status_code, answer.get_json())
-        queue = indexing_jobs.queue_for(self.library)
+        queue = self.runtime.index_queues.of(self.library)
         self.assertTrue(queue.pending(), "nothing was queued")
         queue.run_pending()
         return queue.status(self.folder)
@@ -146,7 +146,7 @@ class EveryEntryPointOfTheServer(unittest.TestCase):
     def test_each_index_ends_with_what_its_new_faces_matched_and_refuses_no_write_of_a_face(self):
         for name, kind, route, key in self.ENTRY_POINTS:
             with self.subTest(name):
-                indexing_jobs.forget(self.library)
+                self.runtime.index_queues.forget(self.library)
                 seen = []
                 cli = _TheCli(INDEXED, during=self.writes_of_faces_meanwhile(seen))
                 with mock.patch("subprocess.Popen", side_effect=cli):

@@ -5,8 +5,9 @@ not go twice as fast so much as make each other crawl. Asking for ten should sti
 one action, not a wait beside the machine between each.
 
 TagTuner had this queue. TagPup started a thread per folder, so two folders asked for
-together were indexed at once. A process has one queue per library, which lasts as long
-as the process: nothing about it is saved yet (docs/ARCHITECTURE.md, the `jobs` table).
+together were indexed at once. A runtime -- one a process -- has one queue per library file
+(tagpup.runtime.Runtime.index_queues), which lasts as long as it: what waits is not saved
+(docs/ARCHITECTURE.md, the `jobs` table).
 
 Each run of the indexer has a tag (tagpup.core.runs.index_tag), held while it runs, so
 its lines in this process's log and in the indexer's own (the CLI it starts writes
@@ -48,35 +49,9 @@ AGAIN = "Indexing again: files arrived in it while it was being indexed..."
 #: What the run of an index whose thread stopped before it said how it ended (a BaseException) says.
 STOPPED = "The index stopped before it ended; the server's log says why."
 
-_queues = {}
-_queues_lock = threading.Lock()
-
-
 def _folders_of(job):
     """The folders a job indexes: one, or a batch's (IndexQueue.start's `together`)."""
     return job.get("folders") or [job["folder"]]
-
-
-def queue_for(library):
-    """This process's queue for a library, made the first time it is asked for."""
-    with _queues_lock:
-        queue = _queues.get(library.key)
-        if queue is None:
-            queue = _queues[library.key] = IndexQueue(library.name, library)
-        return queue
-
-
-def every_queue():
-    """[(library name, queue)] of every library this process has a queue for."""
-    with _queues_lock:
-        return [(queue.library, queue) for queue in _queues.values()]
-
-
-def forget(library):
-    """Drop a library's queue and what became of its folders. A worker still indexing
-    one finishes it, into a queue nothing reads."""
-    with _queues_lock:
-        _queues.pop(library.key, None)
 
 
 class _Progress:

@@ -26,6 +26,7 @@ from mcp.shared.memory import create_connected_server_and_client_session  # noqa
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -77,7 +78,8 @@ class TheRoutes(Drifted, unittest.TestCase):
     def test_a_dry_run_then_an_apply_then_last_in_step_on_both_apps(self):
         for kind in ("tagpup", "tuner"):
             with self.subTest(app=kind):
-                app, home = web_client.app_for(self, kind)
+                runtime = Runtime()
+                app, home = web_client.app_for(self, kind, runtime=runtime)
                 client = app.test_client()
                 library = Library(home.library("library.db"))
                 self.drift(os.path.join(home.root, kind), library.path)
@@ -98,10 +100,9 @@ class TheRoutes(Drifted, unittest.TestCase):
                 applied = client.post("/library/api/sync", json={"apply": True})
                 self.assertEqual(200, applied.status_code, applied.data)
                 self.assertEqual((False, 1), (applied.get_json()["dry_run"], applied.get_json()["queued"]))
-                indexing_jobs.queue_for(library).wait()
+                runtime.index_queues.of(library).wait()
                 self.assertEqual([self.folder], self.indexed)
                 self.assertEqual([False], self.with_subfolders, "an indexed folder's new files took its subfolders")
-                indexing_jobs.forget(library)
 
                 state = client.get("/library/api/sync").get_json()
                 self.assert_no_path(json.dumps(state))
@@ -111,7 +112,8 @@ class TheRoutes(Drifted, unittest.TestCase):
                 self.with_subfolders.clear()
 
     def test_the_folders_to_review_are_listed_included_and_ignored(self):
-        app, home = web_client.app_for(self, "tuner")
+        runtime = Runtime()
+        app, home = web_client.app_for(self, "tuner", runtime=runtime)
         client = app.test_client()
         library = Library(home.library("library.db"))
         self.drift(os.path.join(home.root, "tuner"), library.path)
@@ -136,9 +138,8 @@ class TheRoutes(Drifted, unittest.TestCase):
         self.assertEqual([{"path": found, "photos": 1}], client.get("/library/api/sync/review").get_json()["folders"])
         reply = client.post("/library/api/sync/review/include", json={"folder": found})
         self.assertEqual((200, 1), (reply.status_code, reply.get_json()["queued"]), reply.data)
-        indexing_jobs.queue_for(library).wait()
+        runtime.index_queues.of(library).wait()
         self.assertEqual(([found], [True]), (self.indexed, self.with_subfolders))
-        indexing_jobs.forget(library)
         self.assertEqual(400, client.post("/library/api/sync/review/include", json={"folder": "Quayside"}).status_code)
 
 
@@ -148,7 +149,7 @@ class AFolderIsChecked(Drifted, unittest.TestCase):
     indexed folders in step; indexing a folder is TagTuner's Add Folder."""
 
     def test_the_route_refuses_a_folder_that_is_no_full_path_or_holds_no_indexed_photo(self):
-        app, home = web_client.app_for(self, "tuner")
+        app, home = web_client.app_for(self, "tuner", runtime=Runtime())
         client = app.test_client()
         self.drift(os.path.join(home.root, "tuner"), home.library("library.db"))
         elsewhere = os.path.join(home.root, "Elsewhere")
@@ -199,7 +200,6 @@ class TheCli(Drifted, unittest.TestCase):
         self.assertEqual([self.folder], self.indexed)
         self.assertIn("Indexing 1 folder(s)", out)
         self.assertEqual(1, self.last()["last_run"]["changed"]["queued_folders"])
-        indexing_jobs.forget(Library(self.db_path))
 
     def last(self):
         from tagpup.services import sync
@@ -219,7 +219,6 @@ class TheCli(Drifted, unittest.TestCase):
             conn.close()
         self.run_cli("--apply")
         self.assertEqual([sorted([self.folder, other])], [sorted(run) for run in self.runs])
-        indexing_jobs.forget(Library(self.db_path))
 
     def test_a_batch_is_one_job_whose_folders_share_its_status(self):
         queue = indexing_jobs.IndexQueue()
@@ -266,7 +265,6 @@ class TheTools(Drifted, unittest.TestCase):
         self.assertEqual({"last_run": None, "last_in_step": None}, self.call("sync_state"))
         applied = CliRunner().invoke(cli, ["--db", self.db_path, "sync", "--apply"])
         self.assertEqual(0, applied.exit_code, applied.output + repr(applied.exception))
-        indexing_jobs.forget(Library(self.db_path))
         state = self.call("sync_state")
         self.assertEqual((1, 1), (state["last_run"]["found"]["new"], state["last_run"]["changed"]["queued_folders"]))
 
@@ -301,7 +299,9 @@ class TheSyncRouteSaysWhetherItIsSyncing(unittest.TestCase):
         busy = dict(idle, syncing={"library": "harbour", "folder": "x", "started": "y"})
         for tasks, harbour_syncs, regatta_syncs in (([], False, False), ([("folder watcher", FakeWatcher(idle))], False, False),
                                                     ([("folder watcher", FakeWatcher(busy))], True, False)):
-            app = web.create_app("tagpup", startup=Library(harbour), lifecycle=Lifecycle(background=runtimes.Background(list(tasks))))
+            runtime = Runtime()
+            app = web.create_app("tagpup", startup=Library(harbour), runtime=runtime,
+                                 lifecycle=Lifecycle(background=runtimes.Background(list(tasks)), runtime=runtime))
             app.testing = True
             client = app.test_client()
             self.assertEqual(harbour_syncs, client.get("/harbour/api/sync").get_json()["syncing"], tasks)

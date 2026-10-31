@@ -17,12 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup.core.library import Library as PathLibrary  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import schema  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
 class Library:
@@ -44,7 +44,7 @@ class Library:
         self.db_path = self.home.library(name + ".db")
         schema.ensure(self.db_path)
         self.library = PathLibrary(self.db_path)
-        self.app = web.create_app("tagpup", startup=self.library)
+        self.app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         self.app.testing = True
         self.client = self.app.test_client()
         testcase.addCleanup(self.close)
@@ -97,7 +97,6 @@ class Library:
         """Forget what the process kept for this library, and let the home go."""
         tagpup_routes.folders.forget(self.library)
         suggestion_jobs.forget(self.library)
-        indexing_jobs.forget(self.library)
         self.home.close()
 
     # ---- The rows ------------------------------------------------------------------------

@@ -22,26 +22,25 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
-def app_on(db_path):
-    """The TagTuner app started on the library at `db_path`. In testing mode: a route
-    that raises, raises."""
-    app = web.create_app("tuner", startup=Library(db_path))
+def app_on(db_path, runtime=None):
+    """The TagTuner app started on the library at `db_path`, given `runtime` (tagpup.runtime.Runtime), or one of its own. In
+    testing mode: a route that raises, raises."""
+    app = web.create_app("tuner", startup=Library(db_path), runtime=runtime or Runtime())
     app.testing = True
     return app
 
 
 def forget(db_path):
-    """Drop what the server keeps of this library: its cached grids and queue, any
-    grid's progress, and the index queue."""
+    """Drop what the server keeps of this library: its cached grids and queue, and any
+    grid's progress. Its index queue is its app's runtime's (Runtime.index_queues)."""
     library = Library(db_path)
     tuner_routes.identify_cache.forget(library)
     tuner_routes.identify_progress.forget(library)
-    indexing_jobs.forget(library)
 
 
 def grid_cache(db_path):

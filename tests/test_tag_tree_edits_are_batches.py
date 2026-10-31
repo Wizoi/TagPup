@@ -18,6 +18,7 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.services import batches, tags  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
 from tagpup.web import lifecycle, tuner_routes  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 OLD, NEW = "Trips/Coast", "Trips/Shore"
 
@@ -143,7 +144,7 @@ class Rename(T.Bulk):
         self.addCleanup(gate.release.set)
         writing, answered = B.in_thread(lambda: self.rename(self.app.test_client()))
         self.assertTrue(gate.reached.wait(30))
-        moving = lifecycle.Lifecycle()
+        moving = lifecycle.Lifecycle(runtime=Runtime())
         draining, drained = B.in_thread(lambda: moving.drain(seconds=30, lease=60))
         B.wait_until(lambda: [each["state"] for each in batches.listing(self.library)] == ["stopping"], "asked to stop")
         gate.release.set()

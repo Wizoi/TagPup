@@ -40,9 +40,10 @@ def flask_routes(kind):
     `_read_face_ids`), and a public function the module itself defines (`face_routes.read_face_ids`)."""
     import inspect
 
+    from tagpup.runtime import Runtime
     from tagpup.web import app as web
 
-    app = web.create_app(kind)
+    app = web.create_app(kind, runtime=Runtime())
     out = {}
     for rule in app.url_map.iter_rules():
         if not rule.rule.startswith("/api/"):

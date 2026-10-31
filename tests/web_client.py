@@ -17,17 +17,18 @@ import own_home  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
 def app_for(testcase, kind, startup="library.db", pages=None, runtime=None):
     """(the app, its home). The app is in testing mode: a route that raises, raises.
-    `runtime` is the process's models the app is given (tagpup.runtime), a fake's."""
+    `runtime` is the process's models and index queues the app is given (tagpup.runtime), or one of its own."""
     home = own_home.for_test(testcase)
     library = None
     if startup:
         db_path = home.library(startup)
         library_actions.create(db_path)
         library = Library(db_path)
-    app = web.create_app(kind, startup=library, pages=pages, runtime=runtime)
+    app = web.create_app(kind, startup=library, pages=pages, runtime=runtime or Runtime())
     app.testing = True
     return app, home

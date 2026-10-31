@@ -751,7 +751,7 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
 
     def client(self, kind):
         if kind not in self.clients:
-            app, self.home = web_client.app_for(self, kind)
+            app, self.home = web_client.app_for(self, kind, runtime=Runtime())   # its index queue, as the server's
             self.clients[kind] = app.test_client()
         return self.clients[kind]
 

@@ -105,6 +105,8 @@ def rows(db_path, sql, params=()):
 class _Indexing(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self)
+        #: The process's runtime, as the server's: its index queues.
+        self.runtime = runtimes.Runtime()
         self.library = self.made("harbour")
 
     def made(self, name, at=None):
@@ -115,7 +117,6 @@ class _Indexing(unittest.TestCase):
             with migration_names.up_to(at):
                 schema.ensure(library.path)
             schema.forget()
-        self.addCleanup(indexing_jobs.forget, library)
         return library
 
     def folder(self, name):
@@ -146,7 +147,7 @@ class _Indexing(unittest.TestCase):
         """`folders` queued on `library`'s queue (this process's, as the server's) and indexed by the fake CLI: the
         queue's status of the first, once it has ended."""
         library = library or self.library
-        queue = indexing_jobs.queue_for(library)
+        queue = self.runtime.index_queues.of(library)
         self.assertTrue(queue.start(folders, self.index_with(library, code, report), together=True).ok)
         queue.wait()
         return queue.status(folders[0])
@@ -184,7 +185,8 @@ class _Indexing(unittest.TestCase):
 
     def page(self, url):
         """What the Activity page is answered at `url`, by an app of this home's libraries (Flask's test client)."""
-        app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background([])))
+        app = web.create_app("tagpup", runtime=self.runtime,
+                             lifecycle=Lifecycle(background=runtimes.Background([]), runtime=self.runtime))
         app.testing = True
         reply = app.test_client().get(url)
         self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
@@ -202,7 +204,7 @@ class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
     def test_the_daily_sync_s_index_is_its_child_says_how_far_it_got_and_ends_with_its_counts_and_message(self):
         folders = [self.folder("Regatta"), self.folder("Lighthouse")]
         code = self.code(bars(3) + bake(folders) + [baked(written=3, conflicts=1)])
-        queue = indexing_jobs.queue_for(self.library)
+        queue = self.runtime.index_queues.of(self.library)
         index = self.index_with(self.library, code)
         synced = recurring.run_claimed(recurring.JOBS.get(recurring.SYNC), self.library, self.library.name,
                                        lambda now: queue.start(folders, index, together=True))
@@ -254,7 +256,7 @@ class AnIndexIsOneRunUnderTheSyncThatQueuedIt(_Indexing):
         release = os.path.join(self.home.root, "RELEASE")
         mine = [self.folder("Regatta")]
         theirs = [self.folder("Quay %d" % number) for number in range(3)]
-        queues = [indexing_jobs.queue_for(self.library), indexing_jobs.queue_for(other)]
+        queues = [self.runtime.index_queues.of(self.library), self.runtime.index_queues.of(other)]
         for queue, library, folders, name in ((queues[0], self.library, mine, "code-harbour"),
                                               (queues[1], other, theirs, "code-lighthouse")):
             code = self.code(["WAIT " + release] + bake(folders), name=name)
@@ -316,7 +318,7 @@ class AnIndexThatDoesNotFinishIsRecordedSo(_Indexing):
 
         def stops(folders, told):
             raise Stopped()
-        queue = indexing_jobs.queue_for(self.library)
+        queue = self.runtime.index_queues.of(self.library)
         with mock.patch.object(threading, "excepthook", lambda args: None):
             self.assertTrue(queue.start(folder, stops, together=True).ok)
             queue.wait()
@@ -474,7 +476,7 @@ class AnIndexStartsAtOnceBesideAnotherWriter(_Indexing):
         """#2200: the end waited the other's write out, up to four times 30 s, on the queue's worker: the next queued
         index started only then."""
         go = os.path.join(self.home.root, "GO")
-        queue = indexing_jobs.queue_for(self.library)
+        queue = self.runtime.index_queues.of(self.library)
         held, seen = [], {}
 
         def first_said(message, percent):
@@ -672,7 +674,7 @@ from tagpup.core.library import Library
 from tagpup.core.result import Result
 from tagpup.jobs import indexing, recurring
 library = Library(%(library)r)
-queue = indexing.queue_for(library)
+queue = indexing.IndexQueue(library.name, library)
 
 def index(folders, report):
     open(%(ready)r, "w").close()

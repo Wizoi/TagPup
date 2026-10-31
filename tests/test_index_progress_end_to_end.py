@@ -163,8 +163,7 @@ class TheBarReachesTheEnd(unittest.TestCase):
             Image.new("RGB", (64, 64), "navy").save(os.path.join(folder, name), "JPEG")
         library_actions.create(home.library("harbour.db"))
         library = Library(home.library("harbour.db"))
-        self.addCleanup(indexing_jobs.forget, library)
-        queue = indexing_jobs.queue_for(library)
+        queue = indexing_jobs.IndexQueue(library.name, library)
         told = []
         real = runs_service.progress
 
@@ -340,8 +339,7 @@ class TheOwnerWatchesALargeFolderBaked(unittest.TestCase):
             Image.new("RGB", (64, 64), (40 * number, 90, 160)).save(os.path.join(folder, "heat %d.jpg" % number), "JPEG")
         library_actions.create(home.library("harbour.db"))
         library = Library(home.library("harbour.db"))
-        self.addCleanup(indexing_jobs.forget, library)
-        queue = indexing_jobs.queue_for(library)
+        queue = indexing_jobs.IndexQueue(library.name, library)
         # The queue's clock moves a minute at each look: each report it hears is a `progressed` of its own.
         ticks = itertools.count()
         clock = mock.Mock(time=lambda: time.time() + 60 * next(ticks))
@@ -498,8 +496,8 @@ class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
         for folder in folders:
             Image.new("RGB", (32, 32), "teal").save(os.path.join(folder, "new.jpg"), "JPEG")
 
-        queue = indexing_jobs.queue_for(library)
-        self.addCleanup(indexing_jobs.forget, library)
+        runtime = runtimes.Runtime()      # the server's: the page reads its queues
+        queue = runtime.index_queues.of(library)
         heard = []
 
         def index(each, report):
@@ -515,7 +513,8 @@ class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
         self.addCleanup(queue.wait)
         self.addCleanup(lambda: open(os.path.join(stub, "RELEASE"), "w").close())
 
-        app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background([])))
+        app = web.create_app("tagpup", runtime=runtime,
+                             lifecycle=Lifecycle(background=runtimes.Background([]), runtime=runtime))
         app.testing = True
         client = app.test_client()
         deadline, running = time.time() + 60, None

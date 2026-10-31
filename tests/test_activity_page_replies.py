@@ -44,7 +44,6 @@ from tagpup import logs  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import dates, progress_line, runs  # noqa: E402
 from tagpup.files import shares  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import activity, bake_after_index, indexing, job_runs, sync  # noqa: E402
 from tagpup.store import file_journal, journal  # noqa: E402
@@ -77,7 +76,8 @@ class RepliesForTheActivityPage(_Libraries):
         tasks = [(runtimes.RECURRING_JOBS, recurring.Runner(lambda: libraries, clock=Clock(at)))]
         if watcher is not None:
             tasks.append((runtimes.FOLDER_WATCHER, FakeWatcher(watcher)))
-        app = web.create_app("tagpup", lifecycle=Lifecycle(background=runtimes.Background(tasks)))
+        app = web.create_app("tagpup", runtime=self.runtime,
+                             lifecycle=Lifecycle(background=runtimes.Background(tasks), runtime=self.runtime))
         app.testing = True
         client = app.test_client()
         found = {}
@@ -143,7 +143,7 @@ class RepliesForTheActivityPage(_Libraries):
         bar = progress_line.say(indexing.phase_fact("metadata", 120, 800))
         running = self.indexer("indexer-regatta", ["WAIT " + go[0], bar, "WAIT " + go[1]])
         waiting = self.indexer("indexer-walk", [])
-        queue = indexing_jobs.queue_for(library)
+        queue = self.runtime.index_queues.of(library)
 
         def release():
             for each in go:
@@ -242,7 +242,7 @@ class RepliesForTheActivityPage(_Libraries):
         # record written, the run's counts the Result's (job_runs.counts), which name the record it pairs with.
         self.clock.now = at + 20 * MINUTE
         release()
-        indexing_jobs.forget(harbour)
+        self.runtime.index_queues.forget(harbour)
         walked = sync.sync(harbour, apply=True, roots=[os.path.join(self.pictures, "harbour")])
         self.assertIn(sync.RECORD, walked.details, "the long sync wrote no record")
         job_runs.end(harbour, sync_id, at + 25 * MINUTE, job_runs.counts(walked))

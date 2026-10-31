@@ -3,7 +3,7 @@ alike (tagpup.services.sync; docs/ARCHITECTURE.md, phase 8).
 
 GET answers what the pages show -- "last in step: ..." -- and the last applied sync, as
 counts and times; never a path, since folders name people. POST runs a sync of the
-library the URL names (tagpup.runtime.sync): a dry run unless the body says apply, which
+library the URL names (tagpup.runtime.Runtime.sync): a dry run unless the body says apply, which
 says what it found and would write; applied, the rows are written as one change of the
 journal, the new files' folders go on this process's index queue (TagTuner's indexing
 panel shows them), and the run is recorded. After an apply that changed rows, the folder
@@ -47,7 +47,7 @@ def sync_library():
     # Checked by the service (tagpup.core.validation), as the index routes' folder is.
     folder = body.get("folder") or None
     try:
-        result = runtimes.sync(library, folder=folder, apply=apply)
+        result = state.runtime().sync(library, folder=folder, apply=apply)
     except Exception as e:
         logger.error("Could not sync %s: %s", library.name, e, exc_info=True)
         return responses.error(500, str(e))
@@ -79,7 +79,7 @@ def sync_review():
 def sync_review_include():
     library = state.require()
     body = request.get_json(silent=True) or {}
-    result = runtimes.include(library, body.get("folder"))
+    result = state.runtime().include(library, body.get("folder"))
     if result.refused:
         return responses.refused(result)
     return jsonify({"success": True, "queued": result.changed})

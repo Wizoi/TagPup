@@ -29,7 +29,7 @@ from click.testing import CliRunner  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
@@ -68,7 +68,8 @@ class AfterAMove(unittest.TestCase):
         self.moved = [self.first + p[len(self.old):] for p in self.held]
         self.folder_old = os.path.dirname(self.held[0])
         self.folder_first = os.path.dirname(self.moved[0])
-        self.app = web.create_app(self.KIND, startup=self.library)
+        self.runtime = Runtime()
+        self.app = web.create_app(self.KIND, startup=self.library, runtime=self.runtime)
         self.app.testing = True
         self.client = self.app.test_client()
         tagpup_routes.folders.of(self.library).clear()
@@ -179,7 +180,7 @@ class TheFolderRoutesNameTheTwoPlaces(AfterAMove):
         self.assert_two_places(self.get("/api/folder/subfolders", query_string={"path": later}), later)
 
     def test_the_tuner_says_it_too(self):                                                    # #490
-        self.app = web.create_app("tuner", startup=self.library)
+        self.app = web.create_app("tuner", startup=self.library, runtime=Runtime())
         self.app.testing = True
         self.client = self.app.test_client()
         later = self.only_at_the_old_place()
@@ -272,8 +273,7 @@ class AFolderToAdd(AfterAMove):
         both = os.path.join(self.old, "Both")
         os.makedirs(both)
         os.makedirs(os.path.join(self.first, "Both"))
-        queue = indexing_jobs.queue_for(self.library)
-        self.addCleanup(indexing_jobs.forget, self.library)
+        queue = self.runtime.index_queues.of(self.library)
         with mock.patch.object(type(queue), "_ensure_runner"):
             reply = self.post("/api/folder/index-start", {"folder_path": both})
         self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
@@ -427,7 +427,7 @@ class AWriteStoppedByARootChange(unittest.TestCase):
         self.assertEqual([], file_journal.unfinished(self.side.db_path))
 
     def test_the_route_answers_refused_with_written_and_the_change(self):                          # #486
-        app = web.create_app("tagpup", startup=self.library)
+        app = web.create_app("tagpup", startup=self.library, runtime=Runtime())
         app.testing = True
         reply = self.stopped(lambda: app.test_client().post(
             "/photo_index/api/photos/bulk-tags", data=json.dumps({"paths": self.side.real[:3], "add_tags": ["Harbour"],

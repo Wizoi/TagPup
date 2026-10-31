@@ -72,7 +72,6 @@ class _Library(unittest.TestCase):
                        {"path": paths.stored(os.path.join(self.folder, "start %d.jpg" % n))} for n in range(3)}
         self.runs = suggestion_jobs.runs_for(self.library)
         self.addCleanup(suggestion_jobs.forget, self.library)
-        self.addCleanup(indexing_jobs.forget, self.library)
 
     def status(self):
         return self.runs.status(self.folder)
@@ -117,13 +116,13 @@ class SuggestWaitsForTheFoldersIndex(_Library):
             self.release.wait(DEADLINE)
             self.indexed_at.append(time.monotonic())
             return Result(attempted=1, changed=1)
-        self.queue = indexing_jobs.queue_for(self.library)
+        self.queue = indexing_jobs.IndexQueue(self.library.name, self.library)
         self.queue.start([self.folder], index)
         self.assertTrue(until(lambda: self.queue.indexing(self.folder) is not None))
 
     def test_it_runs_once_the_index_is_done(self):
         models = _FakeModels()
-        self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, models))
+        self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, models, self.queue))
         # The index's own line, once it has claimed its run and begun: "Starting indexing..." until then.
         self.assertTrue(until(lambda: "Generating embeddings: 33% (1/3)" in (self.status().get("message") or "")),
                         self.status())
@@ -143,7 +142,7 @@ class SuggestWaitsForTheFoldersIndex(_Library):
 
     def test_cancel_stops_the_wait_at_once(self):
         models = _FakeModels()
-        self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, models))
+        self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, models, self.queue))
         self.assertTrue(until(lambda: "indexed first" in (self.status().get("message") or "")))
         asked = time.monotonic()
         self.assertTrue(self.runs.cancel(self.folder))
@@ -250,7 +249,8 @@ class SuggestWaitsForTheCard(_Library):
         self.addCleanup(self.other.release)
 
     def start(self):
-        self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, self.runtime))
+        self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, self.runtime,
+                                                                   self.runtime.index_queues.of(self.library)))
 
     def test_its_status_says_who_has_the_card(self):
         self.start()
@@ -302,7 +302,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
         os.makedirs(code)
         with open(os.path.join(code, "tagpup_cli.py"), "w", encoding="utf-8") as handle:
             handle.write(FAKE_INDEXER % {"root": os.path.dirname(os.path.dirname(os.path.abspath(__file__)))})
-        queue = indexing_jobs.queue_for(self.library)
+        queue = indexing_jobs.IndexQueue(self.library.name, self.library)
 
         def index(folder, report):
             return indexing_service.index_folder(self.library, folder, code, report=report)
@@ -318,7 +318,7 @@ class TheQueuesCancelStopsAnIndexThatWaits(_Library):
         self.assertEqual(indexing_service.CANCELLED_WAITING, status["message"])
 
     def test_a_run_that_has_begun_is_not_stopped(self):
-        queue = indexing_jobs.queue_for(self.library)
+        queue = indexing_jobs.IndexQueue(self.library.name, self.library)
         release = threading.Event()
         self.addCleanup(release.set)
 
@@ -437,7 +437,8 @@ class TwoLibrariesNamingTwoModels(_Library):
 
     def suggest_in(self, runs, folder, library, photos):
         with mock.patch.object(suggester_service, "model_for_run", self.model_for_run):
-            runs.run(folder, suggestion_jobs.work_for(library, lambda: photos, self.runtime))
+            runs.run(folder, suggestion_jobs.work_for(library, lambda: photos, self.runtime,
+                                                      self.runtime.index_queues.of(library)))
         return runs.status(folder)
 
     def suggest_in_cove(self):

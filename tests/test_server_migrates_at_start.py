@@ -37,6 +37,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
 from tagpup.web import lifecycle as web_lifecycle  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 
 
 def version(path):
@@ -108,7 +109,7 @@ class TheServerMigratesAtStart(unittest.TestCase):
             release.wait(30)
             return real(path)
 
-        lifecycle = web_lifecycle.Lifecycle()
+        lifecycle = web_lifecycle.Lifecycle(runtime=Runtime())
         with mock.patch.object(schema, "ensure", side_effect=slow):
             thread = library_actions.bring_up_to_date_in_background([Library(path) for path in self.behind])
             try:

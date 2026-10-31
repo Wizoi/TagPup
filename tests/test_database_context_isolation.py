@@ -31,6 +31,7 @@ from face_rows import add_face, add_people  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db as tagpup_store_db  # noqa: E402
@@ -58,14 +59,14 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
     OTHER_NAME = "test_ctx_other.db"
 
     def setUp(self):
-        self.app, home = web_client.app_for(self, "tagpup", startup=self.STARTUP_NAME)
+        self.runtime = Runtime()
+        self.app, home = web_client.app_for(self, "tagpup", startup=self.STARTUP_NAME, runtime=self.runtime)
         self.client = self.app.test_client()
         self.STARTUP_DB = home.library(self.STARTUP_NAME)
         self.OTHER_DB = home.library(self.OTHER_NAME)
         library_actions.create(self.OTHER_DB)
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_ctx_", dir=home.root)
         for library in (Library(self.STARTUP_DB), Library(self.OTHER_DB)):
-            self.addCleanup(indexing_jobs.forget, library)
             self.addCleanup(suggestion_jobs.forget, library)
 
     def startup_name(self):
@@ -113,7 +114,7 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
 
     def index_the_folder(self, mock_popen):
         """Queue the folder under the other library and run its worker here."""
-        queue = indexing_jobs.queue_for(Library(self.OTHER_DB))
+        queue = self.runtime.index_queues.of(Library(self.OTHER_DB))
         with patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
             res = self.post(f"/{self.OTHER_URL_NAME}/api/folder/index-start", {"folder_path": self.tmpdir})
         self.assertTrue(res["success"])
@@ -171,7 +172,7 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
 
         The folder is queued through the route under the non-default library, and so
         must land in that library's queue."""
-        queue = indexing_jobs.queue_for(Library(self.OTHER_DB))
+        queue = self.runtime.index_queues.of(Library(self.OTHER_DB))
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = mock_indexer()
             with patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
