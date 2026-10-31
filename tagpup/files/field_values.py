@@ -28,9 +28,10 @@ logger = logging.getLogger(__name__)
 
 #: What ExifTool warns of a field it was given and did not write, in a command it reports as a success: a struct's field
 #: it does not know ("is not a field of"), one in a namespace it cannot write ("is not a writable XMP tag"), TagPup's own
-#: in a process started without its configuration ("is not defined"). Only these: 119 of 120 photos read carry a minor
+#: in a process started without its configuration ("is not defined"), and a photo whose XMP segment holds no packet
+#: ("Invalid XMP": all NUL bytes on 3 photos of photo_index, #2349), where ExifTool writes nothing. Only these: 119 of 120 photos read carry a minor
 #: validation warning of their own, which costs a write nothing.
-NOT_WRITTEN = ("is not defined", "is not a field of", "is not a writable XMP tag")
+NOT_WRITTEN = ("is not defined", "is not a field of", "is not a writable XMP tag", "Invalid XMP")
 
 #: What ExifTool says a file is. A photo's starts with "image/".
 MIME_TYPE = "File:MIMEType"

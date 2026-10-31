@@ -392,6 +392,27 @@ class ABakeIsWritten(BakeCase):
         self.assertIn("is not a field of", str(result.errors))
         self.assertEqual(["conflict"], self.states(result.details["change"]))
 
+    def test_a_photo_whose_xmp_segment_is_all_zero_bytes_fails_the_write_not_recorded_as_written(self):
+        # ExifTool warns "Invalid XMP", exits 0 and leaves the file as it was (#2349).
+        a = self.make_read("a.jpg")
+        self.outside(a, "-XMP-dc:Subject=seed")
+        with open(a, "rb") as handle:
+            data = bytearray(handle.read())
+        header = b"http://ns.adobe.com/xap/1.0/\x00"
+        start = data.index(header) + len(header)
+        length = int.from_bytes(data[data.index(header) - 2:data.index(header)], "big") - 2 - len(header)
+        data[start:start + length] = bytes(length)
+        with open(a, "wb") as handle:
+            handle.write(data)
+        before = bytes(data)
+        text = bake.region_text({"RegionList": [{"Type": "Face", "Name": "Face"}]})
+        result = file_changes.write_fields(self.library, "bake", EXIFTOOL, [a], [fields.REGION_INFO],
+                                           lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
+        self.assertEqual(0, result.changed)
+        self.assertIn("Invalid XMP", str(result.errors))
+        with open(a, "rb") as handle:
+            self.assertEqual(before, handle.read())
+
     def test_an_undo_putting_back_regions_in_a_namespace_exiftool_cannot_write_is_a_conflict_not_undone(self):
         a = self.make_read("a.jpg")
         before = self.seed_regions(a, "<mwg-rs:Extensions rdf:parseType='Resource'><nw:Thing>1</nw:Thing></mwg-rs:Extensions>")
