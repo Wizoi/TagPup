@@ -5,7 +5,8 @@
 naming of faces, an assignment of faces, the startup migrations. It was a hand list, and a new job joined it only if somebody
 remembered. A module under tagpup/jobs or tagpup/services that starts a thread, or has a `running()` of its own, fails here until
 `long_work` asks it, or it is listed below with the reason a drain need not wait for it. A module whose work lives on the runtime
-is asked through what `under_way` is handed (ASKED_THROUGH_THE_RUNTIME), with the argument that hands it.
+is asked through what `under_way` is handed (ASKED_THROUGH_THE_RUNTIME), with the argument that hands it, which `under_way`
+must read: a parameter it only declares asks nothing.
 """
 import ast
 import os
@@ -51,7 +52,7 @@ def starts_background_work(path):
 
 def asked_by_long_work():
     """The modules `lifecycle.under_way` calls something of (`under_way`, `running`, `bringing_up_to_date`), by their full
-    names, and those it is handed the work of by an argument (ASKED_THROUGH_THE_RUNTIME)."""
+    names, and those it is handed the work of by an argument it reads (ASKED_THROUGH_THE_RUNTIME)."""
     with open(lifecycle.__file__, encoding="utf-8") as handle:
         tree = ast.parse(handle.read())
     aliases = {}
@@ -60,7 +61,8 @@ def asked_by_long_work():
             for each in node.names:
                 aliases[each.asname or each.name] = "%s.%s" % (node.module, each.name)
     work = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "under_way")
-    handed = {argument.arg for argument in work.args.args}
+    read = {node.id for node in ast.walk(work) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    handed = {argument.arg for argument in work.args.args} & read
     called = {aliases[call.func.value.id] for call in ast.walk(work)
               if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)
               and call.func.value.id in aliases}
