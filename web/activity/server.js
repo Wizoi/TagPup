@@ -61,7 +61,7 @@ export function renderServer() {
         fact('Server running since', buildElement('span', { text: data.running_since || '', title: ago(data.running_since) })),
         fact('Background', buildElement('span', { text: (data.background || []).join(', ') || 'none' })),
     ];
-    if (data.models) facts.push(modelsFact(data.models));
+    facts.push(modelsFact(data.models));
     fill(document.getElementById('server-body'), buildElement('div', { className: 'card' }, facts));
     foldLine('server', `Version ${version}; up ${duration((Date.now() - parseTime(data.running_since).getTime()) / 1000)}`);
 }
