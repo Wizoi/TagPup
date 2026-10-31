@@ -23,6 +23,7 @@ import own_home  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import lifecycle  # noqa: E402
@@ -35,10 +36,17 @@ class PageServers:
         logging.getLogger("werkzeug").setLevel(logging.ERROR)
         self.testcase, self.seeds, self.made, self.lock = testcase, seeds, 0, threading.Lock()
         self.home = own_home.for_test(testcase)    # its reaper ends what a failed test leaves
-        gate = lifecycle.Lifecycle(version=tagpup_config.code_version())
+        # Every request that raised, as the server logs it: a page that tolerates a failed poll still passes, so
+        # run_node fails on these itself.
+        self.failed = Failures()
+        web.requests_log.addHandler(self.failed)
+        testcase.addCleanup(web.requests_log.removeHandler, self.failed)
+        # One runtime for both apps and their gate, as tagpup_web.main builds them: its index queues, its models.
+        runtime = Runtime()
+        gate = lifecycle.Lifecycle(version=tagpup_config.code_version(), runtime=runtime)
         self.urls = {}
         for kind in ("tagpup", "tuner"):
-            app = web.create_app(kind, startup=None, lifecycle=gate)
+            app = web.create_app(kind, startup=None, runtime=runtime, lifecycle=gate)
             app.testing = True
             server = make_server("127.0.0.1", 0, self._seeding(app), threaded=True)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -78,4 +86,15 @@ class PageServers:
                              stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", timeout=240)
         self.testcase.assertEqual(0, done.returncode, done.stdout)
         self.testcase.assertNotRegex(done.stdout, r"\bpass 0\b", "no test of the real server ran")
+        self.testcase.assertEqual([], self.failed.messages, "the server answered a request with an error")
         return done.stdout
+
+
+class Failures(logging.Handler):
+    """The requests the server logged as failed ('a request failed: GET ...'), by their message."""
+    def __init__(self):
+        super().__init__(logging.ERROR)
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
