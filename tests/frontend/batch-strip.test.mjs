@@ -60,7 +60,7 @@ describe("a batch the page did not start", () => {
     assert.ok(button(ctx, "Cancel"));
     world.batches = [];
     await wait();
-    assert.deepEqual(sentences(ctx), ["bulk tags has ended (10 of 60 photos handled when last seen). Change 10 in History says what it wrote and can undo it."]);
+    assert.deepEqual(sentences(ctx), ["bulk tags has ended (10 of 60 photos handled when last seen)."]);
     const calls = asked(ctx);
     await wait();
     assert.equal(asked(ctx), calls, "nothing is going: nothing is asked");
@@ -104,7 +104,7 @@ describe("a batch the page did not start", () => {
     assert.equal(button(ctx, "Cancel"), undefined, "asked already");
     world.batches = [];
     await wait();
-    assert.deepEqual(sentences(ctx), ["bulk tags was stopped as asked (25 of 60 photos handled when last seen). Change 10 in History says what it wrote and can undo it."]);
+    assert.deepEqual(sentences(ctx), ["bulk tags was stopped as asked (25 of 60 photos handled when last seen)."]);
   });
 
   test("another program's batch is listed and cannot be cancelled from here", async (t) => {

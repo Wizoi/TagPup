@@ -54,11 +54,10 @@ export function endedSentence(what, result) {
  */
 function batchLeftSentence(row) {
     const seenAt = `${(row.done + row.conflict).toLocaleString()} of ${photosOf(row.photos)} handled when last seen`;
-    const where = row.id ? ` Change ${row.id} in History says what it wrote and can undo it.` : '';
-    if (row.state !== 'stopping') return `${row.operation} has ended (${seenAt}).${where}`;
+    if (row.state !== 'stopping') return `${row.operation} has ended (${seenAt}).`;
     return row.started === null || row.started === undefined
         ? `${row.operation} was cancelled before it began: nothing was written.`
-        : `${row.operation} was stopped as asked (${seenAt}).${where}`;
+        : `${row.operation} was stopped as asked (${seenAt}).`;
 }
 
 const batchKey = row => (row.ticket === null || row.ticket === undefined ? `c${row.id}` : `t${row.ticket}`);

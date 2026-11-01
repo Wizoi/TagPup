@@ -42,6 +42,7 @@ from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.ml import gpu  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.services import bake_after_index  # noqa: E402
 from tagpup.services import indexing as indexing_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
@@ -124,15 +125,34 @@ class SuggestWaitsForTheFoldersIndex(_Library):
         models = _FakeModels()
         self.runs.start(self.folder, suggestion_jobs.work_for(self.library, lambda: self.photos, models, self.queue))
         # The index's own line, once it has claimed its run and begun: "Starting indexing..." until then.
-        self.assertTrue(until(lambda: "Generating embeddings: 33% (1/3)" in (self.status().get("message") or "")),
+        self.assertTrue(until(lambda: "Generating embeddings: 33% (1/3)" in self.queue.indexing(self.folder)["message"]))
+        self.assertTrue(until(lambda: self.status().get("message") == suggestion_jobs.WAITING_FOR_THE_INDEX),
                         self.status())
-        self.assertIn("indexed first", self.status()["message"])
+        self.assertEqual(suggestion_jobs.WAITING_FOR_THE_INDEX, self.status()["message"])
         time.sleep(0.3)
         self.assertEqual([], models.began, "Suggest began while its folder was being indexed")
         self.release.set()
         self.wait_for("completed")
         self.assertEqual(1, len(models.began))
         self.assertGreaterEqual(models.began[0], self.indexed_at[0])
+
+    def test_it_does_not_wait_for_the_bake_that_follows_the_index(self):
+        # The folder's rows are recorded when the bake begins; the bake's line is the index job's, not Suggest's (#2355).
+        bake = bake_after_index.FOLDER_SAID + "1 of 1, 0 written, 0 current, 0 conflicts: " + self.folder
+        done = threading.Event()
+        self.addCleanup(done.set)
+
+        def index(folder, report):
+            report(bake, 90)
+            done.wait(DEADLINE)
+            return Result(attempted=1, changed=1)
+        another = os.path.join(self.folder, "Another")
+        os.makedirs(another)
+        queue = indexing_jobs.IndexQueue(self.library.name, self.library)
+        queue.start([another], index)
+        self.assertTrue(until(lambda: bake in (queue.active()["active"] or [{}])[0].get("message", "")), queue.active())
+        self.assertTrue(queue.busy())
+        self.assertIsNone(queue.indexing(another))
 
     def test_a_subfolder_waits_too(self):
         below = os.path.join(self.folder, "Morning")

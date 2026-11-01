@@ -35,7 +35,7 @@ import time
 
 from tagpup.core import gpu_turns, paths, runs
 from tagpup.core.result import Result
-from tagpup.services import job_runs
+from tagpup.services import bake_after_index, job_runs
 from tagpup.services import photos as photo_actions
 
 logger = logging.getLogger(__name__)
@@ -252,7 +252,8 @@ class IndexQueue:
         """The job that indexes `folder` -- it, or a folder above it -- running or waiting:
         {"status": "running" or "queued", "message", "folder"}; None when none does. What a
         Suggest of the folder waits for (tagpup.jobs.suggestions): the index writes the
-        vectors and faces it would otherwise make itself."""
+        vectors and faces it would otherwise make itself. A run that has begun to bake has recorded
+        its folders already (the bake follows the last batch), so it is not waited for (#2355)."""
         key = paths.key(folder)
 
         def covers(each):
@@ -260,6 +261,8 @@ class IndexQueue:
         with self._lock:
             if any(covers(each) for each in self._current_folders) and self._progress is not None:
                 status = self._progress.status
+                if status.get("message", "").startswith((bake_after_index.FOLDER_SAID, bake_after_index.SAID)):
+                    return None
                 return {"status": "running", "message": status.get("message", ""), "folder": status.get("folder")}
             for job in self._pending:
                 if any(covers(each) for each in _folders_of(job)):

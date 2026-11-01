@@ -61,6 +61,9 @@ MAX_LOOKED_FOLDERS = 3
 #: How often a run waiting for its folder's index looks again (seconds).
 INDEX_POLL = 1.0
 
+#: What a run says while its folder is being indexed or waits to be.
+WAITING_FOR_THE_INDEX = "Waiting for this folder to be indexed first"
+
 #: What a cancelled run says.
 CANCELLED = "Cancelled. What was suggested before is kept."
 
@@ -522,8 +525,8 @@ class SuggestionRuns:
                 break
             if not found:
                 break
-            self._say(key, "Waiting for this folder to be indexed first: %s"
-                      % (found.get("message") or found.get("status") or "queued"))
+            # Only that it waits: the index's own line is on the page beside this one (#2355).
+            self._say(key, WAITING_FOR_THE_INDEX)
             if stop.wait(INDEX_POLL):
                 raise Cancelled("Suggest of %s was cancelled while it waited for the index" % folder)
         self._say(key, None)
