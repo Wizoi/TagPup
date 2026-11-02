@@ -112,12 +112,16 @@ export function checkIndexingStatus(folderPath) {
             .then(data => {
                 if (state.library) return;   // a reply that came after a library view opened shows nothing
                 if (data.status === 'running') {
-                    indexProgressContainer.classList.remove('hidden');
-                    const pct = data.percent || 0;
+                    // One bar: a Suggest run showing carries the index's progress in its own.
+                    const pct = state.indexPercent = data.percent || 0;
+                    const suggesting = !suggestProgressContainer.classList.contains('hidden');
+                    indexProgressContainer.classList.toggle('hidden', suggesting);
                     indexProgressBar.style.width = `${pct}%`;
                     indexProgressText.textContent = `${data.message || 'Indexing...'}`;
+                    if (suggesting && state.suggestWaiting) suggestProgressBar.style.width = `${pct}%`;
                 }
                 else if (data.status === 'completed') {
+                    state.indexPercent = null;
                     clearInterval(state.indexProgressTimer);
                     const wasVisible = !indexProgressContainer.classList.contains('hidden');
                     indexProgressContainer.classList.add('hidden');
@@ -126,13 +130,13 @@ export function checkIndexingStatus(folderPath) {
                     if (wasVisible) {
                         fetchKnownTagsAndPeople();
                         scanFolder(true);
-                        alert(data.message || "Folder successfully added to the database and indexed!");
                     }
                     
                     statusDot.className = 'status-indicator-dot';
                     statusText.textContent = 'Ready';
                 }
                 else if (data.status === 'failed') {
+                    state.indexPercent = null;
                     clearInterval(state.indexProgressTimer);
                     const wasVisible = !indexProgressContainer.classList.contains('hidden');
                     indexProgressContainer.classList.add('hidden');
@@ -206,12 +210,14 @@ export function checkSuggestionsStatus(folderPath) {
                 }
                 if (data.status === 'preparing' || data.status === 'running') {
                     suggestProgressContainer.classList.remove('hidden');
+                    indexProgressContainer.classList.add('hidden');
                     const total = data.total || 0;
                     const completed = data.completed || 0;
                     if (data.message !== 'Cancelling...') btnSuggestCancel.disabled = false;
                     
-                    if (data.status === 'preparing' || total === 0) {
-                        suggestProgressBar.style.width = `0%`;
+                    state.suggestWaiting = data.status === 'preparing' || total === 0;
+                    if (state.suggestWaiting) {
+                        suggestProgressBar.style.width = `${state.indexPercent || 0}%`;
                         // What it waits for, when it waits: the folder's index, or the graphics card and who has it.
                         suggestProgressText.textContent = data.message || `Preparing AI models & scanning folder...`;
                     } else {

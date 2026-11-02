@@ -171,6 +171,10 @@ export const state = {
     searchTimeout: null,
 
     indexProgressTimer: null,
+    // How far the folder's index has got while one runs (a percent), else null: a Suggest run waiting for it shows it in its own bar.
+    indexPercent: null,
+    // Whether the Suggest run showing is waiting (for the index or the graphics card) and has no count of its own yet.
+    suggestWaiting: false,
 
     // What the library holds of the open folder (GET /api/folder/membership), and the
     // folder being looked at without adding it, if any: edits go to the photo files only, and

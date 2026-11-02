@@ -18,7 +18,7 @@ const WAITING = "Waiting for the graphics card (in use by: indexing Regatta (har
 const POLL_MS = 1600;
 
 /** A page on a folder whose Suggest status replies run through `sequence`, the last kept. */
-async function pageWithStatus(t, sequence, cancelReply = { success: true, cancelled: true }) {
+async function pageWithStatus(t, sequence, cancelReply = { success: true, cancelled: true }, indexStatus = { status: "idle" }) {
   const replies = [...sequence];
   const server = new FakeServer()
     .on("/api/tags", [])
@@ -27,8 +27,9 @@ async function pageWithStatus(t, sequence, cancelReply = { success: true, cancel
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/scan", [photoRecord({ filename: "start.jpg" })])
     .on("/api/folder/suggest-cancel", cancelReply)
+    .on("/api/folder/index-status", () => indexStatus)
     .on("/api/folder/suggest-status", () => (replies.length > 1 ? replies.shift() : replies[0]));
-  const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
+  const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/?path=" + encodeURIComponent(FOLDER), server });
   await openFolder(ctx, FOLDER, { settle: 6 });
   return ctx;
 }
@@ -53,6 +54,17 @@ describe("a Suggest that waits", () => {
     const line = "Waiting for this folder to be indexed first: Generating embeddings: 33% (1/3)";
     const ctx = await pageWithStatus(t, [{ status: "preparing", completed: 0, total: 3, message: line }]);
     assert.equal(el(ctx, "suggest-progress-text").textContent, line);
+  });
+});
+
+describe("one bar for the work of a folder (#2355)", () => {
+  test("a Suggest waiting for the index shows the index's progress in its own bar, and the index's bar stays hidden", async (t) => {
+    const ctx = await pageWithStatus(t, [{ status: "preparing", completed: 0, total: 3, message: "Waiting for this folder to be indexed first" }],
+      undefined, { status: "running", percent: 40, message: "Generating embeddings: 40% (2/5)" });
+    await wait(POLL_MS);
+    await flush(ctx.window, 6);
+    assert.equal(el(ctx, "suggest-progress-bar").style.width, "40%");
+    assert.ok(el(ctx, "index-progress-container").classList.contains("hidden"), "two bars showed");
   });
 });
 
