@@ -240,6 +240,17 @@ describe("acting on a face", () => {
     assert.ok(body.tags.includes("People/Jane Doe"), JSON.stringify(body.tags));
   });
 
+  test("naming a face of a person in the tree creates nothing and reads the tree no more than the page did", async (t) => {
+    const ctx = await openWith(t, { faces: named, tags: [], people: [] });
+    const loads = () => ctx.server.urls().filter((u) => u.includes("/api/taxonomy/tree")).length;
+    const before = loads();
+    click(ctx.window, ctx.document.querySelector(".face-card"));
+    await flush(ctx.window, 8);
+    assert.ok(ctx.server.lastBody("/api/photo/save-metadata"), "the person was not saved");
+    assert.equal(ctx.server.urls().filter((u) => u.includes("/api/taxonomy/create")).length, 0, "the person was created again");
+    assert.equal(loads(), before, "the tree was read again");
+  });
+
   test("Add all is offered when a face would be named, and adds the person", async (t) => {
     const ctx = await openWith(t, { faces: named, tags: [], people: [] });
     const button = ctx.document.getElementById("btn-add-all-faces");

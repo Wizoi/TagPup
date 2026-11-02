@@ -299,6 +299,13 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
 
     const askWhereItGoes = (...args) => (prompt ? showPlacementModal(...args) : null);
     
+    // A person already filed at this path (a click on a named face is this): nothing to create, and the tree is not
+    // read again.
+    if (isPersonField && inputName.includes('/')) {
+        const filed = state.people.ofTag(normalizeTag(inputName));
+        if (filed) return filed.tag;
+    }
+
     if (inputName.includes('/')) {
         // Not while just looking: a tag in the tree is the library's, and an edit of files only
         // changes nothing of it. The tag is written as typed and filed; the index reads it later.
