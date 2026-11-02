@@ -7,7 +7,6 @@
 // back up the page goes through here. main.js fills it in before anything runs.
 export const upper = {
     addedFromView: null,
-    applySuggestedTagDirect: null,
     applySuggestedTagsDirect: null,
     checkFolderMembership: null,
     checkSuggestionsStatus: null,

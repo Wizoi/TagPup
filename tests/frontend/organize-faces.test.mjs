@@ -452,28 +452,32 @@ describe("naming a face names the person on the photo too", () => {
     assert.match(ctx.panel().textContent, /not added to the photo, so the face is not named/);
   });
 
-  test("faces named one after the other: each is shown named at once, and the writes follow in order", async (t) => {
-    // The first save of the photo's file is slow (a network share): the second face must not wait for it to be clicked.
+  test("faces named one after the other: each is shown named at once, and those clicked while one is written go in one write", async (t) => {
+    // The first save of the photo's file is slow (a network share): the other faces must not wait for it to be clicked, and
+    // once it is done the two that waited are written together.
     let release;
     const slow = new Promise((resolve) => { release = resolve; });
-    const ctx = await openPhoto(t, { extra: (server) => server.first("/api/photo/save-metadata", () => slow.then(() => ({ success: true }))) });
+    const CLEO = { id: 23, name: "Cleo Marsh", tag: "People/Cleo Marsh" };
+    const tree = [...TAXONOMY, { id: 23, tag: "People/Cleo Marsh", name: "Cleo Marsh", parent_id: 1, has_face: 1 }];
+    const matches = [...MATCHES, { name: "Cleo Marsh", person: CLEO, similarity: 0.6, band: "possible" }];
+    const ctx = await openPhoto(t, {
+      tree, matches, extra: (server) => server.first("/api/photo/save-metadata", () => slow.then(() => ({ success: true }))),
+    });
     ctx.show();
-    click(ctx.window, ctx.boxes()[0]);
-    await flush(ctx.window, 4);
-    click(ctx.window, ctx.panel().querySelectorAll(".face-panel-suggestion")[0]);
-    await flush(ctx.window, 6);
-    assert.equal(ctx.boxes()[0].getAttribute("aria-label").includes("Hazel"), true, "the first face is not shown named at once");
-    click(ctx.window, ctx.boxes()[1]);
-    await flush(ctx.window, 4);
-    assert.ok(ctx.panel(), "the second face's panel did not open while the first is being written");
-    click(ctx.window, ctx.panel().querySelectorAll(".face-panel-suggestion")[0]);
-    await flush(ctx.window, 6);
-    assert.equal(ctx.boxes()[1].getAttribute("aria-label").includes("Anh"), true, "the second face is not shown named at once");
+    for (const [index, who] of [[0, "Hazel"], [1, "Anh"], [2, "Cleo"]]) {
+      click(ctx.window, ctx.boxes()[index]);
+      await flush(ctx.window, 4);
+      assert.ok(ctx.panel(), `face ${index + 1}'s panel did not open while an earlier face is being written`);
+      click(ctx.window, ctx.panel().querySelectorAll(".face-panel-suggestion")[0]);
+      await flush(ctx.window, 6);
+      assert.equal(ctx.boxes()[index].getAttribute("aria-label").includes(who), true, `${who} is not shown named at once`);
+    }
     assert.equal(ctx.posts("/api/face/match").length, 0, "a face was written before the file of the photo");
     release();
-    await flush(ctx.window, 40);
-    assert.deepEqual(ctx.posts("/api/face/match").map((post) => post.body.face_id), [1, 2]);
-    assert.deepEqual(ctx.posts("/api/photo/save-metadata").map((post) => post.body.tags.length), [2, 3]);
+    await flush(ctx.window, 60);
+    assert.deepEqual(ctx.posts("/api/face/match").map((post) => post.body.face_id), [1, 2, 3]);
+    assert.deepEqual(ctx.posts("/api/photo/save-metadata").map((post) => post.body.tags.length), [2, 4],
+      "the faces that waited were not written together");
   });
 
   test("a save that fails names no face", async (t) => {

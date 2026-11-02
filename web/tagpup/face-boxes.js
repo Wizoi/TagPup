@@ -8,7 +8,7 @@
 //
 // Choosing a person NAMES THE FACE AND PUTS THE PERSON ON THE PHOTO in one action, so that faces and
 // tags cannot drift apart: the tag goes first, through the page's own save of the photo's keywords
-// (applySuggestedTagDirect -- its queue, its undo, its placement question for a name the tree does not
+// (applySuggestedTagsDirect -- its queue, its undo, its placement question for a name the tree does not
 // hold), and the face second. If the tag is not added (a failed save, a placement question answered
 // "no"), the face is not named. If the face cannot be named afterwards, the panel says so and keeps the
 // choice: the tag is already there, and the same click names the face.
@@ -545,8 +545,9 @@ export async function nameFaceAs(face, who) {
     showBusy(true);
     setStatus('busy', `Naming ${shown}...`);
     // The click is answered now: the face is shown named and its panel is closed, so the next face can be clicked at once.
-    // The writes follow, one after another (the photo's queue, then the database); leaving the photo waits for them all
-    // (edits.js openPhotoWrite). If one fails the face is shown as it was, with the sentence why.
+    // The writes follow (writeNamings): the first starts at once, and the faces clicked while it runs are written together
+    // when it is done. Leaving the photo waits for them all (edits.js openPhotoWrite). If one fails the face is shown as it
+    // was, with the sentence why.
     const mine = faceById(face.id);
     const was = mine && { name: mine.name, person: mine.person, suggestion: mine.suggestion, similarity: mine.similarity };
     const showFace = () => {
@@ -571,63 +572,99 @@ export async function nameFaceAs(face, who) {
     if (opener) box.open = null;
     showFace();
     if (opener && boxButton(face.id)) boxButton(face.id).focus({ preventScroll: true });
-    const work = async () => {
-        try {
-            // The tag. Already on the photo: nothing to write.
-            if (!photoHasPerson(photo, person || rawName)) {
-                await upper.applySuggestedTagDirect(rawName, true, path);
-                if (!photoHasPerson(photo, person || rawName)) {
-                    showAsItWas();
-                    setStatus('ready', 'Ready');
-                    say(`${shown} was not added to the photo, so the face is not named.`);
-                    return false;
-                }
-            }
-            // The face. The person is its photo's now; whichever photo is open, this face is named.
-            let res;
-            try {
-                res = await post('/api/face/match', { face_id: face.id, ...personFields(person || name), page_writes_tags: true });
-            } catch (error) {
-                showAsItWas();
-                say(`${shown} is on the photo, but the face could not be named: ${error.message}. Choose again to retry.`);
-                setStatus('error', 'The face was not named');
-                return false;
-            }
-            if (!res.ok) {
-                // A person merged or deleted in another window (404): what this page holds of the people is out of date.
-                if (res.status === 404) fetchKnownTagsAndPeople();
-                showAsItWas();
-                say(`${shown} is on the photo, but the face was not named: ${await whyRefused(res)}`);
-                setStatus('error', 'The face was not named');
-                return false;
-            }
-            // A face that was another person's: that person's tag goes with the name, unless another face is them.
-            const rest = await takeTagsOff(path, await res.json());
-            forgetPersonFaces();
-            setStatus(rest ? 'ready' : 'error', untagged(rest, `Named ${shown} and added to the photo`), { transient: rest });
-            if (box.path && samePath(box.path, path)) {
-                const named = faceById(face.id);
-                if (named) {
-                    named.name = name;
-                    named.person = person;
-                }
-                box.matches = {};
-                redrawFaceBoxes();
-                upper.renderPhotoFacesHere(path);  // the strip under the photo says the same, from the page's own copy
-            }
-            return true;
-        } finally {
-            box.naming = box.naming.filter(id => id !== face.id);
-            if (!box.naming.length) {
-                box.busy = false;
-                showBusy(false);
-                if (box.writes === run) box.writes = null;
-            }
+    return new Promise((resolve) => {
+        box.waiting.push({ face, path, photo, person, rawName, name, shown, showAsItWas, resolve });
+        if (!box.writes) box.writes = drainNamings();
+    });
+}
+
+/**
+ * Write the namings waiting for their turn: the ones of one photo together, then the next photo's. The first face clicked is
+ * written at once; the faces clicked while it is being written are the next batch, and their people go on the photo in ONE
+ * write of its file (the file of a share is slow to write), then each face is named.
+ */
+async function drainNamings() {
+    const box = state.faceBoxes;
+    try {
+        while (box.waiting.length) {
+            const path = box.waiting[0].path;
+            const batch = box.waiting.filter((each) => samePath(each.path, path));
+            box.waiting = box.waiting.filter((each) => !batch.includes(each));
+            await writeNamings(batch, path);
         }
-    };
-    const run = (box.writes || Promise.resolve()).then(work);
-    box.writes = run;
-    return run;
+    } finally {
+        box.writes = null;
+        box.busy = false;
+        showBusy(false);
+    }
+}
+
+/** The people of `batch` (namings of one photo) on the photo, in one write; then each face named, one at a time. */
+async function writeNamings(batch, path) {
+    const box = state.faceBoxes;
+    try {
+        const missing = batch.filter((each) => !photoHasPerson(each.photo, each.person || each.rawName));
+        if (missing.length) await upper.applySuggestedTagsDirect(missing.map((each) => each.rawName), true, path);
+    } catch (error) {
+        console.error(error);
+    }
+    for (const each of batch) {
+        let named = false;
+        try {
+            named = await nameOne(each);
+        } catch (error) {
+            console.error(error);
+            each.showAsItWas();
+            say(`${each.shown} was not named: ${error.message}`);
+            setStatus('error', 'The face was not named');
+        }
+        box.naming = box.naming.filter((id) => id !== each.face.id);
+        each.resolve(named);
+    }
+}
+
+/** One face of a batch, its person's tag written: the face itself named (the database only). True when it is named. */
+async function nameOne({ face, path, photo, person, rawName, name, shown, showAsItWas }) {
+    const box = state.faceBoxes;
+    if (!photoHasPerson(photo, person || rawName)) {
+        showAsItWas();
+        setStatus('ready', 'Ready');
+        say(`${shown} was not added to the photo, so the face is not named.`);
+        return false;
+    }
+    // The face. The person is its photo's now; whichever photo is open, this face is named.
+    let res;
+    try {
+        res = await post('/api/face/match', { face_id: face.id, ...personFields(person || name), page_writes_tags: true });
+    } catch (error) {
+        showAsItWas();
+        say(`${shown} is on the photo, but the face could not be named: ${error.message}. Choose again to retry.`);
+        setStatus('error', 'The face was not named');
+        return false;
+    }
+    if (!res.ok) {
+        // A person merged or deleted in another window (404): what this page holds of the people is out of date.
+        if (res.status === 404) fetchKnownTagsAndPeople();
+        showAsItWas();
+        say(`${shown} is on the photo, but the face was not named: ${await whyRefused(res)}`);
+        setStatus('error', 'The face was not named');
+        return false;
+    }
+    // A face that was another person's: that person's tag goes with the name, unless another face is them.
+    const rest = await takeTagsOff(path, await res.json());
+    forgetPersonFaces();
+    setStatus(rest ? 'ready' : 'error', untagged(rest, `Named ${shown} and added to the photo`), { transient: rest });
+    if (box.path && samePath(box.path, path)) {
+        const named = faceById(face.id);
+        if (named) {
+            named.name = name;
+            named.person = person;
+        }
+        box.matches = {};
+        redrawFaceBoxes();
+        upper.renderPhotoFacesHere(path);  // the strip under the photo says the same, from the page's own copy
+    }
+    return true;
 }
 
 /**
