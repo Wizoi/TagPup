@@ -126,8 +126,8 @@ class AddingAFolder(unittest.TestCase):
         self.assertEqual([("embeddings", {"done": 25, "of": 50, "percent": 50}), ("faces", {}),
                           ("bake", {"folders_done": 1, "folders": 4, "written": 3, "current": 1, "conflicts": 0,
                                     "percent": 37, "files_done": 5, "files": 10})], told)
-        self.assertIn(("Generating embeddings: 50% (25/50)", 50), self.reports)
-        self.assertIn((bake["sentence"], 37), self.reports)
+        self.assertIn(("Generating embeddings: 50% (25/50)", 27), self.reports)
+        self.assertIn((bake["sentence"], 68), self.reports)
         self.assertTrue(bake["sentence"].endswith(": " + folder), bake["sentence"])
         self.assertIn(("x" * 89 + chr(0x2026), None), self.reports)
         self.assertFalse([message for message, _p in self.reports if progress_line.PREFIX.strip() in message],

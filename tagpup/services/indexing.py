@@ -62,6 +62,11 @@ GENERATING_EMBEDDINGS = "Generating embeddings"
 _PHASE_LABEL = {"metadata": READING_METADATA, "embeddings": GENERATING_EMBEDDINGS, "faces": MATCHING}
 
 
+#: Where each phase of an index starts on the one bar the person sees, and how much of it the phase takes: reading the
+#: files' metadata, the embeddings and the faces share the first half, the bake into the files is the second (#2355).
+_BAR = {"metadata": (0, 10), "embeddings": (10, 35), "faces": (45, 5), "bake": (50, 50)}
+
+
 def phase_fact(phase, done=None, of=None):
     """The fact of how far the CLI's `index` has got in `phase` (metadata, embeddings, faces): `done` of `of`, and the
     percent, in the words of the bar a person sees by hand: `Generating embeddings: 100% (3/3)`."""
@@ -172,6 +177,16 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1, cwd=code_folder,
         )
+        furthest = [0]
+
+        def one_bar(fact, percent):
+            """`percent` of a phase as the one bar of the whole index: where its phase starts and how much of the bar it
+            takes (_BAR), the bake into the files the second half, and never back (#2355)."""
+            if percent is None:
+                return None
+            start, span = _BAR.get(fact.get("phase"), (0, 50))
+            furthest[0] = max(furthest[0], start + percent * span // 100)
+            return furthest[0]
         with proc.stdout:
             for line in iter(proc.stdout.readline, ""):
                 fact = progress_line.heard(line)
@@ -199,7 +214,7 @@ def index_folder(library, folder, code_folder, report=None, subfolders=True):
                     wrote.append(fact["sentence"])
                     counted.update(("baked_" + name, value) for name, value in counts.items())
                 if "sentence" in fact:
-                    report(fact["sentence"], counts.get("percent"))
+                    report(fact["sentence"], one_bar(fact, counts.get("percent")))
             proc.wait()
         return proc.returncode
 

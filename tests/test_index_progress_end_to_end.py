@@ -124,7 +124,8 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertTrue(result.ok, (result.errors, heard))
         percents = [percent for _message, percent in heard if percent is not None]
         # Each bar the CLI draws is read as "label: N% (done/total)", at its own percent.
-        self.assertIn(100, percents, heard)
+        self.assertEqual(sorted(percents), percents, heard)
+        self.assertGreaterEqual(max(percents), 50, heard)
         self.assertTrue(any(indexing.GENERATING_EMBEDDINGS + ": 100% (3/3)" == message for message, _p in heard), heard)
         # Neither a fact's text nor a log line reaches the bar: the log is the run's file alone.
         self.assertFalse([message for message, _p in heard
@@ -374,7 +375,7 @@ class TheOwnerWatchesALargeFolderBaked(unittest.TestCase):
                                                                                          heard))
         self.assertEqual([False, True, True], [", %d of 5 of its files reached: " % (2 * n) in message
                                                for n, (message, _p, _at) in enumerate(in_the_folder)], heard)
-        self.assertEqual([0, 40, 80], [percent for _m, percent, _at in in_the_folder])
+        self.assertEqual([50, 70, 90], [percent for _m, percent, _at in in_the_folder])
         self.assertEqual([(2, 5), (4, 5)], [(counts["files_done"], counts["files"]) for phase, counts in told
                                             if phase == "bake" and "files_done" in counts])
 
@@ -527,7 +528,7 @@ class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
             time.sleep(0.05)
         said = bake_after_index.FOLDER_SAID + "2 of 3, 1 written, 0 current, 0 conflicts: "
         self.assertIn(running["message"], [said + paths.stored(folder) for folder in folders], "the folder's path, whole")
-        self.assertEqual(33, running["percent"], "one folder of three is done")
+        self.assertEqual(66, running["percent"], "one folder of three is done, in the bar's second half")
         self.assertLessEqual(running["started"], running["progressed"], "when it last moved, for 'last progress'")
 
         open(os.path.join(stub, "RELEASE"), "w").close()
@@ -536,7 +537,7 @@ class TheOwnerWatchesASyncsNewFoldersIndexedAndBaked(unittest.TestCase):
         # The fact cut short and the one of no kind a reader knows were passed over; nothing raised.
         self.assertFalse([message for message, _p in heard if progress_line.PREFIX.strip() in message
                           or "1 of 0" in message], heard)
-        self.assertEqual([0, 33, 66], [percent for message, percent in heard if message.startswith("Bake folder")])
+        self.assertEqual([50, 66, 83], [percent for message, percent in heard if message.startswith("Bake folder")])
 
 
 if __name__ == "__main__":
