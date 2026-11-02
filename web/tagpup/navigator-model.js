@@ -42,7 +42,9 @@ function navPlural(count, one, many) {
 /**
  * The folder tree of the route's flat list, [{ path, name, parent, direct, recursive }]: nodes by the key of
  * their path (pathKey: the same folder in any spelling), each holding its children in the list's order. A folder
- * whose parent is not in the list is a top of the tree.
+ * whose parent is not in the list is a top of the tree, and a top that holds no photo itself and has one folder below it
+ * is not shown: its folder is the top, so a root added from a share reads "Track and Field", beside "cross-country",
+ * not under the share's own path (#2356).
  */
 export function indexFolders(list) {
     const byKey = new Map();
@@ -61,7 +63,10 @@ export function indexFolders(list) {
         if (parent && parent !== node) parent.children.push(node);
         else tops.push(node);
     }
-    return { byKey, tops, size: byKey.size };
+    return { byKey, tops: tops.map(node => {
+        while (node.direct === 0 && node.children.length === 1) node = node.children[0];
+        return node;
+    }), size: byKey.size };
 }
 
 function navFolderRow(node, level, expanded) {

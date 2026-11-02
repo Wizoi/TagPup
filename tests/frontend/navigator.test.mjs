@@ -666,6 +666,24 @@ describe("the model, alone", () => {
     assert.equal(folders.tops.length, 1);
   });
 
+  test("a root added from a share is a top named for its folder, not for the share's path above it (#2356)", async (t) => {
+    const ctx = await loadViewPage(t);
+    const m = ctx.module("navigator-model.js");
+    const row = (path, name, parent, direct, recursive) => ({ path, name, parent, direct, recursive });
+    const share = "\\\\server\\Pictures";
+    const folders = m.indexFolders([
+      row(share, "\\\\server\\Pictures\\", null, 0, 40),
+      row(share + "\\Clients", "Clients", share, 0, 40),
+      row(share + "\\Clients\\Track", "Track", share + "\\Clients", 0, 40),
+      row(share + "\\Clients\\Track\\One", "One", share + "\\Clients\\Track", 25, 25),
+      row(share + "\\Clients\\Track\\Two", "Two", share + "\\Clients\\Track", 15, 15),
+      row("D:\\cross-country", "cross-country", null, 3, 9),
+      row("D:\\cross-country\\Meet", "Meet", "D:\\cross-country", 6, 6),
+    ]);
+    assert.deepEqual(Array.from(folders.tops, (node) => node.name), ["Track", "cross-country"]);
+    assert.deepEqual(Array.from(folders.tops[0].children, (node) => node.name), ["One", "Two"]);
+  });
+
   test("the folders of the sandbox library have the size the brief names", () => {
     assert.equal(syntheticFolders().length, 2746);
     assert.equal(syntheticKeywords().length, 895);

@@ -114,7 +114,7 @@ describe("Now: a card a library, its runs as a tree, in the server's words", () 
     const beneath = [...top[0].querySelectorAll(":scope > ul.run-tree > li.run")];
     assert.deepEqual(beneath.map((li) => li.dataset.label), ["index of Regatta 2019"], "the index it queued is under it");
     assert.match(beneath[0].querySelector(".phase").textContent, /^reading metadata$/);
-    assert.equal(beneath[0].querySelector("progress").getAttribute("aria-valuetext"), "15%, reading metadata");
+    assert.equal(beneath[0].querySelector("progress").getAttribute("aria-valuetext"), "1%, reading metadata");
     assert.match(beneath[0].textContent, /running 4 min, last progress 3 s ago/);
     // The library with nothing running says so, and what finished in it last.
     assert.match(card(document, "lighthouse").textContent, /^lighthouseNothing is running\. The last, .+, finished .+ ago\.$/);
@@ -159,7 +159,7 @@ describe("Now: a card a library, its runs as a tree, in the server's words", () 
     const sync = card(document, "harbour").querySelector('li.run[data-label="sync (folder watcher)"]');
     const index = sync.querySelector('li.run[data-label="index of Regatta 2019"]');
     assert.ok(index, card(document, "harbour").textContent);
-    assert.equal(index.querySelector("progress").getAttribute("value"), "15");
+    assert.equal(index.querySelector("progress").getAttribute("value"), "1");
     assert.match(index.textContent, /Reading metadata: 15% \(120\/800\)/, "the queue's own message: the graphics card's wait is said there");
     assert.match(card(document, "harbour").textContent, /1 waiting.*Harbour Walk/);
     assert.match(card(document, "harbour").textContent, /Lakes.*running, 3 of 9/);
@@ -216,7 +216,7 @@ describe("Now: a card a library, its runs as a tree, in the server's words", () 
     // Only the line is read aloud: the cards, drawn again at every poll, are not.
     assert.equal(document.getElementById("now-body").getAttribute("aria-live"), null);
     assert.equal(line.textContent,
-                 "harbour: sync (folder watcher), walking the folders again. harbour: index of Regatta 2019, reading metadata, 10%.");
+                 "harbour: sync (folder watcher), walking the folders again. harbour: index of Regatta 2019, reading metadata, 0%.");
     const said = line.firstChild;
 
     // Three seconds on, more folders walked: the same words, left as they were.
