@@ -221,12 +221,14 @@
                                     </div>
                                 </div>
                                 <div class="detail-item full-width">
-                                    <span class="detail-label">People Tags</span>
+                                    <div class="detail-label-row">
+                                        <span class="detail-label">People Tags</span>
+                                        <button type="button" id="btn-edit-people" data-writes class="btn btn-secondary btn-sm edit-toggle" aria-expanded="false" aria-controls="add-people-group" title="Add a person">&#9999;&#65039;</button>
+                                    </div>
                                     <div class="tags-edit-wrapper" data-writes>
                                         <div class="tags-container" id="detail-people">
                                             <!-- People pills inserted here -->
                                         </div>
-                                        <button type="button" id="btn-edit-people" class="btn btn-secondary btn-sm edit-toggle" aria-expanded="false" aria-controls="add-people-group" title="Add a person">&#9999;&#65039;</button>
                                         <div class="add-tag-group hidden" id="add-people-group">
                                             <input type="text" id="input-add-person" placeholder="Add person..." list="people-datalist">
                                             <button id="btn-add-person" class="btn btn-secondary btn-sm">Add Person</button>
@@ -234,12 +236,14 @@
                                     </div>
                                 </div>
                                 <div class="detail-item full-width">
-                                    <span class="detail-label">Keywords / Tags</span>
+                                    <div class="detail-label-row">
+                                        <span class="detail-label">Keywords / Tags</span>
+                                        <button type="button" id="btn-edit-tags" data-writes class="btn btn-secondary btn-sm edit-toggle" aria-expanded="false" aria-controls="add-tags-group" title="Add a keyword">&#9999;&#65039;</button>
+                                    </div>
                                     <div class="tags-edit-wrapper" data-writes>
                                         <div class="tags-container" id="detail-tags">
                                             <!-- Tag pills inserted here -->
                                         </div>
-                                        <button type="button" id="btn-edit-tags" class="btn btn-secondary btn-sm edit-toggle" aria-expanded="false" aria-controls="add-tags-group" title="Add a keyword">&#9999;&#65039;</button>
                                         <div class="add-tag-group hidden" id="add-tags-group">
                                             <input type="text" id="input-add-tag" placeholder="Add tag..." list="tags-datalist">
                                             <button id="btn-add-tag" class="btn btn-secondary btn-sm">Add Tag</button>
@@ -282,8 +286,8 @@
                         <div id="faces-section" class="faces-section hidden">
                             <div class="faces-section-header">
                                 <span class="detail-label">Detected Faces</span>
-                                <span id="faces-summary" class="faces-summary"></span>
                                 <button type="button" id="btn-add-all-faces" data-writes class="btn btn-secondary btn-sm hidden" title="Name every face below that has a name or a closest match, and put those people on the photo">Add all</button>
+                                <span id="faces-summary" class="faces-summary"></span>
                             </div>
                             <div id="faces-strip" class="faces-strip"></div>
                         </div>

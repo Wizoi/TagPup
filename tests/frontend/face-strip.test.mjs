@@ -190,6 +190,7 @@ describe("acting on a face", () => {
   const TAXONOMY = [
     { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
     { id: 2, tag: "People/Jane Doe", name: "Jane Doe", parent_id: 1, has_face: 1 },
+    { id: 3, tag: "People/Alex Roe", name: "Alex Roe", parent_id: 1, has_face: 1 },
   ];
 
   async function openWith(t, { faces, tags = [], people = [] }) {
@@ -259,6 +260,22 @@ describe("acting on a face", () => {
     await flush(ctx.window, 8);
     const body = ctx.server.lastBody("/api/photo/save-metadata");
     assert.ok(body && body.tags.includes("People/Jane Doe"), "Add all saved nothing");
+  });
+
+  test("Add all puts every face's person on the photo in one write of the file", async (t) => {
+    const two = {
+      faces: [{ id: 1, box: [0, 0, 9, 9], area: 81, name: "Jane Doe", excluded: false },
+              { id: 2, box: [20, 0, 29, 9], area: 81, name: "Alex Roe", excluded: false }],
+      total: 2, unmatched: 0,
+    };
+    const ctx = await openWith(t, { faces: two, tags: [], people: [] });
+    click(ctx.window, ctx.document.getElementById("btn-add-all-faces"));
+    await flush(ctx.window, 12);
+    const writes = ctx.server.urls().filter((u) => u.includes("/api/photo/save-metadata"));
+    assert.equal(writes.length, 1, "the file was written once per person");
+    const body = ctx.server.lastBody("/api/photo/save-metadata");
+    assert.deepEqual([...body.tags].sort(), ["People/Alex Roe", "People/Jane Doe"]);
+    assert.equal(ctx.server.urls().filter((u) => u.includes("/api/face/match")).length, 2, "each face is named");
   });
 
   test("Add all is not offered when nothing would change", async (t) => {

@@ -55,7 +55,7 @@ import {
     bulkAddPeopleToSelection, bulkAddTagsToSelection, updateSelectedThumbnailsCount
 } from './selection.js';
 import {
-    applyAllSingleSuggestions, applyFolderSuggestionsLevel, applySuggestedTagDirect,
+    applyAllSingleSuggestions, applyFolderSuggestionsLevel, applySuggestedTagDirect, applySuggestedTagsDirect,
     applySuggestedTitle, checkIndexingStatus, checkSuggestionsStatus, renderSuggestionsPanel,
     cancelSuggestions, startSuggestions, updateFolderAutoApplyState, updateSuggestButtonState
 } from './suggestions.js';
@@ -66,7 +66,7 @@ import {
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    addedFromView, applySuggestedTagDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
+    addedFromView, applySuggestedTagDirect, applySuggestedTagsDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
     facesFollowTags,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,

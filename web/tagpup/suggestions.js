@@ -414,6 +414,14 @@ export function personChips(list) {
  * recognised face means never: they are in the taxonomy already.
  */
 export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activePhotoPath) {
+    return applySuggestedTagsDirect([tagName], isPerson, forPath);
+}
+
+/**
+ * The tags of `tagNames` the open photo does not hold yet, added in one write of the file (Add all names each face of
+ * the photo, and puts their people on it: one save, not one per person).
+ */
+export function applySuggestedTagsDirect(tagNames, isPerson, forPath = state.activePhotoPath) {
     // A chip or face card belongs to the photo it was drawn for. One left over
     // from another photo must not write that photo's suggestion to this one.
     const path = state.activePhotoPath;
@@ -422,17 +430,21 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
     if (!photo) return;
 
     return queueWriteOf(path, async () => {
-        const resolved = await resolveTagOrPerson(tagName, isPerson);
-        if (!resolved) return true;
-
+        const added = [];
+        let had = null;
+        for (const tagName of tagNames) {
+            const resolved = await resolveTagOrPerson(tagName, isPerson);
+            if (!resolved || added.includes(resolved)) continue;
+            if (photoAlreadyHas(photo, resolved, namesAPerson, state.people)) had = resolved;
+            else added.push(resolved);
+        }
         // Say so rather than doing nothing. A click that silently no-ops reads as
         // a broken button, which is how this was reported.
-        if (photoAlreadyHas(photo, resolved, namesAPerson, state.people)) {
-            setStatus('ready', `${leafOf(resolved)} is already on this photo`);
+        if (added.length === 0) {
+            if (had) setStatus('ready', `${leafOf(had)} is already on this photo`);
             return true;
         }
-        const updatedTags = [...(photo.tags || []), resolved];
-        const leaf = leafOf(resolved);
+        const updatedTags = [...(photo.tags || []), ...added];
 
         setStatus('busy', 'Saving...');
         try {
@@ -446,7 +458,9 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
         photo.tags = updatedTags;
         if (isPerson) {
             if (!photo.people) photo.people = [];
-            if (!photo.people.includes(leaf)) photo.people.push(leaf);
+            for (const each of added) {
+                if (!photo.people.includes(leafOf(each))) photo.people.push(leafOf(each));
+            }
         }
         // The suggestion has been taken, so it is no longer a suggestion.
         redrawIfShowing(photo);

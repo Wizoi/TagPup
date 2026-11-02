@@ -179,7 +179,10 @@ Click to ${does}.`;
             if (btnAddAllFaces && actionable.length > 0) {
                 btnAddAllFaces.classList.remove('hidden');
                 btnAddAllFaces.onclick = async () => {
-                    // One at a time (each names the face, then draws the strip again), and not on into another photo.
+                    // The people on the photo in one write of the file; then each face is named (the database only, no file),
+                    // one at a time, and not on into another photo.
+                    await upper.applySuggestedTagsDirect(actionable.map(({ who }) => (typeof who === 'object' ? who.tag : who)),
+                        true, photoPath);
                     for (const { face, who } of actionable) {
                         if (!state.activePhotoPath || !samePath(state.activePhotoPath, photoPath)) break;
                         if (!(await nameFaceAs(face, who))) break;

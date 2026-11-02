@@ -8,6 +8,7 @@
 export const upper = {
     addedFromView: null,
     applySuggestedTagDirect: null,
+    applySuggestedTagsDirect: null,
     checkFolderMembership: null,
     checkSuggestionsStatus: null,
     choosePane: null,

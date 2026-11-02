@@ -667,11 +667,16 @@ body {
     text-decoration: line-through;
 }
 
+.detail-label-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .edit-toggle {
     padding: 2px 6px;
     font-size: 11px;
     line-height: 1;
-    align-self: flex-start;
 }
 
 .add-tag-group {
@@ -2058,9 +2063,13 @@ body.just-looking #faces-strip {
 
 .faces-section-header {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
     margin-bottom: 10px;
+}
+
+.faces-section-header .faces-summary {
+    margin-left: auto;
 }
 
 .faces-summary {
