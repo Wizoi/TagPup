@@ -125,6 +125,8 @@ export const state = {
     // in the panel of face `typedFor`.
     faceBoxes: {
         path: null, faces: [], size: null, shown: false, open: null, matches: {}, busy: false,
+        // The namings under way: the faces' ids, and the one chain of their writes (face-boxes.js nameFaceAs).
+        naming: [], writes: null,
         note: '', typed: '', typedFor: null,
     },
 

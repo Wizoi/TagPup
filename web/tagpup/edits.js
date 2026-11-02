@@ -142,7 +142,10 @@ export function queueWriteOf(path, job, label = `Save photo ${baseName(path)}`, 
 /** The write of the open photo queued or under way, if any: what leaving it waits for. */
 export function openPhotoWrite() {
     const path = state.activePhotoPath;
-    return (path && state.photoWrites[pathKey(path)]) || null;
+    if (!path) return null;
+    // The faces named on it write after their tags, and are the photo's writes too.
+    const faces = state.faceBoxes.writes && state.faceBoxes.path && samePath(state.faceBoxes.path, path) ? state.faceBoxes.writes : null;
+    return state.photoWrites[pathKey(path)] || faces;
 }
 
 /**

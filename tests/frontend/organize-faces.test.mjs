@@ -452,6 +452,30 @@ describe("naming a face names the person on the photo too", () => {
     assert.match(ctx.panel().textContent, /not added to the photo, so the face is not named/);
   });
 
+  test("faces named one after the other: each is shown named at once, and the writes follow in order", async (t) => {
+    // The first save of the photo's file is slow (a network share): the second face must not wait for it to be clicked.
+    let release;
+    const slow = new Promise((resolve) => { release = resolve; });
+    const ctx = await openPhoto(t, { extra: (server) => server.first("/api/photo/save-metadata", () => slow.then(() => ({ success: true }))) });
+    ctx.show();
+    click(ctx.window, ctx.boxes()[0]);
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.panel().querySelectorAll(".face-panel-suggestion")[0]);
+    await flush(ctx.window, 6);
+    assert.equal(ctx.boxes()[0].getAttribute("aria-label").includes("Hazel"), true, "the first face is not shown named at once");
+    click(ctx.window, ctx.boxes()[1]);
+    await flush(ctx.window, 4);
+    assert.ok(ctx.panel(), "the second face's panel did not open while the first is being written");
+    click(ctx.window, ctx.panel().querySelectorAll(".face-panel-suggestion")[0]);
+    await flush(ctx.window, 6);
+    assert.equal(ctx.boxes()[1].getAttribute("aria-label").includes("Anh"), true, "the second face is not shown named at once");
+    assert.equal(ctx.posts("/api/face/match").length, 0, "a face was written before the file of the photo");
+    release();
+    await flush(ctx.window, 40);
+    assert.deepEqual(ctx.posts("/api/face/match").map((post) => post.body.face_id), [1, 2]);
+    assert.deepEqual(ctx.posts("/api/photo/save-metadata").map((post) => post.body.tags.length), [2, 3]);
+  });
+
   test("a save that fails names no face", async (t) => {
     const ctx = await openPhoto(t, { extra: (server) => server.first("/api/photo/save-metadata", { success: false, error: "locked" }) });
     ctx.show();
