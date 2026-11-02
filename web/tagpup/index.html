@@ -207,10 +207,10 @@
                                         <span class="detail-value" id="detail-date-taken"></span>
                                         <button id="btn-edit-date-taken" data-writes class="btn btn-secondary btn-sm" style="padding: 2px 6px; font-size: 11px; line-height: 1;" title="Edit date taken">✏️</button>
                                     </div>
-                                </div>
-                                <div class="detail-item full-width hidden" id="detail-camera-item">
-                                    <span class="detail-label">Camera / Lens</span>
-                                    <span class="detail-value one-line" id="detail-camera"></span>
+                                    <!-- Camera and lens, read only: a line under the date (hidden when the file names neither). -->
+                                    <div class="hidden" id="detail-camera-item">
+                                        <span class="detail-value one-line" id="detail-camera"></span>
+                                    </div>
                                 </div>
                                 <div class="detail-item full-width">
                                     <span class="detail-label">Title / Caption</span>
@@ -226,7 +226,8 @@
                                         <div class="tags-container" id="detail-people">
                                             <!-- People pills inserted here -->
                                         </div>
-                                        <div class="add-tag-group">
+                                        <button type="button" id="btn-edit-people" class="btn btn-secondary btn-sm edit-toggle" aria-expanded="false" aria-controls="add-people-group" title="Add a person">&#9999;&#65039;</button>
+                                        <div class="add-tag-group hidden" id="add-people-group">
                                             <input type="text" id="input-add-person" placeholder="Add person..." list="people-datalist">
                                             <button id="btn-add-person" class="btn btn-secondary btn-sm">Add Person</button>
                                         </div>
@@ -238,7 +239,8 @@
                                         <div class="tags-container" id="detail-tags">
                                             <!-- Tag pills inserted here -->
                                         </div>
-                                        <div class="add-tag-group">
+                                        <button type="button" id="btn-edit-tags" class="btn btn-secondary btn-sm edit-toggle" aria-expanded="false" aria-controls="add-tags-group" title="Add a keyword">&#9999;&#65039;</button>
+                                        <div class="add-tag-group hidden" id="add-tags-group">
                                             <input type="text" id="input-add-tag" placeholder="Add tag..." list="tags-datalist">
                                             <button id="btn-add-tag" class="btn btn-secondary btn-sm">Add Tag</button>
                                             <button id="btn-carry-forward" class="btn btn-secondary btn-sm" disabled title="Copy the previous photo's tags onto this one (Ctrl+D)">&#8676; Same as previous</button>
@@ -281,6 +283,7 @@
                             <div class="faces-section-header">
                                 <span class="detail-label">Detected Faces</span>
                                 <span id="faces-summary" class="faces-summary"></span>
+                                <button type="button" id="btn-add-all-faces" data-writes class="btn btn-secondary btn-sm hidden" title="Name every face below that has a name or a closest match, and put those people on the photo">Add all</button>
                             </div>
                             <div id="faces-strip" class="faces-strip"></div>
                         </div>

@@ -12,7 +12,7 @@ import { state } from './state.js';
 import {
     btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
     dateTakenModal, detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
-    emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
+    btnAddAllFaces, emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
     folderViewStats, inputAddPerson, inputAddTag, inputDateTaken,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
 } from './elements.js';
@@ -47,6 +47,7 @@ export function renderPhotoFaces(photoPath) {
 
     facesStrip.innerHTML = '';
     facesSection.classList.add('hidden');
+    if (btnAddAllFaces) btnAddAllFaces.classList.add('hidden');
     if (facesSummary) facesSummary.textContent = '';
     // The boxes over the photo are another photo's until this one's faces arrive. The same photo drawn
     // again (after a face was named) keeps its boxes and its panel until the new answer replaces them.
@@ -74,6 +75,8 @@ export function renderPhotoFaces(photoPath) {
                     : `${faces.length} detected, all identified`;
             }
 
+            // The faces a click would name, in the strip's order: what Add all goes through.
+            const actionable = [];
             faces.forEach(face => {
                 // A face nobody is like has no card: it offers nothing to click. The face icon's boxes on the
                 // photo are where a missing person's face is found and named (owner, 2026-11-02).
@@ -164,6 +167,7 @@ Click to ${does}.`;
                     card.addEventListener('click', () => {
                         nameFaceAs(face, namesSomebody);
                     });
+                    actionable.push({ face, who: namesSomebody });
                 } else if (alreadyTagged) {
                     // Not clickable, and saying so beats a card that looks live
                     // and does nothing when pressed.
@@ -172,6 +176,16 @@ Click to ${does}.`;
                 }
                 facesStrip.appendChild(card);
             });
+            if (btnAddAllFaces && actionable.length > 0) {
+                btnAddAllFaces.classList.remove('hidden');
+                btnAddAllFaces.onclick = async () => {
+                    // One at a time (each names the face, then draws the strip again), and not on into another photo.
+                    for (const { face, who } of actionable) {
+                        if (!state.activePhotoPath || !samePath(state.activePhotoPath, photoPath)) break;
+                        if (!(await nameFaceAs(face, who))) break;
+                    }
+                };
+            }
         })
         .catch(err => {
             if (token === state.facesRequestToken) clearPhotoFaces();

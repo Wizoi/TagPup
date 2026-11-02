@@ -50,6 +50,7 @@ export const btnPhotoBack = document.getElementById('btn-photo-back');
 export const selectedThumbnailsCount = document.getElementById('selected-thumbnails-count');
 export const btnFolderAutoApply = document.getElementById('btn-folder-auto-apply');
 export const facesStrip = document.getElementById('faces-strip');
+export const btnAddAllFaces = document.getElementById('btn-add-all-faces');
 export const facesSummary = document.getElementById('faces-summary');
 export const folderSelectionSidebar = document.getElementById('folder-selection-sidebar');
 export const selectionEmptyHint = document.getElementById('selection-empty-hint');
@@ -117,6 +118,11 @@ export const btnAddPerson = document.getElementById('btn-add-person');
 export const detailTags = document.getElementById('detail-tags');
 export const inputAddTag = document.getElementById('input-add-tag');
 export const btnAddTag = document.getElementById('btn-add-tag');
+// The add boxes of the single photo's people and keywords, shown by their pencils (edit-toggles.js).
+export const btnEditPeople = document.getElementById('btn-edit-people');
+export const addPeopleGroup = document.getElementById('add-people-group');
+export const btnEditTags = document.getElementById('btn-edit-tags');
+export const addTagsGroup = document.getElementById('add-tags-group');
 
 export const suggestionsSection = document.getElementById('suggestions-section');
 export const btnApplyAllSingleSugg = document.getElementById('btn-apply-all-single-sugg');

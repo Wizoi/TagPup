@@ -240,6 +240,21 @@ describe("acting on a face", () => {
     assert.ok(body.tags.includes("People/Jane Doe"), JSON.stringify(body.tags));
   });
 
+  test("Add all is offered when a face would be named, and adds the person", async (t) => {
+    const ctx = await openWith(t, { faces: named, tags: [], people: [] });
+    const button = ctx.document.getElementById("btn-add-all-faces");
+    assert.ok(!button.classList.contains("hidden"), "no Add all beside faces that can be named");
+    click(ctx.window, button);
+    await flush(ctx.window, 8);
+    const body = ctx.server.lastBody("/api/photo/save-metadata");
+    assert.ok(body && body.tags.includes("People/Jane Doe"), "Add all saved nothing");
+  });
+
+  test("Add all is not offered when nothing would change", async (t) => {
+    const ctx = await openWith(t, { faces: named, tags: ["People/Jane Doe"], people: ["Jane Doe"] });
+    assert.ok(ctx.document.getElementById("btn-add-all-faces").classList.contains("hidden"));
+  });
+
   test("a face whose person is already tagged is not clickable", async (t) => {
     const ctx = await openWith(t, {
       faces: named, tags: ["People/Jane Doe"], people: ["Jane Doe"],

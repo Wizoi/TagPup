@@ -50,6 +50,7 @@ import {
 import { recordUndo, undoLastOperation } from './undo.js';
 import { enableSwipeNavigation, wireKeyboard } from './navigation.js';
 import { wireFaceBoxes } from './face-boxes.js';
+import { wireEditToggles } from './edit-toggles.js';
 import {
     bulkAddPeopleToSelection, bulkAddTagsToSelection, updateSelectedThumbnailsCount
 } from './selection.js';
@@ -171,6 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     wireZoom();
     wireFaceBoxes();
+    wireEditToggles();
 
     wireDateTakenModal();
 
