@@ -543,11 +543,32 @@ export async function nameFaceAs(face, who) {
     box.busy = true;
     showBusy(true);
     setStatus('busy', `Naming ${shown}...`);
+    // The result first: the face is shown named now, and the writes follow (the page's queue for the photo's file, then the
+    // database). If either fails it is shown as it was, with the sentence why.
+    const mine = faceById(face.id);
+    const was = mine && { name: mine.name, person: mine.person, suggestion: mine.suggestion, similarity: mine.similarity };
+    const showFace = () => {
+        if (box.path && samePath(box.path, path)) {
+            redrawFaceBoxes();
+            upper.renderPhotoFacesHere(path);
+        }
+    };
+    const showAsItWas = () => {
+        if (mine && was) {
+            Object.assign(mine, was);
+            showFace();
+        }
+    };
+    if (mine) {
+        Object.assign(mine, { name, person, suggestion: null, similarity: null });
+        showFace();
+    }
     try {
         // The tag. Already on the photo: nothing to write.
         if (!photoHasPerson(photo, person || rawName)) {
             await upper.applySuggestedTagDirect(rawName, true, path);
             if (!photoHasPerson(photo, person || rawName)) {
+                showAsItWas();
                 setStatus('ready', 'Ready');
                 say(`${shown} was not added to the photo, so the face is not named.`);
                 return false;
@@ -558,6 +579,7 @@ export async function nameFaceAs(face, who) {
         try {
             res = await post('/api/face/match', { face_id: face.id, ...personFields(person || name), page_writes_tags: true });
         } catch (error) {
+            showAsItWas();
             say(`${shown} is on the photo, but the face could not be named: ${error.message}. Choose again to retry.`);
             setStatus('error', 'The face was not named');
             return false;
@@ -565,6 +587,7 @@ export async function nameFaceAs(face, who) {
         if (!res.ok) {
             // A person merged or deleted in another window (404): what this page holds of the people is out of date.
             if (res.status === 404) fetchKnownTagsAndPeople();
+            showAsItWas();
             say(`${shown} is on the photo, but the face was not named: ${await whyRefused(res)}`);
             setStatus('error', 'The face was not named');
             return false;
@@ -584,7 +607,7 @@ export async function nameFaceAs(face, who) {
             box.open = null;
             redrawFaceBoxes();
             if (opener && boxButton(face.id)) boxButton(face.id).focus({ preventScroll: true });
-            upper.renderPhotoFaces(path);      // the strip under the photo says the same
+            upper.renderPhotoFacesHere(path);  // the strip under the photo says the same, from the page's own copy
         }
         return true;
     } finally {

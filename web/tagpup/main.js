@@ -39,7 +39,7 @@ import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
 import {
     carryTagsForward, deleteActivePhoto, facesFollowTags, openLibraryPhoto, openPhotoInDefaultApp, removePhotoTags,
-    renderPhotoFaces, renderTags, rotatePhoto,
+    renderPhotoFaces, renderPhotoFacesHere, renderTags, rotatePhoto,
     reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
     updateCarryForwardState, wireDateTakenModal, wireZoom
 } from './photo.js';
@@ -69,7 +69,7 @@ Object.assign(upper, {
     addedFromView, applySuggestedTagDirect, applySuggestedTagsDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
     facesFollowTags,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
-    renderFileList, renderPhotoFaces, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
+    renderFileList, renderPhotoFaces, renderPhotoFacesHere, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
     openLibraryPhoto, openLibraryView, restoreViewAsLeft,

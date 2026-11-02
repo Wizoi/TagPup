@@ -252,6 +252,39 @@ describe("acting on a face", () => {
     assert.equal(loads(), before, "the tree was read again");
   });
 
+  // Made for each test: the page names the very face it was given, and the next test must not start from that.
+  const suggested = () => ({
+    faces: [{ id: 3, box: [0, 0, 9, 9], area: 81, name: null, suggestion: "Jane Doe", similarity: 0.82, excluded: false }],
+    total: 1, unmatched: 1,
+  });
+  const label = (ctx) => ctx.document.querySelector(".face-card-label").textContent;
+  const photoFacesAsked = (ctx) => ctx.server.urls().filter((u) => u.includes("/api/photo-faces")).length;
+
+  test("a clicked suggestion shows named at once, before the file is written, and the faces are not asked for again", async (t) => {
+    const ctx = await openWith(t, { faces: suggested(), tags: [], people: [] });
+    assert.equal(label(ctx), "Jane Doe?");
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    ctx.server.first("/api/photo/save-metadata", () => gate.then(() => ({ success: true })));
+    const asked = photoFacesAsked(ctx);
+    click(ctx.window, ctx.document.querySelector(".face-card"));
+    await flush(ctx.window, 6);
+    assert.equal(label(ctx), "Jane Doe", "the face waited for the file to be written");
+    release();
+    await flush(ctx.window, 12);
+    assert.equal(label(ctx), "Jane Doe");
+    assert.equal(photoFacesAsked(ctx), asked, "the faces were read again after naming");
+  });
+
+  test("a suggestion whose write fails is shown as it was", async (t) => {
+    const ctx = await openWith(t, { faces: suggested(), tags: [], people: [] });
+    ctx.server.first("/api/photo/save-metadata", { success: false, error: "disk full" });
+    ctx.window.alert = () => {};
+    click(ctx.window, ctx.document.querySelector(".face-card"));
+    await flush(ctx.window, 12);
+    assert.equal(label(ctx), "Jane Doe?", "a face the file does not hold is shown named");
+  });
+
   test("Add all is offered when a face would be named, and adds the person", async (t) => {
     const ctx = await openWith(t, { faces: named, tags: [], people: [] });
     const button = ctx.document.getElementById("btn-add-all-faces");

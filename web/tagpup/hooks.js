@@ -30,6 +30,7 @@ export const upper = {
     reloadChangedPhoto: null,
     renderFileList: null,
     renderPhotoFaces: null,
+    renderPhotoFacesHere: null,
     renderSyncInfo: null,
     renderSuggestionsPanel: null,
     renderTags: null,
