@@ -75,6 +75,9 @@ export function renderPhotoFaces(photoPath) {
             }
 
             faces.forEach(face => {
+                // A face nobody is like has no card: it offers nothing to click. The face icon's boxes on the
+                // photo are where a missing person's face is found and named (owner, 2026-11-02).
+                if (!face.excluded && !face.name && !face.suggestion) return;
                 const card = document.createElement('div');
                 card.className = 'face-card';
                 if (face.excluded) card.classList.add('excluded');
@@ -128,9 +131,6 @@ export function renderPhotoFaces(photoPath) {
                     label.classList.add('face-card-suggestion');
                     card.tabIndex = 0;
                     attachPersonFaces(card, suggestedWho);
-                } else {
-                    label.textContent = 'Unidentified';
-                    card.title = 'No similar face in this database yet';
                 }
                 card.appendChild(label);
 

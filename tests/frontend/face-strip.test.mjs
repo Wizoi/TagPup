@@ -51,7 +51,7 @@ describe("face strip", () => {
     assert.ok(hidden(ctx.section()), "strip shown with no faces");
   });
 
-  test("renders one card per detected face", async (t) => {
+  test("renders one card per face that has a name or a suggestion", async (t) => {
     const ctx = await openPhoto(t, {
       faces: [
         { id: 1, box: [0, 0, 50, 50], area: 2500, name: "Jane Doe", excluded: false },
@@ -61,7 +61,7 @@ describe("face strip", () => {
       unmatched: 1,
     });
     assert.ok(!hidden(ctx.section()), "strip stayed hidden");
-    assert.equal(ctx.cards().length, 2);
+    assert.equal(ctx.cards().length, 1);
   });
 
   test("a named face shows its name", async (t) => {
@@ -73,15 +73,14 @@ describe("face strip", () => {
     assert.match(ctx.cards()[0].textContent, /Jane Doe/);
   });
 
-  test("an unidentified face is flagged", async (t) => {
+  test("an unidentified face has no card in the strip, and the summary still counts it", async (t) => {
     const ctx = await openPhoto(t, {
       faces: [{ id: 2, box: [0, 0, 9, 9], area: 81, name: null, suggestion: null, excluded: false }],
       total: 1,
       unmatched: 1,
     });
-    const card = ctx.cards()[0];
-    assert.ok(card.classList.contains("unmatched"), "face not marked unmatched");
-    assert.match(card.textContent, /Unidentified/);
+    assert.equal(ctx.cards().length, 0, "a card that offers nothing was drawn");
+    assert.match(ctx.document.getElementById("faces-summary").textContent, /1 detected, 1 unidentified/);
   });
 
   test("a suggested name is shown with its confidence", async (t) => {
@@ -165,15 +164,6 @@ describe("face strip", () => {
 
     const asked = ctx.server.urls().some((u) => u.includes("/api/photo/save-metadata"));
     assert.ok(asked, "clicking a suggestion did not apply the person");
-  });
-
-  test("a face with no suggestion is not clickable", async (t) => {
-    const ctx = await openPhoto(t, {
-      faces: [{ id: 2, box: [0, 0, 9, 9], area: 81, name: null, suggestion: null, excluded: false }],
-      total: 1,
-      unmatched: 1,
-    });
-    assert.ok(!ctx.cards()[0].classList.contains("face-card-actionable"));
   });
 
   test("returning to the folder view clears the strip", async (t) => {
