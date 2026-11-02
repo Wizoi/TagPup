@@ -93,6 +93,13 @@ export function zoomedPicture() {
     };
 }
 
+/** Is `el` a field text is typed in? */
+function isTypingField(el) {
+    if (!el || typeof el.tagName !== 'string') return false;
+    if (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+    return el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes(el.type);
+}
+
 /** Keys that move around the page behind: kept from it while the zoom is open. */
 const PAGE_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' ',
     'PageUp', 'PageDown', 'Home', 'End'];
@@ -265,7 +272,8 @@ export function wireImageZoom() {
             dismissZoom();
             return;
         }
-        if (PAGE_KEYS.includes(e.key)) {
+        // A name typed in a field over the picture (a face's panel) keeps its keys: Space and Enter are the field's.
+        if (PAGE_KEYS.includes(e.key) && !isTypingField(e.target)) {
             e.preventDefault();
             e.stopPropagation();
         }

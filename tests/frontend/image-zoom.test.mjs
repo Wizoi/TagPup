@@ -97,6 +97,20 @@ describe("zooming the photo", () => {
     assert.equal(tagInput.value, "Sunset", "Escape also abandoned the typed tag");
   });
 
+  test("a name typed in a field over the zoomed picture keeps its Space and Enter", async (t) => {
+    const { window, document } = await onFirstPhoto(t);
+    click(window, document.getElementById("main-image"));
+    const field = document.createElement("input");
+    field.type = "text";
+    document.getElementById("image-zoom").append(field);
+    field.focus();
+    for (const key of [" ", "Enter", "ArrowLeft", "Home"]) {
+      assert.equal(press(document, key).defaultPrevented, false, `the zoom took ${JSON.stringify(key)} from a field being typed in`);
+    }
+    document.getElementById("image-zoom").removeChild(field);
+    assert.equal(press(document, " ").defaultPrevented, true, "the page's keys are no longer kept from it");
+  });
+
   test("the arrow keys do not change the photo underneath it", async (t) => {
     const { window, document } = await onFirstPhoto(t);
     click(window, document.getElementById("main-image"));
