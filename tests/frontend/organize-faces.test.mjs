@@ -516,8 +516,8 @@ describe("naming a face against the server", { skip: !REAL }, () => {
     click(ctx.window, button);
     await until(ctx, () => ctx.replies("/api/face/match") === 1, "the face to be named");
     const posts = ctx.server.calls.slice(sent).filter((c) => c.method === "POST").map((c) => c.url.replace(/^.*\/api\//, ""));
-    // The real page also asks the tree to hold the person (taxonomy/create, a no-op for a node it has): no fake ever sent it.
-    assert.deepEqual(posts, ["taxonomy/create", "photo/save-metadata", "face/match"], "two rapid clicks name once, the tag first");
+    // A person the tree holds is not created again (taxonomy/create was a no-op for a node it has, and the tree was read after it).
+    assert.deepEqual(posts, ["photo/save-metadata", "face/match"], "two rapid clicks name once, the tag first");
     assert.deepEqual(await ctx.faceNames(), [null, WREN, null]);
     assert.deepEqual(await ctx.tagsOfPhoto(), ["People/" + WREN, "Trips"]);
     assert.match(ctx.box(1).getAttribute("aria-label"), new RegExp(`Face [0-9] of 3: ${WREN}`));
