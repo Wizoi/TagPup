@@ -32,6 +32,7 @@ import hashlib
 import io
 import os
 import tempfile
+import threading
 
 from tagpup.files import containers, shares
 
@@ -287,13 +288,9 @@ def patch_jpeg(path, serialise, saving):
         raise
     except OSError:
         return False        # held open by another program, read-only, gone: the rewrite's, which says why
-    lent = False            # a bounded call still running holds the handle: closed by the thread's end, not here
+    lent = _Lent(handle)
     try:
-        try:
-            found = _bounded(path, lambda: _header_of(handle))
-        except Away:
-            lent = True
-            raise
+        found = lent.bounded(path, lambda: _header_of(handle))
         if found is None:
             return False
         layout, header = found
@@ -310,18 +307,47 @@ def patch_jpeg(path, serialise, saving):
             return False
         if not changes:
             return True
-        try:
-            saved, before = _bounded(path, lambda: record(handle, changes))
-        except Away:
-            lent = True
-            raise
+        saved, before = lent.bounded(path, lambda: record(handle, changes))
         saving(saved, before)
-        try:
-            _bounded(path, lambda: _write(handle, changes))
-        except Away:
-            lent = True
-            raise
+        lent.bounded(path, lambda: _write(handle, changes))
         return True
     finally:
-        if not lent:
-            handle.close()
+        lent.close()
+
+
+class _Lent:
+    """The photo's open handle across the bounded calls of a patch (_bounded): closed by `close` at the patch's end,
+    unless a call that did not answer (Away) may still be using it on its thread; then by that call's end, or at once
+    when the call never started. Not left to the garbage collector: the Away's traceback holds the patch's frame, and
+    with it the handle, which no other program, nor a settle of this process, could open meanwhile."""
+
+    def __init__(self, handle):
+        self.handle, self.gate = handle, threading.Lock()
+        self.lent = self.started = self.ended = False
+
+    def bounded(self, path, work):
+        def call():
+            with self.gate:
+                if self.lent:
+                    return None         # began after its wait ran out: the handle is closed already
+                self.started, self.ended = True, False
+            try:
+                return work()
+            finally:
+                with self.gate:
+                    self.ended = True
+                    if self.lent:
+                        self.handle.close()
+        try:
+            return _bounded(path, call)
+        except Away:
+            with self.gate:
+                self.lent = True
+                if not self.started or self.ended:
+                    self.handle.close()
+            raise
+
+    def close(self):
+        with self.gate:
+            if not self.lent:
+                self.handle.close()
