@@ -230,6 +230,7 @@ _FILES = {
             "test_a_photo_is_known_by_its_picture "
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
+            "test_census_of_jpeg_segments "
             "test_container_layout "
             "test_dates test_derived_file_changes "
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session "

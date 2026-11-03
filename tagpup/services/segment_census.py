@@ -15,7 +15,12 @@ of a length in HEADERS, and each entry whose value is larger than four bytes poi
 pointer lands inside the MakerNote counted from the TIFF header (the note breaks if it is moved; Canon, Sony, Panasonic),
 "note-relative" when every pointer lands inside it counted from the note's own start (it may move whole; Apple,
 Fujifilm, Olympus' newer form), "own header" for a note carrying a TIFF header of its own (Nikon's type 3), "either" when
-both fit, "outside" when neither does, "no pointers" when every value fits in its entry, "not an IFD" otherwise.
+both fit, "no pointers" when every value fits in its entry. A note whose pointers fit inside it once all are shifted by one
+amount was moved by a program that did not fix them (its pointers count from its old place): "moved" with what the Exif
+IFD's OffsetSchema (0xEA1D, the shift Microsoft's writers record) says -- "says by how much" when that shift lands every
+pointer inside the note, "wrong" when it does not, "absent" -- and a reader that does not shift them reads garbage.
+"outside" when no shift fits, "not an IFD" when no header length gives an IFD whose entries parse (a count claiming more
+entries than the note holds, an entry of no TIFF type).
 """
 import collections
 import datetime
@@ -201,8 +206,9 @@ def _note_ifd(note, at, order):
     return pointers
 
 
-def _note_offsets(tiff, start, length, order):
-    """How a MakerNote at `start` of `tiff` points at its values (the module says)."""
+def _note_offsets(tiff, start, length, order, schema=None):
+    """How a MakerNote at `start` of `tiff` points at its values (the module says); `schema` is the Exif IFD's
+    OffsetSchema, None when it has none."""
     note = tiff[start:start + length]
     if len(note) < length or length < 8:
         return "cut short"
@@ -217,8 +223,15 @@ def _note_offsets(tiff, start, length, order):
                 return "no pointers"
             tiff_relative = all(start <= at and at + size <= start + length for size, at in pointers)
             note_relative = all(at + size <= length for size, at in pointers)
-            return ("either" if tiff_relative and note_relative else "tiff-relative" if tiff_relative
-                    else "note-relative" if note_relative else "outside")
+            if tiff_relative or note_relative:
+                return "either" if tiff_relative and note_relative else "tiff-relative" if tiff_relative else "note-relative"
+            if max(at + size for size, at in pointers) - min(at for _size, at in pointers) > length:
+                return "outside"
+            if schema is None:
+                return "moved, OffsetSchema absent"
+            return ("moved, OffsetSchema says by how much" if all(
+                start <= at + schema and at + schema + size <= start + length for size, at in pointers)
+                else "moved, OffsetSchema wrong")
     return "not an IFD"
 
 
@@ -242,7 +255,9 @@ def _exif(tiff, counts, makers):
         makers[vendor]["no MakerNote"] += 1
     else:
         counts["MakerNote"] += 1
-        makers[vendor][_note_offsets(tiff, note[3], note[1], order) if note[1] > 4 else "inline"] += 1
+        schema = exif_ifd[0].get(0xEA1D)
+        shift = struct.unpack(order + "i", schema[2])[0] if schema and schema[0] == 9 else None
+        makers[vendor][_note_offsets(tiff, note[3], note[1], order, shift) if note[1] > 4 else "inline"] += 1
 
 
 # --- XMP ----------------------------------------------------------------------------------------------------------
