@@ -12,14 +12,56 @@ tagpup.files.exiftool_session.ExifToolSession, and a test reaches into the middl
   `on_write` is called;
 
 A file is also a real one on disk when the test made it so (tests/view_library.py make_jpeg), which the lock-free parts of a write
-(the stat, the tail check, the Recycle Bin) look at.
+(the stat, the tail check, the Recycle Bin) look at. A write is made as field_values.write makes it, beside the photo (`-o`):
+the new file is a copy of a real photo, which the picture check (field_values._landed) compares and moves over it; a photo
+that is only in the table has no new file and nothing to move, so while a session is open the check passes it by. A test
+whose own stand-in writes no file at all says so with `writes_no_file(testcase)`.
 """
 import os
+import shutil
 import threading
 from unittest import mock
 
 from tagpup.core import fields, paths
-from tagpup.files import exiftool_session
+from tagpup.files import exiftool_session, field_values
+
+#: The sessions open (in every thread) and the patch of the picture check they hold while any is (_check_passes_by).
+_open = {"sessions": 0, "patch": None}
+_open_lock = threading.Lock()
+_real_landed = field_values._landed
+
+
+def _landed_or_only_in_the_table(photo_path, scratch):
+    """The picture check of a new file the stand-in wrote (of a real photo); nothing for a photo of which none was written
+    (one only in the table, or a stand-in that writes no file)."""
+    if os.path.exists(scratch):
+        _real_landed(photo_path, scratch)
+
+
+def writes_no_file(testcase):
+    """For `testcase`, whose stand-in for ExifTool keeps fields and writes no file: the picture check passes by a write
+    that left no new file beside its photo (_landed_or_only_in_the_table), until the test ends."""
+    patcher = mock.patch("tagpup.files.field_values._landed", _landed_or_only_in_the_table)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
+def _check_passes_by(opening):
+    """A session opened (`opening`) or closed: the first open patches the picture check, the last closed unpatches it."""
+    with _open_lock:
+        _open["sessions"] += 1 if opening else -1
+        if opening and _open["sessions"] == 1:
+            _open["patch"] = mock.patch("tagpup.files.field_values._landed", _landed_or_only_in_the_table)
+            _open["patch"].start()
+        elif not opening and _open["sessions"] == 0:
+            _open["patch"].stop()
+            _open["patch"] = None
+
+
+def _written_beside(path, params):
+    """What ExifTool's `-o <file>` does: the new file of a real photo written at <file> (a copy: the table holds the fields)."""
+    if "-o" in params and os.path.exists(path):
+        shutil.copyfile(path, params[params.index("-o") + 1])
 
 
 def standing_in(testcase):
@@ -82,9 +124,11 @@ class Files:
                     files.starts += 1
                 if files.cannot_start is not None:
                     raise files.cannot_start
+                _check_passes_by(True)
                 return files
 
             def __exit__(self, *problem):
+                _check_passes_by(False)
                 return False
         return Session()
 
@@ -113,10 +157,10 @@ class Files:
 
     @staticmethod
     def refuse_in_the_way(path):
-        """What ExifTool answers a write of a photo whose scratch file is there (exiftool.pl, 13.59)."""
+        """What ExifTool answers a write of a photo (`-o` at its scratch file) whose scratch file is there (13.59)."""
         scratch = exiftool_session.scratch_of(path)
         if os.path.exists(scratch):
-            raise exiftool_session.ExifToolFailed(1, "", "Error: Temporary file already exists: %s\n" % scratch, [path])
+            raise exiftool_session.ExifToolFailed(1, "", "Error: '%s' already exists - %s\n" % (scratch, path), [path])
 
     def set_tags(self, photo_paths, tags=None, params=None):
         for path in photo_paths:
@@ -138,6 +182,7 @@ class Files:
             answered_as = {written: read for read, written in fields.WRITTEN_AS.items()}
             for field, value in (tags or {}).items():
                 held[fields.read_key(answered_as.get(field, field))] = value
+            _written_beside(path, list(params or []))
 
     def execute(self, *args):
         self.refuse_in_the_way(args[-1])
@@ -145,4 +190,5 @@ class Files:
         for field in args:
             if field.startswith("-") and field.endswith("="):
                 held.pop(fields.read_key(field[1:-1]), None)
+        _written_beside(args[-1], list(args))
         return ""

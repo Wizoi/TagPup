@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_exiftool  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.services import tagging  # noqa: E402
@@ -55,6 +56,7 @@ HARBOUR = ["Places/Harbour", "Places/Harbour/Pier", "Relay"]
 class ReplacingATag(unittest.TestCase):
     def setUp(self):
         self.lib = TempLibrary(self)
+        fake_exiftool.writes_no_file(self)
         self.harbour = self.lib.photo("harbour.jpg")
         self.beach = self.lib.photo("beach.jpg")
         self.lib.add_row(self.harbour, tags=HARBOUR)

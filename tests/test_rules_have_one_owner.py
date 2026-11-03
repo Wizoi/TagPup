@@ -108,9 +108,9 @@ LINE_RULES = (
      "with exiftool.ExifTool(executable=path) as et:", "class ExifToolSession(exiftool.ExifToolHelper", ""),
     # A photo's fields are written by one writer, field_values.write: the indexer's identity mint built its own set_tags,
     # outside the writer's clears, its minor-error rule and its guard (#1473, #1418). An execute of a "-TAG=value" is a
-    # write too, and one without -overwrite_original leaves an _original copy beside the photo (#1496).
+    # write too. Not even field_values overwrites a photo in place (OVERWRITES).
     ("an ExifTool write outside field_values", FIELD_VALUES, r"\.set_tags\(|-overwrite_original|\.execute\([^)]*[\"']-[\w:-]+<?=",
-     'et.execute("-XMP:Subject=Quay", path)', "-overwrite_original", ""),
+     'et.execute("-XMP:Subject=Quay", path)', ".set_tags(", ""),
     # Other processes are started, run and stopped through tagpup.core.processes: every spawn decided for itself
     # whether the child got a console window, and a test run put a terminal window on the desktop for every server it
     # started and every reaper (#124).
@@ -119,6 +119,10 @@ LINE_RULES = (
     ("a console flag or taskkill spelled", PROCESSES, r"creationflags|CREATE_NO_WINDOW|DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|\btaskkill\b|\btasklist\b",
      "flags = CREATE_NO_WINDOW", "CREATE_NO_WINDOW", "all"),
 )
+#: ExifTool told to write over a photo, which no shipped file says, field_values included: a write is made beside the photo
+#: (`-o`) and moved over it only once its picture is the photo's (field_values._landed; #2377). Without the option ExifTool
+#: leaves an _original copy beside the photo (#1496).
+OVERWRITES = "-overwrite_original"
 #: Lines no line rule may match.
 NOT_FORBIDDEN = ('execute("SELECT 1 FROM photos WHERE people LIKE ?")', 'x = tag.split("/")',
                  "with ExifToolSession(executable=executable) as et:", "from exiftool_session import ExifToolSession")
@@ -144,6 +148,11 @@ class OneOwnerPerLine(unittest.TestCase):
                              if pattern.search(line) and NOT_A_PATH not in line and not line.lstrip().startswith("#")]
         self.assertEqual([], problems, "\n\nSay it through its owner (paths.stored / key / sql_equals, ExifToolSession, "
                          "tagpup.core.processes):\n\n" + "\n".join(problems))
+
+    def test_no_photo_is_overwritten_in_place(self):
+        found = ["%s:%d" % (relative, number) for relative in python_sources() for number, line in lines_of(relative)
+                 if OVERWRITES in line and not line.lstrip().startswith("#")]
+        self.assertEqual([], found, "a photo is written beside itself and moved over it (field_values.write)")
 
     def test_the_rules_see_what_they_forbid_and_their_owners_still_say_it(self):
         # A guard whose patterns quietly match nothing passes forever.

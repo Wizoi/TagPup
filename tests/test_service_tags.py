@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_exiftool  # noqa: E402
 import photo_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from face_rows import people_of  # noqa: E402
@@ -349,10 +350,11 @@ class AnIndexBehindItsFiles(unittest.TestCase):
     """docs/findings.md, #44. The photos to change come from the index; the rewrite
     reads each file and skips one whose file no longer carries the tag. That photo was
     counted as one that could not be rewritten. Here the rewrite is the real one, and
-    only the files are stood in for."""
+        only the files are stood in for."""
 
     def setUp(self):
         self.lib = TempLibrary(self)
+        fake_exiftool.writes_no_file(self)
         self.carries = self.lib.photo("a.jpg")
         self.stale = self.lib.photo("b.jpg")
         for path in (self.carries, self.stale):

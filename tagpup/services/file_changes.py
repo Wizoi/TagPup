@@ -59,6 +59,11 @@ and asks whether it is to stop: a stopped batch withdraws the files it did not r
 write: never a conflict, since the file under way holds what it held or what it was to hold (_Stalled, _share_stopped). The
 scratch file ExifTool leaves beside it, which refuses every later write of it, is removed by the next write of it, which then
 tries once more (_removed_scratch, #2180).
+
+**A write whose picture changed** (field_values.PictureChanged, the picture check of #2377): its new file was removed and the
+photo is as it was, so it is written once more, logged and counted (`pictures_refused` in the result's details); a second
+is the photo's error, by the one failure path (_after_failure): taken out of a forward change, a conflict noted
+file_journal.PICTURE_CHANGED in a settle or an undo.
 """
 import contextlib
 import functools
@@ -82,9 +87,11 @@ from tagpup.store import db, derived, file_journal, photos, schema
 logger = logging.getLogger(__name__)
 
 #: The steps of writing one file, in order; `_reached` is told of each.
-STEPS = ("plan committed", "file writing", "patch saved", "file written", "file recorded")
+STEPS = ("plan committed", "file writing", "patch saved", "scratch written", "file written", "file recorded")
 #: The step only a patch in place reaches (field_values.write's `saving`): ExifTool's rewrite saves no record.
 PATCH_SAVED = "patch saved"
+#: The step of ExifTool's rewrite once its new file is beside the photo, before the picture check (field_values._landed).
+SCRATCH_WRITTEN = "scratch written"
 
 
 def _reached(step):
@@ -383,7 +390,7 @@ def _write_session(library, operation, exiftool_path, photo_paths, read, plan_on
                    stop_at_first_error, et, held, whole, on_planned, alongside=None, on_chunk=None):
     if len(photo_paths) > batches.CHUNK and batches.current() is None:
         raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
-    since = _removed_so_far()
+    since = _counted_so_far()
     with contextlib.ExitStack() as own:
         if et is None:
             et = own.enter_context(field_values.session(exiftool_path))
@@ -769,6 +776,13 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
             failed = _written(et, row.path, target, saving)      # once: a second failure is the write's own
         elif left == SCRATCH_UNDER_WAY:
             failed = exiftool_session.written_lately(failed)
+    if isinstance(failed, field_values.PictureChanged):
+        logger.warning("%s: its write changed the picture's bytes; the new file was discarded, and it is written once more",
+                       row.named())
+        _running.pictures_refused = _counted_so_far()[1] + 1
+        failed = _written(et, row.path, target, saving)
+        if isinstance(failed, field_values.PictureChanged):
+            failed = field_values.PictureChanged(file_journal.PICTURE_CHANGED)
     if failed is None and row.patched:
         failed = _verified(et, library, row, target)
     if failed is not None:
@@ -788,7 +802,7 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
 def _written(et, path, target, saving=None):
     """None when field_values.write wrote `target` into the file at `path`; else what it raised."""
     try:
-        field_values.write(et, path, target, saving=saving)
+        field_values.write(et, path, target, saving=saving, scratch_written=lambda: _reached(SCRATCH_WRITTEN))
     except Exception as e:
         return e
     return None
@@ -856,16 +870,20 @@ SCRATCH_STALE = exiftool_session.DEFAULT_TIMEOUT
 SCRATCH_UNDER_WAY = "it was written in the last %d s, by a write that may be under way" % SCRATCH_STALE
 
 
-def _removed_so_far():
-    return getattr(_running, "scratch_removed", 0)
+def _counted_so_far():
+    """(scratch files _removed_scratch removed, writes whose picture changed made again: _carry) in this thread so far."""
+    return getattr(_running, "scratch_removed", 0), getattr(_running, "pictures_refused", 0)
 
 
 def _said_removed(result, since):
-    """`result`, saying how many scratch files _removed_scratch removed in this thread since `since` (_removed_so_far)."""
-    removed = _removed_so_far() - since
+    """`result`, saying how many scratch files _removed_scratch removed (`scratch_removed`) and how many writes whose
+    picture changed were discarded and made again (`pictures_refused`) in this thread since `since` (_counted_so_far)."""
+    removed, refused = (now - then for now, then in zip(_counted_so_far(), since))
     if removed:
         result.details["scratch_removed"] = removed
         logger.info("A write removed %d leftover scratch file(s) of interrupted writes", removed)
+    if refused:
+        result.details["pictures_refused"] = refused
     return result
 
 
@@ -900,7 +918,7 @@ def _removed_scratch(path, saw, interrupted):
             why = "it could not be removed: %s" % e
         else:
             logger.warning("Removed %s (%d bytes), the scratch file an interrupted write left beside its photo", scratch, left[1])
-            _running.scratch_removed = _removed_so_far() + 1
+            _running.scratch_removed = _counted_so_far()[0] + 1
             return None
     logger.info("Left %s beside its photo: %s", scratch, why)
     return why
@@ -1028,7 +1046,9 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
         if on_failure == "withdraw":
             file_journal.withdraw(library.path, [row.id])
             return "failed", error
-        file_journal.mark(library.path, [row.id], "conflict", "could not be written: %s" % error)
+        picture = isinstance(error, field_values.PictureChanged)
+        file_journal.mark(library.path, [row.id], "conflict",
+                          file_journal.PICTURE_CHANGED if picture else "could not be written: %s" % error)
         return "failed", error
     return _conflict(library, row, "a write failed (%s) and left it holding neither what it held nor what"
                                    " it was to hold" % error)
@@ -1465,7 +1485,7 @@ def undo(library, change_id, exiftool_path, check, apply=False):
     if not apply or rehearsal.refused:
         return rehearsal
     result = Result(attempted=rehearsal.attempted, details={"dry_run": False, "change": change_id, "files": True})
-    since = _removed_so_far()
+    since = _counted_so_far()
     schema.ensure(library.path)
     change, ready, refused = _undoable(library, change_id, exiftool_path, check)
     if change is None:

@@ -212,6 +212,11 @@ PATCH_CAP = 1 << 20
 OUTSIDE_CHANGED = ("the bytes outside its patch changed while it was written: the patch was put back, and the file "
                    "is not written again")
 
+#: The note of a file whose write changed its picture's bytes twice in a settle or an undo (tagpup.files.field_values.
+#: PictureChanged, the picture check of #2377): the new file was discarded each time and the file is as it was; a
+#: conflict, which the doctor counts. Also the error a forward write reports for it.
+PICTURE_CHANGED = "its write changed the picture's bytes twice; the file is as it was and nothing was written"
+
 
 class PatchTooLarge(Exception):
     """A patch's old bytes are more than PATCH_CAP: nothing was saved, and nothing may be written by a patch."""

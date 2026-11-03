@@ -25,9 +25,11 @@ canonical serialised form ExifTool writes as given, so the text a read gives is 
 float of 17 digits exactly); a dict in a plan is refused (it was planned as "clear the regions"), and so is a session that
 does not know TagPup's namespace (ABakeIsWritten).
 """
+import io
 import json
 import os
 import shutil
+import stat as file_stat
 import sys
 import unittest
 from unittest import mock
@@ -38,10 +40,10 @@ from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of,
 import baked_files  # noqa: E402
 import photo_rows  # noqa: E402
 from tagpup.core import fields, orientation  # noqa: E402
-from tagpup.files import bake, field_values  # noqa: E402
+from tagpup.files import bake, containers, exiftool_session, field_values, lock_owners  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, file_journal  # noqa: E402
 
 #: 98 bytes, longer than the 64 IPTC:Keywords keeps.
 LONG = "Places/" + "Harbour" * 13
@@ -176,9 +178,9 @@ class AWriteThatChangedNothing(KeptCase):
         a, b = self.make_read("a.jpg"), self.make_read("b.jpg")
         real = field_values.write
 
-        def write(et, path, values, saving=None):
+        def write(et, path, values, **options):
             if path != a:
-                real(et, path, values, saving=saving)
+                real(et, path, values, **options)
 
         with mock.patch.object(field_values, "write", side_effect=write):
             result = self.add([a, b])
@@ -452,6 +454,183 @@ class ABakeIsWritten(BakeCase):
         self.assertEqual((1, []), (undone.changed, undone.errors))
         self.assertEqual(["undone"], self.states(change))
         self.assertEqual(before, self.regions_of(a))
+
+
+def picture_of(data):
+    """The bytes of a JPEG (`data`) from its first scan to its end: its picture, which no write may change (#2377)."""
+    return data[containers.read(io.BytesIO(data)).image_offset:]
+
+
+def bytes_of(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def flip_a_picture_byte(path):
+    """What the PC that wrote the owner's photos did to some of them: a byte of the picture changed after a write."""
+    with open(path, "r+b") as handle:
+        start = containers.read(handle).image_offset
+        size = handle.seek(0, 2)
+        at = start + (size - start) // 2
+        handle.seek(at)
+        byte = handle.read(1)[0]
+        handle.seek(at)
+        handle.write(bytes([byte ^ 0x01]))
+
+
+class APhotoIsWrittenBesideItselfAndMovedOverIt(KeptCase):
+    """ExifTool writes the new file of a photo beside it; the write compares its picture with the photo's and only then
+    moves it over the photo (tagpup.files.field_values._landed; #2377, DECISIONS 2026-11-03). A new file whose picture
+    changed is removed, the photo untouched, and the write made once more; twice is the photo's error.
+
+    Mutations, each run and each failing the tests named: _landed putting the new file over the photo before comparing
+    -> test_a_picture_changed_once, test_a_picture_changed_twice, test_the_new_file_is_moved and test_a_move_that_fails;
+    the compare always equal (`same = True`) -> the first two; `-o` dropped from both commands of field_values.write ->
+    every test here. On the code before the check (551689f4) every test here fails: four for want of the step "scratch
+    written" (no write was ever beside its photo), and test_a_move_that_fails because the photo was written in place.
+    A move that fails removes the write's own new file and names no path: on the branch's first cut, which left it and
+    raised the OS's error, test_a_move_that_fails and test_a_read_only_photo fail.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.a = self.make_read("a.jpg")
+        self.scratch = exiftool_session.scratch_of(self.a)
+        self.before = bytes_of(self.a)
+        self.stamped = self.rows("SELECT mtime, size, raw_metadata FROM photos WHERE path = ?", (self.a,))[0]
+
+    def flipping(self, times):
+        """A stand-in for file_changes._reached that flips a picture byte of the new file the first `times` times it is
+        written, and keeps what the photo held each time it was (to show it was not touched before the compare)."""
+        seen = self.seen = []
+
+        def reached(step):
+            if step == file_changes.SCRATCH_WRITTEN:
+                seen.append(bytes_of(self.a))
+                if len(seen) <= times:
+                    flip_a_picture_byte(self.scratch)
+        return mock.patch.object(file_changes, "_reached", side_effect=reached)
+
+    def row_of_a(self):
+        return self.rows("SELECT mtime, size, raw_metadata FROM photos WHERE path = ?", (self.a,))[0]
+
+    def test_a_picture_changed_once_is_written_again(self):
+        with self.flipping(1), self.assertLogs(file_changes.logger, "WARNING") as logged:
+            result = self.add([self.a])
+        self.assertEqual((1, []), (result.changed, result.errors))
+        self.assertEqual(1, result.details["pictures_refused"])
+        self.assertTrue(any("picture's bytes" in line for line in logged.output), logged.output)
+        # The photo was the photo before each compare: the damaged new file never reached it.
+        self.assertEqual([self.before, self.before], self.seen)
+        self.assertEqual(picture_of(self.before), picture_of(bytes_of(self.a)))
+        self.assertEqual(["Beach", "Harbour"], keywords_of(self.a))
+        self.assertFalse(os.path.exists(self.scratch))
+        self.assertEqual(["done"], self.states(result.details["change"]))
+        mtime, size, _raw = self.row_of_a()
+        stat = os.stat(self.a)
+        self.assertEqual((stat.st_size, True), (size, abs(stat.st_mtime - mtime) < 0.001), "stamped from the replaced file")
+
+    def test_a_picture_changed_twice_is_the_photos_error_and_the_file_is_as_it_was(self):
+        with self.flipping(2), self.assertLogs(file_changes.logger, "WARNING"):
+            result = self.add([self.a])
+        self.assertEqual(0, result.changed)
+        self.assertEqual([(self.a, file_journal.PICTURE_CHANGED)],
+                         [(what, str(why)) for what, why in result.errors])
+        self.assertEqual(self.before, bytes_of(self.a))
+        self.assertFalse(os.path.exists(self.scratch))
+        self.assertEqual(self.stamped, self.row_of_a(), "the row is not stamped from a write that did not land")
+        self.assertEqual([], self.states(result.details["change"]))
+
+    def test_a_crash_once_the_new_file_is_written_leaves_the_photo_and_a_settle_writes_it(self):
+        # The photo older than the write, as on a share: the scratch file's age, not the photo's, says no write is under way.
+        long_ago = os.stat(self.a).st_mtime - 3 * 86400
+        os.utime(self.a, (long_ago, long_ago))
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at(file_changes.SCRATCH_WRITTEN)):
+            with self.assertRaises(Crash):
+                self.add([self.a])
+        change = self.last_change()
+        self.assertEqual(self.before, bytes_of(self.a))
+        self.assertTrue(os.path.exists(self.scratch), "the new file is left beside the photo")
+        self.assertEqual(["writing"], self.states(change))
+        stale = long_ago + 60
+        self.assertLess(stale, os.stat(self.scratch).st_mtime - file_changes.SCRATCH_STALE)
+        os.utime(self.scratch, (stale, stale))
+        self.assertEqual(1, self.settle())
+        self.assertEqual(("applied", ["done"]), (self.status(change), self.states(change)))
+        self.assertEqual(["Beach", "Harbour"], keywords_of(self.a))
+        self.assertEqual(picture_of(self.before), picture_of(bytes_of(self.a)))
+        self.assertFalse(os.path.exists(self.scratch))
+
+    def test_the_new_file_is_moved_over_the_photo_never_copied(self):
+        # The owner's requirement (2026-11-03): the photo is replaced by a move of the checked file, never a copy of it.
+        moved, ids = [], []
+        real_replace = os.replace
+
+        def replace(source, destination):
+            moved.append((source, destination))
+            real_replace(source, destination)
+
+        def reached(step):
+            if step == file_changes.SCRATCH_WRITTEN:
+                ids.append(os.stat(self.scratch).st_ino)
+
+        def no_copy(*args, **kwargs):
+            raise AssertionError("a photo's write copied a file: %r" % (args,))
+
+        with mock.patch.object(file_changes, "_reached", side_effect=reached), \
+                mock.patch.object(os, "replace", side_effect=replace), \
+                mock.patch.object(shutil, "copy", side_effect=no_copy), \
+                mock.patch.object(shutil, "copyfile", side_effect=no_copy), \
+                mock.patch.object(shutil, "copy2", side_effect=no_copy):
+            result = self.add([self.a])
+        self.assertEqual((1, []), (result.changed, result.errors))
+        self.assertEqual(["Beach", "Harbour"], keywords_of(self.a))
+        self.assertIn((self.scratch, self.a), moved)
+        self.assertEqual(ids, [os.stat(self.a).st_ino], "the photo is the very file ExifTool wrote beside it")
+
+    def test_a_move_that_fails_leaves_the_photo_as_it_was_and_removes_its_new_file(self):
+        real_replace = os.replace
+
+        def replace(source, destination):
+            if destination == self.a:
+                # Words lock_owners.HELD_WORDS does not know: the holder is named only if the error is still an OSError.
+                raise PermissionError(13, "Refused by the stand-in", None, 32)
+            real_replace(source, destination)
+
+        viewer = [{"name": "Viewer.exe", "pid": 4242}]
+        with mock.patch.object(os, "replace", side_effect=replace), \
+                mock.patch.object(lock_owners, "holders", return_value=viewer):
+            result = self.add([self.a])
+        self.assertEqual(0, result.changed)
+        self.assertEqual([self.a], [what for what, _why in result.errors])
+        self.assertIn("It is held open by Viewer.exe.", str(result.errors[0][1]), "the OS's error was not kept")
+        self.assertIn("the new file was removed and the photo is as it was", str(result.errors[0][1]))
+        self.assertEqual(self.before, bytes_of(self.a))
+        self.assertFalse(os.path.exists(self.scratch), "the write's own new file is left beside the photo")
+        self.assertEqual([], self.states(result.details["change"]))
+
+    def test_a_read_only_photo_is_an_error_naming_no_path_and_the_next_write_fails_the_same(self):
+        """A photo marked read-only (copied off a disc) in a folder that is not: ExifTool writes its new file beside it,
+        and the move over the photo is refused. The error names no path (a photo is named by its id); the new file is
+        removed, so the next write is not told a write may be under way, but fails the same way; made writable, it takes
+        the tag."""
+        os.chmod(self.a, file_stat.S_IREAD)
+        self.addCleanup(os.chmod, self.a, file_stat.S_IREAD | file_stat.S_IWRITE)
+        for attempt in (1, 2):
+            with self.subTest(attempt=attempt):
+                result = self.add([self.a])
+                self.assertEqual((0, [self.a]), (result.changed, [what for what, _why in result.errors]))
+                said = str(result.errors[0][1])
+                self.assertIn("the new file was removed and the photo is as it was", said)
+                for named in (self.folder, os.path.basename(self.a), "exiftool_tmp"):
+                    self.assertNotIn(named, said, "the error names a path")
+                self.assertEqual(self.before, bytes_of(self.a))
+                self.assertFalse(os.path.exists(self.scratch), "the write's own new file is left beside the photo")
+                self.assertEqual(self.stamped, self.row_of_a())
+        os.chmod(self.a, file_stat.S_IREAD | file_stat.S_IWRITE)
+        done = self.add([self.a])
+        self.assertEqual((1, []), (done.changed, done.errors))
+        self.assertEqual(["Beach", "Harbour"], keywords_of(self.a))
 
 
 if __name__ == "__main__":

@@ -307,7 +307,8 @@ class ASmartRename(Base):
         read-only file), renames none of them; nothing is looked at before ExifTool is asked. The file of zeros
         stops the rename before anything is written; with the read-only one, the others are given the name they have
         as their PreservedFileName first (in their files only: the folder is not the library's), which a later rename
-        keeps. ExifTool's temporary file of the failed write may stay beside the read-only photo (#1410, #1411)."""
+        keeps. The read-only photo's write fails at the move over it, and its new file is removed with it
+        (field_values.NOT_MOVED)."""
         zeros = damaged_photos.all_zeros(os.path.join(self.lighthouse, "IMG_0004.jpg"), size=images.ZERO_TAIL + 100)
         locked = damaged_photos.whole_jpeg(os.path.join(self.lighthouse, "IMG_0005.jpg"), seed=31) and \
             os.path.join(self.lighthouse, "IMG_0005.jpg")
@@ -319,12 +320,12 @@ class ASmartRename(Base):
         self.addCleanup(writable_again)
         original = self.names()
         self.before = library_dump.dump(self.library.path)
-        for one, kept in ((zeros, [None] * 3), (locked, [os.path.basename(path) for path in self.loose])):
+        for one, kept, said in ((zeros, [None] * 3, "ExifTool"),
+                                (locked, [os.path.basename(path) for path in self.loose], "the new file was removed and the photo is as it was")):
             reply = self.rename(self.loose + [one])
             self.assertNotEqual(200, reply.status_code, (one, reply.data))
-            self.assertIn("ExifTool", reply.get_json()["error"], one)
-            self.assertEqual(original, [name for name in self.names() if not name.endswith("_exiftool_tmp")],
-                             "a photo was renamed")
+            self.assertIn(said, reply.get_json()["error"], one)
+            self.assertEqual(original, self.names(), "a photo was renamed, or a new file left beside one")
             self.assertEqual(kept, [in_file(path, "XMP:PreservedFileName").get("XMP:PreservedFileName")
                                     for path in self.loose], one)
         self.assert_library_unchanged()

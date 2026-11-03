@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_exiftool  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from test_service_replace_tag import keeps_writes  # noqa: E402
@@ -21,6 +22,7 @@ from tagpup.services import tagging  # noqa: E402
 class ChangingTags(unittest.TestCase):
     def setUp(self):
         self.lib = TempLibrary(self)
+        fake_exiftool.writes_no_file(self)
         self.a, self.b, self.c = (self.lib.photo(n) for n in ("a.jpg", "b.jpg", "c.jpg"))
         for path in (self.a, self.b, self.c):
             self.lib.add_row(path, tags=["Stale Index Tag"])

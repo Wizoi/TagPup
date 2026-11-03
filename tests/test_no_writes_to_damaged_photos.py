@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import damaged_photos  # noqa: E402
+import fake_exiftool  # noqa: E402
 import own_home  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 
@@ -115,6 +116,9 @@ class FakeExifTool:
 
 
 class TheIdentityWriter(unittest.TestCase):
+    def setUp(self):
+        fake_exiftool.writes_no_file(self)
+
     def writer(self, et):
         writer = IdentityWriter("exiftool")
         writer._session = lambda: et

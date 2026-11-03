@@ -81,7 +81,7 @@ def digest(path):
 
 
 def writes(execute):
-    return [call.args for call in execute.call_args_list if "-overwrite_original" in call.args]
+    return [call.args for call in execute.call_args_list if "-o" in call.args]
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")

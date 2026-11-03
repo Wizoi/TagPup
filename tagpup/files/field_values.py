@@ -16,13 +16,25 @@ photo's identity goes in that command too (#282).
 A struct field (tagpup.core.fields.STRUCT_FIELDS: a bake's regions) is one text, read with -struct and made the canonical
 text of what ExifTool answers (tagpup.files.bake.region_text), written whole as that text and cleared whole. TagPup's own
 bake fields are written only by a session that knows its namespace: session(), which every journaled write opens.
+
+**The picture check** (#2377; DECISIONS 2026-11-03). Photo files rewritten through this PC had bytes of their picture
+data changed, a few at a 64-byte stride, after an ordinary write. So ExifTool never writes over a photo: it writes the new
+file beside it (`-o`, at exiftool_session.scratch_of), its picture bytes -- a JPEG's from its first scan to its end -- are
+compared with the photo's, and only when they are equal is the new file moved over the photo (os.replace of a file beside
+it, on its volume: a move, never a copy). A new file whose picture differs is removed and the write raises PictureChanged,
+the photo untouched. What it does not catch: a byte changed in the metadata ExifTool rewrote (before the first scan), which
+only the read back of the fields finds; a fault below the SMB client's cache, since the new file is read back through it
+(a warm re-read of a share's file is a few ms against hundreds cold: #2388). A TIFF or PNG (19 photos of the live
+libraries) is written unchecked, one log line each (DECISIONS 2026-11-02). With `-o` ExifTool does not copy a file's
+attributes: a photo marked hidden or system loses the mark at its write (#2389).
 """
 import logging
+import os
 
 from exiftool.exceptions import ExifToolNotRunning
 
 from tagpup.core import fields, paths
-from tagpup.files import bake, exiftool_session, identity
+from tagpup.files import bake, containers, exiftool_session, identity, shares
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +56,30 @@ READ_BATCH = 200
 #: is refused without it, and written with it, each description under the first about and nothing else changed; a
 #: corrupt packet is refused with it as without it, and its warnings of a field not written (NOT_WRITTEN) are the same.
 #: It also stops ExifTool cutting an IPTC value to IPTC's length, so a write cuts it first (fields.as_written). Never on
-#: a read: it changes what ExifTool answers (DECISIONS 2026-10-27).
-WRITE_OPTIONS = ("-m", "-overwrite_original")
+#: a read: it changes what ExifTool answers (DECISIONS 2026-10-27). Never -overwrite_original: ExifTool writes the new
+#: file beside the photo (`-o`), and the picture check moves it over the photo (_landed).
+WRITE_OPTIONS = ("-m",)
+
+#: Seconds the picture check may take to read the photo and its new file (shares.bounded): a share that does not answer
+#: in it is away, and the write fails as a stalled share's does, the photo as it was.
+CHECK_SECONDS = 30.0
+
+#: The bytes the picture check reads at a time.
+BLOCK = 1 << 20
+
+#: The first bytes of a JPEG; a photo starting otherwise (a TIFF, a PNG) is written unchecked.
+JPEG_START = b"\xff\xd8\xff"
+
+#: Why a write is refused: the photo is a JPEG whose picture cannot be found (no scan before its end), so a new file
+#: could not be checked against it.
+NO_PICTURE = ("it starts as a JPEG but holds no picture data that could be found (no scan before its end), so a write "
+              "of it could not be checked; nothing was written")
+
+#: Why a write failed whose checked new file could not be moved over the photo (a photo marked read-only, copied off a
+#: disc; one open in another program): the OS's own words, then this. It names no path: a photo is named by its id.
+NOT_MOVED = ("its new file could not be put in place of it (%s): the photo may be marked read-only or open in another "
+             "program; the new file was removed and the photo is as it was")
+
 
 class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
@@ -54,6 +88,11 @@ class Unreadable(Exception):
 class NotAnswered(Unreadable):
     """A photo of a batch ExifTool did not answer for in its deadline (a share gone away, a disk that stopped): nothing is
     known of the file, not even that it cannot be read, so a reader leaves it unread."""
+
+
+class PictureChanged(Exception):
+    """The new file ExifTool wrote of a photo holds picture bytes other than the photo's (the picture check, #2377): it
+    was removed, and the photo is as it was. The journal writes once more (tagpup.services.file_changes._carry)."""
 
 
 def session(exiftool_path):
@@ -169,13 +208,16 @@ def read_one(et, photo_path, wanted):
     return held
 
 
-def write(et, photo_path, values, saving=None):
+def write(et, photo_path, values, saving=None, scratch_written=None):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
     field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
     with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
-    when ExifTool fails. Nothing beside the photo is deleted here: the scratch file an interrupted write left is removed
-    only by file_changes, by the owner's rules (#2180); one ExifTool fails after deleting the original is the photo's
-    only copy (#1410).
+    when ExifTool fails. ExifTool writes the new file beside the photo, which the picture check moves over it or removes
+    (_landed; the module's docstring): PictureChanged, the photo untouched. `scratch_written()`, the journal's, is called
+    once the new file is written and before it is checked (file_changes.STEPS). Nothing else beside the photo is deleted
+    here (its own new file, when the picture differs or the move fails, is the write's): the scratch file an
+    interrupted write left is removed only by file_changes, by the owner's rules (#2180); an
+    old one, of a write before the picture check that failed after deleting the original, is the photo's only copy (#1410).
 
     A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
     (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,
@@ -203,17 +245,90 @@ def write(et, photo_path, values, saving=None):
             params[named] = list(texts)
         else:
             params[named] = texts[0]
+    scratch = exiftool_session.scratch_of(photo_path)
     if params:
         # The clears go before the values, in the same command.
-        et.set_tags([photo_path], tags=params, params=list(WRITE_OPTIONS) + clear)
+        et.set_tags([photo_path], tags=params, params=list(WRITE_OPTIONS) + ["-o", scratch] + clear)
     elif clear:
-        et.execute(*clear, *WRITE_OPTIONS, photo_path)
+        et.execute(*clear, *WRITE_OPTIONS, "-o", scratch, photo_path)
+    else:
+        return
+    if scratch_written is not None:
+        scratch_written()
+    _landed(photo_path, scratch)
     if own or any(fields.is_struct(field) for field in values):
         # A write that reported what it attempted: the file holds less than it was given (#1881).
         dropped = [line.strip() for line in exiftool_session.unnamed(et.last_stderr, [photo_path]).splitlines()
                    if any(said in line for said in NOT_WRITTEN)]
         if dropped:
             raise RuntimeError("ExifTool did not write all it was given: %s" % "; ".join(dropped))
+
+
+def _picture_at(handle):
+    """Where the picture of the JPEG open in `handle` starts (containers.Jpeg.image_offset), or None when it has none."""
+    layout = containers.read(handle)
+    return layout.image_offset if isinstance(layout, containers.Jpeg) else None
+
+
+def _same_picture(photo_path, scratch):
+    """Do the photo and the new file beside it hold the same picture bytes, from each one's first scan to its end? None
+    for a photo that is no JPEG (unchecked); NO_PICTURE for a JPEG whose picture is not found."""
+    with open(photo_path, "rb") as photo, open(scratch, "rb") as written:
+        if photo.read(len(JPEG_START)) != JPEG_START:
+            return None
+        start, new_start = _picture_at(photo), _picture_at(written)
+        if start is None:
+            return NO_PICTURE
+        if new_start is None:
+            return False
+        size, new_size = photo.seek(0, 2), written.seek(0, 2)
+        if size - start != new_size - new_start:
+            return False
+        photo.seek(start)
+        written.seek(new_start)
+        while True:
+            block = photo.read(BLOCK)
+            if block != written.read(BLOCK):
+                return False
+            if not block:
+                return True
+
+
+def _landed(photo_path, scratch):
+    """Move the new file ExifTool wrote at `scratch` over the photo, once its picture is the photo's (_same_picture),
+    with os.replace: a move of a file beside it on its volume, never a copy. A picture that differs: the new file is
+    removed and PictureChanged raised. The look is bounded (CHECK_SECONDS): a share that does not answer raises
+    NotAnswered, the photo as it was and the new file left beside it for the scratch rules (file_changes._removed_scratch).
+    A move that fails (a photo marked read-only, one open in another program) leaves the photo untouched -- os.replace is
+    one rename -- so the write removes its own new file, which would otherwise make the next write of the photo wait out
+    the scratch rules and fail the same way, and raises an OSError of the same winerror (lock_owners.explain still names
+    a holder) saying NOT_MOVED, no path in it. A kill between the new file and the move still leaves it to the rules."""
+    answer, same = shares.bounded(photo_path, lambda: _same_picture(photo_path, scratch), CHECK_SECONDS)
+    if answer == "away":
+        raise NotAnswered("its folder did not answer the picture check in %d s; the photo is as it was" % CHECK_SECONDS)
+    if answer == "error":
+        raise same
+    if same == NO_PICTURE:
+        os.remove(scratch)
+        raise RuntimeError(NO_PICTURE)
+    if same is False:
+        try:
+            os.remove(scratch)
+        except OSError as e:
+            logger.warning("The new file of a write whose picture changed could not be removed; it is left: %s", e)
+        raise PictureChanged("its write changed the picture's bytes; the new file was discarded and the photo is as it was")
+    if same is None:
+        logger.info("A photo that is no JPEG was written unchecked (its picture is not compared)")
+    try:
+        os.replace(scratch, photo_path)
+    except OSError as e:
+        try:
+            os.remove(scratch)
+        except OSError as left:
+            logger.warning("The new file of a write that could not be moved over its photo could not be removed; it is "
+                           "left: %s", left)
+        # A refused rename on Windows always carries its winerror (5, access denied; 32, a sharing violation).
+        raise OSError(e.errno, NOT_MOVED % e.strerror, None, e.winerror) from None
 
 
 def ensure_document_id(et, path, metadata=None):

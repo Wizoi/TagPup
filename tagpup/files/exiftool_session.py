@@ -96,16 +96,18 @@ class ExifToolTimeout(RuntimeError):
 SAID_LINES = 2
 
 
-#: What ExifTool names the copy it writes a photo through, its scratch file: the photo's path as it was given, with this
-#: after it (exiftool.pl: `"${file}_exiftool_tmp"`, 13.59). A write that is interrupted (a share that drops, a crash)
-#: leaves it beside the photo.
+#: What a write names the new file ExifTool writes of a photo, its scratch file: the photo's path with this after it.
+#: TagPup names it so (`-o`, tagpup.files.field_values.write), as ExifTool named its own temporary file before the
+#: picture check (exiftool.pl: `"${file}_exiftool_tmp"`, 13.59), so one left by an older write is the same file. A write
+#: that is interrupted (a share that drops, a crash) leaves it beside the photo. scratch_of is the one place that names it.
 SCRATCH_SUFFIX = "_exiftool_tmp"
 
-#: What ExifTool says when the scratch file of a photo is there already, and what the owner is told to do. A failed
-#: write leaves one (a read-only or locked photo, an interrupted write); file_changes removes only an interrupted
-#: write's, stale, beside the photo as the write saw it (#2180): after a failure that deleted the original it is the
-#: photo's only copy (#1410, #1411).
-TEMPORARY_IN_THE_WAY = "Temporary file already exists"
+#: What ExifTool says when the scratch file of a photo is there already (`-o` to a file that exists: "Error: '<file>'
+#: already exists - <file>", 13.59), and what the owner is told to do. A failed write leaves one (a photo open in another
+#: program or read-only when the new file is moved over it, an interrupted write); file_changes removes only an
+#: interrupted write's, stale, beside the photo as the write saw it (#2180). One an older ExifTool left after a failure
+#: that deleted the original is the photo's only copy (#1410, #1411): hence the second half of TEMPORARY_SENTENCE.
+TEMPORARY_IN_THE_WAY = "' already exists"
 TEMPORARY_SENTENCE = (". A file named as the photo with _exiftool_tmp after it, left beside it by a write that failed, "
                       "is in the way; the server's log names both. If the photo is there and opens, delete that file; "
                       "if the photo is gone, that file is its only copy: rename it back. Then try again.")
