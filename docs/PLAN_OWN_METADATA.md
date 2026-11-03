@@ -13,7 +13,7 @@ ExifTool keeps. Owning the writer removes the ExifTool rewrite (a whole-file cop
 ## Scope (owner 2026-11-03: staged cut)
 
 - **Own writer: JPEG.** Edit only the EXIF APP1, Photoshop APP13 (IPTC) and XMP APP1 segments; copy every other byte.
-- **Stays on ExifTool:** every non-JPEG write (TIFF/RAW 18 rows, PNG 1 row, relayed; HEIC 0), the indexer's whole read
+- **Stays on ExifTool:** every non-JPEG write (TIFF 17 rows, PNG 2 rows, counted 2026-11-03; HEIC 0), the indexer's whole read
   into `raw_metadata` (Composite GPS and LensID exist only there), bakes (namespace config), `-validate`, and a shadow
   comparison while the bar below is met.
 - **Unchanged:** `file_changes.write_fields` is the one journaled writer; `field_values.write` the one entry; the patch
@@ -31,13 +31,13 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
 - Byte for byte: every other segment (JFIF, ICC, MPF, Adobe, DQT/DHT/SOF, COM, unknown APPn) in order, and everything from
   the first SOS to the end (picture, MPF second images, Motion Photo video, trailers).
 - EXIF: edit IFD0 and ExifIFD entries only; never move MakerNotes, IFD1 and its thumbnail, the GPS or Interop IFDs, or an
-  unknown tag. New value data goes in the slack or segment end; the segment grows only when MakerNotes is relative-offset
-  or absent. A structure that cannot be followed is "not mine" and goes to ExifTool.
+  unknown tag. New value data goes in the slack or segment end; the segment grows only when it has no MakerNote or the census shows its offsets are not affected (M3 decides, from the census classes in docs/domains/files.md)
+  A structure that cannot be followed is "not mine" and goes to ExifTool.
 - XMP: an XML-preserving textual edit of the properties TagPup owns; other namespaces kept as bytes; UTF-8, keep the
   `<?xpacket>` wrapper and its padding and the first `rdf:about`. A packet where a target property occurs twice or in
   attribute form, or is not well-formed, is refused to ExifTool or with a plain sentence. Extended XMP: main packet edited,
-  extension untouched (127 of 3,000 relayed have one).
-- IPTC: rewrite only 8BIM 0x0404 (2:25, 2:120, 2:05, 1:90 charset); refresh the 8BIM 0x0425 IPTCDigest to match ExifTool's;
+  extension untouched (111 of 3,000 in photo_index, 80 of 2,065 in kr-track, counted 2026-11-03).
+- IPTC: rewrite only 8BIM 0x0404 (2:25, 2:120, 2:05, 1:90 charset); the 8BIM 0x0425 IPTCDigest: ExifTool never refreshes it (#2408; 1,902 of 2,065 in kr-track differ from the block), so refreshing it is new behaviour for the owner to decide;
   keep every other 8BIM resource; pad with the dummy resource (`PAD_RESOURCE` 0x0DAC).
 - Nothing foreign is dropped; TagPup adds, never removes.
 - Dates: EXIF as 19-char local wall clock, no zone invented; XMP ISO 8601 keeping an existing offset; OffsetTime* untouched.
@@ -63,14 +63,14 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
 - **M2** XMP packet editor (pure; shared with the clip patcher).
 - **M3** EXIF and IPTC block editors (IPTCDigest, charset).
 - **M4** wire into `in_place.patch_jpeg` behind `OWN_WRITER = False` with shadow comparison; the %TEMP% header copy goes.
-- **M5** own whole-file JPEG rewrite beside the photo, with the reserve (XMP +2 KB, IPTC pad; 2 KB fits 99%, relayed);
+- **M5** own whole-file JPEG rewrite beside the photo, with the reserve (XMP already carries ExifTool padding of 2 KB or more in nearly every file, counted 2026-11-03, so the reserve is mostly EXIF, which never has 64 bytes of slack: 0 of 6,373 sampled);
   `_refuse_dropped` arms go for JPEG; MPF files kept length-stable or refused. The 512 B reserve branch is closed.
-- **M6** optional own read for the journal's field reads, only if M1 shows read time matters.
+- **M6** optional own read for the journal's field reads, dropped: M1 timed a header read at 23 ms against ExifTool at 52 ms for one photo and 28 ms in a batch (warm cache, 2026-11-03).
 - **M7** MP4/MOV clip patcher on the same XMP editor.
 
 ## Risks ExifTool protects us from today
 
-MakerNotes with absolute offsets (Sony, Olympus); MPF offsets; vendor trailers; XMP/RDF variants (a mis-located property
+MakerNotes (all 1,239 sampled Canon notes and 251 of 258 Sony notes in photo_index were already moved by another program, #2409; M3 trusts no stored shift except the Canon footer, Canon only); MPF offsets; vendor trailers; XMP/RDF variants (a mis-located property
 shows two titles); IPTCDigest semantics (wrong either way makes WLPG or Lightroom discard or overwrite); UCS-2/Latin/UTF-8
 encodings (mojibake in Explorer); the minor errors `-m` swallows (our writer refuses rather than guesses; the fallback to
 ExifTool stays for anything not fully understood); Composite fields (the indexer's read stays on ExifTool). The hardware
