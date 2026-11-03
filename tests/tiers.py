@@ -37,6 +37,7 @@ SCENARIO = frozenset({
     "test_a_bake_is_planned_from_the_library",
     # The file journal and the writes it covers.
     "test_file_journal",
+    "test_a_photo_patched_in_place",
     "test_time_shift",
     "test_a_crash_part_way_is_settled_at_the_next_start",
     "test_a_file_holds_what_exiftool_kept",
