@@ -233,6 +233,7 @@ _FILES = {
             "test_container_layout "
             "test_dates test_derived_file_changes "
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session "
+            "test_frames_of_a_video "
             "test_index_adds_the_folder_it_is_given "
             "test_index_startup_reads test_jobs_indexing "
             "test_keyword_fields test_lock_owners "

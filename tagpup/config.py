@@ -1,4 +1,4 @@
-"""Where TagPup's libraries are and which ExifTool the machine has.
+"""Where TagPup's libraries are and which ExifTool and ffmpeg the machine has.
 
 config.ini was read in 26 places, each with its own idea of where the file is and what
 a missing value means, and then by this module alone. Now nothing reads it; an old file
@@ -12,6 +12,7 @@ format and the ExifTool it names. What is left here is the machine's:
   Where the libraries are is not a setting: data/ in the home.
 - Which ExifTool the machine has: where its installer puts it, else the one on PATH.
   A library may name another.
+- Which ffmpeg the machine has (`locate_ffmpeg`): the one on PATH, else the one winget installed.
 - Which folder on this machine holds each root of the libraries (machine_roots.json in the
   home; docs/ARCHITECTURE.md, "Roots and machines"). Absent means nothing is mapped.
 - `own_home_environment`, what makes a folder a home of its own -- a test's
@@ -21,12 +22,14 @@ format and the ExifTool it names. What is left here is the machine's:
   name beside it), or None for a checkout: what the pages say answers them.
 """
 import contextlib
+import glob
 import json
 import os
 import platform
 import shutil
 import threading
 import time
+from typing import NamedTuple, Optional
 
 from tagpup.core import machine, paths
 
@@ -107,6 +110,69 @@ def exiftool_path(named=""):
     if os.path.exists(path):
         return path
     return shutil.which("exiftool") or path
+
+
+#: What locate_ffmpeg answers on a machine with no ffmpeg: what the owner does about it.
+FFMPEG_MISSING = "ffmpeg not found; install it with winget install Gyan.FFmpeg"
+
+
+class Ffmpeg(NamedTuple):
+    """The ffmpeg and ffprobe programs to run, or, when either is not found, None for both and why."""
+    ffmpeg: Optional[str]
+    ffprobe: Optional[str]
+    problem: Optional[str]
+
+
+_FFMPEG = {}
+_FFMPEG_LOCK = threading.Lock()
+
+
+def _version_of(folder):
+    """The numbers in a winget ffmpeg folder's name, ffmpeg-9.0.2-full_build -> (9, 0, 2): the newest first."""
+    name = os.path.basename(os.path.dirname(folder))
+    return tuple(int(part) for part in name.replace("-", ".").split(".") if part.isdigit())
+
+
+def _winget_folders():
+    """Where winget puts ffmpeg: its Links folder, then each Gyan.FFmpeg package's bin, the newest version first. A
+    process started before the install (a launcher, a server) has a PATH without it."""
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        return []
+    winget = os.path.join(local, "Microsoft", "WinGet")
+    packages = glob.glob(os.path.join(winget, "Packages", "Gyan.FFmpeg*", "ffmpeg-*", "bin"))
+    return [os.path.join(winget, "Links")] + sorted(packages, key=_version_of, reverse=True)
+
+
+def _program(name, folders):
+    on_path = shutil.which(name)
+    if on_path:
+        return on_path
+    program = name + (".exe" if os.name == "nt" else "")
+    for folder in folders:
+        candidate = os.path.join(folder, program)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def locate_ffmpeg():
+    """Ffmpeg(ffmpeg, ffprobe, None): the programs on PATH, else in winget's folders (_winget_folders); or
+    Ffmpeg(None, None, FFMPEG_MISSING) when either is not found. Not a library's setting: no library names one
+    (a library naming ExifTool is `paths.exiftool`). Kept for the process once found, while both files are still
+    there (a winget upgrade moves them: the next call finds the new ones); looked for again at every call while not
+    found, so an install is picked up without a restart."""
+    with _FFMPEG_LOCK:
+        held = _FFMPEG.get("found")
+        if held is not None and os.path.isfile(held.ffmpeg) and os.path.isfile(held.ffprobe):
+            return held
+        _FFMPEG.pop("found", None)
+        folders = _winget_folders()
+        ffmpeg, ffprobe = _program("ffmpeg", folders), _program("ffprobe", folders)
+        if not ffmpeg or not ffprobe:
+            return Ffmpeg(None, None, FFMPEG_MISSING)
+        _FFMPEG["found"] = Ffmpeg(ffmpeg, ffprobe, None)
+        return _FFMPEG["found"]
 
 
 #: The file in a home that says where this machine keeps each root of the libraries.
