@@ -19,7 +19,7 @@ or written (Files), or what a page shows (Views, Integration).
 
 ## Scope
 Paths are checked by `tests/test_the_test_map.py`; a moved module is changed here in the same commit.
-- Connections, schema, journal: `tagpup/store/db.py`, `tagpup/store/schema.py`, `tagpup/store/journal.py`, `tagpup/store/file_journal.py`, `tagpup/store/locks.py`
+- Connections, schema, journal: `tagpup/store/db.py`, `tagpup/store/schema.py`, `tagpup/store/journal.py`, `tagpup/store/file_journal.py` (with a patch in place's record, save_patch and patch_of, the one reader; its bytes are Files', tagpup.files.in_place), `tagpup/store/locks.py`
 - Derived tables and the word index: `tagpup/store/derived.py`, `tagpup/store/search_index.py`, `tagpup/store/generations.py`
 - Backups and checks: `tagpup/store/snapshots.py`, `tagpup/services/snapshots.py`, `tagpup/store/checks.py`, `tools/doctor.py`
 - Journal and maintenance services: `tagpup/services/journal.py`, `tagpup/services/maintenance.py`, `tagpup/services/job_runs.py`, `tagpup/store/job_runs.py`
