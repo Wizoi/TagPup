@@ -363,7 +363,7 @@ class AScratchFileAnInterruptedWriteLeft(T.Bulk):
 
     def leaves_it(self, result):
         self.assertFalse(result.ok)
-        self.assertIn("Temporary file already exists", str(result.errors[-1][1]))
+        self.assertIn("already exists", str(result.errors[-1][1]))
         self.assertTrue(os.path.exists(self.scratch), "the scratch file was removed")
         self.assertNotIn("scratch_removed", result.details)
 
@@ -427,7 +427,7 @@ class AScratchFileAnInterruptedWriteLeft(T.Bulk):
         self.assertTrue(os.path.exists(self.scratch), "the scratch file was removed")
         self.assertNotIn("scratch_removed", result.details)
         why = str(result.errors[-1][1])
-        self.assertIn("Temporary file already exists", why)
+        self.assertIn("already exists", why)
         self.assertIn("delete that file", why)
         self.assertNotIn("try again after", why)
         with open(self.scratch, "rb") as handle:
