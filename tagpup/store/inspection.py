@@ -10,7 +10,7 @@ import json
 import re
 import sqlite3
 
-from tagpup.store import person_ids
+from tagpup.store import file_journal, person_ids
 from tagpup.store import roots as store_roots
 
 #: How many ids go in one IN (...): well under SQLite's limit on parameters.
@@ -171,7 +171,7 @@ def kinds(conn):
 
 def file_states(conn):
     """[(state, files, of them holding a patch's record)] of the journal's files (change_files), by state."""
-    return conn.execute("SELECT state, COUNT(*), COUNT(patch) FROM change_files GROUP BY state ORDER BY state").fetchall()
+    return file_journal.states_with_patches(conn)
 
 
 # ---- Query plans ------------------------------------------------------------------------

@@ -505,6 +505,11 @@ def newer_overlapping(conn, change_id):
         + ") ORDER BY c.id", (change_id,) + params).fetchall()
 
 
+def states_with_patches(conn):
+    """[(state, files, of them holding a patch's record)] of every journal file, by state. The caller's connection."""
+    return conn.execute("SELECT state, COUNT(*), COUNT(patch) FROM change_files GROUP BY state ORDER BY state").fetchall()
+
+
 def counts(conn, change_ids):
     """{change id: {state: files}} of `change_ids`. The caller's connection."""
     found = {}
