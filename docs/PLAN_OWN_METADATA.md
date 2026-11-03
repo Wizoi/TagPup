@@ -31,7 +31,7 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
 - Byte for byte: every other segment (JFIF, ICC, MPF, Adobe, DQT/DHT/SOF, COM, unknown APPn) in order, and everything from
   the first SOS to the end (picture, MPF second images, Motion Photo video, trailers).
 - EXIF: edit IFD0 and ExifIFD entries only; never move MakerNotes, IFD1 and its thumbnail, the GPS or Interop IFDs, or an
-  unknown tag. New value data goes in the slack or segment end; the segment grows only when it has no MakerNote or the census shows its offsets are not affected (M3 decides, from the census classes in docs/domains/files.md)
+  unknown tag. New value data goes in the slack or segment end; the segment grows only when it has no MakerNote or the census shows its offsets are not affected (M3 decides, from the census classes in docs/domains/files.md).
   A structure that cannot be followed is "not mine" and goes to ExifTool.
 - XMP: an XML-preserving textual edit of the properties TagPup owns; other namespaces kept as bytes; UTF-8, keep the
   `<?xpacket>` wrapper and its padding and the first `rdf:about`. A packet where a target property occurs twice or in
