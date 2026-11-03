@@ -10,7 +10,7 @@ import json
 import re
 import sqlite3
 
-from tagpup.store import person_ids
+from tagpup.store import file_journal, person_ids
 from tagpup.store import roots as store_roots
 
 #: How many ids go in one IN (...): well under SQLite's limit on parameters.
@@ -162,6 +162,16 @@ def photo_files(conn):
     """(id, native path) of every photo, by path: the files a library says it holds."""
     return store_roots.ordered(conn, store_roots.natives(
         conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1), 1)
+
+
+def kinds(conn):
+    """{photo id: its kind, 'photo' or 'video' (photos.kind)} of every photo."""
+    return dict(conn.execute("SELECT id, kind FROM photos"))
+
+
+def file_states(conn):
+    """[(state, files, of them holding a patch's record)] of the journal's files (change_files), by state."""
+    return file_journal.states_with_patches(conn)
 
 
 # ---- Query plans ------------------------------------------------------------------------

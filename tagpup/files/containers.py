@@ -46,7 +46,7 @@ _IPTC_HEAD = b"Photoshop 3.0\0"
 _PACKET_END = b"<?xpacket end="
 _XMPMETA_END = b"</x:xmpmeta>"
 #: Bytes of each TIFF field type (EXIF): a type not here makes the EXIF slack unknown, taken as none.
-_TIFF_TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4}
+TIFF_TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4}
 #: TIFF tags that point at another IFD: Exif, GPS, Interoperability.
 _SUB_IFDS = (0x8769, 0x8825, 0xA005)
 
@@ -158,10 +158,13 @@ class Video:
 
 @dataclass(frozen=True)
 class Resource:
-    """One 8BIM resource of a Photoshop (APP13) segment: `size` is the whole resource, header and padding included."""
+    """One 8BIM resource of a Photoshop (APP13) segment: `size` is the whole resource, header and padding included;
+    its data is `length` bytes at file offset `data`."""
     id: int
     offset: int
     size: int
+    data: int
+    length: int
 
 
 @dataclass(frozen=True)
@@ -415,20 +418,16 @@ def _exif_slack(tiff):
         if at == 0 or at in seen:
             continue
         seen.add(at)
-        if at + 2 > len(tiff):
+        found = ifd(tiff, at, order)
+        if found is None or found[1] is None:
             return 0
-        count = struct.unpack(order + "H", tiff[at:at + 2])[0]
-        ifd_end = at + 2 + 12 * count + 4
-        if ifd_end > len(tiff):
-            return 0
-        used = max(used, ifd_end)
+        entries, next_ifd = found
+        used = max(used, at + 2 + 12 * len(entries) + 4)
         thumbnail = {}
-        for entry in range(at + 2, at + 2 + 12 * count, 12):
-            tag, kind, n = struct.unpack(order + "HHI", tiff[entry:entry + 8])
-            if kind not in _TIFF_TYPE_SIZES:
+        for tag, kind, n, _raw, value in entries:
+            if kind not in TIFF_TYPE_SIZES:
                 return 0
-            value = struct.unpack(order + "I", tiff[entry + 8:entry + 12])[0]
-            length = _TIFF_TYPE_SIZES[kind] * n
+            length = TIFF_TYPE_SIZES[kind] * n
             if length > 4:
                 if value + length > len(tiff):
                     return 0
@@ -442,9 +441,28 @@ def _exif_slack(tiff):
             if end > len(tiff):
                 return 0
             used = max(used, end)
-        queue.append(struct.unpack(order + "I", tiff[ifd_end - 4:ifd_end])[0])
+        queue.append(next_ifd)
     rest = tiff[used:]
     return len(rest) if not rest.strip(b"\0") else 0
+
+
+def ifd(tiff, at, order):
+    """(the entries of the TIFF IFD at offset `at` of `tiff`, each (tag, type, count, its four value bytes, those read as
+    an offset); the offset of the next IFD, None when the bytes stop before it), or None when its entries do not fit in
+    `tiff`. `order` is struct's "<" or ">". The one reading of an IFD's layout; what a type means is the caller's."""
+    if at + 2 > len(tiff):
+        return None
+    count = struct.unpack(order + "H", tiff[at:at + 2])[0]
+    end = at + 2 + 12 * count
+    if end > len(tiff):
+        return None
+    entries = []
+    for entry in range(at + 2, end, 12):
+        tag, kind, n = struct.unpack(order + "HHI", tiff[entry:entry + 8])
+        raw = tiff[entry + 8:entry + 12]
+        entries.append((tag, kind, n, raw, struct.unpack(order + "I", raw)[0]))
+    next_ifd = struct.unpack(order + "I", tiff[end:end + 4])[0] if end + 4 <= len(tiff) else None
+    return entries, next_ifd
 
 
 def _resources(data, start):
@@ -462,6 +480,6 @@ def _resources(data, start):
         whole = 6 + name + 4 + length + (length & 1)
         if at + whole > len(data):
             break
-        found.append(Resource(resource_id, start + at, whole))
+        found.append(Resource(resource_id, start + at, whole, start + size_at + 4, length))
         at += whole
     return tuple(found), len(data) - at

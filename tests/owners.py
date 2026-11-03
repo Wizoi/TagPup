@@ -230,6 +230,7 @@ _FILES = {
             "test_a_photo_is_known_by_its_picture "
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
+            "test_census_of_jpeg_segments "
             "test_container_layout "
             "test_dates test_derived_file_changes "
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session "
@@ -249,7 +250,7 @@ _FILES = {
             "test_tag_writes_keep_the_index_true "
             "test_thumbnails "
             "test_what_counts_as_a_photo "
-            "test_when_a_photo_was_taken_is_kept test_xmp_census tuner-picker-and-queue "
+            "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
         "guard": "test_photo_looks_have_one_owner",

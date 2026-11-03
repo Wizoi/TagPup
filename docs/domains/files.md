@@ -121,6 +121,69 @@ The one place is `sync.look`; nothing else removes a row for a missing file (the
 - The Activity page shows a root on such a share as "share not answering since hh:mm".
 - Tests: `tests/test_a_share_asleep.py`, `tests/test_a_share_that_wakes.py`, `tests/test_one_walk_of_a_library_at_a_time.py`.
 
+## JPEG segment census, 2026-11-03
+
+Counted this session, read-only (`scripts/census_segments.py --sample 3000`, `tagpup/services/segment_census.py`, seed
+20261103; M1 of docs/PLAN_OWN_METADATA.md): photo_index a sample of 3,000 of its 59,505 JPEGs; kr-track (2,065) and
+renton_parkrun (1,308) every JPEG. Every file read: no share away, none gone, none cut short. Columns: photo_index /
+kr-track / renton_parkrun.
+
+- Kinds: photo_index 59,486 .jpg, 19 .jpeg, 17 .tif, 1 .png; kr-track 2,065 .jpg; renton_parkrun 1,308 .jpg, 1 .png. No
+  HEIC, no video row in any.
+- XMP toolkit: ExifTool in every file read (3,000 / 2,065 / 1,308). One XMP segment in each; two `rdf:about` values,
+  a target property twice or as an attribute: 0 / 0 / 0. No packet wrapper 2 / 7 / 0; begin BOM in the rest.
+- XMP slack (padding before `<?xpacket end`): 2,048 bytes or more in 2,996 / 2,049 / 1,306; none in 4 / 16 / 2.
+  The packet's size: under 16 KB 1,828 / 9 / 4, 16 to 48 KB 1,138 / 1,931 / 1,286, 48 KB or more 34 / 125 / 18.
+- Extended XMP: 111 / 80 / 5 (as many packets name `xmpNote:HasExtendedXMP`). MPF: 100 / 14 / 0. Bytes after the last EOI:
+  10 / 3 / 0.
+- EXIF: two segments 4 / 0 / 0, none 2 / 0 / 3; slack 0 bytes in 1,652 / 1,120 / 926, 1 to 63 in 1,350 / 945 / 379,
+  64 or more in none. IFD1 thumbnail 2,747 / 2,062 / 1,304. Orientation (of the EXIF segments): 1 in 1,950 / 15 / 0, 6 in
+  12 / 0 / 0, 0 in 1 / 0 / 0, absent 1,039 / 2,050 / 1,305.
+- MakerNotes: 1,613 / 1 / 0. photo_index by maker: Canon 1,239, every one ending in the Canon footer (its byte order
+  and the offset it was written at) and every one moved from there: 1,236 by an amount that lands every pointer inside
+  the note, 3 by one that does not; the Exif IFD's OffsetSchema equals the footer's shift in 15 and differs in 1,224.
+  Sony 258: 251 moved by an amount nothing in the file says (233 of them little-endian notes in a big-endian TIFF
+  whose last 4 of 12 entries are of no TIFF type, skipped), 1 TIFF-relative as written, 3 outside, 3 inline. Nikon 13
+  own header; note-relative Apple 7, Fujifilm 7, Samsung 3, Casio 2; no IFD that parses Nokia 48, Google 15, other 11,
+  Kodak 5, LG 3, Microsoft 1; inline Google 1. kr-track: one Canon, its footer saying it lies where it was written.
+  ("Moved" and the other classes are the census module's.) ExifTool agrees (its warnings, read-only, on photo_index's
+  sample): on 11 Canon notes the census calls moved (the 3 included), its "Adjusted MakerNotes base by N" equalled the
+  footer's shift each time; on 8 Sony notes called "moved, shift unknown" and the one called TIFF-relative it warns
+  "Possibly incorrect maker notes offsets (fix by N?)". So a note with no footer whose pointers land inside it as
+  written may have moved too, and nothing but a Canon footer says by how much.
+- IPTC: two APP13 segments 0 / 2 / 3; bytes after the last 8BIM 1 / 4 / 6; no 0x0404 block in 1 / 2 / 3; padded with
+  PAD_RESOURCE 0 / 0 / 0. Charset 1:90 UTF-8 in 2,194 / 2,057 / 1,305, absent in 746 / 4 / 0; values outside ASCII 6 / 0 / 0
+  in 2:xx datasets; datasets cut short 12 / 0 / 0.
+- IPTCDigest (0x0425 against the MD5 of 0x0404): matches 2,093 / 153 / 463, differs 112 / 1,902 / 839, absent 735 / 6 / 3.
+  The comparison is ExifTool's: on copies of 8 kr-track JPEGs the census's MD5 equalled ExifTool's CurrentIPTCDigest each
+  time, and the stored digests are stale. An ExifTool IPTC write as TagPup makes one (`-IPTC:Keywords+=`) changes the
+  block and leaves 0x0425 as it was, so a digest that matched stops matching (findings, this branch).
+- Segment orders, the commonest: photo_index `JFIF EXIF XMP IPTC` 1,403 and `JFIF Adobe EXIF IPTC ICC XMP` 611;
+  kr-track and renton_parkrun `EXIF IPTC ICC XMP Adobe` (with the tables) 1,939 and 1,297.
+- Header read (bytes before the first scan, the first 50 reads), median / p90 / max in ms: photo_index 23 / 28 / 31
+  (40 / 59 / 67 on a first, cold run), kr-track 40 / 51 / 59, renton_parkrun 39 / 47 / 55. ExifTool's read of the
+  journal's fields (`fields.METADATA_FIELDS`, `field_values.read` through `ExifToolSession`) of the same 50 photo_index
+  photos, warm, right after the census read them again in 23.5 / 30.3 / 43.7: one command a photo 51.9 / 59.6 / 75.8, one
+  batch of the 50 in 1,396 (27.9 a photo).
+- The journal's files: photo_index 51,312 done and 139 conflict, kr-track 4,696 done, renton_parkrun 4,318 done; none
+  holds a patch record.
+
+Against docs/PLAN_OWN_METADATA.md: extended XMP is 111 of 3,000 in photo_index (the plan relays 127 of 3,000); TIFF is
+17 rows and PNG 2 (relayed 18 and 1); HEIC 0, as relayed. The plan's 2 KB XMP reserve is already there in nearly every
+file (ExifTool's padding), and EXIF has under 64 bytes of slack everywhere. Every Canon note and nearly every Sony note of
+photo_index was moved from where its offsets count, a class the plan's "absolute or relative offsets" does not name; M3
+trusts no stored shift but a Canon footer, for Canon only (OffsetSchema is wrong in 1,224 of 1,239), and never moves a
+note. ExifTool does not refresh the IPTCDigest, so "refresh to match ExifTool's" has nothing to match. M6 (an own read for
+the journal's field reads): a photo read alone takes about half ExifTool's time (23 against 52 ms warm); against a batch,
+little (23 against 28 ms a photo).
+
+The census reads a TIFF IFD and an 8BIM resource through `tagpup.files.containers` (`ifd`, `TIFF_TYPE_SIZES`,
+`Resource.data` and `.length`), the one statement of their layout; what a MakerNote's entries mean (the footer, the
+classes) is the census's alone until M3, which takes it into containers.py beside its writer, never a third copy. The
+phase 6 XMP census (`inspect.xmp_census`, `scripts/census_xmp.py`) is gone: this census counts what it alone answered of
+a JPEG (the XMP packet's size, EXIF Orientation; regions, extended XMP and two XMP segments it counted already), and its
+17 TIFF and 2 PNG rows are no feature's count.
+
 ## By design (each row closed `decided:`)
 
 - **The indexer's per-photo reads have no deadline** (the header for the read-ahead's estimate, the decodes, the stamp,
