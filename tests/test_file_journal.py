@@ -6,8 +6,10 @@ Real JPEGs, made here in a home of the test's own, written by the real ExifTool;
 test is skipped only where ExifTool is not installed. Rows are seeded as the indexer
 stores them (tests/photo_rows.add_read, #309), never through the recorder under test. A crash is a
 BaseException raised at a step of the write (file_changes.STEPS), as tests/test_journal.py
-does for the journal of rows; `settle` then finishes what it left.
+does for the journal of rows; `settle` then finishes what it left. A patch in place is the real one
+(tagpup.files.in_place.patch_jpeg), cut where it writes the photo by `cut_patch`.
 """
+import contextlib
 import json
 import os
 import re
@@ -71,47 +73,50 @@ def write_outside(path, values):
         et.set_tags([path], tags=values, params=["-overwrite_original"])
 
 
-class Patcher:
-    """A stand-in for field_values.write's in-place path (the patcher, M2, is not built): swaps 'Beach' for the
-    same-length 'Shore' (or back, for an undo) wherever the file holds it, in ASCII (XMP, IPTC) and in UTF-16LE
-    (EXIF:XPKeywords): its record by in_place.record, then `saving`, then the ranges one at a time, so a crash between two
-    leaves a genuine half state. `cut`: how many ranges it writes before it is killed (a Crash), BEFORE_THE_SAVE or
-    AFTER_THE_LAST; `outside`: it also changes a byte outside its ranges (#2377). A patch the journal will not keep
-    (file_journal.PatchTooLarge) is ExifTool's write, as the patcher's is to be."""
-    BEFORE_THE_SAVE, AFTER_THE_LAST = "before the save", "after the last byte"
+class Torn(OSError):
+    """The test stopping a patch's write (in_place._write), which runs on shares.bounded's thread: an OSError, which
+    bounded hands back to the patch's thread, where cut_patch raises a Crash. A Crash raised on bounded's thread would
+    end that thread alone, and escape the patch with its photo still open."""
 
-    def __init__(self, cut=None, outside=False):
-        self.cut, self.outside, self.calls, self.fell_back = cut, outside, [], []
-        self.exiftools = field_values.write
 
-    def __call__(self, et, path, values, saving=None, scratch_written=None):
-        self.calls.append(dict(values))
-        old, new = ("Beach", "Shore") if "Shore" in values.get("XMP:Subject", []) else ("Shore", "Beach")
-        with open(path, "rb") as handle:
-            held = handle.read()
-            changes = [(found.start(), new.encode(code)) for code in ("ascii", "utf-16-le")
-                       for found in re.finditer(re.escape(old.encode(code)), held)]
-            record, before = in_place.record(handle, changes)
-        if self.cut == self.BEFORE_THE_SAVE:
-            raise Crash(self.cut)
+@contextlib.contextmanager
+def cut_patch(ranges=None, outside=False):
+    """The real patch in place (in_place.patch_jpeg, field_values.write's in-place path) cut at its write of the photo:
+    `ranges` of its ranges written and flushed, then the process killed (a Crash); None, every range written and the
+    process killed after the last byte. `outside`: every range written and a byte of the picture changed as they were
+    (#2377), the process not killed. Only the first write is cut; a put back (in_place.put_back) is the real one.
+    Yields the list of the ranges the cut write was given."""
+    real_write, real_bounded, cut = in_place._write, in_place._bounded, []
+
+    def write(handle, changes):
+        if cut:
+            return real_write(handle, changes)
+        cut.extend(changes)
+        if outside:
+            real_write(handle, changes)
+            end = handle.seek(0, os.SEEK_END) - 3        # the last byte of the picture, before its end of image
+            handle.seek(end)
+            byte = handle.read(1)[0]
+            handle.seek(end)
+            handle.write(bytes([byte ^ 0xFF]))
+            handle.flush()
+            return None
+        real_write(handle, changes if ranges is None else changes[:ranges])
+        raise Torn("killed after %s of the ranges" % ("all" if ranges is None else ranges))
+
+    def bounded(path, call):
         try:
-            saving(record, before)
-        except file_journal.PatchTooLarge:
-            with open(path, "rb") as handle:
-                self.fell_back.append(handle.read() == held)
-            return self.exiftools(et, path, values, scratch_written=scratch_written)
-        with open(path, "r+b") as handle:
-            for written, (at, now) in enumerate(sorted(changes)):
-                if written == self.cut:
-                    raise Crash("after %d ranges" % written)
-                handle.seek(at)
-                handle.write(now)
-                handle.flush()
-            if self.outside:
-                handle.seek(len(held) - 3)
-                handle.write(bytes([held[-3] ^ 0xFF]))
-        if self.cut == self.AFTER_THE_LAST:
-            raise Crash(self.cut)
+            return real_bounded(path, call)
+        except Torn as e:
+            raise Crash(str(e)) from None
+
+    with mock.patch.object(in_place, "_write", write), mock.patch.object(in_place, "_bounded", bounded):
+        yield cut
+
+
+def killed_before_the_save():
+    """The process killed as a patch's record is saved (file_journal.save_patch), before it is committed."""
+    return mock.patch.object(file_journal, "save_patch", side_effect=Crash("before the save"))
 
 
 @requires_exiftool
@@ -486,8 +491,7 @@ class APatchInPlace(FilesCase):
 
     def test_only_the_file_being_written_holds_a_record_and_every_way_out_erases_it(self):
         a, b = self.make("a.jpg"), self.make("b.jpg")
-        with mock.patch.object(field_values, "write", Patcher()), \
-                mock.patch.object(file_changes, "_reached", side_effect=crash_at(file_changes.PATCH_SAVED)):
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at(file_changes.PATCH_SAVED)):
             with self.assertRaises(Crash):
                 self.replace([a, b])
         change = self.last_change()
@@ -495,31 +499,36 @@ class APatchInPlace(FilesCase):
         first = self.rows("SELECT MIN(id) FROM change_files WHERE change_id = ?", (change,))[0][0]
         self.assertEqual([first], self.recorded())
         record, before = file_journal.patch_of(self.library.path, first)
-        lengths = [each["len"] for each in record["ranges"]]
-        pieces = [before[sum(lengths[:n]):sum(lengths[:n + 1])] for n in range(len(lengths))]
-        self.assertEqual(sorted([b"Beach", b"Beach", "Beach".encode("utf-16-le")]), sorted(pieces),
-                         "the record does not hold what its three ranges (XMP, IPTC, XPKeywords) held")
-        with mock.patch.object(field_values, "write", Patcher()):
-            self.assertEqual(1, self.settle())
+        self.assertEqual(3, len(record["ranges"]), "a range each of the EXIF, IPTC and XMP segments")
+        # Only the bytes that differ, from the first to the last: XPKeywords' UTF-16 to its last differing byte.
+        self.assertEqual("Beach".encode("utf-16-le")[:-1] + b"Beach" + b"Beach", before,
+                         "the record does not hold what its ranges held")
+        self.assertEqual(1, self.settle())
         self.assertEqual((("applied", ["done", "done"]), [], ["Shore"]), ((self.status(change), self.states(change)),
                                                                           self.recorded(), keywords_of(a)))
-        undoing = Patcher()
-        with mock.patch.object(field_values, "write", undoing):
+        with mock.patch.object(field_values, "write", wraps=field_values.write) as writes, \
+                mock.patch.object(file_journal, "save_patch", wraps=file_journal.save_patch) as saved:
             result = self.undo(change)
         self.assertEqual((2, []), (result.changed, result.errors))
-        self.assertEqual([["Beach"], ["Beach"]], [values["XMP:Subject"] for values in undoing.calls],
+        self.assertEqual([["Beach"], ["Beach"]], [call.args[2]["XMP:Subject"] for call in writes.call_args_list],
                          "the undo was not carried by the fields the change found")
+        self.assertEqual(2, saved.call_count, "the undo of a patched change is a patch too")
         self.assertEqual((["Beach"], ["Beach"], [], ["undone", "undone"]),
                          (keywords_of(a), self.indexed(a), self.recorded(), self.states(change)))
 
-    def test_a_patch_larger_than_the_journal_keeps_writes_no_byte_and_is_exiftools(self):
+    def test_a_patch_larger_than_the_journal_keeps_is_a_failed_write_of_no_byte(self):
+        # A JPEG's patch is at most three segments of 64 KB, under PATCH_CAP (1 MiB): nothing real meets the cap, so a
+        # patch over it is not given to ExifTool's rewrite instead; it fails, the photo as it was (main session, 2026-11-03).
         a = self.make("a.jpg")
-        patcher = Patcher()
-        with mock.patch.object(field_values, "write", patcher), mock.patch.object(file_journal, "PATCH_CAP", 4):
+        with open(a, "rb") as handle:
+            held = handle.read()
+        with mock.patch.object(file_journal, "PATCH_CAP", 4):
             result = self.replace([a])
-        self.assertEqual([True], patcher.fell_back, "a byte was written before the journal refused the patch")
-        self.assertEqual(((1, []), ["Shore"], ["done"], []), ((result.changed, result.errors), keywords_of(a),
-                                                               self.states(result.details["change"]), self.recorded()))
+        with open(a, "rb") as handle:
+            self.assertEqual(held, handle.read(), "a byte was written when the journal refused the patch")
+        self.assertEqual(0, result.changed)
+        self.assertIn("more than the journal keeps", str(result.errors))
+        self.assertEqual((["Beach"], [], ["Beach"]), (keywords_of(a), self.recorded(), self.indexed(a)))
 
 
 class ThePatchRecordHasOneReader(unittest.TestCase):
