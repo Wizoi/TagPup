@@ -13,8 +13,8 @@ test_the_next_start_finishes_what_the_crash_left_also_when_windows_reused_the_pr
 
 A patch in place (tagpup.files.in_place) killed part-way is settled by its bytes against the record it saved before its
 first byte (AnInPlacePatchCutShort). Break that fails it: _by_bytes not called, so a file torn between two ranges is read
-by its fields, holds neither what the change found nor what it was to leave, and is left a half-written conflict (the
-code before the record: test_killed_between_two_ranges_what_it_tore_is_put_back_and_written_again fails there).
+by its fields, holds neither what the change found nor what it was to leave, and is left a half-written conflict (that
+the old code also fails that test is not the proof: it fails earlier, on a write without `saving`; the mutation is).
 """
 import os
 import socket

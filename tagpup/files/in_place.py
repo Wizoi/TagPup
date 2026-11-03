@@ -20,11 +20,6 @@ import os
 
 VERSION = 1
 
-#: Whether a clip's record carries the hash of every byte outside its ranges, as a photo's always does. A photo's is two
-#: full reads of a few megabytes, and finds a byte changed outside the patch (#2377); a clip's would be two full reads of
-#: up to 10 GB, about what the rewrite the patch avoids costs. The owner has not decided (2026-11-02): until then, none.
-CLIPS_HASHED = False
-
 #: What a file holds against its record (held).
 NEW, OLD, TORN, NEITHER, RESIZED, OUTSIDE = "new", "old", "torn", "neither", "resized", "outside"
 
@@ -57,11 +52,13 @@ def _read_at(handle, at, length):
     return handle.read(length)
 
 
-def record(handle, changes, clip=False):
+def record(handle, changes, hash_outside=True):
     """(record, before) of a patch writing `changes`, [(at, new bytes)], into the file open in `handle` (binary, read):
     the record as the journal saves it, and the bytes the ranges hold now. Ranges are sorted and may not overlap, be
-    empty or run past the end. The hash of what lies outside them is taken for a photo, and for a clip only when
-    CLIPS_HASHED. Writes nothing."""
+    empty or run past the end. The hash of what lies outside them is taken unless `hash_outside` is False:
+    a photo's is two full reads of a few megabytes and finds a byte changed outside the patch (#2377); a clip's would be
+    two full reads of up to 10 GB, about what the rewrite the patch avoids costs, so a clip's patch passes False (owner,
+    2026-11-03). Writes nothing."""
     size = handle.seek(0, os.SEEK_END)
     changes = sorted((int(at), bytes(new)) for at, new in changes)
     end = 0
@@ -71,10 +68,9 @@ def record(handle, changes, clip=False):
         end = at + len(new)
     spans = [(at, len(new), new) for at, new in changes]
     before = b"".join(_read_at(handle, at, length) for at, length, _new in spans)
-    hashed = not clip or CLIPS_HASHED
     return {"v": VERSION, "size": size,
             "ranges": [{"at": at, "len": length, "after": base64.b64encode(new).decode("ascii")} for at, length, new in spans],
-            "outside": {"sha256": _outside(handle, size, spans)} if hashed else None}, before
+            "outside": {"sha256": _outside(handle, size, spans)} if hash_outside else None}, before
 
 
 def held(path, record, before):
