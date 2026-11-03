@@ -27,6 +27,9 @@ XMP PersonInImage or RegionName (all 0 in the three).
    - One batch reader, `field_values.read`: the indexer's `MetadataExtractor.batch_read` and sync's pairing read
      through it (#1473). A timeout ends the read and leaves every photo not read unread (#1490).
    - One writer of a photo's fields, `field_values.write`; the identity mint writes through it (`ensure_document_id`).
+     It writes every photo beside itself and moves the new file over it only once its picture is the photo's
+     (`_landed`, #2377, DECISIONS 2026-11-03): the one check of a rewrite, the patch in place's verify the other
+     mechanism of the same rule (INVARIANTS), not merged with it.
    - One answer to "is this file there to be written", `file_changes.file_states`, with `write_fields` the one place
      that leaves out a photo on a share asleep (#1492).
    - One cap and its sentence, `file_changes.too_many`, asked by `write_fields`, `batch_exclusively`, Smart Rename, the
@@ -34,8 +37,9 @@ XMP PersonInImage or RegionName (all 0 in the three).
    - One `store.photos.stamps` (#1090).
    - Left by rule: `names.read_for_renaming` reads one photo per command and refuses the whole set (#1419).
 3. **No hidden coupling.** Met. `tests/test_rules_have_one_owner.py` fails each of these outside `files/field_values.py`:
-   a `set_tags(`, an `-overwrite_original` and an `execute` of a `-TAG=value`. It also fails a `field_values.write`
-   outside `file_changes` and `file_only`. The cap and the away rule each have one function.
+   a `set_tags(` and an `execute` of a `-TAG=value`; an `-overwrite_original` it fails anywhere, field_values included
+   (a photo is written beside itself, #2377). It also fails a `field_values.write` outside `file_changes` and
+   `file_only`. The cap and the away rule each have one function.
 4. **No concept that could collapse.** Met. Gone in this pass: `stamps_with_vectors`, `libraries.not_in`,
    `sync.folder_state` (now `sync.watch_states`), `bulk_edit._reachable`, `MetadataExtractor._read_one_by_one`,
    `face_people.CHUNK`, `face_people.TIMEOUT` and the route's `_too_many`.
