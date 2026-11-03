@@ -35,4 +35,3 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
-| 2364 | 2026-11-02 | low: a Suggested People chip that comes from the faces alone still says "or leave it for Apply All, which writes everything here", but Apply All (`/api/folder/auto-apply`, suggestions.js) writes only what a Suggest run stored; the chip's own click writes it. Left as the brief said ("the chips' count, Apply and the rest stay as they are"): the owner decides whether Apply All takes the faces' people too or the title says it does not. | ? |

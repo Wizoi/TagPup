@@ -92,6 +92,22 @@ describe("a shoot just indexed: the selection offers who its faces look like", (
     assert.deepEqual(suggested(ctx), ["Kira Bao (1) · 91%"]);
   });
 
+  test("a chip says Apply All writes it only for the photos a Suggest run stored it for", async (t) => {
+    const ctx = await openShoot(t, photos.slice(0, 2), {
+      [photos[0].path]: [like(KIRA, 0.91)],
+      [photos[1].path]: [like(KIRA, 0.82)],
+    }, {
+      status: "completed",
+      suggestions: { [photos[0].path]: { people: [{ name: "Kira Bao", score: 0.8 }] } },
+    });
+    await ctx.selectAll();
+    const title = () => ctx.document.querySelector("#selection-suggested-people-list .suggestion-chip").title;
+    assert.match(title(), /Apply All writes only what Suggest stored, so it leaves out 1 of them/);
+    await ctx.tick(photos[1].path);
+    assert.match(title(), /or leave it for Apply All, which writes everything here/,
+      "every photo of the chip is stored: Apply All writes all of them");
+  });
+
   test("photos answered already are not asked again, and a new photo in the selection is asked alone", async (t) => {
     const ctx = await openShoot(t, photos, faces);
     await ctx.tick(photos[0].path);

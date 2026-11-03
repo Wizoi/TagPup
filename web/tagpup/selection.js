@@ -220,7 +220,7 @@ export function updateSelectedThumbnailsCount() {
             (state.selectionFaces[photo.path] || []).forEach(({ person, similarity }) => {
                 if (photoAlreadyHas(photo, person.tag, namesAPerson, state.people)
                     || peopleListHas(photo.people || [], leafOf(person.name), state.people)) return;
-                noteSuggestion(suggPeopleCounts, person.tag, photo.path, similarity);
+                noteSuggestion(suggPeopleCounts, person.tag, photo.path, similarity, false);
             });
             const sugg = state.folderSuggestions[photo.path];
             if (sugg) {
@@ -318,13 +318,17 @@ function showLibrarySelection() {
 //: would now be a bug rather than a threshold.
 export const CONFIDENT_ENOUGH_TO_LOOK_SURE = 0.75;
 
-/** Record a suggestion, remembering which photos asked for it and how strongly: a photo counts once, however often asked. */
-export function noteSuggestion(into, key, photoPath, score) {
-    const entry = into[key] || (into[key] = { count: 0, paths: [], score: 0 });
+/**
+ * Record a suggestion, remembering which photos asked for it and how strongly: a photo counts once, however often asked.
+ * `stored` is whether a Suggest run stored it for the photo (Apply All writes only those); a photo's faces alone say false.
+ */
+export function noteSuggestion(into, key, photoPath, score, stored = true) {
+    const entry = into[key] || (into[key] = { count: 0, paths: [], stored: [], score: 0 });
     if (!entry.paths.includes(photoPath)) {
         entry.paths.push(photoPath);
         entry.count++;
     }
+    if (stored && !entry.stored.includes(photoPath)) entry.stored.push(photoPath);
     entry.score = Math.max(entry.score, Number(score) || 0);
 }
 
@@ -346,7 +350,7 @@ export function renderSuggestionChips(container, counts, isPerson) {
         return;
     }
     keys.forEach(name => {
-        const { count, paths, score } = counts[name];
+        const { count, paths, stored, score } = counts[name];
         const pct = Math.round(score * 100);
         const unsure = score < CONFIDENT_ENOUGH_TO_LOOK_SURE;
 
@@ -354,8 +358,10 @@ export function renderSuggestionChips(container, counts, isPerson) {
         chip.className = 'suggestion-chip' + (unsure ? ' suggestion-chip-unsure' : '');
         chip.style.cursor = 'pointer';
         chip.textContent = `${shownOf(name)} (${count}) · ${pct}%`;
-        chip.title = `${pct}% confident— click to add it to ${count} photo(s) now, `
-            + `or leave it for Apply All, which writes everything here.`;
+        // Apply All writes what a Suggest run stored: a chip the photos' faces alone offer is written by its click only.
+        chip.title = `${pct}% confident— click to add it to ${count} photo(s) now`
+            + (stored.length === count ? `, or leave it for Apply All, which writes everything here.`
+                : `. Apply All writes only what Suggest stored, so it leaves out ${count - stored.length} of them.`);
         chip.addEventListener('click', (e) => {
             e.stopPropagation();
             applyTagToPhotos(name, isPerson, paths);
