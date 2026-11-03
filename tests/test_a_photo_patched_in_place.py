@@ -5,15 +5,16 @@ A keyword renamed writes only the bytes of the EXIF, IPTC and XMP segments that 
 non-ASCII keywords (UTF-16 XPKeywords, UTF-8 XMP) the same; three saves in a row are three patches; what does not fit
 is ExifTool's rewrite, as before the patch (a photo with no XMP yet, an EXIF segment that would move); a photo another
 program has open is not patched; a photo another process is patching (held with no sharing) is not written by this
-one; a share that stops answering mid-patch stops the write, and the next start settles the photo by its bytes. The
-fit itself (in_place.jpeg_ranges) against ExifTool's own output: an IPTC segment that shrank by 2 to 10 bytes is
+one; a share that stops answering mid-patch stops the write, and the next start settles the photo by its bytes; a
+photo holding Photoshop's Print Flags Information (8BIM 0x2710) keeps it as it was, wherever it sits. The fit itself (in_place.jpeg_ranges) against ExifTool's own output: an IPTC segment that shrank by 2 to 10 bytes is
 rewritten (no 8BIM resource is that small), by 12 or more it is padded with a dummy resource that ExifTool reads past.
 
 Real JPEGs written by the real ExifTool in a home of the test's own (test_file_journal.FilesCase); the crash cuts of a
 patch are D3's (test_a_crash_part_way_is_settled_at_the_next_start.AnInPlacePatchCutShort). Break that fails these:
 field_values.PATCH_IN_PLACE False (every write the rewrite) fails the three tests that count a patch saved; in_place
 ._fitted padding IPTC with zero bytes instead of the dummy resource fails test_an_iptc_segment_that_shrank_is_padded_
-only_by_a_resource_exiftool_reads_past; dropping its `new.offset != old.offset` refusal fails test_an_exif_segment_
+only_by_a_resource_exiftool_reads_past; containers.PAD_RESOURCE 0x2710 (Print Flags' id) fails test_photoshop_print_flags_
+in_the_iptc_segment_are_kept_as_they_were; dropping its `new.offset != old.offset` refusal fails test_an_exif_segment_
 that_would_move_is_rewritten.
 """
 import contextlib
@@ -71,6 +72,23 @@ def open_elsewhere(path, sharing):
         yield
     finally:
         kernel.CloseHandle(handle)
+
+
+#: Photoshop's Print Flags Information resource as 7 of 300 photo_index JPEGs hold one (a reviewer's count, 2026-11-03):
+#: 8BIM 0x2710, no name, a body of 22 bytes.
+PRINT_FLAGS = b"8BIM" + (0x2710).to_bytes(2, "big") + bytes(2) + (22).to_bytes(4, "big") + bytes(range(1, 23))
+
+
+def with_print_flags(path, last):
+    """The photo at `path` given PRINT_FLAGS in its IPTC segment, after its last 8BIM resource or before its first, as
+    Photoshop leaves it in its list."""
+    held = read(path)
+    iptc = containers.read(io.BytesIO(held)).of_kind("iptc")[0]
+    at = iptc.resources[-1].offset + iptc.resources[-1].size if last else iptc.resources[0].offset
+    segment = held[iptc.offset:at] + PRINT_FLAGS + held[at:iptc.end]
+    segment = segment[:2] + (len(segment) - 2).to_bytes(2, "big") + segment[4:]
+    with open(path, "wb") as handle:
+        handle.write(held[:iptc.offset] + segment + held[iptc.end:])
 
 
 def away_at(nth):
@@ -215,6 +233,33 @@ class APhotoPatchedInPlace(FilesCase):
         self.assertEqual((["Beach"], "Beach"), (keywords_of(a), field_of(a, "EXIF:XPKeywords")))
 
 
+    def test_photoshop_print_flags_in_the_iptc_segment_are_kept_as_they_were(self):
+        # A photo Photoshop saved holds its Print Flags Information (0x2710) among its 8BIM resources. A keyword
+        # shortened by 12 bytes shrinks the IPTC segment and the patch pads it with a resource of its own: never over
+        # Print Flags when they are last, never a second resource of that id when they are not.
+        tags = ("Beachcombing at low tide",)
+        values = {"XMP:Subject": list(tags), "IPTC:Keywords": list(tags), "EXIF:XPKeywords": ";".join(tags)}
+        for last in (True, False):
+            with self.subTest(last=last):
+                a = self.make("last.jpg" if last else "first.jpg", tags=tags, row=False)
+                with_print_flags(a, last)
+                conn = db.connect(self.library.path)
+                try:
+                    photo_rows.add_read(conn, a, values)
+                    conn.commit()
+                finally:
+                    conn.close()
+                with saves_counted() as saved:
+                    result = self.replace([a], tags[0], "Beachcombing")
+                self.assertEqual((1, [], 1), (result.changed, result.errors, saved.call_count), "not a patch")
+                held = read(a)
+                flags = [each for each in containers.read(io.BytesIO(held)).of_kind("iptc")[0].resources
+                         if each.id == 0x2710]
+                self.assertEqual(1, len(flags), "a second resource of Print Flags' id was written")
+                self.assertEqual(PRINT_FLAGS, held[flags[0].offset:flags[0].offset + flags[0].size],
+                                 "Print Flags were written over")
+                self.assertEqual((["Beachcombing"], "Beachcombing"), (keywords_of(a), field_of(a, "IPTC:Keywords")))
+
 @requires_exiftool
 class TheFitOfAnIptcSegment(unittest.TestCase):
     """in_place.jpeg_ranges against ExifTool's own write of a header holding IPTC keywords alone: the segment that shrank
@@ -259,6 +304,9 @@ class TheFitOfAnIptcSegment(unittest.TestCase):
             for at, new in ranges:
                 patched[at:at + len(new)] = new
             self.assertEqual(len(self.header), len(patched))
+            if pad:
+                last = containers.read(io.BytesIO(bytes(patched) + in_place._EOI)).of_kind("iptc")[0].resources[-1]
+                self.assertEqual((containers.PAD_RESOURCE, pad), (last.id, last.size), "the padding is not the dummy's")
             check = os.path.join(self.folder, "patched.jpg")
             with open(check, "wb") as handle:
                 handle.write(bytes(patched) + in_place._EOI)

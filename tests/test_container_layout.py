@@ -219,7 +219,7 @@ class AJpeg(Reading):
 
     def test_the_slack_of_each_segment(self):
         data = (b"\xff\xd8" + exif_segment(24) + xmp_segment(b"\n" + b" " * 300)
-                + iptc_segment(resource(0x0404, b"\x1c\x02\x19\x00\x05Alpha"), resource(0x2710, bytes(40))) + SOS)
+                + iptc_segment(resource(0x0404, b"\x1c\x02\x19\x00\x05Alpha"), resource(containers.PAD_RESOURCE, bytes(40))) + SOS)
         layout = self.read(data, "photo.jpg")
         self.assertEqual(24, layout.exif.slack)
         self.assertEqual(300, layout.xmp.slack, "the whitespace less the one newline a rewrite keeps")

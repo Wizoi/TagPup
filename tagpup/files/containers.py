@@ -16,7 +16,7 @@ cut short, a box that claims more than the file holds, or bytes that are no box 
             slack: the bytes a rewrite of the segment at its old length may use, as the in-place study defined them
             (DECISIONS 2026-11-02, "THE JPEG PATCH IS BUILT WITH THE VIDEOS"): XMP's whitespace between </x:xmpmeta>
             and the packet's end (one newline kept), EXIF's zero bytes after the last data its IFDs point at, IPTC's
-            dummy 8BIM resource 0x2710 at the end; and bytes after the last 8BIM resource that are no resource
+            dummy 8BIM resource (PAD_RESOURCE) at the end; and bytes after the last 8BIM resource that are no resource
             (`stray`), which break ExifTool's next write and Windows' reader.
 """
 import struct
@@ -32,8 +32,12 @@ CONTAINERS = {"moov": frozenset({"udta"}), "udta": frozenset()}
 #: What a MOV/MP4/M4V starts with: an ftyp box, or a skip box before it (2 of the 2,184 live .mov/.mp4/.m4v files,
 #: counted 2026-11-02; no other first box among them).
 FIRST_TYPES = frozenset({"ftyp", "skip"})
-#: The 8BIM resource the in-place writer pads an IPTC segment with (no meaning to any reader).
-PAD_RESOURCE = 0x2710
+#: The id of the 8BIM resource the in-place writer pads an IPTC segment with, and the only id read as that padding:
+#: 0x0DAC (3500), in the gap Adobe's Photoshop File Formats Specification leaves undefined between Origin Path Info
+#: (0x0BB8) and the Plug-In resources (0x0FA0), so no program writes it with a meaning. It was 0x2710 before it was
+#: merged, which is Photoshop's Print Flags Information: 7 of 300 photo_index JPEGs hold a real one (a reviewer's count,
+#: 2026-11-03), which the patch then took as its padding and wrote zeros over.
+PAD_RESOURCE = 0x0DAC
 
 _XMP_HEAD = b"http://ns.adobe.com/xap/1.0/\0"
 _XMP_EXTENSION_HEAD = b"http://ns.adobe.com/xmp/extension/\0"
