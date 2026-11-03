@@ -18,7 +18,9 @@ import unittest
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import fake_exiftool  # noqa: E402
 from tagpup.core.fields import read_document_id
 from tagpup.files.field_values import ensure_document_id
 from tagpup.files.identity import (
@@ -71,6 +73,9 @@ class TestMinting(unittest.TestCase):
 
 
 class TestEnsuring(unittest.TestCase):
+    def setUp(self):
+        fake_exiftool.writes_no_file(self)
+
     def test_a_photo_that_has_one_is_not_written_to(self):
         # The common case by a wide margin, and the reason this is cheap: 1,075 of
         # 1,129 photos in this library already have an identity.

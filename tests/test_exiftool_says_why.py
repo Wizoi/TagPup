@@ -47,9 +47,10 @@ class AFailedWrite(unittest.TestCase):
         with self.assertLogs(exiftool_session.logger, logging.WARNING) as logged:
             with ExifToolSession(executable=EXIFTOOL) as et:
                 with self.assertRaises(ExifToolExecuteError) as raised:
-                    et.set_tags([self.photo], tags={"XMP:Subject": ["Quay"]}, params=["-overwrite_original"])
+                    et.set_tags([self.photo], tags={"XMP:Subject": ["Quay"]},
+                                params=["-o", exiftool_session.scratch_of(self.photo)])
         said = str(raised.exception)
-        self.assertIn("Temporary file already exists", said)
+        self.assertIn("' already exists", said)
         self.assertNotIn("Rowan", said)
         self.assertIn("<file>", said)
         # What is in the way, and what to do, said without the photo's name (#1411).
@@ -74,7 +75,7 @@ class AFailedWrite(unittest.TestCase):
         status, reply = self.lib.post("/api/photos/bulk-tags", {
             "paths": [self.photo], "add_tags": ["Sunset"], "remove_tags": []})
         self.assertEqual(500, status, reply)
-        self.assertIn("Temporary file already exists", reply["error"])
+        self.assertIn("' already exists", reply["error"])
         self.assertNotIn("non-zero exit status", reply["error"])
         # Written this moment, it may be another write's under way: not one to delete (rule 3).
         self.assertIn("try again after 5 minutes", reply["error"])
