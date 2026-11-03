@@ -21,7 +21,8 @@ journal's path, the write a stand-in that raises it (APictureAWriteDamagesTwice)
 change and its error says why; in a settle -- the index's bake killed part-way -- or an undo, it is a conflict noted
 file_journal.PICTURE_CHANGED, its row not stamped again, which the doctor counts. Fails on the old code: file_journal.finish
 erasing a forward-finished bake whole (the change and its conflict, so the doctor counted 0) fails
-test_a_bake_settled_at_the_next_start_keeps_its_change_and_the_conflict_the_doctor_counts.
+test_a_bake_settled_at_the_next_start_keeps_its_change_and_the_conflict_the_doctor_counts; keeping every conflict of a
+bake, one that may pass too, fails test_a_bake_whose_file_ends_a_conflict_that_may_pass_is_erased_with_it.
 """
 import os
 import socket
@@ -281,6 +282,25 @@ class APictureAWriteDamagesTwice(FilesCase):
         self.assertEqual(2, self.writes)
         self.assertEqual(("applied", [("conflict", file_journal.PICTURE_CHANGED)], row, None, 1),
                          (self.status(change), self.notes(change), self.row(), field_of(self.a, found), self.counted()))
+        self.assertEqual([], file_journal.unfinished(self.library.path))
+
+    def test_a_bake_whose_file_ends_a_conflict_that_may_pass_is_erased_with_it(self):
+        # A conflict the doctor counts no note of (NOTES): kept, it would be listed nowhere and counted by no rule, and
+        # the next index writes the file anyway. Keeping every conflict of a bake (the rule before) fails this.
+        found = bake.WRITTEN[bake.FACES_FOUND]
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("plan committed")):
+            with self.assertRaises(Crash):
+                file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, [self.a], [found],
+                                          lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
+        change = self.last_change()
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, change))
+
+        def held(*_args, **_kwargs):
+            raise PermissionError("the file is being used by another process")
+        with mock.patch.object(field_values, "write", held):
+            start_again(self.library)
+        self.assertEqual(([], [], None, 0), (self.rows("SELECT id FROM changes WHERE id = ?", (change,)),
+                                              self.notes(change), field_of(self.a, found), self.counted()))
         self.assertEqual([], file_journal.unfinished(self.library.path))
 
     def test_an_undo_is_refused_for_it_a_conflict_the_doctor_counts(self):

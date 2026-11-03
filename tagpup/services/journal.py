@@ -95,7 +95,7 @@ UNDO_CHECKS = {
     journal.PERSON_MERGED: None,
     tagging.ADD_TO_ALL: None,
     tags_from_faces.OPERATION: None,
-    # The index's bake (file_journal.INTERNAL): no operation; listed nowhere, and erased once it finishes (its conflicts kept).
+    # The index's bake (file_journal.INTERNAL): no operation; listed nowhere, and erased once it finishes (its conflicts of NOTES kept).
     baking.INDEX_OPERATION: "change %(change)d (%(operation)s): a bake the index wrote is not an operation; it is not undone",
     sync.OPERATION: None,
     "save photo": None,

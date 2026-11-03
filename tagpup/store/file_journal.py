@@ -22,9 +22,10 @@ file_changes.settle).
 
 A change of an INTERNAL operation (the index's bake) is the record a crash needs and no
 more: it is erased, its files and itself, when it finishes forward -- but for a file of it
-that ended a conflict, which is kept with its change for the doctor to count (owner,
-2026-11-03); no history lists it, and no undo check meets it, but while one of its files
-is `writing` (newer_overlapping: one writer of a file at a time).
+that ended a conflict the doctor counts (a note of NOTES), which is kept with its change
+(owner, 2026-11-03, narrowed by the main session to the doctor's notes); no history lists
+it, and no undo check meets it, but while one of its files is `writing` (newer_overlapping:
+one writer of a file at a time).
 
 A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}, and
 the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
@@ -532,9 +533,11 @@ def finish(db_path, change_id, also=None):
 
     An internal change (INTERNAL) that finishes forward is erased in the same transaction, its files and itself: it was
     the record a crash needed, and it is done (an id is never used again: changes.id is AUTOINCREMENT). One with a file
-    that ended a conflict keeps that file and is applied (owner, 2026-11-03): the note is the only record of a file the
-    bake could not write (a picture its write damaged twice, PICTURE_CHANGED), which the doctor counts (noted); its done
-    files go, and no history lists it."""
+    that ended a conflict noted one of NOTES keeps that file and is applied (owner, 2026-11-03): the note is the only
+    record of a file the bake found damaged (a picture its write changed twice, PICTURE_CHANGED), which the doctor counts
+    (noted); its other files go, and no history lists it. Any other conflict -- one that may pass (a scratch file of a
+    write that may be under way, a file held by another program, one changed outside) -- goes with the change, as a done
+    file does: the next index reads the file and bakes it again, and nothing would count or list it if it were kept."""
     def work(conn):
         states = counts(conn, [change_id]).get(change_id, {})
         undoing = conn.execute("SELECT undone FROM changes WHERE id = ?", (change_id,)).fetchone()[0] is not None
@@ -548,8 +551,10 @@ def finish(db_path, change_id, also=None):
         summary["undone_files" if undoing else "files"] = dict(sorted(states.items()))
         operation = conn.execute("SELECT operation FROM changes WHERE id = ?", (change_id,)).fetchone()[0]
         if operation in INTERNAL and not undoing:
-            conn.execute("DELETE FROM change_files WHERE change_id = ? AND state != 'conflict'", (change_id,))
-            if not states.get("conflict"):
+            notes = ", ".join("?" * len(NOTES))
+            conn.execute("DELETE FROM change_files WHERE change_id = ? AND (state != 'conflict' OR note IS NULL"
+                         " OR note NOT IN (%s))" % notes, (change_id,) + NOTES)
+            if not conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone():
                 conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
                 return states
         if not states:
