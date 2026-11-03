@@ -277,7 +277,7 @@ class AFailedWrite(unittest.TestCase):
 
     def test_a_journaled_write_names_the_holder(self):
         library = mock.Mock(path="library.db")
-        row = mock.Mock(path="D:\\Photos\\IMG_0001.jpg", id=3, stamp=None)
+        row = mock.Mock(path="D:\\Photos\\IMG_0001.jpg", id=3, stamp=None, patched=False)
         error = RuntimeError("Error renaming temporary file to IMG_0001.jpg")
         with mock.patch.object(field_values, "read_one", return_value=FIELDS_BEFORE), \
                 mock.patch.object(file_changes.file_journal, "withdraw") as withdraw, \
@@ -290,7 +290,7 @@ class AFailedWrite(unittest.TestCase):
 
     def test_a_write_that_turns_out_to_have_worked_asks_nobody(self):
         library = mock.Mock(path="library.db")
-        row = mock.Mock(path="D:\\Photos\\IMG_0001.jpg", id=3, stamp=None)
+        row = mock.Mock(path="D:\\Photos\\IMG_0001.jpg", id=3, stamp=None, patched=False)
         with mock.patch.object(field_values, "read_one", return_value=FIELDS_AFTER), \
                 mock.patch.object(file_changes, "_record_held"), \
                 mock.patch.object(lock_owners, "holders", side_effect=AssertionError("asked")):

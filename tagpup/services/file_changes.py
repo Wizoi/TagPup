@@ -22,7 +22,9 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
    file is done or a conflict.
 3. **Settle**, at start (settle_once): a file a crash left `writing` is settled by what it
    holds -- what the plan read: written again; what it was to hold: marked done and its
-   row recorded; neither: a conflict. Files the crash left `planned` are written too, so
+   row recorded; neither: a conflict. A file a patch was writing in place is settled by its bytes first, against the
+   record the patch saved before its first byte (_by_bytes): a patch this process cut short is put back and written
+   again, one another program wrote over is a conflict, one that cannot be read stays `writing` with its record. Files the crash left `planned` are written too, so
    the edit the person asked for is finished. A change another live process is writing
    is left to it (`changes.owner`).
 4. **Undo**, by the same states: a file that no longer holds what the change left is
@@ -72,7 +74,7 @@ from tagpup.core import fields, paths
 from tagpup.core.result import Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names, shares
+from tagpup.files import exiftool_session, field_values, in_place, lock_owners, metadata, names, shares
 from tagpup.services import baking, batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, file_journal, photos, schema
@@ -80,7 +82,9 @@ from tagpup.store import db, derived, file_journal, photos, schema
 logger = logging.getLogger(__name__)
 
 #: The steps of writing one file, in order; `_reached` is told of each.
-STEPS = ("plan committed", "file writing", "file written", "file recorded")
+STEPS = ("plan committed", "file writing", "patch saved", "file written", "file recorded")
+#: The step only a patch in place reaches (field_values.write's `saving`): ExifTool's rewrite saves no record.
+PATCH_SAVED = "patch saved"
 
 
 def _reached(step):
@@ -518,7 +522,10 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         if stopped and stopped.get("share"):
             _share_stopped(library, operation in file_journal.INTERNAL, change_id, result, stopped, stalled)
         else:
-            file_journal.finish(library.path, change_id, also=face_batch.tidy)
+            if file_journal.finish(library.path, change_id, also=face_batch.tidy) is None:
+                # A patched file that could not be read after its write stays `writing` with its record (_by_bytes):
+                # the change is let go, for the next settle to finish.
+                file_journal.release(library.path, change_id)
             if stopped:
                 result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written%s; the rest were not written."
                               % (stopped["after"], stopped["of"], result.changed,
@@ -752,14 +759,18 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     stamp = row.stamp = (before.st_mtime, before.st_size) if before is not None else None
     row.known_as = before
     file_journal.writing(library.path, row.id, stamp)
+    row.patched = False
     _reached("file writing")
-    failed = _written(et, row.path, target)
+    saving = _saving(library, row)
+    failed = _written(et, row.path, target, saving)
     if exiftool_session.scratch_in_the_way(failed):
         left = _removed_scratch(row.path, stamp, interrupted)
         if left is None:
-            failed = _written(et, row.path, target)      # once: a second failure is the write's own
+            failed = _written(et, row.path, target, saving)      # once: a second failure is the write's own
         elif left == SCRATCH_UNDER_WAY:
             failed = exiftool_session.written_lately(failed)
+    if failed is None and row.patched:
+        failed = _verified(et, library, row, target)
     if failed is not None:
         return _after_failure(et, library, row, origin, target, finished, on_failure, failed, stall_stops)
     _reached("file written")
@@ -774,12 +785,67 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     return finished, None
 
 
-def _written(et, path, target):
+def _written(et, path, target, saving=None):
     """None when field_values.write wrote `target` into the file at `path`; else what it raised."""
     try:
-        field_values.write(et, path, target)
+        field_values.write(et, path, target, saving=saving)
     except Exception as e:
         return e
+    return None
+
+
+def _saving(library, row):
+    """field_values.write's `saving` for the file of `row`: a patch's record committed (file_journal.save_patch) before
+    the patch writes a byte of it."""
+    def saving(record, before):
+        file_journal.save_patch(library.path, row.id, record, before)
+        row.patched = True
+        _reached(PATCH_SAVED)
+    return saving
+
+
+def _verified(et, library, row, target):
+    """None when the patch just written leaves the file of `row` holding what it wrote and nothing else changed
+    (in_place.held: NEW), and its fields read back as `target`; else what failed, for _after_failure to settle the file
+    by its bytes. A file whose bytes are as written but whose fields do not read so is put back here first. One read of
+    the file more than ExifTool's rewrite costs, for a patched file only: a byte changed outside the patch (#2377) is
+    found before the file is done."""
+    saved = file_journal.patch_of(library.path, row.id)
+    try:
+        found = in_place.held(row.path, *saved)
+        if found != in_place.NEW:
+            return RuntimeError("the patch did not leave the file as it wrote it (%s)" % found)
+        if fields.reads_same(field_values.read_one(et, row.path, list(target)), target):
+            return None
+        in_place.put_back(row.path, *saved)
+    except (OSError, field_values.Unreadable) as e:
+        return e
+    return RuntimeError("the patch was written, but its fields do not read back as written; its bytes were put back")
+
+
+def _by_bytes(library, row):
+    """The one rule of a file a patch was writing (its record saved: file_journal.save_patch), settled by its bytes before
+    any field of it is read. None when it holds every range as it was (to be written again) or as the patch wrote it (then
+    read as any file is), a range this process tore put back first (in_place.TORN). Else (outcome, why): a conflict, never
+    overwritten, for a file another program wrote (a byte neither found nor written, another size), and for one whose
+    bytes outside the patch changed (in_place.OUTSIDE: its ranges put back first, noted file_journal.OUTSIDE_CHANGED);
+    ("writing", why) for one that cannot be read or put back now: left `writing` with its record for the next settle,
+    never a conflict, since the record is the only way back."""
+    saved = file_journal.patch_of(library.path, row.id)
+    if saved is None:
+        return None
+    try:
+        found = in_place.held(row.path, *saved)
+        if found in (in_place.TORN, in_place.OUTSIDE):
+            in_place.put_back(row.path, *saved)
+    except OSError as e:
+        return "writing", "%s: could not be read or put back now (%s); it is settled by its bytes the next time" % (
+            row.named(), e.strerror or type(e).__name__)
+    if found in (in_place.NEITHER, in_place.RESIZED):
+        return _conflict(library, row, "changed since its patch was saved: it holds bytes the patch neither found nor"
+                                       " wrote, and is not overwritten")
+    if found == in_place.OUTSIDE:
+        return _conflict(library, row, file_journal.OUTSIDE_CHANGED)
     return None
 
 
@@ -855,6 +921,10 @@ def _held_or_conflict(et, library, row, origin, target, finished, now=None, unre
     planned, settled at the next start as any planned file is."""
     seen = None
     if now is None:
+        if row.state == "writing":
+            settled = _by_bytes(library, row)
+            if settled is not None:
+                return settled
         # The stat before the read: a file found holding `target` is recorded stamped as it was before what was read of it.
         seen = _stat(row.path)
         try:
@@ -942,6 +1012,10 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
     (its stat after the failure), the one failure told from one that may pass the next time."""
     seen = _stat(row.path)
     row.read_only = seen is not None and not seen.st_mode & S_IWRITE
+    if row.patched:
+        settled = _by_bytes(library, row)
+        if settled is not None:
+            return settled
     try:
         now = _read_now(et, row, target, stall_stops)
     except field_values.Unreadable:
@@ -1259,10 +1333,14 @@ def _finish(library, change, exiftool_path):
                     continue
                 try:
                     if undoing:
-                        _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict", stall_stops=True)
+                        outcome, _why = _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict",
+                                               stall_stops=True)
                     else:
-                        _carry(et, library, row, row.before, row.after, "done", on_failure="conflict", wrote=wrote,
-                               stall_stops=True, held_out=row.state == "planned" and row.photo_id not in kept)
+                        outcome, _why = _carry(et, library, row, row.before, row.after, "done", on_failure="conflict",
+                                               wrote=wrote, stall_stops=True,
+                                               held_out=row.state == "planned" and row.photo_id not in kept)
+                    # A patched file that cannot be read now stays `writing` with its record (_by_bytes).
+                    left = left or outcome == "writing"
                 except _Stalled:
                     left = True
                     break
@@ -1423,7 +1501,8 @@ def undo(library, change_id, exiftool_path, check, apply=False):
                         result.changed += 1
                     else:
                         result.fail(row.named(), why)
-        file_journal.finish(library.path, change_id)
+        if file_journal.finish(library.path, change_id) is None:
+            file_journal.release(library.path, change_id)      # a patched file left `writing` (_by_bytes)
     except BaseException:
         file_journal.release(library.path, change_id)
         raise

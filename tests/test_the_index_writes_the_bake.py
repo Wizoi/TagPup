@@ -197,7 +197,8 @@ class TheIndexWritesTheBake(unittest.TestCase):
         self.assertBaked(a, 1)
 
     def test_a_crash_at_each_step_of_a_files_write_is_settled_and_leaves_no_record(self):
-        for n, step in enumerate(file_changes.STEPS):
+        # ExifTool's rewrite saves no patch: its write never reaches PATCH_SAVED.
+        for n, step in enumerate(step for step in file_changes.STEPS if step != file_changes.PATCH_SAVED):
             with self.subTest(step=step):
                 path = self.picture("crash %d.jpg" % n, (20 * n, 90, 160))
                 with mock.patch.object(file_changes, "_reached", side_effect=crash_at(step)):

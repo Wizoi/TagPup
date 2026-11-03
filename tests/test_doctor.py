@@ -23,7 +23,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tagpup.store import checks, db, derived, people, roots_check, schema, taxonomy
+from tagpup.store import checks, db, derived, file_journal, people, roots_check, schema, taxonomy
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
@@ -131,6 +131,21 @@ class TheRules(Library):
         add_vector(self.conn, os.path.join(self.dir, "a.jpg"), b"\x00" * 16, model="m")
         self.assertEqual({}, self.broken())
         self.assertEqual((1, 2), (checks.without_a_vector(self.conn, "m"), checks.without_a_vector(self.conn, "another model")))
+
+    def test_a_patch_record_a_mark_kept_and_a_file_changed_around_its_patch(self):
+        # Two files of a change as the journal plans them; one marked done by hand, keeping its patch's record, which
+        # every mark erases (file_journal.set_state); one a patch found changed outside it (in_place.OUTSIDE).
+        _change, planned = file_journal.plan(self.db_path, "rename tag", [
+            {"photo_id": None, "path": os.path.join(self.dir, name), "before": {"XMP:Subject": ["Beach"]},
+             "after": {"XMP:Subject": ["Shore"]}} for name in ("a.jpg", "b.jpg")])
+        kept, changed = (row.id for row in planned)
+        self.conn.execute("UPDATE change_files SET state = 'done', patch = '{}', patch_before = x'00' WHERE id = ?", (kept,))
+        self.conn.commit()
+        file_journal.mark(self.db_path, [changed], "conflict", file_journal.OUTSIDE_CHANGED)
+        self.assertEqual({"patch records of files not being written": 1, "files changed outside their patch": 1},
+                         self.broken())
+        self.assertEqual([[kept], [changed]], [check.examples for check in (
+            checks.patch_records_outside_writing(self.conn), checks.files_changed_around_a_patch(self.conn))])
 
     def test_one_file_under_two_spellings(self):
         if os.path.normcase("A") == "A":

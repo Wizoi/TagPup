@@ -10,7 +10,7 @@ import os
 import weakref
 
 from tagpup.core import paths, vocabulary
-from tagpup.store import derived, generations, people, person_ids, roots_check, schema, search_index, taxonomy
+from tagpup.store import derived, file_journal, generations, people, person_ids, roots_check, schema, search_index, taxonomy
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -239,6 +239,22 @@ def without_a_vector(conn, model):
                         (model,)).fetchone()[0]
 
 
+# ---- The journal's patches in place (tagpup.store.file_journal.save_patch) -----------------------
+
+def patch_records_outside_writing(conn):
+    """Files of the journal holding a patch's record though no longer `writing`: a mark that kept it, where every mark
+    that takes a file out of `writing` erases it (file_journal.set_state). The examples are change_files ids. One scan of
+    change_files (0.28 s on photo_index's 51,451 rows, counted 2026-11-02)."""
+    return _check("patch records of files not being written", file_journal.patches_outside_writing(conn))
+
+
+def files_changed_around_a_patch(conn):
+    """Files a patch wrote whose bytes outside it were found changed (file_journal.OUTSIDE_CHANGED): put back and left a
+    conflict, the picture data of the file not what it was (#2377). Found, not repaired: the file is restored from a copy
+    by hand. The examples are change_files ids."""
+    return _check("files changed outside their patch", file_journal.changed_around_a_patch(conn))
+
+
 # ---- The library's roots (docs/ARCHITECTURE.md, "Roots and machines") -------------------------
 
 def _roots_or_why(conn):
@@ -307,7 +323,7 @@ RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excl
          people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
          rooted_rows_convert, native_rows_under_a_root, photo_tags_out_of_date, photo_folders_out_of_date,
          folders_out_of_date, search_index_out_of_date, face_person_ids_out_of_step,
-         listed_person_ids_out_of_step)
+         listed_person_ids_out_of_step, patch_records_outside_writing, files_changed_around_a_patch)
 
 
 def run(conn):

@@ -10,9 +10,15 @@ Lifted: test_a_changes_owner_is_known_by_its_start (#275) and test_a_withdrawn_c
 fails the kept tests: tagpup.store.file_journal.owner_alive ignoring the start time (the start read as None) fails
 test_the_next_start_finishes_what_the_crash_left_also_when_windows_reused_the_process_id. There is no start-less owner
 ("host:pid", the old form): the live libraries hold none (0 of 3, counted 2026-10-15), and owner() refuses to name one.
+
+A patch in place (tagpup.files.in_place) killed part-way is settled by its bytes against the record it saved before its
+first byte (AnInPlacePatchCutShort). Break that fails it: _by_bytes not called, so a file torn between two ranges is read
+by its fields, holds neither what the change found nor what it was to leave, and is left a half-written conflict (that
+the old code also fails that test is not the proof: it fails earlier, on a write without `saving`; the mutation is).
 """
 import os
 import socket
+import stat
 import sys
 import unittest
 from unittest import mock
@@ -20,16 +26,27 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
-from test_file_journal import Crash, FilesCase, crash_at, keywords_of, requires_exiftool  # noqa: E402
+from test_file_journal import EXIFTOOL, Crash, FilesCase, Patcher, crash_at, field_of, keywords_of, requires_exiftool, \
+    write_outside  # noqa: E402
 
 from tagpup import runtime  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.services import file_changes  # noqa: E402
-from tagpup.store import db, file_journal, journal, people, schema  # noqa: E402
+from tagpup.files import field_values, in_place  # noqa: E402
+from tagpup.services import file_changes, tagging  # noqa: E402
+from tagpup.store import checks, db, file_journal, journal, people, schema  # noqa: E402
 
 HOST = socket.gethostname()
 #: A process that has gone: no process has this id.
 GONE = "%s:%d:1" % (HOST, 0x7FFFFFF0)
+
+
+def start_again(library):
+    """What the next process does with the library: opens it (rows settled), reads its settings (files settled)."""
+    journal._settled.clear()
+    schema.forget()
+    schema.ensure(library.path)
+    with mock.patch.object(file_changes, "_settled", set()):
+        runtime.library_settings(library)
 
 
 @requires_exiftool
@@ -53,14 +70,6 @@ class ACrashAndTheNextStart(FilesCase):
     def owned_by(self, owner, change):
         self.execute("UPDATE changes SET owner = ? WHERE id = ?", (owner, change))
 
-    def start_again(self):
-        """What the next process does with the library: opens it (rows settled), reads its settings (files settled)."""
-        journal._settled.clear()
-        schema.forget()
-        schema.ensure(self.library.path)
-        with mock.patch.object(file_changes, "_settled", set()):
-            runtime.library_settings(self.library)
-
     def test_the_next_start_finishes_what_the_crash_left_also_when_windows_reused_the_process_id(self):
         # The server dies after writing a file and before marking it done, ...
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written")):
@@ -81,7 +90,7 @@ class ACrashAndTheNextStart(FilesCase):
         self.assertEqual(0, self.settle())
         earlier = processes.started(os.getpid()) - 1
         self.owned_by("%s:%d:%d" % (HOST, os.getpid(), earlier), files)
-        self.start_again()
+        start_again(self.library)
         self.assertEqual(("applied", ["done", "done"]), (self.status(files), self.states(files)))
         for path in (self.a, self.b):
             self.assertEqual((["Beach", "Harbour"], ["Beach", "Harbour"]), (keywords_of(path), self.indexed(path)), path)
@@ -112,6 +121,102 @@ class ACrashAndTheNextStart(FilesCase):
         self.assertEqual(1, self.settle())
         self.assertEqual("failed", self.status(change))
         self.assertEqual([], file_journal.unfinished(self.library.path))
+
+
+@requires_exiftool
+class AnInPlacePatchCutShort(FilesCase):
+    """A keyword renamed in a photo by a patch in place (the stand-in test_file_journal.Patcher), the process killed at
+    each point of the write, and the next start: untouched or all old, it is written again; torn by the patch, put back
+    and written again; all new, done; another program's write, a conflict never overwritten; unreadable, left `writing`
+    with its record and the change let go; a byte changed outside the patch as it was written, put back and a conflict
+    the doctor counts."""
+
+    def setUp(self):
+        super().setUp()
+        self.a = self.make("a.jpg")
+        self.original = self.held()
+
+    def held(self):
+        with open(self.a, "rb") as handle:
+            return handle.read()
+
+    def replace(self, patcher, step=None):
+        with mock.patch.object(field_values, "write", patcher), \
+                mock.patch.object(file_changes, "_reached", side_effect=crash_at(step) if step else None):
+            return tagging.replace_tag(self.library, [self.a], "Beach", "Shore", EXIFTOOL)
+
+    def killed(self, patcher, step=None):
+        with self.assertRaises(Crash):
+            self.replace(patcher, step)
+        change = self.last_change()
+        self.assertEqual(["writing"], self.states(change))
+        return change, self.rows("SELECT id FROM change_files WHERE change_id = ?", (change,))[0][0]
+
+    def against_its_record(self, file_id):
+        return in_place.held(self.a, *file_journal.patch_of(self.library.path, file_id))
+
+    def assert_written_again(self, change):
+        start_again(self.library)
+        self.assertEqual((("applied", ["done"]), ["Shore"], ["Shore"], None),
+                         ((self.status(change), self.states(change)), keywords_of(self.a), self.indexed(self.a),
+                          file_journal.patch_of(self.library.path, self.rows("SELECT MAX(id) FROM change_files")[0][0])))
+
+    def test_killed_before_its_record_was_saved_the_file_is_untouched_and_written_again(self):
+        change, file_id = self.killed(Patcher(cut=Patcher.BEFORE_THE_SAVE))
+        self.assertEqual((self.original, None), (self.held(), file_journal.patch_of(self.library.path, file_id)))
+        self.assert_written_again(change)
+
+    def test_killed_once_its_record_was_saved_every_range_is_old_and_it_is_written_again(self):
+        change, file_id = self.killed(Patcher(), file_changes.PATCH_SAVED)
+        self.assertEqual((self.original, in_place.OLD), (self.held(), self.against_its_record(file_id)))
+        self.assert_written_again(change)
+
+    def test_killed_between_two_ranges_what_it_tore_is_put_back_and_written_again(self):
+        change, file_id = self.killed(Patcher(cut=1))
+        self.assertEqual(in_place.TORN, self.against_its_record(file_id))
+        self.assert_written_again(change)
+
+    def test_killed_after_its_last_byte_it_is_done_and_not_written_again(self):
+        change, file_id = self.killed(Patcher(cut=Patcher.AFTER_THE_LAST))
+        self.assertEqual(in_place.NEW, self.against_its_record(file_id))
+        patched = self.held()
+        self.assert_written_again(change)
+        self.assertEqual(patched, self.held(), "a file holding what it was to hold was written again")
+
+    def test_written_by_another_program_to_another_size_it_is_a_conflict_never_overwritten(self):
+        change, file_id = self.killed(Patcher(), file_changes.PATCH_SAVED)
+        write_outside(self.a, {"XMP:Description": "Written elsewhere"})
+        self.assertEqual(in_place.RESIZED, self.against_its_record(file_id))
+        start_again(self.library)
+        self.assertEqual((["conflict"], ["Beach"], "Written elsewhere", None),
+                         (self.states(change), keywords_of(self.a), field_of(self.a, "XMP:Description"),
+                          file_journal.patch_of(self.library.path, file_id)))
+
+    def test_unreadable_at_the_next_start_it_stays_writing_with_its_record_and_the_change_is_let_go(self):
+        change, file_id = self.killed(Patcher(cut=1))
+        torn = self.held()
+        os.chmod(self.a, stat.S_IREAD)
+        self.addCleanup(os.chmod, self.a, stat.S_IREAD | stat.S_IWRITE)
+        start_again(self.library)
+        self.assertEqual((["writing"], torn, None), (self.states(change), self.held(),
+                                                     self.rows("SELECT owner FROM changes WHERE id = ?", (change,))[0][0]))
+        self.assertIsNotNone(file_journal.patch_of(self.library.path, file_id), "the only way back was erased")
+        self.assertNotEqual("applied", self.status(change))
+        os.chmod(self.a, stat.S_IREAD | stat.S_IWRITE)
+        self.assert_written_again(change)
+
+    def test_a_byte_changed_outside_the_patch_as_it_was_written_is_put_back_a_conflict_the_doctor_counts(self):
+        result = self.replace(Patcher(outside=True))
+        change = result.details["change"]
+        self.assertEqual((0, ["conflict"], ["Beach"]), (result.changed, self.states(change), keywords_of(self.a)))
+        self.assertEqual([(file_journal.OUTSIDE_CHANGED,)],
+                         self.rows("SELECT note FROM change_files WHERE change_id = ?", (change,)))
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            counted = (checks.files_changed_around_a_patch(conn).count, checks.patch_records_outside_writing(conn).count)
+        finally:
+            conn.close()
+        self.assertEqual((1, 0), counted)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ does for the journal of rows; `settle` then finishes what it left.
 """
 import json
 import os
+import re
 import socket
 import sys
 import unittest
@@ -24,6 +25,7 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.files import field_values, in_place  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, journal as journal_service, photos as photo_actions, tagging  # noqa: E402
 from tagpup.store import db, file_journal, schema  # noqa: E402
@@ -69,6 +71,49 @@ def write_outside(path, values):
         et.set_tags([path], tags=values, params=["-overwrite_original"])
 
 
+class Patcher:
+    """A stand-in for field_values.write's in-place path (the patcher, M2, is not built): swaps 'Beach' for the
+    same-length 'Shore' (or back, for an undo) wherever the file holds it, in ASCII (XMP, IPTC) and in UTF-16LE
+    (EXIF:XPKeywords): its record by in_place.record, then `saving`, then the ranges one at a time, so a crash between two
+    leaves a genuine half state. `cut`: how many ranges it writes before it is killed (a Crash), BEFORE_THE_SAVE or
+    AFTER_THE_LAST; `outside`: it also changes a byte outside its ranges (#2377). A patch the journal will not keep
+    (file_journal.PatchTooLarge) is ExifTool's write, as the patcher's is to be."""
+    BEFORE_THE_SAVE, AFTER_THE_LAST = "before the save", "after the last byte"
+
+    def __init__(self, cut=None, outside=False):
+        self.cut, self.outside, self.calls, self.fell_back = cut, outside, [], []
+        self.exiftools = field_values.write
+
+    def __call__(self, et, path, values, saving=None):
+        self.calls.append(dict(values))
+        old, new = ("Beach", "Shore") if "Shore" in values.get("XMP:Subject", []) else ("Shore", "Beach")
+        with open(path, "rb") as handle:
+            held = handle.read()
+            changes = [(found.start(), new.encode(code)) for code in ("ascii", "utf-16-le")
+                       for found in re.finditer(re.escape(old.encode(code)), held)]
+            record, before = in_place.record(handle, changes)
+        if self.cut == self.BEFORE_THE_SAVE:
+            raise Crash(self.cut)
+        try:
+            saving(record, before)
+        except file_journal.PatchTooLarge:
+            with open(path, "rb") as handle:
+                self.fell_back.append(handle.read() == held)
+            return self.exiftools(et, path, values)
+        with open(path, "r+b") as handle:
+            for written, (at, now) in enumerate(sorted(changes)):
+                if written == self.cut:
+                    raise Crash("after %d ranges" % written)
+                handle.seek(at)
+                handle.write(now)
+                handle.flush()
+            if self.outside:
+                handle.seek(len(held) - 3)
+                handle.write(bytes([held[-3] ^ 0xFF]))
+        if self.cut == self.AFTER_THE_LAST:
+            raise Crash(self.cut)
+
+
 @requires_exiftool
 class FilesCase(unittest.TestCase):
     def setUp(self):
@@ -85,7 +130,8 @@ class FilesCase(unittest.TestCase):
 
         path = os.path.join(self.folder, name)
         Image.new("RGB", (16, 12), (90, 110, 130)).save(path, "JPEG")
-        values = {"XMP:Subject": list(tags), "IPTC:Keywords": list(tags)}
+        # Every field a keyword write sets that a file without people holds (fields.keyword_fields).
+        values = {"XMP:Subject": list(tags), "IPTC:Keywords": list(tags), "EXIF:XPKeywords": ";".join(tags)}
         if taken:
             values["EXIF:DateTimeOriginal"] = taken
         if caption:
@@ -425,6 +471,77 @@ class Renames(FilesCase):
         self.assertIn("photo %d" % self.ids[1], [what for what, _why in result.errors])
         self.assertEqual(os.path.basename(self.paths_of_rows()[1]), "Regatta - 2 - Finish.jpg")
         self.assertEqual(self.paths_of_rows()[0], self.a)
+
+
+class APatchInPlace(FilesCase):
+    """The journal's record of a patch in place (file_journal.save_patch): on the row being written and no other,
+    erased by every mark that takes it out of `writing`, refused over PATCH_CAP before a byte is written, and an undo
+    carried by the fields, as any undo is."""
+
+    def replace(self, photo_paths):
+        return tagging.replace_tag(self.library, photo_paths, "Beach", "Shore", EXIFTOOL)
+
+    def recorded(self):
+        return [i for (i,) in self.rows("SELECT id FROM change_files WHERE patch IS NOT NULL OR patch_before IS NOT NULL")]
+
+    def test_only_the_file_being_written_holds_a_record_and_every_way_out_erases_it(self):
+        a, b = self.make("a.jpg"), self.make("b.jpg")
+        with mock.patch.object(field_values, "write", Patcher()), \
+                mock.patch.object(file_changes, "_reached", side_effect=crash_at(file_changes.PATCH_SAVED)):
+            with self.assertRaises(Crash):
+                self.replace([a, b])
+        change = self.last_change()
+        self.assertEqual(["writing", "planned"], self.states(change))
+        first = self.rows("SELECT MIN(id) FROM change_files WHERE change_id = ?", (change,))[0][0]
+        self.assertEqual([first], self.recorded())
+        record, before = file_journal.patch_of(self.library.path, first)
+        lengths = [each["len"] for each in record["ranges"]]
+        pieces = [before[sum(lengths[:n]):sum(lengths[:n + 1])] for n in range(len(lengths))]
+        self.assertEqual(sorted([b"Beach", b"Beach", "Beach".encode("utf-16-le")]), sorted(pieces),
+                         "the record does not hold what its three ranges (XMP, IPTC, XPKeywords) held")
+        with mock.patch.object(field_values, "write", Patcher()):
+            self.assertEqual(1, self.settle())
+        self.assertEqual((("applied", ["done", "done"]), [], ["Shore"]), ((self.status(change), self.states(change)),
+                                                                          self.recorded(), keywords_of(a)))
+        undoing = Patcher()
+        with mock.patch.object(field_values, "write", undoing):
+            result = self.undo(change)
+        self.assertEqual((2, []), (result.changed, result.errors))
+        self.assertEqual([["Beach"], ["Beach"]], [values["XMP:Subject"] for values in undoing.calls],
+                         "the undo was not carried by the fields the change found")
+        self.assertEqual((["Beach"], ["Beach"], [], ["undone", "undone"]),
+                         (keywords_of(a), self.indexed(a), self.recorded(), self.states(change)))
+
+    def test_a_patch_larger_than_the_journal_keeps_writes_no_byte_and_is_exiftools(self):
+        a = self.make("a.jpg")
+        patcher = Patcher()
+        with mock.patch.object(field_values, "write", patcher), mock.patch.object(file_journal, "PATCH_CAP", 4):
+            result = self.replace([a])
+        self.assertEqual([True], patcher.fell_back, "a byte was written before the journal refused the patch")
+        self.assertEqual(((1, []), ["Shore"], ["done"], []), ((result.changed, result.errors), keywords_of(a),
+                                                               self.states(result.details["change"]), self.recorded()))
+
+
+class ThePatchRecordHasOneReader(unittest.TestCase):
+    """The saved bytes of a patch are a crash record, not a second undo: only the journal (file_journal), the schema
+    that adds them and the doctor, by the journal's functions, name them in SQL. History, the MCP server and an undo's
+    rehearsal read change_files by _FILE_COLUMNS, which does not hold them. Break: a reader selecting patch_before."""
+
+    SQL = re.compile(r"\b(SELECT|UPDATE|INSERT|ALTER|WHERE)\b[^\n]*\bpatch(_before)?\b|SELECT \*[^\n]*change_files")
+    OWNERS = {os.path.join("tagpup", "store", name) for name in ("file_journal.py", "schema.py", "checks.py")}
+
+    def test_only_the_journal_the_schema_and_the_doctor_name_the_columns(self):
+        found = set()
+        for top in ("tagpup", "scripts", "tools"):
+            for folder, _dirs, names in os.walk(os.path.join(WORKSPACE_DIR, top)):
+                for name in names:
+                    if name.endswith(".py"):
+                        path = os.path.join(folder, name)
+                        with open(path, encoding="utf-8") as handle:
+                            if self.SQL.search(handle.read()):
+                                found.add(os.path.relpath(path, WORKSPACE_DIR))
+        self.assertEqual(set(), found - self.OWNERS)
+        self.assertNotIn("patch", file_journal._FILE_COLUMNS)
 
 
 class TimeShift(FilesCase):

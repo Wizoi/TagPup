@@ -169,7 +169,7 @@ def read_one(et, photo_path, wanted):
     return held
 
 
-def write(et, photo_path, values):
+def write(et, photo_path, values, saving=None):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
     field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
     with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
@@ -181,7 +181,12 @@ def write(et, photo_path, values):
     (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,
     under any other, so another is refused here, by a ValueError, before anything is written. A write of a struct field
     or of TagPup's own that ExifTool warns left a field unwritten (NOT_WRITTEN) raises RuntimeError after it: the caller
-    settles the file by what it holds. A text holding a line break is sent as ExifToolSession sends it (exiftool_session.CSTR)."""
+    settles the file by what it holds. A text holding a line break is sent as ExifToolSession sends it (exiftool_session.CSTR).
+
+    `saving(record, before)` is the journal's (tagpup.services.file_changes): a write that patches the file in place
+    calls it with its record (tagpup.files.in_place.record) and writes no byte until it returns, nor at all when it raises
+    (file_journal.PatchTooLarge: the write is then ExifTool's). ExifTool's rewrite never calls it: it leaves the file it
+    held or the one it was to hold, whole. The in-place path is the patcher's (M2), not built yet; every write is ExifTool's."""
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
