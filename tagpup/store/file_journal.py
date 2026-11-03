@@ -217,6 +217,12 @@ OUTSIDE_CHANGED = ("the bytes outside its patch changed while it was written: th
 #: conflict, which the doctor counts. Also the error a forward write reports for it.
 PICTURE_CHANGED = "its write changed the picture's bytes twice; the file is as it was and nothing was written"
 
+#: The notes of a conflict the doctor counts (noted; tagpup.store.checks): a file a write found damaged, by its kind.
+NOTES = (OUTSIDE_CHANGED, PICTURE_CHANGED)
+#: noted's key of the files holding a patch's record though not `writing`: a mark that did not erase it (none, by
+#: set_state, writing and withdraw_in).
+PATCH_KEPT = ("not writing", "a patch's record")
+
 
 class PatchTooLarge(Exception):
     """A patch's old bytes are more than PATCH_CAP: nothing was saved, and nothing may be written by a patch."""
@@ -309,17 +315,21 @@ def patch_of(db_path, file_id):
     return None if found is None else (json.loads(found[0]), bytes(found[1] or b""))
 
 
-def patches_outside_writing(conn):
-    """The ids of files holding a patch's record though not `writing`: a mark that did not erase it (none, by set_state,
-    writing and withdraw_in). The caller's connection (tagpup.store.checks)."""
-    return [file_id for (file_id,) in conn.execute(
-        "SELECT id FROM change_files WHERE state != 'writing' AND patch IS NOT NULL ORDER BY id")]
-
-
-def changed_around_a_patch(conn):
-    """The ids of files found, once patched, changed outside the patch (OUTSIDE_CHANGED). The caller's connection."""
-    return [file_id for (file_id,) in conn.execute(
-        "SELECT id FROM change_files WHERE state = 'conflict' AND note = ? ORDER BY id", (OUTSIDE_CHANGED,))]
+def noted(conn):
+    """{key: [change_files ids]} of the files the doctor counts, in ONE scan of change_files (0.28 s on photo_index's
+    51,451 rows, counted 2026-11-02; #2384): ("conflict", note) for each of NOTES, and PATCH_KEPT. Every key is there,
+    an empty list when none. The caller's connection (tagpup.store.checks, which keeps the answer while nothing is
+    written)."""
+    found = {("conflict", note): [] for note in NOTES}
+    found[PATCH_KEPT] = []
+    for file_id, state, note, patched in conn.execute(
+            "SELECT id, state, note, patch IS NOT NULL FROM change_files WHERE (state = 'conflict' AND note IN (%s))"
+            " OR (patch IS NOT NULL AND state != 'writing') ORDER BY id" % ", ".join("?" * len(NOTES)), NOTES):
+        if patched and state != "writing":
+            found[PATCH_KEPT].append(file_id)
+        if state == "conflict" and note in NOTES:
+            found[("conflict", note)].append(file_id)
+    return found
 
 
 #: The files of renames done (RENAMES): sought by their change, the change_id index, never a scan of change_files.
