@@ -75,6 +75,11 @@ JPEG_START = b"\xff\xd8\xff"
 NO_PICTURE = ("it starts as a JPEG but holds no picture data that could be found (no scan before its end), so a write "
               "of it could not be checked; nothing was written")
 
+#: Why a write failed whose checked new file could not be moved over the photo (a photo marked read-only, copied off a
+#: disc; one open in another program): the OS's own words, then this. It names no path: a photo is named by its id.
+NOT_MOVED = ("its new file could not be put in place of it (%s): the photo may be marked read-only or open in another "
+             "program; the new file was removed and the photo is as it was")
+
 
 class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
@@ -210,7 +215,8 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
     when ExifTool fails. ExifTool writes the new file beside the photo, which the picture check moves over it or removes
     (_landed; the module's docstring): PictureChanged, the photo untouched. `scratch_written()`, the journal's, is called
     once the new file is written and before it is checked (file_changes.STEPS). Nothing else beside the photo is deleted
-    here: the scratch file an interrupted write left is removed only by file_changes, by the owner's rules (#2180); an
+    here (its own new file, when the picture differs or the move fails, is the write's): the scratch file an
+    interrupted write left is removed only by file_changes, by the owner's rules (#2180); an
     old one, of a write before the picture check that failed after deleting the original, is the photo's only copy (#1410).
 
     A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
@@ -292,8 +298,11 @@ def _landed(photo_path, scratch):
     """Move the new file ExifTool wrote at `scratch` over the photo, once its picture is the photo's (_same_picture),
     with os.replace: a move of a file beside it on its volume, never a copy. A picture that differs: the new file is
     removed and PictureChanged raised. The look is bounded (CHECK_SECONDS): a share that does not answer raises
-    NotAnswered, the photo as it was and the new file left beside it for the scratch rules (file_changes._removed_scratch),
-    as is one the move fails for (the photo open in another program, read-only): an OSError, the photo untouched."""
+    NotAnswered, the photo as it was and the new file left beside it for the scratch rules (file_changes._removed_scratch).
+    A move that fails (a photo marked read-only, one open in another program) leaves the photo untouched -- os.replace is
+    one rename -- so the write removes its own new file, which would otherwise make the next write of the photo wait out
+    the scratch rules and fail the same way, and raises an OSError of the same winerror (lock_owners.explain still names
+    a holder) saying NOT_MOVED, no path in it. A kill between the new file and the move still leaves it to the rules."""
     answer, same = shares.bounded(photo_path, lambda: _same_picture(photo_path, scratch), CHECK_SECONDS)
     if answer == "away":
         raise NotAnswered("its folder did not answer the picture check in %d s; the photo is as it was" % CHECK_SECONDS)
@@ -310,7 +319,16 @@ def _landed(photo_path, scratch):
         raise PictureChanged("its write changed the picture's bytes; the new file was discarded and the photo is as it was")
     if same is None:
         logger.info("A photo that is no JPEG was written unchecked (its picture is not compared)")
-    os.replace(scratch, photo_path)
+    try:
+        os.replace(scratch, photo_path)
+    except OSError as e:
+        try:
+            os.remove(scratch)
+        except OSError as left:
+            logger.warning("The new file of a write that could not be moved over its photo could not be removed; it is "
+                           "left: %s", left)
+        # A refused rename on Windows always carries its winerror (5, access denied; 32, a sharing violation).
+        raise OSError(e.errno, NOT_MOVED % e.strerror, None, e.winerror) from None
 
 
 def ensure_document_id(et, path, metadata=None):

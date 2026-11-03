@@ -172,7 +172,8 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual(picture, picture_of(cut))
 
     def test_a_photo_exiftool_cannot_write_is_its_own_error_and_the_rest_are_written_and_undone(self):
-        """A read-only file (copied off a disc, say): ExifTool reads it and fails the write. A bulk edit goes on past it."""
+        """A read-only file (copied off a disc, say) in a writable folder: ExifTool writes its new file beside it, and
+        the move over it fails (field_values.NOT_MOVED). A bulk edit goes on past it."""
         a, b, c = self.make_read("a.jpg"), self.make_read("b.jpg"), self.make_read("c.jpg")
         os.chmod(b, stat.S_IREAD)
         self.addCleanup(self.writable_again)
@@ -184,7 +185,8 @@ class TaggingAPhoto(ReadFilesCase):
 
         self.assertEqual(2, result.changed, result.message())
         self.assertEqual([b], [path for path, _why in result.errors], "the photo it failed, by itself")
-        self.assertIn("ExifTool", str(result.errors[0][1]))
+        self.assertIn("the new file was removed and the photo is as it was", str(result.errors[0][1]))
+        self.assertNotIn(self.folder, str(result.errors[0][1]), "a photo is named by its id, never by its path")
         for path in (a, c):
             self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(path))
             self.assertEqual(["Activity/Rowing", "Beach"], self.indexed(path))
@@ -217,7 +219,7 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual(["Beach"], self.indexed(c))
 
     def writable_again(self):
-        """ExifTool's temporary file of a failed write carries the photo's read-only attribute: the home goes after."""
+        """The photo marked read-only is made writable again, so the home goes after."""
         for name in os.listdir(self.folder):
             os.chmod(os.path.join(self.folder, name), stat.S_IREAD | stat.S_IWRITE)
 
@@ -316,7 +318,7 @@ class TaggingAPhoto(ReadFilesCase):
         failed = tagging.save_photo(self.library, a, "Finish", ["Beach"], None, EXIFTOOL, "")
         # #299: the route answers from the Result: a write that fails is in it, not raised.
         self.assertEqual((False, 0, None), (failed.ok, failed.changed, failed.refused))
-        self.assertIn("ExifTool", failed.message())
+        self.assertIn("the new file was removed and the photo is as it was", failed.message())
 
     def test_a_save_stopped_once_its_file_is_done_leaves_the_row_whole_as_the_indexer_makes_it(self):
         """#1368: a save's row is recorded once, whole and stamped, in the transaction that marks its file done. It was

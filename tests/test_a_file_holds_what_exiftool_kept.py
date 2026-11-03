@@ -29,6 +29,7 @@ import io
 import json
 import os
 import shutil
+import stat as file_stat
 import sys
 import unittest
 from unittest import mock
@@ -39,7 +40,7 @@ from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of,
 import baked_files  # noqa: E402
 import photo_rows  # noqa: E402
 from tagpup.core import fields, orientation  # noqa: E402
-from tagpup.files import bake, containers, exiftool_session, field_values  # noqa: E402
+from tagpup.files import bake, containers, exiftool_session, field_values, lock_owners  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, tagging  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
@@ -487,6 +488,8 @@ class APhotoIsWrittenBesideItselfAndMovedOverIt(KeptCase):
     the compare always equal (`same = True`) -> the first two; `-o` dropped from both commands of field_values.write ->
     every test here. On the code before the check (551689f4) every test here fails: four for want of the step "scratch
     written" (no write was ever beside its photo), and test_a_move_that_fails because the photo was written in place.
+    A move that fails removes the write's own new file and names no path: on the branch's first cut, which left it and
+    raised the OS's error, test_a_move_that_fails and test_a_read_only_photo fail.
     """
 
     def setUp(self):
@@ -585,21 +588,49 @@ class APhotoIsWrittenBesideItselfAndMovedOverIt(KeptCase):
         self.assertIn((self.scratch, self.a), moved)
         self.assertEqual(ids, [os.stat(self.a).st_ino], "the photo is the very file ExifTool wrote beside it")
 
-    def test_a_move_that_fails_leaves_the_photo_as_it_was_and_the_new_file_beside_it(self):
+    def test_a_move_that_fails_leaves_the_photo_as_it_was_and_removes_its_new_file(self):
         real_replace = os.replace
 
         def replace(source, destination):
             if destination == self.a:
-                raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+                # Words lock_owners.HELD_WORDS does not know: the holder is named only if the error is still an OSError.
+                raise PermissionError(13, "Refused by the stand-in", None, 32)
             real_replace(source, destination)
 
-        with mock.patch.object(os, "replace", side_effect=replace):
+        viewer = [{"name": "Viewer.exe", "pid": 4242}]
+        with mock.patch.object(os, "replace", side_effect=replace), \
+                mock.patch.object(lock_owners, "holders", return_value=viewer):
             result = self.add([self.a])
         self.assertEqual(0, result.changed)
         self.assertEqual([self.a], [what for what, _why in result.errors])
+        self.assertIn("It is held open by Viewer.exe.", str(result.errors[0][1]), "the OS's error was not kept")
+        self.assertIn("the new file was removed and the photo is as it was", str(result.errors[0][1]))
         self.assertEqual(self.before, bytes_of(self.a))
-        self.assertTrue(os.path.exists(self.scratch), "left for the scratch rules (file_changes._removed_scratch)")
+        self.assertFalse(os.path.exists(self.scratch), "the write's own new file is left beside the photo")
         self.assertEqual([], self.states(result.details["change"]))
+
+    def test_a_read_only_photo_is_an_error_naming_no_path_and_the_next_write_fails_the_same(self):
+        """A photo marked read-only (copied off a disc) in a folder that is not: ExifTool writes its new file beside it,
+        and the move over the photo is refused. The error names no path (a photo is named by its id); the new file is
+        removed, so the next write is not told a write may be under way, but fails the same way; made writable, it takes
+        the tag."""
+        os.chmod(self.a, file_stat.S_IREAD)
+        self.addCleanup(os.chmod, self.a, file_stat.S_IREAD | file_stat.S_IWRITE)
+        for attempt in (1, 2):
+            with self.subTest(attempt=attempt):
+                result = self.add([self.a])
+                self.assertEqual((0, [self.a]), (result.changed, [what for what, _why in result.errors]))
+                said = str(result.errors[0][1])
+                self.assertIn("the new file was removed and the photo is as it was", said)
+                for named in (self.folder, os.path.basename(self.a), "exiftool_tmp"):
+                    self.assertNotIn(named, said, "the error names a path")
+                self.assertEqual(self.before, bytes_of(self.a))
+                self.assertFalse(os.path.exists(self.scratch), "the write's own new file is left beside the photo")
+                self.assertEqual(self.stamped, self.row_of_a())
+        os.chmod(self.a, file_stat.S_IREAD | file_stat.S_IWRITE)
+        done = self.add([self.a])
+        self.assertEqual((1, []), (done.changed, done.errors))
+        self.assertEqual(["Beach", "Harbour"], keywords_of(self.a))
 
 
 if __name__ == "__main__":
