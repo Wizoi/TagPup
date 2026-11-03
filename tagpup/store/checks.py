@@ -242,7 +242,7 @@ def without_a_vector(conn, model):
 # ---- The journal's files a write found damaged (tagpup.store.file_journal.noted) -------------------
 
 def _noted(conn):
-    """file_journal.noted, read once while nothing is written (_once): the three rules below read one scan."""
+    """file_journal.noted, read once while nothing is written (_once): the two rules below read one scan."""
     return _once(conn, "noted", lambda: file_journal.noted(conn))
 
 
@@ -250,13 +250,6 @@ def patch_records_outside_writing(conn):
     """Files of the journal holding a patch's record though no longer `writing`: a mark that kept it, where every mark
     that takes a file out of `writing` erases it (file_journal.set_state). The examples are change_files ids."""
     return _check("patch records of files not being written", _noted(conn)[file_journal.PATCH_KEPT])
-
-
-def files_changed_around_a_patch(conn):
-    """Files a patch wrote whose bytes outside it were found changed (file_journal.OUTSIDE_CHANGED): put back and left a
-    conflict, the picture data of the file not what it was (#2377). Found, not repaired: the file is restored from a copy
-    by hand. The examples are change_files ids."""
-    return _check("files changed outside their patch", _noted(conn)[("conflict", file_journal.OUTSIDE_CHANGED)])
 
 
 def files_whose_picture_changed(conn):
@@ -345,8 +338,7 @@ RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excl
          people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
          rooted_rows_convert, native_rows_under_a_root, photo_tags_out_of_date, photo_folders_out_of_date,
          folders_out_of_date, search_index_out_of_date, face_person_ids_out_of_step,
-         listed_person_ids_out_of_step, patch_records_outside_writing, files_changed_around_a_patch,
-         files_whose_picture_changed)
+         listed_person_ids_out_of_step, patch_records_outside_writing, files_whose_picture_changed)
 
 
 def run(conn):

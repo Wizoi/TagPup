@@ -819,11 +819,10 @@ def _saving(library, row):
 
 
 def _verified(et, library, row, target):
-    """None when the patch just written leaves the file of `row` holding what it wrote and nothing else changed
+    """None when the patch just written leaves the file of `row` holding what it wrote, its size and its ranges
     (in_place.held: NEW), and its fields read back as `target`; else what failed, for _after_failure to settle the file
-    by its bytes. A file whose bytes are as written but whose fields do not read so is put back here first. One read of
-    the file more than ExifTool's rewrite costs, for a patched file only: a byte changed outside the patch (#2377) is
-    found before the file is done."""
+    by its bytes. A file whose bytes are as written but whose fields do not read so is put back here first. No byte
+    outside the ranges is read (DECISIONS 2026-11-03, "AN IN-PLACE PATCH CHECKS ONLY THE BYTES IT CHANGED")."""
     saved = file_journal.patch_of(library.path, row.id)
     try:
         found = in_place.held(row.path, *saved)
@@ -841,8 +840,7 @@ def _by_bytes(library, row):
     """The one rule of a file a patch was writing (its record saved: file_journal.save_patch), settled by its bytes before
     any field of it is read. None when it holds every range as it was (to be written again) or as the patch wrote it (then
     read as any file is), a range this process tore put back first (in_place.TORN). Else (outcome, why): a conflict, never
-    overwritten, for a file another program wrote (a byte neither found nor written, another size), and for one whose
-    bytes outside the patch changed (in_place.OUTSIDE: its ranges put back first, noted file_journal.OUTSIDE_CHANGED);
+    overwritten, for a file another program wrote (a byte neither found nor written, another size);
     ("writing", why) for one that cannot be read or put back now: left `writing` with its record for the next settle,
     never a conflict, since the record is the only way back."""
     saved = file_journal.patch_of(library.path, row.id)
@@ -850,7 +848,7 @@ def _by_bytes(library, row):
         return None
     try:
         found = in_place.held(row.path, *saved)
-        if found in (in_place.TORN, in_place.OUTSIDE):
+        if found == in_place.TORN:
             in_place.put_back(row.path, *saved)
     except OSError as e:
         return "writing", "%s: could not be read or put back now (%s); it is settled by its bytes the next time" % (
@@ -858,8 +856,6 @@ def _by_bytes(library, row):
     if found in (in_place.NEITHER, in_place.RESIZED):
         return _conflict(library, row, "changed since its patch was saved: it holds bytes the patch neither found nor"
                                        " wrote, and is not overwritten")
-    if found == in_place.OUTSIDE:
-        return _conflict(library, row, file_journal.OUTSIDE_CHANGED)
     return None
 
 

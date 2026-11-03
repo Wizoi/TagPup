@@ -276,7 +276,12 @@ class TaggingAPhoto(ReadFilesCase):
 
         self.assertEqual((True, 1), (result.ok, result.changed), result.message())
         self.assertEqual("2019:06:15 10:30:00", str(field_of(a, "EXIF:DateTimeOriginal")))
-        self.assertEqual((1, 2, 1), (len(sessions), len(reads), len(writes)), "sessions, reads, writes of one save")
+        # Two writes: a save adding a caption and a tag does not fit the photo's segments at their old lengths, so
+        # ExifTool's write of its header copy (the try at a patch in place, tagpup.files.in_place.patch_jpeg) is followed
+        # by its rewrite of the photo. About 20 ms more for a save that does not fit, accepted (main session,
+        # 2026-11-03): the patch writes no picture byte of the ones that do. Still one session and one change.
+        self.assertEqual((1, 2, 2), (len(sessions), len(reads), len(writes)), "sessions, reads, writes of one save")
+        self.assertEqual([False, True], [files == [a] for files, *_rest in writes], "the header copy, then the photo")
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
             self.assertEqual(["Rowan Thackeray"], face_rows.people_of(conn, a), "the named face was dropped from the people")

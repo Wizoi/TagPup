@@ -384,15 +384,22 @@ class ABakeIsWritten(BakeCase):
                     self.assertEqual({fields.REGION_INFO: [text]}, field_values.read_one(et, a, [fields.REGION_INFO]))
                 self.assertEqual(name, self.regions_of(a)["XMP:RegionInfo"]["RegionList"][0]["Name"])
 
-    def test_a_region_field_exiftool_does_not_know_fails_the_write_not_recorded_as_written(self):
-        # ExifTool writes the rest of the structure, warns, and succeeds: a write recorded it as made (#1881).
-        a = self.make_read("a.jpg")
+    def test_a_region_field_exiftool_does_not_know_fails_the_write_and_writes_no_byte_of_the_photo(self):
+        # ExifTool writes the rest of the structure, warns, and succeeds: a write recorded it as made (#1881). Its warning
+        # comes before the photo's first byte, of the header's copy a patch writes or of the new file a rewrite writes
+        # beside it: the write is refused there, the photo as it was and the bake withdrawn, whichever writes it.
         text = bake.region_text({"RegionList": [{"Type": "Face", "Bogus": "1"}]})
-        result = file_changes.write_fields(self.library, "bake", EXIFTOOL, [a], [fields.REGION_INFO],
-                                           lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
-        self.assertEqual(0, result.changed)
-        self.assertIn("is not a field of", str(result.errors))
-        self.assertEqual(["conflict"], self.states(result.details["change"]))
+        for patched in (True, False):
+            with self.subTest(patched=patched), mock.patch.object(field_values, "PATCH_IN_PLACE", patched):
+                a = self.make_read("patched.jpg" if patched else "rewritten.jpg")
+                before = bytes_of(a)
+                result = file_changes.write_fields(self.library, "bake", EXIFTOOL, [a], [fields.REGION_INFO],
+                                                   lambda path, held: file_changes.Plan(after={fields.REGION_INFO: [text]}))
+                self.assertEqual(0, result.changed)
+                self.assertIn("is not a field of", str(result.errors))
+                self.assertEqual([], self.states(result.details["change"]), "a bake that wrote nothing is kept")
+                self.assertEqual(before, bytes_of(a), "the photo was written")
+                self.assertNotIn(os.path.basename(exiftool_session.scratch_of(a)), os.listdir(os.path.dirname(a)))
 
     def test_a_photo_whose_xmp_segment_is_all_zero_bytes_fails_the_write_not_recorded_as_written(self):
         # ExifTool warns "Invalid XMP", exits 0 and leaves the file as it was (#2349).

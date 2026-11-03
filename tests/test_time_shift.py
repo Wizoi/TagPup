@@ -3,7 +3,9 @@
 The owner shifts a camera's clock error over a folder. Every date a photo holds moves by the minutes (and none is made),
 the row follows the file under the names the scan reads (a photo whose only date is XMP:CreateDate included, #270), the
 answer counts the files written and not those asked about (#249), a file that cannot be written is an error and keeps its
-row, and Undo puts files and rows back. Real ExifTool on JPEGs made here; the rows are the indexer's (photo_rows).
+row, and Undo puts files and rows back. Real ExifTool on JPEGs made here; the rows are the indexer's (photo_rows). A file
+that cannot be written is one a viewer holds open: neither the patch in place nor ExifTool's rewrite may write it (a
+stand-in raising for its path no longer reached it: the patch hands ExifTool a copy of the header, not the photo).
 
 Lifted: test_time_shift_records_every_date (#270), test_time_shift_tells_the_index and test_service_shift_date_taken (#249),
 which ran the same shift three times, once against a table standing in for ExifTool. Mutation proofs: date_shift_plan
@@ -14,15 +16,14 @@ import json
 import os
 import sys
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
 from handler_harness import Library as RouteLibrary  # noqa: E402
+from test_a_photo_patched_in_place import open_elsewhere  # noqa: E402
 from test_file_journal import EXIFTOOL, SHIFTED, TAKEN, FilesCase, field_of, requires_exiftool, write_outside  # noqa: E402
 
-from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -77,17 +78,13 @@ class ShiftingACamerasClock(FilesCase):
         self.assertEqual(TAKEN, self.row(self.a)[0]["EXIF:DateTimeOriginal"])
 
     def test_a_file_that_cannot_be_written_is_an_error_and_keeps_its_row(self):
-        real = ExifToolSession.set_tags
-
-        def set_tags(session, photo_paths, tags=None, params=None):
-            if self.b in photo_paths:
-                raise RuntimeError("the file is locked")
-            return real(session, photo_paths, tags=tags, params=params)
+        # b is open in a viewer (Explorer's preview, the Photos app: reading, letting others read, write and delete).
         before = self.row(self.b)
-        with mock.patch.object(ExifToolSession, "set_tags", set_tags):
+        with open_elsewhere(self.b, 0x7):
             result = photo_actions.shift_date_taken(self.library, [self.a, self.b], 30, EXIFTOOL)
         self.assertEqual(1, result.changed)
-        self.assertIn("the file is locked", result.message())
+        self.assertEqual([self.b], [path for path, _why in result.errors], result.message())
+        self.assertIn("held open by", result.message())
         self.assertEqual(TAKEN, field_of(self.b, "EXIF:DateTimeOriginal"))
         self.assertEqual(before, self.row(self.b))
 

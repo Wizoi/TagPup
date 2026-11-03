@@ -27,9 +27,12 @@ XMP PersonInImage or RegionName (all 0 in the three).
    - One batch reader, `field_values.read`: the indexer's `MetadataExtractor.batch_read` and sync's pairing read
      through it (#1473). A timeout ends the read and leaves every photo not read unread (#1490).
    - One writer of a photo's fields, `field_values.write`; the identity mint writes through it (`ensure_document_id`).
+     It writes a file one of two ways: a journaled write of a JPEG whose fields fit is patched in place
+     (`in_place.patch_jpeg`, called from nowhere else; `PATCH_IN_PLACE`), every other write is ExifTool's rewrite.
      It writes every photo beside itself and moves the new file over it only once its picture is the photo's
      (`_landed`, #2377, DECISIONS 2026-11-03): the one check of a rewrite, the patch in place's verify the other
-     mechanism of the same rule (INVARIANTS), not merged with it.
+     mechanism of the same rule (INVARIANTS), not merged with it: a patch checks only the bytes it changed
+     and reads no other byte of the file (DECISIONS 2026-11-03).
    - One answer to "is this file there to be written", `file_changes.file_states`, with `write_fields` the one place
      that leaves out a photo on a share asleep (#1492).
    - One cap and its sentence, `file_changes.too_many`, asked by `write_fields`, `batch_exclusively`, Smart Rename, the
