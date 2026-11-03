@@ -164,6 +164,16 @@ def photo_files(conn):
         conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1), 1)
 
 
+def kinds(conn):
+    """{photo id: its kind, 'photo' or 'video' (photos.kind)} of every photo."""
+    return dict(conn.execute("SELECT id, kind FROM photos"))
+
+
+def file_states(conn):
+    """[(state, files, of them holding a patch's record)] of the journal's files (change_files), by state."""
+    return conn.execute("SELECT state, COUNT(*), COUNT(patch) FROM change_files GROUP BY state ORDER BY state").fetchall()
+
+
 # ---- Query plans ------------------------------------------------------------------------
 
 class NotARead(ValueError):
