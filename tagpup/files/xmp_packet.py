@@ -82,7 +82,9 @@ class _Node:
 
 
 def _tree(data):
-    """The root _Node of `data`; raises _Refused for what is not well-formed XML with namespaces, or holds a DTD."""
+    """The root _Node of `data`; raises _Refused for what is not well-formed XML with namespaces, or holds a DTD, a
+    comment, a CDATA section, a processing instruction inside it, or text beside an element: an edit that removes a
+    property splices from the element before it, so nothing but whitespace may lie between two."""
     parser = expat.ParserCreate("UTF-8", " ")
     parser.namespace_prefixes = True
     stack, pending, roots = [], {}, []
@@ -101,6 +103,8 @@ def _tree(data):
 
     def end(_name):
         node = stack.pop()
+        if node.children and "".join(node.text).strip():
+            raise _Refused("The packet holds text beside an element.")
         if data[node.open_end - 2:node.open_end] != b"/>":
             node.close_start = parser.CurrentByteIndex
             node.end = data.index(b">", node.close_start) + 1
@@ -109,7 +113,12 @@ def _tree(data):
         if stack:
             stack[-1].text.append(chunk)
 
+    def other(*_):
+        if stack:
+            raise _Refused("The packet holds a comment, a CDATA section or a processing instruction.")
+
     parser.StartDoctypeDeclHandler = parser.EntityDeclHandler = doctype
+    parser.CommentHandler = parser.StartCdataSectionHandler = parser.ProcessingInstructionHandler = other
     parser.StartElementHandler, parser.EndElementHandler, parser.CharacterDataHandler = start, end, text
     parser.StartNamespaceDeclHandler = lambda prefix, uri: pending.__setitem__(uri, prefix or "")
     try:
