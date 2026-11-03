@@ -2,7 +2,8 @@
 field_values.write's in-place path).
 
 A keyword renamed writes only the bytes of the EXIF, IPTC and XMP segments that differ, the picture never touched, and
-non-ASCII keywords (UTF-16 XPKeywords, UTF-8 XMP) the same; three saves in a row are three patches; what does not fit
+non-ASCII keywords (UTF-16 XPKeywords, UTF-8 XMP) the same; three saves in a row are three patches, and a second save
+whose EXIF holds what it held after a first that shortened it writes no byte of the EXIF; what does not fit
 is ExifTool's rewrite, as before the patch (a photo with no XMP yet, an EXIF segment that would move); a photo another
 program has open is not patched; a photo another process is patching (held with no sharing) is not written by this
 one; a share that stops answering mid-patch stops the write, and the next start settles the photo by its bytes; a
@@ -14,7 +15,8 @@ patch are D3's (test_a_crash_part_way_is_settled_at_the_next_start.AnInPlacePatc
 field_values.PATCH_IN_PLACE False (every write the rewrite) fails the three tests that count a patch saved; in_place
 ._fitted padding IPTC with zero bytes instead of the dummy resource fails test_an_iptc_segment_that_shrank_is_padded_
 only_by_a_resource_exiftool_reads_past; containers.PAD_RESOURCE 0x2710 (Print Flags' id) fails test_photoshop_print_flags_
-in_the_iptc_segment_are_kept_as_they_were; dropping its `new.offset != old.offset` refusal fails test_an_exif_segment_
+in_the_iptc_segment_are_kept_as_they_were; in_place.jpeg_ranges not passing a segment fitted to what the photo
+holds fails test_a_second_save_whose_exif_holds_what_it_held_writes_only_its_xmp; dropping its `new.offset != old.offset` refusal fails test_an_exif_segment_
 that_would_move_is_rewritten.
 """
 import contextlib
@@ -145,6 +147,37 @@ class APhotoPatchedInPlace(FilesCase):
                 self.assertEqual(1, self.replace([a], old, new).changed)
         self.assertEqual((3, ["Shore"], ["Shore"]), (saved.call_count, keywords_of(a), self.indexed(a)))
         self.assertEqual(picture_of(original), picture_of(read(a)))
+
+    def test_a_second_save_whose_exif_holds_what_it_held_writes_only_its_xmp(self):
+        # A camera's photo holds its Date Taken in EXIF alone. A keyword shortened is a patch whose EXIF, ExifTool's and
+        # shorter, is made up to its old length with zero bytes. The photo panel's Save of the date it shows then adds
+        # the date's XMP field; ExifTool writes the EXIF again with the values it holds, without those zeros, and made
+        # up again it is the EXIF the photo holds: nothing of it to write, the XMP alone patched.
+        tags, taken = ("Beachcombing at low tide",), "2020:01:01 10:00:00"
+        a = self.make("a.jpg", tags=tags, taken=taken, row=False)
+        write_outside(a, {"EXIF:CreateDate": taken})
+        conn = db.connect(self.library.path)
+        try:
+            photo_rows.add_read(conn, a, {"XMP:Subject": list(tags), "IPTC:Keywords": list(tags),
+                                          "EXIF:XPKeywords": ";".join(tags), "EXIF:DateTimeOriginal": taken,
+                                          "EXIF:CreateDate": taken})
+            conn.commit()
+        finally:
+            conn.close()
+        original = read(a)
+        with saves_counted() as saved:
+            renamed = self.replace([a], tags[0], "Beach")
+            self.assertEqual((1, [], 1), (renamed.changed, renamed.errors, saved.call_count), renamed.message())
+            first = read(a)
+            self.assertGreater(containers.read(io.BytesIO(first)).of_kind("exif")[0].slack, 0,
+                               "the first patch did not make its EXIF up with zero bytes")
+            result = tagging.save_photo(self.library, a, "", ["Beach"], "2020-01-01T10:00:00", EXIFTOOL, "")
+        self.assertEqual((1, [], 2), (result.changed, result.errors, saved.call_count), result.message())
+        now = read(a)
+        exif = containers.read(io.BytesIO(first)).of_kind("exif")[0]
+        self.assertEqual(first[exif.offset:exif.end], now[exif.offset:exif.end], "the EXIF was written")
+        self.assertEqual((taken, ["Beach"]), (field_of(a, "XMP:DateTimeOriginal"), keywords_of(a)))
+        self.assertEqual((len(original), picture_of(original)), (len(now), picture_of(now)))
 
     def test_a_photo_with_no_xmp_yet_is_rewritten(self):
         from PIL import Image

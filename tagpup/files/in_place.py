@@ -222,7 +222,10 @@ def _fitted(old, new, written):
 def jpeg_ranges(header, written):
     """[(at, new bytes)] that make the JPEG whose bytes up to its first scan's header's end are `header` hold the
     segments ExifTool `written` (the same header, rewritten, then an end of image) at their old lengths: the bytes of
-    each patched segment that differ, from the first to the last. None when they do not fit (the module says when)."""
+    each patched segment that differ, from the first to the last. None when they do not fit (the module says when); []
+    when every segment, fitted, is what the photo holds. A segment ExifTool wrote otherwise can fit to the photo's own:
+    an EXIF a patch made up to its old length with zero bytes, written again with the values it holds, comes without the
+    zeros, and the fit puts them back (a second save of a photo whose first patch shortened its EXIF)."""
     old = containers.read(io.BytesIO(header + _EOI))
     new = containers.read(io.BytesIO(written))
     if not isinstance(new, containers.Jpeg) or new.image_offset is None:
@@ -239,6 +242,8 @@ def jpeg_ranges(header, written):
         after = _fitted(was, now, written)
         if after is None:
             return None
+        if after == before:
+            continue        # both old.size bytes: when they differ, a byte differs, and the two next() below find it
         first = next(at for at in range(was.size) if after[at] != before[at])
         last = next(at for at in range(was.size - 1, -1, -1) if after[at] != before[at])
         changes.append((was.offset + first, after[first:last + 1]))
