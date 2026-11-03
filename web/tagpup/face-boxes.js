@@ -36,6 +36,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { boxInContainedImage, onImageZoomChange, onImageZoomDismiss, zoomLayer, zoomedPicture } from './common/image-zoom.js';
 import { samePath } from './common/paths.js';
 import { attachPersonFaces, forgetPersonFaces, hidePersonFaces } from './common/person-faces.js';
+import { forgetFacesOfPhoto } from './selection-faces.js';
 import { choosePerson } from './common/person-choice.js';
 import {
     leafOf, nameProblem, personFields, personLabelOf, personTitleOf, sameNamed, sameTagPerson,
@@ -653,6 +654,7 @@ async function nameOne({ face, path, photo, person, rawName, name, shown, showAs
     // A face that was another person's: that person's tag goes with the name, unless another face is them.
     const rest = await takeTagsOff(path, await res.json());
     forgetPersonFaces();
+    forgetFacesOfPhoto(path);
     setStatus(rest ? 'ready' : 'error', untagged(rest, `Named ${shown} and added to the photo`), { transient: rest });
     if (box.path && samePath(box.path, path)) {
         const named = faceById(face.id);
@@ -696,6 +698,7 @@ async function unnameFace(face) {
         }
         const done = await takeTagsOff(path, await res.json());
         forgetPersonFaces();
+        forgetFacesOfPhoto(path);
         setStatus(done ? 'ready' : 'error', untagged(done, 'Name taken off the face'), { transient: done });
         if (box.path && samePath(box.path, path)) {
             const mine = faceById(face.id);
@@ -725,6 +728,7 @@ async function excludeFace(face) {
         }
         const done = await takeTagsOff(path, await res.json());
         forgetPersonFaces();
+        forgetFacesOfPhoto(path);
         setStatus(done ? 'ready' : 'error', untagged(done, 'Face left out'), { transient: done });
         if (box.path && samePath(box.path, path)) {
             const mine = faceById(face.id);

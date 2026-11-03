@@ -12,6 +12,7 @@ grids instead of rebuilding them. The rest move the fingerprint, and a grid buil
 them is rebuilt.
 """
 import collections
+import functools
 import json
 import logging
 import os
@@ -594,11 +595,59 @@ def panel(library, photo_path, named):
         eras = faces.eras_of(conn, [row[0] for row in rows])   # where and when, for the years around it (FaceRows.likeness)
     finally:
         conn.close()
-    cuts, known = clustering.cuts_of(key), None
     shape = photo_files.box_shape(photo_path)
+    found = _faces_shown(rows, eras, everyone, key, _named_under(named, key), shape)
+    found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
     size, turn = shape["size"], shape["turn"]
-    shown_size = list(orientation.upright_size(size[0], size[1], turn)) if size else None
+    return {"faces": found, "total": len(found),
+            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"]),
+            "size": size, "shown_size": list(orientation.upright_size(size[0], size[1], turn)) if size else None}
 
+
+def selection_suggestions(library, photo_paths, named):
+    """Who the unnamed faces of the selected photos look like, for Organize's Suggested People: {photo path: [{"person":
+    {id, name, tag}, "name", "similarity"}]}, one entry a person a photo (its most alike face), the same people at the
+    same cut the photo's own faces strip offers (`panel`'s faces, by one code). A face whose nearest is a name and no
+    person is left out: a name alone is nobody to put on a photo. A photo with no such face is not in the answer.
+
+    One read of the library for every photo, and the named faces read once, on the first face that needs them. The
+    photos' files are looked at only for their size (photo_files.box_shape, bounded on a share), so that the faces left
+    out of a photo's own strip (BACKGROUND_SHARE) are left out here too."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        key = faces.model_key(conn)
+        held = {}
+        for path in photo_paths:
+            rows = faces.in_photo_for_panel(conn, path, key)
+            if rows:
+                held[path] = (rows, faces.eras_of(conn, [row[0] for row in rows]))
+        everyone = person_ids.Directory.read(conn) if held else None
+    finally:
+        conn.close()
+    known, answer = _named_under(named, key), {}
+    for path, (rows, eras) in held.items():
+        best = {}
+        for face in _faces_shown(rows, eras, everyone, key, known, photo_files.box_shape(path)):
+            who = face["suggestion_person"]
+            if who and (who["id"] not in best or face["similarity"] > best[who["id"]]["similarity"]):
+                best[who["id"]] = {"person": who, "name": who["name"], "similarity": face["similarity"]}
+        if best:
+            answer[path] = list(best.values())
+    return answer
+
+
+def _named_under(named, key):
+    """The named faces under the face model `key`, read from `named` on the first call only (a photo whose faces are all
+    named never reads them)."""
+    return functools.cache(lambda: clustering.FaceRows.of(named()).under(key))
+
+
+def _faces_shown(rows, eras, everyone, key, known, shape):
+    """The faces of one photo as the panel shows them (see `panel`), from its rows (faces.in_photo_for_panel) and
+    their eras, `everyone` the people directory, `known` the named faces under `key` (_named_under) and `shape` the one
+    look at the file (photo_files.box_shape): the unnamed faces too small for it (BACKGROUND_SHARE) are left out."""
+    cuts = clustering.cuts_of(key)
+    size, turn = shape["size"], shape["turn"]
     found = []
     for face_id, box_json, carried, prob, emb, excluded, reason in rows:
         name = carried.name if carried else None
@@ -612,9 +661,7 @@ def panel(library, photo_path, named):
             continue
         suggestion = suggested = similarity = None
         if name is None and not excluded:
-            if known is None:   # read only when a face needs it, and only of the vectors' model
-                known = clustering.FaceRows.of(named()).under(key)
-            for suggested, alike, margin in identify.nearest_people(known, np.frombuffer(emb, dtype=np.float32), face_id, 1,
+            for suggested, alike, margin in identify.nearest_people(known(), np.frombuffer(emb, dtype=np.float32), face_id, 1,
                                                                     eras.get(face_id, (None, None))):
                 if cuts.is_offered(alike, margin):
                     suggestion, similarity = suggested.name, round(alike, 4)
@@ -630,10 +677,7 @@ def panel(library, photo_path, named):
             "suggestion_person": everyone.of_id(suggested.id) if name is None and suggested else None,
             "similarity": similarity if name is None else None,
         })
-    found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
-    return {"faces": found, "total": len(found),
-            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"]),
-            "size": size, "shown_size": shown_size}
+    return found
 
 
 # ---- The faces detection finds ---------------------------------------------------------

@@ -428,5 +428,62 @@ class TheStripSuggestsWhatTheBoxesListFirst(Case):
         self.assertEqual(self.boxes(unnamed)[0]["name"], shown["suggestion"])
 
 
+class TheSelectedPhotosSuggestWhoTheirFacesLookLike(Case):
+    """Organize's Suggested People for a selection of a folder just indexed: who the unnamed faces of the selected
+    photos look like, the people and the cut the photo's own strip offers, asked once for the whole selection."""
+
+    def suggestions(self, paths):
+        return self.post("photo-faces/suggestions", {"paths": paths})
+
+    def test_a_shoot_selected_offers_each_person_once_a_photo_at_the_best_likeness_and_leaves_the_rest_out(self):
+        elsewhere = self.photo("regatta_040.jpg")
+        self.face(elsewhere, degrees=0, name=WREN, name_source="manual")
+        two_alike = self.photo("regatta_041.jpg")
+        self.face(two_alike, degrees=30)
+        closer = self.face(two_alike, box=(30, 5, 50, 25), degrees=10)
+        stranger = self.photo("regatta_042.jpg")
+        self.face(stranger, degrees=80)
+        named_only = self.photo("regatta_043.jpg")
+        self.face(named_only, degrees=-60, name=ODA, name_source="manual")
+        left_out = self.photo("regatta_044.jpg")
+        self.face(left_out, degrees=5, excluded=1)
+        reply = self.suggestions([two_alike, stranger, named_only, left_out, elsewhere])
+        self.assertEqual(200, reply.status_code)
+        answer = reply.get_json()["suggestions"]
+        self.assertEqual([two_alike], list(answer), "only the photo with an unnamed face like somebody is answered")
+        strip = self.client.get("/library/api/photo-faces", query_string={"path": two_alike}).get_json()
+        best = next(face for face in strip["faces"] if face["id"] == closer)
+        self.assertEqual([{"person": best["suggestion_person"], "name": WREN, "similarity": best["similarity"]}],
+                         answer[two_alike], "one entry for the person, at the likeness of the face most like them")
+        self.assertEqual("People/" + WREN, answer[two_alike][0]["person"]["tag"])
+
+    def test_a_face_named_since_is_no_longer_offered(self):
+        elsewhere = self.photo("regatta_045.jpg")
+        self.face(elsewhere, degrees=0, name=WREN, name_source="manual")
+        photo = self.photo("regatta_046.jpg")
+        face = self.face(photo, degrees=10)
+        self.assertIn(photo, self.suggestions([photo]).get_json()["suggestions"])
+        self.post("face/match", {"face_id": face, "person_name": WREN})
+        self.assertEqual({}, self.suggestions([photo]).get_json()["suggestions"])
+
+    def test_a_face_the_strip_leaves_out_is_not_suggested_and_a_photo_whose_file_is_gone_still_is(self):
+        elsewhere = self.photo("regatta_047.jpg")
+        self.face(elsewhere, degrees=0, name=WREN, name_source="manual")
+        behind = self.photo("regatta_048.jpg", size=(4000, 3000))
+        self.face(behind, box=(2000, 500, 2050, 550), degrees=10)   # 50 px of 3000: under 2%, the strip leaves it out
+        gone = self.photo("regatta_049.jpg")
+        self.face(gone, degrees=10)
+        os.remove(gone)
+        answer = self.suggestions([behind, gone]).get_json()["suggestions"]
+        self.assertEqual([gone], list(answer), "the strip's list and the selection's are one list")
+
+    def test_more_than_five_hundred_photos_or_no_list_is_refused_with_a_sentence(self):
+        for body in ({"paths": ["x.jpg"] * 501}, {"paths": "x.jpg"}, {}):
+            reply = self.suggestions(body["paths"]) if "paths" in body else self.post("photo-faces/suggestions", body)
+            self.assertEqual(400, reply.status_code, body)
+            self.assertTrue(reply.get_json()["error"].endswith("."), reply.get_json())
+        self.assertEqual(200, self.suggestions(["x.jpg"] * 500).status_code)
+
+
 if __name__ == "__main__":
     unittest.main()
