@@ -1,0 +1,10 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-03 | low: `xmp_packet` took a comment, a CDATA section, a processing instruction or stray text inside the packet as XML it understood; an edit clearing a property splices from the element before it (or the Description's start tag), so a comment or text lying between two properties went with the cleared one, a byte outside the owned elements lost (the module's own promise). 0 of the 4,373 packets read this session (photo_index 1,000 sampled, kr-track 2,065 and renton_parkrun 1,308 all) holds any, so the packet is now refused, as the brief's list had it. `tests/test_xmp_packet_edits_what_it_owns.py` failed on the old module (5 refusals, and a byte flip turning a line break into text before tiff:Orientation) and passes now. | fixed: files: xmp_packet refuses a comment, CDATA, a processing instruction or text beside an element |
+| B-2 | 2026-11-03 | low: a second copy of the XMP padding rule: `in_place._spaces` lays a line break after each 99 spaces, ExifTool after each 100 (a line break and 24 lines of 100 spaces: 4,355 of the 4,366 wrapped packets read this session; the other 11 hold a single line break), beside `xmp_packet.padding`, which lays ExifTool's. A patch that grows the padding writes lines one space short (well-formed, the same length). M4 wires `in_place` to the editor and deletes `_spaces`. (`containers._xmp_slack` states what the padding is a third time, as a count.) | open |
+| B-3 | 2026-11-03 | low: docs/PLAN_OWN_METADATA.md said ExifTool's XMP padding is "2 KB or more"; it is 2,425 bytes exactly (`xmp_packet.RESERVE`: a line break and 24 lines of 100 spaces) in 4,355 of the 4,366 wrapped packets read this session, a single line break in the other 11 (each so large that the reserve would carry it past `LIMIT`, so an edit needing room is refused even with grow). The M5 line now says so. | fixed: docs: the XMP editor's section, its census, and the plan's padding |
