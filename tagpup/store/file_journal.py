@@ -21,9 +21,10 @@ another live process is writing is not taken for one a crash left (tagpup.servic
 file_changes.settle).
 
 A change of an INTERNAL operation (the index's bake) is the record a crash needs and no
-more: it is erased, its files and itself, when it finishes forward; no history lists it,
-and no undo check meets it, but while one of its files is `writing` (newer_overlapping:
-one writer of a file at a time).
+more: it is erased, its files and itself, when it finishes forward -- but for a file of it
+that ended a conflict, which is kept with its change for the doctor to count (owner,
+2026-11-03); no history lists it, and no undo check meets it, but while one of its files
+is `writing` (newer_overlapping: one writer of a file at a time).
 
 A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}, and
 the file's stamp, [mtime, size], as it is marked writing, over which settling carries its
@@ -56,7 +57,7 @@ CHUNK = 500
 #: The operation of a bake the index writes after it records a folder (tagpup.services.bake_after_index): the index's
 #: values stamped on the file, never an operation the owner sees or undoes (owner, docs/PLAN_KEEP_IN_STEP.md, decision 2).
 #: Its change is the crash record a write needs while it is under way (settled at the next start by what each file
-#: holds), and once finished it is erased (finish). Spelt here, the lowest layer that tells it apart; tagpup.services.
+#: holds), and once finished it is erased, all but its conflicts (finish). Spelt here, the lowest layer that tells it apart; tagpup.services.
 #: baking names it INDEX_OPERATION. The 'bake photos' changes of the backfill are not internal and stay as they are.
 INDEX_BAKE = "index bake"
 #: The operations whose changes are internal: listed by no history, met by no undo's check of newer changes.
@@ -530,7 +531,10 @@ def finish(db_path, change_id, also=None):
     tagpup.store.face_batches.tidy); an undo keeps everything the change recorded.
 
     An internal change (INTERNAL) that finishes forward is erased in the same transaction, its files and itself: it was
-    the record a crash needed, and it is done (an id is never used again: changes.id is AUTOINCREMENT)."""
+    the record a crash needed, and it is done (an id is never used again: changes.id is AUTOINCREMENT). One with a file
+    that ended a conflict keeps that file and is applied (owner, 2026-11-03): the note is the only record of a file the
+    bake could not write (a picture its write damaged twice, PICTURE_CHANGED), which the doctor counts (noted); its done
+    files go, and no history lists it."""
     def work(conn):
         states = counts(conn, [change_id]).get(change_id, {})
         undoing = conn.execute("SELECT undone FROM changes WHERE id = ?", (change_id,)).fetchone()[0] is not None
@@ -544,9 +548,11 @@ def finish(db_path, change_id, also=None):
         summary["undone_files" if undoing else "files"] = dict(sorted(states.items()))
         operation = conn.execute("SELECT operation FROM changes WHERE id = ?", (change_id,)).fetchone()[0]
         if operation in INTERNAL and not undoing:
-            conn.execute("DELETE FROM change_files WHERE change_id = ?", (change_id,))
-            conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
-        elif not states:
+            conn.execute("DELETE FROM change_files WHERE change_id = ? AND state != 'conflict'", (change_id,))
+            if not states.get("conflict"):
+                conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
+                return states
+        if not states:
             # Every file was taken out again: nothing was written.
             conn.execute("UPDATE changes SET status = 'failed', owner = NULL, summary = ? WHERE id = ?",
                          (json.dumps(summary, sort_keys=True), change_id))

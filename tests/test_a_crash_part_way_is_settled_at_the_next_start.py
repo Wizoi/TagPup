@@ -15,6 +15,13 @@ A patch in place (tagpup.files.in_place) killed part-way is settled by its bytes
 first byte (AnInPlacePatchCutShort). Break that fails it: _by_bytes not called, so a file torn between two ranges is read
 by its fields, holds neither what the change found nor what it was to leave, and is left a half-written conflict (that
 the old code also fails that test is not the proof: it fails earlier, on a write without `saving`; the mutation is).
+
+A write whose picture its rewrite damages twice (tagpup.files.field_values.PictureChanged; the picture check of #2377), its
+journal's path, the write a stand-in that raises it (APictureAWriteDamagesTwice): forward, the file is taken out of its
+change and its error says why; in a settle -- the index's bake killed part-way -- or an undo, it is a conflict noted
+file_journal.PICTURE_CHANGED, its row not stamped again, which the doctor counts. Fails on the old code: file_journal.finish
+erasing a forward-finished bake whole (the change and its conflict, so the doctor counted 0) fails
+test_a_bake_settled_at_the_next_start_keeps_its_change_and_the_conflict_the_doctor_counts.
 """
 import os
 import socket
@@ -31,8 +38,8 @@ from test_file_journal import EXIFTOOL, Crash, FilesCase, Patcher, crash_at, fie
 
 from tagpup import runtime  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.files import field_values, in_place  # noqa: E402
-from tagpup.services import file_changes, tagging  # noqa: E402
+from tagpup.files import bake, field_values, in_place  # noqa: E402
+from tagpup.services import baking, file_changes, tagging  # noqa: E402
 from tagpup.store import checks, db, file_journal, journal, people, schema  # noqa: E402
 
 HOST = socket.gethostname()
@@ -217,6 +224,74 @@ class AnInPlacePatchCutShort(FilesCase):
         finally:
             conn.close()
         self.assertEqual((1, 0), counted)
+
+
+@requires_exiftool
+class APictureAWriteDamagesTwice(FilesCase):
+    """Each write of the photo comes back with its picture's bytes changed (field_values.PictureChanged), the new file
+    discarded and the photo as it was: written once more, then the photo's error by the one failure path."""
+
+    def setUp(self):
+        super().setUp()
+        self.a = self.make("a.jpg")
+        self.writes = 0
+
+    def refused(self, *_args, **_kwargs):
+        self.writes += 1
+        raise field_values.PictureChanged("its write changed the picture's bytes; the new file was discarded")
+
+    def damaging(self):
+        return mock.patch.object(field_values, "write", self.refused)
+
+    def row(self):
+        return self.rows("SELECT * FROM photos WHERE path = ?", (self.a,))
+
+    def counted(self):
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            return checks.files_whose_picture_changed(conn).count
+        finally:
+            conn.close()
+
+    def notes(self, change):
+        return self.rows("SELECT state, note FROM change_files WHERE change_id = ?", (change,))
+
+    def test_forward_it_is_taken_out_of_its_change_and_its_error_says_why(self):
+        row = self.row()
+        with self.damaging():
+            result = self.add([self.a])
+        change = result.details["change"]
+        self.assertEqual((0, 2, 1), (result.changed, self.writes, result.details.get("pictures_refused")))
+        self.assertIn(file_journal.PICTURE_CHANGED, " ".join(why for _path, why in result.errors))
+        self.assertEqual(("failed", [], ["Beach"], row), (self.status(change), self.states(change), keywords_of(self.a),
+                                                          self.row()))
+        self.assertEqual(0, self.counted(), "a file taken out of its change is no conflict")
+
+    def test_a_bake_settled_at_the_next_start_keeps_its_change_and_the_conflict_the_doctor_counts(self):
+        found = bake.WRITTEN[bake.FACES_FOUND]
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("plan committed")):
+            with self.assertRaises(Crash):
+                file_changes.write_fields(self.library, baking.INDEX_OPERATION, EXIFTOOL, [self.a], [found],
+                                          lambda _path, _held: file_changes.Plan(after={found: ["0"]}))
+        change = self.last_change()
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, change))
+        row = self.row()
+        with self.damaging():
+            start_again(self.library)
+        self.assertEqual(2, self.writes)
+        self.assertEqual(("applied", [("conflict", file_journal.PICTURE_CHANGED)], row, None, 1),
+                         (self.status(change), self.notes(change), self.row(), field_of(self.a, found), self.counted()))
+        self.assertEqual([], file_journal.unfinished(self.library.path))
+
+    def test_an_undo_is_refused_for_it_a_conflict_the_doctor_counts(self):
+        change = self.add([self.a]).details["change"]
+        row = self.row()
+        with self.damaging():
+            result = self.undo(change)
+        self.assertEqual((0, 2), (result.changed, self.writes))
+        self.assertIn(file_journal.PICTURE_CHANGED, " ".join(why for _path, why in result.errors))
+        self.assertEqual(([("conflict", file_journal.PICTURE_CHANGED)], ["Beach", "Harbour"], row, 1),
+                         (self.notes(change), keywords_of(self.a), self.row(), self.counted()))
 
 
 if __name__ == "__main__":
