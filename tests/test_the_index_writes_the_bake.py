@@ -8,6 +8,8 @@ What the owner lives through, each with the CLI's index over a real ExifTool and
 - the process is killed at each step of a file's write: the next start settles it, the fingerprint row follows, and the
   finished record is gone;
 - the index's own decode of a photo is its fingerprint: the bake decodes no photo again;
+- a write whose picture came back changed (field_values.PictureChanged, #2377) is discarded and made again, and the
+  index's line says how many were;
 - a share stops answering part-way through the bake: what it says names no change in History to undo;
 - a face deleted from the library (one of a photo's two) is left in the file: a bake under the library's keys of the
   picture is never rewritten (owner, DECISIONS 2026-10-27), the file's mtime does not move, and the face does not come
@@ -212,6 +214,25 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {})
                 self.assertBaked(path, 0)
                 self.assertNoBakeListed()
+
+    def test_a_write_that_changed_the_picture_is_made_again_and_the_line_says_so(self):
+        path = self.picture("a.jpg", (200, 40, 40))
+        write, calls = field_values.write, []
+
+        def damaged_once(*args, **kwargs):
+            # The journal's writes (file_changes._written: the bake's), not the identity mint's before them.
+            if "scratch_written" in kwargs:
+                calls.append(args[1])
+                if len(calls) == 1:
+                    raise field_values.PictureChanged("its write changed the picture's bytes; the new file was discarded")
+            return write(*args, **kwargs)
+        with mock.patch.object(field_values, "write", damaged_once):
+            said = " ".join(self.index().output.split())
+        self.assertEqual([path, path], calls)
+        self.assertIn("Bake: 1 file(s) written", said)
+        self.assertIn(bake_after_index._SAID_REFUSED % 1, said)
+        self.assertBaked(path, 1)
+        self.assertNoBakeListed()
 
     def test_the_index_hands_its_decode_over_and_the_bake_decodes_nothing(self):
         paths_made = [self.picture(name, colour) for name, colour in (("a.jpg", (200, 40, 40)), ("b.jpg", (40, 200, 40)))]

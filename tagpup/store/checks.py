@@ -239,20 +239,34 @@ def without_a_vector(conn, model):
                         (model,)).fetchone()[0]
 
 
-# ---- The journal's patches in place (tagpup.store.file_journal.save_patch) -----------------------
+# ---- The journal's files a write found damaged (tagpup.store.file_journal.noted) -------------------
+
+def _noted(conn):
+    """file_journal.noted, read once while nothing is written (_once): the three rules below read one scan."""
+    return _once(conn, "noted", lambda: file_journal.noted(conn))
+
 
 def patch_records_outside_writing(conn):
     """Files of the journal holding a patch's record though no longer `writing`: a mark that kept it, where every mark
-    that takes a file out of `writing` erases it (file_journal.set_state). The examples are change_files ids. One scan of
-    change_files (0.28 s on photo_index's 51,451 rows, counted 2026-11-02)."""
-    return _check("patch records of files not being written", file_journal.patches_outside_writing(conn))
+    that takes a file out of `writing` erases it (file_journal.set_state). The examples are change_files ids."""
+    return _check("patch records of files not being written", _noted(conn)[file_journal.PATCH_KEPT])
 
 
 def files_changed_around_a_patch(conn):
     """Files a patch wrote whose bytes outside it were found changed (file_journal.OUTSIDE_CHANGED): put back and left a
     conflict, the picture data of the file not what it was (#2377). Found, not repaired: the file is restored from a copy
     by hand. The examples are change_files ids."""
-    return _check("files changed outside their patch", file_journal.changed_around_a_patch(conn))
+    return _check("files changed outside their patch", _noted(conn)[("conflict", file_journal.OUTSIDE_CHANGED)])
+
+
+def files_whose_picture_changed(conn):
+    """Files a settle, an undo or the index's bake could not write, because each of two writes of them changed the
+    picture's bytes (file_journal.PICTURE_CHANGED; tagpup.files.field_values.PictureChanged): the new file was discarded
+    each time and the file is as it was, a conflict. A write that damages a picture twice points at the machine, not the
+    file (the corrupted bytes of 2026-11-02): write it again, and if it is refused again, check this PC's memory. The
+    examples are change_files ids."""
+    return _check("files a write refused twice for changing the picture (write them again; if refused again, check"
+                  " this PC's memory)", _noted(conn)[("conflict", file_journal.PICTURE_CHANGED)])
 
 
 # ---- The library's roots (docs/ARCHITECTURE.md, "Roots and machines") -------------------------
@@ -266,24 +280,32 @@ def _roots_or_why(conn):
         return None, str(problem)
 
 
-#: The last scan of each connection's rooted rows (roots_check.broken): {conn: (what says nothing was written since -- the
-#: connection's own changes and other connections' commits, PRAGMA data_version --, the Roots it was read by, what it found)}.
-#: The two rules below read one scan, not one each (#1383: 0.34 s each on photo_index); a write or another Roots reads again.
-#: A scan taken inside a transaction is not kept: a rollback takes its rows away and moves neither number.
+#: The last scans of each connection that several rules read: {conn: {name: (what says nothing was written since -- the
+#: connection's own changes and other connections' commits, PRAGMA data_version --, what else it was read by, what it
+#: found)}}. Several rules read one scan, not one each (#1383: 0.34 s each on photo_index); a write, or another `by`,
+#: reads again. A scan taken inside a transaction is not kept: a rollback takes its rows away and moves neither number.
 _scanned = weakref.WeakKeyDictionary()
 
 
-def _rooted(conn):
-    roots = _roots_or_why(conn)[0]
+def _once(conn, name, read, by=None):
+    """read(), or what it returned the last time on `conn` under `name` while nothing was written and `by` is the same
+    object (_scanned)."""
     stamp = (conn.total_changes, conn.execute("PRAGMA data_version").fetchone()[0])
-    held = _scanned.get(conn)
-    if held is None or held[0] != stamp or held[1] is not roots:
-        held = (stamp, roots, roots_check.broken(conn, roots)[0])
+    kept = _scanned.setdefault(conn, {})
+    held = kept.get(name)
+    if held is None or held[0] != stamp or held[1] is not by:
+        held = (stamp, by, read())
         if conn.in_transaction:
-            _scanned.pop(conn, None)
+            kept.pop(name, None)
         else:
-            _scanned[conn] = held
+            kept[name] = held
     return held[2]
+
+
+def _rooted(conn):
+    """roots_check.broken of the library's rooted rows, read once while nothing is written and the Roots are the same."""
+    roots = _roots_or_why(conn)[0]
+    return _once(conn, "rooted", lambda: roots_check.broken(conn, roots)[0], by=roots)
 
 
 def rooted_rows_convert(conn):
@@ -323,7 +345,8 @@ RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excl
          people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
          rooted_rows_convert, native_rows_under_a_root, photo_tags_out_of_date, photo_folders_out_of_date,
          folders_out_of_date, search_index_out_of_date, face_person_ids_out_of_step,
-         listed_person_ids_out_of_step, patch_records_outside_writing, files_changed_around_a_patch)
+         listed_person_ids_out_of_step, patch_records_outside_writing, files_changed_around_a_patch,
+         files_whose_picture_changed)
 
 
 def run(conn):

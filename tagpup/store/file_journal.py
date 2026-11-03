@@ -21,8 +21,10 @@ another live process is writing is not taken for one a crash left (tagpup.servic
 file_changes.settle).
 
 A change of an INTERNAL operation (the index's bake) is the record a crash needs and no
-more: it is erased, its files and itself, when it finishes forward; no history lists it,
-and no undo check meets it, but while one of its files is `writing` (newer_overlapping:
+more: it is erased, its files and itself, when it finishes forward -- but for a file of it
+that ended a conflict the doctor counts (a note of NOTES), which is kept with its change
+(owner, 2026-11-03, narrowed by the main session to the doctor's notes); no history lists
+it, and no undo check meets it, but while one of its files is `writing` (newer_overlapping:
 one writer of a file at a time).
 
 A field change keeps `fields_before` and `fields_after` as JSON, {field: [texts]}, and
@@ -56,7 +58,7 @@ CHUNK = 500
 #: The operation of a bake the index writes after it records a folder (tagpup.services.bake_after_index): the index's
 #: values stamped on the file, never an operation the owner sees or undoes (owner, docs/PLAN_KEEP_IN_STEP.md, decision 2).
 #: Its change is the crash record a write needs while it is under way (settled at the next start by what each file
-#: holds), and once finished it is erased (finish). Spelt here, the lowest layer that tells it apart; tagpup.services.
+#: holds), and once finished it is erased, all but its conflicts (finish). Spelt here, the lowest layer that tells it apart; tagpup.services.
 #: baking names it INDEX_OPERATION. The 'bake photos' changes of the backfill are not internal and stay as they are.
 INDEX_BAKE = "index bake"
 #: The operations whose changes are internal: listed by no history, met by no undo's check of newer changes.
@@ -217,6 +219,12 @@ OUTSIDE_CHANGED = ("the bytes outside its patch changed while it was written: th
 #: conflict, which the doctor counts. Also the error a forward write reports for it.
 PICTURE_CHANGED = "its write changed the picture's bytes twice; the file is as it was and nothing was written"
 
+#: The notes of a conflict the doctor counts (noted; tagpup.store.checks): a file a write found damaged, by its kind.
+NOTES = (OUTSIDE_CHANGED, PICTURE_CHANGED)
+#: noted's key of the files holding a patch's record though not `writing`: a mark that did not erase it (none, by
+#: set_state, writing and withdraw_in).
+PATCH_KEPT = ("not writing", "a patch's record")
+
 
 class PatchTooLarge(Exception):
     """A patch's old bytes are more than PATCH_CAP: nothing was saved, and nothing may be written by a patch."""
@@ -309,17 +317,21 @@ def patch_of(db_path, file_id):
     return None if found is None else (json.loads(found[0]), bytes(found[1] or b""))
 
 
-def patches_outside_writing(conn):
-    """The ids of files holding a patch's record though not `writing`: a mark that did not erase it (none, by set_state,
-    writing and withdraw_in). The caller's connection (tagpup.store.checks)."""
-    return [file_id for (file_id,) in conn.execute(
-        "SELECT id FROM change_files WHERE state != 'writing' AND patch IS NOT NULL ORDER BY id")]
-
-
-def changed_around_a_patch(conn):
-    """The ids of files found, once patched, changed outside the patch (OUTSIDE_CHANGED). The caller's connection."""
-    return [file_id for (file_id,) in conn.execute(
-        "SELECT id FROM change_files WHERE state = 'conflict' AND note = ? ORDER BY id", (OUTSIDE_CHANGED,))]
+def noted(conn):
+    """{key: [change_files ids]} of the files the doctor counts, in ONE scan of change_files (0.28 s on photo_index's
+    51,451 rows, counted 2026-11-02; #2384): ("conflict", note) for each of NOTES, and PATCH_KEPT. Every key is there,
+    an empty list when none. The caller's connection (tagpup.store.checks, which keeps the answer while nothing is
+    written)."""
+    found = {("conflict", note): [] for note in NOTES}
+    found[PATCH_KEPT] = []
+    for file_id, state, note, patched in conn.execute(
+            "SELECT id, state, note, patch IS NOT NULL FROM change_files WHERE (state = 'conflict' AND note IN (%s))"
+            " OR (patch IS NOT NULL AND state != 'writing') ORDER BY id" % ", ".join("?" * len(NOTES)), NOTES):
+        if patched and state != "writing":
+            found[PATCH_KEPT].append(file_id)
+        if state == "conflict" and note in NOTES:
+            found[("conflict", note)].append(file_id)
+    return found
 
 
 #: The files of renames done (RENAMES): sought by their change, the change_id index, never a scan of change_files.
@@ -520,7 +532,12 @@ def finish(db_path, change_id, also=None):
     tagpup.store.face_batches.tidy); an undo keeps everything the change recorded.
 
     An internal change (INTERNAL) that finishes forward is erased in the same transaction, its files and itself: it was
-    the record a crash needed, and it is done (an id is never used again: changes.id is AUTOINCREMENT)."""
+    the record a crash needed, and it is done (an id is never used again: changes.id is AUTOINCREMENT). One with a file
+    that ended a conflict noted one of NOTES keeps that file and is applied (owner, 2026-11-03): the note is the only
+    record of a file the bake found damaged (a picture its write changed twice, PICTURE_CHANGED), which the doctor counts
+    (noted); its other files go, and no history lists it. Any other conflict -- one that may pass (a scratch file of a
+    write that may be under way, a file held by another program, one changed outside) -- goes with the change, as a done
+    file does: the next index reads the file and bakes it again, and nothing would count or list it if it were kept."""
     def work(conn):
         states = counts(conn, [change_id]).get(change_id, {})
         undoing = conn.execute("SELECT undone FROM changes WHERE id = ?", (change_id,)).fetchone()[0] is not None
@@ -534,9 +551,13 @@ def finish(db_path, change_id, also=None):
         summary["undone_files" if undoing else "files"] = dict(sorted(states.items()))
         operation = conn.execute("SELECT operation FROM changes WHERE id = ?", (change_id,)).fetchone()[0]
         if operation in INTERNAL and not undoing:
-            conn.execute("DELETE FROM change_files WHERE change_id = ?", (change_id,))
-            conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
-        elif not states:
+            notes = ", ".join("?" * len(NOTES))
+            conn.execute("DELETE FROM change_files WHERE change_id = ? AND (state != 'conflict' OR note IS NULL"
+                         " OR note NOT IN (%s))" % notes, (change_id,) + NOTES)
+            if not conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone():
+                conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
+                return states
+        if not states:
             # Every file was taken out again: nothing was written.
             conn.execute("UPDATE changes SET status = 'failed', owner = NULL, summary = ? WHERE id = ?",
                          (json.dumps(summary, sort_keys=True), change_id))

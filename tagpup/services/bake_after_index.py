@@ -4,7 +4,8 @@ ToBake is written, the folder as one change of file_changes.write_fields, the on
 
 A bake is the index's values stamped on the file, never an operation the owner sees or undoes (owner, decision 2): its
 change is internal (file_journal.INTERNAL), the record a crash needs while the write is under way -- the next start
-settles a half-written file by what it holds -- and erased once the folder is finished. Where the index's rows and the
+settles a half-written file by what it holds -- and erased once the folder is finished, but for its files that ended
+a conflict the doctor counts (file_journal.NOTES), kept with it (file_journal.finish; owner, 2026-11-03). Where the index's rows and the
 file's bake differ the rows win (decision 3): a face deleted in TagPup is gone from the file at the folder's next index.
 
 A folder is planned twice, on a read-only connection of its own: first every photo without its decode (the bake fields
@@ -82,6 +83,7 @@ def folder_told(number, of, baked, folder, files=None):
 #: The parts of a line Baked.said makes: the counts every line has, and the conflicts it adds when there are any.
 _SAID_COUNTS = "%d file(s) written, %d already held it"
 _SAID_CONFLICTS = "%d conflict(s), left as they are"
+_SAID_REFUSED = "%d write(s) discarded for changing the picture and made again"
 
 
 #: A folder whose write the library's roots, changed by another process, stopped (the run ends there).
@@ -94,7 +96,8 @@ class Baked:
     their bake already (planned or at the write's read), conflicts, failed, not answered (a share away), and the photos
     the library cannot plan, by baking's kind of Cannot; `refused`, the folders whose write was refused, by its sentence
     (counts only: too many photos, a batch ahead, the roots changed); `stalled`, a share stopped answering and ended the
-    run; `roots_changed`, the library's roots were changed by another process and ended it."""
+    run; `roots_changed`, the library's roots were changed by another process and ended it; `pictures_refused`, the writes
+    discarded because they changed the picture's bytes and made again (file_changes, the result's `pictures_refused`)."""
     planned: int = 0
     written: int = 0
     current: int = 0
@@ -106,6 +109,7 @@ class Baked:
     refused: collections.Counter = dataclasses.field(default_factory=collections.Counter)
     stalled: bool = False
     roots_changed: bool = False
+    pictures_refused: int = 0
 
     def said(self):
         """The run in one line, counts only (the paths name people)."""
@@ -114,6 +118,7 @@ class Baked:
                 (_SAID_CONFLICTS % self.conflicts) if self.conflicts else "",
                 ("%d failed" % self.failed) if self.failed else "",
                 ("%d not answered (a share away)" % self.not_answered) if self.not_answered else "",
+                (_SAID_REFUSED % self.pictures_refused) if self.pictures_refused else "",
                 ", ".join("%d %s" % (n, kind) for kind, n in sorted(self.cannot.items())),
                 ", ".join("%d folder(s) refused: %s" % (n, why.rstrip(".")) for why, n in sorted(self.refused.items()))]
         line += "".join("; " + each for each in more if each)
@@ -274,7 +279,7 @@ def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
 
 def _write(library, exiftool_path, et, stored, to_bake, baked, on_chunk):
     """Write the photos of one folder to bake as one internal change, each file read again before its write, and count
-    in `baked` what the write reported (its Result: the change is erased once it finishes); `on_chunk(done, of)` as each
+    in `baked` what the write reported (its Result: the change is erased once it finishes, its conflicts of NOTES kept); `on_chunk(done, of)` as each
     chunk of its files ends (write_fields)."""
     result = file_changes.write_fields(
         library, baking.INDEX_OPERATION, exiftool_path, [path for path, _values in to_bake.values()],
@@ -287,6 +292,7 @@ def _write(library, exiftool_path, et, stored, to_bake, baked, on_chunk):
     baked.current += len(result.details.get("written", {})) - result.changed
     baked.conflicts += conflicts
     baked.not_answered += len(unanswered)
+    baked.pictures_refused += result.details.get("pictures_refused", 0)
     baked.failed += max(0, len({paths.key(path) for path, _why in result.errors} - unanswered) - conflicts)
     if (result.details.get("stopped") or {}).get("share"):
         baked.stalled = True
