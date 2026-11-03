@@ -82,6 +82,7 @@ PATHS = os.path.join("tagpup", "core", "paths.py")
 PROCESSES = os.path.join("tagpup", "core", "processes.py")
 EXIFTOOL = os.path.join("tagpup", "files", "exiftool_session.py")
 FIELD_VALUES = os.path.join("tagpup", "files", "field_values.py")
+IN_PLACE = os.path.join("tagpup", "files", "in_place.py")
 #: A line that is genuinely not about a photo path -- a tag hierarchy, a database file's URI -- says so, which keeps
 #: each exception visible where it is made.
 NOT_A_PATH = "# not a path:"
@@ -111,6 +112,13 @@ LINE_RULES = (
     # write too. Not even field_values overwrites a photo in place (OVERWRITES).
     ("an ExifTool write outside field_values", FIELD_VALUES, r"\.set_tags\(|-overwrite_original|\.execute\([^)]*[\"']-[\w:-]+<?=",
      'et.execute("-XMP:Subject=Quay", path)', ".set_tags(", ""),
+    # A JPEG is patched in place by field_values.write alone, which gives it the journal's `saving` and its picture
+    # rules; and the patch's own open of the photo with no sharing (in_place._alone) is the one CreateFileW of the code,
+    # so no other open of a photo slips past shares' bounded looks.
+    ("a JPEG patched outside field_values.write", FIELD_VALUES, r"(?<!def )\bpatch_jpeg\(",
+     "done = in_place.patch_jpeg(path, serialise, saving)", "in_place.patch_jpeg(", ""),
+    ("a file opened by CreateFileW outside in_place._alone", IN_PLACE, r"\bCreateFileW\b",
+     'create = kernel.CreateFileW', ".CreateFileW", ""),
     # Other processes are started, run and stopped through tagpup.core.processes: every spawn decided for itself
     # whether the child got a console window, and a test run put a terminal window on the desktop for every server it
     # started and every reaper (#124).
