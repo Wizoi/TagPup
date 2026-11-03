@@ -143,7 +143,7 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None, params=()):
 
     `stop`, a threading.Event: once it is set no more batches are read, and the photos not reached are left out of the
     answer (a batch asked to stop while it plans, tagpup.services.file_changes). `params`, options of each read command
-    (the XMP census's -validate, which alone makes ExifTool say a JPEG holds two XMP blocks: tagpup.services.inspect).
+    (-struct, for the bake's region fields: tagpup.files.metadata).
     A struct field in `wanted` is read with -struct, which answers a list of one as a list: `also` beside one is refused,
     since its records would not be in the indexer's shape.
 
