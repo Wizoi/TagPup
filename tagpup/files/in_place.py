@@ -9,10 +9,12 @@ when that returns writes a byte; whoever meets the file next settles it by its b
 process tore (`put_back`), never what another program wrote.
 
 A record is JSON, as `change_files.patch` holds it: {"v": 1, "size": the file's size, "ranges": [{"at", "len", "after":
-the new bytes, base64}], "outside": null or {"sha256": of every byte outside the ranges, in order}}; the bytes the
-ranges held before, concatenated in the ranges' order, are kept beside it (`change_files.patch_before`). The new bytes
-are kept too, so a range this process tore is told from one another program wrote. Reads are of the open file, not
-looks at its path: the caller has the file's state already (tagpup.services.file_changes reads it from the journal).
+the new bytes, base64}]}; the bytes the ranges held before, concatenated in the ranges' order, are kept beside it
+(`change_files.patch_before`). The new bytes are kept too, so a range this process tore is told from one another program
+wrote. A patch checks only the bytes it changed, against those two (DECISIONS 2026-11-03, "AN IN-PLACE PATCH CHECKS ONLY
+THE BYTES IT CHANGED"): no other byte of the file is read, nor any hash taken of it, for a photo or a clip. Reads are of
+the open file, not looks at its path: the caller has the file's state already (tagpup.services.file_changes reads it
+from the journal).
 
 **A JPEG's patch** (`patch_jpeg`). A photo's EXIF, IPTC (Photoshop APP13) and XMP segments are rewritten at their old
 length, and only the bytes of them that differ are written. TagPup writes no serialiser of its own: ExifTool writes the
@@ -28,7 +30,6 @@ read of its header to the last byte written, so no other program writes it, nor 
 that holds it open already makes it the rewrite's. Every read and write of it is bounded (shares.bounded, SECONDS).
 """
 import base64
-import hashlib
 import io
 import os
 import tempfile
@@ -52,30 +53,11 @@ class Away(OSError):
     against the record the journal saved (held), the next time."""
 
 #: What a file holds against its record (held).
-NEW, OLD, TORN, NEITHER, RESIZED, OUTSIDE = "new", "old", "torn", "neither", "resized", "outside"
-
-#: The bytes read at a time for the hash of what lies outside the ranges.
-BLOCK = 1 << 20
+NEW, OLD, TORN, NEITHER, RESIZED = "new", "old", "torn", "neither", "resized"
 
 
 def _spans(record):
     return [(each["at"], each["len"], base64.b64decode(each["after"])) for each in record["ranges"]]
-
-
-def _outside(handle, size, spans):
-    """The sha256 of every byte of the open file outside `spans`, in order."""
-    digest, at = hashlib.sha256(), 0
-    for start, length, _after in spans + [(size, 0, b"")]:
-        handle.seek(at)
-        left = start - at
-        while left > 0:
-            block = handle.read(min(BLOCK, left))
-            if not block:
-                raise OSError("the file ended before its byte %d" % start)
-            digest.update(block)
-            left -= len(block)
-        at = start + length
-    return digest.hexdigest()
 
 
 def _read_at(handle, at, length):
@@ -83,13 +65,10 @@ def _read_at(handle, at, length):
     return handle.read(length)
 
 
-def record(handle, changes, hash_outside=True):
+def record(handle, changes):
     """(record, before) of a patch writing `changes`, [(at, new bytes)], into the file open in `handle` (binary, read):
-    the record as the journal saves it, and the bytes the ranges hold now. Ranges are sorted and may not overlap, be
-    empty or run past the end. The hash of what lies outside them is taken unless `hash_outside` is False:
-    a photo's is two full reads of a few megabytes and finds a byte changed outside the patch (#2377); a clip's would be
-    two full reads of up to 10 GB, about what the rewrite the patch avoids costs, so a clip's patch passes False (owner,
-    2026-11-03). Writes nothing."""
+    the record as the journal saves it, and the bytes the ranges hold now, the only bytes of the file read. Ranges are
+    sorted and may not overlap, be empty or run past the end. Writes nothing."""
     size = handle.seek(0, os.SEEK_END)
     changes = sorted((int(at), bytes(new)) for at, new in changes)
     end = 0
@@ -99,9 +78,8 @@ def record(handle, changes, hash_outside=True):
         end = at + len(new)
     spans = [(at, len(new), new) for at, new in changes]
     before = b"".join(_read_at(handle, at, length) for at, length, _new in spans)
-    return {"v": VERSION, "size": size,
-            "ranges": [{"at": at, "len": length, "after": base64.b64encode(new).decode("ascii")} for at, length, new in spans],
-            "outside": {"sha256": _outside(handle, size, spans)} if hash_outside else None}, before
+    ranges = [{"at": at, "len": length, "after": base64.b64encode(new).decode("ascii")} for at, length, new in spans]
+    return {"v": VERSION, "size": size, "ranges": ranges}, before
 
 
 def _bounded(path, call):
@@ -118,8 +96,8 @@ def held(path, record, before):
     """What the file at `path` holds against its patch's `record` and the bytes its ranges held `before`: NEW, every
     range as the patch wrote it; OLD, every range as it was; TORN, each byte one or the other but not all of one (a
     write this process cut short); NEITHER, a byte that is neither (another program wrote it); RESIZED, the file is not
-    the size it was; OUTSIDE, the ranges are this process's but a byte outside them is not what it was. Raises OSError
-    when the file cannot be read (Away, when its share does not answer)."""
+    the size it was. Reads the file's size and its ranges, no other byte. Raises OSError when the file cannot be read
+    (Away, when its share does not answer)."""
     return _bounded(path, lambda: _held(path, record, before))
 
 
@@ -131,18 +109,13 @@ def _held(path, record, before):
             return RESIZED
         now = b"".join(_read_at(handle, at, length) for at, length, _new in spans)
         new = b"".join(after for _at, _length, after in spans)
-        if now == new:
-            found = NEW
-        elif now == before:
-            found = OLD
-        elif len(now) == len(new) == len(before) and all(n in (o, a) for n, o, a in zip(now, before, new)):
-            found = TORN
-        else:
-            return NEITHER
-        outside = record.get("outside")
-        if outside and _outside(handle, size, spans) != outside["sha256"]:
-            return OUTSIDE
-    return found
+    if now == new:
+        return NEW
+    if now == before:
+        return OLD
+    if len(now) == len(new) == len(before) and all(n in (o, a) for n, o, a in zip(now, before, new)):
+        return TORN
+    return NEITHER
 
 
 def put_back(path, record, before):
@@ -158,7 +131,7 @@ def put_back(path, record, before):
             _write(handle, changes)
 
     _bounded(path, put)
-    if held(path, dict(record, outside=None), before) != OLD:
+    if held(path, record, before) != OLD:
         raise OSError("the bytes put back did not read back")
 
 

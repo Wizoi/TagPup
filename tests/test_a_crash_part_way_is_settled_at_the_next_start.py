@@ -137,8 +137,8 @@ class AnInPlacePatchCutShort(FilesCase):
     """A keyword renamed in a photo by a patch in place (in_place.patch_jpeg: 'Beach' for 'Shore' in its EXIF, IPTC and
     XMP, three ranges), the process killed at each point of the write (test_file_journal.cut_patch), and the next start: untouched or all old, it is written again; torn by the patch, put back
     and written again; all new, done; another program's write, a conflict never overwritten; unreadable, left `writing`
-    with its record and the change let go; a byte changed outside the patch as it was written, put back and a conflict
-    the doctor counts."""
+    with its record and the change let go. Another program's write is told by the ranges and the size alone: a byte of a
+    range that is neither old nor new, or another size (no byte outside the ranges is read, DECISIONS 2026-11-03)."""
 
     def setUp(self):
         super().setUp()
@@ -214,18 +214,22 @@ class AnInPlacePatchCutShort(FilesCase):
         os.chmod(self.a, stat.S_IREAD | stat.S_IWRITE)
         self.assert_written_again(change)
 
-    def test_a_byte_changed_outside_the_patch_as_it_was_written_is_put_back_a_conflict_the_doctor_counts(self):
-        result = self.replace(cut_patch(outside=True))
-        change = result.details["change"]
-        self.assertEqual((0, ["conflict"], ["Beach"]), (result.changed, self.states(change), keywords_of(self.a)))
-        self.assertEqual([(file_journal.OUTSIDE_CHANGED,)],
-                         self.rows("SELECT note FROM change_files WHERE change_id = ?", (change,)))
-        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
-        try:
-            counted = (checks.files_changed_around_a_patch(conn).count, checks.patch_records_outside_writing(conn).count)
-        finally:
-            conn.close()
-        self.assertEqual((1, 0), counted)
+    def test_a_byte_of_a_range_neither_old_nor_new_is_another_programs_a_conflict_never_overwritten(self):
+        # Killed once its record was saved; then another program writes a byte where the patch was to write, the file
+        # the same size: neither what the patch found nor what it was to leave, so neither put back nor written over.
+        change, file_id = self.killed(step=file_changes.PATCH_SAVED)
+        record, before = file_journal.patch_of(self.library.path, file_id)
+        at = record["ranges"][0]["at"]
+        found, meant = before[0], in_place._spans(record)[0][2][0]
+        stray = next(byte for byte in range(256) if byte not in (found, meant))
+        with open(self.a, "r+b") as handle:
+            handle.seek(at)
+            handle.write(bytes([stray]))
+        written = self.held()
+        self.assertEqual(in_place.NEITHER, self.against_its_record(file_id))
+        start_again(self.library)
+        self.assertEqual((["conflict"], written, None), (self.states(change), self.held(),
+                                                         file_journal.patch_of(self.library.path, file_id)))
 
 
 @requires_exiftool

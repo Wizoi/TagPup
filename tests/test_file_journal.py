@@ -80,11 +80,10 @@ class Torn(OSError):
 
 
 @contextlib.contextmanager
-def cut_patch(ranges=None, outside=False):
+def cut_patch(ranges=None):
     """The real patch in place (in_place.patch_jpeg, field_values.write's in-place path) cut at its write of the photo:
     `ranges` of its ranges written and flushed, then the process killed (a Crash); None, every range written and the
-    process killed after the last byte. `outside`: every range written and a byte of the picture changed as they were
-    (#2377), the process not killed. Only the first write is cut; a put back (in_place.put_back) is the real one.
+    process killed after the last byte. Only the first write is cut; a put back (in_place.put_back) is the real one.
     Yields the list of the ranges the cut write was given."""
     real_write, real_bounded, cut = in_place._write, in_place._bounded, []
 
@@ -92,15 +91,6 @@ def cut_patch(ranges=None, outside=False):
         if cut:
             return real_write(handle, changes)
         cut.extend(changes)
-        if outside:
-            real_write(handle, changes)
-            end = handle.seek(0, os.SEEK_END) - 3        # the last byte of the picture, before its end of image
-            handle.seek(end)
-            byte = handle.read(1)[0]
-            handle.seek(end)
-            handle.write(bytes([byte ^ 0xFF]))
-            handle.flush()
-            return None
         real_write(handle, changes if ranges is None else changes[:ranges])
         raise Torn("killed after %s of the ranges" % ("all" if ranges is None else ranges))
 
@@ -500,6 +490,8 @@ class APatchInPlace(FilesCase):
         self.assertEqual([first], self.recorded())
         record, before = file_journal.patch_of(self.library.path, first)
         self.assertEqual(3, len(record["ranges"]), "a range each of the EXIF, IPTC and XMP segments")
+        self.assertEqual({"v", "size", "ranges"}, set(record), "a patch keeps only the bytes it changes, no hash of the"
+                         " rest (DECISIONS 2026-11-03, AN IN-PLACE PATCH CHECKS ONLY THE BYTES IT CHANGED)")
         # Only the bytes that differ, from the first to the last: XPKeywords' UTF-16 to its last differing byte.
         self.assertEqual("Beach".encode("utf-16-le")[:-1] + b"Beach" + b"Beach", before,
                          "the record does not hold what its ranges held")

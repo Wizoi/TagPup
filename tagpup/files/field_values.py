@@ -32,8 +32,8 @@ attributes: a photo marked hidden or system loses the mark at its write (#2389).
 `saving`) of a JPEG whose new fields fit its old EXIF, IPTC and XMP segments writes only those bytes
 (tagpup.files.in_place.patch_jpeg): the same ExifTool command writes the fields into a copy of the photo's header alone,
 on this PC, and the segments it wrote are patched into the photo at their old lengths. What does not fit is rewritten
-as above. The picture is never read or written by a patch; the journal checks the bytes outside the patch, and the
-fields read back, before the file is done (tagpup.services.file_changes._verified).
+as above. The picture is never read or written by a patch; the journal checks the bytes it changed, and the fields
+read back, before the file is done (tagpup.services.file_changes._verified), and reads no other byte of the file.
 """
 import logging
 import os

@@ -134,25 +134,22 @@ class TheRules(Library):
 
     def test_a_patch_record_a_mark_kept_and_files_a_write_found_damaged_are_counted_from_one_scan(self):
         # Files of a change as the journal plans them; one marked done by hand, keeping its patch's record, which every
-        # mark erases (file_journal.set_state); one a patch found changed outside it (in_place.OUTSIDE); one a write refused
-        # twice for changing its picture (field_values.PictureChanged); one an ordinary conflict, which no rule counts.
+        # mark erases (file_journal.set_state); one a write refused twice for changing its picture
+        # (field_values.PictureChanged); one an ordinary conflict, which no rule counts.
         _change, planned = file_journal.plan(self.db_path, "rename tag", [
             {"photo_id": None, "path": os.path.join(self.dir, name), "before": {"XMP:Subject": ["Beach"]},
-             "after": {"XMP:Subject": ["Shore"]}} for name in ("a.jpg", "b.jpg", "c.jpg", "d.jpg")])
-        kept, changed, damaged, other = (row.id for row in planned)
+             "after": {"XMP:Subject": ["Shore"]}} for name in ("a.jpg", "b.jpg", "c.jpg")])
+        kept, damaged, other = (row.id for row in planned)
         self.conn.execute("UPDATE change_files SET state = 'done', patch = '{}', patch_before = x'00' WHERE id = ?", (kept,))
         self.conn.commit()
-        file_journal.mark(self.db_path, [changed], "conflict", file_journal.OUTSIDE_CHANGED)
         file_journal.mark(self.db_path, [damaged], "conflict", file_journal.PICTURE_CHANGED)
         file_journal.mark(self.db_path, [other], "conflict", "could not be written: it is read-only")
         picture = checks.files_whose_picture_changed(self.conn).name
-        self.assertEqual({"patch records of files not being written": 1, "files changed outside their patch": 1,
-                          picture: 1}, self.broken())
+        self.assertEqual({"patch records of files not being written": 1, picture: 1}, self.broken())
         with mock.patch.object(file_journal, "noted", wraps=file_journal.noted) as scans:
-            self.assertEqual([[kept], [changed], [damaged]], [check.examples for check in (
-                checks.patch_records_outside_writing(self.conn), checks.files_changed_around_a_patch(self.conn),
-                checks.files_whose_picture_changed(self.conn))])
-            self.assertEqual(0, scans.call_count, "the three rules were read again with nothing written since")
+            self.assertEqual([[kept], [damaged]], [check.examples for check in (
+                checks.patch_records_outside_writing(self.conn), checks.files_whose_picture_changed(self.conn))])
+            self.assertEqual(0, scans.call_count, "the two rules were read again with nothing written since")
             file_journal.mark(self.db_path, [other], "conflict", file_journal.PICTURE_CHANGED)
             self.assertEqual((2, 1), (checks.files_whose_picture_changed(self.conn).count, scans.call_count),
                              "a write by another connection is read again")

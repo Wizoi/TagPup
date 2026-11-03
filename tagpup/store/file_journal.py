@@ -209,18 +209,13 @@ def _row(found, roots):
 #: rewrite's, which the patcher then takes. A photo's metadata segments are at most 64 KB each.
 PATCH_CAP = 1 << 20
 
-#: The note of a file whose bytes outside its patch were not what they were once the patch was written (tagpup.files.
-#: in_place.OUTSIDE, #2377): its ranges are put back, and it is a conflict, which the doctor counts.
-OUTSIDE_CHANGED = ("the bytes outside its patch changed while it was written: the patch was put back, and the file "
-                   "is not written again")
-
 #: The note of a file whose write changed its picture's bytes twice in a settle or an undo (tagpup.files.field_values.
 #: PictureChanged, the picture check of #2377): the new file was discarded each time and the file is as it was; a
 #: conflict, which the doctor counts. Also the error a forward write reports for it.
 PICTURE_CHANGED = "its write changed the picture's bytes twice; the file is as it was and nothing was written"
 
 #: The notes of a conflict the doctor counts (noted; tagpup.store.checks): a file a write found damaged, by its kind.
-NOTES = (OUTSIDE_CHANGED, PICTURE_CHANGED)
+NOTES = (PICTURE_CHANGED,)
 #: noted's key of the files holding a patch's record though not `writing`: a mark that did not erase it (none, by
 #: set_state, writing and withdraw_in).
 PATCH_KEPT = ("not writing", "a patch's record")
