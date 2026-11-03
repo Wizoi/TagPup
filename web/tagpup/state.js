@@ -100,6 +100,10 @@ export const state = {
     shownIndex: new Map(),
     shownSource: null,
     folderSuggestions: {},
+    // Who the unnamed faces of each selected photo of the folder look like, {path: [{person, name, similarity}]}, [] for
+    // none, and the ask still out for the rest ({key, controller}) (selection-faces.js).
+    selectionFaces: {},
+    selectionFacesAsking: null,
     progressTimer: null,
     knownTags: [],
     // The same people without those hidden from autocomplete: what the add-person field offers while typing.

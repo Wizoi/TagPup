@@ -28,6 +28,7 @@ import {
     openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
 } from './folder.js';
 import { clearSelection } from './selected.js';
+import { forgetSelectionFaces } from './selection-faces.js';
 import { positionOf, pushEntry } from './history-entries.js';
 import { backArrived, backToView, bestEffortScroll, forgetViewLeft, leavePhotoPlace, onPhotoPlace, photoPlaceMoved, saveScroll } from './view-left.js';
 import { lockBulkControls } from './bulk-run.js';
@@ -63,6 +64,7 @@ function quietTheFolder() {
     state.scannedFolder = null;
     state.folderPhotos = [];
     state.folderSuggestions = {};
+    forgetSelectionFaces();
     upper.checkFolderMembership(null);   // nothing is held back, no folder is asked to be added: every photo is held
     btnToggleRename.disabled = true;
     btnToggleTimeshift.disabled = true;

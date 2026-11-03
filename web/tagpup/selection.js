@@ -29,6 +29,7 @@ import { setStatus } from './status.js';
 import { addTypedToSelection } from './bulk-edit.js';
 import { clearTally, selectionTallied } from './tally.js';
 import { drawJumpNote, showPanelFor } from './selection-panel.js';
+import { askSelectionFaces } from './selection-faces.js';
 
 /**
  * A library view's selection that a request cannot carry says why beside the panel, the moment it is so, not when a bulk
@@ -72,7 +73,8 @@ export function updateSelectedThumbnailsCount() {
         
         // Gather statistics
         const selectedPhotos = state.folderPhotos.filter(p => isSelected(p.path));
-        
+        askSelectionFaces(selectedPhotos.map(p => p.path));
+
         // Calculate Date Taken Range
         const dateObjs = [];
         selectedPhotos.forEach(photo => {
@@ -209,11 +211,17 @@ export function updateSelectedThumbnailsCount() {
             });
         }
 
-        // Tally suggested tags & people from folderSuggestions
+        // Tally suggested tags & people from folderSuggestions, and the people the photos' unnamed faces look like
+        // (selection-faces.js): a photo counts once for a person, whichever said so.
         const suggPeopleCounts = {};
         const suggTagCounts = {};
-        
+
         selectedPhotos.forEach(photo => {
+            (state.selectionFaces[photo.path] || []).forEach(({ person, similarity }) => {
+                if (photoAlreadyHas(photo, person.tag, namesAPerson, state.people)
+                    || peopleListHas(photo.people || [], leafOf(person.name), state.people)) return;
+                noteSuggestion(suggPeopleCounts, person.tag, photo.path, similarity);
+            });
             const sugg = state.folderSuggestions[photo.path];
             if (sugg) {
                 const photoPeople = photo.people || [];
@@ -268,6 +276,7 @@ export function updateSelectedThumbnailsCount() {
         upper.updateFolderAutoApplyState();
     } else {
         // Empty selection: keep the panel, clear what it was showing.
+        askSelectionFaces([]);
         selectionDateLabel.textContent = 'Date Taken';
         selectionDateValue.textContent = '--';
         if (selectionPeopleList) selectionPeopleList.innerHTML = '';
@@ -309,11 +318,13 @@ function showLibrarySelection() {
 //: would now be a bug rather than a threshold.
 export const CONFIDENT_ENOUGH_TO_LOOK_SURE = 0.75;
 
-/** Record a suggestion, remembering which photos asked for it and how strongly. */
+/** Record a suggestion, remembering which photos asked for it and how strongly: a photo counts once, however often asked. */
 export function noteSuggestion(into, key, photoPath, score) {
     const entry = into[key] || (into[key] = { count: 0, paths: [], score: 0 });
-    entry.count++;
-    if (!entry.paths.includes(photoPath)) entry.paths.push(photoPath);
+    if (!entry.paths.includes(photoPath)) {
+        entry.paths.push(photoPath);
+        entry.count++;
+    }
     entry.score = Math.max(entry.score, Number(score) || 0);
 }
 

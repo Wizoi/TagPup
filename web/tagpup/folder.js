@@ -12,6 +12,7 @@ import {
 } from './elements.js';
 import { flagField } from './status.js';
 import { clearSelection, keepOnly } from './selected.js';
+import { forgetSelectionFaces } from './selection-faces.js';
 import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
@@ -56,6 +57,7 @@ export function closeFolderForDogPark() {
     state.scannedFolder = null;
     state.folderPhotos = [];
     state.folderSuggestions = {};
+    forgetSelectionFaces();
     upper.checkFolderMembership(null);
     folderPathInput.value = '';
     const url = new URL(window.location);
@@ -228,6 +230,7 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
 
     // Reset folder-specific suggestions state to prevent leaks
     state.folderSuggestions = {};
+    forgetSelectionFaces();
 
     // Cache lookup if not forcing refresh
     if (!forceRefresh) {
