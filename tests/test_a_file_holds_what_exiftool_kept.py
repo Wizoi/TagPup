@@ -176,9 +176,9 @@ class AWriteThatChangedNothing(KeptCase):
         a, b = self.make_read("a.jpg"), self.make_read("b.jpg")
         real = field_values.write
 
-        def write(et, path, values):
+        def write(et, path, values, saving=None):
             if path != a:
-                real(et, path, values)
+                real(et, path, values, saving=saving)
 
         with mock.patch.object(field_values, "write", side_effect=write):
             result = self.add([a, b])

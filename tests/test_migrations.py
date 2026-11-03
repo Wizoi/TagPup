@@ -998,8 +998,17 @@ class TheOwnersLibraryAt36MeetsMigration37(Migrated):
             self.saved, [planned] = file_journal.plan(self.db_path, "save photo", [
                 {"photo_id": self.ids["start"], "path": start, "before": {"XMP:Title": ["Start line"]},
                  "after": {"XMP:Title": ["Finish line"]}}])
-            file_journal.writing(self.db_path, planned.id, (1727000000.5, 4812346))
-            file_journal.mark(self.db_path, [planned.id], "done")
+            # By the statements the app at 36 ran (file_journal.writing, then mark): today's also erase a patch's record,
+            # a column a library at 36 does not have, and no app at 37 writes a library before it migrates it.
+            conn = db.connect(self.db_path)
+            try:
+                conn.execute("UPDATE change_files SET state = 'writing', note = NULL, stamp = ? WHERE id = ?",
+                             ("[1727000000.5, 4812346]", planned.id))
+                conn.commit()
+                conn.execute("UPDATE change_files SET state = 'done', note = NULL WHERE id = ?", (planned.id,))
+                conn.commit()
+            finally:
+                conn.close()
             self.deletion = journal.apply(self.db_path, "delete", [journal.delete("photos", (self.ids["prize"],), {})]).change_id
         self.assertEqual(36, self.version())
         self.before = (self.objects(), self.counts(), self.dump())
