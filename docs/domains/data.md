@@ -24,9 +24,10 @@ Unfinished work: 0 `derived_pending`, 0 files `writing`, 1 `conflict` file (a ch
 0 broken rules on all three. Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
 listed "too old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
 `faces_pending` and `idx_faces_name`; DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD") has run on all three
-(schema 33, counted 2026-10-18), and 34 and 35 after it (schema 35, counted 2026-10-29). Migration 36 (`job_runs.parent`,
-`heartbeat`, `progress` and an index by parent; additive; DECISIONS 2026-10-28, "ACTIVITY REWORK") is the one in flight
-from its merge until the owner's server has run it on the three libraries. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
+(schema 33, counted 2026-10-18), and 34 to 36 after it (schema 36 on all three, counted read-only 2026-11-02). Migration 37
+(`photos.kind`, 'photo' in every row, and `change_files.patch` and `patch_before`; additive; DECISIONS 2026-11-02, "VIDEO:
+THE OWNERS' PLANS AND THE OWNER'S ANSWERS", 4) is the one in flight from its merge until the owner's server has run it on
+the three libraries (62,897 photos at 36, none with a video's extension, counted read-only 2026-11-02). What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
 
 ## The contract other domains rely on
 
