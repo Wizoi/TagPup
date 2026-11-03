@@ -32,6 +32,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Writing a photo file's fields | `tagpup/files/field_values.py`, `tagpup/services/file_changes.py` | `tests/test_file_journal.py` |
 | A patch in place: a JPEG's EXIF, IPTC and XMP segments rewritten at their old lengths when a journaled write's fields fit (`in_place.patch_jpeg`, from `field_values.write` only; `PATCH_IN_PLACE`), its record saved before its first byte (`file_journal.save_patch`), a file it was writing settled by its bytes (`in_place.held`, `put_back`; `file_changes._by_bytes`) and verified before done by the bytes it changed alone (`_verified`) | `tagpup/files/in_place.py`, `tagpup/store/file_journal.py`, `tagpup/services/file_changes.py` | `tests/test_a_crash_part_way_is_settled_at_the_next_start.py`, `tests/test_a_photo_patched_in_place.py` |
 | The bake the index writes after it records a folder (each photo `baking.plan_photo` marks ToBake, the folder one internal change of `write_fields`, listed in no History and erased once finished, but for a file that ended a conflict the doctor counts (`file_journal.NOTES`), kept for it; the index's rows win) | `tagpup/services/bake_after_index.py` | `tests/test_the_index_writes_the_bake.py` |
+| An XMP packet's owned properties read and edited as text, every other byte kept, paid for out of its padding; what it does not wholly understand refused (`xmp_packet.read`, `edit`; no caller until M4) | `tagpup/files/xmp_packet.py` | `tests/test_xmp_packet_edits_what_it_owns.py` |
 | Child processes | `tagpup/core/processes.py` | `tests/test_processes_single_owner.py` |
 | The indexer's progress on its pipe: typed facts (`kind`, a sentence, whole-number counts), one `@tagpup ` JSON line each in ASCII, said only when the server asks (`TAGPUP_PROGRESS_LINES`; by hand the CLI prints a person's words), read as values, never scraped from text | `tagpup/core/progress_line.py` (said by `tagpup_cli.py`, heard by `tagpup/services/indexing.py`) | `tests/test_index_progress_end_to_end.py`, `tests/test_an_index_reads_a_bake.py` |
 | ffmpeg: where it is (`config.locate_ffmpeg`), a video's frames and poster | `tagpup/config.py`, `tagpup/files/video_frames.py` | `tests/test_frames_of_a_video.py` |
@@ -188,7 +189,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        thumbs, names, shares, lock_owners, recycle_bin, containers (a clip's boxes and a
                        JPEG's segments: where the XMP sits and the room beside it, read from an open file), video_frames,
                        in_place (a JPEG's patch of its metadata segments, the patch's record and what a file
-                       holds against it)
+                       holds against it), xmp_packet (an XMP packet's owned properties edited as text)
   ml/                  models: clip, scrfd_adaface (the face model: SCRFD and AdaFace; MTCNN and FaceNet deleted 2026-10-28), vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
                        identities, identify, indexing, sync, refresh_rows, relink_photos,

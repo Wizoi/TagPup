@@ -184,6 +184,43 @@ phase 6 XMP census (`inspect.xmp_census`, `scripts/census_xmp.py`) is gone: this
 a JPEG (the XMP packet's size, EXIF Orientation; regions, extended XMP and two XMP segments it counted already), and its
 17 TIFF and 2 PNG rows are no feature's count.
 
+## The XMP packet editor
+
+`tagpup/files/xmp_packet.py` (M2 of docs/PLAN_OWN_METADATA.md; no caller yet, M4 wires it): pure, a packet's bytes in
+and out, for a JPEG's segment and a clip's box alike. It owns nine properties (`PROPERTIES`, found by namespace URI):
+dc:subject and lr:hierarchicalSubject (a Bag), dc:description and dc:title (an x-default Alt), exif:DateTimeOriginal,
+xmp:CreateDate, tiff:Orientation, xmpMM:DocumentID and xmpMM:PreservedFileName (text). `read` answers their values;
+`edit` sets them and keeps every other byte: a change is paid for out of the padding before `<?xpacket end`, so the
+packet keeps its length, and only `grow=True` lets it grow, laying `RESERVE` (2,425 bytes, ExifTool's padding) afresh.
+An edit is parsed again and read back before it is answered. Scenario test:
+`tests/test_xmp_packet_edits_what_it_owns.py` (F1).
+
+Counted this session, read-only, through `scripts/census_segments.py`'s reads (seed 20261103): photo_index 1,000 of its
+59,598 JPEGs sampled, kr-track's 2,065 and renton_parkrun's 1,308 every one; 4,373 XMP packets, every one read, none
+refused. Each was edited in memory (a caption, a keyword added, an Orientation), nothing written.
+
+- **Refused, each with no instance** (0 of the 4,373): a property written as an attribute or twice, two `rdf:about`
+  values, a DTD, a comment, a CDATA section, a processing instruction or text beside an element (an edit that clears a
+  property splices from the element before it), a byte order mark or UTF-16, a NUL, a self-closing Description that
+  would take a property (refused by the read-back), an Alt not one x-default item, bytes after the end PI, `end='r'`
+  (all 4,366 wrapped are `end='w'`). CRLF: none in the packets. A value XML cannot carry (NUL, another C0) is refused;
+  `&`, `<`, `>` are escaped and a CR written `&#xD;`. Over `LIMIT` (64 KB, read or made) is refused; that a JPEG's
+  segment holds a few bytes less is its container's to check.
+- **Handled instances**: the empty caption `<rdf:li xml:lang='x-default'/>` (photo_index 264 of 1,000, renton_parkrun 1)
+  reads '' and '' or None writes nothing; no wrapper, 7 in kr-track (an edit at its length, or growing with no padding
+  laid; the 7 grow); a single line break of padding in 11 (kr-track 9, renton_parkrun 2): an edit needing room is
+  refused, and with grow too, the reserve carrying each past `LIMIT`; a namespace URI holding `xmlns/` (Iptc4xmpCore), 2
+  in photo_index. ExifTool's padding, a line break and 24 lines of 100 spaces (`padding(2425)`), in 4,355 of the 4,366
+  wrapped packets.
+- **What it does differently from ExifTool**: a property of a namespace the packet does not declare is declared on the
+  first Description (ExifTool makes a Description for it); Descriptions keep their order; a cleared property's
+  namespace declaration (and an emptied Description) stays. On the 4,373: every edit kept the length where the padding
+  allowed (4,355), every byte outside the owned elements and the declarations added was equal, an edit of the values
+  held changed no byte, and a caption and keyword undone gave the bytes back wherever dc was declared before (a
+  declaration added stays). The previous worker compared it with ExifTool on 5 sidecar copies: the owned and all other
+  tags equal.
+- **Not verified**: an ExifTool edit of the same change inside a JPEG, byte for byte (M4's shadow comparison).
+
 ## By design (each row closed `decided:`)
 
 - **The indexer's per-photo reads have no deadline** (the header for the read-ahead's estimate, the decodes, the stamp,
