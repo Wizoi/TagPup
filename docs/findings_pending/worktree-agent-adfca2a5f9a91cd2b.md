@@ -1,0 +1,9 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-02 | low: a configured ffmpeg path (DECISIONS 2026-11-02, "VIDEO IS MEDIA TAGPUP MANAGES" 10, "PATH or a configured path") is not built. ExifTool's configured path is a library setting (`paths.exiftool`, read by `tagpup.runtime.exiftool` through `config.exiftool_path`); the same for ffmpeg is a new library setting (`paths.ffmpeg`), a settings change the worker may not invent. `config.locate_ffmpeg` looks on PATH, then winget's Links folder, then each `Gyan.FFmpeg*\ffmpeg-*\bin`, the newest version first; on this machine it finds the winget package with PATH not holding it. The owner decides whether a configured path is still wanted (it would be the machine's, beside `machine_roots.json`, or the library's, beside `paths.exiftool`). | open |
+| B-2 | 2026-11-02 | low: decided in `tagpup/files/video_frames.py` (worker): a video with no duration (a raw stream: ffprobe gives none) yields ONE frame, its first, read without `-ss` (ffmpeg 9.0.2 cannot seek in a raw H.264 stream, not even to 0: "Could not open encoder before EOF", no frame), rather than decoding the whole stream to space five; and frames are spaced over the duration less one frame (by `r_frame_rate`), since an exact seek past the last frame decodes nothing (a 0.5 s clip at 10 fps gave 4 of 5 before). No live count of videos without a duration: the videos are not rows yet; ten real videos sampled read-only (two each of .mp4 .wmv .mpg .mov .avi) all had one and gave five frames. Tests: `tests/test_frames_of_a_video.py` (raw stream, half-second clip). | decided: one frame when nothing spaces them; revisit if a count of duration-less videos comes back above zero |
