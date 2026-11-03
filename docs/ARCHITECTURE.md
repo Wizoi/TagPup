@@ -177,7 +177,8 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        library_view, snapshots, generations, locks, job_runs,
                        added_folders, faces_detected, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
-                       thumbs, names, shares, lock_owners, recycle_bin
+                       thumbs, names, shares, lock_owners, recycle_bin, containers (a clip's boxes and a
+                       JPEG's segments: where the XMP sits and the room beside it, read from an open file)
   ml/                  models: clip, faces, scrfd_adaface (phase 3's: built for a look, Runtime.look_at_faces, and for a library set to it, faces.model, which a switch allows once the pass has reached its faces), vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
