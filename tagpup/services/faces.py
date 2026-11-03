@@ -19,7 +19,7 @@ import os
 import numpy as np
 
 from tagpup.core import clustering, orientation, paths, validation
-from tagpup.files import shares
+from tagpup.files import images, shares
 from tagpup.core.result import Conflict, NotFound, Refused, Result
 from tagpup.services import identify
 from tagpup.services import people as people_service
@@ -581,7 +581,8 @@ def panel(library, photo_path, named):
     (tagpup.core.clustering.Cuts.is_offered, the library's face model's) the nearest name is noise, not a candidate:
     it was 0.5 here, which two strangers in three reach (docs/findings.md, #75).
     Named first, then by confidence, then largest first: the faces needing attention
-    are the ones the eye should land on.
+    are the ones the eye should land on. An unnamed face under images.BACKGROUND_SHARE of the picture's shorter side is left
+    out (the people behind the subject); the library keeps it.
     """
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
@@ -605,6 +606,10 @@ def panel(library, photo_path, named):
             box = json.loads(box_json) if box_json else []
         except Exception:
             box = []
+        # A face nobody is named, behind the subject (BACKGROUND_SHARE): not in the answer, so no box, no card and no Add all
+        # for it. A named face stays whatever its size.
+        if name is None and not excluded and images.is_background(box, size):
+            continue
         suggestion = suggested = similarity = None
         if name is None and not excluded:
             if known is None:   # read only when a face needs it, and only of the vectors' model

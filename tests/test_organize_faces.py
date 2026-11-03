@@ -136,6 +136,17 @@ class WhatTheBoxesAreDrawnOn(Case):
         self.assertIsNone(answer["faces"][0]["shown_box"])
         self.assertEqual(1, len(answer["faces"]), "the faces are still there, to be named")
 
+    def test_an_unnamed_face_behind_the_subject_is_left_out_and_a_named_one_never(self):
+        photo = self.photo("track_001.jpg", size=(4000, 3000))
+        big = self.face(photo, box=(1000, 500, 1400, 900))
+        self.face(photo, box=(2000, 500, 2050, 550))                        # 50 px of 3000: under 2%, nobody
+        small_named = self.face(photo, box=(2400, 500, 2450, 550), name=WREN)   # as small, named
+        answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+        self.assertEqual({big, small_named}, {each["id"] for each in answer["faces"]})
+        self.assertEqual(2, answer["total"])
+        self.assertEqual(1, answer["unmatched"])
+        self.assertEqual(3, len(self.look("SELECT id FROM faces")), "the library keeps the face")
+
     def test_a_photo_with_no_faces_has_none_to_box(self):
         photo = self.photo("empty_001.jpg")
         answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
