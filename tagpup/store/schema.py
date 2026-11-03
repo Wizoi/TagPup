@@ -688,6 +688,20 @@ def _runs_nest_and_say_how_far(conn):
     conn.execute("CREATE INDEX idx_job_runs_parent ON job_runs(parent)")
 
 
+def _photos_know_their_kind_and_a_patch_is_recorded(conn):
+    """Migration 37 (owner, 2026-11-02; DECISIONS, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", 4): `photos.kind`,
+    'photo' or 'video' and nothing else (the CHECK), 'photo' in every row there was and in every row a writer inserts without
+    naming it -- Files decides it once from the extension, in a later merge, and every reader reads the column; and the
+    journal's write-ahead record of an in-place patch of a file, `change_files.patch` (JSON, the byte ranges the patch
+    writes) and `patch_before` (the bytes those ranges held, saved before the patch and erased when the row leaves `writing`:
+    a crash record, not a second undo), NULL in every row there was. Spelled here, not imported: a migration is frozen.
+    Additive: three columns added at the end; a constant default rewrites no row (SQLite answers it from the schema for a row
+    stored without it), and the CHECK reads each photo once to test it."""
+    conn.execute("ALTER TABLE photos ADD COLUMN kind TEXT NOT NULL DEFAULT 'photo' CHECK (kind IN ('photo', 'video'))")
+    conn.execute("ALTER TABLE change_files ADD COLUMN patch TEXT")
+    conn.execute("ALTER TABLE change_files ADD COLUMN patch_before BLOB")
+
+
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
@@ -721,6 +735,17 @@ MIGRATIONS = (
               "that was there changes, so no backup",
               ("job_runs",),
               (RowsKept(),) + STANDARD),
+    # It names `change_files`, which the journal does not key, and not `photos`, which it does: naming it would refuse the
+    # undo of every change of rows made at 36 (journal.schema_gap_blocker), and the column changes nothing such a change
+    # means: every photo row there was is a photo (no path of the three libraries has a video's extension, counted
+    # 2026-11-02), so a row an undo puts back without the column is one, as the default says. The watch holds every row as
+    # it was; `photos` is counted by name.
+    Migration(37, "photos know their kind; a patch is recorded before it is written", _photos_know_their_kind_and_a_patch_is_recorded,
+              ADDITIVE,
+              "adds photos.kind ('photo' in every row there was) and change_files.patch and patch_before (NULL in every row "
+              "there was); nothing that was there changes, so no backup",
+              ("change_files",),
+              (RowsKept("photos", "change_files"),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version

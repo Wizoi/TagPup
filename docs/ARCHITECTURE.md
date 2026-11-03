@@ -276,11 +276,11 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 
 | Kind | Tables | Written by |
 |---|---|---|
-| File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, sync (`refresh_rows.reread`, `edits_for`), `record_tags_in_index` (`store/photos.py`) |
+| File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`, `kind`: `photo` or `video`, from the extension) | only after a file is read or written: indexer, sync (`refresh_rows.reread`, `edits_for`), `record_tags_in_index` (`store/photos.py`) |
 | Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
 | Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `face_embeddings` (a face's vector under the model that made it, read under the library's `faces.model`: `store.faces.model_key`), `suggestions`, `faces_detected`, `photo_fingerprints` (the hash of a photo's upright decode; not journaled, a rotation forgets it) | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py`, `store/photo_fingerprints.py` |
 | Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs` (the recurring jobs' runs, the syncs: `sync-whole`, `sync-folder`, and each index the queue makes: `index`, a record that gates nothing, one row per process indexing, holding its tag, its folders' count and the syncs it is part of) | `store/schema.py`, `store/generations.py`, `store/job_runs.py` |
-| The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |
+| The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state; an in-place patch's byte ranges and the bytes they held, kept only while it is `writing`) | `store/journal.py`, `store/file_journal.py` |
 
 **The journal** (7.5). Every bulk edit and maintenance operation is one `changes`
 row: what it found and what it left, applied only where the rows are still what the plan read, rehearsed by
