@@ -186,7 +186,9 @@ reviewed once by each owner: it adds no debt, or it is refused.- **A branch adds
   (`tests/test_the_test_map.py`).
 - **A `low` finding is fixed or recorded as by design**, with its reason in its own row, closed `decided:` (a
   decision that changes behaviour still gets a DECISIONS row); there is no third state, no list of accepted debt (owner,
-  2026-10-15, amended 2026-10-23). A finding is verified
+  2026-10-15, amended 2026-10-23), unless nothing can be done until it is reported again or reproduced: then it is moved to
+  docs/watching.md (`tools/add_findings.py --watch`), not counted open and not brought up; read it when an issue is reported,
+  to see whether it is a duplicate (owner, 2026-11-02). A finding is verified
   against the trunk, and against a live count where it names one, before it is reported or briefed.
 
 ## Before committing

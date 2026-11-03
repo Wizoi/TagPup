@@ -8,10 +8,14 @@ report them. Numbers are given from the highest across findings.md AND the archi
     .venv/Scripts/python.exe tools/add_findings.py --status 266 "fixed: 29f101a"
     .venv/Scripts/python.exe tools/add_findings.py --archive
     .venv/Scripts/python.exe tools/add_findings.py --open     # the open rows and their count, to quote in a report
+    .venv/Scripts/python.exe tools/add_findings.py --watch 2360 "no repro; look here when a report sounds like it"
 
 A status replaces a row's last column, in findings.md or in the archive holding the row.
 `--archive` moves every closed row (status starting fixed, built, decided, closed,
 accepted, ...) from findings.md to the archive of its number range, byte for byte.
+`--watch N "why"` moves an open row, byte for byte but for its status, to docs/watching.md: a finding with nothing to do
+until it is reported again or reproduced. It is not counted by `--open` and not brought up again; it is read when an issue
+is reported, to see whether it is that one (owner, 2026-11-02). Its number is kept and never given again.
 Nothing is written unless every row parses and every numbered row exists.
 
 A worker on a branch does NOT number into findings.md: two branches that both number
@@ -37,6 +41,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FINDINGS = os.path.join(ROOT, "docs", "findings.md")
 ARCHIVE_DIR = os.path.join(ROOT, "docs", "history")
+WATCHING = os.path.join(ROOT, "docs", "watching.md")
+WATCHING_TITLE = ("# Findings being watched\n\nRows moved from [findings.md](findings.md) by `tools/add_findings.py --watch`: "
+                  "nothing to do until the problem is reported again or reproduced (owner, 2026-11-02). Not counted as open and "
+                  "not brought up. **Read this when an issue is reported, to see whether it is one of these**; a row that is "
+                  "reproduced goes back to findings.md by hand, with status `open`.\n\n" + "| # | Found | Finding | Status |\n"
+                  "|---|---|---|---|\n")
 CHUNK = 250
 NUMBERED = re.compile(r"^\| (\d+) \|", re.M)
 ARCHIVE_NAME = re.compile(r"^findings_closed_(\d{4})-(\d{4})\.md$")
@@ -72,6 +82,17 @@ def open_rows(text):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             found.append((int(match.group(1)), cells[2].split(":", 1)[0][:12], row_status(line)[:60]))
     return found
+
+
+def watch(findings, watching, key, reason):
+    """(findings without the row `key`, watching with it, its status set to `watching: reason`), or None if findings has no
+    such row."""
+    match = re.search(r"^\| %s \|[^\n]*\n?" % re.escape(str(key)), findings, re.M)
+    if not match:
+        return None
+    row = set_status(match.group(0).rstrip("\n"), key, "watching: " + reason.strip())
+    kept = findings[:match.start()] + findings[match.end():]
+    return kept, insert_rows(watching or WATCHING_TITLE, [row])
 
 
 def without_first_cell(row):
@@ -236,6 +257,10 @@ def _read(path):
         return handle.read()
 
 
+def _watching_text(path):
+    return _read(path).replace("\r\n", "\n") if os.path.exists(path) else ""
+
+
 def _write(path, text, newline="\n"):
     folder = os.path.dirname(path)
     if folder:
@@ -244,8 +269,9 @@ def _write(path, text, newline="\n"):
         handle.write(text.replace("\n", newline))
 
 
-def _say_similar(rows, findings, archive_dir):
-    existing = existing_rows(findings.replace("\r\n", "\n"), *load_archives(archive_dir).values())
+def _say_similar(rows, findings, archive_dir, watching=""):
+    existing = existing_rows(findings.replace("\r\n", "\n"), watching.replace("\r\n", "\n"),
+                             *load_archives(archive_dir).values())
     for name, number in similar_rows(rows, existing):
         print("notice: row %s looks like #%d (shares %d or more identifiers); cite it as #%d or fold the row into it"
               % (name, number, SIMILAR_SHARED, number))
@@ -260,6 +286,9 @@ def main(argv=None):
     parser.add_argument("--archive", action="store_true", help="move the closed rows to docs/history/")
     parser.add_argument("--open", action="store_true",
                         help="print the open rows and their count: the number a merge or phase-end report quotes")
+    parser.add_argument("--watch", nargs=2, action="append", default=[], metavar=("NUMBER", "WHY"),
+                        help="move an open row to docs/watching.md: nothing to do until it is reported again")
+    parser.add_argument("--watching-file", default=WATCHING, help=argparse.SUPPRESS)
     parser.add_argument("--branch-file", metavar="PATH", help="keep the rows (and statuses) in this file with B-n numbers")
     parser.add_argument("--take", metavar="PATH", help="number a branch's file into findings.md and remove it")
     parser.add_argument("--findings", default=FINDINGS, help=argparse.SUPPRESS)
@@ -283,7 +312,7 @@ def main(argv=None):
         given = []
         if rows:
             text, given = add_branch(text, rows)
-            _say_similar(rows, _read(args.findings), args.archive_dir)
+            _say_similar(rows, _read(args.findings), args.archive_dir, _watching_text(args.watching_file))
         for key, status in args.status:
             updated = set_status(text, key, status)
             if updated is None:
@@ -298,7 +327,8 @@ def main(argv=None):
     newline = "\r\n" if "\r\n" in text else "\n"
     text = text.replace("\r\n", "\n")
     archives = load_archives(args.archive_dir)
-    floor = highest(*archives.values())
+    watching = _watching_text(args.watching_file)
+    floor = highest(*archives.values(), watching)
     given, mapping, changed, moved = [], {}, {}, 0
     for key, status in args.status:
         if set_status(text, key, status) is not None:
@@ -312,18 +342,27 @@ def main(argv=None):
             changed[name] = archives[name]
             continue
         parser.error("no finding #%s" % key)
+    watched = []
+    for key, why in args.watch:
+        moved_row = watch(text, watching, key, why)
+        if moved_row is None:
+            parser.error("no open finding #%s" % key)
+        text, watching = moved_row
+        watched.append(key)
     if rows:
-        _say_similar(rows, text, args.archive_dir)
+        _say_similar(rows, text, args.archive_dir, watching)
         text, given = add(text, rows, floor=floor)
     if args.take:
         taken = _read(args.take).replace("\r\n", "\n")
         _say_similar([line for line in taken.splitlines() if re.match(r"\| (?:B-\d+|\?) \|", line)], text,
-                     args.archive_dir)
+                     args.archive_dir, watching)
         text, mapping = take(text, _read(args.take).replace("\r\n", "\n"), floor=floor)
     if args.archive:
         text, moves, moved = archive(text, archives)
         changed.update(moves)
     _write(args.findings, text, newline)
+    if watched:
+        _write(args.watching_file, watching, newline)
     for name, body in changed.items():
         _write(os.path.join(args.archive_dir, name), body)
     if args.take:
@@ -333,6 +372,8 @@ def main(argv=None):
         print("numbered %d-%d" % (given[0], given[-1]))
     for number, _status in args.status:
         print("status of #%s set" % number)
+    for number in watched:
+        print("#%s moved to docs/watching.md" % number)
     if args.archive:
         print("archived %d closed row(s)" % moved)
     return 0

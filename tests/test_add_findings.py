@@ -137,7 +137,8 @@ class Files(unittest.TestCase):
         self.archives = os.path.join(self.folder, "history")
         with open(self.findings, "w", encoding="utf-8", newline="") as handle:
             handle.write(MIXED)
-        self.base = ["--findings", self.findings, "--archive-dir", self.archives]
+        self.base = ["--findings", self.findings, "--archive-dir", self.archives,
+                     "--watching-file", os.path.join(self.folder, "watching.md")]
 
     def read(self, *path):
         with open(os.path.join(*path), encoding="utf-8", newline="") as handle:
@@ -171,6 +172,38 @@ class Files(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             run(self.base + ["--status", "999", "fixed"])
         self.assertEqual(before, self.read(self.findings))
+
+    def test_a_row_with_nothing_to_do_is_watched_not_counted_open_and_keeps_its_number(self):
+        watching = os.path.join(self.folder, "watching.md")
+        base = self.base + ["--watching-file", watching]
+        code, out = run(base + ["--watch", "2", "no repro; read when a report sounds like it"])
+        self.assertEqual(0, code)
+        self.assertNotIn("| 2 |", self.read(self.findings))
+        self.assertIn("| 2 | 2026-09-21 | Still wanted. | watching: no repro; read when a report sounds like it |",
+                      self.read(watching))
+        _, out = run(base + ["--open"])
+        self.assertNotIn("#2 ", out)
+        self.assertIn("#252", out)
+        rows = os.path.join(self.folder, "rows.md")
+        with open(rows, "w", encoding="utf-8") as handle:
+            handle.write("| ? | 2026-11-02 | New. | open |\n")
+        run(base + [rows])
+        self.assertIn("| 253 |", self.read(self.findings))
+        with open(watching, encoding="utf-8", newline="") as handle:
+            kept = handle.read()
+        with open(rows, "w", encoding="utf-8") as handle:
+            handle.write("| ? | 2026-11-02 | Next. | open |\n")
+        run(base + ["--watch", "252", "waiting"] + [rows])
+        self.assertIn("| 252 |", self.read(watching))
+        self.assertNotEqual(kept, self.read(watching))
+
+    def test_watching_a_row_that_is_not_open_is_an_error_and_nothing_is_written(self):
+        watching = os.path.join(self.folder, "watching.md")
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                run(self.base + ["--watching-file", watching, "--watch", "9", "x"])
+        self.assertFalse(os.path.exists(watching))
+        self.assertEqual(MIXED, self.read(self.findings))
 
     def test_a_workers_rows_wait_in_a_file_of_their_own_with_provisional_numbers(self):
         rows = os.path.join(self.folder, "rows.md")
