@@ -209,7 +209,10 @@ class TheIndexWritesTheBake(unittest.TestCase):
                 self.assertEqual([baking.INDEX_OPERATION], [each.operation for each in file_journal.unfinished(self.db_path)])
                 self.assertEqual([], [entry for entry in journal_service.history(self.library)["changes"]
                                       if entry["operation"] == baking.INDEX_OPERATION], "in flight, it is listed nowhere")
-                file_changes.settle(self.library, EXIFTOOL)
+                # the new file beside the photo that a crash at "scratch written" left: a restart within
+                # SCRATCH_STALE of it is told to try again later; the settle here is the one after that
+                with mock.patch.object(file_changes, "SCRATCH_STALE", 0):
+                    file_changes.settle(self.library, EXIFTOOL)
                 self.assertNoBakeListed()
                 bake_after_index.bake_folders(self.library, EXIFTOOL, DETECTOR, [self.folder], {})
                 self.assertBaked(path, 0)

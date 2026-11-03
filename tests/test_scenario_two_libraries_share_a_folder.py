@@ -23,6 +23,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_exiftool  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 
@@ -81,6 +82,7 @@ class SharedFolderTwoLibraries(unittest.TestCase):
     own; alpha alone holds Pictures/Alpha Only."""
 
     def setUp(self):
+        fake_exiftool.writes_no_file(self)
         self.home = own_home.for_test(self, prefix="shared_folder_")
         self.pictures = os.path.join(self.home.root, "Pictures")
         self.meet = os.path.join(self.pictures, "2025-10 Meet")

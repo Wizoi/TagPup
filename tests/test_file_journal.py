@@ -84,7 +84,7 @@ class Patcher:
         self.cut, self.outside, self.calls, self.fell_back = cut, outside, [], []
         self.exiftools = field_values.write
 
-    def __call__(self, et, path, values, saving=None):
+    def __call__(self, et, path, values, saving=None, scratch_written=None):
         self.calls.append(dict(values))
         old, new = ("Beach", "Shore") if "Shore" in values.get("XMP:Subject", []) else ("Shore", "Beach")
         with open(path, "rb") as handle:
@@ -99,7 +99,7 @@ class Patcher:
         except file_journal.PatchTooLarge:
             with open(path, "rb") as handle:
                 self.fell_back.append(handle.read() == held)
-            return self.exiftools(et, path, values)
+            return self.exiftools(et, path, values, scratch_written=scratch_written)
         with open(path, "r+b") as handle:
             for written, (at, now) in enumerate(sorted(changes)):
                 if written == self.cut:
