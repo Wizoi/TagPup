@@ -233,8 +233,9 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
     A struct field's value is its one text (bake.region_text); an empty one clears the structure whole. TagPup's own fields
     (bake.NAMESPACE) are written only through a session opened by session(): ExifTool would refuse them, by a warning,
     under any other, so another is refused here, by a ValueError, before anything is written. A write of a struct field
-    or of TagPup's own that ExifTool warns left a field unwritten (NOT_WRITTEN) raises RuntimeError after it: the caller
-    settles the file by what it holds. A text holding a line break is sent as ExifToolSession sends it (exiftool_session.CSTR).
+    or of TagPup's own that ExifTool warns left a field unwritten (NOT_WRITTEN) raises RuntimeError before the photo's
+    first byte, by a patch or a rewrite: ExifTool's new file (of the photo, or of its header's copy) is discarded, and
+    the photo holds what it held. A text holding a line break is sent as ExifToolSession sends it (exiftool_session.CSTR).
 
     `saving(record, before)` is the journal's (tagpup.services.file_changes): given, a JPEG whose fields fit is patched
     in place (the module; PATCH_IN_PLACE), which calls it with its record (tagpup.files.in_place.record) and writes no
@@ -262,14 +263,12 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
         return
     checked = own or any(fields.is_struct(field) for field in values)
     if PATCH_IN_PLACE and saving is not None:
-        dropped = []
-
         def serialise(source, target):
             try:
                 _command(et, source, target, params, clear)
             except exiftool_session.ExifToolFailed:
                 return False        # the rewrite's command says why, of the photo
-            dropped.extend(_dropped(et, source) if checked else ())
+            _refuse_dropped(et, source, checked)
             return True
 
         try:
@@ -278,18 +277,30 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
             raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
                               "the next time" % in_place.SECONDS) from None
         if patched:
-            if dropped:
-                raise RuntimeError("ExifTool did not write all it was given: %s" % "; ".join(dropped))
             return
     scratch = exiftool_session.scratch_of(photo_path)
     _command(et, photo_path, scratch, params, clear)
     if scratch_written is not None:
         scratch_written()
+    try:
+        _refuse_dropped(et, photo_path, checked)
+    except RuntimeError:
+        try:
+            os.remove(scratch)
+        except FileNotFoundError:
+            pass            # ExifTool wrote none ("Invalid XMP")
+        except OSError as e:
+            logger.warning("The new file of a write ExifTool did not write all of could not be removed; it is left: %s", e)
+        raise
     _landed(photo_path, scratch)
-    if checked:
-        dropped = _dropped(et, photo_path)
-        if dropped:
-            raise RuntimeError("ExifTool did not write all it was given: %s" % "; ".join(dropped))
+
+
+def _refuse_dropped(et, source, checked):
+    """Raise RuntimeError, when the write was `checked`, if ExifTool's last answer says a field it was given was not
+    written (_dropped): before the new file it wrote of `source` reaches the photo."""
+    dropped = _dropped(et, source) if checked else ()
+    if dropped:
+        raise RuntimeError("ExifTool did not write all it was given: %s" % "; ".join(dropped))
 
 
 def _command(et, source, target, params, clear):
