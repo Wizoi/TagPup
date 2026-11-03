@@ -15,7 +15,9 @@ A file is also a real one on disk when the test made it so (tests/view_library.p
 (the stat, the tail check, the Recycle Bin) look at. A write is made as field_values.write makes it, beside the photo (`-o`):
 the new file is a copy of a real photo, which the picture check (field_values._landed) compares and moves over it; a photo
 that is only in the table has no new file and nothing to move, so while a session is open the check passes it by. A test
-whose own stand-in writes no file at all says so with `writes_no_file(testcase)`.
+whose own stand-in writes no file at all says so with `writes_no_file(testcase)`. A table holds fields, not bytes, so it
+writes no segment a patch in place could take: while a session is open every write is the rewrite (field_values.
+PATCH_IN_PLACE off), whose steps (the scratch file, the picture check) these tests follow.
 """
 import os
 import shutil
@@ -25,8 +27,9 @@ from unittest import mock
 from tagpup.core import fields, paths
 from tagpup.files import exiftool_session, field_values
 
-#: The sessions open (in every thread) and the patch of the picture check they hold while any is (_check_passes_by).
-_open = {"sessions": 0, "patch": None}
+#: The sessions open (in every thread) and the patches of the picture check and of the patch in place they hold while any
+#: is (_check_passes_by).
+_open = {"sessions": 0, "patch": None, "rewrite": None}
 _open_lock = threading.Lock()
 _real_landed = field_values._landed
 
@@ -53,9 +56,12 @@ def _check_passes_by(opening):
         if opening and _open["sessions"] == 1:
             _open["patch"] = mock.patch("tagpup.files.field_values._landed", _landed_or_only_in_the_table)
             _open["patch"].start()
+            _open["rewrite"] = mock.patch("tagpup.files.field_values.PATCH_IN_PLACE", False)
+            _open["rewrite"].start()
         elif not opening and _open["sessions"] == 0:
             _open["patch"].stop()
-            _open["patch"] = None
+            _open["rewrite"].stop()
+            _open["patch"] = _open["rewrite"] = None
 
 
 def _written_beside(path, params):

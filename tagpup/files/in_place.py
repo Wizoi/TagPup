@@ -13,12 +13,42 @@ the new bytes, base64}], "outside": null or {"sha256": of every byte outside the
 ranges held before, concatenated in the ranges' order, are kept beside it (`change_files.patch_before`). The new bytes
 are kept too, so a range this process tore is told from one another program wrote. Reads are of the open file, not
 looks at its path: the caller has the file's state already (tagpup.services.file_changes reads it from the journal).
+
+**A JPEG's patch** (`patch_jpeg`). A photo's EXIF, IPTC (Photoshop APP13) and XMP segments are rewritten at their old
+length, and only the bytes of them that differ are written. TagPup writes no serialiser of its own: ExifTool writes the
+fields, as it does for a rewrite, into a copy of the photo's header alone (its segments up to and including the first
+scan's header, then an end of image), on this PC's disk, and the segments it wrote are taken from that copy and fitted
+to the old lengths (`jpeg_ranges`): XMP by the whitespace before its packet's end, EXIF by zero bytes after its last
+data, IPTC by a dummy 8BIM resource (containers.PAD_RESOURCE; zero bytes there break ExifTool's next write and Windows'
+reader). It is not a patch's, and the caller rewrites the whole file, when any of these holds: the file is no JPEG or
+holds two segments of one kind, an extended XMP, or bytes after its last 8BIM resource; ExifTool would make, drop or
+change any other segment (a photo with no XMP yet); a new segment is longer than the old; an EXIF segment would move
+(a maker note may point at its own place in the file). The photo is opened once, with no sharing on Windows, from the
+read of its header to the last byte written, so no other program writes it, nor reads it half written, meanwhile; one
+that holds it open already makes it the rewrite's. Every read and write of it is bounded (shares.bounded, SECONDS).
 """
 import base64
 import hashlib
+import io
 import os
+import tempfile
+
+from tagpup.files import containers, shares
 
 VERSION = 1
+
+#: Seconds a read or write of the photo may take (shares.bounded): a share that does not answer in it is away (Away).
+SECONDS = 30.0
+
+#: The segments a patch may rewrite, by containers.Segment.kind.
+PATCHED_KINDS = ("exif", "xmp", "iptc")
+
+_EOI = b"\xff\xd9"
+
+
+class Away(OSError):
+    """The share of the photo did not answer a read or write of it in SECONDS. What a write left is settled by its bytes
+    against the record the journal saved (held), the next time."""
 
 #: What a file holds against its record (held).
 NEW, OLD, TORN, NEITHER, RESIZED, OUTSIDE = "new", "old", "torn", "neither", "resized", "outside"
@@ -73,12 +103,26 @@ def record(handle, changes, hash_outside=True):
             "outside": {"sha256": _outside(handle, size, spans)} if hash_outside else None}, before
 
 
+def _bounded(path, call):
+    """What `call()` returned, on a thread bounded by SECONDS (shares.bounded); raises the OSError it raised, or Away."""
+    answer, value = shares.bounded(path, call, SECONDS)
+    if answer == "away":
+        raise Away("the photo's folder did not answer in %d s" % SECONDS)
+    if answer == "error":
+        raise value
+    return value
+
+
 def held(path, record, before):
     """What the file at `path` holds against its patch's `record` and the bytes its ranges held `before`: NEW, every
     range as the patch wrote it; OLD, every range as it was; TORN, each byte one or the other but not all of one (a
     write this process cut short); NEITHER, a byte that is neither (another program wrote it); RESIZED, the file is not
     the size it was; OUTSIDE, the ranges are this process's but a byte outside them is not what it was. Raises OSError
-    when the file cannot be read."""
+    when the file cannot be read (Away, when its share does not answer)."""
+    return _bounded(path, lambda: _held(path, record, before))
+
+
+def _held(path, record, before):
     spans = _spans(record)
     with open(path, "rb") as handle:
         size = handle.seek(0, os.SEEK_END)
@@ -102,14 +146,182 @@ def held(path, record, before):
 
 def put_back(path, record, before):
     """Write the bytes the ranges held `before` back into the file at `path`, flushed to the disk, and read them back:
-    raises OSError when the file cannot be written or does not then hold them."""
-    spans, at_old = _spans(record), 0
-    with open(path, "r+b") as handle:
-        for at, length, _new in spans:
-            handle.seek(at)
-            handle.write(before[at_old:at_old + length])
-            at_old += length
-        handle.flush()
-        os.fsync(handle.fileno())
+    raises OSError when the file cannot be written or does not then hold them (Away, when its share does not answer)."""
+    spans, at_old, changes = _spans(record), 0, []
+    for at, length, _new in spans:
+        changes.append((at, before[at_old:at_old + length]))
+        at_old += length
+
+    def put():
+        with _alone(path) as handle:
+            _write(handle, changes)
+
+    _bounded(path, put)
     if held(path, dict(record, outside=None), before) != OLD:
         raise OSError("the bytes put back did not read back")
+
+
+def _alone(path):
+    """The file at `path` open to read and write (binary), on Windows with no sharing: no other program may open it
+    while this is open, and one that has it open already makes this fail (a sharing violation, winerror 32)."""
+    if os.name != "nt":
+        return open(path, "r+b")
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    create = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+    create.restype = wintypes.HANDLE
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                       wintypes.DWORD, wintypes.HANDLE)
+    read_write, no_sharing, existing, normal = 0xC0000000, 0, 3, 0x80
+    handle = create(path, read_write, no_sharing, None, existing, normal, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return os.fdopen(msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY), "r+b")
+
+
+def _write(handle, changes):
+    """Write each (at, bytes) of `changes` into the open file, flushed to the disk."""
+    for at, new in changes:
+        handle.seek(at)
+        handle.write(new)
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+# --- a JPEG's patch -------------------------------------------------------------------------------------------------
+
+
+def _header_of(handle):
+    """(the JPEG's layout, its bytes up to its first scan's header's end) of the open file, or None when it is not a
+    patch's: no JPEG, no scan found, two segments of one patched kind, an extended XMP, or bytes after the last 8BIM."""
+    layout = containers.read(handle)
+    if not isinstance(layout, containers.Jpeg) or layout.image_offset is None:
+        return None
+    if any(len(layout.of_kind(kind)) > 1 for kind in PATCHED_KINDS) or layout.of_kind("xmp-extension"):
+        return None
+    if any(segment.stray for segment in layout.of_kind("iptc")):
+        return None
+    end = layout.segments[-1].end
+    handle.seek(0)
+    header = handle.read(end)
+    return (layout, header) if len(header) == end else None
+
+
+def _spaces(count):
+    """`count` bytes of whitespace, a line break after each 99 spaces, as ExifTool pads an XMP packet."""
+    return bytes(10 if at % 100 == 99 else 32 for at in range(count))
+
+
+def _fitted(old, new, written):
+    """The segment `new` of the header ExifTool `written`, made the size of the old segment `old` (both containers.
+    Segment of one kind); None when it does not fit."""
+    least = new.size - new.slack
+    if least > old.size:
+        return None
+    segment = written[new.offset:new.end]
+    if new.kind == "xmp":
+        packet_end = segment.rfind(b"<?xpacket end=")
+        meta_end = segment.rfind(b"</x:xmpmeta>", 0, packet_end) + len(b"</x:xmpmeta>")
+        room = packet_end - meta_end - (new.size - old.size)
+        if packet_end < 0 or meta_end < len(b"</x:xmpmeta>") or room < 1:
+            return None
+        between = segment[meta_end:packet_end]
+        between = between[:room] if room <= len(between) else between + _spaces(room - len(between))
+        segment = segment[:meta_end] + between + segment[packet_end:]
+    elif new.kind == "exif":
+        if new.offset != old.offset:
+            return None
+        segment = segment[:least] + bytes(old.size - least)
+    else:
+        if new.stray:
+            return None
+        pad = old.size - least
+        if pad and (pad < 12 or pad % 2):
+            return None
+        segment = segment[:least] + (b"8BIM" + containers.PAD_RESOURCE.to_bytes(2, "big") + bytes(2)
+                                     + (pad - 12).to_bytes(4, "big") + bytes(pad - 12) if pad else b"")
+    return segment[:2] + (old.size - 2).to_bytes(2, "big") + segment[4:]
+
+
+def jpeg_ranges(header, written):
+    """[(at, new bytes)] that make the JPEG whose bytes up to its first scan's header's end are `header` hold the
+    segments ExifTool `written` (the same header, rewritten, then an end of image) at their old lengths: the bytes of
+    each patched segment that differ, from the first to the last. None when they do not fit (the module says when)."""
+    old = containers.read(io.BytesIO(header + _EOI))
+    new = containers.read(io.BytesIO(written))
+    if not isinstance(new, containers.Jpeg) or new.image_offset is None:
+        return None
+    if [(each.marker, each.kind) for each in old.segments] != [(each.marker, each.kind) for each in new.segments]:
+        return None
+    changes = []
+    for was, now in zip(old.segments, new.segments):
+        before = header[was.offset:was.end]
+        if written[now.offset:now.end] == before:
+            continue
+        if was.kind not in PATCHED_KINDS:
+            return None
+        after = _fitted(was, now, written)
+        if after is None:
+            return None
+        first = next(at for at in range(was.size) if after[at] != before[at])
+        last = next(at for at in range(was.size - 1, -1, -1) if after[at] != before[at])
+        changes.append((was.offset + first, after[first:last + 1]))
+    return changes
+
+
+def patch_jpeg(path, serialise, saving):
+    """Write the fields ExifTool would write into the JPEG at `path` by a patch of its metadata segments (the module):
+    True once the file holds them -- a patch saved by `saving(record, before)` (the journal's, which commits the record
+    before this writes a byte, and raises when it will not, nothing then written) and written; or nothing to write, the
+    segments already holding them. False when it is not a patch's, nothing written: the caller rewrites the file.
+
+    `serialise(source, target)` is ExifTool's write of the fields from the file at `source` into a new file at `target`
+    (field_values.write's command): True when it wrote it, False when ExifTool refused (the rewrite then says why).
+    Raises Away when the photo's share does not answer, the file as it was or as far as the patch wrote it (held settles
+    it); an OSError that is no sharing violation or refusal to open; whatever `saving` raises."""
+    try:
+        handle = _bounded(path, lambda: _alone(path))
+    except Away:
+        raise
+    except OSError:
+        return False        # held open by another program, read-only, gone: the rewrite's, which says why
+    lent = False            # a bounded call still running holds the handle: closed by the thread's end, not here
+    try:
+        try:
+            found = _bounded(path, lambda: _header_of(handle))
+        except Away:
+            lent = True
+            raise
+        if found is None:
+            return False
+        layout, header = found
+        with tempfile.TemporaryDirectory(prefix="tagpup-patch-") as folder:
+            source, target = os.path.join(folder, "header.jpg"), os.path.join(folder, "written.jpg")
+            with open(source, "wb") as copy:
+                copy.write(header + _EOI)
+            if not serialise(source, target):
+                return False
+            with open(target, "rb") as copy:
+                written = copy.read()
+        changes = jpeg_ranges(header, written)
+        if changes is None:
+            return False
+        if not changes:
+            return True
+        try:
+            saved, before = _bounded(path, lambda: record(handle, changes))
+        except Away:
+            lent = True
+            raise
+        saving(saved, before)
+        try:
+            _bounded(path, lambda: _write(handle, changes))
+        except Away:
+            lent = True
+            raise
+        return True
+    finally:
+        if not lent:
+            handle.close()
