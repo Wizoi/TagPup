@@ -31,6 +31,12 @@ vectors (migration 12); a rename keeps the file's old and new path, and its size
 rename does not change, to know the file by wherever it is found -- carried over each later write of the journal's own
 that the file under its new name takes, and over the indexer's identity mint (follow_renamed). Reading and writing the files is
 tagpup.services.file_changes'; this is the rows.
+
+A file a patch writes in place (tagpup.files.in_place, migration 37) carries, while it is `writing`, the patch's record
+(`patch`, JSON) and the bytes its ranges held (`patch_before`), committed before the first byte (save_patch): a crash
+part-way leaves ranges half written, which only the bytes settle. patch_of is their one reader; every mark that takes the
+file out of `writing` erases them in its own transaction (set_state, writing, withdraw_in): a crash record, not a second
+undo. ExifTool's rewrite, which leaves the old file or the new one whole, saves none.
 """
 import json
 import os
@@ -94,6 +100,9 @@ class FileRow:
     #: Not stored: the file's os.stat just before this process wrote it, whose fingerprint (tagpup.services.file_changes.
     #: _fingerprint_of) a rename that left it under this name knows it by (follow_renamed).
     known_as: Optional[Any] = None
+    #: Not stored: this process saved a patch's record of the file for the write under way (save_patch), so what the write
+    #: left is settled by the file's bytes (tagpup.services.file_changes._by_bytes).
+    patched: bool = False
 
     @property
     def is_rename(self):
@@ -194,6 +203,20 @@ def _row(found, roots):
                    json.loads(after or "{}"), state, note, tuple(json.loads(stamp)) if stamp else None)
 
 
+#: The most bytes a patch's record keeps of what its ranges held (save_patch): a patch bigger than this is ExifTool's
+#: rewrite's, which the patcher then takes. A photo's metadata segments are at most 64 KB each.
+PATCH_CAP = 1 << 20
+
+#: The note of a file whose bytes outside its patch were not what they were once the patch was written (tagpup.files.
+#: in_place.OUTSIDE, #2377): its ranges are put back, and it is a conflict, which the doctor counts.
+OUTSIDE_CHANGED = ("the bytes outside its patch changed while it was written: the patch was put back, and the file "
+                   "is not written again")
+
+
+class PatchTooLarge(Exception):
+    """A patch's old bytes are more than PATCH_CAP: nothing was saved, and nothing may be written by a patch."""
+
+
 _FILE_COLUMNS = "id, change_id, photo_id, path, new_path, fields_before, fields_after, state, note, stamp"
 
 
@@ -233,7 +256,9 @@ def set_state(conn, file_id, state, note=None):
     records its row."""
     if state not in STATES:
         raise ValueError("a file is %s, not %r" % (", ".join(STATES), state))
-    conn.execute("UPDATE change_files SET state = ?, note = ? WHERE id = ?", (state, note, file_id))
+    # The patch's record goes with the mark (the module's docstring): a file marked anything is no longer under a patch.
+    conn.execute("UPDATE change_files SET state = ?, note = ?, patch = NULL, patch_before = NULL WHERE id = ?",
+                 (state, note, file_id))
 
 
 def set_after(conn, file_id, after):
@@ -244,12 +269,52 @@ def set_after(conn, file_id, after):
 
 def writing(db_path, file_id, stamp):
     """Mark one file `writing`, with `stamp`, (mtime, size) of the file just before its
-    write: settling after a crash carries the photo's vectors over the write by it."""
+    write: settling after a crash carries the photo's vectors over the write by it. A record of an earlier patch is
+    erased: this write saves its own, if it patches."""
     def work(conn):
-        conn.execute("UPDATE change_files SET state = 'writing', note = NULL, stamp = ? WHERE id = ?",
-                     (json.dumps(list(stamp)) if stamp else None, file_id))
+        conn.execute("UPDATE change_files SET state = 'writing', note = NULL, stamp = ?, patch = NULL, patch_before = NULL"
+                     " WHERE id = ?", (json.dumps(list(stamp)) if stamp else None, file_id))
 
     db.write_with_connection(db_path, work, label="file %d writing" % file_id)
+
+
+def save_patch(db_path, file_id, record, before):
+    """Commit the record of a patch (tagpup.files.in_place.record) and the bytes its ranges hold `before`, of a file
+    `writing`, before the patch writes a byte. Raises PatchTooLarge over PATCH_CAP, and RuntimeError when the file is not
+    `writing`; either way nothing is saved, and the patch must write nothing."""
+    if len(before) > PATCH_CAP:
+        raise PatchTooLarge("file %d: a patch of %d bytes is more than the journal keeps (%d)" % (file_id, len(before), PATCH_CAP))
+
+    def work(conn):
+        return conn.execute("UPDATE change_files SET patch = ?, patch_before = ? WHERE id = ? AND state = 'writing'",
+                            (json.dumps(record, sort_keys=True), bytes(before), file_id)).rowcount
+
+    if db.write_with_connection(db_path, work, label="file %d: its patch saved" % file_id) != 1:
+        raise RuntimeError("file %d is not being written, so its patch was not saved; nothing was written" % file_id)
+
+
+def patch_of(db_path, file_id):
+    """(record, before) of the patch file `file_id` is under (save_patch), or None: the one reader of the record."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        found = conn.execute("SELECT patch, patch_before FROM change_files WHERE id = ? AND patch IS NOT NULL",
+                             (file_id,)).fetchone()
+    finally:
+        conn.close()
+    return None if found is None else (json.loads(found[0]), bytes(found[1] or b""))
+
+
+def patches_outside_writing(conn):
+    """The ids of files holding a patch's record though not `writing`: a mark that did not erase it (none, by set_state,
+    writing and withdraw_in). The caller's connection (tagpup.store.checks)."""
+    return [file_id for (file_id,) in conn.execute(
+        "SELECT id FROM change_files WHERE state != 'writing' AND patch IS NOT NULL ORDER BY id")]
+
+
+def changed_around_a_patch(conn):
+    """The ids of files found, once patched, changed outside the patch (OUTSIDE_CHANGED). The caller's connection."""
+    return [file_id for (file_id,) in conn.execute(
+        "SELECT id FROM change_files WHERE state = 'conflict' AND note = ? ORDER BY id", (OUTSIDE_CHANGED,))]
 
 
 #: The files of renames done (RENAMES): sought by their change, the change_id index, never a scan of change_files.
@@ -318,7 +383,7 @@ def withdraw(db_path, file_ids):
 
 def withdraw_in(conn, file_ids):
     """withdraw, in the caller's transaction: a file whose write changed nothing is taken
-    out in the one that records its row (tagpup.services.file_changes)."""
+    out in the one that records its row (tagpup.services.file_changes). Its patch's record, if any, goes with its row."""
     file_ids = list(file_ids)
     for start in range(0, len(file_ids), CHUNK):
         chunk = file_ids[start:start + CHUNK]
