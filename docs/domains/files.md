@@ -121,6 +121,48 @@ The one place is `sync.look`; nothing else removes a row for a missing file (the
 - The Activity page shows a root on such a share as "share not answering since hh:mm".
 - Tests: `tests/test_a_share_asleep.py`, `tests/test_a_share_that_wakes.py`, `tests/test_one_walk_of_a_library_at_a_time.py`.
 
+## JPEG segment census, 2026-11-03
+
+Counted this session, read-only (`scripts/census_segments.py --sample 3000`, `tagpup/services/segment_census.py`, seed
+20261103; M1 of docs/PLAN_OWN_METADATA.md): photo_index a sample of 3,000 of its 59,505 JPEGs; kr-track (2,065) and
+renton_parkrun (1,308) every JPEG. Every file read: no share away, none gone, none cut short. Columns: photo_index /
+kr-track / renton_parkrun.
+
+- Kinds: photo_index 59,486 .jpg, 19 .jpeg, 17 .tif, 1 .png; kr-track 2,065 .jpg; renton_parkrun 1,308 .jpg, 1 .png. No
+  HEIC, no video row in any.
+- XMP toolkit: ExifTool in every file read (3,000 / 2,065 / 1,308). One XMP segment in each; two `rdf:about` values,
+  a target property twice or as an attribute: 0 / 0 / 0. No packet wrapper 2 / 7 / 0; begin BOM in the rest.
+- XMP slack (padding before `<?xpacket end`): 2,048 bytes or more in 2,996 / 2,049 / 1,306; none in 4 / 16 / 2.
+- Extended XMP: 111 / 80 / 5 (as many packets name `xmpNote:HasExtendedXMP`). MPF: 100 / 14 / 0. Bytes after the last EOI:
+  10 / 3 / 0.
+- EXIF: two segments 4 / 0 / 0, none 2 / 0 / 3; slack 0 bytes in 1,652 / 1,120 / 926, 1 to 63 in 1,350 / 945 / 379,
+  64 or more in none. IFD1 thumbnail 2,747 / 2,062 / 1,304.
+- MakerNotes: 1,613 / 1 / 0. photo_index by maker: Canon 466 moved with an OffsetSchema saying by how much, 764 moved
+  with one that does not, 6 TIFF-relative as written, 3 outside; Sony 1 moved and said, 18 moved and not, 3 outside, 233
+  no IFD that parses, 3 inline; Nikon 13 own header; Apple 6, Fujifilm 7, Samsung 3 note-relative; no IFD that parses:
+  Nokia 48, Google 15, other 11, Kodak 5, LG 3, Casio 2, Apple 1, Microsoft 1. kr-track: one Canon, TIFF-relative.
+  ("Moved": every pointer fits the note only shifted by one amount; the classes are the census module's.)
+- IPTC: two APP13 segments 0 / 2 / 3; bytes after the last 8BIM 1 / 4 / 6; no 0x0404 block in 1 / 2 / 3; padded with
+  PAD_RESOURCE 0 / 0 / 0. Charset 1:90 UTF-8 in 2,194 / 2,057 / 1,305, absent in 746 / 4 / 0; values outside ASCII 6 / 0 / 0
+  in 2:xx datasets; datasets cut short 12 / 0 / 0.
+- IPTCDigest (0x0425 against the MD5 of 0x0404): matches 2,093 / 153 / 463, differs 112 / 1,902 / 839, absent 735 / 6 / 3.
+  The comparison is ExifTool's: on copies of 8 kr-track JPEGs the census's MD5 equalled ExifTool's CurrentIPTCDigest each
+  time, and the stored digests are stale. An ExifTool IPTC write as TagPup makes one (`-IPTC:Keywords+=`) changes the
+  block and leaves 0x0425 as it was, so a digest that matched stops matching (findings, this branch).
+- Segment orders, the commonest: photo_index `JFIF EXIF XMP IPTC` 1,403 and `JFIF Adobe EXIF IPTC ICC XMP` 611;
+  kr-track and renton_parkrun `EXIF IPTC ICC XMP Adobe` (with the tables) 1,939 and 1,297.
+- Header read (bytes before the first scan, the first 50 reads), median / p90 / max in ms: photo_index 22.6 / 27.6 / 33.5
+  (40 / 59 / 67 on a first, cold run), kr-track 41.7 / 54.2 / 86.1, renton_parkrun 42.5 / 54.0 / 60.9.
+- The journal's files: photo_index 51,312 done and 139 conflict, kr-track 4,696 done, renton_parkrun 4,318 done; none
+  holds a patch record.
+
+Against docs/PLAN_OWN_METADATA.md: extended XMP is 111 of 3,000 in photo_index (the plan relays 127 of 3,000); TIFF is
+17 rows and PNG 2 (relayed 18 and 1); HEIC 0, as relayed. The plan's 2 KB XMP reserve is already there in nearly every
+file (ExifTool's padding), and EXIF has under 64 bytes of slack everywhere. MakerNotes moved from where their offsets
+count are most of photo_index's Canon notes, a class the plan's "absolute or relative offsets" does not name. ExifTool
+does not refresh the IPTCDigest, so "refresh to match ExifTool's" has nothing to match. A header read is tens of ms, so
+M6 (an own read for the journal's field reads) has little to win from the read itself.
+
 ## By design (each row closed `decided:`)
 
 - **The indexer's per-photo reads have no deadline** (the header for the read-ahead's estimate, the decodes, the stamp,
