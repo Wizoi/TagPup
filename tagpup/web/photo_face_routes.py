@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 routes = Blueprint("photo_faces", __name__)
 routes.before_request(tuner_routes.refuse_face_writes_while_naming)
 
+#: The most photos one ask of `/api/photo-faces/suggestions` names: Organize asks for nothing over it (selection-faces.js).
+SUGGESTIONS_AT_MOST = 500
+
 
 @routes.get("/api/photo-faces")
 def photo_faces():
@@ -36,6 +39,26 @@ def photo_faces():
         return jsonify(face_actions.panel(library, photo_path, face_routes.named(library)))
     except Exception as e:
         logger.error("Error listing faces for %s: %s", photo_path, e)
+        return responses.error(500, str(e))
+
+
+@routes.post("/api/photo-faces/suggestions")
+def photo_faces_suggestions():
+    """Who the unnamed faces of the selected photos look like, for Organize's Suggested People
+    (tagpup.services.faces.selection_suggestions): {"suggestions": {path: [...]}}, a photo with none left out.
+    A POST for the length of its list of paths; it writes nothing, but is refused with the blueprint's writes while
+    names are given from tags (the page then shows what it showed, and asks again on the next selection)."""
+    library = state.require()
+    body = request.get_json(silent=True)
+    paths = body.get("paths") if isinstance(body, dict) else None
+    if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+        return responses.error(400, "'paths' must be a list of photo paths.")
+    if len(paths) > SUGGESTIONS_AT_MOST:
+        return responses.error(400, f"Ask for the faces of {SUGGESTIONS_AT_MOST} photos at most, not {len(paths)}.")
+    try:
+        return jsonify({"suggestions": face_actions.selection_suggestions(library, paths, face_routes.named(library))})
+    except Exception as e:
+        logger.error("Error suggesting people for %d photos: %s", len(paths), e)
         return responses.error(500, str(e))
 
 
