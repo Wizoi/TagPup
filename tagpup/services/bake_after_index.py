@@ -4,7 +4,8 @@ ToBake is written, the folder as one change of file_changes.write_fields, the on
 
 A bake is the index's values stamped on the file, never an operation the owner sees or undoes (owner, decision 2): its
 change is internal (file_journal.INTERNAL), the record a crash needs while the write is under way -- the next start
-settles a half-written file by what it holds -- and erased once the folder is finished. Where the index's rows and the
+settles a half-written file by what it holds -- and erased once the folder is finished, but for its files that ended
+a conflict, kept with it for the doctor (file_journal.finish; owner, 2026-11-03). Where the index's rows and the
 file's bake differ the rows win (decision 3): a face deleted in TagPup is gone from the file at the folder's next index.
 
 A folder is planned twice, on a read-only connection of its own: first every photo without its decode (the bake fields
@@ -278,7 +279,7 @@ def _adopt(library, unfingerprinted, to_bake, written, handed, baked):
 
 def _write(library, exiftool_path, et, stored, to_bake, baked, on_chunk):
     """Write the photos of one folder to bake as one internal change, each file read again before its write, and count
-    in `baked` what the write reported (its Result: the change is erased once it finishes); `on_chunk(done, of)` as each
+    in `baked` what the write reported (its Result: the change is erased once it finishes, its conflicts kept); `on_chunk(done, of)` as each
     chunk of its files ends (write_fields)."""
     result = file_changes.write_fields(
         library, baking.INDEX_OPERATION, exiftool_path, [path for path, _values in to_bake.values()],

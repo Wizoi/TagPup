@@ -4,7 +4,7 @@ The domain's charter is `.claude/agents/tagpup-owner-data.md` (its Scope, its co
 D9). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its evidence
 and date, and what is so by design. A condition not met is the domain's queue.
 
-## What the domain is (counted 2026-10-15; the table 2026-10-29; read-only)
+## What the domain is (counted 2026-10-15; the table 2026-11-03 but its last two rows 2026-10-29; read-only)
 
 What is in the library file, and whether it can be put back: how a file is opened and written (`store/db.py`), the schema
 and its one baseline at 32, the journal of row changes and its undo, the journal of photo-file changes, the derived tables
@@ -14,14 +14,15 @@ shows (Views, Integration).
 
 | | photo_index | kr-track | renton_parkrun |
 |---|---|---|---|
-| schema | 35 | 35 | 35 |
-| photos / faces | 59,524 / 183,086 | 1,634 / 10,884 | 1,309 / 3,315 |
-| changes / change_rows / change_files | 6,239 / 1,491,017 / 51,451 | 391 / 88,486 / 2,968 | 1,243 / 24,032 / 4,318 |
+| schema | 37 | 37 | 37 |
+| photos / faces | 59,523 / 183,084 | 2,065 / 12,664 | 1,309 / 3,315 |
+| changes / change_rows / change_files | 6,243 / 1,491,060 / 51,451 | 1,947 / 88,883 / 4,696 | 1,245 / 24,032 / 4,318 |
 | changes made below 32 (row undo refused) | 715 | 316 | 1,210 |
 | roots / settings / job_runs | 1 / 11 / 323 | 1 / 10 / 112 | 1 / 10 / 96 |
 
-Unfinished work: 0 `derived_pending`, 0 files `writing`, 1 `conflict` file (a changed file, as designed). The doctor reports
-0 broken rules on all three. Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
+Unfinished work (2026-11-03): 0 `derived_pending`, 0 files `writing`, 0 patch records; 139 `conflict` files, all in
+photo_index (every other file `done`), none with a note the doctor counts (`file_journal.NOTES`), and no change of the
+index's bake kept (the doctor's last full report: 0 broken rules on all three, 2026-10-29). Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
 listed "too old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
 `faces_pending` and `idx_faces_name`; DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD") has run on all three
 (schema 33, counted 2026-10-18), and 34 to 36 after it (schema 36 on all three, counted read-only 2026-11-02). Migration 37
@@ -36,10 +37,11 @@ the three libraries (62,897 photos at 36, none with a video's extension, counted
 | every domain | `db.connect / write / write_with_connection / lock_for / readonly_uri`: WAL, a 30 s busy timeout, one writer per file, retry; one `db.key` for a library file; no `sqlite3.connect`, no SQL outside `tagpup/store`; `db.write_if_free` for a write worth nothing late (a run's progress): made now or not at all, `db.BUSY` while the file is being written | `test_db_access`, `test_layers`, `test_runs_nest_and_say_how_far_they_got` |
 | Integration (server, CLI, MCP, launcher) | `schema.ensure` migrates or raises; a newer or below-baseline library is refused, also in a long-lived process; `reading_newer` / `newer_problem` never write; 503 while migrating | `test_a_library_from_a_newer_tagpup`, `test_newer_library_guard_in_a_long_lived_process`, `test_server_migrates_at_start`, `test_migrations` |
 | People, Files (sync, refresh_rows, relink, maintenance), Views (a retiring of vectors) | `journal.apply / rehearse / undo / record / record_faces / add_counts / kept / kept_named / old_values / recorded_values`, `db.begin`: one transaction, applied and undone only where rows are as read (a retiring of vectors' change is added to a piece at a time, `add_counts` while `kept`; the deleted face pass's changes, added to one photo at a time, stay in the journals and are undone as recorded, made in the tests by `face_rows.as_a_face_pass_gave`) (an insert's undo: the exception for the change's own rows is the module docstring's, "undo"); refusals name keys; one `schema.row_key` spelling for a row's key; `journal.KEYS` is the one statement of the tables a change may name (`faces_detected` among them, keyed by its photo's id with no foreign key: `journal.UNLINKED`; journaled only by the deleted `delete-old-detector-rows`, whose change in each live journal is a kind in `services.journal.RETIRED`, its undo refused); `journal.CACHES` the tables none records (`face_crops`: the face pass recorded no crop, and `journal.NOT_CACHED` leaves a crop row a change recorded before out of `_load` and of History's counts and keys; DECISIONS 2026-10-27) | `test_journal`, `test_maintenance`, `test_sync` (the dry run, then `--apply`), `test_journal_keys_and_cascades`, `test_journal_through_the_services` (the journal's list and undo for changes of the deleted maintenance services' shape, at the current schema), `test_undo_after_every_later_kind` |
-| Files (`file_changes`), Integration (batches) | `file_journal`: planned, `writing`, `done` with its row; a crash settled at the next start by what the file holds; a change of an `INTERNAL` operation (the index's bake) is erased on a forward finish, listed by no history and no batch list, and met by no undo check but `newer_overlapping` (an undo of photo files) while a file of it is `writing` | `test_file_journal`, `test_a_crash_part_way_is_settled_at_the_next_start` |
+| Files (`file_changes`), Integration (batches) | `file_journal`: planned, `writing`, `done` with its row; a crash settled at the next start by what the file holds; a change of an `INTERNAL` operation (the index's bake) is erased on a forward finish -- but for its files that ended a conflict, kept with the change, `applied` (owner, 2026-11-03) -- listed by no history and no batch list, and met by no undo check but `newer_overlapping` (an undo of photo files) while a file of it is `writing` | `test_file_journal`, `test_a_crash_part_way_is_settled_at_the_next_start` |
 | Files (indexer), People (faces, tree) | `derived.*` and `people.rebuild` in the writer's transaction; `doctor --rebuild-derived` rebuilds the same | `test_derived_writers`, `test_derived_follow_writes`, `test_photo_people_follow_their_sources` |
 | every writer of photos; Views reads | `search_index.refresh` from `derived`; a deleted photo's words by trigger | `test_derived_writers`, `test_search_words` |
 | every cache | `generations` counters moved by triggers from any process | `test_schema`, `test_doctor` |
+| Files (`file_changes`: a patch's put-back, a write refused twice for its picture) | `file_journal.NOTES`: a conflict noted `OUTSIDE_CHANGED` or `PICTURE_CHANGED` is counted by the doctor, with the patch records kept outside `writing`, from one scan (`noted`, cached by `checks` while nothing is written) | `test_doctor`, `test_a_crash_part_way_is_settled_at_the_next_start` |
 | Integration (CLI, scheduler) | `snapshots.take / listed / restore` (3/1/1; a restore snapshots first; below 32 refused) | `test_snapshots` |
 | Integration (`runtime.library_settings`) | `services.settings.of / change / stamp`: changes journaled, a locked group acknowledged, no `config.ini` | `test_a_librarys_settings_are_its_own`, `test_config_single_owner` |
 | `services.settings` -> Files (`sync.review`) | a change of roots or ignored folders asks sync which folders to review | `tests/test_library_roots.py` (`FoldersNotAddedAreExcluded`: settings asking sync nothing fails it) |
