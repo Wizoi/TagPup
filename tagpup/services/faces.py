@@ -626,7 +626,7 @@ def selection_suggestions(library, photo_paths, named):
             if who and (who["id"] not in best or face["similarity"] > best[who["id"]]["similarity"]):
                 best[who["id"]] = {"person": who, "name": who["name"], "similarity": face["similarity"]}
         if best:
-            answer[path] = sorted(best.values(), key=lambda entry: -entry["similarity"])
+            answer[path] = list(best.values())
     return answer
 
 
