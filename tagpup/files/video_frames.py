@@ -55,7 +55,7 @@ CANNOT_READ = "The video cannot be read (permissions, or another program has it 
 SHARE_AWAY = "The share the video is on did not answer."
 NOT_A_VIDEO = "ffmpeg cannot read this file as a video."
 NO_FRAME = "ffmpeg decoded no frame of this video."
-TOO_LONG = "ffmpeg took longer than %d s and was stopped."
+TOO_LONG = "ffmpeg took longer than %g s and was stopped."
 
 
 class Frames(NamedTuple):
@@ -173,14 +173,32 @@ def _run(args, deadline, seconds):
     try:
         out, err = child.communicate(timeout=left)
     except subprocess.TimeoutExpired:
-        processes.kill_tree(child.pid)
-        try:
-            child.communicate(timeout=KILL_WAIT)
-        except subprocess.TimeoutExpired:
-            logger.warning("A killed %s has not ended after %s s; it is left to end when the system lets it.",
-                           args[0], KILL_WAIT)
+        _end(child, args)
         return None, TOO_LONG % seconds
+    except BaseException as problem:
+        _end(child, args)
+        if not isinstance(problem, Exception):
+            raise
+        logger.warning("Waiting for %s failed: %s", args[0], problem)
+        return None, "ffmpeg could not be run to the end: %s." % (problem,)
     return (child.returncode, out, err), None
+
+
+def _end(child, args):
+    """`child` and its tree ended, or as near as the system lets it; never an exception."""
+    try:
+        processes.kill_tree(child.pid)
+    except Exception as problem:
+        logger.warning("Ending the tree of %s failed: %s", args[0], problem)
+    try:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=KILL_WAIT)
+    except subprocess.TimeoutExpired:
+        logger.warning("A killed %s has not ended after %s s; it is left to end when the system lets it.",
+                       args[0], KILL_WAIT)
+    except Exception as problem:
+        logger.warning("Ending %s failed: %s", args[0], problem)
 
 
 def _log(program, err, path):

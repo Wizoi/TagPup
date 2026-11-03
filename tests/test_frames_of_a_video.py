@@ -11,6 +11,7 @@ tagpup.core.processes (tests/test_rules_have_one_owner.py fails a module that ca
 import io
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -173,6 +174,8 @@ class FramesOfAVideo(unittest.TestCase):
     def test_ffmpeg_past_its_deadline_is_killed_and_said(self):
         found, started = self.frames(self.clip, seconds=0.05)
         self.assertEqual(((), video_frames.TOO_LONG % 0.05), (found.pictures, found.problem))
+        self.assertIn("0.05 s", found.problem)
+        self.assertTrue(started.children, "a child was started, so there was something to kill")
         for _args, pid in started.children:
             self.assertFalse(processes.is_alive(pid))
 
@@ -202,6 +205,51 @@ class AHungProgram(unittest.TestCase):
         self.assertEqual(video_frames.TOO_LONG % 1, problem)
         self.assertLess(time.monotonic() - began, 30)
         self.assertFalse(processes.is_alive(started.children[0][1]))
+
+
+class AChildThatCannotBeWaitedFor(unittest.TestCase):
+    """_run promises a sentence, never an exception, and no ffmpeg left running whichever way the wait or the kill fails."""
+
+    class Child:
+        pid = 4242
+
+        def __init__(self, fails):
+            self.fails, self.killed, self.returncode = fails, False, None
+
+        def communicate(self, timeout=None):
+            if self.fails and not self.killed:
+                raise self.fails
+            return b"", b""
+
+        def poll(self):
+            return -9 if self.killed else None
+
+        def kill(self):
+            self.killed = True
+
+    def run_with(self, child, kill_tree):
+        with mock.patch.object(processes, "start", return_value=child), \
+                mock.patch.object(processes, "kill_tree", kill_tree):
+            return video_frames._run(["ffmpeg"], time.monotonic() + 5, 5)
+
+    def test_a_wait_that_fails_otherwise_kills_the_child_and_says_so(self):
+        child = self.Child(ValueError("pipe closed"))
+        ended = []
+        done, problem = self.run_with(child, ended.append)
+        self.assertIsNone(done)
+        self.assertTrue(problem and problem.endswith("."), problem)
+        self.assertEqual([child.pid], ended)
+
+    def test_a_taskkill_that_hangs_does_not_escape_and_the_child_is_still_killed(self):
+        def hangs(_pid):
+            raise subprocess.TimeoutExpired("the kill", 30)
+        for fails in (subprocess.TimeoutExpired("ffmpeg", 5), ValueError("pipe closed")):
+            with self.subTest(type(fails).__name__):
+                child = self.Child(fails)
+                done, problem = self.run_with(child, hangs)
+                self.assertIsNone(done)
+                self.assertTrue(problem)
+                self.assertTrue(child.killed)
 
 
 class LocatingFfmpeg(unittest.TestCase):
