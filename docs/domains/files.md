@@ -179,7 +179,8 @@ little (23 against 28 ms a photo).
 
 The census reads a TIFF IFD and an 8BIM resource through `tagpup.files.containers` (`ifd`, `TIFF_TYPE_SIZES`,
 `Resource.data` and `.length`), the one statement of their layout; what a MakerNote's entries mean (the footer, the
-classes) is the census's alone until M3, which takes it into containers.py beside its writer, never a third copy. The
+classes: `maker_note`, `canon_footer`) and the walk of an EXIF block's IFDs (`exif_tiff`) are containers.py's since M3,
+read by the census and the EXIF block editor alike, never a third copy. The
 phase 6 XMP census (`inspect.xmp_census`, `scripts/census_xmp.py`) is gone: this census counts what it alone answered of
 a JPEG (the XMP packet's size, EXIF Orientation; regions, extended XMP and two XMP segments it counted already), and its
 17 TIFF and 2 PNG rows are no feature's count.
@@ -220,6 +221,59 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
   declaration added stays). The previous worker compared it with ExifTool on 5 sidecar copies: the owned and all other
   tags equal.
 - **Not verified**: an ExifTool edit of the same change inside a JPEG, byte for byte (M4's shadow comparison).
+
+## The EXIF block editor
+
+`tagpup/files/exif_block.py` (M3 of docs/PLAN_OWN_METADATA.md; no caller yet, M4 wires it): pure, an EXIF segment's
+body (`Exif\0\0` and the TIFF block) in and out. It owns nine fields (`FIELDS`): IFD0's ImageDescription, Orientation,
+XPComment and XPKeywords; the Exif IFD's DateTimeOriginal, CreateDate, SubSecTime, SubSecTimeOriginal and
+SubSecTimeDigitized. The block's layout is `containers.exif_tiff`'s, the one walk of its IFDs (IFD0, IFD1 and its
+thumbnail, Exif, GPS, Interoperability: every byte range an IFD points at, `used`, the slack after it), and what a
+MakerNote's entries mean is `containers.maker_note`'s and `canon_footer`'s, which the census reads too. `read` answers
+the fields' values; `edit(body, changes, grow=False, limit=65533)` answers `Edited(body, length_changed)`,
+`DoesNotFit(needed)` or `Refusal(reason)`. A value of the same length or shorter is written where it was, the rest
+zeroed; a longer one goes after `used` at an even offset, its old bytes zeroed; a cleared field loses its entry (the
+table shrinks, its last 12 bytes zeroed). The block keeps its length; `grow` only adds bytes at its end, after
+everything. Bytes no IFD points at are taken only with no MakerNote, or one whose pointers land inside it (TIFF- or
+note-relative, its own header, none, moved by the Canon footer's shift, moved by a shift unknown). An edit is walked
+again and read back, and every byte it changed is checked to be an owned table's, an owned value's or zero, before it
+is answered. The editor takes one segment: a file with two (photo_index 2 of the 1,500 below) is its caller's to
+refuse. Scenario test: `tests/test_exif_block_edits_what_it_owns.py` (F1), which fails on each of 11 deliberately
+broken copies of the module (a value laid over the thumbnail, a MakerNote byte moved with the checks skipped, a note
+that is no IFD taken as contained, grow ignored, old values not zeroed, among them).
+
+Counted this session, read-only, in memory, nothing written: a seeded sample (seed 7) of photo_index 1,500, kr-track
+400 and renton_parkrun 400 JPEGs; 2,297 with one EXIF segment, every one read, none refused, and writing back the
+values each held changed no byte in all 2,297. Big-endian 1,433 / 6 / 3, little-endian 64 / 394 / 397 (photo_index /
+kr-track / renton_parkrun). MakerNotes: none 617 / 400 / 400; moved by the Canon footer's shift 669, shift unknown 138,
+own header 12, note-relative 9, not an IFD 46, the Canon footer wrong 1 (photo_index).
+
+- **Refused, with instances** (each grown or not): a new tag, since data follows its IFD's table in every absent case
+  of the sample (ImageDescription 415 / 396 / 399, Orientation 433 / 397 / 400, XPComment 87 / 396 / 399,
+  DateTimeOriginal 28 / 0 / 0; moving the table into room made under `grow` would allow it, M5's choice); a new tag in
+  an IFD out of tag order (IFD0 8, Exif 2, photo_index); a longer value beside a MakerNote that is no IFD (46) or whose
+  Canon footer's shift lands a pointer outside it (1). The one new tag that fits is one a clear has just made room for.
+- **Refused, no instance in the sample**: not an EXIF segment; over 65,533 bytes, read or made; a structure the walk
+  cannot follow (an IFD or a value outside the block, an entry of no TIFF type); strips, tiles, SubIFDs or an entry of
+  type IFD; an owned tag twice, of a type TagPup does not read (Orientation SHORT or LONG, count 1; an XP tag BYTE or
+  ASCII; the rest ASCII), or text not UTF-8; an owned IFD or value sharing bytes with another; a date with no Exif IFD.
+  Values: Orientation outside 1 to 8 (one held, 0 in 1 of the census's 3,000, given back changes no byte), a NUL, a date
+  not `YYYY:MM:DD HH:MM:SS`, SubSec not digits, a lone surrogate, a field it does not own.
+- **Fit**, photo_index's 1,500, each change alone (a 34-character caption; one keyword added; a date, an Orientation, a
+  SubSec changed), of the tags present: dates, Orientation and SubSec always fit; ImageDescription 128 fit, 910 need
+  `grow`, 36 refused; XPComment 34 / 1,322 / 46; XPKeywords 0 / 1,087 / 44. kr-track and renton_parkrun: every date and
+  SubSec present fits, every caption and keyword present needs `grow` (369 and 249 changes).
+- **XP tags**: read as UCS-2 little-endian whatever their type (type 2 in 1,392 of 1,402 photo_index XPComments; 337 of
+  those hold printable ASCII bytes up to their first NUL, read, as ExifTool reads them, as UCS-2 characters), written as type 1 (BYTE) as ExifTool
+  writes them. ImageDescription is written as UTF-8, as ExifTool writes it.
+- **What it does differently from ExifTool**: ExifTool rebuilds the segment, TagPup keeps every unowned byte and
+  offset and an IFD's order (ExifTool sorts it). On 12 copies the previous worker made of sampled headers (fictional
+  values, the same change by each, TagPup's grown), recounted this session: TagPup's segment 14 to 176 bytes longer
+  than ExifTool's in 10, the same length in 2; every EXIF tag ExifTool reads from the two equal, but ThumbnailOffset
+  (ExifTool moves the thumbnail; TagPup keeps it) in 8.
+- **Not verified**: Windows' own reading (Windows Photo Gallery, the Windows property system) of an XP tag TagPup
+  wrote; a file with MPF when the EXIF block grows (MPF's offsets count from its own segment, which then moves); a
+  rewrite in a file, byte for byte against ExifTool's (M4's shadow comparison).
 
 ## By design (each row closed `decided:`)
 
