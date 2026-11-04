@@ -3,19 +3,20 @@
 Pure: bytes in, bytes out, no file and no container; a JPEG's segment and a clip's box both hand it the packet alone.
 
 `read(packet)` is {name: value} of the owned properties the packet holds (a Bag a list of str, the rest a str).
-`edit(packet, changes)` sets each named property to its value (None, '' or [] clears it) and answers `Edited`: every byte
+`edit(packet, changes)` sets each named property to its value (None, '' or [] clears it) and answers `containers.Edited`: every byte
 outside the owned properties' own elements is the packet's as it was -- other namespaces, comments, attribute order,
 quotes, whitespace -- and the change is paid for out of the padding before `<?xpacket end`, so the packet keeps its
 length; only `grow=True` lets it grow, laying `reserve` bytes of fresh padding. A value equal to what the packet holds
 changes no byte; a Bag keeps the order it is given, a repeat dropped.
 
-Either answers `Refusal`, a sentence, for a packet it does not wholly understand: it never repairs one and never returns
+Either answers `containers.Refusal`, a sentence, for a packet it does not wholly understand: it never repairs one and never returns
 bytes on doubt (an edit is parsed again and read back before it is answered). What it refuses, with the counts of the
 three libraries behind each rule: docs/domains/files.md, "The XMP packet editor".
 """
 import re
-from dataclasses import dataclass
 from xml.parsers import expat
+
+from tagpup.files import containers
 
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 _DC = "http://purl.org/dc/elements/1.1/"
@@ -44,18 +45,6 @@ _BEGIN = re.compile(rb"<\?xpacket begin=[^>]*\?>\s*\Z")
 _END = re.compile(rb"(\s*)<\?xpacket end=(['\"])w\2\?>\Z")
 #: What XML 1.0 cannot carry, even as a character reference (its Char production).
 _NOT_XML = re.compile("[^\t\n\r -%s%s-%s%s-%s]" % (chr(0xD7FF), chr(0xE000), chr(0xFFFD), chr(0x10000), chr(0x10FFFF)))
-
-
-@dataclass(frozen=True)
-class Refusal:
-    reason: str
-
-
-@dataclass(frozen=True)
-class Edited:
-    packet: bytes
-    #: The packet's length is not what it was (only with grow=True): its container must make room, not patch.
-    length_changed: bool
 
 
 class _Refused(Exception):
@@ -206,7 +195,7 @@ def read(packet, limit=LIMIT):
     try:
         return dict(_Packet(packet, limit).values)
     except _Refused as why:
-        return Refusal(str(why))
+        return containers.Refusal(str(why))
 
 
 def _escaped(text):
@@ -302,11 +291,11 @@ def padding(size):
 def _padded(pad, need, grow, reserve):
     """The whitespace `pad` less `need` bytes (more, for a negative need), always ending in a line break; `reserve`
     bytes of it when it holds too few and `grow`."""
-    if len(pad) - need >= 1:
+    if len(pad) - need >= containers.XMP_PADDING_LEAST:
         return padding(len(pad) - need)
     if grow:
         return padding(reserve)
-    raise _Refused("The change needs %d more bytes than the packet's padding holds." % (need - len(pad) + 1))
+    raise _Refused("The change needs %d more bytes than the packet's padding holds." % (need - len(pad) + containers.XMP_PADDING_LEAST))
 
 
 def edit(packet, changes, grow=False, reserve=RESERVE, limit=LIMIT):
@@ -319,7 +308,7 @@ def edit(packet, changes, grow=False, reserve=RESERVE, limit=LIMIT):
         wanted = {name: _wanted(name, changes[name]) for name in PROPERTIES if name in changes}
         moved = {name: value for name, value in wanted.items() if (before.values.get(name) or None) != value}
         if not moved:
-            return Edited(packet, False)
+            return containers.Edited(packet, False)
         pieces, at = [], 0
         for start, end, text in sorted(_splices(before, moved), key=lambda splice: splice[:2]):
             pieces += [packet[at:start], text]
@@ -337,6 +326,6 @@ def edit(packet, changes, grow=False, reserve=RESERVE, limit=LIMIT):
         expected = {name: value for name, value in {**before.values, **moved}.items() if value is not None}
         if _Packet(result, limit).values != expected:
             raise _Refused("The edited packet does not read back as written.")
-        return Edited(result, len(result) != len(packet))
+        return containers.Edited(result, len(result) != len(packet))
     except _Refused as why:
-        return Refusal(str(why))
+        return containers.Refusal(str(why))

@@ -150,7 +150,7 @@ def changed_only_where_owned(test, before, after):
 class AnExifBlockReadAndWritten(unittest.TestCase):
     def edited(self, body, changes, **kw):
         result = eb.edit(body, changes, **kw)
-        self.assertIsInstance(result, eb.Edited, result)
+        self.assertIsInstance(result, containers.Edited, result)
         self.assertEqual(unowned(body), unowned(result.body))
         changed_only_where_owned(self, body, result.body)
         return result
@@ -201,8 +201,8 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         self.assertIsInstance(eb.edit(tail, change), eb.DoesNotFit)
         self.assertEqual(tail.index(b"\x01junk"), self.edited(tail, change, grow=True).body.index(b"\x01junk"))
         many = {"XPKeywords": "k" * 40000}
-        self.assertIsInstance(eb.edit(body, many, grow=True), eb.Refusal)
-        self.assertIsInstance(eb.edit(body, many, grow=True, limit=99999), eb.Edited)
+        self.assertIsInstance(eb.edit(body, many, grow=True), containers.Refusal)
+        self.assertIsInstance(eb.edit(body, many, grow=True, limit=99999), containers.Edited)
 
     def test_an_xp_tag_of_type_2_reads_as_ucs2_and_is_written_as_type_1(self):
         # 1,392 of 1,500 photo_index XPComments sampled are type 2; 337 of them hold ASCII bytes, which are read
@@ -225,13 +225,27 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         self.assertNotIn(b"A day at the lake", cleared)
         again = self.edited(cleared, {"ImageDescription": "A day at the lake"}).body
         self.assertEqual("A day at the lake", eb.read(again)["ImageDescription"])
-        self.assertIsInstance(eb.edit(block(ifd0={}), {"ImageDescription": "Lake"}, grow=True), eb.Refusal)
+        self.assertIsInstance(eb.edit(block(ifd0={}), {"ImageDescription": "Lake"}, grow=True), containers.Refusal)
+
+    def test_a_new_tag_is_laid_over_zero_bytes_nothing_points_at_and_never_over_others(self):
+        def with_gap(gap):
+            return b"Exif\0\0" + layout_tiff("<", [
+                ("ifd0", [(0x0112, 3, struct.pack("<H", 1)), (0x8769, 4, lambda p, _at: struct.pack("<I", p.get("exif", 0)))],
+                 gap),
+                ("exif", [(0x9000, 7, b"0232")], b"")], 0, b"")
+
+        result = self.edited(with_gap(bytes(16)), {"ImageDescription": "Oak"})
+        self.assertEqual("Oak", eb.read(result.body)["ImageDescription"])
+        # 0xAB bytes lie between IFD0's table and the Exif IFD, named by nothing: a new entry is not laid over them
+        marked = with_gap(b"\xab" * 16)
+        self.assertIsInstance(eb.edit(marked, {"ImageDescription": "Oak"}), containers.Refusal)
+        self.assertIsInstance(eb.edit(marked, {"ImageDescription": "Oak"}, grow=True), containers.Refusal)
 
     def test_orientation_takes_one_to_eight_and_an_odd_one_held_is_left_alone(self):
         self.assertEqual(8, eb.read(self.edited(BIG, {"Orientation": 8}).body)["Orientation"])
         # (a value equal to the one held is not looked at: True, given for a held 1, changes no byte)
         for bad in (0, 9, "6", 6.0):
-            self.assertIsInstance(eb.edit(BIG, {"Orientation": bad}), eb.Refusal)
+            self.assertIsInstance(eb.edit(BIG, {"Orientation": bad}), containers.Refusal)
         zero = block(">", ifd0={0x0112: (3, b"\0\0")})  # 1 of 3,000 photo_index files in the census
         self.assertEqual(zero, self.edited(zero, {"Orientation": 0}).body)
         # stored as a LONG (2 of photo_index's 1,064 sampled Orientations): read, and written back as a SHORT
@@ -244,7 +258,7 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         for change in ({"ImageDescription": "a\0b"}, {"ImageDescription": 3}, {"DateTimeOriginal": "2019-07-14"},
                        {"SubSecTime": "4a"}, {"XPComment": "a" + chr(0xD800)}, {"Rating": "3"}):
             with self.subTest(change):
-                self.assertIsInstance(eb.edit(LITTLE, change), eb.Refusal)
+                self.assertIsInstance(eb.edit(LITTLE, change), containers.Refusal)
         utf8 = self.edited(LITTLE, {"ImageDescription": "Caf" + chr(0xE9) + " at the lake"}).body
         self.assertIn(b"Caf\xc3\xa9 at the lake\0", utf8)
 
@@ -260,7 +274,7 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         self.assertEqual("Kelp", eb.read(self.edited(nokia, {"XPComment": "Kelp"}).body)["XPComment"])
         for grow in (False, True):
             found = eb.edit(nokia, {"XPComment": "Kites over the dunes"}, grow=grow)
-            self.assertIsInstance(found, eb.Refusal)
+            self.assertIsInstance(found, containers.Refusal)
             self.assertIn("not an IFD", found.reason)
 
     def test_what_it_does_not_wholly_understand_is_refused(self):
@@ -295,7 +309,7 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
             with self.subTest(why):
                 for grow in (False, True):
                     found = eb.edit(body, change, grow=grow, **(kw[0] if kw else {}))
-                    self.assertIsInstance(found, eb.Refusal)
+                    self.assertIsInstance(found, containers.Refusal)
                     self.assertIn(words, found.reason)
 
     def test_an_ifd_loop_and_a_note_pointing_past_the_block_end_well(self):
@@ -305,8 +319,8 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         far = b"\0\1" + struct.pack("<HHII", 7, 2, 8, 40000) + bytes(30)
         for body in (bytes(loop), block("<", note=far)):
             found = eb.edit(body, {"XPComment": "Kites over the dunes"})
-            self.assertIsInstance(found, (eb.Edited, eb.Refusal))
-            if isinstance(found, eb.Edited):
+            self.assertIsInstance(found, (containers.Edited, containers.Refusal))
+            if isinstance(found, containers.Edited):
                 self.assertEqual(unowned(body), unowned(found.body))
 
 
@@ -317,10 +331,10 @@ class AnExifBlockDamagedAnywhere(unittest.TestCase):
     BODY = block(">", note=note_ifd(">"))
 
     def check(self, body):
-        self.assertIsInstance(eb.read(body), (dict, eb.Refusal))
+        self.assertIsInstance(eb.read(body), (dict, containers.Refusal))
         result = eb.edit(body, self.CHANGES)
-        if not isinstance(result, eb.Edited):
-            self.assertIsInstance(result, (eb.Refusal, eb.DoesNotFit))
+        if not isinstance(result, containers.Edited):
+            self.assertIsInstance(result, (containers.Refusal, eb.DoesNotFit))
             return 0
         self.assertEqual(len(body), len(result.body))
         held = eb.read(result.body)
