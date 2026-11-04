@@ -37,7 +37,7 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
   `<?xpacket>` wrapper and its padding and the first `rdf:about`. A packet where a target property occurs twice or in
   attribute form, or is not well-formed, is refused to ExifTool or with a plain sentence. Extended XMP: main packet edited,
   extension untouched (111 of 3,000 in photo_index, 80 of 2,065 in kr-track, counted 2026-11-03).
-- IPTC: rewrite only 8BIM 0x0404 (2:25, 2:120, 2:05, 1:90 charset); the 8BIM 0x0425 IPTCDigest: ExifTool never refreshes it (#2408; 1,902 of 2,065 in kr-track differ from the block), so refreshing it is new behaviour for the owner to decide;
+- IPTC: rewrite only 8BIM 0x0404 (2:25, 2:120, 2:05, 1:90 charset); the 8BIM 0x0425 IPTCDigest is left alone (owner 2026-11-03, DECISIONS);
   keep every other 8BIM resource; pad with the dummy resource (`PAD_RESOURCE` 0x0DAC).
 - Nothing foreign is dropped; TagPup adds, never removes.
 - Dates: EXIF as 19-char local wall clock, no zone invented; XMP ISO 8601 keeping an existing offset; OffsetTime* untouched.
