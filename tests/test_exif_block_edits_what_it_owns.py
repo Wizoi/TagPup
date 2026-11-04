@@ -234,6 +234,11 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
             self.assertIsInstance(eb.edit(BIG, {"Orientation": bad}), eb.Refusal)
         zero = block(">", ifd0={0x0112: (3, b"\0\0")})  # 1 of 3,000 photo_index files in the census
         self.assertEqual(zero, self.edited(zero, {"Orientation": 0}).body)
+        # stored as a LONG (2 of photo_index's 1,064 sampled Orientations): read, and written back as a SHORT
+        long = block(">", ifd0={0x0112: (4, struct.pack(">I", 6))})
+        self.assertEqual(6, eb.read(long)["Orientation"])
+        turned = self.edited(long, {"Orientation": 8}).body
+        self.assertEqual(struct.pack(">HHIH", 0x0112, 3, 1, 8), turned[entry_at(turned, 0x0112):][:10])
 
     def test_a_value_exif_cannot_carry_is_refused(self):
         for change in ({"ImageDescription": "a\0b"}, {"ImageDescription": 3}, {"DateTimeOriginal": "2019-07-14"},
