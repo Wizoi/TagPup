@@ -108,6 +108,20 @@ class TestExtractCaptions(unittest.TestCase):
     def test_blank_captions_are_dropped(self):
         self.assertEqual(extract_captions({"XMP:Description": "   "}), [])
 
+    def test_a_blank_xmp_copy_holds_none_so_iptcs_is_read(self):
+        """A whitespace-only XMP value, or a list of them, is no caption and no keyword: IPTC's copy is the one read."""
+        self.assertEqual(["abstract"], extract_captions({"XMP:Description": "  ", "IPTC:Caption-Abstract": "abstract"}))
+        self.assertEqual(["Beach"], extract_tags({"XMP:Subject": [" ", ""], "IPTC:Keywords": ["Beach"]}))
+        self.assertEqual(["Beach"], extract_tags({"XMP:Subject": " ", "IPTC:Keywords": "Beach"}))
+
+    def test_smart_rename_names_a_photo_by_the_caption_the_index_shows(self):
+        """XMP's description wins over IPTC's caption whichever ExifTool answered first; the title only when neither."""
+        from tagpup.files.names import caption_for_name
+        self.assertEqual("xmp", caption_for_name({"IPTC:Caption-Abstract": "iptc", "XMP:Description": "xmp"}))
+        self.assertEqual("iptc", caption_for_name({"XMP:Title": "title", "IPTC:Caption-Abstract": "iptc"}))
+        self.assertEqual("title", caption_for_name({"XMP:Title": " title "}))
+        self.assertEqual("", caption_for_name({"XMP:Description": " "}))
+
 
 class TestExtractPeopleWithoutADatabase(unittest.TestCase):
     """Without a library the one face root is People, the root a new library is given.

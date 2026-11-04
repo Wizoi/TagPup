@@ -4,7 +4,7 @@ import logging
 import os
 import time
 
-from tagpup.core import paths
+from tagpup.core import paths, vocabulary
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, lock_owners
@@ -41,18 +41,10 @@ def preserved_name(meta):
 
 
 def caption_for_name(meta):
-    """The caption a photo's new name carries: the first of its description, caption
-    and title fields to hold one, in the order ExifTool gave them."""
-    title = ""
-    for _base, value in _field(meta, "Description", "Caption-Abstract", "Title"):
-        if value:
-            if isinstance(value, list) and value:
-                title = str(value[0]).strip()
-            else:
-                title = str(value).strip()
-            if title:
-                break
-    return title.strip()
+    """The caption a photo's new name carries: the first caption the index shows for it (vocabulary.extract_captions:
+    the description, XMP's when it holds one, else IPTC's, then the title); "" for none."""
+    captions = vocabulary.extract_captions(meta)
+    return captions[0] if captions else ""
 
 
 def read_for_renaming(exiftool_path, photo_paths):

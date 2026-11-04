@@ -42,7 +42,8 @@ def run(db_path, apply):
     left, _rows = refresh_rows.apart(library)
     said += ["Written: %d row(s). %s" % (result.changed, maintenance.recorded(result, db_path)),
              "Read again: %d row(s) still apart." % left["apart"]]
-    return said, result.ok and left["apart"] == len(result.skipped)
+    # A skipped row was saved meanwhile and is derived by the rule already, so it is not counted apart.
+    return said, result.ok and left["apart"] == 0
 
 
 def main(argv=None):
