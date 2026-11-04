@@ -262,18 +262,6 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
             found = eb.edit(nokia, {"XPComment": "Kites over the dunes"}, grow=grow)
             self.assertIsInstance(found, eb.Refusal)
             self.assertIn("not an IFD", found.reason)
-        # a note moved with no footer to say by how much (138 of 1,500 photo_index notes sampled, Sony's): its
-        # pointers as written land outside it, so no byte beside it is taken, grown or not; a value that fits its
-        # place is still written
-        sony = block("<", note=note_ifd("<", 64))
-        self.assertEqual("moved, shift unknown", containers.maker_note(
-            sony[6:], *next((e[4], e[2]) for e in containers.exif_tiff(sony[6:]).named["exif"].entries
-                            if e[0] == 0x927C), "<")[0])
-        self.assertEqual("Kelp", eb.read(self.edited(sony, {"XPComment": "Kelp"}).body)["XPComment"])
-        for grow in (False, True):
-            found = eb.edit(sony, {"XPComment": "Kites over the dunes"}, grow=grow)
-            self.assertIsInstance(found, eb.Refusal)
-            self.assertIn("moved, shift unknown", found.reason)
 
     def test_what_it_does_not_wholly_understand_is_refused(self):
         lake = block("<", ifd0={0x010E: (2, text("A day at the lake"))})

@@ -235,8 +235,7 @@ the fields' values; `edit(body, changes, grow=False, limit=65533)` answers `Edit
 zeroed; a longer one goes after `used` at an even offset, its old bytes zeroed; a cleared field loses its entry (the
 table shrinks, its last 12 bytes zeroed). The block keeps its length; `grow` only adds bytes at its end, after
 everything. Bytes no IFD points at are taken only with no MakerNote, or one whose pointers land inside it (TIFF- or
-note-relative, its own header, none, moved by the Canon footer's shift); not beside a note moved by a shift no record
-says (main session, 2026-11-03), whose pointers as written land outside it. An edit is walked
+note-relative, its own header, none, moved by the Canon footer's shift, moved by a shift unknown). An edit is walked
 again and read back, and every byte it changed is checked to be an owned table's, an owned value's or zero, before it
 is answered. The editor takes one segment: a file with two (photo_index 2 of the 1,500 below) is its caller's to
 refuse. Scenario test: `tests/test_exif_block_edits_what_it_owns.py` (F1), which fails on each of 11 deliberately
@@ -247,16 +246,13 @@ Counted this session, read-only, in memory, nothing written: a seeded sample (se
 400 and renton_parkrun 400 JPEGs; 2,297 with one EXIF segment, every one read, none refused, and writing back the
 values each held changed no byte in all 2,297. Big-endian 1,433 / 6 / 3, little-endian 64 / 394 / 397 (photo_index /
 kr-track / renton_parkrun). MakerNotes: none 617 / 400 / 400; moved by the Canon footer's shift 669, shift unknown 138,
-own header 12, note-relative 9, not an IFD 46, the Canon footer wrong 1, under 8 bytes 5 (photo_index). Recounted
-after the shift-unknown change on the same sample, drawn again from the libraries (`random.Random(7)` over
-`inspection.photo_files`' JPEGs): every count of this paragraph and the old code's fit rates came out as before.
+own header 12, note-relative 9, not an IFD 46, the Canon footer wrong 1 (photo_index).
 
 - **Refused, with instances** (each grown or not): a new tag, since data follows its IFD's table in every absent case
   of the sample (ImageDescription 415 / 396 / 399, Orientation 433 / 397 / 400, XPComment 87 / 396 / 399,
   DateTimeOriginal 28 / 0 / 0; moving the table into room made under `grow` would allow it, M5's choice); a new tag in
-  an IFD out of tag order (IFD0 8, Exif 2, photo_index); a longer value beside a MakerNote that is no IFD (46), whose
-  Canon footer's shift lands a pointer outside it (1), or moved by a shift unknown (138, every one Sony's, every one's
-  pointers as written landing before the note). The one new tag that fits is one a clear has just made room for.
+  an IFD out of tag order (IFD0 8, Exif 2, photo_index); a longer value beside a MakerNote that is no IFD (46) or whose
+  Canon footer's shift lands a pointer outside it (1). The one new tag that fits is one a clear has just made room for.
 - **Refused, no instance in the sample**: not an EXIF segment; over 65,533 bytes, read or made; a structure the walk
   cannot follow (an IFD or a value outside the block, an entry of no TIFF type); strips, tiles, SubIFDs or an entry of
   type IFD; an owned tag twice, of a type TagPup does not read (Orientation SHORT or LONG, count 1; an XP tag BYTE or
@@ -264,11 +260,9 @@ after the shift-unknown change on the same sample, drawn again from the librarie
   Values: Orientation outside 1 to 8 (one held, 0 in 1 of the census's 3,000, given back changes no byte), a NUL, a date
   not `YYYY:MM:DD HH:MM:SS`, SubSec not digits, a lone surrogate, a field it does not own.
 - **Fit**, photo_index's 1,500, each change alone (a 34-character caption; one keyword added; a date, an Orientation, a
-  SubSec changed), of the tags present: dates, Orientation and SubSec always fit; ImageDescription 128 fit, 772 need
-  `grow`, 174 refused; XPComment 34 / 1,193 / 175; XPKeywords 0 / 1,049 / 82 (with a shift-unknown note's slack
-  taken, as first built: 910 / 36, 1,322 / 46, 1,087 / 44: 305 of 3,607 changes refused that fitted, all grown).
-  kr-track and renton_parkrun: every date and SubSec present fits; of the captions and keywords present, 1 fits
-  (a kr-track ImageDescription) and the rest need `grow` (369 and 249 changes).
+  SubSec changed), of the tags present: dates, Orientation and SubSec always fit; ImageDescription 128 fit, 910 need
+  `grow`, 36 refused; XPComment 34 / 1,322 / 46; XPKeywords 0 / 1,087 / 44. kr-track and renton_parkrun: every date and
+  SubSec present fits, every caption and keyword present needs `grow` (369 and 249 changes).
 - **XP tags**: read as UCS-2 little-endian whatever their type (type 2 in 1,392 of 1,402 photo_index XPComments; 337 of
   those hold printable ASCII bytes up to their first NUL, read, as ExifTool reads them, as UCS-2 characters), written as type 1 (BYTE) as ExifTool
   writes them. ImageDescription is written as UTF-8, as ExifTool writes it.

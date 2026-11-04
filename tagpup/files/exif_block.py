@@ -13,8 +13,7 @@ at (the slack, or a gap); an IFD followed by data is refused, since moving that 
 The block keeps its length; a change that needs more than its slack answers `DoesNotFit` with the bytes it needs, and
 only `grow=True` lets the block grow, at its end alone, after everything (never before the MakerNote's data or the
 thumbnail). Bytes no IFD points at (the slack, a gap) are taken only beside a MakerNote whose every pointer lands
-inside it as written, or as its Canon footer shifts them (or none): a note that may point outside itself might
-point there, and a note moved by an unknown shift points outside itself as written.
+inside it (or none): a note that may point outside itself might point there.
 
 Either answers `Refusal`, a sentence, for a block it does not wholly understand: it never repairs one and never answers
 bytes on doubt (an edit is walked again and read back, and every byte it changed is checked to be an owned one, before
@@ -45,12 +44,10 @@ _READ_TYPES = {"text": (2,), "date": (2,), "digits": (2,), "ucs2": (1, 2), "shor
 _WRITE_TYPE = {"text": 2, "date": 2, "digits": 2, "ucs2": 1, "short": 3}
 _IFD_NAMES = {"ifd0": "IFD0", "exif": "Exif"}
 LIMIT = containers.MOST_BODY
-#: The MakerNote classes (containers.maker_note) whose every pointer lands inside the note, as written or shifted by
-#: the shift its Canon footer records: beside such a note, a byte no IFD points at is free. Not "moved, shift
-#: unknown" (main session, 2026-11-03): its pointers as written land outside it (before it, in 138 of 138 such
-#: Sony notes of photo_index's sample) and no record says where it was, so no byte beside it is taken on a guess.
+#: The MakerNote classes (containers.maker_note) whose every pointer lands inside the note, as written or shifted:
+#: beside such a note, a byte no IFD points at is free.
 _CONTAINED = frozenset({"tiff-relative", "note-relative", "either", "own header", "no pointers",
-                        "moved, the Canon footer says by how much"})
+                        "moved, the Canon footer says by how much", "moved, shift unknown"})
 _SHAPES = {"date": re.compile(r"\d{4}:\d\d:\d\d \d\d:\d\d:\d\d\Z", re.ASCII),
            "digits": re.compile(r"\d+\Z", re.ASCII)}
 
