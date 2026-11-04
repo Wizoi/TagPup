@@ -83,6 +83,17 @@ read-only (`file_changes`' `read_only`, the one failure no retry changes), recor
 (`photo_fingerprints.adopt`); any other photo stays owed: the bake takes away the index's rows of this run's photos
 before it plans, so only those three give one back, however the bake ends; an index that ends before its bake (an error, a Ctrl+C) takes them away too (`tests/test_the_index_writes_the_bake.py`).
 
+## The copy the index reads, and a write that leaves copies stale (M4, merge 4a)
+
+A photo's tags and captions are read from XMP when it holds them, IPTC's copy only when XMP holds none
+(`vocabulary.KEYWORD_COPIES`, `CAPTION_COPIES`; DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS). Each value is
+read from its own pair (Subject or Keywords, Description or Caption-Abstract, Title or ObjectName), and a field present
+but blank holds none: 12,469 photo_index rows hold an empty XMP description beside an IPTC caption, 12,473 an XMP title
+and only an IPTC caption, 151 IPTC keywords and no XMP ones (4 of them with an XMP packet) (counted 2026-11-03). A write
+answers the fields it left as they were (`field_values.write`; `fields.PATCH_LEAVES`, the non-XMP fields a keyword or
+caption write sets), and the file is verified, recorded and journaled as `fields.as_patched` says it holds them
+(`file_changes._carry`). Every write still writes every copy, so that answer is always empty until merge 4b.
+
 ## Rows removed by a whole sync (DECISIONS 2026-10-28)
 
 The one place is `sync.look`; nothing else removes a row for a missing file (the charter's contract, point 4).
