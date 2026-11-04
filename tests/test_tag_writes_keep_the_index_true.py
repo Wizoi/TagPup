@@ -339,6 +339,38 @@ class XmpIsTheCopyRead(FilesCase):
         saved = save("Relay at the lake, later")
         self.assertEqual((True, "Relay at the lake, later"), (saved.ok, field_of(a, "XMP:Description")))
 
+    def test_a_row_a_server_saved_between_the_plan_and_the_write_is_skipped_and_the_run_succeeds(self):
+        # The server has the library open: a row it saves after the plan was read is derived by the new rule already.
+        a = self.made("a.jpg", {"XMP:Description": "Relay at the lake", "IPTC:Caption-Abstract": "Relay at dusk"})
+        photo_id = self.rows("SELECT id FROM photos WHERE path = ?", (a,))[0][0]
+        conn = tagpup_db.connect(self.library.path)
+        try:
+            conn.execute("UPDATE photos SET captions = ? WHERE id = ?",
+                         (json.dumps(["Relay at dusk", "Relay at the lake"]), photo_id))
+            conn.commit()
+        finally:
+            conn.close()
+        real, planned = refresh_rows.apart, []
+
+        def apart_then_a_save(library):
+            found = real(library)
+            if not planned:   # the plan has read the row; the server now saves it, derived by the new rule
+                planned.append(1)
+                conn = tagpup_db.connect(library.path)
+                try:
+                    conn.execute("UPDATE photos SET captions = ? WHERE id = ?",
+                                 (json.dumps(["Relay at the lake"]), photo_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+            return found
+
+        with patch.object(refresh_rows, "apart", apart_then_a_save):
+            code, said = self.rederive("--apply")
+        self.assertEqual(0, code, said)
+        self.assertIn("Skipped", said)
+        self.assertIn("Read again: 0 row(s) still apart.", said)
+
     def test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags(self):
         # 151 photo_index photos hold IPTC keywords and no XMP ones, 4 of them in a file with an XMP packet (2026-11-03).
         a = self.made("a.jpg", {"IPTC:Keywords": ["Beach", "Relay"], "XMP-xmpMM:DocumentID": "xmp.did:0001"},

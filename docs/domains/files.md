@@ -99,7 +99,8 @@ file's XMP; kr-track and renton_parkrun none; counted 2026-11-03), and a save fr
 photo indexed or saved afterwards is derived by the rule (the indexer, `follow_fields`); the rows of before are derived
 again, once, from their own raw_metadata by `scripts/rederive_captions.py` (`refresh_rows.rederive`: a dry run that
 counts and rehearses, `--apply` one journaled change, undoable, the search words with it), run with `--apply` on each
-library before this merge is installed.
+library before the install and again after it (a save by the still-installed old server between the run and
+the install re-derives that row the old way; the script is idempotent).
 
 ## Rows removed by a whole sync (DECISIONS 2026-10-28)
 
