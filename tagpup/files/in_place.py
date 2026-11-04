@@ -212,10 +212,9 @@ def _fitted(old, new, written):
         if new.stray:
             return None
         pad = old.size - least
-        if pad and (pad < 12 or pad % 2):
+        if pad and (pad < containers.LEAST_RESOURCE or pad % 2):
             return None
-        segment = segment[:least] + (b"8BIM" + containers.PAD_RESOURCE.to_bytes(2, "big") + bytes(2)
-                                     + (pad - 12).to_bytes(4, "big") + bytes(pad - 12) if pad else b"")
+        segment = segment[:least] + (containers.pad_resource(pad) if pad else b"")
     return segment[:2] + (old.size - 2).to_bytes(2, "big") + segment[4:]
 
 
