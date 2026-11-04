@@ -36,6 +36,7 @@ from tagpup.services import (
     face_batch,
     face_people,
     file_changes,
+    refresh_rows,
     retire_photo_vectors,
     sync,
     tagging,
@@ -108,6 +109,7 @@ UNDO_CHECKS = {
     "time shift": None,
     "rotate": None,
     "faces_from_tags": None,
+    refresh_rows.REDERIVE_OPERATION: None,
 }
 UNDO_CHECKS.update({operation: None for operation in bulk_edit.OPERATIONS.values()})
 UNDO_CHECKS.update({operation: None for operation in face_batch.DESCRIPTIONS.values()})
