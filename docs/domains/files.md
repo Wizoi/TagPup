@@ -281,6 +281,51 @@ after the shift-unknown change on the same sample, drawn again from the librarie
   wrote; a file with MPF when the EXIF block grows (MPF's offsets count from its own segment, which then moves); a
   rewrite in a file, byte for byte against ExifTool's (M4's shadow comparison).
 
+## The IPTC block editor
+
+`tagpup/files/iptc_block.py` (M3 of docs/PLAN_OWN_METADATA.md; no caller yet, M4 wires it): pure, an APP13 segment's
+body (`Photoshop 3.0` and its 8BIM resources) in and out. It owns three datasets (`DATASETS`): 2:05 ObjectName (the
+title), 2:25 Keywords and 2:120 Caption-Abstract. The layout is containers.py's, the one statement of it, read by the
+census, the in-place patch and this editor alike: `photoshop_resources`, `resource`, `pad_resource` (the dummy resource
+the patch lays, `PAD_RESOURCE`, `LEAST_RESOURCE`) and `iptc_records`, the one walk of a block's datasets. `read` answers
+the values; `edit(body, changes)` answers `Edited(body, length_changed)` or `Refusal(reason)`. Only the 0x0404
+resource's data changes, and in it only the owned datasets (one held is rewritten where its first one was, a new one goes
+at the end of its record), the character set 1:90 and a missing version dataset; every other dataset and resource keeps
+its bytes, the IPTCDigest (0x0425) among them, left stale (DECISIONS 2026-11-03). The dummy resource at the end takes up
+or gives the room, so the body keeps its length when the change fits; `length_changed` says it did not, for the caller to
+choose a patch or a rewrite. No 1:90 reads as cp1252, as ExifTool reads it; a block stays so while every owned value fits
+cp1252, and is else given 1:90 UTF-8 and its owned values written in UTF-8. An edit is walked again and read back, its
+values, character set and every kept dataset and resource compared, before it is answered. A file with two APP13
+segments is its caller's to refuse (`containers.Jpeg.iptc` is None). Scenario test:
+`tests/test_iptc_block_edits_what_it_owns.py` (F1), which fails on each of 7 deliberately broken copies of the module
+(the read-back skipped, the `kept` check skipped, each with and without a fault of the layout behind it; no version
+dataset added; zero bytes after the last dataset kept).
+
+Counted read-only, in memory, nothing written: single-APP13 bodies 1,467 / 2,059 / 1,302 (photo_index's seed-7 1,500,
+every kr-track and renton_parkrun JPEG); photo_index's recounted this session (1,467, 6 refused, 1,461 held values,
+the fit rates and the version and zero counts below came out the same), the rest the building worker's.
+
+- **Refused, with instances**: 6 photo_index blocks whose 0x0404 data does not start with a dataset.
+- **Refused, no instance**: stray bytes after the last resource, two 0x0404 resources, an extended length, a 1:90 other
+  than UTF-8, an owned title or caption written twice, a value not text in the block's character set; text outside
+  ASCII elsewhere in a block with no 1:90 when a change needs UTF-8 (giving it 1:90 would change how that text reads);
+  over 65,533 bytes, read or made; a NUL or a C0 control but tab, line feed and carriage return in a value.
+- **Held values change no byte**: 1,461 / 1,461, 2,059 / 2,059, 1,302 / 1,302.
+- **Fit**, a first edit, the length kept: a keyword added 4 / 1,461, 0 / 2,059, 0 / 1,302; a 34-character caption 127,
+  3, 0; a title 368, 9, 0. Once an edit and its undo have laid the dummy resource, redoing a keyword or a caption keeps
+  the length in every block.
+- **Against ExifTool** (the building worker's 12 copies of sampled headers, an ASCII and a non-cp1252 value each): 22
+  of 24 APP13 bodies byte-identical; the 2 that differ by design: for a value outside cp1252 in a block with no 1:90,
+  ExifTool writes `?` and no 1:90, TagPup adds 1:90 UTF-8 (and 1:00) and writes the letter.
+- **Decided here, as ExifTool does** (no file changes today: no caller yet): the version datasets 1:00 and 2:00 added to
+  a record that lacks one (photo_index: 1,441 of 1,460 blocks with records lack 1:00, 1,109 lack 2:00); zero bytes after
+  the last dataset dropped (754 of 1,461); a trailing NUL read off a value (1,041 photo_index captions end in one); a
+  value cut by `fields.as_written`, which every write of a value passes today before ExifTool, so the file holds what an
+  ExifTool write of TagPup's leaves (ExifTool with `-m` cuts nothing itself; without it, it cuts at 64 bytes: probed
+  this session on a made-up JPEG).
+- **Not verified**: Windows Photo Gallery or Lightroom reading a block whose IPTCDigest is stale after TagPup's edit
+  (#2408); a rewrite in a file, byte for byte against ExifTool's (M4's shadow comparison).
+
 ## By design (each row closed `decided:`)
 
 - **The indexer's per-photo reads have no deadline** (the header for the read-ahead's estimate, the decodes, the stamp,
