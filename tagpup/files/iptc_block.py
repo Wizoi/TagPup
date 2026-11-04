@@ -6,7 +6,7 @@ bytes out; no file. A JPEG with two APP13 segments (Photoshop splits a large blo
 
 `read(body)` is {field: value} of the owned datasets the block holds (DATASETS; Keywords a list of str, the rest a str),
 each read in the block's character set with a trailing run of NULs off. `edit(body, changes)` sets each named field
-(None, '' or [] clears it), each value cut as a write cuts it (`fields.as_written`), and answers `Edited`: only the 0x0404
+(None, '' or [] clears it), each value cut as a write cuts it (`fields.as_written`), and answers `containers.Edited`: only the 0x0404
 resource's data changes, and in it only the owned datasets (a dataset held is rewritten where its first one was, a new
 one goes at the end of its record), the character set (1:90) and the version dataset (1:00, 2:00) of a record that
 lacks one, as ExifTool adds them; every other dataset and every other resource, the IPTCDigest (0x0425) among
@@ -17,12 +17,11 @@ the room as the in-place patch lays it; `length_changed` says it did not fit, fo
 rewrite. A value equal to what the block holds changes no byte.
 
 The character set: no 1:90 is cp1252, as ExifTool reads it; a block without one stays so while every owned value fits in
-cp1252, and else is given 1:90 UTF-8 (ESC % G) and its owned values are written in UTF-8. Either answers `Refusal`, a
+cp1252, and else is given 1:90 UTF-8 (ESC % G) and its owned values are written in UTF-8. Either answers `containers.Refusal`, a
 sentence, for a block it does not wholly understand: it never repairs one, and an edit is read back before it is
 answered. What it refuses, with the counts behind each rule: docs/domains/files.md, "The IPTC block editor".
 """
 import re
-from dataclasses import dataclass
 
 from tagpup.core import fields
 from tagpup.files import containers
@@ -37,18 +36,6 @@ VERSIONS = {1: ((1, 0), b"\0\x04"), 2: ((2, 0), b"\0\x04")}
 LIMIT = containers.MOST_BODY
 #: What a value may not hold: NUL and the C0 controls but tab, line feed and carriage return.
 _NOT_TEXT = re.compile("[%s-%s%s%s%s-%s]" % (chr(0), chr(8), chr(11), chr(12), chr(14), chr(31)))
-
-
-@dataclass(frozen=True)
-class Refusal:
-    reason: str
-
-
-@dataclass(frozen=True)
-class Edited:
-    body: bytes
-    #: The body's length is not what it was: the change did not fit, and its segment must grow or shrink.
-    length_changed: bool
 
 
 class _Refused(Exception):
@@ -118,7 +105,7 @@ def read(body, limit=LIMIT):
     try:
         return dict(_Block(body, limit).values)
     except _Refused as why:
-        return Refusal(str(why))
+        return containers.Refusal(str(why))
 
 
 def _written(field, value):
@@ -139,6 +126,11 @@ def _wanted(field, value):
     value = _written(field, value)
     if any(_NOT_TEXT.search(text) for text in ([value] if isinstance(value, str) else value or [])):
         raise _Refused("A value of %s holds a NUL or a control character." % field)
+    for text in ([value] if isinstance(value, str) else value or []):
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise _Refused("A value of %s holds a lone surrogate, which no encoding carries." % field) from None
     return value
 
 
@@ -198,7 +190,7 @@ def edit(body, changes, limit=LIMIT):
         wanted = {field: _wanted(field, changes[field]) for field in DATASETS if field in changes}
         moved = {field: value for field, value in wanted.items() if _written(field, before.values.get(field)) != value}
         if not moved:
-            return Edited(body, False)
+            return containers.Edited(body, False)
         expected = {field: value for field, value in {**before.values, **moved}.items() if value is not None}
         charset = before.charset
         if charset == "cp1252" and not _encodes(expected.values(), charset):
@@ -214,9 +206,9 @@ def edit(body, changes, limit=LIMIT):
         after = _Block(result, limit)
         if after.values != expected or after.charset != charset or after.kept(added) != before.kept(added):
             raise _Refused("The edited IPTC block does not read back as written.")
-        return Edited(result, len(result) != len(body))
+        return containers.Edited(result, len(result) != len(body))
     except _Refused as why:
-        return Refusal(str(why))
+        return containers.Refusal(str(why))
 
 
 def _encodes(values, charset):

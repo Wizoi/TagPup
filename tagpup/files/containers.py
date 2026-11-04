@@ -44,6 +44,10 @@ LEAST_RESOURCE = 12
 IPTC_RESOURCE = 0x0404
 #: The longest body a JPEG segment holds: its length field, at most 65,535, counts its own two bytes.
 MOST_BODY = 0xFFFF - 2
+#: The fewest bytes of whitespace an XMP packet keeps between </x:xmpmeta> and <?xpacket end=: the one line break
+#: ExifTool ends its padding with. The slack a packet gives, the padding an edit leaves and the patch's fit all count
+#: from it (`xmp_packet.padding` lays the bytes).
+XMP_PADDING_LEAST = 1
 
 _XMP_HEAD = b"http://ns.adobe.com/xap/1.0/\0"
 _XMP_EXTENSION_HEAD = b"http://ns.adobe.com/xmp/extension/\0"
@@ -62,6 +66,22 @@ _UNFOLLOWED = frozenset({0x0111, 0x0144, 0x014A})
 #: Lengths of the vendor headers before a MakerNote's IFD (none: Canon; 6 "AOC"; 8 "OLYMP"; 12 "SONY DSC", "Panasonic",
 #: "FUJIFILM", "OLYMPUS II"; 14 "Apple iOS"; 18 Nikon's type 3, whose TIFF header is found first).
 NOTE_HEADERS = (0, 6, 8, 10, 12, 14, 18)
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """What the three block editors (`xmp_packet`, `exif_block`, `iptc_block`) answer for input they do not wholly
+    understand or a change they will not make: a sentence, nothing changed."""
+    reason: str
+
+
+@dataclass(frozen=True)
+class Edited:
+    """What an editor answers for a change made: the new bytes of the packet, EXIF body or APP13 body, and whether the
+    length is not what it was (the change did not fit, or `grow` was given): the segment must then be rewritten, not
+    patched."""
+    body: bytes
+    length_changed: bool
 
 
 @dataclass(frozen=True)
@@ -404,7 +424,7 @@ def _segment(marker, offset, size, body):
 
 
 def _xmp_slack(packet):
-    """The whitespace between </x:xmpmeta> and <?xpacket end=, less the one newline a rewrite keeps; 0 when the packet
+    """The whitespace between </x:xmpmeta> and <?xpacket end=, less XMP_PADDING_LEAST; 0 when the packet
     has no such ending or something other than whitespace sits there."""
     end = packet.rfind(_PACKET_END)
     meta = packet.rfind(_XMPMETA_END, 0, end) if end >= 0 else -1
@@ -413,7 +433,7 @@ def _xmp_slack(packet):
     between = packet[meta + len(_XMPMETA_END):end]
     if between.strip(b" \t\r\n"):
         return 0
-    return max(len(between) - 1, 0)
+    return max(len(between) - XMP_PADDING_LEAST, 0)
 
 
 def _exif_slack(tiff):
