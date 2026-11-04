@@ -11,6 +11,13 @@ Three ways it did not:
   tagged in bulk was re-read with ExifTool on every scan afterwards.
 * TagTuner's bulk writers wrote the files and never told the index at all.
 
+And the copy it reads: XMP's when the file holds keywords or a caption there, IPTC's only when XMP holds none
+(DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS; vocabulary.KEYWORD_COPIES, CAPTION_COPIES), on real JPEGs
+written by the real ExifTool (XmpIsTheCopyRead). Reading the union of both copies fails
+test_a_keyword_left_only_in_iptc_is_no_tag_and_a_rename_does_not_bring_it_back and
+test_the_caption_shown_is_xmps_and_a_save_from_it_is_not_refused; preferring an XMP packet over IPTC whatever it holds
+fails test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags.
+
 Rows are seeded the way the indexer writes them -- native paths, and raw_metadata in
 the shape real rows have, bare aliases and all -- never through the code under test.
 ExifTool is replaced by a stand-in that changes the file the way a real write does.
@@ -25,11 +32,13 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import photo_rows  # noqa: E402
 from handler_harness import Library  # noqa: E402
+from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requires_exiftool, write_outside  # noqa: E402
 
 from tagpup.core.fields import keyword_fields  # noqa: E402
 from tagpup.core.vocabulary import extract_tags  # noqa: E402
-from tagpup.services import tagging  # noqa: E402
+from tagpup.services import photos as photo_actions, tagging  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 
 KEYWORDS = ["Beach", "Cross Country", "People/Rowan Thackeray"]
@@ -222,6 +231,59 @@ class TestBulkWritersTellTheIndex(IndexCase):
             for field in ('["XMP:Subject"]', '["IPTC:Keywords"]', '["XMP:HierarchicalSubject"]'):
                 self.assertFalse("params" + field in source,
                                  "%s writes %s itself instead of through the journaled write" % (relative, field))
+
+
+@requires_exiftool
+class XmpIsTheCopyRead(FilesCase):
+    def made(self, name, written, read=None):
+        """A JPEG another program wrote `written` into, and its row as the indexer records a read of it answering `read`
+        (the same fields, under the keys ExifTool answers them by, unless given)."""
+        from PIL import Image
+
+        path = os.path.join(self.folder, name)
+        Image.new("RGB", (16, 12), (90, 110, 130)).save(path, "JPEG")
+        write_outside(path, written)
+        conn = tagpup_db.connect(self.library.path)
+        try:
+            photo_rows.add_read(conn, path, written if read is None else read)
+            conn.commit()
+        finally:
+            conn.close()
+        return path
+
+    def captions(self, path):
+        return json.loads(self.rows("SELECT captions FROM photos WHERE path = ?", (path,))[0][0])
+
+    def test_a_keyword_left_only_in_iptc_is_no_tag_and_a_rename_does_not_bring_it_back(self):
+        # What a save that patches XMP alone leaves when it takes a keyword off: IPTC still holds it.
+        a = self.made("a.jpg", {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach", "Cross Country"],
+                                "EXIF:XPKeywords": "Beach;Cross Country"})
+        self.assertEqual(["Beach"], self.indexed(a))
+        result = tagging.replace_tag(self.library, [a], "Beach", "Shore", EXIFTOOL)
+        self.assertEqual((1, []), (result.changed, result.errors))
+        self.assertEqual((["Shore"], ["Shore"], "Shore"), (self.indexed(a), keywords_of(a), field_of(a, "IPTC:Keywords")))
+
+    def test_the_caption_shown_is_xmps_and_a_save_from_it_is_not_refused(self):
+        a = self.made("a.jpg", {"XMP:Description": "Relay at the lake", "IPTC:Caption-Abstract": "Relay at dusk"})
+        self.assertEqual(["Relay at the lake"], self.captions(a))
+        shown = photo_actions.page_record(a, {"captions": self.captions(a), "raw_metadata": {}})["title"]
+        self.assertEqual("Relay at the lake", shown)
+        result = tagging.save_photo(self.library, a, "Relay at the lake, later", [], None, EXIFTOOL, "",
+                                    base={"tags": [], "title": shown})
+        self.assertEqual((True, "Relay at the lake, later", "Relay at the lake, later"),
+                         (result.ok, field_of(a, "XMP:Description"), field_of(a, "IPTC:Caption-Abstract")))
+        # A blank XMP description holds none: 12,469 photo_index rows hold one beside an IPTC caption (counted
+        # 2026-11-03), and show the IPTC caption.
+        b = self.made("b.jpg", {"IPTC:Caption-Abstract": "Relay at dusk"},
+                      {"XMP:Description": "", "IPTC:Caption-Abstract": "Relay at dusk"})
+        self.assertEqual(["Relay at dusk"], self.captions(b))
+
+    def test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags(self):
+        # 151 photo_index photos hold IPTC keywords and no XMP ones, 4 of them in a file with an XMP packet (2026-11-03).
+        a = self.made("a.jpg", {"IPTC:Keywords": ["Beach", "Relay"], "XMP-xmpMM:DocumentID": "xmp.did:0001"},
+                      {"IPTC:Keywords": ["Beach", "Relay"], "XMP:DocumentID": "xmp.did:0001"})
+        self.assertEqual(["Beach", "Relay"], self.indexed(a))
+        self.assertEqual("xmp.did:0001", field_of(a, "XMP-xmpMM:DocumentID"))
 
 
 if __name__ == "__main__":

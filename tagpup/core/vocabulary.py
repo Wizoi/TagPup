@@ -240,13 +240,20 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 # What a photo's metadata says. `meta` is the record tagpup.files.metadata reads: every
 # field under its ExifTool name ("XMP:Subject") and again bare ("Subject").
 
-#: Keywords, flat and hierarchical.
-KEYWORD_FIELDS = ("XMP:Subject", "Subject", "IPTC:Keywords", "Keywords")
+#: A value a file holds twice, in XMP and in IPTC's older copy: (XMP's fields, IPTC's), each under both names a read
+#: records it by. XMP is the copy read when it holds the value, a text that is not blank; IPTC's only when it holds
+#: none (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS): a keyword or caption save may patch XMP alone and
+#: leave IPTC holding what it held before (tagpup.core.fields.PATCH_LEAVES).
+KEYWORD_COPIES = (("XMP:Subject", "Subject"), ("IPTC:Keywords", "Keywords"))
+CAPTION_COPIES = ((("XMP:Description", "Description"), ("IPTC:Caption-Abstract", "Caption-Abstract")),
+                  (("XMP:Title", "Title"), ("IPTC:ObjectName", "ObjectName")))
+
+#: Keywords, flat and hierarchical: every field a photo's tags may be read from. The hierarchy is XMP's alone.
+KEYWORD_FIELDS = KEYWORD_COPIES[0] + KEYWORD_COPIES[1]
 HIERARCHY_FIELDS = ("XMP:HierarchicalSubject", "HierarchicalSubject")
 
-#: Captions and titles, most wanted first: the first is the one shown.
-CAPTION_FIELDS = ("IPTC:Caption-Abstract", "Caption-Abstract", "XMP:Description", "Description",
-                  "XMP:Title", "Title", "IPTC:ObjectName", "ObjectName")
+#: Captions and titles, most wanted first: the first a photo holds (by CAPTION_COPIES) is the one shown.
+CAPTION_FIELDS = tuple(name for copies in CAPTION_COPIES for copy in copies for name in copy)
 
 
 def _held_caption_fields():
@@ -284,6 +291,13 @@ def _values(meta, fields):
 IPTC_KEYWORD_FIELDS = ("IPTC:Keywords", "Keywords")
 
 
+def _read_copy(meta, copies):
+    """The values of one value held twice (KEYWORD_COPIES, a pair of CAPTION_COPIES): XMP's when it holds one, else
+    IPTC's. A field present but blank holds none."""
+    xmp, iptc = copies
+    return _values(meta, xmp) or _values(meta, iptc)
+
+
 def _iptc_cuts(meta):
     """The keywords IPTC holds only as its cut of one another field holds whole: IPTC
     keeps 64 bytes of a keyword (tagpup.core.fields.as_read), XMP all of it."""
@@ -301,10 +315,12 @@ def extract_tags(meta):
     ("Family" beside "Family/Immediate/Cora Ingersoll") is left out: it is the path
     written again in pieces, not a tag of its own. So is IPTC's cut of a keyword the
     photo holds whole: it was read as a tag of its own, and every later keyword write
-    wrote it into every field (docs/findings.md, #278).
+    wrote it into every field (docs/findings.md, #278). The flat keywords are XMP's when it holds any, IPTC's only
+    when it holds none (KEYWORD_COPIES): a keyword removed from XMP alone stays removed.
     """
     cuts = _iptc_cuts(meta)
-    tags = list(dict.fromkeys(t for t in _values(meta, KEYWORD_FIELDS + HIERARCHY_FIELDS) if t and t not in cuts))
+    held = _read_copy(meta, KEYWORD_COPIES) + _values(meta, HIERARCHY_FIELDS)
+    tags = list(dict.fromkeys(t for t in held if t and t not in cuts))
     levels = {part for tag in tags if "/" in tag for part in segments(tag)}
     return [tag for tag in tags if "/" in tag or tag not in levels]
 
@@ -315,9 +331,10 @@ def extract_captions(meta):
     The reader records every field twice, prefixed and bare, and the same title is
     usually written to several fields, so reading them all listed each caption two or
     more times: 99.6% of indexed rows carried a duplicate. The first caption is the
-    one everything shows.
+    one everything shows: the description, XMP's when it holds one, else IPTC's
+    Caption-Abstract, then the title, XMP's, else IPTC's ObjectName (CAPTION_COPIES).
     """
-    return list(dict.fromkeys(c for c in _values(meta, CAPTION_FIELDS) if c))
+    return list(dict.fromkeys(c for copies in CAPTION_COPIES for c in _read_copy(meta, copies) if c))
 
 
 def captions_held(meta):

@@ -99,20 +99,11 @@ class TestExtractTags(unittest.TestCase):
 
 
 class TestExtractCaptions(unittest.TestCase):
-    def test_collects_captions_from_every_known_field(self):
-        meta = {
-            "IPTC:Caption-Abstract": "abstract",
-            "XMP:Description": "description",
-            "XMP:Title": "title",
-        }
-        captions = extract_captions(meta)
-        for expected in ("abstract", "description", "title"):
-            self.assertIn(expected, captions)
-
-    def test_caption_abstract_is_preferred_first(self):
-        """build_photo_ui_record takes captions[0] as the title, so order matters."""
-        meta = {"XMP:Description": "description", "IPTC:Caption-Abstract": "abstract"}
-        self.assertEqual(extract_captions(meta)[0], "abstract")
+    def test_the_description_comes_first_then_the_title(self):
+        """page_record takes captions[0] as the title, so order matters; which copy of each is read, XMP's or IPTC's, is
+        test_tag_writes_keep_the_index_true.XmpIsTheCopyRead's."""
+        meta = {"XMP:Title": "title", "IPTC:Caption-Abstract": "abstract"}
+        self.assertEqual(["abstract", "title"], extract_captions(meta))
 
     def test_blank_captions_are_dropped(self):
         self.assertEqual(extract_captions({"XMP:Description": "   "}), [])
