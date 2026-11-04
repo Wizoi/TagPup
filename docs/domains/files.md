@@ -193,7 +193,7 @@ dc:subject and lr:hierarchicalSubject (a Bag), dc:description and dc:title (an x
 xmp:CreateDate, tiff:Orientation, xmpMM:DocumentID and xmpMM:PreservedFileName (text). `read` answers their values;
 `edit` sets them and keeps every other byte: a change is paid for out of the padding before `<?xpacket end`, so the
 packet keeps its length, and only `grow=True` lets it grow, laying `RESERVE` (2,425 bytes, ExifTool's padding) afresh.
-The padding is one rule: `containers.XMP_PADDING_LEAST` (one line break) is the most an edit, the container's
+The padding is one rule: `containers.XMP_PADDING_LEAST` (one line break) is the least an edit, the container's
 slack (`containers._xmp_slack`) and the in-place patch's fit (`in_place._fitted`) leave of it, and
 `xmp_packet.padding(size)` lays the bytes (lines of 100 spaces) for the editor and the patch alike.
 All three editors answer `containers.Edited(body, length_changed)` or `containers.Refusal(reason)`, one pair.

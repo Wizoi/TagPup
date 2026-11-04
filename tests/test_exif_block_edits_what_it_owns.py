@@ -240,6 +240,10 @@ class AnExifBlockReadAndWritten(unittest.TestCase):
         marked = with_gap(b"\xab" * 16)
         self.assertIsInstance(eb.edit(marked, {"ImageDescription": "Oak"}), containers.Refusal)
         self.assertIsInstance(eb.edit(marked, {"ImageDescription": "Oak"}, grow=True), containers.Refusal)
+        # the same when the table is the last thing any IFD points at (the bytes lie at or past `used`)
+        last = b"Exif\0\0" + layout_tiff("<", [("ifd0", [(0x0112, 3, struct.pack("<H", 1))], b"\xab" * 16)], 0, b"")
+        self.assertIsInstance(eb.edit(last, {"ImageDescription": "Oak"}), containers.Refusal)
+        self.assertIsInstance(eb.edit(last, {"ImageDescription": "Oak"}, grow=True), containers.Refusal)
 
     def test_orientation_takes_one_to_eight_and_an_odd_one_held_is_left_alone(self):
         self.assertEqual(8, eb.read(self.edited(BIG, {"Orientation": 8}).body)["Orientation"])

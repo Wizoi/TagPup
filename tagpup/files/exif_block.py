@@ -203,9 +203,9 @@ def _table(block, room, ifd, names, changes, writes, zeroed):
             entries.insert(sum(1 for entry in entries if entry[0] < tag), (tag, None, None, None, None))
     end = ifd.offset + 2 + 12 * len(entries) + 4
     if end > ifd.end:
-        # The 12 bytes must be bytes nothing points at, and unread: the slack (the table ends at or after `used`) or zeros.
-        if _overlaps(ifd.end, end, [span for span in layout.spans if span[2] != ("ifd", ifd.offset)]) or (
-                ifd.end < layout.used and any(block.tiff[ifd.end:end])):
+        # The 12 bytes must be bytes nothing points at and that hold zeros (the slack, or a cleared entry's room).
+        if _overlaps(ifd.end, end, [span for span in layout.spans if span[2] != ("ifd", ifd.offset)]) or any(
+                block.tiff[ifd.end:end]):
             raise _Refused("A new tag needs a new entry in the %s IFD, and data follows its table." % _IFD_NAMES[
                 FIELDS[names[0]][0]])
         room.taken(ifd.end, end)
