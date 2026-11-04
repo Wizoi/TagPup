@@ -35,7 +35,7 @@ import os
 import tempfile
 import threading
 
-from tagpup.files import containers, shares
+from tagpup.files import containers, shares, xmp_packet
 
 VERSION = 1
 
@@ -183,11 +183,6 @@ def _header_of(handle):
     return (layout, header) if len(header) == end else None
 
 
-def _spaces(count):
-    """`count` bytes of whitespace, a line break after each 99 spaces, as ExifTool pads an XMP packet."""
-    return bytes(10 if at % 100 == 99 else 32 for at in range(count))
-
-
 def _fitted(old, new, written):
     """The segment `new` of the header ExifTool `written`, made the size of the old segment `old` (both containers.
     Segment of one kind); None when it does not fit."""
@@ -199,11 +194,9 @@ def _fitted(old, new, written):
         packet_end = segment.rfind(b"<?xpacket end=")
         meta_end = segment.rfind(b"</x:xmpmeta>", 0, packet_end) + len(b"</x:xmpmeta>")
         room = packet_end - meta_end - (new.size - old.size)
-        if packet_end < 0 or meta_end < len(b"</x:xmpmeta>") or room < 1:
+        if packet_end < 0 or meta_end < len(b"</x:xmpmeta>") or room < containers.XMP_PADDING_LEAST:
             return None
-        between = segment[meta_end:packet_end]
-        between = between[:room] if room <= len(between) else between + _spaces(room - len(between))
-        segment = segment[:meta_end] + between + segment[packet_end:]
+        segment = segment[:meta_end] + xmp_packet.padding(room) + segment[packet_end:]
     elif new.kind == "exif":
         if new.offset != old.offset:
             return None

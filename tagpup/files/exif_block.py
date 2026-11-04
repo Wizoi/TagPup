@@ -4,18 +4,18 @@ Pure: the EXIF segment's body (the bytes after its length field: "Exif\\0\\0" an
 file. The layout of the TIFF block is `containers.exif_tiff`'s, its MakerNote's classes `containers.maker_note`'s.
 
 `read(body)` is {name: value} of the owned fields the block holds (FIELDS: text, Orientation an int). `edit(body,
-changes)` sets each named field (None or '' clears it) and answers `Edited`; every other byte stays where it was, and
+changes)` sets each named field (None or '' clears it) and answers `containers.Edited`; every other byte stays where it was, and
 the values of the other tags, the other IFDs, the MakerNote, IFD1 and its thumbnail, GPS and Interoperability, the
 byte order, all keep their bytes and offsets. A value of the same length or shorter is written where it was (the rest
 zeroed); a longer one goes after the last byte any IFD points at, into the slack, and its old bytes are zeroed. A new
 tag takes a new entry, 12 bytes, in tag order: only where the 12 bytes after the IFD's table are bytes nothing points
-at (the slack, or a gap); an IFD followed by data is refused, since moving that data would move what points at it.
+at and that are zeros (or the slack); an IFD followed by data is refused, since moving that data would move what points at it.
 The block keeps its length; a change that needs more than its slack answers `DoesNotFit` with the bytes it needs, and
 only `grow=True` lets the block grow, at its end alone, after everything (never before the MakerNote's data or the
 thumbnail). Bytes no IFD points at (the slack, a gap) are taken only beside a MakerNote whose every pointer lands
 inside it (or none): a note that may point outside itself might point there.
 
-Either answers `Refusal`, a sentence, for a block it does not wholly understand: it never repairs one and never answers
+Either answers `containers.Refusal`, a sentence, for a block it does not wholly understand: it never repairs one and never answers
 bytes on doubt (an edit is walked again and read back, and every byte it changed is checked to be an owned one, before
 it is answered). The rules and the counts behind them: docs/domains/files.md, "The EXIF block editor".
 """
@@ -50,18 +50,6 @@ _CONTAINED = frozenset({"tiff-relative", "note-relative", "either", "own header"
                         "moved, the Canon footer says by how much", "moved, shift unknown"})
 _SHAPES = {"date": re.compile(r"\d{4}:\d\d:\d\d \d\d:\d\d:\d\d\Z", re.ASCII),
            "digits": re.compile(r"\d+\Z", re.ASCII)}
-
-
-@dataclass(frozen=True)
-class Refusal:
-    reason: str
-
-
-@dataclass(frozen=True)
-class Edited:
-    body: bytes
-    #: The block is longer than it was (only with grow=True): its segment must be rewritten, not patched.
-    length_changed: bool
 
 
 @dataclass(frozen=True)
@@ -147,7 +135,7 @@ def read(body, limit=LIMIT):
     try:
         return dict(_Block(body, limit).values)
     except _Refused as why:
-        return Refusal(str(why))
+        return containers.Refusal(str(why))
 
 
 def _wanted(name, value, order):
@@ -215,7 +203,9 @@ def _table(block, room, ifd, names, changes, writes, zeroed):
             entries.insert(sum(1 for entry in entries if entry[0] < tag), (tag, None, None, None, None))
     end = ifd.offset + 2 + 12 * len(entries) + 4
     if end > ifd.end:
-        if _overlaps(ifd.end, end, [span for span in layout.spans if span[2] != ("ifd", ifd.offset)]):
+        # The 12 bytes must be bytes nothing points at and that hold zeros (the slack, or a cleared entry's room).
+        if _overlaps(ifd.end, end, [span for span in layout.spans if span[2] != ("ifd", ifd.offset)]) or any(
+                block.tiff[ifd.end:end]):
             raise _Refused("A new tag needs a new entry in the %s IFD, and data follows its table." % _IFD_NAMES[
                 FIELDS[names[0]][0]])
         room.taken(ifd.end, end)
@@ -307,7 +297,7 @@ def edit(body, changes, grow=False, limit=LIMIT):
                   if name in changes and before.held(name) != (None if changes[name] == "" else changes[name])}
         moved = {name: new for name, (value, new) in wanted.items() if before.held(name) != value}
         if not moved:
-            return Edited(body, False)
+            return containers.Edited(body, False)
         room, writes, zeroed, tables = _Room(before), [], [], []
         for where in _IFD_NAMES:
             names = [name for name in moved if FIELDS[name][0] == where]
@@ -334,6 +324,6 @@ def edit(body, changes, grow=False, limit=LIMIT):
         if {name: after.held(name) for name in FIELDS} != expected:
             raise _Refused("The edited EXIF block does not read back as written.")
         _kept(before, after, list(moved))
-        return Edited(result, len(result) != len(body))
+        return containers.Edited(result, len(result) != len(body))
     except _Refused as why:
-        return Refusal(str(why))
+        return containers.Refusal(str(why))

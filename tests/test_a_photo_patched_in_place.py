@@ -36,7 +36,7 @@ from test_a_crash_part_way_is_settled_at_the_next_start import start_again  # no
 from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requires_exiftool, write_outside  # noqa: E402
 
 from tagpup.core import fields  # noqa: E402
-from tagpup.files import containers, field_values, in_place, shares  # noqa: E402
+from tagpup.files import containers, field_values, in_place, shares, xmp_packet  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
@@ -382,6 +382,51 @@ class TheFitOfAnIptcSegment(unittest.TestCase):
                 self.assertEqual("Shore", str(et.get_tags([check], tags=["IPTC:Keywords"])[0].get("IPTC:Keywords")))
             os.remove(check)
         self.assertEqual({True, False}, seen, "the keywords tried did not reach both a fit and a shrink too small")
+
+
+@requires_exiftool
+class TheFitOfAnXmpSegment(unittest.TestCase):
+    """in_place.jpeg_ranges against ExifTool's own write of a header holding XMP keywords alone: the padding after the
+    packet is laid as ExifTool lays it (lines of 100 spaces, `xmp_packet.padding`) whatever the patch took from it or
+    gave it."""
+
+    def setUp(self):
+        from PIL import Image
+
+        self.folder = own_folder(self)
+        self.photo = os.path.join(self.folder, "a.jpg")
+        Image.new("RGB", (16, 12), (90, 110, 130)).save(self.photo, "JPEG")
+        write_outside(self.photo, {"XMP:Subject": ["Beachcombing at low tide"]})
+        with open(self.photo, "rb") as handle:
+            self.header = in_place._header_of(handle)[1]
+
+    def written(self, keyword):
+        source, target = os.path.join(self.folder, "header.jpg"), os.path.join(self.folder, "written.jpg")
+        for path in (source, target):
+            if os.path.exists(path):
+                os.remove(path)
+        with open(source, "wb") as handle:
+            handle.write(self.header + in_place._EOI)
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            et.set_tags([source], tags={"XMP:Subject": [keyword]}, params=["-m", "-o", target])
+        return read(target)
+
+    def test_a_patch_that_changes_the_padding_lays_exiftools_shape(self):
+        old = containers.read(io.BytesIO(self.header + in_place._EOI)).of_kind("xmp")[0]
+        seen = 0
+        for keyword in ("Beachcombing at low tid", "Beachcombing", "Bea", "Beachcombing at low tide, and the pier"):
+            ranges = in_place.jpeg_ranges(self.header, self.written(keyword))
+            self.assertIsNotNone(ranges, keyword)
+            patched = bytearray(self.header)
+            for at, new in ranges:
+                patched[at:at + len(new)] = new
+            self.assertEqual(len(self.header), len(patched))
+            packet = bytes(patched)[old.offset + 4 + len(b"http://ns.adobe.com/xap/1.0/\0"):old.end]
+            meta = packet.rfind(b"</x:xmpmeta>") + len(b"</x:xmpmeta>")
+            between = packet[meta:packet.rfind(b"<?xpacket end=")]
+            self.assertEqual(xmp_packet.padding(len(between)), between, keyword)
+            seen += len(between) > 101
+        self.assertTrue(seen, "no keyword tried left a padding of more than one line")
 
 
 def own_folder(testcase):

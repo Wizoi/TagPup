@@ -84,13 +84,18 @@ def others(data):
 class AnIptcBlockReadAndWritten(unittest.TestCase):
     def edited(self, data, changes):
         result = ib.edit(data, changes)
-        self.assertIsInstance(result, ib.Edited, result)
+        self.assertIsInstance(result, containers.Edited, result)
         return result
 
     def refused(self, data, changes=None):
         result = ib.read(data) if changes is None else ib.edit(data, changes)
-        self.assertIsInstance(result, ib.Refusal, result)
+        self.assertIsInstance(result, containers.Refusal, result)
         return result.reason
+
+    def test_a_lone_surrogate_is_refused_as_the_exif_editor_refuses_it(self):
+        for field, value in ((KEYWORDS, ["Beach", "Sea\ud800"]), (CAPTION, "Rain\udc00")):
+            self.refused(body(EXIFTOOL), {field: value})
+            self.refused(body(WLPG), {field: value})
 
     def test_every_owned_dataset_reads_in_its_character_set(self):
         self.assertEqual({KEYWORDS: ["People/Ida Corwell", "Places/Lakeside"]}, ib.read(body(EXIFTOOL)))
@@ -165,7 +170,7 @@ class AnIptcBlockReadAndWritten(unittest.TestCase):
     def test_unmarked_text_outside_ascii_elsewhere_refuses_a_change_of_character_set(self):
         data = body(dataset(2, 90, "Lakesidé".encode("cp1252")) + dataset(2, 25, b"Kites"))
         self.assertIn("UTF-8", self.refused(data, {KEYWORDS: ["Zoő"]}))
-        self.assertIsInstance(ib.edit(data, {KEYWORDS: ["Café"]}), ib.Edited)
+        self.assertIsInstance(ib.edit(data, {KEYWORDS: ["Café"]}), containers.Edited)
 
     def test_version_datasets_added_as_exiftool_adds_them(self):
         result = records(self.edited(body(WLPG), {KEYWORDS: ["Rowan Thackeray", "Kites"]}).body)
@@ -261,11 +266,11 @@ class AnIptcBlockReadAndWritten(unittest.TestCase):
             data = bytes(data)
             held = ib.read(data)
             result = ib.edit(data, {KEYWORDS: ["Kites"], CAPTION: "Dunes"})
-            if isinstance(held, ib.Refusal):
-                self.assertIsInstance(result, ib.Refusal)
+            if isinstance(held, containers.Refusal):
+                self.assertIsInstance(result, containers.Refusal)
                 continue
-            self.assertIsInstance(result, (ib.Edited, ib.Refusal))
-            if isinstance(result, ib.Edited):
+            self.assertIsInstance(result, (containers.Edited, containers.Refusal))
+            if isinstance(result, containers.Edited):
                 self.assertEqual({**held, KEYWORDS: ["Kites"], CAPTION: "Dunes"}, ib.read(result.body))
                 self.assertEqual(others(data), others(result.body))
                 self.assertEqual(result.length_changed, len(result.body) != len(data))

@@ -204,6 +204,10 @@ dc:subject and lr:hierarchicalSubject (a Bag), dc:description and dc:title (an x
 xmp:CreateDate, tiff:Orientation, xmpMM:DocumentID and xmpMM:PreservedFileName (text). `read` answers their values;
 `edit` sets them and keeps every other byte: a change is paid for out of the padding before `<?xpacket end`, so the
 packet keeps its length, and only `grow=True` lets it grow, laying `RESERVE` (2,425 bytes, ExifTool's padding) afresh.
+The padding is one rule: `containers.XMP_PADDING_LEAST` (one line break) is the least an edit, the container's
+slack (`containers._xmp_slack`) and the in-place patch's fit (`in_place._fitted`) leave of it, and
+`xmp_packet.padding(size)` lays the bytes (lines of 100 spaces) for the editor and the patch alike.
+All three editors answer `containers.Edited(body, length_changed)` or `containers.Refusal(reason)`, one pair.
 An edit is parsed again and read back before it is answered. Scenario test:
 `tests/test_xmp_packet_edits_what_it_owns.py` (F1).
 
@@ -241,8 +245,8 @@ XPComment and XPKeywords; the Exif IFD's DateTimeOriginal, CreateDate, SubSecTim
 SubSecTimeDigitized. The block's layout is `containers.exif_tiff`'s, the one walk of its IFDs (IFD0, IFD1 and its
 thumbnail, Exif, GPS, Interoperability: every byte range an IFD points at, `used`, the slack after it), and what a
 MakerNote's entries mean is `containers.maker_note`'s and `canon_footer`'s, which the census reads too. `read` answers
-the fields' values; `edit(body, changes, grow=False, limit=65533)` answers `Edited(body, length_changed)`,
-`DoesNotFit(needed)` or `Refusal(reason)`. A value of the same length or shorter is written where it was, the rest
+the fields' values; `edit(body, changes, grow=False, limit=65533)` answers `containers.Edited(body, length_changed)`,
+`DoesNotFit(needed)` (this module's) or `containers.Refusal(reason)`. A value of the same length or shorter is written where it was, the rest
 zeroed; a longer one goes after `used` at an even offset, its old bytes zeroed; a cleared field loses its entry (the
 table shrinks, its last 12 bytes zeroed). The block keeps its length; `grow` only adds bytes at its end, after
 everything. Bytes no IFD points at are taken only with no MakerNote, or one whose pointers land inside it (TIFF- or
@@ -263,7 +267,8 @@ own header 12, note-relative 9, not an IFD 46, the Canon footer wrong 1 (photo_i
   of the sample (ImageDescription 415 / 396 / 399, Orientation 433 / 397 / 400, XPComment 87 / 396 / 399,
   DateTimeOriginal 28 / 0 / 0; moving the table into room made under `grow` would allow it, M5's choice); a new tag in
   an IFD out of tag order (IFD0 8, Exif 2, photo_index); a longer value beside a MakerNote that is no IFD (46) or whose
-  Canon footer's shift lands a pointer outside it (1). The one new tag that fits is one a clear has just made room for.
+  Canon footer's shift lands a pointer outside it (1). The one new tag that fits is one a clear has just made room for. A new entry is laid only over bytes of zero
+  or in the slack: 12 non-zero bytes no IFD points at (13 of 400 photo_index blocks hold some before `used`) refuse it.
 - **Refused, no instance in the sample**: not an EXIF segment; over 65,533 bytes, read or made; a structure the walk
   cannot follow (an IFD or a value outside the block, an entry of no TIFF type); strips, tiles, SubIFDs or an entry of
   type IFD; an owned tag twice, of a type TagPup does not read (Orientation SHORT or LONG, count 1; an XP tag BYTE or
@@ -293,7 +298,8 @@ body (`Photoshop 3.0` and its 8BIM resources) in and out. It owns three datasets
 title), 2:25 Keywords and 2:120 Caption-Abstract. The layout is containers.py's, the one statement of it, read by the
 census, the in-place patch and this editor alike: `photoshop_resources`, `resource`, `pad_resource` (the dummy resource
 the patch lays, `PAD_RESOURCE`, `LEAST_RESOURCE`) and `iptc_records`, the one walk of a block's datasets. `read` answers
-the values; `edit(body, changes)` answers `Edited(body, length_changed)` or `Refusal(reason)`. Only the 0x0404
+the values; `edit(body, changes)` answers `containers.Edited(body, length_changed)` or `containers.Refusal(reason)` (a value with a lone surrogate
+is refused). Only the 0x0404
 resource's data changes, and in it only the owned datasets (one held is rewritten where its first one was, a new one goes
 at the end of its record), the character set 1:90 and a missing version dataset; every other dataset and resource keeps
 its bytes, the IPTCDigest (0x0425) among them, left stale (DECISIONS 2026-11-03). The dummy resource at the end takes up
