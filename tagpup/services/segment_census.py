@@ -257,15 +257,10 @@ def _iptc(segment, header, counts):
     counts["IPTC 0x0404 blocks %s" % _how_many(len(blocks))] += 1
     if not blocks:
         return
-    block, datasets, at = blocks[0], {}, 0
-    while at + 5 <= len(block) and block[at] == 0x1C:
-        record, number, length = block[at + 1], block[at + 2], int.from_bytes(block[at + 3:at + 5], "big")
-        at += 5
-        if length & 0x8000:
-            width = length & 0x7FFF
-            length, at = int.from_bytes(block[at:at + width], "big"), at + width
-        datasets.setdefault((record, number), []).append(block[at:at + length])
-        at += length
+    block, datasets = blocks[0], {}
+    records, at = containers.iptc_records(block)
+    for record in records:
+        datasets.setdefault((record.record, record.dataset), []).append(block[record.start:record.end])
     counts["IPTC datasets cut short or garbage"] += at < len(block.rstrip(b"\0"))
     charset = datasets.get((1, 90))
     counts["IPTC 1:90 " + ("absent" if not charset else "UTF-8" if charset[0] == b"\x1b%G" else "other")] += 1

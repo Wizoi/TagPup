@@ -38,6 +38,10 @@ FIRST_TYPES = frozenset({"ftyp", "skip"})
 #: merged, which is Photoshop's Print Flags Information: 7 of 300 photo_index JPEGs hold a real one (a reviewer's count,
 #: 2026-11-03), which the patch then took as its padding and wrote zeros over.
 PAD_RESOURCE = 0x0DAC
+#: The fewest bytes an 8BIM resource takes: its signature, id, an empty name and its length, no data.
+LEAST_RESOURCE = 12
+#: The 8BIM resource of a Photoshop segment that holds its IPTC-IIM records.
+IPTC_RESOURCE = 0x0404
 
 _XMP_HEAD = b"http://ns.adobe.com/xap/1.0/\0"
 _XMP_EXTENSION_HEAD = b"http://ns.adobe.com/xmp/extension/\0"
@@ -597,6 +601,55 @@ def ifd(tiff, at, order):
         entries.append((tag, kind, n, raw, struct.unpack(order + "I", raw)[0]))
     next_ifd = struct.unpack(order + "I", tiff[end:end + 4])[0] if end + 4 <= len(tiff) else None
     return entries, next_ifd
+
+
+def photoshop_resources(body):
+    """(the 8BIM resources of an APP13 segment's `body` -- what follows its marker and length -- each at its offset in
+    `body`; how many bytes after the last whole one are no resource), or None for a body that is not Photoshop 3.0's."""
+    if not body.startswith(_IPTC_HEAD):
+        return None
+    return _resources(body[len(_IPTC_HEAD):], len(_IPTC_HEAD))
+
+
+def resource(resource_id, data, name=b"\0\0"):
+    """The bytes of an 8BIM resource: `name` its Pascal string as held (even in length; empty by default), `data` padded
+    to an even length."""
+    return (b"8BIM" + resource_id.to_bytes(2, "big") + name + len(data).to_bytes(4, "big") + data
+            + bytes(len(data) & 1))
+
+
+def pad_resource(size):
+    """The dummy resource (PAD_RESOURCE) of `size` bytes, its data zeros: `size` is even and LEAST_RESOURCE or more."""
+    return resource(PAD_RESOURCE, bytes(size - LEAST_RESOURCE))
+
+
+@dataclass(frozen=True)
+class IptcRecord:
+    """One IPTC-IIM dataset of an 0x0404 resource's data: its record and dataset numbers, where its tag starts and where
+    its value starts and ends. `extended` is a value whose length is held in an extended (long) length field."""
+    record: int
+    dataset: int
+    offset: int
+    start: int
+    end: int
+    extended: bool = False
+
+
+def iptc_records(block):
+    """(the IPTC-IIM datasets of `block`, an 0x0404 resource's data, in order; the offset where their walk stopped: the
+    block's length, or the first byte that does not begin a whole dataset)."""
+    found, at = [], 0
+    while at + 5 <= len(block) and block[at] == 0x1C:
+        start, length = at + 5, int.from_bytes(block[at + 3:at + 5], "big")
+        extended = bool(length & 0x8000)
+        if extended:
+            width = length & 0x7FFF
+            start, length = start + width, int.from_bytes(block[at + 5:at + 5 + width], "big")
+        if start + length > len(block):
+            break
+        found.append(IptcRecord(block[at + 1], block[at + 2], at, start, start + length, extended))
+        at = start + length
+    return found, at
 
 
 def _resources(data, start):
