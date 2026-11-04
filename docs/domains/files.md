@@ -94,6 +94,13 @@ answers the fields it left as they were (`field_values.write`; `fields.PATCH_LEA
 caption write sets), and the file is verified, recorded and journaled as `fields.as_patched` says it holds them
 (`file_changes._carry`). Every write still writes every copy, so that answer is always empty until merge 4b.
 
+The rows stored before this rule put IPTC's caption first (photo_index 383 rows, 104 showing another caption than the
+file's XMP; kr-track and renton_parkrun none; counted 2026-11-03), and a save from one is refused as changed on disk. A
+photo indexed or saved afterwards is derived by the rule (the indexer, `follow_fields`); the rows of before are derived
+again, once, from their own raw_metadata by `scripts/rederive_captions.py` (`refresh_rows.rederive`: a dry run that
+counts and rehearses, `--apply` one journaled change, undoable, the search words with it), run with `--apply` on each
+library before this merge is installed.
+
 ## Rows removed by a whole sync (DECISIONS 2026-10-28)
 
 The one place is `sync.look`; nothing else removes a row for a missing file (the charter's contract, point 4).

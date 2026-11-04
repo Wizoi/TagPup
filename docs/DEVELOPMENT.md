@@ -337,6 +337,7 @@ lists every place that may still copy a whole library, and why.
 | script | what it does |
 | --- | --- |
 | `scripts/verify_workflow.py` | End-to-end pass over both apps against a throwaway copy of a database. |
+| `scripts/rederive_captions.py` | A one-off (M4, merge 4a): each row's tags and captions derived again from its own raw_metadata by the rule the index reads by now, XMP's copy first. Dry run counts and rehearses; `--apply` writes one journaled change (no copy: undo it from History); `--db` once per library. Deleted once it has run on the three libraries. |
 
 Retired on 2026-09-24 with nothing left to do on either library, and in git's history: `canonicalize_paths.py`, `repair_bare_person_tags.py`, `tidy_exclusion_reasons.py`, `restore_face_names.py` and `cache_all_crops.py` (findings.md, #54).
 
