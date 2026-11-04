@@ -13,6 +13,7 @@ import os
 import random
 import sys
 import unittest
+from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
@@ -233,6 +234,21 @@ class AnIptcBlockReadAndWritten(unittest.TestCase):
                 self.refused(data)
                 self.refused(data, {KEYWORDS: ["Kites"]})
         self.assertIn("over", self.refused(HEAD, {KEYWORDS: ["Kite %d" % n for n in range(5000)]}))
+
+    def test_a_block_laid_wrong_is_refused_by_the_editors_own_checks(self):
+        # the read-back and the `kept` check stand between a fault in the layout and a file: each fault refused
+        data = body(WLPG, pad=40)
+        real = ib._rebuilt
+        faults = {
+            "a value cut": lambda b, m, c: (real(b, m, c)[0].replace(b"Kites", b"Kite\0"), real(b, m, c)[1]),
+            "an unowned dataset dropped": lambda b, m, c: (
+                real(b, m, c)[0].replace(dataset(2, 80, b"Jo Brannock"), b""), real(b, m, c)[1]),
+            "an unowned dataset changed": lambda b, m, c: (
+                real(b, m, c)[0].replace(b"Jo Brannock", b"Jo Brannick"), real(b, m, c)[1]),
+        }
+        for name, fault in faults.items():
+            with self.subTest(name), mock.patch.object(ib, "_rebuilt", fault):
+                self.assertIn("does not read back", self.refused(data, {KEYWORDS: ["Kites"]}))
 
     def test_hostile_bytes_never_raise_and_never_give_a_block_that_does_not_read_back(self):
         rng = random.Random(7)
