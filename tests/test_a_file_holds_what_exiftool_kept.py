@@ -179,8 +179,8 @@ class AWriteThatChangedNothing(KeptCase):
         real = field_values.write
 
         def write(et, path, values, **options):
-            if path != a:
-                real(et, path, values, **options)
+            # field_values.write's answer: the fields it left as they were, none for one that "wrote" all.
+            return real(et, path, values, **options) if path != a else ()
 
         with mock.patch.object(field_values, "write", side_effect=write):
             result = self.add([a, b])

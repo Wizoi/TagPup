@@ -657,6 +657,27 @@ def stamps(conn, folder=None, with_vectors=None, vector_stamps=None):
     return [row[:-3] + ((row[-2], row[-1]) if row[-3] else None,) for row in rows]
 
 
+def derived_apart(conn):
+    """The photos whose stored tags or captions are not what the indexer's derivation (vocabulary.extract_tags and
+    extract_captions, as follow_fields and the indexer's read derive them) makes of their stored raw_metadata now: the
+    rows stored before the rule changed (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS). (photos, photos with no
+    raw_metadata to derive from, [(id, the row's tags, captions and raw_metadata -- native -- as read, {column: JSON
+    derived now} of the columns that differ)]). Reads only, one row held at a time (photo_index: about a second)."""
+    roots = store_roots.roots_for(conn)
+    photos, unread, apart = conn.execute(
+        "SELECT COUNT(*), SUM(raw_metadata IS NULL OR raw_metadata = '') FROM photos").fetchone() + ([],)
+    for photo_id, tags, captions, raw_json in conn.execute(
+            "SELECT id, tags, captions, raw_metadata FROM photos WHERE raw_metadata IS NOT NULL AND raw_metadata != ''"):
+        raw = json.loads(raw_json)
+        stored = {"tags": tags, "captions": captions}
+        now = {"tags": vocabulary.extract_tags(raw), "captions": vocabulary.extract_captions(raw)}
+        differs = {column: json.dumps(value) for column, value in now.items()
+                   if json.loads(stored[column] or "[]") != value}
+        if differs:
+            apart.append((photo_id, dict(stored, raw_metadata=store_roots.raw_to_native(raw_json, roots)), differs))
+    return photos, unread or 0, apart
+
+
 def row_as_recorded(conn, stored_path):
     """(tags, people, captions, raw_metadata, mtime, size, document_id) of the row stored
     under exactly `stored_path`, or None."""

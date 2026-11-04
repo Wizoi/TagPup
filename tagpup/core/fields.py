@@ -184,6 +184,21 @@ def caption_fields(caption):
     }
 
 
+#: The fields a keyword or caption save leaves holding what they held when it patches the file's XMP alone: every field
+#: keyword_fields and caption_fields set outside XMP, refreshed by the next rewrite that writes them (DECISIONS
+#: 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY). The index reads XMP (vocabulary.KEYWORD_COPIES).
+PATCH_LEAVES = tuple(field for field in dict.fromkeys(list(keyword_fields([], [])) + list(caption_fields("")))
+                     if not field.startswith("XMP:"))
+
+
+def as_patched(before, after, stale):
+    """What a file holds after a write of `after` that left the fields in `stale` as they were: `after`, each of its
+    fields in `stale` holding `before`'s value (none, when `before` names it not). With nothing stale, `after` itself."""
+    if not stale:
+        return after
+    return {field: before.get(field, []) if field in stale else value for field, value in after.items()}
+
+
 def record_keyword_fields(raw_meta, flat, hierarchical):
     """Make `raw_meta` say what a keyword write just put in the file. Returns it.
 
