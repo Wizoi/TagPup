@@ -34,8 +34,7 @@ CHARSET = (1, 90)
 UTF8 = b"\x1b%G"
 #: The version dataset of each record and its value (4), as ExifTool adds it to a record that lacks one.
 VERSIONS = {1: ((1, 0), b"\0\x04"), 2: ((2, 0), b"\0\x04")}
-#: The largest body an APP13 segment holds (its length field counts itself).
-LIMIT = 0xFFFF - 2
+LIMIT = containers.MOST_BODY
 #: What a value may not hold: NUL and the C0 controls but tab, line feed and carriage return.
 _NOT_TEXT = re.compile("[%s-%s%s%s%s-%s]" % (chr(0), chr(8), chr(11), chr(12), chr(14), chr(31)))
 

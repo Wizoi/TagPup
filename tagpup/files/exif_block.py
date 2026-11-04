@@ -25,7 +25,6 @@ from dataclasses import dataclass
 
 from tagpup.files import containers
 
-_HEAD = b"Exif\0\0"
 #: name: (IFD, tag, kind). "text": TIFF ASCII (type 2), NUL-ended, written as UTF-8 as ExifTool writes it; "date" and
 #: "digits" text of that shape; "ucs2": an XP tag, UCS-2 little-endian whatever the block's byte order, NUL-ended,
 #: written as BYTE (type 1) as ExifTool writes it; "short": Orientation, SHORT (type 3).
@@ -44,8 +43,7 @@ FIELDS = {
 _READ_TYPES = {"text": (2,), "date": (2,), "digits": (2,), "ucs2": (1, 2), "short": (3, 4)}
 _WRITE_TYPE = {"text": 2, "date": 2, "digits": 2, "ucs2": 1, "short": 3}
 _IFD_NAMES = {"ifd0": "IFD0", "exif": "Exif"}
-#: The longest body a JPEG segment holds (its length field, at most 65,535, counts its own two bytes).
-LIMIT = 65533
+LIMIT = containers.MOST_BODY
 #: The MakerNote classes (containers.maker_note) whose every pointer lands inside the note, as written or shifted:
 #: beside such a note, a byte no IFD points at is free.
 _CONTAINED = frozenset({"tiff-relative", "note-relative", "either", "own header", "no pointers",
@@ -105,9 +103,9 @@ class _Block:
     def __init__(self, body, limit):
         if len(body) > limit:
             raise _Refused("The EXIF segment is %d bytes, over the %d a segment holds." % (len(body), limit))
-        if not body.startswith(_HEAD):
+        if not body.startswith(containers.EXIF_HEAD):
             raise _Refused("The segment is not an EXIF segment.")
-        self.tiff = tiff = body[len(_HEAD):]
+        self.tiff = tiff = body[len(containers.EXIF_HEAD):]
         self.layout = layout = containers.exif_tiff(tiff)
         if layout is None or "ifd0" not in layout.named:
             raise _Refused("The EXIF block's structure cannot be followed: an IFD or a value lies outside it, or an "
@@ -327,7 +325,7 @@ def edit(body, changes, grow=False, limit=LIMIT):
             tiff[start:end] = bytes(end - start)
         for at, data in writes:
             tiff[at:at + len(data)] = data
-        result = _HEAD + bytes(tiff)
+        result = containers.EXIF_HEAD + bytes(tiff)
         if len(result) > limit:
             raise _Refused("The edited EXIF segment would be %d bytes, over %d." % (len(result), limit))
         after = _Block(result, limit)

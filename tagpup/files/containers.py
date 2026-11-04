@@ -42,10 +42,13 @@ PAD_RESOURCE = 0x0DAC
 LEAST_RESOURCE = 12
 #: The 8BIM resource of a Photoshop segment that holds its IPTC-IIM records.
 IPTC_RESOURCE = 0x0404
+#: The longest body a JPEG segment holds: its length field, at most 65,535, counts its own two bytes.
+MOST_BODY = 0xFFFF - 2
 
 _XMP_HEAD = b"http://ns.adobe.com/xap/1.0/\0"
 _XMP_EXTENSION_HEAD = b"http://ns.adobe.com/xmp/extension/\0"
-_EXIF_HEAD = b"Exif\0\0"
+#: What an EXIF segment's body starts with, before its TIFF block.
+EXIF_HEAD = b"Exif\0\0"
 _IPTC_HEAD = b"Photoshop 3.0\0"
 _PACKET_END = b"<?xpacket end="
 _XMPMETA_END = b"</x:xmpmeta>"
@@ -390,8 +393,8 @@ def _segment(marker, offset, size, body):
         return Segment(marker, offset, size, "xmp", slack=_xmp_slack(body[len(_XMP_HEAD):]))
     if marker == 0xE1 and body.startswith(_XMP_EXTENSION_HEAD):
         return Segment(marker, offset, size, "xmp-extension")
-    if marker == 0xE1 and body.startswith(_EXIF_HEAD):
-        return Segment(marker, offset, size, "exif", slack=_exif_slack(body[len(_EXIF_HEAD):]))
+    if marker == 0xE1 and body.startswith(EXIF_HEAD):
+        return Segment(marker, offset, size, "exif", slack=_exif_slack(body[len(EXIF_HEAD):]))
     if marker == 0xED and body.startswith(_IPTC_HEAD):
         start = offset + 4 + len(_IPTC_HEAD)
         resources, stray = _resources(body[len(_IPTC_HEAD):], start)
