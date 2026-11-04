@@ -242,7 +242,11 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
     byte until it returns, nor at all when it raises. ExifTool's rewrite never calls it: it leaves the file it held or the
     one it was to hold, whole. A JPEG patch is at most three segments of 64 KB, under file_journal.PATCH_CAP, so the
     journal's PatchTooLarge is not met here. A patch whose photo's share does not answer raises NotAnswered, the file
-    settled by its bytes (file_changes._by_bytes)."""
+    settled by its bytes (file_changes._by_bytes).
+
+    Returns the fields of `values` the write left holding what they held before (fields.PATCH_LEAVES, which a patch of
+    the XMP alone leaves; file_changes records the file as fields.as_patched): () for every write, which writes them
+    all."""
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -260,7 +264,7 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
         else:
             params[named] = texts[0]
     if not params and not clear:
-        return
+        return ()
     checked = own or any(fields.is_struct(field) for field in values)
     if PATCH_IN_PLACE and saving is not None:
         def serialise(source, target):
@@ -277,7 +281,7 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
             raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
                               "the next time" % in_place.SECONDS) from None
         if patched:
-            return
+            return ()
     scratch = exiftool_session.scratch_of(photo_path)
     _command(et, photo_path, scratch, params, clear)
     if scratch_written is not None:
@@ -293,6 +297,7 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
             logger.warning("The new file of a write ExifTool did not write all of could not be removed; it is left: %s", e)
         raise
     _landed(photo_path, scratch)
+    return ()
 
 
 def _refuse_dropped(et, source, checked):

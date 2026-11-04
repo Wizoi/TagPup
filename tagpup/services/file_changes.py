@@ -769,29 +769,35 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     row.patched = False
     _reached("file writing")
     saving = _saving(library, row)
-    failed = _written(et, row.path, target, saving)
+    failed = _written(et, row, target, saving)
     if exiftool_session.scratch_in_the_way(failed):
         left = _removed_scratch(row.path, stamp, interrupted)
         if left is None:
-            failed = _written(et, row.path, target, saving)      # once: a second failure is the write's own
+            failed = _written(et, row, target, saving)      # once: a second failure is the write's own
         elif left == SCRATCH_UNDER_WAY:
             failed = exiftool_session.written_lately(failed)
     if isinstance(failed, field_values.PictureChanged):
         logger.warning("%s: its write changed the picture's bytes; the new file was discarded, and it is written once more",
                        row.named())
         _running.pictures_refused = _counted_so_far()[1] + 1
-        failed = _written(et, row.path, target, saving)
+        failed = _written(et, row, target, saving)
         if isinstance(failed, field_values.PictureChanged):
             failed = field_values.PictureChanged(file_journal.PICTURE_CHANGED)
+    # What the file holds now: `target`, but for the fields the write left as they were (row.stale).
+    held = fields.as_patched(origin, target, row.stale)
     if failed is None and row.patched:
-        failed = _verified(et, library, row, target)
+        failed = _verified(et, library, row, held)
     if failed is not None:
         return _after_failure(et, library, row, origin, target, finished, on_failure, failed, stall_stops)
     _reached("file written")
     # The stat before the read back: a change another program makes after it leaves the row older than its file, which
     # the next scan reads again; taken after, it stamped what was read before the change as the newer file.
     stat = _stat(row.path)
-    stat = _record(library, row, target, finished, stamp, stat=stat,
+    # Going forward, a field left stale is the journal's after too: an undo starts from what the file holds.
+    after = None
+    if row.stale and finished == "done":
+        after = row.after = held
+    stat = _record(library, row, held, finished, stamp, stat=stat, after=after,
                    whole=_read_whole(et, row, whole) if whole is not None else None)
     if wrote is not None:
         wrote[row.id] = (row, stat)
@@ -799,10 +805,13 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     return finished, None
 
 
-def _written(et, path, target, saving=None):
-    """None when field_values.write wrote `target` into the file at `path`; else what it raised."""
+def _written(et, row, target, saving=None):
+    """None when field_values.write wrote `target` into the file of `row`, the fields it left as they were in
+    `row.stale`; else what it raised."""
+    row.stale = ()
     try:
-        field_values.write(et, path, target, saving=saving, scratch_written=lambda: _reached(SCRATCH_WRITTEN))
+        row.stale = tuple(field_values.write(et, row.path, target, saving=saving,
+                                             scratch_written=lambda: _reached(SCRATCH_WRITTEN)))
     except Exception as e:
         return e
     return None
@@ -818,17 +827,17 @@ def _saving(library, row):
     return saving
 
 
-def _verified(et, library, row, target):
+def _verified(et, library, row, held):
     """None when the patch just written leaves the file of `row` holding what it wrote, its size and its ranges
-    (in_place.held: NEW), and its fields read back as `target`; else what failed, for _after_failure to settle the file
-    by its bytes. A file whose bytes are as written but whose fields do not read so is put back here first. No byte
-    outside the ranges is read (DECISIONS 2026-11-03, "AN IN-PLACE PATCH CHECKS ONLY THE BYTES IT CHANGED")."""
+    (in_place.held: NEW), and its fields read back as `held` (what the write left: fields.as_patched); else what
+    failed, for _after_failure to settle the file by its bytes. A file whose bytes are as written but whose fields do
+    not read so is put back here first. No byte outside the ranges is read (DECISIONS 2026-11-03, "AN IN-PLACE PATCH CHECKS ONLY THE BYTES IT CHANGED")."""
     saved = file_journal.patch_of(library.path, row.id)
     try:
         found = in_place.held(row.path, *saved)
         if found != in_place.NEW:
             return RuntimeError("the patch did not leave the file as it wrote it (%s)" % found)
-        if fields.reads_same(field_values.read_one(et, row.path, list(target)), target):
+        if fields.reads_same(field_values.read_one(et, row.path, list(held)), held):
             return None
         in_place.put_back(row.path, *saved)
     except (OSError, field_values.Unreadable) as e:
