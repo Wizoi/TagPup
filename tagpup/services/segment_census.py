@@ -10,22 +10,8 @@ written: the library is opened read-only (db.readonly_uri), a photo only to read
 tag and no value of a file (the photos are of real people, many of them minors): only counts, a camera maker's bucket
 (VENDORS) and the order of the segments by kind.
 
-How a MakerNote's offsets were told apart: by its bytes, not by its maker. Its first IFD is found after a vendor header
-of a length in HEADERS, and each entry whose value is larger than four bytes points somewhere: "tiff-relative" when every
-pointer lands inside the MakerNote counted from the TIFF header (the note breaks if it is moved; Canon, Sony, Panasonic),
-"note-relative" when every pointer lands inside it counted from the note's own start (it may move whole; Apple,
-Fujifilm, Olympus' newer form), "own header" for a note carrying a TIFF header of its own (Nikon's type 3), "either" when
-both fit, "no pointers" when every value fits in its entry. An entry of no TIFF type, or of a count no note holds, is
-skipped and counted (Sony notes rewritten in the other byte order carry four; ExifTool reads past them too), and the note
-is told by its good entries; a note with no more good entries than bad is no IFD.
-
-A note moved by a program that did not fix its pointers (they count from its old place) is told only by what records
-the old place: a Canon note's footer (its byte order and its old offset from the TIFF header, the last 8 bytes, as Canon
-cameras write it and ExifTool reads it). A Canon note whose footer puts it elsewhere is "moved, the Canon footer says by
-how much" (or "... wrong" when that shift does not land every pointer inside it), even when its pointers happen to land
-inside it as written. A note with no footer whose pointers fit inside it only once shifted by one amount is "moved, shift
-unknown". The Exif IFD's OffsetSchema (0xEA1D) is not trusted for the shift (it equalled the footer's in few real notes):
-it is only counted against the footer. "outside" when no shift fits, "not an IFD" when no header length gives an IFD.
+A MakerNote's offsets are told apart by `containers.maker_note`, which the EXIF block editor reads them by too (its
+classes, in its docstring); the Exif IFD's OffsetSchema (0xEA1D) is only counted against a Canon footer.
 """
 import collections
 import datetime
@@ -71,9 +57,6 @@ VENDORS = {"CANON": "Canon", "NIKON": "Nikon", "SONY": "Sony", "OLYMPUS": "Olymp
            "PENTAX": "Pentax", "RICOH": "Pentax", "HTC": "HTC", "XIAOMI": "Xiaomi", "ONEPLUS": "OnePlus",
            "LEICA": "Leica", "CASIO": "Casio", "MINOLTA": "Minolta", "KONICA": "Minolta", "NOKIA": "Nokia",
            "MICROSOFT": "Microsoft", "HP": "HP", "HEWLETT-PACKARD": "HP", "BLACKBERRY": "BlackBerry"}
-#: Lengths of the vendor headers before a MakerNote's IFD (none: Canon; 6 "AOC"; 8 "OLYMP"; 12 "SONY DSC", "Panasonic",
-#: "FUJIFILM", "OLYMPUS II"; 14 "Apple iOS"; 18 Nikon's type 3, whose TIFF header is found first).
-HEADERS = (0, 6, 8, 10, 12, 14, 18)
 #: The histogram of a segment's slack, each bucket below its bound in bytes.
 SLACK = (("0", 1), ("1-63", 64), ("64-511", 512), ("512-2047", 2048))
 #: The histogram of an XMP packet's size (what phase 6's bake asked of the files).
@@ -181,65 +164,7 @@ def _vendor(tiff, entries):
     found = entries.get(0x010F)
     if found is None or found[0] != 2:
         return "(no Make)"
-    kind, n, raw, at = found
-    text = raw[:n] if n <= 4 else tiff[at:at + n]
-    words = text.split(b"\0")[0].decode("latin-1").strip().upper().split()
-    return VENDORS.get(words[0] if words else "", "other")
-
-
-def _note_ifd(note, at, order):
-    """(the (size, offset) of each entry of the IFD at `at` of a MakerNote whose value is outside its entry, how many
-    entries were skipped as of no TIFF type or a count no note holds), or None when the bytes there are no plausible IFD."""
-    found = containers.ifd(note, at, order)
-    if found is None or not 1 <= len(found[0]) <= 512:
-        return None
-    pointers, bad = [], 0
-    for _tag, kind, n, _raw, value in found[0]:
-        if kind not in containers.TIFF_TYPE_SIZES or n > 1 << 24:
-            bad += 1
-        elif containers.TIFF_TYPE_SIZES[kind] * n > 4:
-            pointers.append((containers.TIFF_TYPE_SIZES[kind] * n, value))
-    return None if 2 * bad >= len(found[0]) else (pointers, bad)
-
-
-def _canon_footer(note, start, order):
-    """How far a Canon MakerNote at `start` was moved from where its footer says it was written, or None when its last
-    8 bytes are no footer in the note's byte `order`."""
-    if note[-8:-4] != (b"II*\0" if order == "<" else b"MM\0*"):
-        return None
-    return start - struct.unpack(order + "I", note[-4:])[0]
-
-
-def _note_offsets(tiff, start, length, order, canon=False):
-    """(how a MakerNote at `start` of `tiff` points at its values, the module says; how many of its entries were
-    skipped; the shift its Canon footer records, None without one). `canon`: the EXIF's Make is Canon's."""
-    note = tiff[start:start + length]
-    if len(note) < length or length < 8:
-        return "cut short", 0, None
-    if note[10:12] in (b"II", b"MM") and note[12:14] in (b"*\0", b"\0*"):
-        return "own header", 0, None
-    for skip in HEADERS:
-        for each in (order, "<" if order == ">" else ">"):
-            found = _note_ifd(note, skip, each)
-            if found is None:
-                continue
-            pointers, bad = found
-            footer = _canon_footer(note, start, each) if canon else None
-            if not pointers:
-                return "no pointers", bad, footer
-            if footer:
-                return ("moved, the Canon footer says by how much" if all(
-                    start <= at + footer and at + footer + size <= start + length for size, at in pointers)
-                    else "moved, the Canon footer wrong"), bad, footer
-            tiff_relative = all(start <= at and at + size <= start + length for size, at in pointers)
-            note_relative = all(at + size <= length for size, at in pointers)
-            if tiff_relative or note_relative:
-                return ("either" if tiff_relative and note_relative else "tiff-relative" if tiff_relative
-                        else "note-relative"), bad, footer
-            if max(at + size for size, at in pointers) - min(at for _size, at in pointers) > length:
-                return "outside", bad, footer
-            return "moved, shift unknown", bad, footer
-    return "not an IFD", 0, None
+    return VENDORS.get(containers.make_word(tiff, (0x010F,) + found), "other")
 
 
 def _exif(tiff, counts, makers):
@@ -268,7 +193,7 @@ def _exif(tiff, counts, makers):
         if note[1] <= 4:
             makers[vendor]["inline"] += 1
             return
-        label, bad, footer = _note_offsets(tiff, note[3], note[1], order, canon=vendor == "Canon")
+        label, bad, footer = containers.maker_note(tiff, note[3], note[1], order, canon=vendor == "Canon")
         makers[vendor][label] += 1
         counts["MakerNote with entries skipped"] += bad > 0
         schema = exif_ifd[0].get(0xEA1D)

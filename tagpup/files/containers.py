@@ -47,8 +47,14 @@ _PACKET_END = b"<?xpacket end="
 _XMPMETA_END = b"</x:xmpmeta>"
 #: Bytes of each TIFF field type (EXIF): a type not here makes the EXIF slack unknown, taken as none.
 TIFF_TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4}
-#: TIFF tags that point at another IFD: Exif, GPS, Interoperability.
-_SUB_IFDS = (0x8769, 0x8825, 0xA005)
+#: TIFF tags that point at another IFD, by the name of the IFD each points at: Exif and GPS (from IFD0),
+#: Interoperability (from Exif).
+_SUB_IFDS = {0x8769: "exif", 0x8825: "gps", 0xA005: "interop"}
+#: Tags that point at bytes the walk of an EXIF block does not follow: strips, tiles, SubIFDs.
+_UNFOLLOWED = frozenset({0x0111, 0x0144, 0x014A})
+#: Lengths of the vendor headers before a MakerNote's IFD (none: Canon; 6 "AOC"; 8 "OLYMP"; 12 "SONY DSC", "Panasonic",
+#: "FUJIFILM", "OLYMPUS II"; 14 "Apple iOS"; 18 Nikon's type 3, whose TIFF header is found first).
+NOTE_HEADERS = (0, 6, 8, 10, 12, 14, 18)
 
 
 @dataclass(frozen=True)
@@ -404,46 +410,174 @@ def _xmp_slack(packet):
 
 
 def _exif_slack(tiff):
-    """The zero bytes after the last byte EXIF's IFDs (IFD0, IFD1 and its thumbnail, Exif, GPS, Interoperability) point
-    at; 0 when the structure cannot be followed or something not zero sits after it."""
+    """The zero bytes after the last byte EXIF's IFDs point at (`exif_tiff`); 0 when the structure cannot be followed."""
+    found = exif_tiff(tiff)
+    return found.slack if found else 0
+
+
+@dataclass(frozen=True)
+class Ifd:
+    """One IFD of an EXIF block: its offset in the TIFF block, its entries as `ifd` gives them, the next IFD's offset."""
+    offset: int
+    entries: tuple
+    next: int
+
+    @property
+    def end(self):
+        return self.offset + 2 + 12 * len(self.entries) + 4
+
+
+@dataclass(frozen=True)
+class Tiff:
+    """An EXIF block's TIFF structure (the bytes after "Exif\\0\\0"), walked. `order` is struct's "<" or ">"; `ifds` every
+    IFD reached (IFD0, IFD1 and its thumbnail, Exif, GPS, Interoperability, and any next IFD of theirs); `named` those
+    reached by their usual pointer, by "ifd0", "ifd1", "exif", "gps", "interop"; `spans` ((start, end, owner), ...) every
+    byte range an IFD points at, its owner ("ifd", offset) for an IFD's own table, (IFD offset, tag) for a value of more
+    than four bytes, ("thumbnail", IFD offset) for IFD1's JPEG; `used` the end of the last. `slack` the zero bytes after
+    it (0 when anything else lies there). `unfollowed`: an entry points at bytes the walk does not follow (strips,
+    tiles, SubIFDs, an entry of type IFD)."""
+    order: str
+    size: int
+    ifds: tuple
+    named: dict
+    spans: tuple
+    used: int
+    slack: int
+    unfollowed: bool
+
+
+def exif_tiff(tiff):
+    """The `Tiff` of an EXIF block's TIFF bytes, or None when its structure cannot be followed: no TIFF header, an IFD
+    or a value that does not fit in the block, an entry of no TIFF type. The one walk of an EXIF block's IFDs."""
     if len(tiff) < 8 or tiff[:2] not in (b"II", b"MM"):
-        return 0
+        return None
     order = "<" if tiff[:2] == b"II" else ">"
     if struct.unpack(order + "H", tiff[2:4])[0] != 42:
-        return 0
-    used = 8
-    queue, seen = [struct.unpack(order + "I", tiff[4:8])[0]], set()
+        return None
+    ifds, named, spans, unfollowed = [], {}, [], False
+    queue, seen = [(struct.unpack(order + "I", tiff[4:8])[0], "ifd0")], set()
     while queue:
-        at = queue.pop()
+        at, name = queue.pop()
         if at == 0 or at in seen:
             continue
         seen.add(at)
         found = ifd(tiff, at, order)
         if found is None or found[1] is None:
-            return 0
-        entries, next_ifd = found
-        used = max(used, at + 2 + 12 * len(entries) + 4)
+            return None
+        here = Ifd(at, tuple(found[0]), found[1])
+        ifds.append(here)
+        if name:
+            named.setdefault(name, here)
+        spans.append((at, here.end, ("ifd", at)))
         thumbnail = {}
-        for tag, kind, n, _raw, value in entries:
+        for tag, kind, n, _raw, value in here.entries:
             if kind not in TIFF_TYPE_SIZES:
-                return 0
+                return None
+            unfollowed = unfollowed or kind == 13 or tag in _UNFOLLOWED
             length = TIFF_TYPE_SIZES[kind] * n
             if length > 4:
                 if value + length > len(tiff):
-                    return 0
-                used = max(used, value + length)
+                    return None
+                spans.append((value, value + length, (at, tag)))
             if tag in _SUB_IFDS:
-                queue.append(value)
+                queue.append((value, _SUB_IFDS[tag] if name == ("exif" if tag == 0xA005 else "ifd0") else None))
             elif tag in (0x0201, 0x0202):
                 thumbnail[tag] = value
         if len(thumbnail) == 2:
             end = thumbnail[0x0201] + thumbnail[0x0202]
             if end > len(tiff):
-                return 0
-            used = max(used, end)
-        queue.append(next_ifd)
+                return None
+            spans.append((thumbnail[0x0201], end, ("thumbnail", at)))
+        queue.append((here.next, "ifd1" if name == "ifd0" else None))
+    used = max([8] + [end for _start, end, _owner in spans])
     rest = tiff[used:]
-    return len(rest) if not rest.strip(b"\0") else 0
+    return Tiff(order, len(tiff), tuple(ifds), named, tuple(spans), used, 0 if rest.strip(b"\0") else len(rest),
+                unfollowed)
+
+
+def value_bytes(tiff, entry):
+    """The bytes of the value of an IFD `entry` (as `ifd` gives it) of `tiff`: in the entry, or where it points."""
+    _tag, kind, n, raw, at = entry
+    length = TIFF_TYPE_SIZES[kind] * n
+    return raw[:length] if length <= 4 else tiff[at:at + length]
+
+
+def make_word(tiff, entry):
+    """The first word of EXIF Make, upper case, of its IFD0 `entry` (None for none): "" when it is no text."""
+    if entry is None or entry[1] != 2:
+        return ""
+    words = value_bytes(tiff, entry).split(b"\0")[0].decode("latin-1").strip().upper().split()
+    return words[0] if words else ""
+
+
+def _note_ifd(note, at, order):
+    """(the (size, offset) of each entry of the IFD at `at` of a MakerNote whose value is outside its entry, how many
+    entries were skipped as of no TIFF type or a count no note holds), or None when the bytes there are no plausible IFD."""
+    found = ifd(note, at, order)
+    if found is None or not 1 <= len(found[0]) <= 512:
+        return None
+    pointers, bad = [], 0
+    for _tag, kind, n, _raw, value in found[0]:
+        if kind not in TIFF_TYPE_SIZES or n > 1 << 24:
+            bad += 1
+        elif TIFF_TYPE_SIZES[kind] * n > 4:
+            pointers.append((TIFF_TYPE_SIZES[kind] * n, value))
+    return None if 2 * bad >= len(found[0]) else (pointers, bad)
+
+
+def canon_footer(note, start, order):
+    """How far a Canon MakerNote at `start` was moved from where its footer says it was written, or None when its last
+    8 bytes are no footer in the note's byte `order`."""
+    if note[-8:-4] != (b"II*\0" if order == "<" else b"MM\0*"):
+        return None
+    return start - struct.unpack(order + "I", note[-4:])[0]
+
+
+def maker_note(tiff, start, length, order, canon=False):
+    """(how a MakerNote at `start` of `tiff`, `length` bytes, points at its values; how many of its entries were skipped;
+    the shift its Canon footer records, None without one). `canon`: the EXIF's Make is Canon's.
+
+    Told by its bytes, not its maker. Its first IFD is found after a vendor header of a length in NOTE_HEADERS, and each
+    entry whose value is larger than four bytes points somewhere: "tiff-relative" when every pointer lands inside the
+    note counted from the TIFF header (the note breaks if it is moved; Canon, Sony, Panasonic), "note-relative" when
+    every pointer lands inside it counted from its own start (Apple, Fujifilm, Olympus' newer form), "own header" for a
+    note carrying a TIFF header of its own (Nikon's type 3), "either" when both fit, "no pointers" when every value fits
+    in its entry. An entry of no TIFF type, or of a count no note holds, is skipped and counted (Sony notes rewritten in
+    the other byte order carry four; ExifTool reads past them too), and the note is told by its good entries; a note
+    with no more good entries than bad is no IFD. A note moved by a program that did not fix its pointers is told only by
+    what records its old place, a Canon note's footer (its byte order and its old offset from the TIFF header, the last
+    8 bytes, as Canon cameras write it and ExifTool reads it): "moved, the Canon footer says by how much" (or "... wrong"
+    when that shift does not land every pointer inside it). A note with no footer whose pointers fit inside it only once
+    shifted by one amount is "moved, shift unknown". The Exif IFD's OffsetSchema (0xEA1D) is not trusted for the shift
+    (it differed from the footer's in 1,224 of 1,239 photo_index notes). "outside" when no shift fits, "not an IFD" when
+    no header length gives one, "cut short" when the note does not fit in the block."""
+    note = tiff[start:start + length]
+    if len(note) < length or length < 8:
+        return "cut short", 0, None
+    if note[10:12] in (b"II", b"MM") and note[12:14] in (b"*\0", b"\0*"):
+        return "own header", 0, None
+    for skip in NOTE_HEADERS:
+        for each in (order, "<" if order == ">" else ">"):
+            found = _note_ifd(note, skip, each)
+            if found is None:
+                continue
+            pointers, bad = found
+            footer = canon_footer(note, start, each) if canon else None
+            if not pointers:
+                return "no pointers", bad, footer
+            if footer:
+                return ("moved, the Canon footer says by how much" if all(
+                    start <= at + footer and at + footer + size <= start + length for size, at in pointers)
+                    else "moved, the Canon footer wrong"), bad, footer
+            tiff_relative = all(start <= at and at + size <= start + length for size, at in pointers)
+            note_relative = all(at + size <= length for size, at in pointers)
+            if tiff_relative or note_relative:
+                return ("either" if tiff_relative and note_relative else "tiff-relative" if tiff_relative
+                        else "note-relative"), bad, footer
+            if max(at + size for size, at in pointers) - min(at for _size, at in pointers) > length:
+                return "outside", bad, footer
+            return "moved, shift unknown", bad, footer
+    return "not an IFD", 0, None
 
 
 def ifd(tiff, at, order):
