@@ -429,14 +429,90 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     if problem:
         result.refuse(problem)
         return result
+    width = len(str(len(photo_paths)))
+    numbers = {path: str(index).zfill(width) for index, path in enumerate(photo_paths, start=1)}
+    return _rename_numbered(library, result, photo_paths, validation.trim(grouping), rename_format, exiftool_path,
+                            numbers, move_aside=True)
+
+
+@roots_service.canonical_args("photo_path")
+@file_changes.exclusively()
+def smart_rename_one(library, photo_path, grouping, rename_format, exiftool_path):
+    """Smart Rename of the one photo `photo_path` (the photo screen's button beside its file name): smart_rename's
+    renaming, journal, index rows and undo, but the number is the one its name holds (renaming.parts_of: kept when the
+    grouping changes, DECISIONS 2026-11-05), and a photo whose name holds none takes the next after the highest its
+    folder's names give `grouping` ("1" when none does; as wide as that highest, "08" after "07"). Numbered in the
+    lock of changes of photo files, so two at once never take one number.
+
+    A file that already holds the new name is not moved aside, as a folder's rename moves it (the photos of that
+    rename are renumbered together, this one alone): refused, and nothing written. Refused too for a grouping that may
+    not be used, a folder not there or on a share that does not answer (shares.folder_refusal, SHARE_AWAY), and a photo
+    no longer there, and a clip (file_changes.leave_out_clips, its sentence). The name already right
+    is no change (`renamed` empty). details: smart_rename's, and `new_path`."""
+    result = Result(attempted=1)
+    problem = validation.problem("grouping", grouping)
+    if problem:
+        result.refuse(problem)
+        return result
+    if not file_changes.leave_out_clips(result, [photo_path]):
+        result.refuse(images.CLIP_NOT_EDITED)   # the one photo asked for: the request is refused, nothing is done
+        return result
+    folder = os.path.dirname(photo_path)
+    refusal = shares.folder_refusal(folder)
+    if refusal is None and not shares.there(photo_path):
+        refusal = Result(attempted=1)
+        refusal.refuse("%s is not in its folder any more: it was moved, renamed or deleted. Refresh the folder."
+                       % os.path.basename(photo_path))
+    grouping = validation.trim(grouping)
+    number, refusal = (None, refusal) if refusal else _number_of(photo_path, grouping, rename_format)
+    if refusal:
+        result.refuse(refusal.refused, refusal.refused_kind)
+        return result
+    _rename_numbered(library, result, [photo_path], grouping, rename_format, exiftool_path, {photo_path: number},
+                     move_aside=False)
+    result.details["new_path"] = result.details.get("updated_paths", {}).get(photo_path, photo_path)
+    return result
+
+
+def _number_of(photo_path, grouping, rename_format):
+    """(the number smart_rename_one gives the photo, None) or (None, a Result refused): the number its name holds, or
+    the next after the highest its folder's names give `grouping` (compared as Windows compares names, case aside)."""
+    own = renaming.parts_of(rename_format, os.path.splitext(os.path.basename(photo_path))[0])
+    if own:
+        return own[1], None
+    folder = os.path.dirname(photo_path)
+    entries = shares.listing(folder)
+    if entries is shares.UNANSWERED:
+        return None, shares.folder_refusal(folder, "unanswered")
+    wanted = grouping.casefold()
+    taken = [parts[1] for parts in (renaming.parts_of(rename_format, os.path.splitext(entry.name)[0])
+                                    for entry in entries) if parts and parts[0].casefold() == wanted]
+    if not taken:
+        return "1", None
+    highest = max(taken, key=int)
+    return str(int(highest) + 1).zfill(len(highest)), None
+
+
+def _rename_numbered(library, result, photo_paths, grouping, rename_format, exiftool_path, numbers, move_aside):
+    """smart_rename's renaming of `photo_paths`, each to the number `numbers` gives it, into `result`. `move_aside`: a
+    file outside them holding a new name is moved aside (names.aside_for); without it, the rename is refused."""
     held, loose = libraries.split(library, photo_paths)
     held_keys = {paths.key(p) for p in held}
-    grouping = validation.trim(grouping)
-    width = len(str(len(photo_paths)))
     # A clip is not renamed (file_changes.leave_out_clips): its error, its number left unused as a photo's no longer on
     # disk is. Asked here, not left to the names kept: that write skips a file it cannot write, which would be renamed.
     present = [p for p in file_changes.leave_out_clips(result, photo_paths) if shares.there(p)]
     captions = names.read_for_renaming(exiftool_path, present)
+    renames = {}
+    for old_path in photo_paths:
+        if old_path not in captions:
+            continue
+        base = renaming.file_base(rename_format, grouping, numbers[old_path], captions[old_path])
+        renames[old_path] = os.path.join(os.path.dirname(old_path), base + os.path.splitext(old_path)[1])
+    if not move_aside:
+        refusal = _name_taken(renames)
+        if refusal:
+            result.refuse(refusal.refused, refusal.refused_kind)
+            return result
     kept = preserve_names(library, present, exiftool_path, split=(held, loose))
     if kept.refused:
         result.refuse(kept.refused)
@@ -447,18 +523,13 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
         for what, why in kept.errors:
             result.fail(what, "the name it had before its first rename could not be kept: %s" % why)
         return result
-    renames = {}
-    for index, old_path in enumerate(photo_paths, start=1):
-        if old_path not in captions:
-            continue
-        base = renaming.file_base(rename_format, grouping, str(index).zfill(width), captions[old_path])
-        renames[old_path] = os.path.join(os.path.dirname(old_path), base + os.path.splitext(old_path)[1])
 
     # Two parts: the photos of held folders, then the others. Photos stay in their own folder
     # and a folder is held or not, so the names of the parts never meet.
     held_renames = {old: new for old, new in renames.items() if paths.key(old) in held_keys}
     loose_renames = {old: new for old, new in renames.items() if paths.key(old) not in held_keys}
     done, moved_aside, skipped, moved, change, with_rows, files_only = {}, {}, [], 0, None, 0, 0
+    aside_for = names.aside_for if move_aside else (lambda _renames: {})
 
     def report():
         renamed = {old: new for old, new in done.items() if old != new}
@@ -473,7 +544,7 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
             # The rows move in the transaction that marks the files done, the files moved
             # aside and renamed into their names in one call, so each frees its name for the
             # next within it.
-            outcome = file_changes.rename(library, "smart rename", held_renames, names.aside_for(held_renames),
+            outcome = file_changes.rename(library, "smart rename", held_renames, aside_for(held_renames),
                                           exiftool_path, summary={"photos": len(held_renames)})
             done.update(outcome.done)
             moved_aside.update(outcome.moved_aside)
@@ -481,7 +552,7 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
             with_rows = sum(1 for old, new in outcome.done.items() if old != new)
         if loose_renames:
             stage = "files only"
-            outcome = file_only.rename(loose_renames, names.aside_for(loose_renames))
+            outcome = file_only.rename(loose_renames, aside_for(loose_renames))
             done.update(outcome.done)
             moved_aside.update(outcome.moved_aside)
             files_only = sum(1 for old, new in outcome.done.items() if old != new)
@@ -506,6 +577,26 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
                        "name; left both as they were.", old_path, new_path)
     logger.info("Renamed %d photo(s) (%d to files only); moved %d index row(s).", result.changed, files_only, moved)
     return result
+
+
+def _name_taken(renames):
+    """A Result refused when a file outside `renames` already holds one of their new names (or its share does not say),
+    else None: smart_rename_one's check, made before anything is written. A rename onto the photo's own name in
+    another case is no other file."""
+    own = {paths.key(old) for old in renames}
+    for new in renames.values():
+        if paths.key(new) in own:
+            continue
+        stamp = shares.stamp_of(new)
+        if stamp is None:
+            continue
+        if stamp is shares.UNANSWERED:
+            return shares.folder_refusal(os.path.dirname(new), "unanswered")
+        refusal = Result(attempted=1)
+        refusal.refuse("Another file in the folder is already named %s: type another grouping, or rename that file "
+                       "first. Nothing was renamed." % os.path.basename(new))
+        return refusal
+    return None
 
 
 def date_shift_plan(minutes):
