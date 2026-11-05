@@ -160,6 +160,12 @@ export function checkIndexingStatus(folderPath) {
     state.indexProgressTimer = setInterval(queryProgress, 1000);
 }
 
+/** The open folder's suggestions and its run forgotten: a folder closed or another opened, or the server let them go. */
+export function forgetFolderSuggestions() {
+    state.folderSuggestions = {};
+    state.suggestRun = null;
+}
+
 /**
  * The server no longer holds what a Suggest that only looked found (it is kept in memory, for a while): it
  * let it go after a while, or the folder was added to the library and it was dropped. The page says which,
@@ -167,7 +173,7 @@ export function checkIndexingStatus(folderPath) {
  */
 export function suggestionsLetGo() {
     state.suggestionsInMemory = null;
-    state.folderSuggestions = {};
+    forgetFolderSuggestions();
     saveToLocalStorageCache();
     btnFolderAutoApply.disabled = true;
     renderFileList();

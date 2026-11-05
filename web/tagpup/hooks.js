@@ -12,6 +12,7 @@ export const upper = {
     checkSuggestionsStatus: null,
     choosePane: null,
     facesFollowTags: null,
+    forgetFolderSuggestions: null,
     landOnAnchor: null,
     leaveLibraryView: null,
     libraryChanged: null,

@@ -56,7 +56,7 @@ export function closeFolderForDogPark() {
     state.lastSelectedPath = null;
     state.scannedFolder = null;
     state.folderPhotos = [];
-    state.folderSuggestions = {};
+    upper.forgetFolderSuggestions();
     forgetSelectionFaces();
     upper.checkFolderMembership(null);
     folderPathInput.value = '';
@@ -229,7 +229,7 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
     if (state.library) upper.leaveLibraryView();
 
     // Reset folder-specific suggestions state to prevent leaks
-    state.folderSuggestions = {};
+    upper.forgetFolderSuggestions();
     forgetSelectionFaces();
 
     // Cache lookup if not forcing refresh

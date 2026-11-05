@@ -57,7 +57,7 @@ import {
 } from './selection.js';
 import {
     applyAllSingleSuggestions, applyFolderSuggestionsLevel, applySuggestedTagsDirect,
-    applySuggestedTitle, checkIndexingStatus, checkSuggestionsStatus, renderSuggestionsPanel,
+    applySuggestedTitle, checkIndexingStatus, checkSuggestionsStatus, forgetFolderSuggestions, renderSuggestionsPanel,
     cancelSuggestions, startSuggestions, updateFolderAutoApplyState, updateSuggestButtonState
 } from './suggestions.js';
 import {
@@ -68,7 +68,7 @@ import {
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
     addedFromView, applySuggestedTagsDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
-    facesFollowTags,
+    facesFollowTags, forgetFolderSuggestions,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderPhotoFacesHere, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
