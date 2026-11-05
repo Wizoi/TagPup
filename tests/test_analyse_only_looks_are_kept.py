@@ -224,6 +224,23 @@ class ASmartRenameRenamesWhatIsKept(Base):
         self.assert_library_unchanged()
 
 
+    def test_the_look_follows_a_save_that_renames_a_photo(self):
+        """#2415: a caption saved on a Smart-Renamed photo renames its file; what Suggest looked at follows it."""
+        self.start(self.cup)
+        self.assertEqual(200, self.post("/folder/rename-photos", {"folder_path": self.cup, "photo_paths": self.loose,
+                                                                  "grouping": "Lighthouse"}).status_code)
+        before = self.status(self.cup)["suggestions"]
+        old = next(path for path in before if os.path.basename(path) == "Lighthouse - 1.jpg")
+        reply = self.post("/photo/save-metadata", {"path": old, "title": "Dusk", "tags": []})
+        self.assertEqual(200, reply.status_code, reply.data)
+        new = reply.get_json()["new_path"]
+        self.assertNotEqual(old, new, "the caption renamed the file")
+        found = self.status(self.cup)["suggestions"]
+        self.assertIn(new, found)
+        self.assertNotIn(old, found)
+        self.assertEqual(len(before), len(found))
+
+
 class TheLibraryIsReadOutsideTheRunsLock(Base):
     """#547 (d)."""
 

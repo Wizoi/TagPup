@@ -1008,6 +1008,9 @@ def photo_save_metadata():
             logger.error("Error saving metadata for %s: %s", photo_path, result.message())
             return responses.error(500, result.message())
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
+        if renamed:
+            # What Suggest only looked at is kept under the names the files had (#547, #2415).
+            suggestion_jobs.runs_for(library).renamed({photo_path: new_path})
         # Every folder map holding the photo, found under the name it had (a rename
         # stays in the same directory).
         for held, record in folders.of(library).entries_for(photo_path):
