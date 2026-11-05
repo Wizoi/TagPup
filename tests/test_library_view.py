@@ -260,7 +260,7 @@ class TheCards(Library):
 
     def test_a_card_is_small_and_names_the_photo_by_id(self):
         card = library_view.cards(self.vl.library, [self.two, self.one])[0]
-        self.assertEqual({"id", "name", "path", "taken", "thumb"}, set(card))
+        self.assertEqual({"id", "name", "path", "taken", "thumb", "media"}, set(card))
         self.assertEqual((self.two, "two.jpg", self.vl.path_of(self.two), "2024:01:02 00:00:00"),
                          (card["id"], card["name"], card["path"], card["taken"]))
         self.assertTrue(card["thumb"].startswith("/api/photo-thumb?id=%d&v=" % self.two))

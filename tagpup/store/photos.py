@@ -549,6 +549,16 @@ def thumb_row(conn, photo_id):
     return ThumbRow(photo_id, row[0], native)
 
 
+def path_and_kind(conn, photo_id):
+    """(native path, kind -- 'photo' or 'video', photos.kind) of the photo with this id, or None: one read by primary
+    key, never a BLOB. What a video is served by (tagpup.services.photos.video). Raises paths.RootsError for a photo
+    under a root this machine does not place."""
+    row = conn.execute("SELECT path, kind FROM photos WHERE id = ?", (photo_id,)).fetchone()
+    if row is None:
+        return None
+    return store_roots.from_row(conn, row[0]), row[1]
+
+
 def row_stamp(conn, photo_id):
     """(mtime, size) the row of the photo with this id holds, (None, None) for no row: one read by primary key. A
     journaled write of the photo's file stamps them in the transaction that marks it done (follow_fields), so a reader

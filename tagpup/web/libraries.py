@@ -59,7 +59,6 @@ def names_a_library(first):
 
 #: What a request for a library that is being brought up to date is told (the pages wait it out: web/common/api.js).
 UPDATING_SENTENCE = "This library is being brought up to date by a new version of TagPup. This is sent again in a moment."
-RETRY_AFTER_SECONDS = 2
 
 
 class Updating(Exception):
@@ -120,14 +119,14 @@ class LibraryFromUrl:
     def _refuse_updating(environ, start_response):
         """503 with Retry-After and X-TagPup-Updating, as a drain answers (tagpup.web.lifecycle): the API's JSON is
         waited out and sent again by the pages; a browser shown a page gets a short text that asks again by itself."""
-        headers = [("Retry-After", str(RETRY_AFTER_SECONDS)), ("X-TagPup-Updating", "1"), ("Cache-Control", "no-store")]
+        headers = [("Retry-After", str(responses.RETRY_AFTER_SECONDS)), ("X-TagPup-Updating", "1"), ("Cache-Control", "no-store")]
         if "/api/" in (environ.get("PATH_INFO") or "") + "/":
             body = json.dumps({"success": False, "updating": True, "error": UPDATING_SENTENCE}).encode("utf-8")
             kind = "application/json"
         else:
             body = ('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="%d">'
                     '<title>Updating</title><body style="font-family:sans-serif;margin:3em"><p>%s</p></body>'
-                    % (RETRY_AFTER_SECONDS, UPDATING_SENTENCE)).encode("utf-8")
+                    % (responses.RETRY_AFTER_SECONDS, UPDATING_SENTENCE)).encode("utf-8")
             kind = "text/html; charset=utf-8"
         start_response("503 SERVICE UNAVAILABLE", headers + [("Content-Type", kind), ("Content-Length", str(len(body)))])
         return [body]

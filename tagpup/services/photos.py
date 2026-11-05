@@ -1,10 +1,11 @@
 """Actions on photo files, and reading a folder of them for the page."""
+import collections
 import json
 import logging
 import os
 
 from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
-from tagpup.core.result import NotFound, Refused, Result
+from tagpup.core.result import NotFound, Refused, Result, Unavailable
 from tagpup.files import images, metadata, names, recycle_bin, shares
 from tagpup.services import file_changes, file_only, libraries, rotation, thumbnails
 from tagpup.services import roots as roots_service
@@ -236,6 +237,56 @@ def page_copy(photo_path, max_size=None, upright=True):
             logger.warning("Could not make a smaller copy of %s: %s", photo_path, e)
     with open(photo_path, "rb") as f:
         return f.read(), images.content_type(photo_path)
+
+
+#: The most bytes one answer to a range of a video sends (tagpup.web.responses.ranged): a browser playing a video asks
+#: `bytes=N-` and asks again from where an answer ended, so a cap keeps one request from holding one of the server's
+#: threads (waitress has 16) and its buffer for the length of a whole film.
+VIDEO_SPAN = 4 * 1024 * 1024
+#: The bytes read from a video's file at a time (shares.read_span), each read opening and closing the file.
+VIDEO_READ = 1024 * 1024
+
+#: A video as /api/video-file answers it: its native path, and the stamp (size, mtime) its bytes are read against.
+Video = collections.namedtuple("Video", "path size mtime content_type")
+
+
+def video(library, photo_id):
+    """The Video of photo `photo_id` of `library`. Raises NotFound -- with its sentence -- for an id the library has no
+    photo of, one that is a photo and not a video (photos.kind), and one whose file is not there; Unavailable when the
+    file is on a share that is away or refuses to be read (shares.reachable_stamp: a 503, try again);
+    paths.RootsError for a video under a root this machine does not place."""
+    row = None
+    if 0 < photo_id < 2 ** 63:   # an id SQLite cannot hold names no photo: a sentence, not an overflow
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            row = photos.path_and_kind(conn, photo_id)
+        finally:
+            conn.close()
+    if row is None or row[1] != "video":
+        raise NotFound("There is no video %d in this library." % photo_id)
+    path = row[0]
+    stamp = shares.reachable_stamp(path, "video")
+    if stamp is None:
+        raise NotFound("The file of video %d is not there." % photo_id)
+    return Video(path, stamp[1], stamp[0], images.content_type(path))
+
+
+def video_bytes(video, start, length):
+    """The bytes of `video` from `start`, `length` of them, a VIDEO_READ at a time (shares.read_span, the file opened and
+    closed for each): what an answer to a range streams. Ends early -- a short answer, which the browser asks again
+    from where it stopped -- when the file changed since `video` was looked at, cannot be read, or its share stopped
+    answering, with one line in the log; never raises once the answer has begun."""
+    end = start + length
+    while start < end:
+        try:
+            piece = shares.read_span(video.path, start, min(VIDEO_READ, end - start), (video.mtime, video.size))
+        except (OSError, Unavailable) as why:
+            logger.info("A video's answer ended at byte %d of %d: %s", start, video.size, why)
+            return
+        if not piece:
+            return
+        yield piece
+        start += len(piece)
 
 
 #: How long a look at a photo's header waits on a network share, and how long a share that did not

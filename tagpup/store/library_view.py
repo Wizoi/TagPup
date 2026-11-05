@@ -494,17 +494,17 @@ def id_plans(conn, source, cap, order=TAKEN):
 # ---- The cards -------------------------------------------------------------------------------
 
 def card_rows(conn, photo_ids):
-    """{photo id: (path -- native --, mtime, size, taken)} of the photos `photo_ids` that have a row: one read in
+    """{photo id: (path -- native --, mtime, size, taken, kind)} of the photos `photo_ids` that have a row: one read in
     batches of CHUNK of the columns a card needs, never raw_metadata, tags or a BLOB. Raises
     paths.RootsError for a root this machine does not place."""
     found = {}
     ids = list(photo_ids)
     for start in range(0, len(ids), CHUNK):
         chunk = ids[start:start + CHUNK]
-        rows = conn.execute("SELECT id, path, mtime, size, taken FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)),
-                            chunk).fetchall()
-        for photo_id, path, mtime, size, taken in store_roots.natives(conn, rows, 1):
-            found[photo_id] = (path, mtime, size, taken)
+        rows = conn.execute("SELECT id, path, mtime, size, taken, kind FROM photos WHERE id IN (%s)"
+                            % ",".join("?" * len(chunk)), chunk).fetchall()
+        for photo_id, path, mtime, size, taken, kind in store_roots.natives(conn, rows, 1):
+            found[photo_id] = (path, mtime, size, taken, kind)
     return found
 
 
@@ -515,11 +515,11 @@ def photo_id_of(conn, photo_path):
 
 
 def photo_row(conn, photo_id):
-    """(path -- native --, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON, year) of the photo
+    """(path -- native --, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON, year, kind) of the photo
     `photo_id`, or None: one row by its primary key, what the details panel shows of a photo. Raises
     paths.RootsError for a root this machine does not place."""
-    rows = conn.execute("SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, p.year"
-                        " FROM photos p WHERE p.id = ?", (photo_id,)).fetchall()
+    rows = conn.execute("SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata, p.year,"
+                        " p.kind FROM photos p WHERE p.id = ?", (photo_id,)).fetchall()
     rows = store_roots.natives(conn, rows, 0, raw=(6,))
     return tuple(rows[0]) if rows else None
 

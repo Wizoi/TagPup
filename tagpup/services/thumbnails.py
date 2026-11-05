@@ -32,7 +32,7 @@ import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from tagpup.core.result import NotFound
+from tagpup.core.result import NotFound, Unavailable
 from tagpup.files import images, shares, thumbs
 from tagpup.store import db
 from tagpup.store import photos as store_photos
@@ -58,10 +58,6 @@ ASSUMED_BYTES = 30_000
 #: Photos `warm` reads from the library at once, and decodes at once (threads: Pillow decodes outside the GIL).
 BATCH = 500
 WORKERS = 4
-
-
-class Unavailable(RuntimeError):
-    """The thumbnail cannot be answered just now, and why, as a sentence: the file is not reachable."""
 
 
 class Thumb:
@@ -166,18 +162,6 @@ def _make(root, photo_id, row_path, path, stamp):
         return Thumb(made, OK, etag if kept else None, mtime, kept=kept)
 
 
-def _file_stamp(path):
-    """The file's (mtime, size), or None when it is not there; raises Unavailable for a share that is away
-    (answered at once while it is taken as away, shares.stamp_of) and for a file that cannot be read."""
-    stamp = shares.stamp_of(path)
-    if stamp is shares.UNANSWERED:
-        raise Unavailable("The network share this photo is on is away just now: try again in a moment.")
-    if stamp is shares.CANNOT_READ:
-        raise Unavailable("The photo's file cannot be read (it is there, but permissions or another program "
-                          "refuse it): try again in a moment.")
-    return stamp
-
-
 def serve(library, photo_id):
     """The Thumb of photo `photo_id` of `library`. Raises NotFound -- with its sentence -- for an id the
     library has no photo of, or one whose file is not there and was never shown; Unavailable when the file cannot
@@ -193,7 +177,7 @@ def serve(library, photo_id):
     if row is None:
         raise NotFound("There is no photo %d in this library." % photo_id)
     root = library.thumbs
-    stamp = _file_stamp(row.path)
+    stamp = shares.reachable_stamp(row.path)
     if stamp is None:
         last = thumbs.newest(root, photo_id, _hash_of(row.row_path))
         if last is not None:
