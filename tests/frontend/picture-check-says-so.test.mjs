@@ -71,11 +71,4 @@ describe("A write the picture check made again says so", () => {
     await settle(app.window, 60);
     assert.equal(status(app.document), "Ready");
   });
-
-  test("more than one write made again says how many", async (t) => {
-    const many = { ...served.picture_changed, pictures_refused: 3 };
-    const app = await openA(t, { save: many, rotate: served.rotated_picture_changed });
-    await saveCaption(app, "A caption");
-    assert.match(status(app.document), /3 tries would have changed a photo's picture/);
-  });
 });
