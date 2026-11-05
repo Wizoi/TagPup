@@ -536,17 +536,19 @@ def remove_under(conn, folder):
 
 #: A photo as the thumbnail cache asks for it: its id, its path as the row holds it (what the cache's
 #: entry is keyed by, so that a library moved to another place keeps its entries), and its native path.
-ThumbRow = collections.namedtuple("ThumbRow", "id row_path path")
+#: What a thumbnail is made from: the photo's id, its path as the row holds it, its native path, and its kind
+#: ('photo' or 'video', photos.kind): a clip's thumbnail is never decoded from its file.
+ThumbRow = collections.namedtuple("ThumbRow", "id row_path path kind")
 
 
 def thumb_row(conn, photo_id):
     """The ThumbRow of the photo with this id, or None: one read by primary key, never a BLOB. Raises
     paths.RootsError for a photo under a root this machine does not place."""
-    row = conn.execute("SELECT path FROM photos WHERE id = ?", (photo_id,)).fetchone()
+    row = conn.execute("SELECT path, kind FROM photos WHERE id = ?", (photo_id,)).fetchone()
     if row is None:
         return None
     native = store_roots.from_row(conn, row[0])
-    return ThumbRow(photo_id, row[0], native)
+    return ThumbRow(photo_id, row[0], native, row[1])
 
 
 def path_and_kind(conn, photo_id):
@@ -567,16 +569,16 @@ def row_stamp(conn, photo_id):
 
 
 def thumb_rows(conn, folder=None, after=0, limit=1000):
-    """[(id, path as the row holds it, native path)] of the photos with an id above `after`, in id order, at
+    """[ThumbRow] of the photos with an id above `after`, in id order, at
     most `limit`: those under `folder` at any depth, or every one. What warming the cache walks, a batch
     at a time."""
-    query, params = "SELECT id, path FROM photos WHERE id > ?", [after]
+    query, params = "SELECT id, path, kind FROM photos WHERE id > ?", [after]
     if folder:
         where, folder_params = store_roots.sql_under(conn, "path", folder)
         query += " AND " + where
         params += list(folder_params)
     rows = conn.execute(query + " ORDER BY id LIMIT ?", params + [limit]).fetchall()
-    return [(photo_id, row_path, store_roots.from_row(conn, row_path)) for photo_id, row_path in rows]
+    return [ThumbRow(photo_id, row_path, store_roots.from_row(conn, row_path), kind) for photo_id, row_path, kind in rows]
 
 
 def row_paths(conn):
