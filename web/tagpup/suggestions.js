@@ -192,11 +192,18 @@ export function suggestionsLetGo() {
 
 export function checkSuggestionsStatus(folderPath) {
     if (state.progressTimer) clearInterval(state.progressTimer);
+    let timer = null;
 
     function queryProgress() {
         api.json(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
             .then(data => {
                 if (state.library) return;   // likewise: its progress and suggestions belong to a folder
+                // A reply for a folder left behind (another opened meanwhile) is that folder's: it shows nothing here,
+                // and its poll stops.
+                if (!state.scannedFolder || !samePath(folderPath, state.scannedFolder)) {
+                    clearInterval(timer);
+                    return;
+                }
                 state.suggestRun = {
                     status: data.status, message: data.message || '',
                     completed: data.completed || 0, total: data.total || 0,
@@ -298,7 +305,7 @@ export function checkSuggestionsStatus(folderPath) {
 
     // Query once immediately, then poll
     queryProgress();
-    state.progressTimer = setInterval(queryProgress, 1500);
+    timer = state.progressTimer = setInterval(queryProgress, 1500);
 }
 
 /**
