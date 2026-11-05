@@ -829,9 +829,9 @@ def photo_thumb():
 @routes.get("/api/video-file")
 def video_file():
     """A video's bytes by its id, a range at a time as the browser asks (tagpup.services.photos.video, video_bytes;
-    tagpup.web.responses.ranged): 206 with at most VIDEO_SPAN bytes of a range, 200 with the whole file for no range, 416
-    for a range that cannot be answered. The URL carries the file's modified time (`v`), so the browser keeps it a day,
-    as a photo. 404 for an id that is no video of the library or whose file is gone, 400 for a missing or non-numeric
+    tagpup.web.responses.ranged): 206 with at most VIDEO_SPAN bytes of a range (no range is the first), 416 for a range
+    that cannot be answered. The URL carries the file's modified time (`v`), so the browser may keep the pieces a day,
+    as a photo; Last-Modified is the file's. 404 for an id that is no video of the library or whose file is gone, 400 for a missing or non-numeric
     one, 503 with Retry-After when the file cannot be reached just now (a share away). A stream that cannot go on (the
     file changed, the share stopped answering) ends short, and the browser asks again. To this PC only (403)."""
     if (refusal := _this_pc_only()) is not None:
@@ -852,6 +852,7 @@ def video_file():
                              photo_actions.VIDEO_SPAN)
     if reply.status_code != 416:
         reply.headers["Cache-Control"] = "max-age=%d" % PHOTO_CACHE_SECONDS
+        reply.last_modified = video.mtime
     return reply
 
 

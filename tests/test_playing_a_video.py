@@ -70,6 +70,7 @@ class Playing(Videos):
                          (reply.headers["Content-Range"], reply.headers["Accept-Ranges"],
                           reply.headers["Content-Length"], reply.mimetype))
         self.assertEqual("max-age=86400", reply.headers["Cache-Control"])
+        self.assertEqual(int(os.stat(self.path).st_mtime), reply.last_modified.timestamp())
 
     def test_an_open_ended_range_is_answered_a_span_at_a_time(self):
         reply = self.ask(asked="bytes=500-")
@@ -78,9 +79,11 @@ class Playing(Videos):
         rest = self.ask(asked="bytes=800-")
         self.assertEqual(("bytes 800-999/1000", CONTENT[800:]), (rest.headers["Content-Range"], rest.data))
 
-    def test_no_range_is_the_whole_file(self):
+    def test_no_range_is_the_first_span_never_the_whole_file(self):
         reply = self.ask()
-        self.assertEqual((200, CONTENT, "1000"), (reply.status_code, reply.data, reply.headers["Content-Length"]))
+        self.assertEqual((206, CONTENT[:SPAN], "bytes 0-299/1000", str(SPAN)),
+                         (reply.status_code, reply.data, reply.headers["Content-Range"], reply.headers["Content-Length"]))
+        self.assertIsNotNone(reply.last_modified)
 
     def test_a_range_that_cannot_be_answered_is_416_with_the_size(self):
         for asked in ("bytes=1000-", "bytes=0-1,5-6", "bytes=-2000"):
@@ -88,12 +91,12 @@ class Playing(Videos):
                 reply = self.ask(asked=asked)
                 self.assertEqual((416, "bytes */1000"), (reply.status_code, reply.headers["Content-Range"]))
 
-    def test_a_file_of_no_bytes_is_empty_whole_and_has_no_range(self):
+    def test_a_file_of_no_bytes_has_no_range_asked_or_not(self):
         empty = self.make_video(self.vl, "blank.mov", b"")
-        whole = self.ask(empty)
-        self.assertEqual((200, b"", "video/quicktime"), (whole.status_code, whole.data, whole.mimetype))
-        ranged = self.ask(empty, asked="bytes=0-")
-        self.assertEqual((416, "bytes */0"), (ranged.status_code, ranged.headers["Content-Range"]))
+        for asked in (None, "bytes=0-"):
+            with self.subTest(asked=asked):
+                reply = self.ask(empty, asked=asked)
+                self.assertEqual((416, "bytes */0"), (reply.status_code, reply.headers["Content-Range"]))
 
 
 class WhatIsNotAVideo(Videos):
