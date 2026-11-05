@@ -13,7 +13,9 @@ date, a delete -- are made here for such a photo, and write only its file:
 - the file is not looked at before the write, as a held photo's is not (DECISIONS
   2026-10-15): a file ExifTool cannot read or write fails that photo's write;
 - what is reported is what was written: a file counted changed is one read back holding
-  what was written, as the journaled write counts it.
+  what was written, as the journaled write counts it;
+- a write whose new file's picture changed is made once more, as a held photo's is
+  (field_values.written_once_more), and counted in the Result's details, `pictures_refused`.
 
 What the journal gave a write and this does not: the way back (History's Undo) and the
 settling of a write a crash cut short. The page's own one-step Undo writes the earlier
@@ -82,7 +84,7 @@ def write_fields(exiftool_path, photo_paths, read, plan_one, unreadable="fail", 
     holds, `unreadable`, `stop_at_first_error`, an `et` session and what the caller `held`
     of the files in it) and the same Result -- `changed` the files written, errors the photos
     that failed, details `written` {path: detail} of each written or already holding it,
-    `conflicts` -- but only the files are written: no
+    `conflicts`, `pictures_refused` when a write was made once more -- but only the files are written: no
     journal change (details["change"] is None), no row, nothing after."""
     if et is None:
         with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
@@ -153,8 +155,12 @@ def _write_one(et, path, before, after, just_read, result):
             result.details["conflicts"].append(path)
             return ("changed since it was read: it holds neither what the edit found nor what it was to leave,"
                     " and is not overwritten")
+    def again():
+        logger.warning("A Just-look photo's write changed the picture's bytes; the new file was discarded, and it is "
+                       "written once more")
+        result.details["pictures_refused"] = result.details.get("pictures_refused", 0) + 1
     try:
-        field_values.write(et, path, after)
+        field_values.written_once_more(et, path, after, again)
     except Exception as error:
         # Settled by what the file holds after it, as the journaled write settles it.
         try:

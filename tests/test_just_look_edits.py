@@ -9,7 +9,8 @@ what a write made of a row -- and a row makes its folder the library's (2026-09-
 So for a photo in a folder the library does not hold, a caption or a tag (one photo or
 many), a Smart Rename, a turn, a Date Taken, a time shift and a delete write the FILE and
 nothing of the library's: no row, no journal change, nothing derived, no thumbnail, no
-damaged-photo record, nothing for sync or the watcher. Every test here dumps every table of the
+damaged-photo record, nothing for sync or the watcher. A write whose new file came back with its picture changed (the picture check,
+#2377) is made once more and the reply says so, as a held photo's is (DECISIONS 2026-11-05, #2476). Every test here dumps every table of the
 library before and after (tests/library_dump.py) and says it is the same. Which photos
 these are is the library's own answer, per photo, at the time of the write -- never a flag
 the page sends. In a folder the library holds part of, in one request, the held photos
@@ -31,10 +32,11 @@ import library_dump  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
+from test_a_file_holds_what_exiftool_kept import flip_a_picture_byte  # noqa: E402
 
 from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import field_values, images  # noqa: E402
+from tagpup.files import exiftool_session, field_values, images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -581,6 +583,56 @@ class AFolderEditedWhileJustLookingIsIndexedAsEdited(Base):
         self.assertTrue(all("Trips/Lighthouse" in tags for tags, _captions in rows.values()))
         self.assertEqual(1, sum("Stairs" in captions for _tags, captions in rows.values()))
         self.assertEqual(1, sum("People/Rowan Thackeray" in tags for tags, _captions in rows.values()))
+
+
+class AWriteWhosePictureChanged(Base):
+    """The owner's PC changed a picture byte of some photos as it wrote them (#2377), so a write's new file is compared
+    with the photo before it replaces it. A Just-look photo's new file that came back changed is discarded and the write
+    made once more, as a held photo's is, and the reply counts it (`pictures_refused`); a second time is that photo's
+    error, its file as it was and nothing reported written (DECISIONS 2026-11-05, #2476: the old code answered 500)."""
+
+    def flipping(self, times):
+        """ExifTool's writes, the first `times` of whose new files have a picture byte changed, as the PC did."""
+        real, made = field_values._command, []
+        self.made = made
+
+        def command(et, photo_path, scratch, *args, **kwargs):
+            real(et, photo_path, scratch, *args, **kwargs)
+            made.append(photo_path)
+            if len(made) <= times:
+                flip_a_picture_byte(scratch)
+        return mock.patch.object(field_values, "_command", command)
+
+    def test_a_save_and_a_turn_are_made_once_more_and_say_so(self):
+        photo = self.loose[0]
+        with self.flipping(1):
+            saved = self.post("/photo/save-metadata", {"path": photo, "title": "Lamp room", "tags": ["Trips/Lighthouse"]})
+        self.assertEqual(200, saved.status_code, saved.data)
+        self.assertEqual((1, 1, 2), (saved.get_json().get("pictures_refused"), saved.get_json()["file_only"],
+                                     len(self.made)))
+        self.assertEqual(("Lamp room", ["Trips/Lighthouse"]), (caption_in(photo), tags_in(photo)))
+        with self.flipping(1):
+            turned = self.post("/photo/rotate", {"path": photo, "direction": "left"})
+        self.assertEqual((200, 1), (turned.status_code, turned.get_json().get("pictures_refused")), turned.data)
+        self.assertEqual(8, int(in_file(photo, "EXIF:Orientation")["EXIF:Orientation"]))
+        quiet = self.post("/photo/save-metadata", {"path": photo, "title": "Lantern", "tags": ["Trips/Lighthouse"]})
+        self.assertNotIn("pictures_refused", quiet.get_json())
+        self.assertFalse(os.path.exists(exiftool_session.scratch_of(photo)), "a discarded new file was left")
+        self.assert_library_unchanged()
+
+    def test_a_picture_changed_twice_is_the_photos_error_and_nothing_is_written(self):
+        photo = self.loose[0]
+        with open(photo, "rb") as handle:
+            held = handle.read()
+        with self.flipping(2):
+            saved = self.post("/photo/save-metadata", {"path": photo, "title": "Lamp room", "tags": ["Trips/Lighthouse"]})
+        self.assertEqual(500, saved.status_code, saved.data)
+        self.assertIn("picture's bytes twice", saved.get_json()["error"])
+        self.assertEqual(2, len(self.made), "made more than once more")
+        with open(photo, "rb") as handle:
+            self.assertEqual(held, handle.read(), "the photo was written")
+        self.assertFalse(os.path.exists(exiftool_session.scratch_of(photo)), "a discarded new file was left")
+        self.assert_library_unchanged()
 
 
 class TwoTabs(Base):
