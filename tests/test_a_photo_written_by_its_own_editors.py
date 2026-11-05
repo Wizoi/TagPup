@@ -205,7 +205,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
                          (keywords_of(a), field_of(a, "IPTC:Keywords"), self.indexed(a)))
 
     def test_a_person_added_to_a_photo_whose_keywords_are_in_iptc_alone(self):
-        # 193 photo_index rows hold IPTC keywords and no XMP:Subject (counted read-only, 2026-11-05). The planner
+        # 151 photo_index rows hold IPTC keywords and no XMP:Subject (counted read-only, 2026-11-05). The planner
         # reads both copies, so XMP is given every keyword, not the person alone; IPTC keeps what it held.
         from PIL import Image
 
