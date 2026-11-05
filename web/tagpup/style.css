@@ -2106,6 +2106,12 @@ body.just-looking #faces-strip {
     padding-bottom: 6px;
 }
 
+/* The suggestions box's one line while its folder's run waits or is under way, or for a photo it could not read. */
+.suggestions-note {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
 /* The strip's one line while the faces load, or when they could not be loaded. */
 .faces-note {
     font-size: 12px;

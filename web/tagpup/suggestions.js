@@ -6,7 +6,7 @@ import { samePath } from './common/paths.js';
 import { leafOf, peopleListHas, personLabelOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
-    btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
+    btnApplyAllSingleSugg, btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
     indexProgressContainer, indexProgressText, inputPhotoTitle, statusDot, statusText,
     suggestedPeopleContainer, suggestedTagsContainer, suggestionsSection, suggestProgressBar,
     suggestProgressContainer, suggestProgressText
@@ -241,6 +241,12 @@ export function checkSuggestionsStatus(folderPath) {
                     // Merge progressive suggestions
                     state.folderSuggestions = data.suggestions || {};
                     renderFileList(); // updates tags badge dynamically
+                    // The open photo's box, hidden or a line, says how far the run has got until its own
+                    // suggestions come; chips shown are left (a redraw under the pointer would close a face popup).
+                    if (state.activePhotoPath && (suggestionsSection.classList.contains('hidden')
+                        || suggestionsSection.querySelector('.suggestions-note'))) {
+                        renderSuggestionsPanel(state.activePhotoPath);
+                    }
                     updateSelectedThumbnailsCount();
                     saveToLocalStorageCache();
                 } 
@@ -274,6 +280,8 @@ export function checkSuggestionsStatus(folderPath) {
                     clearInterval(state.progressTimer);
                     suggestProgressContainer.classList.add('hidden');
                     updateSuggestButtonState(data.status);
+                    // The box's waiting line goes: the run ended without this photo's suggestions.
+                    if (state.activePhotoPath) renderSuggestionsPanel(state.activePhotoPath);
                     if (data.status === 'cancelled') {
                         setStatus('ready', 'Suggest was cancelled; what it suggested before is kept.', { transient: false });
                     }
@@ -314,11 +322,44 @@ function sayWhereTheyAre(data) {
         { transient: false });
 }
 
+/**
+ * The line the box shows for a photo with nothing to offer yet (owner, 2026-11-05): while the folder's run waits or
+ * is under way, the server's own line, else its count; after it, a photo the run could not read says why. Otherwise
+ * none, and the box stays hidden as it was: a photo never analysed with no run says nothing.
+ */
+function suggestionsNote(sugg) {
+    const run = state.suggestRun;
+    if (run && (run.status === 'preparing' || run.status === 'running')) {
+        return run.message || (run.total ? `Suggesting... ${run.completed} / ${run.total}` : 'Suggesting...');
+    }
+    if (sugg && sugg.error) {
+        return `This photo could not be analysed: ${sugg.error}. Start Photo Analysis again to retry.`;
+    }
+    return null;
+}
+
+/** The box holding only a line of words, as the faces' strip does while it loads (photo.js); null puts the lists back. */
+function sayAboutSuggestions(words) {
+    let note = suggestionsSection.querySelector('.suggestions-note');
+    if (words && !note) {
+        note = document.createElement('div');
+        note.className = 'suggestions-note';
+        note.setAttribute('role', 'status');
+        suggestionsSection.appendChild(note);
+    }
+    if (note && !words) note.remove();
+    else if (note) note.textContent = words;
+    suggestionsSection.querySelector('.suggestions-content').classList.toggle('hidden', Boolean(words));
+    btnApplyAllSingleSugg.classList.toggle('hidden', Boolean(words));
+}
+
 // Render suggestions box in right pane for active photo
 export function renderSuggestionsPanel(photoPath) {
     const sugg = state.folderSuggestions[photoPath];
-    if (!sugg) {
-        suggestionsSection.classList.add('hidden');
+    const note = !sugg || sugg.error ? suggestionsNote(sugg) : null;
+    sayAboutSuggestions(note);
+    if (note || !sugg) {
+        suggestionsSection.classList.toggle('hidden', !note);
         return;
     }
 
