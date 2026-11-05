@@ -40,6 +40,7 @@ SCENARIO = frozenset({
     "test_a_photo_patched_in_place",
     "test_a_photo_written_by_its_own_editors",
     "test_a_clip_patched_in_place",
+    "test_an_adobe_clip_packet_edited_and_read_back",
     "test_time_shift",
     "test_a_crash_part_way_is_settled_at_the_next_start",
     "test_a_file_holds_what_exiftool_kept",
