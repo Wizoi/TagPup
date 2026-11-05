@@ -483,6 +483,14 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     for why, count in sorted(left_unread.items()):
         console.print(f"[bold yellow]{count} photo(s) were not read: {why}.[/bold yellow] They are left as they were; "
                       f"the next index reads them.")
+    # A clip (kind 'video') is recorded by its stamp and what ExifTool read of it, with no vector: nothing decoded, no
+    # face looked for, nothing written to its file (so no lock), no turn on the graphics card. A transaction a chunk.
+    clips = [m for m in to_index_meta if m.get("kind") == "video"]
+    to_index_meta = [m for m in to_index_meta if m.get("kind") != "video"]
+    for start in range(0, len(clips), VIDEO_CHUNK):
+        photo_index.record_videos(clips[start:start + VIDEO_CHUNK])
+    if clips:
+        console.print(f"Recorded [bold green]{len(clips)}[/bold green] video(s).")
     tagged_count = sum(1 for m in to_index_meta if m["tags"] or m["people"] or m["captions"])
 
     console.print(
@@ -493,7 +501,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     # If there is nothing at all to index
     if not to_index_meta:
-        if skipped_count > 0:
+        if clips:
+            console.print("[green]No photos to index besides the videos.[/green]")
+        elif skipped_count > 0:
             console.print("[green]No new images found. Index remains current.[/green]")
         else:
             console.print("[yellow]No photos found to index.[/yellow]")
@@ -905,6 +915,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     if touched and not skip_faces:
         _bake_after_index(Library(db_path), exiftool_path, face_records.detector_named(settings.faces),
                           list(touched.values()), handed, stop_file)
+
+
+#: How many clips the index records in one transaction (PhotoIndex.record_videos).
+VIDEO_CHUNK = 100
 
 
 #: What the index says of the photos it owes only their files' bake (photo_fingerprints.NO_FINGERPRINT), counts only.

@@ -90,16 +90,19 @@ def owed(conn, photo_key, detector, on_disk, folder=None):
     embeddings.model_key), a vector whose stamp does not describe the file, a current vector with no fingerprint row
     (NO_FINGERPRINT), or -- `detector` a faces_detected name, None when faces are not asked (--skip-faces) -- never
     examined for faces. A row whose stamp does not describe its file is sync's to read again (store.photos.describes),
-    not a reason here. Nothing decoded, nothing written: one read of the rows' stamps with their vectors'
+    not a reason here; nor is a clip (kind 'video'), which is owed none of these. Nothing decoded, nothing written: one read of the rows' stamps with their vectors'
     (store.photos.stamps), one of the never-examined and one of the ids holding a fingerprint (a scan of this table's
     keys: 0.11 s on a process's first ask, 0.02 s warm; the whole answer 0.48 s, faces not asked, on photo_index's
     59,524 photos, 2026-10-28)."""
     unexamined = faces_detected.unexamined(conn, detector) if detector is not None else set()
     fingerprinted = {photo_id for (photo_id,) in conn.execute("SELECT photo_id FROM photo_fingerprints")}
     found = {}
-    for photo_id, path, _mtime, _size, vector in store_photos.stamps(conn, folder, vector_stamps=photo_key):
+    for photo_id, path, _mtime, _size, kind, vector in store_photos.stamps(conn, folder, vector_stamps=photo_key,
+                                                                         with_kind=True):
         disk = on_disk.get(paths.key(path))
-        if disk is None:
+        if disk is None or kind == "video":
+            # A clip has no vector, no fingerprint and no faces looked for: the index owes it nothing once its row
+            # describes its file (it would queue every clip's folder on every sync).
             continue
         reasons = ()
         if vector is None:

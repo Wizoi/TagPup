@@ -642,13 +642,16 @@ def rows_under(conn, folder):
 
 # ---- What sync and the re-read of a row read --------------------------------------------------
 
-def stamps(conn, folder=None, with_vectors=None, vector_stamps=None):
+def stamps(conn, folder=None, with_vectors=None, vector_stamps=None, with_kind=False):
     """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what sync
-    (tagpup.services.sync) and the indexer (services.search.PhotoIndex) compare with the disk. With
+    (tagpup.services.sync) and the indexer (services.search.PhotoIndex) compare with the disk. With `with_kind`, each
+    also gives its kind ('photo' or 'video') after its size. With
     `with_vectors`, a model's name, each also says whether the photo holds a vector under it; with `vector_stamps`, a
     model's name, each also gives its vector's (mtime, size), or None when it holds none: what
     photo_fingerprints.same_picture is asked with. Nothing else of the row is read, none of its JSON, no vector."""
     columns, joined, params = "p.id, p.path, p.mtime, p.size", "", []
+    if with_kind:
+        columns += ", p.kind"
     if with_vectors is not None:
         columns += ", EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
         params.append(with_vectors)
