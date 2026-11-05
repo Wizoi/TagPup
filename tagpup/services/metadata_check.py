@@ -4,7 +4,9 @@ the verification bar's points 1, 2 and 6): `metadata-check` of tagpup_cli.py. It
 Of a library's JPEGs, the census's seeded draw (segment_census.drawn) is read, each file through shares (read_whole: a
 file gone, changed while it was read, that cannot be read, or on a share that does not answer is counted by
 shares.why_not_read's word and passed over), into a sandbox of this PC: SANDBOX in the temporary folder, one run on the PC at a time (byte_lock),
-left by a run that was killed removed by the next, and removed at the run's end however it ends (Ctrl+C too). Nothing the
+left by a run that was killed removed by the next, and removed at the run's end however it ends (Ctrl+C too; a file of
+it another program holds a moment, as an antivirus scans a copy just written, tried once more: _removed). Each photo's
+copies are in a folder of their own, numbered, so one whose removal failed is never in the next photo's way. Nothing the
 run calls reads a home (the planners are pure, the writers write the copy they are given), so the sandbox is a folder,
 not a home. Free space is checked before each photo (MARGIN, and COPIES of its size).
 
@@ -30,6 +32,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from contextlib import closing, contextmanager
 
 from tagpup.core import byte_lock, dates, fields, paths, vocabulary
@@ -72,6 +75,8 @@ CAPTION = "Lanterns along the harbour wall"
 SHIFT_MINUTES = 90
 SIDES = (("ExifTool", False), ("own", True))
 TWO_AT_ONCE = "Another metadata-check is running on this PC; wait for it to end."
+#: Seconds the sandbox's removal waits before its one retry, when a file of it was held by another program.
+REMOVAL_RETRY = 1.0
 #: Why a run ended early.
 INTERRUPTED = "interrupted"
 NO_ROOM = "the sandbox's disk has less than %d MB free"
@@ -101,6 +106,21 @@ def sandbox_root():
     return os.path.join(tempfile.gettempdir(), SANDBOX)
 
 
+def _removed(folder):
+    """Remove `folder` and all it holds; when a file of it is held (another program's handle, WinError 32), once more
+    after REMOVAL_RETRY. What is left after that is removed by the next run's start."""
+    for wait in (REMOVAL_RETRY, None):
+        try:
+            shutil.rmtree(folder)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if wait is None:
+                return
+            time.sleep(wait)
+
+
 @contextmanager
 def sandbox():
     """The run's sandbox folder; Refused while another run holds it. Removed at the end."""
@@ -109,11 +129,11 @@ def sandbox():
     if not held.acquire():
         raise Refused(TWO_AT_ONCE)
     try:
-        shutil.rmtree(root, ignore_errors=True)          # a run killed before its cleanup
-        os.makedirs(root)
+        _removed(root)                                   # a run killed before its cleanup
+        os.makedirs(root, exist_ok=True)
         yield root
     finally:
-        shutil.rmtree(root, ignore_errors=True)
+        _removed(root)
         held.release()
 
 
@@ -267,8 +287,7 @@ def check(library, exiftool_path, sample=SAMPLE, seed=segment_census.SEED, revea
         run = _Run(library, et, whole_et, reveal)
         try:
             for done, path in enumerate(chosen, 1):
-                folder = os.path.join(root, "photo")
-                os.makedirs(folder)
+                folder = tempfile.mkdtemp(prefix="%d-" % done, dir=root)
                 try:
                     stopped = run.photo(path, folder)
                 finally:

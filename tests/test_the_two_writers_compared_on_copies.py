@@ -25,7 +25,8 @@ disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a
 reading a photo whose stamp says it is gone fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on; a photo read in one read
 fails test_a_photo_larger_than_a_piece_is_read_in_pieces; sandbox()
 not taking its lock fails test_a_second_run_is_refused_while_one_holds_the_sandbox; a sandbox a killed run left not
-removed first, or Ctrl+C not caught, fails test_an_interrupted_run_leaves_no_sandbox; no disk check fails
+removed first, or Ctrl+C not caught, fails test_an_interrupted_run_leaves_no_sandbox; one folder for every photo,
+or the sandbox's removal not tried again, fails test_a_folder_another_program_holds_a_moment_is_not_in_the_way; no disk check fails
 test_a_disk_without_room_stops_the_run_before_a_copy; the CLI exiting 0 on a difference fails
 test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing.
 """
@@ -214,6 +215,28 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.assertIn("stopped: %s" % metadata_check.INTERRUPTED, result.output)
         self.assertFalse(os.path.exists(self.sandbox), "the sandbox was left")
         self.assertTrue(all(path.startswith(self.sandbox) for path in written), "a write outside the sandbox")
+
+    def test_a_folder_another_program_holds_a_moment_is_not_in_the_way(self):
+        # An antivirus scan holds a copy just written: the first photo's folder is left, and so is the sandbox at the
+        # first try of its removal. The next photo has a folder of its own; the sandbox is removed on the second try.
+        self.photo("a.jpg")
+        self.photo("b.jpg")
+        real, held = shutil.rmtree, set()
+
+        def rmtree(path, ignore_errors=False, **kwargs):
+            here = os.path.normcase(os.path.abspath(path))
+            which = ("sandbox" if here == os.path.normcase(self.sandbox) and os.path.isdir(here) else
+                     "photo" if os.path.dirname(here) == os.path.normcase(self.sandbox) else None)
+            if which and which not in held:
+                held.add(which)
+                if ignore_errors:
+                    return None
+                raise PermissionError(32, "The process cannot access the file because it is being used")
+            return real(path, ignore_errors=ignore_errors, **kwargs)
+        with mock.patch.object(shutil, "rmtree", rmtree), mock.patch.object(metadata_check, "REMOVAL_RETRY", 0):
+            found = self.check()
+        self.assert_agreed(found, 2)
+        self.assertEqual({"sandbox", "photo"}, held)
 
     def test_a_disk_without_room_stops_the_run_before_a_copy(self):
         self.photo("a.jpg")
