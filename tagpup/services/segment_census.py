@@ -87,16 +87,11 @@ def _read(path):
 
 
 def _looked(path):
-    """("read", (layout, header, tail)) | ("not_answered" | "gone" | "unreadable", None), never raising."""
+    """("read", (layout, header, tail)) | (why it was not read, None: shares.why_not_read's words), never raising."""
     state, found = shares.bounded(path, lambda: _read(path), shares.READ_WAIT)
     if state == "ok":
         return "read", found
-    if state == "away":
-        return "not_answered", None
-    if isinstance(found, (FileNotFoundError, NotADirectoryError)):
-        stamp = shares.stamp_of(path)
-        return ("gone" if stamp is None else "not_answered" if stamp is shares.UNANSWERED else "unreadable"), None
-    return "unreadable", None
+    return shares.why_not_read(path, found if state == "error" else None), None
 
 
 def _label(segment, body):

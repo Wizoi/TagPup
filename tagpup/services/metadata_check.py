@@ -1,9 +1,9 @@
 """The shadow comparison of TagPup's own JPEG writer with ExifTool's, on copies (docs/PLAN_OWN_METADATA.md, M4 step 4c,
 the verification bar's points 1, 2 and 6): `metadata-check` of tagpup_cli.py. It never writes the library or a photo.
 
-Of a library's JPEGs, the census's seeded draw (segment_census.drawn) is read, each file through shares (read_span after
-stamp_of: a file gone, changed while it was read, that cannot be read, or on a share that does not answer is counted and
-passed over), into a sandbox of this PC: SANDBOX in the temporary folder, one run on the PC at a time (byte_lock),
+Of a library's JPEGs, the census's seeded draw (segment_census.drawn) is read, each file through shares (read_whole: a
+file gone, changed while it was read, that cannot be read, or on a share that does not answer is counted by
+shares.why_not_read's word and passed over), into a sandbox of this PC: SANDBOX in the temporary folder, one run on the PC at a time (byte_lock),
 left by a run that was killed removed by the next, and removed at the run's end however it ends (Ctrl+C too). Nothing the
 run calls reads a home (the planners are pure, the writers write the copy they are given), so the sandbox is a folder,
 not a home. Free space is checked before each photo (MARGIN, and COPIES of its size).
@@ -117,27 +117,6 @@ def sandbox():
         held.release()
 
 
-def _copied(path):
-    """("read", the file's bytes) | (why it was passed over, None), never raising."""
-    stamp = shares.stamp_of(path)
-    if stamp is None:
-        return "gone", None
-    if stamp is shares.UNANSWERED:
-        return "not answered", None
-    if stamp is shares.CANNOT_READ:
-        return "unreadable", None
-    try:
-        return "read", shares.read_span(path, 0, stamp[1], stamp)
-    except shares.FileChanged:
-        return "changed while read", None
-    except shares.Unavailable:
-        return "not answered", None
-    except (FileNotFoundError, NotADirectoryError):
-        return "gone", None
-    except OSError:
-        return "unreadable", None
-
-
 def _outside(data):
     """(every segment of the JPEG `data` but its metadata ones, its picture), or None when it is no JPEG with a scan."""
     layout = containers.read(io.BytesIO(data))
@@ -199,7 +178,7 @@ class _Run:
 
     def photo(self, path, folder):
         """Compare the writers on the photo at `path`, in `folder`; None, or why the run is to stop."""
-        state, data = _copied(path)
+        state, data = shares.read_whole(path)
         if state == "read" and _outside(data) is None:
             state = "not a JPEG with a picture"
         if state != "read":

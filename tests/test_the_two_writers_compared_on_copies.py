@@ -21,7 +21,7 @@ KNOWN names by its IFD1 group: both writers leave IFD0's and IFD1's Orientation 
 offset fails it too; KNOWN without the XMP toolkit fails
 test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing; a stale tag compared with
 ExifTool's side and not the original's fails test_simple_photos_agree_and_nothing_of_the_library_is_written; a
-disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference; _copied
+disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference; shares.read_whole
 reading a photo whose stamp says it is gone fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on; sandbox()
 not taking its lock fails test_a_second_run_is_refused_while_one_holds_the_sandbox; a sandbox a killed run left not
 removed first, or Ctrl+C not caught, fails test_an_interrupted_run_leaves_no_sandbox; no disk check fails
