@@ -1,0 +1,11 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-05 | low: for the flip (4d). With OWN_WRITER off, the %TEMP% header copy (field_values._exiftool_header), in_place.fitted and _fitted and the ExifTool-copy arm stay as the live path; deleting them before the flip would make every JPEG write a rewrite and undo the DECISIONS 2026-11-03 patch. They go, and PATCH_IN_PLACE and OWN_WRITER collapse into one, in the commit that turns the own writer on (main session's decision, 2026-11-05); docs/PLAN_OWN_METADATA.md M4 still says 4b-2 deletes them. | open |
+| B-2 | 2026-11-05 | low: #2434 is fixed by 681d2549 (the patch record keeps `stale`; file_changes._by_bytes reads it; a settle compares against fields.as_patched). tests/test_a_photo_written_by_its_own_editors.py test_killed_after_the_last_byte_it_is_done_as_the_patch_left_it covers it with OWN_WRITER forced on; its run with the `row.stale = in_place.left_stale(...)` line dropped was not made in this run (context budget): the next worker makes it. | open |
+| B-3 | 2026-11-05 | wrong: for the flip (4d). With OWN_WRITER on, a photo whose IPTC copy an XMP-only patch left stale is never holding it already to the planner: a repeated Save of the same keywords, or an add of a tag the photo has, is planned, journaled and reported as 1 changed though no byte is written (sandbox: changed 1, no patch saved, fields_before equal to fields_after). Each adds a History entry that changes nothing. The planner should compare as fields.as_patched says the file holds. Unreachable while OWN_WRITER is off. | open |
+| B-4 | 2026-11-05 | low: tests/owners.py _build reassigns its loop's `ids` when a name is already mapped (`owner, ids = files[name][0], files[name][2] + ids`), so each later name in the same scenario string inherits the earlier ids: test_a_crash_part_way_is_settled_at_the_next_start is mapped ('D2', 'D3') though listed under D3 alone (it follows test_journal). Worked around for the new file by listing it first under D3; the fix (local names in `put`) is tests/test_the_test_map.py's owner's. | open |
