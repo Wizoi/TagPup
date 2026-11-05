@@ -109,7 +109,7 @@ _SCENARIO_FILES = {
         "test_file_changes_one_at_a_time test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
         "test_tag_a_photo_read_it_back_and_undo test_time_shift test_xmp_packet_edits_what_it_owns "
         "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns test_segment_edits_choose_what_to_write "
-        "test_a_photo_written_by_its_own_editors"
+        "test_a_photo_written_by_its_own_editors test_the_two_writers_compared_on_copies"
     ),
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_an_index_reads_the_next_photos_ahead",
     "F3": (

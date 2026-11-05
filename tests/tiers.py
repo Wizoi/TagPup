@@ -39,6 +39,7 @@ SCENARIO = frozenset({
     "test_file_journal",
     "test_a_photo_patched_in_place",
     "test_a_photo_written_by_its_own_editors",
+    "test_the_two_writers_compared_on_copies",
     "test_a_clip_patched_in_place",
     "test_time_shift",
     "test_a_crash_part_way_is_settled_at_the_next_start",
