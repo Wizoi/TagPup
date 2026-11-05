@@ -18,7 +18,7 @@ import {
 } from './elements.js';
 import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
-import { whereWritten } from './write-queue.js';
+import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
     exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
@@ -722,7 +722,8 @@ export function rotatePhoto(direction) {
             }
             saveToLocalStorageCache();
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = data.file_only ? `Rotated.${whereWritten(data)}` : 'Ready';
+            statusText.textContent = data.file_only || data.pictures_refused
+                ? `Rotated.${whereWritten(data)}${pictureCheckSaid(data)}` : 'Ready';
         } else {
             throw new Error(data.error || 'Failed to rotate');
         }
