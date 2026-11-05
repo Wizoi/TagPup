@@ -37,6 +37,23 @@ def _editors_imported(tree):
     return found
 
 
+def _names_used(tree, editor):
+    """The names of `editor` a file uses: each attribute of a name bound to the module, and each name imported from
+    it (`from tagpup.files.xmp_packet import edit` is `edit`)."""
+    bound, names = set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            bound |= {alias.asname or alias.name for alias in node.names if alias.name.rsplit(".", 1)[-1] == editor}
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").rsplit(".", 1)[-1] == editor:
+                names |= {alias.name for alias in node.names}
+            bound |= {alias.asname or alias.name for alias in node.names if alias.name == editor}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in bound:
+            names.add(node.attr)
+    return names
+
+
 class TheBlockEditorsHaveOneCaller(unittest.TestCase):
 
     def test_only_segment_edits_imports_an_editor_but_the_named_exception(self):
@@ -50,9 +67,7 @@ class TheBlockEditorsHaveOneCaller(unittest.TestCase):
             used = _editors_imported(tree) - {own}
             allowed = EXCEPTIONS.get(relative)
             if allowed and used == {allowed[0]}:
-                names = {node.attr for node in ast.walk(tree)
-                         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
-                         and node.value.id == allowed[0]}
+                names = _names_used(tree, allowed[0])
                 if names <= {allowed[1]}:
                     continue
                 wrong.append("%s uses %s.%s" % (relative, allowed[0], sorted(names - {allowed[1]})))
@@ -64,6 +79,15 @@ class TheBlockEditorsHaveOneCaller(unittest.TestCase):
         self.assertEqual({"exif_block"}, _editors_imported(ast.parse("from tagpup.files import containers, exif_block")))
         self.assertEqual({"iptc_block"}, _editors_imported(ast.parse("import tagpup.files.iptc_block as ib")))
         self.assertEqual({"xmp_packet"}, _editors_imported(ast.parse("from tagpup.files.xmp_packet import edit")))
+
+    def test_the_exception_is_held_to_its_one_name_however_it_is_imported(self):
+        for source in ("from tagpup.files import xmp_packet\nxmp_packet.padding(1)",
+                       "import tagpup.files.xmp_packet as xp\nxp.padding(1)",
+                       "from tagpup.files.xmp_packet import padding"):
+            self.assertEqual({"padding"}, _names_used(ast.parse(source), "xmp_packet"), source)
+        for source in ("from tagpup.files import xmp_packet as xp\nxp.edit(b'', {})",
+                       "from tagpup.files.xmp_packet import padding, edit"):
+            self.assertIn("edit", _names_used(ast.parse(source), "xmp_packet"), source)
 
 
 if __name__ == "__main__":

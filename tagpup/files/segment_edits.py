@@ -5,7 +5,8 @@ Pure: a header's bytes and layout in, bytes out; no file, nothing written. The o
 
 `new_header(layout, header, values)` is (the header with only its edited segments' bodies changed, the fields left
 stale), or None when the write is not a patch -- a field the own writer does not write, a value it cannot spell, a
-segment an editor refuses or that the change does not fit, a change for a segment the photo lacks -- and the caller
+segment an editor refuses or that the change does not fit, a change for a segment the photo lacks or holds twice --
+and the caller
 writes the file whole, as ExifTool does, nothing written here. Every marker and length byte is the header's; a segment
 never grows (no `grow`).
 
@@ -126,8 +127,11 @@ def new_header(layout, header, values):
         by_kind = _changes({field: texts for field, texts in values.items() if field not in stale})
         written = bytearray(header)
         for kind, wanted in by_kind.items():
-            (segment,) = layout.of_kind(kind) or (None,)
-            edited = _edited(kind, segment, header, wanted)
+            held = layout.of_kind(kind)
+            if len(held) > 1:
+                raise _NotAPatch("The photo holds %d %s segments: which one a reader takes is not the own writer's to"
+                                 " say." % (len(held), kind))
+            edited = _edited(kind, held[0] if held else None, header, wanted)
             if edited is not None:
                 start, end, body = edited
                 written[start:end] = body

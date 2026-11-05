@@ -268,6 +268,23 @@ class AKeywordOrCaptionSave(unittest.TestCase):
                               containers.Refusal)
         self.assertIsNone(segment_edits.new_header(layout, data, keywords([PERSON, "Shore"])))
 
+    def test_a_segment_held_twice_is_no_patch_for_a_change_to_it(self):
+        # Two APP13 segments (kr-track 2, renton_parkrun 3 in the census) or two EXIF (photo_index 4): which one a
+        # reader takes is not this module's to say, so a change to that kind goes to the rewrite; a keyword save in
+        # XMP alone does not touch the APP13 segments and stays a patch.
+        layout, data = header()
+        data = data[:layout.iptc.end] + _segment(0xED, iptc_body()) + data[layout.iptc.end:]
+        layout = containers.read(io.BytesIO(data))
+        self.assertEqual(2, len(layout.of_kind("iptc")))
+        self.assertIsNone(segment_edits.new_header(layout, data, keywords([])))
+        new, stale = segment_edits.new_header(layout, data, keywords([PERSON, "Shore"]))
+        self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
+        layout, data = header()
+        data = data[:layout.exif.end] + _segment(0xE1, exif_body()) + data[layout.exif.end:]
+        layout = containers.read(io.BytesIO(data))
+        self.assertEqual(2, len(layout.of_kind("exif")))
+        self.assertIsNone(segment_edits.new_header(layout, data, {fields.ORIENTATION: ["6"]}))
+
     def test_a_text_field_given_two_values_is_no_patch(self):
         layout, data = header()
         self.assertIsNone(segment_edits.new_header(layout, data, {**caption("One"), "XMP:Description": ["One", "Two"]}))
@@ -331,6 +348,12 @@ class ADateOrARotation(unittest.TestCase):
         after, before = bodies(new)[0], bodies(data)[0]
         self.assertEqual(8, after["exif"]["Orientation"])
         self.assertEqual(before["raw"]["xmp"], after["raw"]["xmp"])
+
+    def test_a_rotation_beside_a_packet_it_cannot_read_is_no_patch(self):
+        # Whether the packet holds a tiff:Orientation to follow the EXIF one cannot be told: the rewrite, not an
+        # EXIF patch that might leave XMP saying the old turn.
+        layout, data = header(xmp=packet(orientation=1, extra=b"<!-- a note -->\n"))
+        self.assertIsNone(segment_edits.new_header(layout, data, {fields.ORIENTATION: ["6"]}))
 
     def test_a_rotation_of_a_photo_with_no_orientation_tag_is_no_patch(self):
         layout, data = header(exif=exif_body(orientation=None))
