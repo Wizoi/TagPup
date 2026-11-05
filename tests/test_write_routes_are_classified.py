@@ -51,6 +51,7 @@ ALLOWED = {
                               "vectors, no date, and the apply expects the face and photo-tags rows it read",
     "/api/folder/rename-photos": "renames files and re-points the photo row by id; faces, tags and vectors follow the photo id, "
                                  "which the plan and the apply are keyed by",
+    "/api/photo/smart-rename": "one photo's Smart Rename (photos.smart_rename_one): rename-photos' renaming for a batch of one",
     "/api/photo/rotate": "turns the file's Orientation (a TIFF's boxes too) and drops the photo's vectors; no name, tag or "
                          "exclusion, which are the columns the apply expects; a name decided from the vectors stays true of the same pixels",
 }

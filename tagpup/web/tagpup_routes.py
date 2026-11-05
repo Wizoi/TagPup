@@ -21,7 +21,7 @@ import threading
 from flask import Blueprint, Response, jsonify, request
 
 from tagpup import runtime as runtimes
-from tagpup.core import fields, paths, vocabulary
+from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.core.result import Conflict, NotFound, Refused, Unavailable
 from tagpup.jobs import suggestions as suggestion_jobs
@@ -979,6 +979,66 @@ def _stamp_reply(path):
     return {"mtime": stamp[0], "size": stamp[1]} if stamp else {}
 
 
+def _renamed_in_folders(library, old_path, new_path):
+    """Every folder map holding the photo, found under the name it had, holds it under `new_path` (a rename stays in
+    the same directory): its records, moved."""
+    records = []
+    for held, record in folders.of(library).entries_for(old_path):
+        held.pop(paths.key(old_path), None)
+        record["path"] = new_path
+        record["filename"] = os.path.basename(new_path)
+        held[paths.key(new_path)] = record
+        records.append(record)
+    return records
+
+
+@routes.get("/api/photo/smart-rename-parts")
+def photo_smart_rename_parts():
+    """What the photo's name holds of a Smart Rename name, for the box beside it: its grouping and number."""
+    library = state.require()
+    photo_path = request.args.get("path")
+    if not photo_path:
+        return responses.error(400, "Missing path")
+    parts = renaming.parts_of(state.rename_format(library), os.path.splitext(os.path.basename(photo_path))[0])
+    return jsonify({"grouping": parts[0] if parts else "", "number": parts[1] if parts else None})
+
+
+@routes.post("/api/photo/smart-rename")
+def photo_smart_rename():
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    photo_path = body.get("path")
+    if not photo_path:
+        return responses.error(400, "Missing path")
+    photo_path = paths.stored(photo_path)
+    grouping = (body.get("grouping") or "").strip()
+    try:
+        result = photo_actions.smart_rename_one(library, photo_path, grouping, state.rename_format(library),
+                                                state.exiftool(library))
+        if result.refused:
+            return responses.refused(result)
+        if not result.ok:
+            return responses.error(500, result.message())
+        new_path = result.details["new_path"]
+        renamed = bool(result.details["renamed"])
+        if renamed:
+            # What Suggest only looked at is kept under the names the files had (#547, #2415).
+            suggestion_jobs.runs_for(library).renamed({photo_path: new_path})
+            records = _renamed_in_folders(library, photo_path, new_path)
+        else:
+            records = [record for _held, record in folders.of(library).entries_for(photo_path)]
+        # Keeping the name it had wrote the file (photos.preserve_names): the records take its stamp now.
+        written_stamp = photo_actions.file_stamp(new_path)
+        for record in records:
+            if written_stamp:
+                record["mtime"], record["size"] = written_stamp
+    except Exception as e:
+        logger.error("Error smart renaming %s: %s", photo_path, e, exc_info=True)
+        return responses.error(500, str(e))
+    return jsonify({"success": True, "new_path": new_path, "renamed": renamed,
+                    "updated_paths": result.details["updated_paths"], **_where(result), **_stamp_reply(new_path)})
+
+
 @routes.post("/api/photo/save-metadata")
 def photo_save_metadata():
     library = state.require()
@@ -1011,14 +1071,9 @@ def photo_save_metadata():
         if renamed:
             # What Suggest only looked at is kept under the names the files had (#547, #2415).
             suggestion_jobs.runs_for(library).renamed({photo_path: new_path})
-        # Every folder map holding the photo, found under the name it had (a rename
-        # stays in the same directory).
-        for held, record in folders.of(library).entries_for(photo_path):
-            if renamed:
-                held.pop(paths.key(photo_path), None)
-                record["path"] = new_path
-                record["filename"] = os.path.basename(new_path)
-                held[paths.key(new_path)] = record
+        records = (_renamed_in_folders(library, photo_path, new_path) if renamed
+                   else [record for _held, record in folders.of(library).entries_for(photo_path)])
+        for record in records:
             raw_meta = photo_actions.record_written(
                 library, record, new_path, tags, result.details["flat"], result.details["hierarchical"])
             if date_taken:
