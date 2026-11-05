@@ -421,6 +421,16 @@ function buildThumbnailCard(photo) {
         imgWrapper.appendChild(aiBadge);
     }
 
+    // A video's card says so; its picture is the video's first frame (media.js plays it).
+    if (photo.media === 'video') {
+        const playMark = document.createElement('span');
+        playMark.className = 'thumbnail-play-mark';
+        playMark.textContent = '▶';
+        playMark.title = 'Video';
+        playMark.setAttribute('aria-label', 'Video');
+        imgWrapper.appendChild(playMark);
+    }
+
     // The picture is asked for by the grid, once the card has stayed in view (vgrid.js).
     const img = document.createElement('img');
     img.dataset.src = inLibrary ? api.image(photo.thumb) : photoFileUrl(photo, 300);

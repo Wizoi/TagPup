@@ -32,6 +32,7 @@ import {
 import { renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale } from './stale.js';
+import { showMedia } from './media.js';
 import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
 
@@ -348,8 +349,8 @@ export function showPhoto(path) {
     applyPhotoStale(photo);
     if (!photo) return;
 
-    // Render values. A photo whose file is gone has no picture to ask for.
-    mainImage.src = photo.missing ? '' : photoFileUrl(photo, 800);
+    // Render values. A photo whose file is gone has no picture to ask for; a video is played in the image's place (media.js).
+    showMedia(photo, photo.missing ? '' : photoFileUrl(photo, 800));
     detailPath.textContent = photo.path;
     let dateVal = "Unknown";
     const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
