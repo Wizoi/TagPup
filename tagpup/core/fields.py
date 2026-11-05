@@ -30,6 +30,8 @@ METADATA_FIELDS = [
     "EXIF:DateTimeOriginal", "DateTimeOriginal",
     "XMP:DateTimeOriginal",
     "EXIF:CreateDate", "CreateDate",
+    # A clip's (tagpup.core.dates.CLIP_DATE_FIELDS): CreateDate above brings QuickTime:CreateDate.
+    "QuickTime:CreationDate",
     # Location
     "XMP:City", "City",
     "XMP:State", "State",
