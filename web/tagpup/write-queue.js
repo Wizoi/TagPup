@@ -35,11 +35,8 @@ export function whereWritten(data) {
  * "Saved." or "Rotated.", or '' when none was.
  */
 export function pictureCheckSaid(data) {
-    const n = (data && data.pictures_refused) || 0;
-    if (!n) return '';
-    return n === 1
-        ? " The first try would have changed the photo's picture, so it was thrown away and the photo written again; nothing was lost."
-        : ` ${n} tries would have changed a photo's picture, so they were thrown away and the photos written again; nothing was lost.`;
+    if (!(data && data.pictures_refused)) return '';
+    return " The first try would have changed the photo's picture, so it was thrown away and the photo written again; nothing was lost.";
 }
 
 
