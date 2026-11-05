@@ -247,8 +247,8 @@ class TheTwoWritersComparedOnCopies(FilesCase):
 
     def test_a_disk_without_room_stops_the_run_before_a_copy(self):
         self.photo("a.jpg")
-        free = shutil.disk_usage(self.temp).free
-        with mock.patch.object(metadata_check, "MARGIN", free), \
+        # More room than any disk has: the free space measured a moment before grows when another program frees some.
+        with mock.patch.object(metadata_check, "MARGIN", 1 << 60), \
                 mock.patch.object(field_values, "write", side_effect=AssertionError("a copy was written")):
             found = self.check()
         self.assertEqual(({}, {}), (found["how"], found["looked"]))
