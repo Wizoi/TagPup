@@ -597,9 +597,7 @@ def _view_error(why):
         # The gate (tagpup.web.roots_gate) answers this before a route runs; this is for what it could not see.
         return responses.error(409, str(why), roots_problem=True)
     if isinstance(why, Unavailable):
-        reply = responses.error(503, str(why))
-        reply[0].headers["Retry-After"] = "2"
-        return reply
+        return responses.unavailable(why)
     return None
 
 

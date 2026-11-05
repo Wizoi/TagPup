@@ -27,6 +27,18 @@ def error(status, message, **extra):
 #: again; 503 when a folder's network share did not answer (try again later); any other, REFUSED, 400.
 STATUS = {CHANGED_ON_DISK: (409, {"changed_on_disk": True}), SHARE_AWAY: (503, {})}
 
+#: Seconds a 503 tells the page to wait before it asks again (Retry-After): a file that cannot be reached just now
+#: (unavailable), and a server or a library being brought up to date (tagpup.web.lifecycle, tagpup.web.libraries).
+RETRY_AFTER_SECONDS = 2
+
+
+def unavailable(why):
+    """The reply for a read that cannot be answered just now (tagpup.core.result.Unavailable: the file's share is away,
+    or the file refuses to be read): its sentence, answered as a share away is (STATUS, 503), with Retry-After."""
+    reply = error(STATUS[SHARE_AWAY][0], str(why))
+    reply[0].headers["Retry-After"] = str(RETRY_AFTER_SECONDS)
+    return reply
+
 
 def refused(result, **extra):
     """A refused Result's JSON error, as its kind is answered (STATUS)."""

@@ -33,6 +33,7 @@ import own_home  # noqa: E402
 
 from tagpup import launcher  # noqa: E402
 from tagpup.web import lifecycle as lifecycles  # noqa: E402
+from tagpup.web import responses  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
@@ -134,7 +135,7 @@ class ADrain(Base):
         refused = self.client().get("/harbour/api/tags")
         self.assertEqual(503, refused.status_code)
         self.assertEqual("1", refused.headers[lifecycles.UPDATING_HEADER])
-        self.assertEqual(str(lifecycles.RETRY_AFTER_SECONDS), refused.headers["Retry-After"])
+        self.assertEqual(str(responses.RETRY_AFTER_SECONDS), refused.headers["Retry-After"])
         self.assertTrue(refused.get_json()["updating"])
         # Asked while draining, the server still says how it is.
         status = self.client().get("/api/server").get_json()
