@@ -14,14 +14,17 @@ the copies stops the run before the first; a difference is exit status 1, counts
 library or its photos is written.
 
 Real JPEGs written by the real ExifTool in a home of the test's own (test_file_journal.FilesCase); the sandbox is in the
-home's temporary folder. Breaks that fail these, each tried on a copy of the code: the whole read in the writers'
-session (its -G winning over -G0:1) fails test_a_photo_whose_thumbnail_holds_an_orientation_turns_alike; KNOWN without
-the XMP toolkit fails test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing; a stale tag
-compared with ExifTool's side and not the original's fails test_simple_photos_agree_and_nothing_of_the_library_is_written;
-a disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference;
-_copied reading a photo whose stamp says it is gone fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on;
-sandbox() not taking its lock fails test_a_second_run_is_refused_while_one_holds_the_sandbox; a sandbox a killed run left
-not removed first, or Ctrl+C not caught, fails test_an_interrupted_run_leaves_no_sandbox; no disk check fails
+home's temporary folder. Breaks that fail these, each tried on a copy of the code (2026-11-05): the whole read in the
+writers' session (its -G winning over -G0:1) fails test_a_photo_whose_thumbnail_holds_an_orientation_turns_alike, and
+only through EXIF:ThumbnailOffset, which KNOWN names by its IFD1 group (both writers leave IFD0's and IFD1's Orientation
+alike, so reading the two as one hides nothing in this test); KNOWN without the thumbnail's offset fails it too; KNOWN
+without the XMP toolkit fails test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing; a
+stale tag compared with ExifTool's side and not the original's fails
+test_simple_photos_agree_and_nothing_of_the_library_is_written; a disagreement counted as a difference fails
+test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference; _copied reading a photo whose stamp says it is gone
+fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on; sandbox() not taking its lock fails
+test_a_second_run_is_refused_while_one_holds_the_sandbox; a sandbox a killed run left not removed first, or Ctrl+C not
+caught, fails test_an_interrupted_run_leaves_no_sandbox; no disk check fails
 test_a_disk_without_room_stops_the_run_before_a_copy; the CLI exiting 0 on a difference fails
 test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing.
 """
