@@ -89,7 +89,8 @@ SCENARIOS = {
 _SCENARIO_FILES = {
     "D1": "test_a_library_from_a_newer_tagpup test_newer_library_guard_in_a_long_lived_process",
     "D2": "test_journal test_maintenance test_undo_after_every_later_kind",
-    "D3": "test_journal test_a_crash_part_way_is_settled_at_the_next_start",
+    # test_a_photo_written_by_its_own_editors runs F1 too (the own writer's saves); its crash settles are D3's.
+    "D3": "test_a_photo_written_by_its_own_editors test_journal test_a_crash_part_way_is_settled_at_the_next_start",
     "D4": "test_snapshots",
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
     "D6": "test_a_librarys_settings_are_its_own",
@@ -105,7 +106,8 @@ _SCENARIO_FILES = {
         "test_a_file_holds_what_exiftool_kept test_a_photo_patched_in_place test_a_rename_stopped_part_way "
         "test_file_changes_one_at_a_time test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
         "test_tag_a_photo_read_it_back_and_undo test_time_shift test_xmp_packet_edits_what_it_owns "
-        "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns test_segment_edits_choose_what_to_write"
+        "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns test_segment_edits_choose_what_to_write "
+        "test_a_photo_written_by_its_own_editors"
     ),
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_an_index_reads_the_next_photos_ahead",
     "F3": (
