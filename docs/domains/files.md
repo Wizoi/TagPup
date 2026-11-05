@@ -357,8 +357,8 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
 - **What maps to what** (`fields.EDITED_AS`): XMP:Subject, XMP:HierarchicalSubject, XMP:Description,
   XMP:DateTimeOriginal, XMP:CreateDate, XMP-xmpMM:PreservedFileName to the packet's dc:subject,
   lr:hierarchicalSubject, dc:description, exif:DateTimeOriginal, xmp:CreateDate, xmpMM:PreservedFileName; EXIF
-  DateTimeOriginal, CreateDate, the three SubSecTime, ImageDescription, XPComment, XPKeywords and Orientation to the EXIF
-  block's; IPTC:Keywords and Caption-Abstract to the IPTC block's. EXIF:Orientation is also written to a
+  DateTimeOriginal, CreateDate, ImageDescription, XPComment, XPKeywords and Orientation to the EXIF block's (not the
+  three SubSecTime: no write names them, a Date Taken is set to the second); IPTC:Keywords and Caption-Abstract to the IPTC block's. EXIF:Orientation is also written to a
   tiff:Orientation the packet holds, never one made (ExifTool's ungrouped "Orientation"). Not mapped, so no patch:
   XMP:Title and IPTC:ObjectName (no writer writes them), the DocumentID (a rewrite mints it), a bake's fields.
 - **The XMP-only rule** (DECISIONS 2026-11-03; `fields.XMP_ONLY`): a keyword save goes to XMP alone while its
@@ -369,7 +369,8 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
   (`tagging.keywords_planner` reads XMP and IPTC), so a photo whose keywords were in IPTC alone (151 in photo_index,
   4 of them with a packet, DECISIONS 2026-11-03) gets them all in XMP; segment_edits never infers a set.
 - **Spelling**: a text field takes one text (two: no patch); Orientation a number; an EXIF date only
-  `YYYY:MM:DD HH:MM:SS` (a fraction or zone: the editor refuses, a rewrite); an XMP date in ISO 8601 with the value's own
+  `YYYY:MM:DD HH:MM:SS` (a zone: the editor refuses, a rewrite; a Date Taken carries no fraction: 0 rows whose `taken`
+  holds one in 59,618 / 2,065 / 1,309, counted 2026-11-05, and the page's picker is to the second); an XMP date in ISO 8601 with the value's own
   fraction and zone, none added. The live rows' XMP:DateTimeOriginal all take that spelling: photo_index 52,825,
   kr-track 52, renton_parkrun 3; XMP:CreateDate 20,222 / 2,049 / 1,304, and 1 photo_index value that does not (a
   rewrite); EXIF dates not of the one shape (a rewrite): DateTimeOriginal 2, CreateDate 5, photo_index only (counted

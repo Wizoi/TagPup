@@ -209,9 +209,6 @@ EDITED_AS = {
     "XMP-xmpMM:PreservedFileName": (("xmp", "xmpMM:PreservedFileName"),),
     "EXIF:DateTimeOriginal": (("exif", "DateTimeOriginal"),),
     "EXIF:CreateDate": (("exif", "CreateDate"),),
-    "EXIF:SubSecTime": (("exif", "SubSecTime"),),
-    "EXIF:SubSecTimeOriginal": (("exif", "SubSecTimeOriginal"),),
-    "EXIF:SubSecTimeDigitized": (("exif", "SubSecTimeDigitized"),),
     "EXIF:ImageDescription": (("exif", "ImageDescription"),),
     "EXIF:XPComment": (("exif", "XPComment"),),
     "EXIF:XPKeywords": (("exif", "XPKeywords"),),
@@ -258,23 +255,10 @@ def date_taken_value(date_taken):
 
 
 def date_taken_fields(date_taken):
-    """Every field a Date Taken write sets, the fraction of a second too when one is
-    given ("10:30:00.123")."""
+    """Every field a Date Taken write sets. A Date Taken is to the second: the page's picker sets no fraction, and no
+    row's `taken` holds one (0 in the three libraries, counted 2026-11-05), so no SubSecTime is written."""
     value = date_taken_value(date_taken)
-    written = {"EXIF:DateTimeOriginal": value, "XMP:DateTimeOriginal": value, "EXIF:CreateDate": value}
-    parts = value.split(".")
-    if len(parts) > 1:
-        digits = ""
-        for char in parts[1]:
-            if char.isdigit():
-                digits += char
-            else:
-                break
-        if digits:
-            written["EXIF:SubSecTimeOriginal"] = digits
-            written["EXIF:SubSecTimeDigitized"] = digits
-            written["EXIF:SubSecTime"] = digits
-    return written
+    return {"EXIF:DateTimeOriginal": value, "XMP:DateTimeOriginal": value, "EXIF:CreateDate": value}
 
 
 def record_date_taken(raw_meta, date_taken):

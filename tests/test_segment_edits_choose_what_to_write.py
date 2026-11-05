@@ -171,14 +171,15 @@ def caption(text):
 class TheMapCoversEveryWriter(unittest.TestCase):
 
     def test_every_field_a_writer_names_has_its_place_and_the_rest_go_to_the_rewrite(self):
-        written = (list(keyword_fields_of()) + list(caption("x")) + list(fields.date_taken_fields("2019-06-15T10:30:00.123"))
+        written = (list(keyword_fields_of()) + list(caption("x")) + list(fields.date_taken_fields("2019-06-15T10:30:00"))
                    + list(dates.SHIFTED_FIELDS) + [fields.ORIENTATION, names.PRESERVED_NAME])
         self.assertEqual([], [field for field in written if field not in fields.EDITED_AS])
         owned = {"xmp": xmp_packet.PROPERTIES, "exif": exif_block.FIELDS, "iptc": iptc_block.DATASETS}
         for field, targets in fields.EDITED_AS.items():
             for kind, name in targets:
                 self.assertIn(name, owned[kind], field)
-        for field in (identity.DOCUMENT_ID_FIELD, "XMP:Title", "IPTC:ObjectName", fields.REGION_INFO):
+        for field in (identity.DOCUMENT_ID_FIELD, "XMP:Title", "IPTC:ObjectName", fields.REGION_INFO,
+                      "EXIF:SubSecTimeOriginal"):
             self.assertNotIn(field, fields.EDITED_AS)
 
     def test_a_write_naming_a_field_not_mapped_is_no_patch(self):
@@ -303,15 +304,12 @@ class ADateOrARotation(unittest.TestCase):
     def test_a_date_set_patches_every_copy_it_names(self):
         layout, data = header()
         values = {field: [value] for field, value in fields.date_taken_fields("2021-03-02T08:05:09").items()}
-        values.update({"XMP:CreateDate": ["2021:03:02 08:05:09"], "EXIF:SubSecTimeOriginal": ["45"],
-                       "EXIF:SubSecTime": ["45"], "EXIF:SubSecTimeDigitized": ["45"]})
+        values.update({"XMP:CreateDate": ["2021:03:02 08:05:09"]})
         new, stale = segment_edits.new_header(layout, data, values)
         self.assertEqual((), stale)
         after = bodies(new)[0]
         for name in ("DateTimeOriginal", "CreateDate"):
             self.assertEqual("2021:03:02 08:05:09", after["exif"][name])
-        for name in ("SubSecTime", "SubSecTimeOriginal", "SubSecTimeDigitized"):
-            self.assertEqual("45", after["exif"][name])
         self.assertEqual("2021-03-02T08:05:09", after["xmp"]["exif:DateTimeOriginal"])
         self.assertEqual("2021-03-02T08:05:09", after["xmp"]["xmp:CreateDate"])
         self.assertEqual(bodies(data)[0]["raw"]["iptc"], after["raw"]["iptc"])
@@ -327,10 +325,9 @@ class ADateOrARotation(unittest.TestCase):
             self.assertEqual(spelt, bodies(new)[0]["xmp"]["exif:DateTimeOriginal"])
         self.assertIsNone(segment_edits.new_header(layout, data, {"XMP:DateTimeOriginal": ["2021-03-02"]}))
 
-    def test_an_exif_date_with_a_fraction_goes_to_the_rewrite(self):
+    def test_an_exif_date_with_a_zone_goes_to_the_rewrite(self):
         layout, data = header()
-        values = {field: [value] for field, value in fields.date_taken_fields("2021-03-02T08:05:09.250").items()}
-        self.assertIsNone(segment_edits.new_header(layout, data, values))
+        self.assertIsNone(segment_edits.new_header(layout, data, {"EXIF:DateTimeOriginal": ["2021:03:02 08:05:09+02:00"]}))
 
     def test_a_rotation_writes_exif_and_the_xmp_orientation_only_where_the_packet_holds_one(self):
         layout, data = header(xmp=packet(orientation=1))

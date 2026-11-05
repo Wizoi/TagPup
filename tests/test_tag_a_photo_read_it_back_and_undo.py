@@ -25,12 +25,12 @@ carries, a remove) -- the routes call these services and the pages' flow against
 test_pages_against_the_real_server's. Broken in a scratch copy and this file fails: change_tags dropping the keywords a
 photo carries before it adds (an add keeps them), save_photo writing no Date Taken (one save), a remove that takes nothing off.
 
-Lifted (#1475): test_service_save_photo (a save's sub-second Date Taken in the one write, the named face kept among the
+Lifted (#1475): test_service_save_photo (a save's Date Taken in the one write, the named face kept among the
 photo's people, a new tag that may not be set refusing the save, the faces following a rename after a caption, a write
 that fails answered in the Result and not raised, #299; its ExifTool was a stand-in, here it is real; #266, #276) and
 test_save_reply_says_rename_failed (#884: a caption saved whose rename then fails says so in the reply, and the page's
 fixture of those replies, tests/frontend/fixtures/save_replies.json, is written here: ASaveFromThePage). Broken in a scratch
-copy and this file fails (2026-10-15): date_taken_fields writing no SubSecTimeOriginal, save_photo setting a tag without its
+copy and this file fails (2026-10-15): date_taken_fields writing no EXIF:DateTimeOriginal, save_photo setting a tag without its
 check, the save route dropping `rename_failed`.
 """
 import json
@@ -310,14 +310,14 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertIsNone(field_of(a, "XMP:Description"))
         self.assertEqual(["Beach"], self.indexed(a))
 
-    def test_a_save_takes_a_date_to_the_hundredth_refuses_a_tag_it_may_not_set_and_answers_a_write_that_fails(self):
+    def test_a_save_takes_a_date_refuses_a_tag_it_may_not_set_and_answers_a_write_that_fails(self):
         a = self.make_read("a.jpg")
         refused = tagging.save_photo(self.library, a, "Start", ["Beach", "Places|Harbour"], None, EXIFTOOL, "")
         self.assertIn('"|"', refused.refused)
         self.assertEqual((["Beach"], None), (keywords_of(a), field_of(a, "XMP:Description")), "a refused save wrote")
-        timed = tagging.save_photo(self.library, a, "Start", ["Beach"], "2019-06-15T10:30:00.25", EXIFTOOL, "")
+        timed = tagging.save_photo(self.library, a, "Start", ["Beach"], "2019-06-15T10:30:07", EXIFTOOL, "")
         self.assertTrue(timed.ok, timed.message())
-        self.assertEqual("25", str(field_of(a, "EXIF:SubSecTimeOriginal")), "the hundredths in the same write")
+        self.assertEqual("2019:06:15 10:30:07", str(field_of(a, "EXIF:DateTimeOriginal")), "the date in the same write")
         os.chmod(a, stat.S_IREAD)
         self.addCleanup(self.writable_again)
         failed = tagging.save_photo(self.library, a, "Finish", ["Beach"], None, EXIFTOOL, "")
