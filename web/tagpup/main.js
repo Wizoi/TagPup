@@ -50,6 +50,7 @@ import {
 import { recordUndo, undoLastOperation } from './undo.js';
 import { enableSwipeNavigation, wireKeyboard } from './navigation.js';
 import { wireFaceBoxes } from './face-boxes.js';
+import { wireMedia } from './media.js';
 import { wireEditToggles } from './edit-toggles.js';
 import {
     bulkAddPeopleToSelection, bulkAddTagsToSelection, updateSelectedThumbnailsCount
@@ -172,6 +173,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     wireZoom();
     wireFaceBoxes();
+    // A video in the photo panel: stopped when the panel is hidden, its failure said (media.js).
+    wireMedia();
     wireEditToggles();
 
     wireDateTakenModal();

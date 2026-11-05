@@ -279,7 +279,7 @@ _FILES = {
             "test_suggestions_keep_hierarchy test_tag_usage_from_photo_tags "
             "test_scrfd_adaface_faces "
             "test_the_runtime_keeps_models_by_settings test_the_runtime_reaches_suggest test_thumbs_cli test_vector_index "
-            "test_thumbnail_routes test_zero_shot_skips_people vgrid"
+            "test_thumbnail_routes test_zero_shot_skips_people vgrid video-viewer"
         ),
         "guard": "test_gpu_single_owner test_no_test_loads_a_model",
     },
