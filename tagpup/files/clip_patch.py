@@ -8,8 +8,10 @@ in, a `Patch` or None out; no file is opened here and nothing is written. The pa
 
 Where the packet goes, in this order (live counts of the 2,184 MOV/MP4/M4V in the folders the three libraries hold,
 counted read-only 2026-11-05):
-  1. Into the clip's one XMP box -- a top-level `uuid` box (an MP4 as ExifTool writes it, or one appended here; 80
-     live, each after moov) or moov/udta/XMP_ (a .mov as ExifTool writes it; none live, made by a rewrite that falls
+  1. Into the clip's one XMP box -- a top-level `uuid` box (80 live, each after moov; none is an MP4 as ExifTool
+     writes it: 41 are Adobe Premiere/Media Encoder wrapped, 39 a bare 368-byte self-closing Description, and
+     xmp_packet.edit refuses every one, its properties being attributes, so no live packet reaches a placement into an
+     existing box until the editor handles that form; a box this module appends is the other source) or moov/udta/XMP_ (a .mov as ExifTool writes it; none live, made by a rewrite that falls
      to ExifTool) -- with the free/skip/wide boxes straight after it among its siblings ("the run"; 31 of the 80 have
      one, none has one before it): the new box is written at the old one's place and what is left of the run becomes
      one `free` box after it (only its header is written: a free box's content is never read). Fewer than 8 bytes left
@@ -17,9 +19,9 @@ counted read-only 2026-11-05):
      bytes before and after, so no other box moves: moov keeps its size, mdat its offset, and the chunk offsets in
      stco/co64 stay true.
   2. A top-level XMP box whose run reaches the end of the file (39 live) grows there: the file is longer, nothing moves.
-  3. A top-level XMP box that does not fit and cannot grow, or whose run would leave a free box of 4 GB or more (a
-     32-bit size cannot say it), is made a `free` box (its four type bytes) and the packet is appended at the end of the
-     file in a new uuid box. A .mov's moov/udta/XMP_ that does not fit is the rewrite's: to
+  3. A top-level XMP box that does not fit and cannot grow is made a `free` box (its four type bytes, and its old packet
+     blanked with spaces: a free box's content is never read, but it would stay readable) and the packet is appended at
+     the end of the file in a new uuid box. A .mov's moov/udta/XMP_ that does not fit is the rewrite's: to
      grow it is to grow udta and moov, which moves mdat when moov comes first; to move it out to a top-level box is to
      take it from the place Adobe's specification gives a QuickTime file.
   4. A clip with no XMP (2,104 live) gets a uuid box appended at the end of the file: what ExifTool writes into an MP4,
@@ -27,8 +29,10 @@ counted read-only 2026-11-05):
      (tests/test_a_clip_patched_in_place.py).
 
 None, the rewrite's, for: no moov, two moov, a moov or udta whose children do not fit in it, a fragmented clip (moof),
-two XMP boxes (which one a reader takes is not this module's to guess), a .mov's XMP_ that would leave a free box of
-4 GB or more, a packet that needs an append where the last box has size 0 ("to the end of the file": it would
+two XMP boxes (which one a reader takes is not this module's to guess), any XMP box whose run would leave a free box of
+4 GB or more (a 32-bit size cannot say it; 0 of the 2,184 clips: 3 are over 4 GB, none holds XMP), an XMP box
+holding more than 64 KB (1 live; the old bytes are blanked, and the journal keeps what they were, so they are bounded),
+a packet that needs an append where the last box has size 0 ("to the end of the file": it would
 take the appended box into itself; none live), and a clip whose walk stops before its end (`Video.tail`): a box that
 claims more than the file holds (it may still be being copied) or bytes that are no box, where an appended box would
 lie past what a reader walks and an XMP box before them is in a file no two readers need agree on. 2 live clips have a
@@ -46,6 +50,9 @@ IN_PLACE, GROWN, APPENDED = "in place", "grown at the end", "appended"
 #: The header of a box with a 32-bit size; the largest size it can say.
 _HEADER = 8
 _MOST = 2 ** 32 - 1
+#: The most an old packet may hold for its bytes to be blanked (an XMP packet is at most 64 KB): what a patch keeps of
+#: the old bytes is bounded by this and a few headers, far under the journal's cap (file_journal.PATCH_CAP, 1 MB).
+_OLD_MOST = 1 << 16
 _PACKET_END = b"<?xpacket end="
 
 
@@ -71,15 +78,17 @@ def patch(layout, packet):
     (where, box), = found
     after = layout.slack_beside(box)[1]
     end = after[-1].end if after else box.end
+    written = _box(box, packet)
+    if box.end - box.payload > _OLD_MOST or end - box.offset - len(written) > _MOST:
+        return None
     placed = _placed(box, packet, end)
     if placed is not None:
         return Patch(placed, layout.file_size, IN_PLACE)
     if len(where) > 1:
         return None         # moov/udta/XMP_: the rewrite's (the module, 3)
-    written = _box(box, packet)
     if end == layout.file_size and box.offset + len(written) > end:
         return Patch(((box.offset, written),), box.offset + len(written), GROWN)
-    return _appended(layout, packet, ((box.offset + 4, b"free"),))
+    return _appended(layout, packet, ((box.offset + 4, b"free"), (box.payload, b" " * (box.end - box.payload))))
 
 
 def _understood(layout):
@@ -102,14 +111,17 @@ def _placed(box, packet, end):
     after it (the run), and the rest of the run made one free box; None when it does not fit there."""
     at, written = box.offset, _box(box, packet)
     left = end - at - len(written)
-    if left < 0 or left > _MOST:
+    if left < 0:
         return None
     if 0 < left < _HEADER:
         widened = _widened(packet, left)
         return None if widened is None else ((at, _box(box, widened)),)
     if left == 0:
         return ((at, written),)
-    return (at, written), (at + len(written), left.to_bytes(4, "big") + b"free")
+    # The free box's header, and the old packet's bytes still in its content (a shorter packet leaves its tail there)
+    # blanked: the old packet is at most _OLD_MOST, so this is at most that and a header.
+    free_at = at + len(written)
+    return (at, written), (free_at, left.to_bytes(4, "big") + b"free" + b" " * max(0, box.end - free_at - _HEADER))
 
 
 def _widened(packet, extra):

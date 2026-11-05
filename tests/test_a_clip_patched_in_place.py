@@ -132,6 +132,16 @@ class APacketPlacedInAClip(unittest.TestCase):
         self.assertEqual(["ftyp", "moov", "uuid", "free", "mdat"], [one.type for one in layout_of(after).boxes])
         self.assertEqual(40, layout_of(after).boxes[3].size)
 
+    def test_a_shorter_packet_leaves_none_of_the_old_ones_tail_in_the_free_box(self):
+        old = OLD.replace(b"      \n" + END, b"Hiking\n" + END)
+        self.assertEqual(1, old[len(old) - 30:].count(b"Hiking"))
+        data = FTYP + MOOV + xmp_box(old) + MDAT
+        for cut in (40, 36):
+            with self.subTest(cut=cut):
+                found, after, _ = self.placed(data, sized(len(old) - cut, ("Lakes",)), clip_patch.IN_PLACE)
+                self.assertNotIn(b"Hiking", after, "the old packet's tail inside the new free box is blanked")
+                self.assertEqual(len(data), found.size)
+
     def test_a_longer_packet_takes_the_free_run_after_it_64_bit_boxes_and_all(self):
         run = box(b"free", bytes(30)) + box(b"skip", bytes(20)) + large_box(b"wide", bytes(50))
         data = FTYP + MOOV + xmp_box(OLD) + run + MDAT
@@ -172,8 +182,12 @@ class APacketPlacedInAClip(unittest.TestCase):
 
     def test_a_packet_one_byte_longer_than_its_slot_is_appended_or_the_rewrites(self):
         data = FTYP + MOOV + xmp_box(OLD) + MDAT
-        found, after, held = self.placed(data, sized(len(OLD) + 1), clip_patch.APPENDED)
-        self.assertEqual(((len(FTYP + MOOV) + 4, b"free"), (len(data), after[len(data):])), found.ranges)
+        found, after, held = self.placed(data, sized(len(OLD) + 1, ("Lakes",)), clip_patch.APPENDED)
+        old = layout_of(data).xmp[0][1]
+        self.assertEqual(((old.offset + 4, b"free"), (old.payload, b" " * len(OLD)), (len(data), after[len(data):])),
+                         found.ranges)
+        self.assertNotIn(b"Hiking", after, "the retired box keeps none of the old packet")
+        self.assertEqual(1, after.count(b"Lakes"))
         self.assertEqual(["ftyp", "moov", "free", "mdat", "uuid"], [one.type for one in layout_of(after).boxes])
         nested = FTYP + mov(xmp_box(OLD, b"XMP_")) + MDAT
         self.assertIsNone(clip_patch.patch(layout_of(nested), sized(len(OLD) + 1)))
@@ -251,19 +265,23 @@ class APacketPlacedInAClip(unittest.TestCase):
                 self.assertEqual((clip_patch.GROWN, xmp.offset + 24 + len(OLD) + 6000), (grown.how, grown.size))
                 held = Video(free.end + 100, boxes + (Box("mdat", free.end, 100, 8),))
                 appended = clip_patch.patch(held, sized(len(OLD) + 6000))
-                self.assertEqual(((xmp.offset + 4, b"free"), (held.file_size, xmp_box(sized(len(OLD) + 6000)))),
-                                 appended.ranges)
+                self.assertEqual(((xmp.offset + 4, b"free"), (xmp.payload, b" " * len(OLD)),
+                                  (held.file_size, xmp_box(sized(len(OLD) + 6000)))), appended.ranges)
 
-    def test_a_free_run_of_4_gb_or_more_after_the_box_retires_it_and_appends(self):
+    def test_a_free_run_of_4_gb_or_more_after_the_box_is_the_rewrites(self):
+        """A 32-bit size cannot say the free box the run would leave, and no clip has one (0 of 2,184): not placed."""
         xmp = Box("uuid", 1100, 24 + len(OLD), 24, uuid=XMP_UUID)
         free = Box("free", xmp.end, 5 * GB, 16)
         boxes = (Box("ftyp", 0, 32, 8), Box("moov", 32, 1068, 8, children=(Box("mvhd", 40, 108, 8),)), xmp, free,
                  Box("mdat", free.end, 64, 8))
-        layout = Video(free.end + 64, boxes)
-        found = clip_patch.patch(layout, sized(len(OLD)))
-        self.assertEqual(clip_patch.APPENDED, found.how)
-        self.assertEqual((xmp.offset + 4, b"free"), found.ranges[0])
-        self.assertEqual(layout.file_size, found.ranges[1][0])
+        self.assertIsNone(clip_patch.patch(Video(free.end + 64, boxes), sized(len(OLD))))
+
+    def test_an_old_packet_over_64_kb_is_the_rewrites_because_its_bytes_are_blanked_and_kept(self):
+        for words in (("Hiking",), ("Hiking", "Lakes")):
+            data = FTYP + MOOV + xmp_box(sized(65537)) + MDAT
+            self.assertIsNone(clip_patch.patch(layout_of(data), sized(65537, words)))
+        data = FTYP + MOOV + xmp_box(sized(65536)) + MDAT
+        self.assertEqual(clip_patch.IN_PLACE, clip_patch.patch(layout_of(data), sized(65536, ("Lakes",))).how)
 
 
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
