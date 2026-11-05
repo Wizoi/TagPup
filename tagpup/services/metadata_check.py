@@ -3,11 +3,10 @@ the verification bar's points 1, 2 and 6): `metadata-check` of tagpup_cli.py. It
 
 Of a library's JPEGs, the census's seeded draw (segment_census.drawn) is read, each file through shares (read_span after
 stamp_of: a file gone, changed while it was read, that cannot be read, or on a share that does not answer is counted and
-passed over), into a sandbox of this PC: SANDBOX in the temporary folder, made a home of its own for the run
-(config.own_home_environment), one run on the PC at a time (byte_lock), left by a run that was killed removed by the next,
-and removed at the run's end however it ends (Ctrl+C too). The home is made by setting the process's environment and
-putting it back at the end: right for the CLI, which runs one command on one thread; a server must not call check().
-Free space is checked before each photo (MARGIN, and COPIES of its size).
+passed over), into a sandbox of this PC: SANDBOX in the temporary folder, one run on the PC at a time (byte_lock),
+left by a run that was killed removed by the next, and removed at the run's end however it ends (Ctrl+C too). Nothing the
+run calls reads a home (the planners are pure, the writers write the copy they are given), so the sandbox is a folder,
+not a home. Free space is checked before each photo (MARGIN, and COPIES of its size).
 
 Each of OPERATIONS is planned as the app plans it (tagging's, photos' and fields' planners) from the fields the copy holds,
 skipped when the copy holds the plan already, and written twice, each time on a fresh copy in a folder of its own,
@@ -33,7 +32,6 @@ import shutil
 import tempfile
 from contextlib import closing, contextmanager
 
-from tagpup import config
 from tagpup.core import byte_lock, dates, fields, paths, vocabulary
 from tagpup.core.result import Refused
 from tagpup.files import bake, containers, exiftool_session, field_values, shares
@@ -105,20 +103,16 @@ def sandbox_root():
 
 @contextmanager
 def sandbox():
-    """The run's sandbox folder, a home of its own; Refused while another run holds it. Removed at the end."""
+    """The run's sandbox folder; Refused while another run holds it. Removed at the end."""
     root = sandbox_root()
     held = byte_lock.Lock(root + ".lock")
     if not held.acquire():
         raise Refused(TWO_AT_ONCE)
-    before = dict(os.environ)
     try:
         shutil.rmtree(root, ignore_errors=True)          # a run killed before its cleanup
         os.makedirs(root)
-        os.environ.update(config.own_home_environment(root))
         yield root
     finally:
-        os.environ.clear()
-        os.environ.update(before)
         shutil.rmtree(root, ignore_errors=True)
         held.release()
 
