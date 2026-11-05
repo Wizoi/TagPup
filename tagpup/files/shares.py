@@ -372,9 +372,10 @@ def reachable_stamp(path, what="photo"):
     return stamp
 
 
-#: How long one read_span on a network share is waited for, in seconds: a piece of a file (a video's, at most a MiB) is
-#: many answers of the share's, not one, so longer than SHARE_WAIT; a share that has not given it in this long has stopped
-#: answering, and is taken as away, as a listing that does not answer is (LISTING_WAIT).
+#: How long one read of a file's bytes on a network share is waited for, in seconds: a piece of a file (a video's, at most
+#: a MiB, read_span; a photo's header and tail, tagpup.services.segment_census) is many answers of the share's, not one,
+#: so longer than SHARE_WAIT; a share that has not given it in this long has stopped answering, and is taken as away, as
+#: a listing that does not answer is (LISTING_WAIT).
 READ_WAIT = 10.0
 
 

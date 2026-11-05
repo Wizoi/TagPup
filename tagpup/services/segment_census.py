@@ -35,8 +35,6 @@ SAMPLE = 3000
 SEED = 20261103
 #: How many of the first reads are timed, as M6 asks how long a header read takes.
 TIMED = 50
-#: Seconds a read of one photo may take before its share is taken as away (shares.bounded).
-READ_WAIT = 10.0
 #: Bytes read from the end of a file, to see what follows the picture's end (EOI).
 TAIL = 64
 JPEG_EXTENSIONS = frozenset(ext for ext, mime in images.PHOTO_TYPES.items() if mime == "image/jpeg")
@@ -90,7 +88,7 @@ def _read(path):
 
 def _looked(path):
     """("read", (layout, header, tail)) | ("not_answered" | "gone" | "unreadable", None), never raising."""
-    state, found = shares.bounded(path, lambda: _read(path), READ_WAIT)
+    state, found = shares.bounded(path, lambda: _read(path), shares.READ_WAIT)
     if state == "ok":
         return "read", found
     if state == "away":
