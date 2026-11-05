@@ -121,13 +121,14 @@ def tag_words(library, model):
 
 
 def _rows(library, key):
-    """[(photo id, path)] of the photos holding no vector under `key`, by id, and how many hold one, read now."""
+    """[(photo id, path)] of the photos holding no vector under `key`, by id, and how many hold one, read now. A clip
+    (kind 'video') is neither: it is never given a vector, so never decoded here."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        rows = store_photos.stamps(conn, with_vectors=key)
+        rows = [row for row in store_photos.stamps(conn, with_vectors=key, with_kind=True) if row[4] == "photo"]
     finally:
         conn.close()
-    todo = sorted((photo_id, path) for photo_id, path, _mtime, _size, held in rows if not held)
+    todo = sorted((photo_id, path) for photo_id, path, _mtime, _size, _kind, held in rows if not held)
     return todo, len(rows) - len(todo)
 
 

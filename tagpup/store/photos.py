@@ -373,8 +373,10 @@ def vectors(conn, model):
 
 
 def counts(conn, model):
-    """(photos, photos holding a vector under `model`)."""
-    return conn.execute("SELECT (SELECT COUNT(*) FROM photos),"
+    """(photos of kind 'photo', photos holding a vector under `model`): what a photo model's switch, retiring the other
+    keys' vectors and the search index count. A clip (kind 'video') holds no vector (PhotoIndex.record_videos) and owes
+    none, so it is not counted among the photos that could hold one."""
+    return conn.execute("SELECT (SELECT COUNT(*) FROM photos WHERE kind = 'photo'),"
                         " (SELECT COUNT(*) FROM embeddings e JOIN photos p ON p.id = e.photo_id"
                         " WHERE e.model = ?)", (model,)).fetchone()
 

@@ -211,7 +211,8 @@ def _planned(library, et, detector, folder, handed, baked, walk):
     try:
         keys = baking.keys(conn, detector)
         stored = store_roots.to_row(conn, folder)
-        group = [(photo_id, path) for photo_id, path in inspection.under(conn, folder)
+        # A clip has no vector and no faces to bake: planned, it would be counted a photo that cannot be.
+        group = [(photo_id, path) for photo_id, path in inspection.under(conn, folder, kind="photo")
                  if paths.key(os.path.dirname(path)) == paths.key(folder)]
         fingerprinted = photo_fingerprints.fingerprinted(conn, [photo_id for photo_id, _path in group])
         read = baking.FolderRead(et, [path for _id, path in group])

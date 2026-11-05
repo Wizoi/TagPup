@@ -55,9 +55,12 @@ def ids_and_paths(conn):
         conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1), 1)
 
 
-def under(conn, folder):
-    """(id, path as stored) of each photo under `folder`, at any depth, by id."""
+def under(conn, folder, kind=None):
+    """(id, path as stored) of each photo under `folder`, at any depth, by id; with `kind` ('photo' or 'video'), only
+    the rows of that kind."""
     where, params = store_roots.sql_under(conn, "path", folder)
+    if kind is not None:
+        where, params = where + " AND kind = ?", list(params) + [kind]
     return store_roots.natives(conn, conn.execute(
         "SELECT id, path FROM photos WHERE " + where + " ORDER BY id", params).fetchall(), 1)
 

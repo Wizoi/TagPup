@@ -31,6 +31,7 @@ from tagpup import config  # noqa: E402
 from tagpup.core import dates, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images  # noqa: E402
+from tagpup.services import bake_after_index, baking  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_service  # noqa: E402
@@ -132,8 +133,11 @@ class AClipIsIndexedAsAVideo(unittest.TestCase):
         clip(folder, "harbour.mp4")
         photo(os.path.join(folder, "sail.jpg"), (30, 30, 200))
 
-        self.index(folder)
+        output = " ".join(self.index(folder).split())
 
+        # The bake after the index plans the folder's photos: a clip there is not counted a photo it cannot bake.
+        self.assertIn(bake_after_index.SAID, output)
+        self.assertNotIn(baking.NO_VECTOR, output, "the bake counted a clip as a photo with no vector")
         found = rows(self.library)
         self.assertEqual(("photo", True), (found["sail.jpg"][0], found["sail.jpg"][2]))
         self.assertEqual(("video", False), (found["harbour.mp4"][0], found["harbour.mp4"][2]))
