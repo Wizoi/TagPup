@@ -15,7 +15,7 @@ import { saveToLocalStorageCache } from './cache.js';
 import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { baseOf, photoChangedOnDisk, queueWriteOf, stampOf, takeStamp } from './edits.js';
+import { baseOf, photoChangedOnDisk, photoRenamed, queueWriteOf, stampOf, takeStamp } from './edits.js';
 import { renderFileList, visiblePhotos } from './folder.js';
 import { openLibraryPhoto, photoFileUrl, selectPhoto } from './photo.js';
 import { createVGrid } from './vgrid.js';
@@ -26,7 +26,7 @@ import {
 } from './library-source.js';
 import {
     addToSelection, clearIdSelection, invertIdSelection, isIdSelected, isPhotoSelected, isSelected, removeFromSelection,
-    renameInSelection, selectAllInView, selectionCount, setIdRange, setIdSelected, setSelection
+    selectAllInView, selectionCount, setIdRange, setIdSelected, setSelection
 } from './selected.js';
 
 /** The gutter between a library view's floating header and a card scrolled to below it: the grid's own gap (style.css). */
@@ -502,9 +502,7 @@ function buildThumbnailCard(photo) {
                     photo.captions = newTitle ? [newTitle] : [];
 
                     if (data.new_path && data.new_path !== oldPath) {
-                        photo.path = data.new_path;
-                        photo.filename = baseName(data.new_path);
-                        renameInSelection(oldPath, data.new_path);
+                        photoRenamed(photo, data.new_path);
                         if (state.activePhotoPath === oldPath) {
                             state.activePhotoPath = data.new_path;
                         }
