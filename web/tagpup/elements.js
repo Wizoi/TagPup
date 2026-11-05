@@ -95,6 +95,7 @@ export const renameGroupingInput = document.getElementById('rename-grouping-inpu
 export const btnApplyRename = document.getElementById('btn-apply-rename');
 
 export const mainImage = document.getElementById('main-image');
+export const mainVideo = document.getElementById('main-video');
 export const imageViewer = document.getElementById('image-viewer');
 export const faceLayer = document.getElementById('face-layer');
 export const btnRotateLeft = document.getElementById('btn-rotate-left');

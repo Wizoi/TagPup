@@ -174,7 +174,7 @@ class ACensusOfJpegSegments(unittest.TestCase):
                 raise OSError("the share never answered")
             return real(path)
 
-        with mock.patch.object(segment_census, "_read", read), mock.patch.object(segment_census, "READ_WAIT", 0.3), \
+        with mock.patch.object(segment_census, "_read", read), mock.patch.object(shares, "READ_WAIT", 0.3), \
                 mock.patch.object(shares, "AWAY_SECONDS", 60.0):
             return segment_census.census(self.library, sample=10)
 

@@ -10,7 +10,10 @@ waits. A share that answered is not away. Two callers used to keep a cache each 
 lists, and Roots' Verify), one of them unable to say away from missing; this is the one. `stamp_of` is the look at one
 file that a page of cards, a thumbnail and a bulk edit's chunk make; `folder_state` the look at a folder; `listing` the
 look at what a folder holds, which every walk of photo folders makes (tagpup.files.images.photo_entries); `read_stamp` the
-stamp a reader takes before its own read, which is not bounded since the read is not.
+stamp a reader takes before its own read, which is not bounded since the read is not. `reachable_stamp` is stamp_of for a
+request that answers with the file's bytes or a picture of them (a thumbnail, a video): a share away, or a file that refuses,
+is Unavailable (a 503), never "not there". `read_span` is the one read of a file's bytes a request makes in pieces (a video
+played): bounded, but by a longer wait, and not one another look waits behind.
 
 Every look at a photo or a photo's folder outside this module goes through one of them, or is the reader's or writer's
 own, named in the guard's list (tests/test_photo_looks_have_one_owner.py).
@@ -26,7 +29,7 @@ import threading
 import time
 
 from tagpup.core import dates, paths
-from tagpup.core.result import SHARE_AWAY, Result
+from tagpup.core.result import SHARE_AWAY, Result, Unavailable
 from tagpup.files import recycle_bin
 
 logger = logging.getLogger(__name__)
@@ -115,11 +118,15 @@ def _tell(callbacks, share):
             logger.exception("Telling that %s is back failed", share)
 
 
-def bounded(location, call, seconds, away_seconds=None):
+def bounded(location, call, seconds, away_seconds=None, waited_behind=True):
     """("ok", what `call()` returned) | ("error", the OSError it raised) | ("away", None): `call` on a
     thread of its own, waited for `seconds`. A share already taken as away answers "away" at once, and
     one whose earlier look still waits is waited for as long as any -- only a wait that timed out
-    makes it away. A look that timed out is left to end: when it ends with an answer, the share is back (_answered)."""
+    makes it away. A look that timed out is left to end: when it ends with an answer, the share is back (_answered).
+    `waited_behind` False: the look is not the share's look under way that the next look waits behind -- a read of a
+    file's bytes (read_span), slow by its size and its wait, must not hold every thumbnail's stamp_of behind it, nor
+    make the share away by holding them past SHARE_WAIT. Whether this look timed out is its own (`ended`), whoever is
+    registered."""
     away_seconds = AWAY_SECONDS if away_seconds is None else away_seconds
     share = share_of(location)
     with _guard:
@@ -148,6 +155,7 @@ def bounded(location, call, seconds, away_seconds=None):
             box["error"] = OSError(str(problem))
         finally:
             with _guard:
+                box["ended"] = True
                 if _reading.get(share) is thread:
                     del _reading[share]
                 # The share answered: an away taken before or during this look is over, but not one the look itself
@@ -156,12 +164,13 @@ def bounded(location, call, seconds, away_seconds=None):
             _tell(told, share)
 
     thread = threading.Thread(target=look, name="ShareLook", daemon=True)
-    with _guard:
-        _reading[share] = thread
+    if waited_behind:
+        with _guard:
+            _reading[share] = thread
     thread.start()
     thread.join(seconds)
     with _guard:
-        hung = _reading.get(share) is thread
+        hung = not box.get("ended")
         if hung:
             _mark(share)
     if hung:
@@ -346,6 +355,71 @@ def listing(folder):
     if state == "error":
         raise found
     return found if state == "ok" else UNANSWERED
+
+
+def reachable_stamp(path, what="photo"):
+    """(mtime, size) of the file now (stamp_of), or None when it is not there; raises Unavailable, with the sentence the
+    owner is shown, `what` naming the file ("photo", "video"), when it is on a share that did not answer in time (or is
+    taken as away: answered at once) and when it is there and cannot be read. What a request that answers with the file's
+    bytes or a picture of them asks (tagpup.services.thumbnails.serve, tagpup.services.photos.video): a 503, try again, and
+    never a verdict."""
+    stamp = stamp_of(path)
+    if stamp is UNANSWERED:
+        raise Unavailable("The network share this %s is on is away just now: try again in a moment." % what)
+    if stamp is CANNOT_READ:
+        raise Unavailable("The %s's file cannot be read (it is there, but permissions or another program refuse it): "
+                          "try again in a moment." % what)
+    return stamp
+
+
+#: How long one read of a file's bytes on a network share is waited for, in seconds: a piece of a file (a video's, at most
+#: a MiB, read_span; a photo's header and tail, tagpup.services.segment_census) is many answers of the share's, not one,
+#: so longer than SHARE_WAIT; a share that has not given it in this long has stopped answering, and is taken as away, as
+#: a listing that does not answer is (LISTING_WAIT).
+READ_WAIT = 10.0
+
+
+class FileChanged(OSError):
+    """The file read_span was to read is no longer the one whose stamp it was given: rewritten, or another file put at its
+    name. Nothing of it is answered; the reader asks for the file again."""
+
+
+def _read_span(path, start, length, stamp, on_a_share=False):
+    """read_span's read, asked of the disk now; UNANSWERED for a file "not found" on a network share that does not
+    answer (a server gone while the open waited, WinError 53: _share_answers, as stamp_of and listing learn it, so the
+    end of a look that waited does not take the share as back)."""
+    try:
+        handle = open(path, "rb")
+    except (FileNotFoundError, NotADirectoryError):
+        if on_a_share and not _share_answers(path):
+            return UNANSWERED
+        raise
+    with handle:
+        found = os.fstat(handle.fileno())
+        if (found.st_mtime, found.st_size) != tuple(stamp):
+            raise FileChanged("The file changed since it was looked at.")
+        handle.seek(start)
+        return handle.read(length)
+
+
+def read_span(path, start, length, stamp):
+    """`length` bytes of the file at `path` from `start` (fewer at its end), read only while the file is the one stamped
+    `stamp` (mtime, size, as reachable_stamp gave it; the open handle's own stamp is compared, so a file replaced between
+    the look and the read is not read): what a video is played by, a piece at a time. The file is opened, read and closed
+    in this one call, never held between two: Python opens a file without letting it be renamed or deleted, and a handle
+    held while a video plays would refuse TagPup's own rename or write of it (WinError 32).
+
+    Raises FileChanged, the OSError of the open or the read, and Unavailable (SHARE_AWAY_SENTENCE) for a file on a network
+    share that did not give it within READ_WAIT, or is taken as away; the share is then away (bounded), so the next
+    request is answered at once. The read on a share is bounded but not waited behind (bounded's `waited_behind`)."""
+    if not on_a_network_drive(path):
+        return _read_span(path, start, length, stamp)
+    state, found = bounded(path, lambda: _read_span(path, start, length, stamp, True), READ_WAIT, waited_behind=False)
+    if state == "away" or found is UNANSWERED:
+        raise Unavailable(SHARE_AWAY_SENTENCE % os.path.splitdrive(paths.stored(path))[0])
+    if state == "error":
+        raise found
+    return found
 
 
 def there(path):

@@ -7,6 +7,7 @@ of the photo route for both. The shapes are kept exactly: the pages read them.
 import logging
 
 from flask import Response, abort, jsonify
+from werkzeug.datastructures import Range
 
 from tagpup.core.result import CHANGED_ON_DISK, SHARE_AWAY, NotFound, Refused
 from tagpup.services import photos as photo_actions
@@ -26,6 +27,18 @@ def error(status, message, **extra):
 #: 409 when the file is no longer the one the page built its record from, `changed_on_disk` telling the page to read it
 #: again; 503 when a folder's network share did not answer (try again later); any other, REFUSED, 400.
 STATUS = {CHANGED_ON_DISK: (409, {"changed_on_disk": True}), SHARE_AWAY: (503, {})}
+
+#: Seconds a 503 tells the page to wait before it asks again (Retry-After): a file that cannot be reached just now
+#: (unavailable), and a server or a library being brought up to date (tagpup.web.lifecycle, tagpup.web.libraries).
+RETRY_AFTER_SECONDS = 2
+
+
+def unavailable(why):
+    """The reply for a read that cannot be answered just now (tagpup.core.result.Unavailable: the file's share is away,
+    or the file refuses to be read): its sentence, answered as a share away is (STATUS, 503), with Retry-After."""
+    reply = error(STATUS[SHARE_AWAY][0], str(why))
+    reply[0].headers["Retry-After"] = str(RETRY_AFTER_SECONDS)
+    return reply
 
 
 def refused(result, **extra):
@@ -48,6 +61,35 @@ def image(content, content_type, cache_seconds=None):
     if cache_seconds:
         response.headers["Cache-Control"] = "max-age=%d" % cache_seconds
     return response
+
+
+#: What a request that names no range is answered as: its first span, as a browser's first ask (`bytes=0-`) is.
+FROM_THE_START = Range("bytes", [(0, None)])
+
+
+def ranged(asked, size, content_type, send, span):
+    """The answer to a request for a file's bytes a range at a time (a video's, /api/video-file). `asked` is the
+    request's Range as werkzeug reads it (request.range: None for none, and for one that does not parse); `size` the
+    file's; `send(start, length)` gives the bytes, a piece at a time, streamed as they come.
+
+    Never the whole file in one answer: no range is FROM_THE_START (a page's <video> always sends one; an answer of a
+    whole film would hold one of the server's threads until the client had read it). A range that cannot be answered
+    -- several, one starting past the end, a suffix longer than the file, any range of a file of no bytes -- 416 with
+    `Content-Range: bytes */size`. Else 206 with the bytes from its start, at most `span` of them: a browser playing a
+    video asks again from where an answer ended."""
+    found = (FROM_THE_START if asked is None else asked).range_for_length(size)
+    if found is None:
+        refused = Response(b"", status=416)
+        refused.headers["Content-Range"] = "bytes */%d" % size
+        refused.headers["Accept-Ranges"] = "bytes"
+        return refused
+    start, stop = found
+    stop = min(stop, start + span)
+    reply = Response(send(start, stop - start), status=206, mimetype=content_type, direct_passthrough=True)
+    reply.headers["Content-Range"] = "bytes %d-%d/%d" % (start, stop - 1, size)
+    reply.headers["Content-Length"] = str(stop - start)
+    reply.headers["Accept-Ranges"] = "bytes"
+    return reply
 
 
 def photo(wanted, size, upright, cache_seconds=None):

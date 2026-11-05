@@ -22,7 +22,7 @@ from PIL import Image  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup import config  # noqa: E402
-from tagpup.core.result import NotFound  # noqa: E402
+from tagpup.core.result import NotFound, Unavailable  # noqa: E402
 from tagpup.files import images, shares, thumbs  # noqa: E402
 from tagpup.services import thumbnails  # noqa: E402
 from tagpup.services import faces as face_actions  # noqa: E402
@@ -234,7 +234,7 @@ class ADamagedPhoto(Cache):
 
     def test_a_file_that_cannot_be_read_is_unavailable_and_nothing_is_made_of_it(self):
         with mock.patch.object(images, "smaller_copy", side_effect=PermissionError(13, "Permission denied")):
-            with self.assertRaises(thumbnails.Unavailable) as caught:
+            with self.assertRaises(Unavailable) as caught:
                 self.serve()
         self.assertIn("could not be read just now", str(caught.exception))
         self.assertEqual([], entries_of(self.library))
@@ -416,7 +416,7 @@ class AShareThatIsAway(Cache):
         import time
         started = time.monotonic()
         for photo_id in self.ids:
-            with self.assertRaises(thumbnails.Unavailable) as caught:
+            with self.assertRaises(Unavailable) as caught:
                 self.serve(photo_id)
             self.assertIn("away", str(caught.exception))
         self.assertLess(time.monotonic() - started, 2.0, "24 waits of 0.3 s would be 7 s")
@@ -442,7 +442,7 @@ class AFileThatCannotBeRead(Cache):
             return real(path, *args, **kwargs)
 
         with mock.patch.object(shares.os, "stat", stat):
-            with self.assertRaises(thumbnails.Unavailable) as caught:
+            with self.assertRaises(Unavailable) as caught:
                 self.serve()
         self.assertIn("cannot be read", str(caught.exception))
 

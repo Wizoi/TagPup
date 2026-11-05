@@ -49,7 +49,6 @@ logger = logging.getLogger(__name__)
 
 #: The header on a refusal while draining, which tells a page to wait and send again.
 UPDATING_HEADER = "X-TagPup-Updating"
-RETRY_AFTER_SECONDS = 2
 
 #: How long a drain waits by default, and at most, for what is in flight.
 DRAIN_SECONDS = 120
@@ -366,7 +365,7 @@ class _Gate:
             body = ('{"success": false, "updating": true, "error": "%s"}' % UPDATING_MESSAGE).encode("utf-8")
             start_response("503 SERVICE UNAVAILABLE", [
                 ("Content-Type", "application/json"), ("Content-Length", str(len(body))),
-                ("Retry-After", str(RETRY_AFTER_SECONDS)), (UPDATING_HEADER, "1"),
+                ("Retry-After", str(responses.RETRY_AFTER_SECONDS)), (UPDATING_HEADER, "1"),
                 ("Cache-Control", "no-store")])
             return [body]
         try:

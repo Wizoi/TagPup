@@ -73,6 +73,7 @@ SCENARIOS = {
     "V12": ("views", "A library switches to SigLIP 2 SO400M once the new model's vectors are made for its photos, refused with the counts before, and its undo held to the same share; each library then searches by its own model's vectors, a run on the model it began with."),
     "V13": ("views", "The new photo model's vectors are made for a library beside its own (embed-photos): a dry run that writes nothing, a run stopped and run again that makes only the rest, a batch one write, a photo removed meanwhile given no row back, a photo edited meanwhile stamped as it was opened, a file that does not decode tried again, a drive not connected stopping the run with a sentence, two libraries holding one folder each by its own run, the turn on the card taken before the list is read, a running server giving its kept turn to the run and its next Suggest on the switched model; then the switch from the command line (set-photo-model), refused before, passes as one change of the journal, and its undo puts the old model back."),
     "V14": ("views", "After the switch, the old photo model's vectors and Suggest's words under it are retired (retire-photo-vectors): a dry run that writes nothing, the own key's vectors and words kept byte for byte, one change a key whose undo is refused and the undo of the switch refused with the switch's sentence, a run stopped (or an app started) and run again as the same change, a switch back beside the run ending it, a photo removed meanwhile, and a library whose own model does not hold its photos refused."),
+    "V15": ("views", "A video played in the browser: a range answered with its bytes and capped, one that cannot be answered refused with the size, sought back and forth quickly, closed half way without holding the file, renamed while it plays ending every stream short, a share that stops answering ending the stream within its wait and the next ask answered 503 at once, an id a video in one library and a photo in another; the cards and the record say which are videos."),
     "I1": ("apps", "Switching library in the middle of a folder shows no card of the first."),
     "I2": ("apps", "A write through a server update is waited out and not repeated."),
     "I3": ("apps", "An update by a launch and by an install hands one server over to the next without killing its work."),
@@ -103,7 +104,8 @@ _SCENARIO_FILES = {
         "test_roots_store"
     ),
     "F1": (
-        "test_a_file_holds_what_exiftool_kept test_a_photo_patched_in_place test_a_rename_stopped_part_way "
+        "test_a_clip_patched_in_place test_a_file_holds_what_exiftool_kept test_a_photo_patched_in_place "
+        "test_a_rename_stopped_part_way "
         "test_file_changes_one_at_a_time test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
         "test_tag_a_photo_read_it_back_and_undo test_time_shift test_xmp_packet_edits_what_it_owns "
         "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns test_segment_edits_choose_what_to_write "
@@ -167,6 +169,7 @@ _SCENARIO_FILES = {
     "V12": "test_switching_a_librarys_photo_model",
     "V13": "test_making_a_new_photo_models_vectors",
     "V14": "test_retiring_the_old_photo_models_vectors",
+    "V15": "test_playing_a_video",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
@@ -278,7 +281,7 @@ _FILES = {
             "test_suggestions_keep_hierarchy test_tag_usage_from_photo_tags "
             "test_scrfd_adaface_faces "
             "test_the_runtime_keeps_models_by_settings test_the_runtime_reaches_suggest test_thumbs_cli test_vector_index "
-            "test_thumbnail_routes test_zero_shot_skips_people vgrid"
+            "test_thumbnail_routes test_zero_shot_skips_people vgrid video-viewer"
         ),
         "guard": "test_gpu_single_owner test_no_test_loads_a_model",
     },
