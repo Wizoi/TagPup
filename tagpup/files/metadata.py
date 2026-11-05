@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
-from tagpup.files import bake, field_values
+from tagpup.files import bake, field_values, images
 from tagpup.files.exiftool_session import ExifToolSession, StaysDead
 
 logger = logging.getLogger("tagpup_cli.metadata")
@@ -161,6 +161,7 @@ class MetadataExtractor:
 
         record = {
             "path": path,
+            "kind": images.kind_of(path),
             "mtime": mtime,
             "size": size,
             "tags": tags,
@@ -181,6 +182,7 @@ class MetadataExtractor:
         mtime, size = stamp
         return {
             "path": path,
+            "kind": images.kind_of(path),
             "mtime": mtime,
             "size": size,
             "tags": [],

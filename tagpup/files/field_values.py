@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 #: validation warning of their own, which costs a write nothing.
 NOT_WRITTEN = ("is not defined", "is not a field of", "is not a writable XMP tag", "Invalid XMP")
 
-#: What ExifTool says a file is. A photo's starts with "image/".
+#: What ExifTool says a file is. A photo's starts with "image/", a clip's with "video/".
 MIME_TYPE = "File:MIMEType"
 
 #: Photos read in one ExifTool command.
@@ -132,10 +132,11 @@ def _value(row, field):
 
 def _held(row, wanted):
     kind = row.get(MIME_TYPE)
-    if kind is not None and not str(kind).startswith("image/"):
+    if kind is not None and not str(kind).startswith(("image/", "video/")):
         # A file of text read as TXT answers no fields, and would read as a photo holding
-        # nothing (docs/findings.md, #46).
-        raise Unreadable("Not a photo ExifTool can read (%s)" % kind)
+        # nothing (docs/findings.md, #46). A clip is read as a photo is: the indexer keeps it
+        # as a row of kind 'video' (images.kind_of); refusing it left every clip unread.
+        raise Unreadable("Not a photo or a video ExifTool can read (%s)" % kind)
     return {field: _value(row, field) for field in wanted}
 
 

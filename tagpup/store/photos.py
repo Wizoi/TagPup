@@ -455,7 +455,7 @@ def stored_spelling(conn, photo_path):
 
 
 def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
-    """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
+    """Record what indexing read of a photo or a clip: `row` has kind ('photo' when absent), mtime, size, tags, captions,
     raw_metadata (as values), embedding (bytes), fingerprint and document_id; the embedding is kept
     under `model`, stamped with the row's mtime and size, with the fingerprint, the (key, hash) of the picture it was
     made of, or none (embeddings.put: a row with no fingerprint forgets the photo's), and the photo's people are
@@ -479,13 +479,13 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     stored = held or paths.stored(photo_path)
     row_path = paths.to_row(stored, roots)
     conn.execute(
-        "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO photos (path, kind, mtime, size, tags, captions, raw_metadata, document_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(path) DO UPDATE SET"
-        " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
+        " kind = excluded.kind, mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
         " captions = excluded.captions, raw_metadata = excluded.raw_metadata,"
         " document_id = COALESCE(excluded.document_id, photos.document_id)",
-        (row_path, row.get("mtime"), row.get("size"), json.dumps(row.get("tags", [])),
+        (row_path, row.get("kind") or "photo", row.get("mtime"), row.get("size"), json.dumps(row.get("tags", [])),
          json.dumps(row.get("captions", [])),
          store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id")))
     if not (batch is not None and batch.prepared) and derived.make_nodes(conn, [row.get("tags", [])], batch):

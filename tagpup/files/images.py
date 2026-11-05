@@ -37,6 +37,8 @@ PHOTO_EXTENSIONS = frozenset(PHOTO_TYPES)
 
 #: The Content-Type a video's own bytes go out under (/api/video-file), by its extension: the three the libraries' folders
 #: hold (2,184 .mov/.mp4/.m4v files, tagpup.files.containers). Not servable as a photo: /api/photo-file never sends one.
+#: What the index keeps as a row of kind 'video' (kind_of); a clip in an older format (.wmv, .mpg, .avi, .mod) is not
+#: indexed until it is converted to one of these (DECISIONS, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS").
 VIDEO_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime"}
 
 #: The largest side of a face crop, and the JPEG quality it is kept at. Face detection
@@ -222,6 +224,22 @@ def is_photo(path):
 is_servable = is_photo
 
 
+def kind_of(path):
+    """'photo' or 'video', what `path` names by its extension (PHOTO_EXTENSIONS, VIDEO_TYPES): the kind of the row the
+    index keeps for it (photos.kind); None for any other file."""
+    extension = os.path.splitext(str(path).lower())[1]
+    if extension in PHOTO_EXTENSIONS:
+        return "photo"
+    if extension in VIDEO_TYPES:
+        return "video"
+    return None
+
+
+def is_media(path):
+    """Does `path` name a file the index keeps, a photo or a clip (kind_of)? What the walks below find."""
+    return kind_of(path) is not None
+
+
 def walks_into(entry):
     """Is a folder's entry a folder to walk into? Not a link to one, and not a junction:
     os.scandir's is_symlink() is False for a junction on Python 3.11, and a junction back
@@ -237,7 +255,7 @@ def walks_into(entry):
 
 
 def photo_entries(folder, unlisted=None, listed=None):
-    """Each photo under `folder`, at any depth, as its folder's listing entry, in the
+    """Each photo and clip (is_media) under `folder`, at any depth, as its folder's listing entry, in the
     order os.walk gives: a folder's photos, then each subfolder in turn. Walked from
     paths.stored(folder), each folder listed through shares.listing; a folder that cannot be
     listed, whose listing fails part-way, or on a share that does not answer within its wait
@@ -259,7 +277,7 @@ def photo_entries(folder, unlisted=None, listed=None):
         for entry in listing:
             if walks_into(entry):
                 subfolders.append(entry.path)
-            elif is_photo(entry.name):
+            elif is_media(entry.name):
                 try:
                     if not entry.is_dir():
                         photos += 1
@@ -296,12 +314,12 @@ def has_subfolders(folder):
 
 
 def photos_in(folder):
-    """The photos directly in `folder`, not in its subfolders, in the form the index stores:
+    """The photos and clips (is_media) directly in `folder`, not in its subfolders, in the form the index stores:
     what indexing a folder alone reads (sync's new files in a folder the library holds)."""
     found = []
     for entry in _listing(folder):
         try:
-            if is_photo(entry.name) and not walks_into(entry) and not entry.is_dir():
+            if is_media(entry.name) and not walks_into(entry) and not entry.is_dir():
                 found.append(entry.path)
         except OSError:
             continue
@@ -309,11 +327,11 @@ def photos_in(folder):
 
 
 def stamps_in(folder):
-    """{paths.key: (path as stored, mtime, size)} of the photos directly in `folder`, not in its subfolders:
+    """{paths.key: (path as stored, mtime, size)} of the photos and clips directly in `folder`, not in its subfolders:
     photos_in, each with the stamp its listing gives, as stamps_under does for a folder and all below it."""
     found = {}
     for entry in _listing(folder):
-        if is_photo(entry.name) and not walks_into(entry):
+        if is_media(entry.name) and not walks_into(entry):
             try:
                 if entry.is_dir():
                     continue
@@ -325,7 +343,7 @@ def stamps_in(folder):
 
 
 def stamps_under(folder, unlisted=None, listed=None):
-    """{paths.key: (path as stored, mtime, size)} of the photos under `folder`, at any
+    """{paths.key: (path as stored, mtime, size)} of the photos and clips under `folder`, at any
     depth: the photos photos_under finds, each with the stamp its folder's listing gives.
     On Windows the listing carries both, so no file is opened or looked up on its own: a
     sync that finds nothing costs one walk (docs/ARCHITECTURE.md, phase 8). The folders
