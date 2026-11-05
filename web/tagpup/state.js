@@ -100,6 +100,9 @@ export const state = {
     shownIndex: new Map(),
     shownSource: null,
     folderSuggestions: {},
+    // The open folder's Suggest run as its last poll said it ({status, message, completed, total}), or null before
+    // one answered: what the photo's suggestions box says while a run waits or is under way (suggestions.js).
+    suggestRun: null,
     // Who the unnamed faces of each selected photo of the folder look like, {path: [{person, name, similarity}]}, [] for
     // none, and the ask still out for the rest ({key, controller}) (selection-faces.js).
     selectionFaces: {},

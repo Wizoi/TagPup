@@ -191,6 +191,10 @@ export function checkSuggestionsStatus(folderPath) {
         api.json(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
             .then(data => {
                 if (state.library) return;   // likewise: its progress and suggestions belong to a folder
+                state.suggestRun = {
+                    status: data.status, message: data.message || '',
+                    completed: data.completed || 0, total: data.total || 0,
+                };
                 // Where what it found is kept: in memory (a folder the library does not hold), or in the library.
                 if (data.in_memory) {
                     state.suggestionsInMemory = folderPath;
