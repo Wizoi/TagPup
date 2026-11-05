@@ -19,7 +19,10 @@ writers' session (its -G winning over -G0:1) fails test_a_photo_whose_thumbnail_
 original's read naming no IFD0 or IFD1 Orientation (the comparison itself fails only through EXIF:ThumbnailOffset, which
 KNOWN names by its IFD1 group: both writers leave IFD0's and IFD1's Orientation alike); KNOWN without the thumbnail's
 offset fails it too; KNOWN without the XMP toolkit fails
-test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing; a stale tag compared with
+test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing; ExifTool's group set aside
+whole (its warning and validation never compared), or -validate not asked, fails
+test_a_copy_exiftool_heals_as_it_reads_is_a_difference; its warning compared between the sides alone, and not against
+the original's, fails test_a_warning_the_original_held_is_no_difference; a stale tag compared with
 ExifTool's side and not the original's fails test_simple_photos_agree_and_nothing_of_the_library_is_written; a
 disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference; shares.read_whole
 reading a photo whose stamp says it is gone fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on; a photo read in one read
@@ -46,7 +49,7 @@ from click.testing import CliRunner  # noqa: E402
 
 from tagpup.core import byte_lock  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.files import containers, field_values, shares, xmp_packet  # noqa: E402
+from tagpup.files import containers, field_values, segment_edits, shares, xmp_packet  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import metadata_check  # noqa: E402
 from tagpup_cli import cli  # noqa: E402
@@ -246,6 +249,45 @@ class TheTwoWritersComparedOnCopies(FilesCase):
             found = self.check()
         self.assertEqual(({}, {}), (found["how"], found["looked"]))
         self.assertTrue(found["stopped"].startswith("the sandbox's disk has less than"), found["stopped"])
+
+    def test_a_copy_exiftool_heals_as_it_reads_is_a_difference(self):
+        # The own writer's patch leaves IFD0's first two entries out of order: ExifTool still reads every tag the same,
+        # and says so (its warning, its validation's count); a reader that looks its tags up in order may miss one.
+        self.photo("a.jpg")
+        real = segment_edits.new_header
+
+        def new_header(layout, header, values):
+            made = real(layout, header, values)
+            if made is None or not layout.of_kind("exif"):
+                return made
+            written = bytearray(made[0])
+            tiff = layout.of_kind("exif")[0].offset + 4 + len(b"Exif\0\0")
+            order = "big" if written[tiff:tiff + 2] == b"MM" else "little"
+            first = tiff + int.from_bytes(written[tiff + 4:tiff + 8], order) + 2
+            written[first:first + 24] = written[first + 12:first + 24] + written[first:first + 12]
+            return bytes(written), made[1]
+        with mock.patch.object(segment_edits, "new_header", new_header):
+            found = self.check(reveal=True)
+        said = {each["difference"] for each in found["revealed"] if each["operation"] == "keyword added"}
+        self.assertEqual({"the sides differ in ExifTool:Warning", "the sides differ in ExifTool:Validate"}, said,
+                         "\n".join(metadata_check.lines(found)))
+
+    def test_a_warning_the_original_held_is_no_difference(self):
+        # The original's first two IFD0 entries are out of order (another program wrote it so; ExifTool says "Entries in
+        # IFD0 are out of order"): ExifTool's write lays the block out again and says no more of it, the own writer's
+        # patch of the XMP leaves the block and its warning as they were.
+        a = self.photo("a.jpg")
+        held = read(a)
+        exif = containers.read(io.BytesIO(held)).of_kind("exif")[0]
+        tiff = exif.offset + 4 + len(b"Exif\0\0")
+        order = "big" if held[tiff:tiff + 2] == b"MM" else "little"
+        ifd0 = tiff + int.from_bytes(held[tiff + 4:tiff + 8], order)
+        first, second = ifd0 + 2, ifd0 + 2 + 12
+        with open(a, "wb") as handle:
+            handle.write(held[:first] + held[second:second + 12] + held[first:second] + held[second + 12:])
+        found = self.check()
+        self.assertEqual({"rewrite, own patch": 1}, found["how"]["keyword added"])
+        self.assert_agreed(found, 1)
 
     def test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing(self):
         # A photo another program wrote last (its packet's toolkit) holding an IPTCDigest, as Photoshop's and WLPG's do:

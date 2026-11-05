@@ -17,8 +17,11 @@ journaled write tries it): once by ExifTool's writer, once by the own writer. Th
 - every segment but the EXIF, XMP and IPTC ones, in order, and the picture (its first scan to its end): the copy's own;
 - the fields written, as each side reads back (fields.reads_same of fields.as_patched: a copy the own writer left stale
   holds what it held), and ExifTool's whole read of the two, tag for tag (WHOLE_READ: every copy of a tag, each by its
-  family 0 and 1 groups, the groups SET_ASIDE aside): a copy the own writer left stale holds the original's value, and
+  family 0 and 1 groups, what SET_ASIDE names aside): a copy the own writer left stale holds the original's value, and
   KNOWN tags may differ;
+- what ExifTool says of each copy as it reads it (its warning, and its validation's counts: READER_SAYS), where the own
+  writer's copy says other than ExifTool's and than the original (one ExifTool heals as it reads still reads the same
+  tags, and another reader may refuse it; a warning the original held already is not the writer's);
 - a side failing where the other wrote; a copy that could not be compared.
 How each side wrote (patch, rewrite, unchanged, failed) is counted, and whether both agree; a disagreement is counted by
 its direction and is no difference (both are a correct write; the bar is what the file holds; main session, 2026-11-05).
@@ -52,14 +55,20 @@ MARGIN = 1 << 30
 COPIES = 4
 #: Segments of a JPEG the writers edit (containers' kinds); every other is the photo's own.
 METADATA = frozenset({"exif", "xmp", "xmp-extension", "iptc"})
-#: ExifTool's whole read of a copy. The session's own common -G (exiftool_session.DEFAULT_COMMON_ARGS) is given after
+#: ExifTool's whole read of a copy, with what ExifTool says of it as it reads (READER_SAYS: -validate alone answers the
+#: Validate tag alone, so every tag is asked for, -all:all). The session's own common -G (exiftool_session.DEFAULT_COMMON_ARGS) is given after
 #: each command's and wins over a -G0:1 in it, naming IFD0's and IFD1's Orientation alike, so the whole read has a
 #: session of its own whose common arguments are -n alone. Keys read so (ExifTool 13.59): "EXIF:IFD0:Orientation",
 #: "XMP:XMP-dc:Subject"; a group whose family 1 is its family 0 is named once, "IPTC:Keywords", and a second APP13's
 #: "IPTC:IPTC2:Keywords".
-WHOLE_READ = ("-j", "-G0:1", "-a")
-#: Groups of ExifTool's read that are no field of the file: the file system's, ExifTool's own, those derived from others.
-SET_ASIDE = frozenset({"SourceFile", "File", "ExifTool", "Composite"})
+WHOLE_READ = ("-j", "-G0:1", "-a", "-all:all", "-validate")
+#: Groups and tags of ExifTool's read that are no field of the file: the file system's, those derived from others, the
+#: version of the ExifTool that read it.
+SET_ASIDE = frozenset({"SourceFile", "File", "Composite", "ExifTool:ExifToolVersion"})
+#: The group of what ExifTool says of a file as it reads it, as ExifTool 13.59 names it with -n: "ExifTool:Warning" (the
+#: first warning, "Value for IFD0 tag 0x011a XResolution overlaps IFD") and "ExifTool:Validate" (the counts of errors,
+#: warnings and minor warnings, "0 14 0").
+READER_SAYS = "ExifTool"
 #: Tags the two writers leave differently by design, as ExifTool 13.59 reads them (each seen in its output,
 #: tests/test_the_two_writers_compared_on_copies.py): the XMP toolkit names the program that wrote the packet last, which
 #: ExifTool's rewrite makes itself and the own writer's patch leaves; where the thumbnail lies in the EXIF block, which a
@@ -170,13 +179,17 @@ def _same(a, b):
 
 def _tags_differing(original, theirs, own, stale):
     """The tags of ExifTool's whole read on which the two sides differ (a field the own writer left stale: own's holds
-    other than the original's). A tag's field is its family 0 group and its name (WHOLE_READ's keys)."""
+    other than the original's; what ExifTool says of the copy, READER_SAYS: own's says other than both ExifTool's copy and
+    the original). A tag's field is its family 0 group and its name (WHOLE_READ's keys)."""
     found = []
     for tag in sorted(set(theirs) | set(own)):
         group = tag.split(":")[0]
-        if group in SET_ASIDE or tag in KNOWN:
+        if group in SET_ASIDE or tag in SET_ASIDE or tag in KNOWN:
             continue
-        if "%s:%s" % (group, tag.rsplit(":", 1)[-1]) in stale:
+        if group == READER_SAYS:
+            if not _same(theirs.get(tag), own.get(tag)) and not _same(own.get(tag), original.get(tag)):
+                found.append(tag)
+        elif "%s:%s" % (group, tag.rsplit(":", 1)[-1]) in stale:
             if not _same(own.get(tag), original.get(tag)):
                 found.append(tag)
         elif not _same(theirs.get(tag), own.get(tag)):
