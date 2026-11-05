@@ -1,0 +1,355 @@
+"""A save, a date set or a rotate made into the bytes of a JPEG's three metadata segments, or turned away to the rewrite (F1).
+
+TagPup's own writer (docs/PLAN_OWN_METADATA.md, M4) patches a photo's header in place: `segment_edits.new_header` is
+handed the journal's values of a write and answers the header with only the EXIF, XMP and IPTC bodies changed -- a
+keyword or caption save in XMP alone while XMP keeps a value (the other copies reported stale), every copy when the
+last keyword comes off -- or None, and the write goes to the rewrite with nothing written. The headers here are laid
+out as a camera's file after an ExifTool write (a big-endian EXIF block with its values after each table, an XMP packet
+with ExifTool's padding, a Photoshop block with its digest); the names are fictional.
+"""
+import hashlib
+import io
+import os
+import struct
+import sys
+import unittest
+from unittest import mock
+
+WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(WORKSPACE_DIR))
+
+from tagpup.core import dates, fields  # noqa: E402
+from tagpup.files import (containers, exif_block, identity, iptc_block, names, segment_edits,  # noqa: E402
+                          xmp_packet)
+
+PERSON = "People/Ida Corwell"
+KEYWORD_FIELDS = ("XMP:Subject", "IPTC:Keywords", "EXIF:XPKeywords", "XMP:HierarchicalSubject")
+
+
+# --- a header as a camera's file after an ExifTool write ------------------------------------------------------------
+
+def _ifd(order, entries, at, next_ifd=0):
+    """An IFD at `at`: its table, then the values that do not fit an entry (data follows the table, as in every file
+    the census read)."""
+    entries = sorted(entries)
+    values_at = at + 2 + 12 * len(entries) + 4
+    table, extra = struct.pack(order + "H", len(entries)), b""
+    for tag, kind, count, data in entries:
+        if len(data) <= 4:
+            table += struct.pack(order + "HHI", tag, kind, count) + data.ljust(4, b"\0")
+        else:
+            table += struct.pack(order + "HHII", tag, kind, count, values_at + len(extra))
+            extra += data + b"\0" * (len(data) % 2)
+    return table + struct.pack(order + "I", next_ifd) + extra
+
+
+def _ascii(tag, text):
+    data = text.encode("utf-8") + b"\0"
+    return (tag, 2, len(data), data)
+
+
+def _ucs2(tag, text):
+    data = text.encode("utf-16-le") + b"\0\0"
+    return (tag, 1, len(data), data)
+
+
+def exif_body(order=">", caption="A day at the lake", keywords=PERSON + ";Beach", orientation=1, slack=64):
+    ifd0 = [_ascii(0x010F, "Canon"), _ascii(0x0110, "Canon EOS 80D")]
+    if caption:
+        ifd0 += [_ascii(0x010E, caption), _ucs2(0x9C9C, caption)]
+    if keywords:
+        ifd0.append(_ucs2(0x9C9E, keywords))
+    if orientation is not None:
+        ifd0.append((0x0112, 3, 1, struct.pack(order + "H", orientation)))
+    exif = [_ascii(0x9003, "2019:07:14 10:22:31"), _ascii(0x9004, "2019:07:14 10:22:31"),
+            _ascii(0x9290, "00"), _ascii(0x9291, "00"), _ascii(0x9292, "00")]
+    head = (b"MM\0*" if order == ">" else b"II*\0") + struct.pack(order + "I", 8)
+    first = _ifd(order, ifd0 + [(0x8769, 4, 1, struct.pack(order + "I", 0))], 8)
+    first = _ifd(order, ifd0 + [(0x8769, 4, 1, struct.pack(order + "I", 8 + len(first)))], 8)
+    return containers.EXIF_HEAD + head + first + _ifd(order, exif, 8 + len(first)) + bytes(slack)
+
+
+def description(prefix, uri, *lines):
+    return (b" <rdf:Description rdf:about=''\n  xmlns:%s='%s'>\n" % (prefix, uri)
+            + b"".join(b"  " + line + b"\n" for line in lines) + b" </rdf:Description>\n")
+
+
+def bag(name, *items):
+    return b"\n  ".join([b"<%s>" % name, b" <rdf:Bag>"] + [b"  <rdf:li>%s</rdf:li>" % i.encode() for i in items]
+                        + [b" </rdf:Bag>", b"</%s>" % name])
+
+
+def alt(name, text):
+    return b"\n  ".join([b"<%s>" % name, b" <rdf:Alt>", b"  <rdf:li xml:lang='x-default'>%s</rdf:li>" % text.encode(),
+                         b" </rdf:Alt>", b"</%s>" % name])
+
+
+def uri(name):
+    return xmp_packet.PROPERTIES[name][0].encode()
+
+
+def packet(keywords=(PERSON, "Beach"), caption="A day at the lake", orientation=None, extra=b""):
+    parts = []
+    if keywords or caption:
+        parts.append(description(b"dc", uri("dc:subject"), *([alt(b"dc:description", caption)] if caption else [])
+                                 + ([bag(b"dc:subject", *keywords)] if keywords else [])))
+    if any("/" in k for k in keywords):
+        parts.append(description(b"lr", uri("lr:hierarchicalSubject"),
+                                 bag(b"lr:hierarchicalSubject", *[k for k in keywords if "/" in k])))
+    parts.append(description(b"exif", uri("exif:DateTimeOriginal"),
+                             b"<exif:DateTimeOriginal>2019-07-14T10:22:31</exif:DateTimeOriginal>"))
+    if orientation is not None:
+        parts.append(description(b"tiff", uri("tiff:Orientation"), b"<tiff:Orientation>%d</tiff:Orientation>" % orientation))
+    parts.append(description(b"xmp", uri("xmp:CreateDate"), b"<xmp:CreateDate>2019-07-14T10:22:31</xmp:CreateDate>"))
+    meta = (b"<x:xmpmeta xmlns:x='adobe:ns:meta/' x:xmptk='Image::ExifTool 12.76'>\n"
+            b"<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n"
+            + b"".join(b"\n" + part for part in parts) + extra + b"</rdf:RDF>\n</x:xmpmeta>")
+    begin = b"<?xpacket begin='" + chr(0xFEFF).encode("utf-8") + b"' id='W5M0MpCehiHzreSzNTczkc9d'?>"
+    return begin + b"\n" + meta + xmp_packet.padding(xmp_packet.RESERVE) + b"<?xpacket end='w'?>"
+
+
+def _dataset(record, number, value):
+    return bytes([0x1C, record, number]) + len(value).to_bytes(2, "big") + value
+
+
+def _resource(number, data):
+    return b"8BIM" + number.to_bytes(2, "big") + b"\0\0" + len(data).to_bytes(4, "big") + data + b"\0" * (len(data) % 2)
+
+
+def iptc_body(keywords=(PERSON, "Beach"), caption="A day at the lake", pad=200, lead=b""):
+    block = lead + _dataset(1, 90, b"\x1b%G") + _dataset(1, 0, b"\0\x04") + _dataset(2, 0, b"\0\x04")
+    block += b"".join(_dataset(2, 25, k.encode()) for k in keywords)
+    block += _dataset(2, 120, caption.encode()) if caption else b""
+    return (b"Photoshop 3.0\0" + _resource(0x03ED, bytes(16)) + _resource(0x0404, block)
+            + _resource(0x0425, hashlib.md5(block).digest())
+            + (_resource(containers.PAD_RESOURCE, bytes(pad - 12)) if pad else b""))
+
+
+def _segment(marker, body):
+    return bytes([0xFF, marker]) + (len(body) + 2).to_bytes(2, "big") + body
+
+
+def header(exif=None, xmp=None, iptc=None):
+    """A JPEG's bytes up to its first scan's header's end, as in_place reads them, and their layout."""
+    data = b"\xff\xd8" + _segment(0xE0, b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0")
+    data += _segment(0xE1, exif_body() if exif is None else exif) if exif is not False else b""
+    data += _segment(0xE1, containers.XMP_HEAD + (packet() if xmp is None else xmp)) if xmp is not False else b""
+    data += _segment(0xED, iptc_body() if iptc is None else iptc) if iptc is not False else b""
+    data += _segment(0xDB, b"\0" + bytes(range(64)))
+    data += _segment(0xC0, b"\x08\x00\x10\x00\x10\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01")
+    data += _segment(0xDA, b"\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00")
+    layout = containers.read(io.BytesIO(data))
+    assert layout.image_offset is not None
+    return layout, data
+
+
+def bodies(data):
+    """{kind: body} of the header `data`, by its own layout, and the layout's (marker, offset, size) of each segment."""
+    layout = containers.read(io.BytesIO(data))
+    found = {}
+    for segment in layout.segments:
+        body = data[segment.offset + 4:segment.end]
+        if segment.kind == "xmp":
+            found["xmp"] = xmp_packet.read(body[len(containers.XMP_HEAD):])
+        elif segment.kind == "exif":
+            found["exif"] = exif_block.read(body)
+        elif segment.kind == "iptc":
+            found["iptc"] = iptc_block.read(body)
+        found.setdefault("raw", {})[segment.kind] = body
+    return found, [(s.marker, s.offset, s.size, s.kind) for s in layout.segments]
+
+
+def keywords(flat):
+    """The journal's values of a keyword write of `flat`, as tagging's planner hands them to the writer."""
+    return {field: fields.field_values(value) for field, value in fields.keyword_fields(*fields.expand_tag_fields(flat)).items()}
+
+
+def caption(text):
+    return {field: fields.field_values(value) for field, value in fields.caption_fields(text).items()}
+
+
+class TheMapCoversEveryWriter(unittest.TestCase):
+
+    def test_every_field_a_writer_names_has_its_place_and_the_rest_go_to_the_rewrite(self):
+        written = (list(keyword_fields_of()) + list(caption("x")) + list(fields.date_taken_fields("2019-06-15T10:30:00.123"))
+                   + list(dates.SHIFTED_FIELDS) + [fields.ORIENTATION, names.PRESERVED_NAME])
+        self.assertEqual([], [field for field in written if field not in fields.EDITED_AS])
+        owned = {"xmp": xmp_packet.PROPERTIES, "exif": exif_block.FIELDS, "iptc": iptc_block.DATASETS}
+        for field, targets in fields.EDITED_AS.items():
+            for kind, name in targets:
+                self.assertIn(name, owned[kind], field)
+        for field in (identity.DOCUMENT_ID_FIELD, "XMP:Title", "IPTC:ObjectName", fields.REGION_INFO):
+            self.assertNotIn(field, fields.EDITED_AS)
+
+    def test_a_write_naming_a_field_not_mapped_is_no_patch(self):
+        layout, data = header()
+        for field in ("XMP-tagpup:FaceVectors", fields.REGION_INFO, "XMP:Title", identity.DOCUMENT_ID_FIELD):
+            with self.subTest(field), self.assertLogs("tagpup.files.segment_edits", "INFO") as said:
+                self.assertIsNone(segment_edits.new_header(layout, data, {**keywords([PERSON]), field: ["x"]}))
+            self.assertIn("not a field the own writer writes", said.output[0])
+
+
+def keyword_fields_of():
+    return fields.keyword_fields([], [])
+
+
+class AKeywordOrCaptionSave(unittest.TestCase):
+
+    def test_a_keyword_added_is_written_to_xmp_alone_and_the_other_copies_reported_stale(self):
+        layout, data = header()
+        new, stale = segment_edits.new_header(layout, data, keywords([PERSON, "Beach", "Shore"]))
+        self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
+        after, segments = bodies(new)
+        before, segments_before = bodies(data)
+        self.assertEqual(segments_before, segments)
+        self.assertEqual([PERSON, "Beach", "Shore"], after["xmp"]["dc:subject"])
+        self.assertEqual([PERSON], after["xmp"]["lr:hierarchicalSubject"])
+        self.assertEqual(before["raw"]["exif"], after["raw"]["exif"])
+        self.assertEqual(before["raw"]["iptc"], after["raw"]["iptc"])
+
+    def test_a_photo_whose_keywords_were_in_iptc_alone_is_given_the_whole_set_in_xmp(self):
+        layout, data = header(xmp=packet(keywords=(), caption=None), exif=exif_body(keywords=None))
+        self.assertNotIn("dc:subject", bodies(data)[0]["xmp"])
+        values = keywords([PERSON, "Beach", "Shore"])  # the planner's set: IPTC's two and the one added
+        new, stale = segment_edits.new_header(layout, data, values)
+        after = bodies(new)[0]
+        self.assertEqual([PERSON, "Beach", "Shore"], after["xmp"]["dc:subject"])
+        self.assertEqual(bodies(data)[0]["raw"]["iptc"], after["raw"]["iptc"])
+        self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
+
+    def test_the_last_keyword_taken_off_is_taken_off_every_copy(self):
+        layout, data = header()
+        new, stale = segment_edits.new_header(layout, data, keywords([]))
+        self.assertEqual((), stale)
+        after = bodies(new)[0]
+        self.assertNotIn("dc:subject", after["xmp"])
+        self.assertNotIn("lr:hierarchicalSubject", after["xmp"])
+        self.assertNotIn("IPTC:Keywords", after["iptc"])
+        self.assertNotIn("XPKeywords", after["exif"])
+        self.assertEqual("A day at the lake", after["iptc"]["IPTC:Caption-Abstract"])
+
+    def test_the_last_keyword_taken_off_a_copy_that_cannot_take_it_is_no_patch(self):
+        # An IPTC block whose data does not start with a dataset (6 of photo_index's 1,467 read) is refused: with the
+        # keyword group not XMP-only, the whole write goes to the rewrite; XMP-only, the block is not touched.
+        layout, data = header(iptc=iptc_body(lead=b"\0\0junk"))
+        self.assertIsInstance(iptc_block.read(data[layout.iptc.offset + 4:layout.iptc.end]), containers.Refusal)
+        self.assertIsNone(segment_edits.new_header(layout, data, keywords([])))
+        self.assertIsNotNone(segment_edits.new_header(layout, data, keywords([PERSON, "Shore"])))
+
+    def test_the_last_keyword_taken_off_a_copy_it_does_not_fit_is_no_patch(self):
+        # A block with no dummy resource (none was laid by a patch yet) holding one short keyword: taking it off frees
+        # fewer bytes than a dummy needs, so the block cannot keep its length and the write goes to the rewrite.
+        layout, data = header(iptc=iptc_body(keywords=("Kite",), pad=None),
+                              xmp=packet(keywords=("Kite",)), exif=exif_body(keywords="Kite"))
+        self.assertTrue(iptc_block.edit(data[layout.iptc.offset + 4:layout.iptc.end], {"IPTC:Keywords": []}).length_changed)
+        self.assertIsNone(segment_edits.new_header(layout, data, keywords([])))
+
+    def test_a_caption_is_written_to_xmp_alone_and_a_cleared_one_to_every_copy(self):
+        layout, data = header()
+        new, stale = segment_edits.new_header(layout, data, caption("Kites over the dunes"))
+        self.assertEqual(("IPTC:Caption-Abstract", "EXIF:ImageDescription", "EXIF:XPComment"), stale)
+        after = bodies(new)[0]
+        self.assertEqual("Kites over the dunes", after["xmp"]["dc:description"])
+        self.assertEqual("A day at the lake", after["iptc"]["IPTC:Caption-Abstract"])
+        self.assertEqual("A day at the lake", after["exif"]["ImageDescription"])
+        new, stale = segment_edits.new_header(layout, data, caption(""))
+        after = bodies(new)[0]
+        self.assertEqual((), stale)
+        self.assertNotIn("dc:description", after["xmp"])
+        self.assertNotIn("IPTC:Caption-Abstract", after["iptc"])
+        self.assertNotIn("ImageDescription", after["exif"])
+        self.assertNotIn("XPComment", after["exif"])
+
+    def test_a_photo_with_no_xmp_segment_or_a_packet_refused_is_no_patch(self):
+        layout, data = header(xmp=False)
+        self.assertIsNone(segment_edits.new_header(layout, data, keywords([PERSON, "Shore"])))
+        layout, data = header(xmp=packet(extra=b"<!-- a note -->\n"))
+        self.assertIsInstance(xmp_packet.read(data[layout.xmp.offset + 4 + len(containers.XMP_HEAD):layout.xmp.end]),
+                              containers.Refusal)
+        self.assertIsNone(segment_edits.new_header(layout, data, keywords([PERSON, "Shore"])))
+
+    def test_a_text_field_given_two_values_is_no_patch(self):
+        layout, data = header()
+        self.assertIsNone(segment_edits.new_header(layout, data, {**caption("One"), "XMP:Description": ["One", "Two"]}))
+
+    def test_a_save_made_twice_changes_no_byte_the_second_time(self):
+        for values in (keywords([PERSON, "Shore"]), keywords([]), caption("Kites"), caption("")):
+            layout, data = header()
+            once = segment_edits.new_header(layout, data, values)[0]
+            twice = segment_edits.new_header(containers.read(io.BytesIO(once)), once, values)[0]
+            self.assertEqual(once, twice)
+
+    def test_an_edit_that_changes_the_header_length_is_caught(self):
+        layout, data = header()
+        longer = mock.Mock(side_effect=lambda body, changes: containers.Edited(body + b" ", False))
+        with mock.patch.object(xmp_packet, "edit", longer), self.assertRaises(AssertionError):
+            segment_edits.new_header(layout, data, keywords([PERSON, "Shore"]))
+
+
+class ADateOrARotation(unittest.TestCase):
+
+    def test_a_date_set_patches_every_copy_it_names(self):
+        layout, data = header()
+        values = {field: [value] for field, value in fields.date_taken_fields("2021-03-02T08:05:09").items()}
+        values.update({"XMP:CreateDate": ["2021:03:02 08:05:09"], "EXIF:SubSecTimeOriginal": ["45"],
+                       "EXIF:SubSecTime": ["45"], "EXIF:SubSecTimeDigitized": ["45"]})
+        new, stale = segment_edits.new_header(layout, data, values)
+        self.assertEqual((), stale)
+        after = bodies(new)[0]
+        for name in ("DateTimeOriginal", "CreateDate"):
+            self.assertEqual("2021:03:02 08:05:09", after["exif"][name])
+        for name in ("SubSecTime", "SubSecTimeOriginal", "SubSecTimeDigitized"):
+            self.assertEqual("45", after["exif"][name])
+        self.assertEqual("2021-03-02T08:05:09", after["xmp"]["exif:DateTimeOriginal"])
+        self.assertEqual("2021-03-02T08:05:09", after["xmp"]["xmp:CreateDate"])
+        self.assertEqual(bodies(data)[0]["raw"]["iptc"], after["raw"]["iptc"])
+        self.assertEqual(new, segment_edits.new_header(containers.read(io.BytesIO(new)), new, values)[0])
+
+    def test_an_xmp_date_keeps_its_own_zone_and_fraction_and_is_given_none(self):
+        layout, data = header()
+        for value, spelt in (("2021:03:02 08:05:09+02:00", "2021-03-02T08:05:09+02:00"),
+                             ("2021:03:02 08:05:09.12", "2021-03-02T08:05:09.12"),
+                             ("2021:03:02 08:05:09.12-05:00", "2021-03-02T08:05:09.12-05:00"),
+                             ("2021:03:02 08:05:09", "2021-03-02T08:05:09")):
+            new, _stale = segment_edits.new_header(layout, data, {"XMP:DateTimeOriginal": [value]})
+            self.assertEqual(spelt, bodies(new)[0]["xmp"]["exif:DateTimeOriginal"])
+        self.assertIsNone(segment_edits.new_header(layout, data, {"XMP:DateTimeOriginal": ["2021-03-02"]}))
+
+    def test_an_exif_date_with_a_fraction_goes_to_the_rewrite(self):
+        layout, data = header()
+        values = {field: [value] for field, value in fields.date_taken_fields("2021-03-02T08:05:09.250").items()}
+        self.assertIsNone(segment_edits.new_header(layout, data, values))
+
+    def test_a_rotation_writes_exif_and_the_xmp_orientation_only_where_the_packet_holds_one(self):
+        layout, data = header(xmp=packet(orientation=1))
+        new, _stale = segment_edits.new_header(layout, data, {fields.ORIENTATION: ["6"]})
+        after = bodies(new)[0]
+        self.assertEqual(6, after["exif"]["Orientation"])
+        self.assertEqual("6", after["xmp"]["tiff:Orientation"])
+        layout, data = header()
+        new, _stale = segment_edits.new_header(layout, data, {fields.ORIENTATION: ["8"]})
+        after, before = bodies(new)[0], bodies(data)[0]
+        self.assertEqual(8, after["exif"]["Orientation"])
+        self.assertEqual(before["raw"]["xmp"], after["raw"]["xmp"])
+
+    def test_a_rotation_of_a_photo_with_no_orientation_tag_is_no_patch(self):
+        layout, data = header(exif=exif_body(orientation=None))
+        self.assertIsNone(segment_edits.new_header(layout, data, {fields.ORIENTATION: ["6"]}))
+
+
+class TheEditedHeader(unittest.TestCase):
+
+    def test_only_the_bodies_change_and_every_marker_and_length_is_the_headers(self):
+        layout, data = header()
+        values = {**keywords([]), **caption(""), fields.ORIENTATION: ["3"]}
+        new = segment_edits.new_header(layout, data, values)[0]
+        self.assertEqual(len(data), len(new))
+        changed = [i for i, (a, b) in enumerate(zip(data, new)) if a != b]
+        inside = [(s.offset + 4, s.end) for s in layout.segments if s.kind in ("exif", "xmp", "iptc")]
+        self.assertTrue(changed)
+        self.assertEqual([], [i for i in changed if not any(start <= i < end for start, end in inside)])
+        self.assertEqual(bodies(data)[1], bodies(new)[1])
+
+
+if __name__ == "__main__":
+    unittest.main()

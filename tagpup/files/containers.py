@@ -49,7 +49,7 @@ MOST_BODY = 0xFFFF - 2
 #: from it (`xmp_packet.padding` lays the bytes).
 XMP_PADDING_LEAST = 1
 
-_XMP_HEAD = b"http://ns.adobe.com/xap/1.0/\0"
+XMP_HEAD = b"http://ns.adobe.com/xap/1.0/\0"
 _XMP_EXTENSION_HEAD = b"http://ns.adobe.com/xmp/extension/\0"
 #: What an EXIF segment's body starts with, before its TIFF block.
 EXIF_HEAD = b"Exif\0\0"
@@ -409,8 +409,8 @@ def _read_jpeg(handle, file_size):
 
 
 def _segment(marker, offset, size, body):
-    if marker == 0xE1 and body.startswith(_XMP_HEAD):
-        return Segment(marker, offset, size, "xmp", slack=_xmp_slack(body[len(_XMP_HEAD):]))
+    if marker == 0xE1 and body.startswith(XMP_HEAD):
+        return Segment(marker, offset, size, "xmp", slack=_xmp_slack(body[len(XMP_HEAD):]))
     if marker == 0xE1 and body.startswith(_XMP_EXTENSION_HEAD):
         return Segment(marker, offset, size, "xmp-extension")
     if marker == 0xE1 and body.startswith(EXIF_HEAD):

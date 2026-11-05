@@ -105,7 +105,7 @@ _SCENARIO_FILES = {
         "test_a_file_holds_what_exiftool_kept test_a_photo_patched_in_place test_a_rename_stopped_part_way "
         "test_file_changes_one_at_a_time test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
         "test_tag_a_photo_read_it_back_and_undo test_time_shift test_xmp_packet_edits_what_it_owns "
-        "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns"
+        "test_iptc_block_edits_what_it_owns test_exif_block_edits_what_it_owns test_segment_edits_choose_what_to_write"
     ),
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_an_index_reads_the_next_photos_ahead",
     "F3": (
@@ -254,7 +254,7 @@ _FILES = {
             "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
-        "guard": "test_photo_looks_have_one_owner",
+        "guard": "test_photo_looks_have_one_owner test_the_block_editors_have_one_caller",
     },
     "views": {
         "unit": (
