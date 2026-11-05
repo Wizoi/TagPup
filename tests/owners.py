@@ -232,7 +232,7 @@ _FILES = {
     },
     "files": {
         "unit": (
-            "bulk-edit bulk-writes-queue just-look-edits path-helpers photo-write-queue rename-failed retried-save "
+            "bulk-edit bulk-writes-queue just-look-edits path-helpers photo-write-queue picture-check-says-so rename-failed retried-save "
             "rotate-refreshes-thumbnails smart-rename-count "
             "test_a_bake_is_used_only_whole test_a_cut_keyword_is_not_planned_again test_a_face_box_turned_upright_and_back "
             "test_a_photo_is_known_by_its_picture "
@@ -265,7 +265,7 @@ _FILES = {
     },
     "views": {
         "unit": (
-            "details-panel grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
+            "details-panel faces-say-they-are-loading grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
             "library-selection library-selection-jumps library-tally library-view looking-suggestions navigator "
             "navigator-multi photo-camera photo-details-layout photo-position photo-suggestions-panel search-page selection "
             "selection-follows-the-photo selection-panel selection-suggestions selection-suggests-who-the-faces-look-like stale-cards suggest-cancel suggestions-follow-a-saved-photo tagging-flow "

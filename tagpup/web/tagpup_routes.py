@@ -911,7 +911,8 @@ def photo_rotate():
         return responses.error(500, str(e))
     # The new mtime, which versions the page's image URLs: thumbnails are cached for a
     # day, so without a new URL the grid kept the old turn.
-    return jsonify({"success": True, "mtime": result.details["mtime"], "size": result.details["size"], **_where(result)})
+    return jsonify({"success": True, "mtime": result.details["mtime"], "size": result.details["size"], **_where(result),
+                    **_pictures_refused(result)})
 
 
 @routes.post("/api/photo/delete")
@@ -1032,7 +1033,7 @@ def photo_save_metadata():
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
     reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path),
-             "base": result.details.get("base"), **_faces_unnamed(result)}
+             "base": result.details.get("base"), **_faces_unnamed(result), **_pictures_refused(result)}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
     if result.details.get("rename_failed"):
@@ -1096,6 +1097,13 @@ def _where(result):
     written with their rows}. What was written, not attempted."""
     return {file_only.FILE_ONLY: result.details.get(file_only.FILE_ONLY, 0),
             file_only.WITH_ROWS: result.details.get(file_only.WITH_ROWS, 0)}
+
+
+def _pictures_refused(result):
+    """{"pictures_refused": n} when n writes of this request changed the picture's bytes, were discarded and made again
+    (tagpup.services.file_changes; DECISIONS 2026-11-03), else {}: the page says so in a sentence."""
+    refused = result.details.get("pictures_refused")
+    return {"pictures_refused": refused} if refused else {}
 
 
 def _skipped_photos(result):
