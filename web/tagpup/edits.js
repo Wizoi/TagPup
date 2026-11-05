@@ -287,11 +287,24 @@ export function photoRenamed(photo, newPath) {
     const oldPath = photo.path;
     photo.path = newPath;
     photo.filename = baseName(newPath);
-    renameInSelection(oldPath, newPath);
-    if (state.folderSuggestions[oldPath]) {
-        state.folderSuggestions[newPath] = state.folderSuggestions[oldPath];
-        delete state.folderSuggestions[oldPath];
+    photosRenamed({ [oldPath]: newPath });
+}
+
+/**
+ * Photos were renamed, `renames` {old path: new path} (a save, or Smart Rename's `updated_paths`): their selection and
+ * suggestions move to the new names. Old paths are matched by pathKey, as the server may spell a path other than the scan did (#92).
+ */
+export function photosRenamed(renames) {
+    const moved = new Map(Object.entries(renames).map(([from, to]) => [pathKey(from), to]));
+    const kept = new Map(Object.keys(state.folderSuggestions).map(key => [pathKey(key), key]));
+    for (const [from, to] of moved) {
+        const held = kept.get(from);
+        if (held !== undefined && held !== to) {
+            state.folderSuggestions[to] = state.folderSuggestions[held];
+            delete state.folderSuggestions[held];
+        }
     }
+    for (const [oldPath, newPath] of Object.entries(renames)) renameInSelection(oldPath, newPath);
 }
 
 /** After a write: redraw the panel for this photo, but only if it is still the one open. */

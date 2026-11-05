@@ -73,6 +73,28 @@ describe("a saved photo keeps its suggestions", () => {
     assert.ok(badge(ctx, "Harbour - 01.jpg"), "the renamed row still has the AI badge");
   });
 
+  test("Smart Rename keeps the renamed photo's suggestions, whole or stopped part-way", async (t) => {
+    for (const stopped of [false, true]) {
+      const ctx = await load(t, { success: true });
+      const updated = [{ ...record(RENAMED) }, record(B)];
+      // The server spells the old path as it likes: matched by key, not by exact text.
+      const updated_paths = { [A.toLowerCase()]: RENAMED, [B]: B };
+      if (stopped) ctx.server.on("/api/folder/rename-photos", { success: false, error: "stopped", updated_paths, updated_photos: updated }, { status: 500 });
+      else ctx.server.on("/api/folder/rename-photos", { success: true, updated_paths, updated_photos: updated });
+      ctx.window.confirm = () => true;
+      click(ctx.window, ctx.card("a.jpg").querySelector(".thumbnail-checkbox"));
+      ctx.document.getElementById("rename-grouping-input").value = "Harbour";
+      const apply = ctx.document.getElementById("btn-apply-rename");
+      apply.disabled = false;
+      click(ctx.window, apply);
+      await flush(ctx.window, 10);
+      assert.ok(ctx.server.calls.some((c) => c.url.includes("rename-photos")), "the rename was sent");
+      assert.ok(badge(ctx, "Harbour - 01.jpg"), `the renamed row keeps its badge (stopped: ${stopped})`);
+      assert.ok(badge(ctx, "b.jpg"));
+      closeAllApps();
+    }
+  });
+
   test("a save that fails changes no suggestion", async (t) => {
     const ctx = await load(t, { success: false, error: "disk full" });
     click(ctx.window, ctx.document.querySelector(`li[data-path="${A.replace(/\\/g, "\\\\")}"]`));
