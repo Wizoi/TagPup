@@ -193,7 +193,6 @@ XMP_ONLY = {
     "XMP:Subject": tuple(field for field in keyword_fields([], []) if not field.startswith("XMP:")),
     "XMP:Description": tuple(field for field in caption_fields("") if not field.startswith("XMP:")),
 }
-PATCH_LEAVES = tuple(dict.fromkeys(field for leaves in XMP_ONLY.values() for field in leaves))
 
 #: Where TagPup's own JPEG writer (tagpup.files.segment_edits) puts each field a journaled write names: (segment kind,
 #: the property or field its editor names it by), xmp_packet's, exif_block's or iptc_block's. A target after the first

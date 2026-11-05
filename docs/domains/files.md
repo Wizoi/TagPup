@@ -90,7 +90,7 @@ A photo's tags and captions are read from XMP when it holds them, IPTC's copy on
 read from its own pair (Subject or Keywords, Description or Caption-Abstract, Title or ObjectName), and a field present
 but blank holds none: 12,469 photo_index rows hold an empty XMP description beside an IPTC caption, 12,473 an XMP title
 and only an IPTC caption, 151 IPTC keywords and no XMP ones (4 of them with an XMP packet) (counted 2026-11-03). A write
-answers the fields it left as they were (`field_values.write`; `fields.PATCH_LEAVES`, the non-XMP fields a keyword or
+answers the fields it left as they were (`field_values.write`; `fields.XMP_ONLY`, the non-XMP fields a keyword or
 caption write sets), and the file is verified, recorded and journaled as `fields.as_patched` says it holds them
 (`file_changes._carry`). Every write still writes every copy, so that answer is always empty until merge 4b.
 

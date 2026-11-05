@@ -96,6 +96,7 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         self.assertEqual(("Beach", "Beach"), (field_of(path, "IPTC:Keywords"), field_of(path, "EXIF:XPKeywords")))
         self.assertEqual((["Beach"], ["Beach"]), (self.after(change, "IPTC:Keywords"), self.raw(path, "IPTC:Keywords")),
                          "the row or the journal says IPTC holds what the patch did not write")
+        self.assertEqual(sorted(keywords), sorted(self.after(change, "XMP:Subject")), "the journal lacks what XMP holds")
 
     def test_three_keywords_added_are_three_patches_of_the_xmp_alone(self):
         a = self.make("a.jpg")
