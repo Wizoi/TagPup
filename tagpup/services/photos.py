@@ -433,7 +433,9 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     held_keys = {paths.key(p) for p in held}
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
-    present = [p for p in photo_paths if shares.there(p)]
+    # A clip is not renamed (file_changes.leave_out_clips): its error, its number left unused as a photo's no longer on
+    # disk is. Asked here, not left to the names kept: that write skips a file it cannot write, which would be renamed.
+    present = [p for p in file_changes.leave_out_clips(result, photo_paths) if shares.there(p)]
     captions = names.read_for_renaming(exiftool_path, present)
     kept = preserve_names(library, present, exiftool_path, split=(held, loose))
     if kept.refused:

@@ -266,6 +266,10 @@ def _delete(library, edit, present, out):
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
         out.skipped_missing += sum(1 for _id, path in present if states[paths.key(path)] == file_changes.GONE)
+        # A clip is never deleted (recycle_bin.not_deleted): its error, before this PC is asked for room for copies.
+        out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], recycle_bin.not_deleted(path))
+                          for photo_id, path in there if recycle_bin.not_deleted(path))
+        there = [(photo_id, path) for photo_id, path in there if not recycle_bin.not_deleted(path)]
         refused = _cannot_keep(there)
         batch = batches.current()
         for n, (photo_id, path) in enumerate(there):

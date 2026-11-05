@@ -79,7 +79,7 @@ from tagpup.core import fields, paths
 from tagpup.core.result import Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, in_place, lock_owners, metadata, names, shares
+from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, metadata, names, shares
 from tagpup.services import baking, batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, file_journal, photos, schema
@@ -286,6 +286,23 @@ PRESENT, GONE, AWAY = "present", "gone", "away"
 AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
 
 
+def leave_out_clips(result, photo_paths, unreadable="fail"):
+    """The paths of `photo_paths` that are not clips (images.is_clip), in order. A clip's file is never written
+    (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a write over every
+    photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for nothing, planned and
+    journaled for nothing, and never the error that stops a write at its first (`stop_at_first_error`): the photos named
+    beside it are written. The one place of the refusal, asked by every writer of photo files before it reads one
+    (write_fields, file_only.write_fields) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps a name;
+    a save of a clip is refused before its rename."""
+    photos = []
+    for path in photo_paths:
+        if images.is_clip(path):
+            (result.skip if unreadable == "skip" else result.fail)(path, images.CLIP_NOT_EDITED)
+        else:
+            photos.append(path)
+    return photos
+
+
 #: What a forward write's file found holding its after since the plan comes to (_held_or_conflict's `held_out`): out of
 #: the change, its row recorded.
 OUT = "out"
@@ -423,7 +440,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     if problem:
         result.refuse(problem)
         return result
-    stored = [paths.stored(p) for p in photo_paths]
+    # A clip is left out before anything is read of it (leave_out_clips).
+    stored = leave_out_clips(result, [paths.stored(p) for p in photo_paths], unreadable)
     batch = batches.current()
     if fresh is None:
         # A photo on a share that does not answer is its error at once: read, it would cost ExifTool's whole deadline
