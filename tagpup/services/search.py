@@ -388,6 +388,17 @@ class PhotoIndex:
         meta with none forgets the photo's row (store.embeddings.put)."""
         if not embeddings or self.conn is None:
             return
+        self._record(metas, [np.array(emb, dtype=np.float32).tobytes() for emb in embeddings])
+
+    def record_videos(self, metas: List[Dict[str, Any]]):
+        """Record the clips the indexer read (each meta of kind 'video'), with no vector: a clip is a row the library
+        keeps by its stamp and its metadata; nothing is decoded and nothing written to its file. One transaction."""
+        if not metas or self.conn is None:
+            return
+        self._record(metas, [None] * len(metas))
+
+    def _record(self, metas, blobs):
+        """Record each of `metas` with its vector's bytes in `blobs` (None: no vector), in one transaction."""
         # A row is stamped with the read it records: MetadataExtractor gives every record its mtime and size.
         try:
             # Who each photo's keywords name depends on this library's tree, read once;
@@ -399,14 +410,15 @@ class PhotoIndex:
             if store_derived.make_nodes(self.conn, [meta.get("tags", []) for meta in metas], batch):
                 known = store_taxonomy.read_people_vocabulary(self.conn)
             batch.prepared = True
-            for meta, emb in zip(metas, embeddings):
+            for meta, blob in zip(metas, blobs):
                 store_photos.record_indexed(self.conn, meta["path"], {
+                    "kind": meta.get("kind"),
                     "mtime": meta["mtime"],
                     "size": meta["size"],
                     "tags": meta.get("tags", []),
                     "captions": meta.get("captions", []),
                     "raw_metadata": meta.get("raw_metadata", {}),
-                    "embedding": np.array(emb, dtype=np.float32).tobytes(),
+                    "embedding": blob,
                     "fingerprint": meta.get("fingerprint"),
                     # The photo's identity beside its path. Where the file has one it is
                     # already in raw_metadata; where it does not, the extractor has

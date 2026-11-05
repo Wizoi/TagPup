@@ -94,7 +94,8 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
     result = Result(attempted=len(photo_paths))
     written = result.details["written"] = {}
     result.details.update(change=None, conflicts=[])
-    stored = [paths.stored(p) for p in photo_paths]
+    # A clip is left out before anything is read of it, as a held photo's write leaves it out.
+    stored = file_changes.leave_out_clips(result, [paths.stored(p) for p in photo_paths], unreadable)
     held = fresh if fresh is not None else field_values.read(et, stored, read)
     planned = []
     for path in stored:

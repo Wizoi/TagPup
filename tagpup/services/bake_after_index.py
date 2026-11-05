@@ -46,6 +46,7 @@ from tagpup.files import bake, exiftool_session, field_values, images, shares
 from tagpup.services import baking, file_changes, settings
 from tagpup.services import snapshots as snapshot_service
 from tagpup.store import db, inspection, photo_fingerprints
+from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,8 @@ def _planned(library, et, detector, folder, handed, baked, walk):
     try:
         keys = baking.keys(conn, detector)
         stored = store_roots.to_row(conn, folder)
-        group = [(photo_id, path) for photo_id, path in inspection.under(conn, folder)
+        # A clip's file is never baked: planned, it would be counted a photo that cannot be.
+        group = [(photo_id, path) for photo_id, path in inspection.under(conn, folder, store_photos.BAKED_KINDS)
                  if paths.key(os.path.dirname(path)) == paths.key(folder)]
         fingerprinted = photo_fingerprints.fingerprinted(conn, [photo_id for photo_id, _path in group])
         read = baking.FolderRead(et, [path for _id, path in group])

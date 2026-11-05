@@ -100,8 +100,8 @@ def date_rule_lists(source):
         if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
             names = [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
             if (len(names) == len(node.elts)
-                    and all(n.endswith(("DateTimeOriginal", "CreateDate", "ModifyDate")) for n in names)
-                    and any(n.endswith("DateTimeOriginal") for n in names)):
+                    and all(n.endswith(("DateTimeOriginal", "CreateDate", "ModifyDate", "CreationDate")) for n in names)
+                    and any(n.endswith(("DateTimeOriginal", "CreationDate")) for n in names)):
                 yield node.lineno
 
 
@@ -139,6 +139,7 @@ class OneReadingOfTheDate(unittest.TestCase):
             'for k in ["EXIF:DateTimeOriginal", "DateTimeOriginal", "EXIF:CreateDate"]: pass')))
         self.assertFalse(list(date_rule_lists(
             'FIELDS = ["XMP:Subject", "EXIF:DateTimeOriginal", "EXIF:Model"]')))
+        self.assertTrue(list(date_rule_lists('CLIP = ("QuickTime:CreationDate", "QuickTime:CreateDate")')))
         with open(os.path.join(ROOT, self.OWNER), encoding="utf-8") as handle:
             self.assertTrue(list(date_rule_lists(handle.read())), "the owner stopped matching")
 

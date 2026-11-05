@@ -10,8 +10,9 @@
 //  * a video the browser cannot play says why on the status line: its file is gone, the share or the server is not
 //    answering, or its format is not one this browser plays (an HEVC clip without the HEVC extension). The browser
 //    gives the same error for a refused request as for a format it cannot play, so the server is asked which it was.
-// Switching library is another page: the video goes with it. Rotate, zoom and Date Taken on a video are not offered
-// for yet (M4a).
+// Switching library is another page: the video goes with it. A video is not edited: Rotate, Date Taken, the title,
+// people and keywords are inert while one is shown (stale.js applyPhotoStale, from isVideo), as the server refuses
+// any write to a clip (file_changes.leave_out_clips). Zoom stands down because there is no picture.
 import { api } from './common/api.js';
 import { mainImage, mainVideo, panelContent } from './elements.js';
 import { setStatus } from './status.js';

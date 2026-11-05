@@ -134,7 +134,8 @@ def scan_folder(library, folder, exiftool_path):
     server's scan used the default face roots alone.
     """
     folder = paths.stored(folder)
-    listed = images.stamps_under(folder)
+    # Photos only: a clip is not shown in a folder until the page can show one (video, merge B).
+    listed = {key: stamp for key, stamp in images.stamps_under(folder).items() if images.kind_of(stamp[0]) == "photo"}
     if not listed:
         return {}
 
@@ -178,7 +179,8 @@ def read_folder(library, folder, exiftool_path):
     records keyed by paths.key: the folder after Smart Rename, and a time shift on a
     folder never opened. `mtime` and `size` come from the reader."""
     folder = paths.stored(folder)
-    image_files = images.photos_under(folder)
+    # Photos only: a time shift reads its folder here, and must never write a clip.
+    image_files = [f for f in images.photos_under(folder) if images.kind_of(f) == "photo"]
     if not image_files:
         return {}
     return _read(library, [(f, None, None) for f in image_files], exiftool_path)
@@ -431,7 +433,9 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     held_keys = {paths.key(p) for p in held}
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
-    present = [p for p in photo_paths if shares.there(p)]
+    # A clip is not renamed (file_changes.leave_out_clips): its error, its number left unused as a photo's no longer on
+    # disk is. Asked here, not left to the names kept: that write skips a file it cannot write, which would be renamed.
+    present = [p for p in file_changes.leave_out_clips(result, photo_paths) if shares.there(p)]
     captions = names.read_for_renaming(exiftool_path, present)
     kept = preserve_names(library, present, exiftool_path, split=(held, loose))
     if kept.refused:
@@ -684,8 +688,8 @@ def rotate(library, photo_path, direction, exiftool_path):
 
 
 def count_photos(folder, recursive=True):
-    """(how many photos are under `folder`, has it subfolders): what the folder picker
-    shows beside each folder. `recursive` counts every depth; else the folder's own
+    """(how many photos and clips are under `folder`, has it subfolders): what the folder picker
+    shows beside each folder, what indexing it would add. `recursive` counts every depth; else the folder's own
     files only. What counts as a photo is tagpup.files.images' (docs/findings.md, #72)."""
     count, has_subdirs = 0, False
     try:
@@ -698,7 +702,7 @@ def count_photos(folder, recursive=True):
             for entry in () if listed is shares.UNANSWERED else listed:
                 if entry.is_dir():
                     has_subdirs = True
-                elif images.is_photo(entry.name):
+                elif images.is_media(entry.name):
                     count += 1
     except OSError:
         pass

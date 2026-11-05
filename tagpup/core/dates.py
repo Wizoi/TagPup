@@ -25,6 +25,15 @@ DATE_TAKEN_FIELDS = (
 #: under its group, as a write names it.
 SHIFTED_FIELDS = tuple(field for field in DATE_TAKEN_FIELDS if ":" in field)
 
+#: The fields that say when a clip was taken, read before a photo's: CreationDate (Apple's Keys, local time with its
+#: zone) as given, else CreateDate, which QuickTime keeps in UTC, as local time. A clip holding either is read by these
+#: and then the photo fields under their group only: its bare CreateDate is the QuickTime copy, in UTC. A date of
+#: zeros ("0000:00:00 00:00:00", a camera that wrote none) is no date. Not moved by a time shift (SHIFTED_FIELDS).
+CLIP_DATE_FIELDS = ("QuickTime:CreationDate", "QuickTime:CreateDate")
+
+#: What a QuickTime date with no date in it starts with.
+_ZERO_DATE = "0000:00:00"
+
 #: Years outside this range are not taken to be years: a four-digit run in a file name
 #: is as often a counter (IMG_0001) as a date.
 EARLIEST, LATEST = 1800, 2100
@@ -75,14 +84,48 @@ def _value(raw_metadata, field):
     return value
 
 
-def date_taken(raw_metadata):
-    """The first Date Taken field that has a value, as ExifTool gave it
-    ("2026:06:27 12:00:00"), or None."""
-    for field in DATE_TAKEN_FIELDS:
+def _clip_date(raw_metadata, field):
+    """A clip's date field's value, stripped, or None for none or a date of zeros."""
+    value = str(_value(raw_metadata, field) or "").strip()
+    return value if value and not value.startswith(_ZERO_DATE) else None
+
+
+def _local_of_utc(value):
+    """A QuickTime CreateDate ("2021:07:04 18:30:00", UTC) as local time in the same spelling; None for one that is not
+    a date and time."""
+    found = _EXIF_TIME.match(value)
+    if not found:
+        return None
+    try:
+        when = datetime.datetime(*(int(part) for part in found.groups()[:6]), tzinfo=datetime.timezone.utc)
+        return when.astimezone().strftime("%Y:%m:%d %H:%M:%S")
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _dates_given(raw_metadata):
+    """Each date the record holds, as read, the most specific first: the one rule date_taken and year_taken read by. A
+    clip's (CLIP_DATE_FIELDS) first, then the photo fields under their group; a photo's DATE_TAKEN_FIELDS."""
+    fields = DATE_TAKEN_FIELDS
+    if any(field in (raw_metadata or {}) for field in CLIP_DATE_FIELDS):
+        creation, create = (_clip_date(raw_metadata, field) for field in CLIP_DATE_FIELDS)
+        if creation:
+            yield creation
+        if create:
+            local = _local_of_utc(create)
+            if local:
+                yield local
+        fields = SHIFTED_FIELDS
+    for field in fields:
         value = _value(raw_metadata, field)
         if value:
-            return str(value).strip()
-    return None
+            yield str(value).strip()
+
+
+def date_taken(raw_metadata):
+    """The first Date Taken that has a value (_dates_given), as ExifTool gave it ("2026:06:27 12:00:00"; a clip's UTC
+    CreateDate as local time), or None."""
+    return next(_dates_given(raw_metadata), None)
 
 
 def date_taken_sort_key(raw_metadata, mtime=0.0):
@@ -96,9 +139,9 @@ def date_taken_sort_key(raw_metadata, mtime=0.0):
 
 
 def year_taken(raw_metadata):
-    """The year of the first Date Taken field that starts with one, or None."""
-    for field in DATE_TAKEN_FIELDS:
-        match = _YEAR_AT_START.match(str(_value(raw_metadata, field) or "").strip())
+    """The year of the first Date Taken (_dates_given) that starts with one, or None."""
+    for value in _dates_given(raw_metadata):
+        match = _YEAR_AT_START.match(value)
         if match and EARLIEST <= int(match.group(1)) <= LATEST:
             return int(match.group(1))
     return None

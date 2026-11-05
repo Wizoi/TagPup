@@ -61,11 +61,20 @@ def _long_path(path):
     return path
 
 
+def not_deleted(file_path):
+    """images.CLIP_NOT_DELETED when `file_path` names a clip (images.is_clip), else None: asked before anything is
+    stat'ed or copied, by problem() and by a bulk delete before it asks this PC for room for the copies
+    (tagpup.services.bulk_edit), so a clip's size is never counted in a copy that is never made."""
+    return images.CLIP_NOT_DELETED if images.is_clip(file_path) else None
+
+
 def problem(file_path):
-    """Why `file_path` may not be sent to the Recycle Bin, or None: it is no existing regular file
+    """Why `file_path` may not be sent to the Recycle Bin, or None: a clip (not_deleted), no existing regular file
     (a folder, a path with a trailing separator, one that is not there) or no photo by its
     extension. The path is judged by its LONG name: A4413~1.JPG may be holiday.jpgold (#530)."""
     given = str(file_path or "")
+    if not_deleted(given):
+        return not_deleted(given)
     name = os.path.basename(given.rstrip("\\/")) or given
     if not given or given[-1] in "\\/" or not os.path.isfile(paths.stored(given)):
         return "%s is not a file; only a photo file is deleted" % name

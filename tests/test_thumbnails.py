@@ -557,5 +557,32 @@ class Warming(Cache):
                 thumbnails.warm(self.library)
 
 
+class AClip(Cache):
+    """A clip's row (kind 'video', recorded as the indexer records a read of an .mp4) is answered the placeholder: its
+    file is never opened, since a decode that fails reads the whole file (thumbs.render), and a clip can be 10 GB.
+    Warming skips it."""
+
+    def setUp(self):
+        super().setUp()
+        self.clip = self.vl.photo("Regatta", "harbour.mp4")
+        with open(self.vl.path_of(self.clip), "wb") as handle:
+            handle.write(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 4096)
+
+    def test_a_clip_is_answered_the_placeholder_and_never_decoded(self):
+        with self.renders() as render, mock.patch.object(images, "opened", wraps=images.opened) as opened:
+            answer = self.serve(self.clip)
+        self.assertEqual(0, render.call_count, "the clip's file was decoded")
+        self.assertEqual(0, opened.call_count, "the clip's file was opened")
+        self.assertEqual((thumbnails.VIDEO, False, None), (answer.kind, answer.kept, answer.etag))
+        self.assertEqual(thumbs.placeholder(), answer.content)
+        self.assertEqual([], entries_of(self.library), "something was kept for a clip")
+
+    def test_warming_skips_a_clip_and_makes_the_photos(self):
+        with self.renders() as render:
+            counts = thumbnails.warm(self.library, apply=True)
+        self.assertEqual((1, 1), (counts["photos"], counts["made"]))
+        self.assertEqual([((self.path,), {})], [(c.args, c.kwargs) for c in render.call_args_list])
+
+
 if __name__ == "__main__":
     unittest.main()

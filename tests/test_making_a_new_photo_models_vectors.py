@@ -21,6 +21,8 @@ test declares in the table of photo models (stand_in_models.OTHER_PHOTO_MODEL). 
 - At 40% the switch is refused, from the command line (set-photo-model) as in the gear, with the counts; after a full
   run its dry run passes and writes nothing, and says how many words Suggest makes again under the new model; applied it
   is one change of the journal, and its undo puts the old model back.
+- Clips beside the photos (rows of kind 'video', which hold no vector and owe none): the run never opens one, the
+  counts and the switch's gate count photos only, and retiring the old model's vectors is not refused for them.
 - A run waits for its turn on the graphics card before it reads what is left: one that waited behind another run finds
   what that run made.
 - Beside a running server (#1843): the server, which keeps its turn on the card between Suggest runs, gives it up to
@@ -55,6 +57,7 @@ from tagpup.ml import gpu  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photo_reembed  # noqa: E402
+from tagpup.services import retire_photo_vectors  # noqa: E402
 from tagpup.services import search  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import suggester  # noqa: E402
@@ -62,6 +65,7 @@ from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.store import photo_fingerprints  # noqa: E402
+from tagpup.store import checks  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 
@@ -494,6 +498,59 @@ class TheSwitchWaitsForTheRun(_Library):
         self.assertEqual(0, undone.exit_code, undone.output)
         self.assertEqual(settings_before, self.settings_held(), "the undo did not put the old model back")
         self.assertEqual(OLD_KEY, self.runtime.model_key(self.library))
+
+
+class ClipsBesideThePhotos(_Library):
+    """Three clips in the folder, recorded as the indexer records a read of an .mp4 (kind 'video', no vector). Before
+    clips were counted apart, they were three photos holding no vector: the run tried to decode each, and the switch
+    and the retiring of the old vectors were refused at 10 of 13."""
+
+    def setUp(self):
+        super().setUp()
+        conn = db.connect(self.library.path)
+        try:
+            for n in range(3):
+                path = os.path.join(self.folder, "regatta %02d.mp4" % n)
+                with open(path, "wb") as handle:
+                    handle.write(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2048)
+                photo_rows.add_read(conn, path, {"QuickTime:CreateDate": "2021:07:04 18:30:00"})
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual([("video", 3)], read(self.library.path, "SELECT kind, COUNT(*) FROM photos WHERE kind = 'video'"))
+
+    set_model = TheSwitchWaitsForTheRun.set_model
+
+    def without_a_vector(self, key):
+        """What tools/doctor.py reports: the photos holding no vector under `key`."""
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            return checks.without_a_vector(conn, key)
+        finally:
+            conn.close()
+
+    def test_the_run_never_opens_a_clip_and_the_switch_and_the_retiring_count_photos_only(self):
+        dry = " ".join(self.cli().output.split())
+        self.assertIn("harbour: 10 photo(s), 0 hold a vector under %s already, 10 hold none" % NEW_KEY, dry)
+
+        with mock.patch.object(images, "opened", wraps=images.opened) as opened:
+            ran = self.cli("--apply")
+        self.assertEqual(0, ran.exit_code, ran.output)
+        said = " ".join(ran.output.split())
+        self.assertIn("Embedded 10 of 10: 10 kept, 0 not kept", said)
+        self.assertEqual([], [call.args[0] for call in opened.call_args_list if call.args[0].endswith(".mp4")],
+                         "a clip was decoded")
+        self.assertEqual(set(map(paths.key, self.photos)), self.new_vectors())
+
+        dry = self.set_model()
+        self.assertEqual(0, dry.exit_code, dry.output)
+        self.assertIn(library_settings.PHOTOS_HELD % (10, 10, NEW_KEY, 0), " ".join(dry.output.split()))
+        self.assertEqual(0, self.set_model("--apply").exit_code)
+
+        own, counted, plans = retire_photo_vectors.plan(self.library)
+        self.assertEqual((NEW_KEY, (10, 10)), (own, counted))
+        self.assertEqual([None], [planned.refused for planned in plans], "retiring the old vectors was refused")
+        self.assertEqual((0, 0), (self.without_a_vector(NEW_KEY), self.without_a_vector(OLD_KEY)))
 
 
 class ARunWaitsForTheCard(_Library):

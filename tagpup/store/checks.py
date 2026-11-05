@@ -11,6 +11,7 @@ import weakref
 
 from tagpup.core import paths, vocabulary
 from tagpup.store import derived, file_journal, generations, people, person_ids, roots_check, schema, search_index, taxonomy
+from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -233,8 +234,10 @@ def one_file_two_rows(conn):
 
 def without_a_vector(conn, model):
     """How many photos have no CLIP vector under `model` (tagpup.store.embeddings), the one
-    search reads. Reported, not broken: the next index of their folders computes them."""
-    return conn.execute("SELECT COUNT(*) FROM photos p WHERE NOT EXISTS"
+    search reads. Reported, not broken: the next index of their folders computes them. A row of a kind owed none
+    (a clip: store.photos.VECTOR_KINDS) is not counted."""
+    return conn.execute("SELECT COUNT(*) FROM photos p WHERE " + store_photos.sql_kind_in(store_photos.VECTOR_KINDS, "p.kind")
+                        + " AND NOT EXISTS"
                         " (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)",
                         (model,)).fetchone()[0]
 

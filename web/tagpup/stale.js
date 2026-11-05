@@ -9,10 +9,14 @@
 //  * a CHANGED photo, when it is opened, has been read from its file (GET /api/library/photo, 9b-2), so what the panel
 //    shows is the file's: the badge clears on the card. The library's row is sync's to bring up to date; a view
 //    refreshed before it has will say "changed" again, which is true.
+//
+// A VIDEO (media.js isVideo) is held the same way: it is played, and its write controls are inert with a sentence
+// saying why. The server refuses any write to a clip (file_changes.leave_out_clips); this is the page saying so first.
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';
 import { libraryName } from './looking.js';
+import { isVideo } from './media.js';
 
 /** The badge's words for a card's `stale`, or ''. */
 export function staleText(stale) {
@@ -37,21 +41,25 @@ export function markStale(card, photo) {
     }));
 }
 
+const VIDEO_HELD = 'This is a video: it is played as the library holds it. Its date, title, people and keywords '
+    + 'are not edited here, and it is not turned.';
+
 /**
- * The details panel shows `photo`: a missing one gets the notice and inert write controls; any other gets them
- * back. Called for every photo shown, so the state of one photo is never carried to the next.
+ * The details panel shows `photo`: a missing one, or a video, gets the notice and inert write controls; any other
+ * gets them back. Called for every photo shown, so the state of one photo is never carried to the next.
  */
 export function applyPhotoStale(photo) {
     const missing = Boolean(photo && photo.missing);
-    photoMissingNote.classList.toggle('hidden', !missing);
+    const held = missing || isVideo(photo);
+    photoMissingNote.classList.toggle('hidden', !held);
     photoMissingNote.textContent = missing
         ? `This photo’s file is not on disk. ${libraryName() || 'The library'} still holds it, and it is shown as the library holds it. `
             + 'It cannot be edited until the file is back or the photo is removed from the library.'
-        : '';
+        : (held ? VIDEO_HELD : '');
     // No picture to show, and no broken-image icon in its place.
     mainImage.classList.toggle('hidden', missing);
     for (const el of document.querySelectorAll('[data-writes]')) {
-        if (missing) {
+        if (held) {
             el.setAttribute('inert', '');
             el.setAttribute('aria-disabled', 'true');
         } else {

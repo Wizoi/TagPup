@@ -252,7 +252,7 @@ def folder_watcher(libraries, sync_with, **timings):
     The catch-up at start is skipped for a library in step within CATCH_UP_SKIP, and a folder whose notifications were
     TagPup's own writes is not synced (sync.followed). `timings`: the Watcher's own (a test's shorter ones, its observer
     and clock)."""
-    return watching.Watcher(libraries, watch_folders, sync_with, images.is_photo,
+    return watching.Watcher(libraries, watch_folders, sync_with, images.is_media,
                             recent=lambda library: sync_service.synced_whole_within(library, watching.CATCH_UP_SKIP),
                             whole=recurring.sync_whole, followed=sync_service.followed, **timings)
 

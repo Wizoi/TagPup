@@ -25,6 +25,9 @@ a photo, 1.5-3 GB for photo_index), and nothing in it is the only copy of anythi
 * **A cache that cannot be written** (folder missing and not makeable, read-only, disk full) costs
   only the cache: the thumbnail is made and answered, not kept, and the first time is logged. A file that cannot
   be read is `Unavailable`, a sentence, never a traceback and never a placeholder that looks like a verdict.
+* **A clip** (a row of kind 'video') is answered the placeholder, kind VIDEO, its file never opened: a decode that
+  fails reads the whole file (tagpup.files.thumbs.render), and a clip can be gigabytes. Nothing is kept; warming skips
+  it. Its poster frame is the folder view's work (the video plan's merge B).
 """
 import logging
 import os
@@ -45,6 +48,9 @@ OK, DAMAGED, UNREADABLE, LAST_KNOWN = "ok", "damaged", "unreadable", "last known
 
 #: What a thumbnail of a photo is when it is the cache's own.
 KINDS = (OK, DAMAGED, UNREADABLE, LAST_KNOWN)
+
+#: What the thumbnail of a clip is: the placeholder, made of no file and never kept.
+VIDEO = "video"
 
 #: What warming says of a thumbnail it made and could not keep.
 UNWRITABLE = "unwritable"
@@ -176,6 +182,8 @@ def serve(library, photo_id):
             conn.close()
     if row is None:
         raise NotFound("There is no photo %d in this library." % photo_id)
+    if row.kind not in store_photos.DRAWN_KINDS:
+        return Thumb(thumbs.placeholder(), VIDEO)
     root = library.thumbs
     stamp = shares.reachable_stamp(row.path)
     if stamp is None:
@@ -294,7 +302,9 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                     break
                 after = batch[-1][0]
                 jobs = []
-                for photo_id, row_path, path in batch:
+                for photo_id, row_path, path, kind in batch:
+                    if kind not in store_photos.DRAWN_KINDS:
+                        continue   # a clip has no thumbnail of its own to make (serve)
                     counts["photos"] += 1
                     stamp = walk.stamp_of(path)   # a share found away is asked once, its photos skipped
                     if stamp is shares.UNANSWERED:

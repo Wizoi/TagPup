@@ -1,7 +1,7 @@
 # Files and sync: the state of the domain
 
 The domain's charter is `.claude/agents/tagpup-owner-files.md`: its Scope, the contract the other domains rely on, its
-invariants and guards, and its scenarios F1 to F11. This page states each of the seven conditions of health
+invariants and guards, and its scenarios F1 to F12. This page states each of the seven conditions of health
 (docs/OWNERS.md) with its evidence and date. A condition not met is the domain's queue.
 
 ## What the domain holds (counted 2026-10-15, read-only)
@@ -55,7 +55,7 @@ XMP PersonInImage or RegionName (all 0 in the three).
      - a stop during the planning read: Cancel or a hand-over;
      - a Ctrl+C part-way.
    - `tests/photo_rows.stamp_of`'s (0.0, 0) is a fixture's, by design (its docstring).
-6. **Scenario tests, each file owned and mapped.** Met. F1 to F11 each have files in `tests/owners.py`, and
+6. **Scenario tests, each file owned and mapped.** Met. F1 to F12 each have files in `tests/owners.py`, and
    `test_bulk_delete` is F8. `test_service_save_photo` and `test_save_reply_says_rename_failed` were lifted into F1
    (`tests/test_tag_a_photo_read_it_back_and_undo.py`) with mutation proofs, and the restatements deleted.
 7. **No open data or wrong finding, and every low fixed or by design.** Met once this branch is merged:

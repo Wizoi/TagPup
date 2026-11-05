@@ -372,9 +372,40 @@ def vectors(conn, model):
                         " WHERE e.model = ? ORDER BY e.photo_id", (model,)).fetchall()
 
 
+# What a clip (photos.kind 'video') is not given yet: one rule each, read from here and never spelled as a kind test
+# where it is used, since each changes with its own merge of the video plan (DECISIONS 2026-11-02).
+#: The kinds the index owes a CLIP vector and a fingerprint, and looks at for faces (photo_fingerprints.owed,
+#: counts, checks.without_a_vector, photo_reembed). A clip is owed none until its vector from 5 frames lands
+#: (DECISIONS 2026-11-02, "THE OWNERS' PLANS", item 5): that merge adds 'video' here and splits the face check of
+#: photo_fingerprints.owed from it, as a clip's faces wait for the faces merge.
+VECTOR_KINDS = ("photo",)
+#: The kinds whose picture is drawn as a thumbnail (services.thumbnails): a clip is answered the placeholder, its file
+#: never opened, until its poster frame is made.
+DRAWN_KINDS = ("photo",)
+#: The kinds whose file a bake writes faces into (services.bake_after_index): never a clip (DECISIONS 2026-11-02,
+#: "THE OWNERS' PLANS", item 10; a clip's file is not written, services.file_changes.leave_out_clips).
+BAKED_KINDS = ("photo",)
+#: The kinds a delete sends to the Recycle Bin, so whose bytes a delete copies through this PC
+#: (store.selection_folders.bytes_by_folder): not a clip yet (files.recycle_bin.not_deleted refuses one by its path).
+DELETED_KINDS = ("photo",)
+
+
+def owes_a_vector(kind):
+    """Is a row of this kind ('photo' or 'video', photos.kind) owed a vector? (VECTOR_KINDS)"""
+    return kind in VECTOR_KINDS
+
+
+def sql_kind_in(kinds, column="kind"):
+    """The SQL test that `column` (photos.kind) is one of `kinds` (one of the *_KINDS above), written out: the kinds
+    are this module's constants, never a caller's text."""
+    return "%s IN (%s)" % (column, ", ".join("'%s'" % kind for kind in kinds))
+
+
 def counts(conn, model):
-    """(photos, photos holding a vector under `model`)."""
-    return conn.execute("SELECT (SELECT COUNT(*) FROM photos),"
+    """(photos owed a vector, VECTOR_KINDS; photos holding a vector under `model`): what a photo model's switch,
+    retiring the other keys' vectors and the search index count. A clip holds no vector (PhotoIndex.record_videos) and
+    owes none, so it is not counted among the photos that could hold one."""
+    return conn.execute("SELECT (SELECT COUNT(*) FROM photos WHERE " + sql_kind_in(VECTOR_KINDS) + "),"
                         " (SELECT COUNT(*) FROM embeddings e JOIN photos p ON p.id = e.photo_id"
                         " WHERE e.model = ?)", (model,)).fetchone()
 
@@ -455,7 +486,7 @@ def stored_spelling(conn, photo_path):
 
 
 def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
-    """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
+    """Record what indexing read of a photo or a clip: `row` has kind ('photo' when absent), mtime, size, tags, captions,
     raw_metadata (as values), embedding (bytes), fingerprint and document_id; the embedding is kept
     under `model`, stamped with the row's mtime and size, with the fingerprint, the (key, hash) of the picture it was
     made of, or none (embeddings.put: a row with no fingerprint forgets the photo's), and the photo's people are
@@ -479,13 +510,13 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     stored = held or paths.stored(photo_path)
     row_path = paths.to_row(stored, roots)
     conn.execute(
-        "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO photos (path, kind, mtime, size, tags, captions, raw_metadata, document_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(path) DO UPDATE SET"
-        " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
+        " kind = excluded.kind, mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
         " captions = excluded.captions, raw_metadata = excluded.raw_metadata,"
         " document_id = COALESCE(excluded.document_id, photos.document_id)",
-        (row_path, row.get("mtime"), row.get("size"), json.dumps(row.get("tags", [])),
+        (row_path, row.get("kind") or "photo", row.get("mtime"), row.get("size"), json.dumps(row.get("tags", [])),
          json.dumps(row.get("captions", [])),
          store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id")))
     if not (batch is not None and batch.prepared) and derived.make_nodes(conn, [row.get("tags", [])], batch):
@@ -536,17 +567,19 @@ def remove_under(conn, folder):
 
 #: A photo as the thumbnail cache asks for it: its id, its path as the row holds it (what the cache's
 #: entry is keyed by, so that a library moved to another place keeps its entries), and its native path.
-ThumbRow = collections.namedtuple("ThumbRow", "id row_path path")
+#: What a thumbnail is made from: the photo's id, its path as the row holds it, its native path, and its kind
+#: ('photo' or 'video', photos.kind): a clip's thumbnail is never decoded from its file.
+ThumbRow = collections.namedtuple("ThumbRow", "id row_path path kind")
 
 
 def thumb_row(conn, photo_id):
     """The ThumbRow of the photo with this id, or None: one read by primary key, never a BLOB. Raises
     paths.RootsError for a photo under a root this machine does not place."""
-    row = conn.execute("SELECT path FROM photos WHERE id = ?", (photo_id,)).fetchone()
+    row = conn.execute("SELECT path, kind FROM photos WHERE id = ?", (photo_id,)).fetchone()
     if row is None:
         return None
     native = store_roots.from_row(conn, row[0])
-    return ThumbRow(photo_id, row[0], native)
+    return ThumbRow(photo_id, row[0], native, row[1])
 
 
 def path_and_kind(conn, photo_id):
@@ -567,16 +600,16 @@ def row_stamp(conn, photo_id):
 
 
 def thumb_rows(conn, folder=None, after=0, limit=1000):
-    """[(id, path as the row holds it, native path)] of the photos with an id above `after`, in id order, at
+    """[ThumbRow] of the photos with an id above `after`, in id order, at
     most `limit`: those under `folder` at any depth, or every one. What warming the cache walks, a batch
     at a time."""
-    query, params = "SELECT id, path FROM photos WHERE id > ?", [after]
+    query, params = "SELECT id, path, kind FROM photos WHERE id > ?", [after]
     if folder:
         where, folder_params = store_roots.sql_under(conn, "path", folder)
         query += " AND " + where
         params += list(folder_params)
     rows = conn.execute(query + " ORDER BY id LIMIT ?", params + [limit]).fetchall()
-    return [(photo_id, row_path, store_roots.from_row(conn, row_path)) for photo_id, row_path in rows]
+    return [ThumbRow(photo_id, row_path, store_roots.from_row(conn, row_path), kind) for photo_id, row_path, kind in rows]
 
 
 def row_paths(conn):
@@ -642,13 +675,16 @@ def rows_under(conn, folder):
 
 # ---- What sync and the re-read of a row read --------------------------------------------------
 
-def stamps(conn, folder=None, with_vectors=None, vector_stamps=None):
+def stamps(conn, folder=None, with_vectors=None, vector_stamps=None, with_kind=False):
     """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what sync
-    (tagpup.services.sync) and the indexer (services.search.PhotoIndex) compare with the disk. With
+    (tagpup.services.sync) and the indexer (services.search.PhotoIndex) compare with the disk. With `with_kind`, each
+    also gives its kind ('photo' or 'video') after its size. With
     `with_vectors`, a model's name, each also says whether the photo holds a vector under it; with `vector_stamps`, a
     model's name, each also gives its vector's (mtime, size), or None when it holds none: what
     photo_fingerprints.same_picture is asked with. Nothing else of the row is read, none of its JSON, no vector."""
     columns, joined, params = "p.id, p.path, p.mtime, p.size", "", []
+    if with_kind:
+        columns += ", p.kind"
     if with_vectors is not None:
         columns += ", EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
         params.append(with_vectors)
