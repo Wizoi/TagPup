@@ -74,6 +74,12 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
   (`field_values._exiftool_header`), `in_place.fitted` and `_fitted` are the live patch, and deleting them first would
   make every JPEG write a rewrite. They go, and `PATCH_IN_PLACE` and `OWN_WRITER` become one, in the commit that turns
   the own writer on (4d; main session, 2026-11-05).
+  Merge 4c built `metadata-check` (the shadow comparison on copies) and removes nothing: it is the 4d gate's
+  verification tool. 4d's brief decides whether `field_values.write`'s `own_writer` argument and `metadata-check` are
+  deleted with the flip or kept for the first weeks of shadow mode. Its first run on a library is `--sample 50`:
+  `KNOWN` holds only tags seen to differ by design, and camera JPEGs (MakerNotes offsets) may add some, grown only from
+  output seen. What the gate does not cover, for 4d's brief: undo (the values file_journal's undo writes), extended
+  XMP, and the bulk edit's paths that do not reach the own writer.
 - **M5** own whole-file JPEG rewrite beside the photo, with the reserve (XMP already carries ExifTool's padding, 2,425 bytes (`xmp_packet.RESERVE`), in 4,355 of 4,366 wrapped packets, counted 2026-11-03, so the reserve is mostly EXIF, which never has 64 bytes of slack: 0 of 6,373 sampled);
   `_refuse_dropped` arms go for JPEG; MPF files kept length-stable or refused. The 512 B reserve branch is closed.
 - **M6** optional own read for the journal's field reads, dropped: M1 timed a header read at 23 ms against ExifTool at 52 ms for one photo and 28 ms in a batch (warm cache, 2026-11-03).
