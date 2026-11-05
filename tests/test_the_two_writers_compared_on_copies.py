@@ -22,7 +22,8 @@ offset fails it too; KNOWN without the XMP toolkit fails
 test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing; a stale tag compared with
 ExifTool's side and not the original's fails test_simple_photos_agree_and_nothing_of_the_library_is_written; a
 disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference; shares.read_whole
-reading a photo whose stamp says it is gone fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on; sandbox()
+reading a photo whose stamp says it is gone fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on; a photo read in one read
+fails test_a_photo_larger_than_a_piece_is_read_in_pieces; sandbox()
 not taking its lock fails test_a_second_run_is_refused_while_one_holds_the_sandbox; a sandbox a killed run left not
 removed first, or Ctrl+C not caught, fails test_an_interrupted_run_leaves_no_sandbox; no disk check fails
 test_a_disk_without_room_stops_the_run_before_a_copy; the CLI exiting 0 on a difference fails
@@ -44,7 +45,7 @@ from click.testing import CliRunner  # noqa: E402
 
 from tagpup.core import byte_lock  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.files import containers, field_values, xmp_packet  # noqa: E402
+from tagpup.files import containers, field_values, shares, xmp_packet  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import metadata_check  # noqa: E402
 from tagpup_cli import cli  # noqa: E402
@@ -163,6 +164,20 @@ class TheTwoWritersComparedOnCopies(FilesCase):
             found = self.check()
         self.assertEqual(({}, None, {"read": 2, "gone": 1}), (found["differences"], found["stopped"], found["looked"]))
         self.assertTrue(os.path.exists(a) and os.path.exists(c))
+
+    def test_a_photo_larger_than_a_piece_is_read_in_pieces(self):
+        # A large photo on a slow share is read a piece at a time, each waited for on its own, never in one read.
+        a = self.photo("a.jpg")
+        real, asked = shares.read_span, []
+
+        def read_span(path, start, length, stamp):
+            asked.append(length)
+            return real(path, start, length, stamp)
+        with mock.patch.object(shares, "READ_PIECE", 100), mock.patch.object(shares, "read_span", read_span):
+            found = self.check()
+        self.assert_agreed(found, 1)
+        self.assertEqual(-(-os.path.getsize(a) // 100), len(asked))
+        self.assertLessEqual(max(asked), 100)
 
     def test_a_second_run_is_refused_while_one_holds_the_sandbox(self):
         self.photo("a.jpg")

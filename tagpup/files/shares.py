@@ -425,6 +425,9 @@ def read_span(path, start, length, stamp):
 #: Why a file's bytes were not read, as a run over many files counts it (tagpup.services.segment_census, metadata_check):
 #: the one spelling of each, why_not_read and read_whole's.
 GONE, NOT_ANSWERED, UNREADABLE, CHANGED = "gone", "not_answered", "unreadable", "changed while read"
+#: The bytes read_whole reads at a time, each piece one read_span: a large photo on a slow share is many waits of
+#: READ_WAIT, not one it cannot be read within (a video is played by pieces of the same size, services.photos.VIDEO_READ).
+READ_PIECE = 1024 * 1024
 
 
 def _not_stamped(stamp):
@@ -454,16 +457,24 @@ def why_not_read(path, error):
 
 def read_whole(path):
     """("read", the bytes of the file at `path`) | (why it was not read, None: why_not_read's words), never raising:
-    stamp_of, then read_span of the whole file against that stamp. What a run that copies a library's files reads them
-    by (tagpup.services.metadata_check)."""
+    stamp_of, then the file read a READ_PIECE at a time against that stamp (read_span: the file opened and closed for
+    each, a file that changed between two pieces not read). What a run that copies a library's files reads them by
+    (tagpup.services.metadata_check)."""
     stamp = stamp_of(path)
     why = _not_stamped(stamp)
     if why:
         return why, None
+    pieces, at = [], 0
     try:
-        return "read", read_span(path, 0, stamp[1], stamp)
+        while at < stamp[1]:
+            piece = read_span(path, at, min(READ_PIECE, stamp[1] - at), stamp)
+            if not piece:
+                raise FileChanged("The file ended before the size it was looked at with.")
+            pieces.append(piece)
+            at += len(piece)
     except (OSError, Unavailable) as error:
         return why_not_read(path, error), None
+    return "read", b"".join(pieces)
 
 
 def there(path):
