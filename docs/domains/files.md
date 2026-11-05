@@ -377,8 +377,8 @@ caller rewrites the file, nothing written. It is the one caller of the three edi
   byte for byte, compared on a made-up JPEG.
 - **No patch**: an unmapped field; a value it cannot spell; any editor's Refusal or DoesNotFit or `length_changed`
   (never `grow`); a change for a segment the photo lacks (ExifTool makes one: a rewrite), a clear of one it lacks
-  changing nothing; a change for a kind the photo holds two segments of (two EXIF 4 / 0 / 0, two APP13 0 / 2 / 3 in the
-  census above; a keyword save in XMP alone leaves them and stays a patch); a rotation of a photo with no EXIF Orientation, since the IFD0 table is followed by data in every
+  changing nothing; a photo holding two segments of a patched kind (two EXIF 4 / 0 / 0, two APP13 0 / 2 / 3 in the census
+  above), refused before this module by `in_place._header_of`, whatever the write changes; a rotation of a photo with no EXIF Orientation, since the IFD0 table is followed by data in every
   absent case counted (docs above, "The EXIF block editor"), refused by the editor, not by a rule here.
 - **Not verified**: a patch in a real file against ExifTool's (4b-2's shadow comparison).
 

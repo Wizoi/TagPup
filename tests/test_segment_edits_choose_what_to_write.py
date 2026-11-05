@@ -19,8 +19,8 @@ WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(WORKSPACE_DIR))
 
 from tagpup.core import dates, fields  # noqa: E402
-from tagpup.files import (containers, exif_block, identity, iptc_block, names, segment_edits,  # noqa: E402
-                          xmp_packet)
+from tagpup.files import (containers, exif_block, identity, in_place, iptc_block, names,  # noqa: E402
+                          segment_edits, xmp_packet)
 
 PERSON = "People/Ida Corwell"
 KEYWORD_FIELDS = ("XMP:Subject", "IPTC:Keywords", "EXIF:XPKeywords", "XMP:HierarchicalSubject")
@@ -268,22 +268,17 @@ class AKeywordOrCaptionSave(unittest.TestCase):
                               containers.Refusal)
         self.assertIsNone(segment_edits.new_header(layout, data, keywords([PERSON, "Shore"])))
 
-    def test_a_segment_held_twice_is_no_patch_for_a_change_to_it(self):
+    def test_a_photo_holding_a_kind_twice_is_no_patch_before_segment_edits_is_asked(self):
         # Two APP13 segments (kr-track 2, renton_parkrun 3 in the census) or two EXIF (photo_index 4): which one a
-        # reader takes is not this module's to say, so a change to that kind goes to the rewrite; a keyword save in
-        # XMP alone does not touch the APP13 segments and stays a patch.
+        # reader takes is not the own writer's to say. in_place._header_of, which every patch reads its header
+        # through, answers None for the photo whatever the write, so new_header never sees one.
         layout, data = header()
-        data = data[:layout.iptc.end] + _segment(0xED, iptc_body()) + data[layout.iptc.end:]
-        layout = containers.read(io.BytesIO(data))
-        self.assertEqual(2, len(layout.of_kind("iptc")))
-        self.assertIsNone(segment_edits.new_header(layout, data, keywords([])))
-        new, stale = segment_edits.new_header(layout, data, keywords([PERSON, "Shore"]))
-        self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
-        layout, data = header()
-        data = data[:layout.exif.end] + _segment(0xE1, exif_body()) + data[layout.exif.end:]
-        layout = containers.read(io.BytesIO(data))
-        self.assertEqual(2, len(layout.of_kind("exif")))
-        self.assertIsNone(segment_edits.new_header(layout, data, {fields.ORIENTATION: ["6"]}))
+        self.assertIsNotNone(in_place._header_of(io.BytesIO(data)))
+        for kind, extra in (("iptc", _segment(0xED, iptc_body())), ("exif", _segment(0xE1, exif_body()))):
+            at = getattr(layout, kind).end
+            twice = data[:at] + extra + data[at:]
+            self.assertEqual(2, len(containers.read(io.BytesIO(twice)).of_kind(kind)), kind)
+            self.assertIsNone(in_place._header_of(io.BytesIO(twice)), kind)
 
     def test_a_text_field_given_two_values_is_no_patch(self):
         layout, data = header()
