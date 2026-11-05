@@ -278,6 +278,22 @@ export async function postPhotoMetadata(photo, { title = photo.title, tags = pho
     return data;
 }
 
+/**
+ * A save renamed the photo's file (its caption is part of the name): everything the page keeps by the photo's path moves
+ * to the new one -- the record, the selection and its suggestions (the server keeps those by the photo's id, so they
+ * were never lost, only filed under a name the page no longer asks for; finding #2415). The one place a rename is taken.
+ */
+export function photoRenamed(photo, newPath) {
+    const oldPath = photo.path;
+    photo.path = newPath;
+    photo.filename = baseName(newPath);
+    renameInSelection(oldPath, newPath);
+    if (state.folderSuggestions[oldPath]) {
+        state.folderSuggestions[newPath] = state.folderSuggestions[oldPath];
+        delete state.folderSuggestions[oldPath];
+    }
+}
+
 /** After a write: redraw the panel for this photo, but only if it is still the one open. */
 export function redrawIfShowing(photo) {
     if (!samePath(state.activePhotoPath, photo.path)) return;
@@ -405,9 +421,7 @@ export async function writeDetailEdits(fields, { intent = null, path = state.act
     }
     clearTyped();
     if (data.new_path && data.new_path !== path) {
-        photo.path = data.new_path;
-        photo.filename = baseName(data.new_path);
-        renameInSelection(path, data.new_path);
+        photoRenamed(photo, data.new_path);
     }
 
     // The file is written. Whatever goes wrong redrawing the page from here on
