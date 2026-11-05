@@ -345,6 +345,44 @@ the fit rates and the version and zero counts below came out the same), the rest
 - **Not verified**: Windows Photo Gallery or Lightroom reading a block whose IPTCDigest is stale after TagPup's edit
   (#2408); a rewrite in a file, byte for byte against ExifTool's (M4's shadow comparison).
 
+## segment_edits: a write's values made into a header's segments
+
+`tagpup/files/segment_edits.py` (M4 of docs/PLAN_OWN_METADATA.md, merge 4b-1; no caller until 4b-2 wires it into
+`in_place.patch_jpeg`): pure, the journal's values of a write ({field: [texts]}) and a JPEG header (its bytes to the
+first scan's header's end, `in_place._header_of`'s) in; `new_header` answers the header with only the EXIF, XMP and IPTC
+bodies changed (every marker and length byte the header's) and the fields it left stale, or None: not a patch, the
+caller rewrites the file, nothing written. It is the one caller of the three editors
+(`tests/test_the_block_editors_have_one_caller.py`; one named exception, `in_place`'s `xmp_packet.padding`).
+
+- **What maps to what** (`fields.EDITED_AS`): XMP:Subject, XMP:HierarchicalSubject, XMP:Description,
+  XMP:DateTimeOriginal, XMP:CreateDate, XMP-xmpMM:PreservedFileName to the packet's dc:subject,
+  lr:hierarchicalSubject, dc:description, exif:DateTimeOriginal, xmp:CreateDate, xmpMM:PreservedFileName; EXIF
+  DateTimeOriginal, CreateDate, ImageDescription, XPComment, XPKeywords and Orientation to the EXIF block's (not the
+  three SubSecTime: no write names them, a Date Taken is set to the second); IPTC:Keywords and Caption-Abstract to the IPTC block's. EXIF:Orientation is also written to a
+  tiff:Orientation the packet holds, never one made (ExifTool's ungrouped "Orientation"). Not mapped, so no patch:
+  XMP:Title and IPTC:ObjectName (no writer writes them), the DocumentID (a rewrite mints it), a bake's fields.
+- **The XMP-only rule** (DECISIONS 2026-11-03; `fields.XMP_ONLY`): a keyword save goes to XMP alone while its
+  XMP:Subject is not empty, a caption save while its XMP:Description is not; IPTC:Keywords and EXIF:XPKeywords, or
+  IPTC:Caption-Abstract, EXIF:ImageDescription and EXIF:XPComment, are answered stale and keep their bytes. The last
+  keyword taken off, or a caption cleared, writes every copy (#2433: XMP holding none, the reader would take IPTC's and
+  the value would come back), a patch where they all fit, else a rewrite. XMP is given the planner's whole set
+  (`tagging.keywords_planner` reads XMP and IPTC), so a photo whose keywords were in IPTC alone (151 in photo_index,
+  4 of them with a packet, DECISIONS 2026-11-03) gets them all in XMP; segment_edits never infers a set.
+- **Spelling**: a text field takes one text (two: no patch); Orientation a number; an EXIF date only
+  `YYYY:MM:DD HH:MM:SS` (a zone: the editor refuses, a rewrite; a Date Taken carries no fraction: 0 rows whose `taken`
+  holds one in 59,618 / 2,065 / 1,309, counted 2026-11-05, and the page's picker is to the second); an XMP date in ISO 8601 with the value's own
+  fraction and zone, none added. The live rows' XMP:DateTimeOriginal all take that spelling: photo_index 52,825,
+  kr-track 52, renton_parkrun 3; XMP:CreateDate 20,222 / 2,049 / 1,304, and 1 photo_index value that does not (a
+  rewrite); EXIF dates not of the one shape (a rewrite): DateTimeOriginal 2, CreateDate 5, photo_index only (counted
+  2026-11-03, read-only). ExifTool spells the five shapes (plain, zone, fraction, both, Z) as segment_edits does,
+  byte for byte, compared on a made-up JPEG.
+- **No patch**: an unmapped field; a value it cannot spell; any editor's Refusal or DoesNotFit or `length_changed`
+  (never `grow`); a change for a segment the photo lacks (ExifTool makes one: a rewrite), a clear of one it lacks
+  changing nothing; a photo holding two segments of a patched kind (two EXIF 4 / 0 / 0, two APP13 0 / 2 / 3 in the census
+  above), refused before this module by `in_place._header_of`, whatever the write changes; a rotation of a photo with no EXIF Orientation, since the IFD0 table is followed by data in every
+  absent case counted (docs above, "The EXIF block editor"), refused by the editor, not by a rule here.
+- **Not verified**: a patch in a real file against ExifTool's (4b-2's shadow comparison).
+
 ## By design (each row closed `decided:`)
 
 - **The indexer's per-photo reads have no deadline** (the header for the read-ahead's estimate, the decodes, the stamp,

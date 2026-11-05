@@ -184,11 +184,38 @@ def caption_fields(caption):
     }
 
 
-#: The fields a keyword or caption save leaves holding what they held when it patches the file's XMP alone: every field
-#: keyword_fields and caption_fields set outside XMP, refreshed by the next rewrite that writes them (DECISIONS
-#: 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY). The index reads XMP (vocabulary.KEYWORD_COPIES).
-PATCH_LEAVES = tuple(field for field in dict.fromkeys(list(keyword_fields([], [])) + list(caption_fields("")))
-                     if not field.startswith("XMP:"))
+#: The fields a keyword or caption save leaves holding what they held when it patches the file's XMP alone, by the XMP
+#: field whose value makes it so: every field keyword_fields and caption_fields set outside XMP, refreshed by the next
+#: rewrite that writes them (DECISIONS 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY). The index reads
+#: XMP (vocabulary.KEYWORD_COPIES). A group is left only while its XMP field's value is not empty: XMP holding none, the
+#: reader would take the left copy and the value removed would come back (#2433; tagpup.files.segment_edits).
+XMP_ONLY = {
+    "XMP:Subject": tuple(field for field in keyword_fields([], []) if not field.startswith("XMP:")),
+    "XMP:Description": tuple(field for field in caption_fields("") if not field.startswith("XMP:")),
+}
+PATCH_LEAVES = tuple(dict.fromkeys(field for leaves in XMP_ONLY.values() for field in leaves))
+
+#: Where TagPup's own JPEG writer (tagpup.files.segment_edits) puts each field a journaled write names: (segment kind,
+#: the property or field its editor names it by), xmp_packet's, exif_block's or iptc_block's. A target after the first
+#: is written only where its segment holds it already, as ExifTool's write of "Orientation" (WRITTEN_AS) updates an XMP
+#: tiff:Orientation held and makes none. A field not here is not the own writer's: XMP:Title and IPTC:ObjectName (no
+#: writer writes them), the DocumentID (minted by a rewrite), a bake's fields; a write naming one is ExifTool's.
+EDITED_AS = {
+    "XMP:Subject": (("xmp", "dc:subject"),),
+    "XMP:HierarchicalSubject": (("xmp", "lr:hierarchicalSubject"),),
+    "XMP:Description": (("xmp", "dc:description"),),
+    "XMP:DateTimeOriginal": (("xmp", "exif:DateTimeOriginal"),),
+    "XMP:CreateDate": (("xmp", "xmp:CreateDate"),),
+    "XMP-xmpMM:PreservedFileName": (("xmp", "xmpMM:PreservedFileName"),),
+    "EXIF:DateTimeOriginal": (("exif", "DateTimeOriginal"),),
+    "EXIF:CreateDate": (("exif", "CreateDate"),),
+    "EXIF:ImageDescription": (("exif", "ImageDescription"),),
+    "EXIF:XPComment": (("exif", "XPComment"),),
+    "EXIF:XPKeywords": (("exif", "XPKeywords"),),
+    ORIENTATION: (("exif", "Orientation"), ("xmp", "tiff:Orientation")),
+    "IPTC:Keywords": (("iptc", "IPTC:Keywords"),),
+    "IPTC:Caption-Abstract": (("iptc", "IPTC:Caption-Abstract"),),
+}
 
 
 def as_patched(before, after, stale):
@@ -228,23 +255,10 @@ def date_taken_value(date_taken):
 
 
 def date_taken_fields(date_taken):
-    """Every field a Date Taken write sets, the fraction of a second too when one is
-    given ("10:30:00.123")."""
+    """Every field a Date Taken write sets. A Date Taken is to the second: the page's picker sets no fraction, and no
+    row's `taken` holds one (0 in the three libraries, counted 2026-11-05), so no SubSecTime is written."""
     value = date_taken_value(date_taken)
-    written = {"EXIF:DateTimeOriginal": value, "XMP:DateTimeOriginal": value, "EXIF:CreateDate": value}
-    parts = value.split(".")
-    if len(parts) > 1:
-        digits = ""
-        for char in parts[1]:
-            if char.isdigit():
-                digits += char
-            else:
-                break
-        if digits:
-            written["EXIF:SubSecTimeOriginal"] = digits
-            written["EXIF:SubSecTimeDigitized"] = digits
-            written["EXIF:SubSecTime"] = digits
-    return written
+    return {"EXIF:DateTimeOriginal": value, "XMP:DateTimeOriginal": value, "EXIF:CreateDate": value}
 
 
 def record_date_taken(raw_meta, date_taken):
