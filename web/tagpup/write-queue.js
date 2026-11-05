@@ -29,6 +29,19 @@ export function whereWritten(data) {
         : ` Written to the files only: ${name} does not hold this folder.`;
 }
 
+/**
+ * What a save's or a turn's reply says of the picture check (the server's `pictures_refused`: writes whose new file
+ * would have changed the picture's bytes, thrown away and made again, DECISIONS 2026-11-03), as a sentence to follow
+ * "Saved." or "Rotated.", or '' when none was.
+ */
+export function pictureCheckSaid(data) {
+    const n = (data && data.pictures_refused) || 0;
+    if (!n) return '';
+    return n === 1
+        ? " The first try would have changed the photo's picture, so it was thrown away and the photo written again; nothing was lost."
+        : ` ${n} tries would have changed a photo's picture, so they were thrown away and the photos written again; nothing was lost.`;
+}
+
 
 export const KEEP_DONE = 10;
 

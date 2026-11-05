@@ -18,7 +18,7 @@ import {
 } from './elements.js';
 import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
-import { whereWritten } from './write-queue.js';
+import { pictureCheckSaid, whereWritten } from './write-queue.js';
 import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
     exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
@@ -46,16 +46,19 @@ export function renderPhotoFaces(photoPath) {
     if (!facesSection || !facesStrip) return;
     const token = ++state.facesRequestToken;
 
-    facesStrip.innerHTML = '';
-    facesSection.classList.add('hidden');
     if (btnAddAllFaces) btnAddAllFaces.classList.add('hidden');
     if (facesSummary) facesSummary.textContent = '';
+    // Until the answer comes the section says so: an empty strip looked like a photo with no faces.
+    sayAboutFaces(FACES_LOADING);
     // The boxes over the photo are another photo's until this one's faces arrive. The same photo drawn
     // again (after a face was named) keeps its boxes and its panel until the new answer replaces them.
     if (!state.faceBoxes.path || !samePath(state.faceBoxes.path, photoPath)) clearPhotoFaces();
 
     api.fetch(`/api/photo-faces?path=${encodeURIComponent(photoPath)}`)
-        .then(res => res.ok ? res.json() : { faces: [] })
+        .then(res => {
+            if (!res.ok) throw new Error(`the server answered ${res.status}`);
+            return res.json();
+        })
         .then(data => {
             // A slower reply for a previously selected photo must not overwrite
             // the strip for the one now on screen.
@@ -63,9 +66,25 @@ export function renderPhotoFaces(photoPath) {
             drawPhotoFaces(photoPath, data);
         })
         .catch(err => {
-            if (token === state.facesRequestToken) clearPhotoFaces();
             console.error('Error loading faces:', err);
+            if (token !== state.facesRequestToken) return;
+            clearPhotoFaces();
+            sayAboutFaces(FACES_FAILED);
         });
+}
+
+export const FACES_LOADING = 'Loading faces...';
+export const FACES_FAILED = 'The faces of this photo could not be loaded. Select the photo again to try once more.';
+
+/** The faces section holding only a line of words: it is loading, or it failed (never an empty strip). */
+function sayAboutFaces(words) {
+    facesStrip.innerHTML = '';
+    const note = document.createElement('div');
+    note.className = 'faces-note';
+    note.setAttribute('role', 'status');
+    note.textContent = words;
+    facesStrip.appendChild(note);
+    facesSection.classList.remove('hidden');
 }
 
 /**
@@ -722,7 +741,8 @@ export function rotatePhoto(direction) {
             }
             saveToLocalStorageCache();
             statusDot.className = 'status-indicator-dot';
-            statusText.textContent = data.file_only ? `Rotated.${whereWritten(data)}` : 'Ready';
+            statusText.textContent = data.file_only || data.pictures_refused
+                ? `Rotated.${whereWritten(data)}${pictureCheckSaid(data)}` : 'Ready';
         } else {
             throw new Error(data.error || 'Failed to rotate');
         }
