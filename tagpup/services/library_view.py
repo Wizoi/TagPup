@@ -311,7 +311,7 @@ def photo(library, photo_id, exiftool_path=None):
         conn.close()
     if row is None:
         raise NotFound("There is no photo %d in this library." % photo_id)
-    path, mtime, size, tags, people, captions, raw, year = row
+    path, mtime, size, tags, people, captions, raw, year, kind = row
     stamp = photo_actions.file_stamp(path)
     if stamp is not None and not store_photos.describes(mtime, size, stamp):
         record = photo_actions.read_file(library, path, exiftool_path() if callable(exiftool_path) else exiftool_path, stamp)
@@ -323,6 +323,7 @@ def photo(library, photo_id, exiftool_path=None):
         if stamp is None:
             record["missing"] = True
     record["id"] = photo_id
+    record["media"] = kind
     return record
 
 
@@ -364,9 +365,10 @@ def _cards(conn, photo_ids, check_disk=False):
         row = held.get(photo_id)
         if row is None:
             continue   # deleted since the page was read
-        path, mtime, size, taken = row
+        path, mtime, size, taken, kind = row
+        # `media`: 'photo' or 'video' (photos.kind), which the page shows a picture or plays by (/api/video-file).
         card = {"id": photo_id, "name": os.path.basename(path), "path": path, "taken": taken,
-                "thumb": thumbnails.url(photo_id, mtime)}
+                "thumb": thumbnails.url(photo_id, mtime), "media": kind}
         if check_disk and time.monotonic() - started < STAT_BUDGET_SECONDS:
             mark = disk_mark(path, mtime, size)
             if mark:

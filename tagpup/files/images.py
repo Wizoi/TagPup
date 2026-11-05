@@ -35,6 +35,10 @@ PHOTO_TYPES = {
 #: The extensions of PHOTO_TYPES, lower case with the dot.
 PHOTO_EXTENSIONS = frozenset(PHOTO_TYPES)
 
+#: The Content-Type a video's own bytes go out under (/api/video-file), by its extension: the three the libraries' folders
+#: hold (2,184 .mov/.mp4/.m4v files, tagpup.files.containers). Not servable as a photo: /api/photo-file never sends one.
+VIDEO_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime"}
+
 #: The largest side of a face crop, and the JPEG quality it is kept at. Face detection
 #: cut and encoded its own crops beside face_crop's (docs/findings.md, #74).
 CROP_SIZE = 256
@@ -337,8 +341,9 @@ def stamps_under(folder, unlisted=None, listed=None):
 
 
 def content_type(photo_path):
-    """The Content-Type a photo's own bytes go out under."""
-    return PHOTO_TYPES.get(os.path.splitext(photo_path)[1].lower(), "application/octet-stream")
+    """The Content-Type a photo's or a video's own bytes go out under (PHOTO_TYPES, then VIDEO_TYPES)."""
+    extension = os.path.splitext(photo_path)[1].lower()
+    return PHOTO_TYPES.get(extension) or VIDEO_TYPES.get(extension, "application/octet-stream")
 
 
 def smaller_copy(photo_path, max_size, upright):

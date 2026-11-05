@@ -781,6 +781,18 @@ def library_bulk_edit():
                     "missing": resolved.missing, "excluded": resolved.excluded, **out.reply()})
 
 
+def _id_asked():
+    """(the photo id the request's `id` names, None), or (None, the 400 reply): what the routes that answer a photo's
+    picture or a video's bytes by id read."""
+    wanted = request.args.get("id")
+    if not wanted:
+        return None, responses.error(400, "Missing 'id' parameter")
+    try:
+        return int(wanted), None
+    except (ValueError, TypeError):
+        return None, responses.error(400, "Invalid 'id' parameter")
+
+
 @routes.get("/api/photo-thumb")
 def photo_thumb():
     """A photo's thumbnail by id, from the cache (tagpup.services.thumbnails). The URL carries the file's stamp
@@ -790,13 +802,9 @@ def photo_thumb():
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
-    wanted = request.args.get("id")
-    if not wanted:
-        return responses.error(400, "Missing 'id' parameter")
-    try:
-        photo_id = int(wanted)
-    except (ValueError, TypeError):
-        return responses.error(400, "Invalid 'id' parameter")
+    photo_id, refusal = _id_asked()
+    if refusal is not None:
+        return refusal
     try:
         thumb = thumbnails.serve(library, photo_id)
     except (NotFound, paths.RootsError, Unavailable) as why:
@@ -817,6 +825,35 @@ def photo_thumb():
         reply.set_etag(thumb.etag)
     reply.headers["Cache-Control"] = ("private, max-age=%d, immutable" % THUMB_CACHE_SECONDS
                                       if thumb.kind == thumbnails.OK and thumb.etag and stamped else "no-cache")
+    return reply
+
+
+@routes.get("/api/video-file")
+def video_file():
+    """A video's bytes by its id, a range at a time as the browser asks (tagpup.services.photos.video, video_bytes;
+    tagpup.web.responses.ranged): 206 with at most VIDEO_SPAN bytes of a range, 200 with the whole file for no range, 416
+    for a range that cannot be answered. The URL carries the file's modified time (`v`), so the browser keeps it a day,
+    as a photo. 404 for an id that is no video of the library or whose file is gone, 400 for a missing or non-numeric
+    one, 503 with Retry-After when the file cannot be reached just now (a share away). A stream that cannot go on (the
+    file changed, the share stopped answering) ends short, and the browser asks again. To this PC only (403)."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    photo_id, refusal = _id_asked()
+    if refusal is not None:
+        return refusal
+    try:
+        video = photo_actions.video(library, photo_id)
+    except (NotFound, paths.RootsError, Unavailable) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error reading video %s: %s", photo_id, e, exc_info=True)
+        return responses.error(500, "The video could not be read (%s); the server's log says why." % type(e).__name__)
+    reply = responses.ranged(request.range, video.size, video.content_type,
+                             lambda start, length: photo_actions.video_bytes(video, start, length),
+                             photo_actions.VIDEO_SPAN)
+    if reply.status_code != 416:
+        reply.headers["Cache-Control"] = "max-age=%d" % PHOTO_CACHE_SECONDS
     return reply
 
 

@@ -50,6 +50,34 @@ def image(content, content_type, cache_seconds=None):
     return response
 
 
+def ranged(asked, size, content_type, send, span):
+    """The answer to a request for a file's bytes that may name a range (a video's, /api/video-file). `asked` is the
+    request's Range as werkzeug reads it (request.range: None for none, and for one that does not parse); `size` the
+    file's; `send(start, length)` gives the bytes, a piece at a time, streamed as they come.
+
+    No range: 200 with the whole file. A range that cannot be answered -- several, one starting past the end, a suffix
+    longer than the file, any range of a file of no bytes -- 416 with `Content-Range: bytes */size`. Else 206 with the
+    bytes from its start, at most `span` of them: a browser playing a video asks again from where an answer ended."""
+    found = None
+    if asked is not None:
+        found = asked.range_for_length(size)
+        if found is None:
+            refused = Response(b"", status=416)
+            refused.headers["Content-Range"] = "bytes */%d" % size
+            refused.headers["Accept-Ranges"] = "bytes"
+            return refused
+    start, stop = found if found else (0, size)
+    if found:
+        stop = min(stop, start + span)
+    reply = Response(send(start, stop - start), status=206 if found else 200, mimetype=content_type,
+                     direct_passthrough=True)
+    if found:
+        reply.headers["Content-Range"] = "bytes %d-%d/%d" % (start, stop - 1, size)
+    reply.headers["Content-Length"] = str(stop - start)
+    reply.headers["Accept-Ranges"] = "bytes"
+    return reply
+
+
 def photo(wanted, size, upright, cache_seconds=None):
     """GET /api/photo-file?path=<photo>[&size=<pixels>]: a photo for an <img>, or a
     smaller copy of it (tagpup.services.photos.page_copy). `wanted` and `size` are the
