@@ -25,7 +25,7 @@ rewrite fails test_a_share_that_stops_answering_at_the_write_is_written_at_the_n
 written as an attribute fails test_a_packet_the_editor_refuses_is_rewritten; tagging._tags_held reading XMP alone fails
 test_a_person_added_to_a_photo_whose_keywords_are_in_iptc_alone; segment_edits.stale_of leaving a group whose XMP value
 is empty fails test_the_last_keyword_taken_off_is_taken_from_every_copy; file_changes._carry keeping the target as the
-journal's after fails test_an_undo_puts_back_the_bytes_the_photo_held; in_place._header_of letting two APP13 segments
+journal's after (the read back then corrects it, warning) fails test_an_undo_puts_back_the_bytes_the_photo_held; in_place._header_of letting two APP13 segments
 through fails test_a_photo_with_two_app13_segments_is_rewritten; fields.EDITED_AS without tiff:Orientation fails
 test_a_turn_reads_as_exiftools_write_of_it_reads; file_changes._holds_already comparing against the plan's after
 (the planner before the fix), or in_place.patch_jpeg answering () when no byte changes, fails
@@ -233,9 +233,12 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
                 self.assertEqual(tag == "Harbour", saved.call_count == 1, "patched or not, not as the fit says")
 
     def test_an_undo_puts_back_the_bytes_the_photo_held(self):
+        # The write records the journal's after as the patch left the file (IPTC as it was) when it marks it done; the
+        # read back finds nothing to correct (it warns when it does), and the undo starts from what the file holds.
         a = self.make("a.jpg")
         original = read(a)
-        change = self.add([a]).details["change"]
+        with self.assertNoLogs(file_changes.logger, "WARNING"):
+            change = self.add([a]).details["change"]
         with saves_counted() as saved:
             undone = self.undo(change)
         self.assertEqual((1, [], 1), (undone.changed, undone.errors, saved.call_count), "the undo was not a patch")
