@@ -10,8 +10,11 @@ photo as it was and its record, and the next start writes it; a packet the XMP e
 attribute) and a photo holding two APP13 segments are ExifTool's rewrite; a person added to a photo whose keywords are in
 IPTC alone gets every keyword in XMP; the last keyword taken off writes every copy (#2433); an undo puts back the bytes
 the photo held; a rotation of a photo whose packet holds tiff:Orientation and whose EXIF holds an IFD1 Orientation reads
-as ExifTool's write of the same reads (hazard c); a save repeated, which changes no byte, still answers the copies it
-left (hazard a).
+as ExifTool's write of the same reads (hazard c); a save repeated, or a tag the photo holds added again, is holding it
+already as the patch leaves it (fields.as_patched of field_values.left_as_they_were): nothing written, nothing journaled,
+`changed` 0, and the first save's undo puts back the bytes; the writer itself, given it, writes no byte and answers the
+copies it left (hazard a); with the own writer off, a save of a photo whose IPTC differs from its XMP writes every copy,
+as before.
 
 Real JPEGs written by the real ExifTool in a home of the test's own (test_file_journal.FilesCase); nothing of the
 owner's. Breaks that fail these, each tried on a copy of the code: segment_edits.stale_of answering () fails
@@ -24,8 +27,10 @@ test_a_person_added_to_a_photo_whose_keywords_are_in_iptc_alone; segment_edits.s
 is empty fails test_the_last_keyword_taken_off_is_taken_from_every_copy; file_changes._carry keeping the target as the
 journal's after fails test_an_undo_puts_back_the_bytes_the_photo_held; in_place._header_of letting two APP13 segments
 through fails test_a_photo_with_two_app13_segments_is_rewritten; fields.EDITED_AS without tiff:Orientation fails
-test_a_turn_reads_as_exiftools_write_of_it_reads; in_place.patch_jpeg answering () when no byte changes fails
-test_a_save_repeated_that_changes_no_byte_answers_the_copies_it_left.
+test_a_turn_reads_as_exiftools_write_of_it_reads; file_changes._holds_already comparing against the plan's after
+(the planner before the fix), or in_place.patch_jpeg answering () when no byte changes, fails
+test_a_save_repeated_or_a_tag_held_added_again_writes_and_journals_nothing; field_values.left_as_they_were answering
+stale_of with the own writer off fails test_with_the_own_writer_off_a_save_writes_every_copy_as_before.
 """
 import io
 import json
@@ -291,26 +296,47 @@ class APhotoWrittenByItsOwnEditors(FilesCase):
         # Both turn the picture's copies and leave the thumbnail's own (ExifTool 13.59).
         self.assertEqual({"IFD0:Orientation": 6, "IFD1:Orientation": 1, "XMP-tiff:Orientation": 6}, orientations(a))
 
-    def test_a_save_repeated_that_changes_no_byte_answers_the_copies_it_left(self):
-        # Hazard a: the photo panel's Save of the same keywords again. The file holds them in XMP, IPTC the old set, so
-        # the plan is to write; the own writer has no byte to change, and still answers the copies it left, so the
-        # change is recorded as the file holds it, never as IPTC holding the new set.
+    def test_a_save_repeated_or_a_tag_held_added_again_writes_and_journals_nothing(self):
+        # The photo panel's Save of the same keywords again, and Add to all selected of a tag the photo has. The file
+        # holds them in XMP, IPTC the old set, as the first save's patch left it: holding it already, as a write would
+        # leave it. It was planned, journaled and reported as 1 changed with no byte written, a History entry that
+        # changed nothing.
         a = self.make("a.jpg")
+        original = read(a)
         first = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "")
         self.assertEqual((1, []), (first.changed, first.errors), first.message())
-        held = read(a)
-        answers = []
-        real = field_values.write
-
-        def write(*args, **kwargs):
-            answers.append(real(*args, **kwargs))
-            return answers[-1]
-        with mock.patch.object(field_values, "write", write), saves_counted() as saved:
+        change, held = first.details["change"], read(a)
+        with mock.patch.object(field_values, "write", wraps=field_values.write) as wrote, saves_counted() as saved:
             again = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "")
-        self.assertEqual(([], 0, held), (again.errors, saved.call_count, read(a)), again.message())
-        self.assertEqual([KEYWORD_COPIES_LEFT], [tuple(each) for each in answers])
-        self.assertEqual(["done"], self.states(self.last_change()))
-        self.assert_patched_xmp_alone(a, ["Beach", "Harbour"], self.last_change())
+            tagged = self.add([a])
+        self.assertEqual(((0, [], None), (0, [], None)),
+                         ((again.changed, again.errors, again.details["change"]),
+                          (tagged.changed, tagged.errors, tagged.details["change"])), again.message())
+        self.assertEqual((0, 0, held), (wrote.call_count, saved.call_count, read(a)), "a photo holding it was written")
+        self.assertEqual(change, self.last_change(), "a save that changed nothing is in History")
+        self.assert_patched_xmp_alone(a, ["Beach", "Harbour"], change)
+        # Hazard a, at the writer: given the same values, it has no byte to write and answers the copies it left.
+        flat, hierarchical = fields.expand_tag_fields(["Beach", "Harbour"])
+        with field_values.session(EXIFTOOL) as et:
+            left = field_values.write(et, a, fields.keyword_fields(flat, hierarchical),
+                                      saving=lambda *_: self.fail("a patch with no byte to write saved a record"))
+        self.assertEqual((KEYWORD_COPIES_LEFT, held), (tuple(left), read(a)))
+        # Undo after the saves that did nothing: the first save's, the bytes the photo held.
+        undone = self.undo(change)
+        self.assertEqual((1, []), (undone.changed, undone.errors))
+        self.assertEqual((original, ["Beach"]), (read(a), self.indexed(a)))
+
+    def test_with_the_own_writer_off_a_save_writes_every_copy_as_before(self):
+        # The flag off is today's writer, untouched by the planner's rule: a photo whose XMP holds more than its IPTC
+        # (another program wrote it) saved with its XMP set is written, every copy, and journaled.
+        with mock.patch.object(field_values, "OWN_WRITER", False):
+            a = self.make("a.jpg")
+            write_outside(a, {"XMP:Subject": ["Beach", "Harbour"]})
+            result = tagging.save_photo(self.library, a, "", ["Beach", "Harbour"], None, EXIFTOOL, "")
+        self.assertEqual((1, []), (result.changed, result.errors), result.message())
+        self.assertEqual((["Beach", "Harbour"], ["Beach", "Harbour"], "Beach;Harbour"),
+                         (keywords_of(a), field_of(a, "IPTC:Keywords"), field_of(a, "EXIF:XPKeywords")))
+        self.assertEqual(["Beach", "Harbour"], self.after(result.details["change"], "IPTC:Keywords"))
 
 
 if __name__ == "__main__":

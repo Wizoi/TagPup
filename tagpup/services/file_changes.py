@@ -378,6 +378,13 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                               stop_at_first_error, et, held, whole, on_planned, alongside, on_chunk)
 
 
+def _holds_already(before, after):
+    """Does a file holding `before` hold what a write of `after` would leave it holding: `after`, but for the fields the
+    writer leaves as they were (fields.as_patched of field_values.left_as_they_were; `after` itself unless the own
+    writer patches)? The plan's one question of a file it need not write."""
+    return fields.reads_same(before, fields.as_patched(before, after, field_values.left_as_they_were(after)))
+
+
 def _refused_whole(photo_paths, why):
     result = Result(attempted=len(photo_paths))
     result.refuse(why)
@@ -457,7 +464,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if fields.reads_same(before, after) and not (alongside is not None and alongside.wants(path)):
+        if _holds_already(before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))
             continue
@@ -504,7 +511,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                 written[path] = detail      # held already, as a file found holding it at the plan is
                 continue
             if outcome == "done":
-                if not fields.reads_same(planned[n][1], planned[n][2]):
+                if not _holds_already(planned[n][1], planned[n][2]):
                     result.changed += 1       # a file held what it was to hold: its rows alone were written
                 if isinstance(detail, dict) and row.followed:
                     detail["faces_turned"] = row.followed

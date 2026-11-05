@@ -305,6 +305,15 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
     return ()
 
 
+def left_as_they_were(values):
+    """The fields of `values` a journaled write (one given `saving`) leaves holding what they held: a keyword or caption
+    group's copies outside XMP, while its XMP value is not empty, when the own writer patches (segment_edits.stale_of,
+    fields.XMP_ONLY); () when it does not, ExifTool's writes writing every field. What the file holds after the write is
+    fields.as_patched of these: file_changes asks it of a plan before writing anything, so a file holding that already
+    is not written, journaled or counted (a Save repeated, a tag the photo has added again)."""
+    return segment_edits.stale_of(values) if PATCH_IN_PLACE and OWN_WRITER else ()
+
+
 def _exiftool_header(et, params, clear, checked):
     """in_place.patch_jpeg's `new_header` by ExifTool: the write's command run on a copy of the photo's header alone, in a
     folder of this PC's %TEMP%, and the segments it wrote fitted to the photo's (in_place.fitted). Answers (the header,
