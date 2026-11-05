@@ -45,7 +45,7 @@ import damaged_photos  # noqa: E402
 import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
 import test_stale_record_precondition as S  # noqa: E402
-from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
+from test_a_file_holds_what_exiftool_kept import ReadFilesCase, flip_a_picture_byte  # noqa: E402
 from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, write_outside  # noqa: E402
 
 from tagpup.files import exiftool_session, names  # noqa: E402
@@ -418,6 +418,29 @@ class ASaveFromThePage(S.Fresh):
         self.assertNotIn("rename_failed", reply)
         self.assertEqual(plain, reply["new_path"])
 
+    def flipping_once(self, path):
+        """A stand-in for file_changes._reached that changes a picture byte of the photo's new file the first time it is
+        written (what the owner's PC did, #2377): the write is discarded and made again."""
+        scratch, flipped = exiftool_session.scratch_of(path), []
+
+        def reached(step):
+            if step == file_changes.SCRATCH_WRITTEN and not flipped:
+                flipped.append(step)
+                flip_a_picture_byte(scratch)
+        return mock.patch.object(file_changes, "_reached", side_effect=reached)
+
+    def test_a_save_and_a_turn_made_again_say_how_many_writes_were(self):
+        path, photo_id = self.make("IMG_0003.jpg", 5, ["Trips/Coast"])
+        with self.flipping_once(path), self.assertLogs(file_changes.logger, "WARNING"):
+            saved = self.save(self.record(photo_id), title="A caption")
+        self.assertEqual((200, 1), (saved.status_code, saved.get_json()["pictures_refused"]), saved.data)
+        self.assertEqual("A caption", S.caption_in(path))
+        with self.flipping_once(path), self.assertLogs(file_changes.logger, "WARNING"):
+            turned = self.post("/photo/rotate", {"path": path, "direction": "right"})
+        self.assertEqual((200, 1), (turned.status_code, turned.get_json()["pictures_refused"]), turned.data)
+        quiet = self.save(self.record(photo_id), title="Another caption").get_json()
+        self.assertNotIn("pictures_refused", quiet)
+
     def test_the_replies_the_page_reads_are_written_for_its_test(self):
         path, record = self.smart_renamed()
         refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
@@ -426,8 +449,15 @@ class ASaveFromThePage(S.Fresh):
             found["rename_failed"] = self.save(record, title="Start line").get_json()
         plain, plain_id = self.make("IMG_0002.jpg", 3, ["Trips/Coast"])
         found["no_rename"] = self.save(self.record(plain_id), title="A caption").get_json()
+        again, again_id = self.make("IMG_0003.jpg", 5, ["Trips/Coast"])
+        with self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
+            found["picture_changed"] = self.save(self.record(again_id), title="A caption").get_json()
+        with self.flipping_once(again), self.assertLogs(file_changes.logger, "WARNING"):
+            found["rotated_picture_changed"] = self.post("/photo/rotate", {"path": again, "direction": "left"}).get_json()
         for each in found.values():
-            each.update(mtime=1, size=1, new_path=os.path.basename(each["new_path"]))
+            each.update(mtime=1, size=1)
+            if "new_path" in each:
+                each["new_path"] = os.path.basename(each["new_path"])
         text = json.dumps(found, sort_keys=True, indent=1) + "\n"
         if not os.path.exists(SAVE_REPLIES) or open(SAVE_REPLIES, encoding="utf-8").read() != text:
             with open(SAVE_REPLIES, "w", encoding="utf-8", newline="\n") as handle:

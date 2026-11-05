@@ -98,7 +98,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
     written, `change`, and `index_warning` when the renamed photo's new name already had
-    rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way.
+    rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way; `pictures_refused` when the write
+    changed the picture's bytes and was made again (file_changes).
     """
     result = Result(attempted=1)
     _held, loose = libraries.split(library, [photo_path])
@@ -153,6 +154,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         renamed = not paths.same(new_path, photo_path)
         if rename_failed:
             result.details["rename_failed"] = rename_failed
+        if written.details.get("pictures_refused"):
+            result.details["pictures_refused"] = written.details["pictures_refused"]
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"],
                               base={"tags": _tags_held(after), "title": vocabulary.trimmed(title or "")})
