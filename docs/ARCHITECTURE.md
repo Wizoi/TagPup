@@ -200,7 +200,8 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        roots*, settings, journal, file_changes, batches, bulk_edit, selection,
                        library_view, search, suggester, suggestions, snapshots, thumbnails,
                        faces_from_tags, tags_from_faces, face_people, face_assignment + face_batch, inspect, activity,
-                       maintenance
+                       maintenance, metadata_check (the own JPEG writer against ExifTool's on sandbox
+                       copies; writes nothing of a library)
   jobs/                background work: indexing queue, suggestions,
                        naming_faces, identify, watching, recurring
   web/                 one Flask app per page from one factory (app.py), *_routes.py by concern, security,
