@@ -9,30 +9,33 @@ when that returns writes a byte; whoever meets the file next settles it by its b
 process tore (`put_back`), never what another program wrote.
 
 A record is JSON, as `change_files.patch` holds it: {"v": 1, "size": the file's size, "ranges": [{"at", "len", "after":
-the new bytes, base64}]}; the bytes the ranges held before, concatenated in the ranges' order, are kept beside it
-(`change_files.patch_before`). The new bytes are kept too, so a range this process tore is told from one another program
+the new bytes, base64}], "stale": [the fields the patch leaves holding what they held]}; the bytes the ranges held
+before, concatenated in the ranges' order, are kept beside it (`change_files.patch_before`). `stale` (a keyword or
+caption save that writes the XMP copy alone, fields.XMP_ONLY) is what a file holding every range as written holds of
+the write: fields.as_patched, read back by `left_stale` when a crash leaves the file to be settled by its bytes. The new bytes are kept too, so a range this process tore is told from one another program
 wrote. A patch checks only the bytes it changed, against those two (DECISIONS 2026-11-03, "AN IN-PLACE PATCH CHECKS ONLY
 THE BYTES IT CHANGED"): no other byte of the file is read, nor any hash taken of it, for a photo or a clip. Reads are of
 the open file, not looks at its path: the caller has the file's state already (tagpup.services.file_changes reads it
 from the journal).
 
 **A JPEG's patch** (`patch_jpeg`). A photo's EXIF, IPTC (Photoshop APP13) and XMP segments are rewritten at their old
-length, and only the bytes of them that differ are written. TagPup writes no serialiser of its own: ExifTool writes the
-fields, as it does for a rewrite, into a copy of the photo's header alone (its segments up to and including the first
-scan's header, then an end of image), on this PC's disk, and the segments it wrote are taken from that copy and fitted
-to the old lengths (`jpeg_ranges`): XMP by the whitespace before its packet's end, EXIF by zero bytes after its last
-data, IPTC by a dummy 8BIM resource (containers.PAD_RESOURCE; zero bytes there break ExifTool's next write and Windows'
-reader). It is not a patch's, and the caller rewrites the whole file, when any of these holds: the file is no JPEG or
-holds two segments of one kind, an extended XMP, or bytes after its last 8BIM resource; ExifTool would make, drop or
-change any other segment (a photo with no XMP yet); a new segment is longer than the old; an EXIF segment would move
-(a maker note may point at its own place in the file). The photo is opened once, with no sharing on Windows, from the
+length, and only the bytes of them that differ are written. The new header -- the photo's segments up to and including
+the first scan's header, its EXIF, IPTC and XMP bodies changed and every other byte its own -- is the caller's
+(`new_header`, field_values.write): TagPup's own writer (tagpup.files.segment_edits, field_values.OWN_WRITER), or,
+until that is turned on, ExifTool's write of the fields into a copy of the header alone, on this PC's disk, whose
+segments are fitted to the old lengths (`fitted`): XMP by the whitespace before its packet's end, EXIF by zero bytes
+after its last data, IPTC by a dummy 8BIM resource (containers.PAD_RESOURCE; zero bytes there break ExifTool's next
+write and Windows' reader). It is not a patch's, and the caller rewrites the whole file, when the file is no JPEG or
+holds two segments of one kind, an extended XMP, or bytes after its last 8BIM resource (`_header_of`, whichever writer),
+or the writer answers no header: ExifTool's when it would make, drop or change any other segment (a photo with no XMP
+yet), a new segment is longer than the old, or an EXIF segment would move (a maker note may point at its own place in
+the file); the own writer's by segment_edits' rules. The photo is opened once, with no sharing on Windows, from the
 read of its header to the last byte written, so no other program writes it, nor reads it half written, meanwhile; one
 that holds it open already makes it the rewrite's. Every read and write of it is bounded (shares.bounded, SECONDS).
 """
 import base64
 import io
 import os
-import tempfile
 import threading
 
 from tagpup.files import containers, shares, xmp_packet
@@ -45,7 +48,8 @@ SECONDS = 30.0
 #: The segments a patch may rewrite, by containers.Segment.kind.
 PATCHED_KINDS = ("exif", "xmp", "iptc")
 
-_EOI = b"\xff\xd9"
+#: The end of image marker: a header's copy ends with it, so a program reads it as a JPEG.
+EOI = b"\xff\xd9"
 
 
 class Away(OSError):
@@ -65,10 +69,10 @@ def _read_at(handle, at, length):
     return handle.read(length)
 
 
-def record(handle, changes):
-    """(record, before) of a patch writing `changes`, [(at, new bytes)], into the file open in `handle` (binary, read):
-    the record as the journal saves it, and the bytes the ranges hold now, the only bytes of the file read. Ranges are
-    sorted and may not overlap, be empty or run past the end. Writes nothing."""
+def record(handle, changes, stale=()):
+    """(record, before) of a patch writing `changes`, [(at, new bytes)], into the file open in `handle` (binary, read),
+    leaving the fields `stale` as they were: the record as the journal saves it, and the bytes the ranges hold now, the
+    only bytes of the file read. Ranges are sorted and may not overlap, be empty or run past the end. Writes nothing."""
     size = handle.seek(0, os.SEEK_END)
     changes = sorted((int(at), bytes(new)) for at, new in changes)
     end = 0
@@ -79,7 +83,13 @@ def record(handle, changes):
     spans = [(at, len(new), new) for at, new in changes]
     before = b"".join(_read_at(handle, at, length) for at, length, _new in spans)
     ranges = [{"at": at, "len": length, "after": base64.b64encode(new).decode("ascii")} for at, length, new in spans]
-    return {"v": VERSION, "size": size, "ranges": ranges}, before
+    return {"v": VERSION, "size": size, "ranges": ranges, "stale": list(stale)}, before
+
+
+def left_stale(record):
+    """The fields the patch of `record` leaves holding what they held (record's `stale`). A record saved by the version
+    installed before the key (its patches wrote every field) has none: ()."""
+    return tuple(record.get("stale", ()))
 
 
 def _bounded(path, call):
@@ -211,76 +221,83 @@ def _fitted(old, new, written):
     return segment[:2] + (old.size - 2).to_bytes(2, "big") + segment[4:]
 
 
-def jpeg_ranges(header, written):
-    """[(at, new bytes)] that make the JPEG whose bytes up to its first scan's header's end are `header` hold the
-    segments ExifTool `written` (the same header, rewritten, then an end of image) at their old lengths: the bytes of
-    each patched segment that differ, from the first to the last. None when they do not fit (the module says when); []
-    when every segment, fitted, is what the photo holds. A segment ExifTool wrote otherwise can fit to the photo's own:
-    an EXIF a patch made up to its old length with zero bytes, written again with the values it holds, comes without the
-    zeros, and the fit puts them back (a second save of a photo whose first patch shortened its EXIF)."""
-    old = containers.read(io.BytesIO(header + _EOI))
+def fitted(header, written):
+    """The JPEG header `header` (its bytes up to its first scan's header's end) holding the segments ExifTool `written`
+    (the same header, rewritten, then an end of image), each at its old length; None when they do not fit (the module
+    says when). A segment ExifTool wrote otherwise can fit to the photo's own: an EXIF a patch made up to its old length
+    with zero bytes, written again with the values it holds, comes without the zeros, and the fit puts them back (a
+    second save of a photo whose first patch shortened its EXIF)."""
+    old = containers.read(io.BytesIO(header + EOI))
     new = containers.read(io.BytesIO(written))
     if not isinstance(new, containers.Jpeg) or new.image_offset is None:
         return None
     if [(each.marker, each.kind) for each in old.segments] != [(each.marker, each.kind) for each in new.segments]:
         return None
-    changes = []
+    result = bytearray(header)
     for was, now in zip(old.segments, new.segments):
-        before = header[was.offset:was.end]
-        if written[now.offset:now.end] == before:
+        if written[now.offset:now.end] == header[was.offset:was.end]:
             continue
         if was.kind not in PATCHED_KINDS:
             return None
         after = _fitted(was, now, written)
         if after is None:
             return None
+        result[was.offset:was.end] = after
+    return bytes(result)
+
+
+def _ranges(layout, header, new):
+    """[(at, new bytes)] that make `header` (of `layout`) hold `new`, a header of its length: the bytes of each patched
+    segment that differ, from the first to the last; [] when they are the same. A byte outside the patched segments that
+    differs is a writer's fault, never written: ValueError."""
+    if len(new) != len(header) or new[:layout.segments[0].offset] != header[:layout.segments[0].offset]:
+        raise ValueError("a new header is not the photo's header with its metadata segments changed")
+    changes = []
+    for segment in layout.segments:
+        before, after = header[segment.offset:segment.end], new[segment.offset:segment.end]
         if after == before:
-            continue        # both old.size bytes: when they differ, a byte differs, and the two next() below find it
-        first = next(at for at in range(was.size) if after[at] != before[at])
-        last = next(at for at in range(was.size - 1, -1, -1) if after[at] != before[at])
-        changes.append((was.offset + first, after[first:last + 1]))
+            continue
+        if segment.kind not in PATCHED_KINDS:
+            raise ValueError("a new header changed a %s segment, which no patch writes" % segment.kind)
+        first = next(at for at in range(segment.size) if after[at] != before[at])
+        last = next(at for at in range(segment.size - 1, -1, -1) if after[at] != before[at])
+        changes.append((segment.offset + first, after[first:last + 1]))
     return changes
 
 
-def patch_jpeg(path, serialise, saving):
-    """Write the fields ExifTool would write into the JPEG at `path` by a patch of its metadata segments (the module):
-    True once the file holds them -- a patch saved by `saving(record, before)` (the journal's, which commits the record
-    before this writes a byte, and raises when it will not, nothing then written) and written; or nothing to write, the
-    segments already holding them. False when it is not a patch's, nothing written: the caller rewrites the file.
+def patch_jpeg(path, new_header, saving):
+    """Write a journaled write's fields into the JPEG at `path` by a patch of its metadata segments (the module): the
+    fields it left holding what they held (a tuple, () when it wrote every field) once the file holds them -- a patch
+    saved by `saving(record, before)` (the journal's, which commits the record before this writes a byte, and raises
+    when it will not, nothing then written) and written; or nothing to write, the segments already holding them, the
+    fields left all the same. None when it is not a patch's, nothing written: the caller rewrites the file.
 
-    `serialise(source, target)` is ExifTool's write of the fields from the file at `source` into a new file at `target`
-    (field_values.write's command): True when it wrote it, False when ExifTool refused (the rewrite then says why).
+    `new_header(layout, header)` is the writer's: given the photo's layout (containers.Jpeg) and its header's bytes, it
+    answers (the header with the fields written, the same length; the fields left stale), or None, no patch.
     Raises Away when the photo's share does not answer, the file as it was or as far as the patch wrote it (held settles
-    it); an OSError that is no sharing violation or refusal to open; whatever `saving` raises."""
+    it); an OSError that is no sharing violation or refusal to open; whatever `new_header` or `saving` raises."""
     try:
         handle = _bounded(path, lambda: _alone(path))
     except Away:
         raise
     except OSError:
-        return False        # held open by another program, read-only, gone: the rewrite's, which says why
+        return None         # held open by another program, read-only, gone: the rewrite's, which says why
     lent = _Lent(handle)
     try:
         found = lent.bounded(path, lambda: _header_of(handle))
         if found is None:
-            return False
+            return None
         layout, header = found
-        with tempfile.TemporaryDirectory(prefix="tagpup-patch-") as folder:
-            source, target = os.path.join(folder, "header.jpg"), os.path.join(folder, "written.jpg")
-            with open(source, "wb") as copy:
-                copy.write(header + _EOI)
-            if not serialise(source, target):
-                return False
-            with open(target, "rb") as copy:
-                written = copy.read()
-        changes = jpeg_ranges(header, written)
-        if changes is None:
-            return False
-        if not changes:
-            return True
-        saved, before = lent.bounded(path, lambda: record(handle, changes))
-        saving(saved, before)
-        lent.bounded(path, lambda: _write(handle, changes))
-        return True
+        made = new_header(layout, header)
+        if made is None:
+            return None
+        new, stale = made
+        changes = _ranges(layout, header, new)
+        if changes:
+            saved, before = lent.bounded(path, lambda: record(handle, changes, stale))
+            saving(saved, before)
+            lent.bounded(path, lambda: _write(handle, changes))
+        return tuple(stale)
     finally:
         lent.close()
 

@@ -7,7 +7,7 @@ whose EXIF holds what it held after a first that shortened it writes no byte of 
 is ExifTool's rewrite, as before the patch (a photo with no XMP yet, an EXIF segment that would move); a photo another
 program has open is not patched; a photo another process is patching (held with no sharing) is not written by this
 one; a share that stops answering mid-patch stops the write, and the next start settles the photo by its bytes; a
-photo holding Photoshop's Print Flags Information (8BIM 0x2710) keeps it as it was, wherever it sits. The fit itself (in_place.jpeg_ranges) against ExifTool's own output: an IPTC segment that shrank by 2 to 10 bytes is
+photo holding Photoshop's Print Flags Information (8BIM 0x2710) keeps it as it was, wherever it sits. The fit itself (in_place.fitted) against ExifTool's own output: an IPTC segment that shrank by 2 to 10 bytes is
 rewritten (no 8BIM resource is that small), by 12 or more it is padded with a dummy resource that ExifTool reads past.
 
 Real JPEGs written by the real ExifTool in a home of the test's own (test_file_journal.FilesCase); the crash cuts of a
@@ -15,7 +15,7 @@ patch are D3's (test_a_crash_part_way_is_settled_at_the_next_start.AnInPlacePatc
 field_values.PATCH_IN_PLACE False (every write the rewrite) fails the three tests that count a patch saved; in_place
 ._fitted padding IPTC with zero bytes instead of the dummy resource fails test_an_iptc_segment_that_shrank_is_padded_
 only_by_a_resource_exiftool_reads_past; containers.PAD_RESOURCE 0x2710 (Print Flags' id) fails test_photoshop_print_flags_
-in_the_iptc_segment_are_kept_as_they_were; in_place.jpeg_ranges not passing a segment fitted to what the photo
+in_the_iptc_segment_are_kept_as_they_were; in_place.fitted not passing a segment fitted to what the photo
 holds fails test_a_second_save_whose_exif_holds_what_it_held_writes_only_its_xmp; dropping its `new.offset != old.offset` refusal fails test_an_exif_segment_
 that_would_move_is_rewritten. A save that patches the XMP alone (field_values.write naming the fields it left,
 fields.PATCH_LEAVES) is verified and recorded as fields.as_patched says the file holds it: verifying it against all it
@@ -327,7 +327,7 @@ class APhotoPatchedInPlace(FilesCase):
 
 @requires_exiftool
 class TheFitOfAnIptcSegment(unittest.TestCase):
-    """in_place.jpeg_ranges against ExifTool's own write of a header holding IPTC keywords alone: the segment that shrank
+    """in_place.fitted against ExifTool's own write of a header holding IPTC keywords alone: the segment that shrank
     is padded to its old length by a dummy 8BIM resource of 12 bytes or more, even (its header and an even body), or
     not at all; a shrink of 2 to 10 bytes or an odd one does not fit and is the rewrite's."""
 
@@ -347,34 +347,31 @@ class TheFitOfAnIptcSegment(unittest.TestCase):
             if os.path.exists(path):
                 os.remove(path)
         with open(source, "wb") as handle:
-            handle.write(self.header + in_place._EOI)
+            handle.write(self.header + in_place.EOI)
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.set_tags([source], tags={"IPTC:Keywords": [keyword]}, params=["-m", "-o", target])
         return read(target)
 
     def test_an_iptc_segment_that_shrank_is_padded_only_by_a_resource_exiftool_reads_past(self):
-        old = containers.read(io.BytesIO(self.header + in_place._EOI)).of_kind("iptc")[0]
+        old = containers.read(io.BytesIO(self.header + in_place.EOI)).of_kind("iptc")[0]
         seen = set()
         for keyword in ("Beachcombing at low tid", "Beachcombing at low t", "Beachcombing at l", "Beachcombing",
                         "Beach", "Bea"):
             written = self.written(keyword)
             pad = old.size - containers.read(io.BytesIO(written)).of_kind("iptc")[0].size
-            ranges = in_place.jpeg_ranges(self.header, written)
+            patched = in_place.fitted(self.header, written)
             fits = pad == 0 or (pad >= 12 and pad % 2 == 0)
-            self.assertEqual(fits, ranges is not None, "a shrink of %d bytes" % pad)
+            self.assertEqual(fits, patched is not None, "a shrink of %d bytes" % pad)
             seen.add(fits)
-            if ranges is None:
+            if patched is None:
                 continue
-            patched = bytearray(self.header)
-            for at, new in ranges:
-                patched[at:at + len(new)] = new
             self.assertEqual(len(self.header), len(patched))
             if pad:
-                last = containers.read(io.BytesIO(bytes(patched) + in_place._EOI)).of_kind("iptc")[0].resources[-1]
+                last = containers.read(io.BytesIO(bytes(patched) + in_place.EOI)).of_kind("iptc")[0].resources[-1]
                 self.assertEqual((containers.PAD_RESOURCE, pad), (last.id, last.size), "the padding is not the dummy's")
             check = os.path.join(self.folder, "patched.jpg")
             with open(check, "wb") as handle:
-                handle.write(bytes(patched) + in_place._EOI)
+                handle.write(bytes(patched) + in_place.EOI)
             with ExifToolSession(executable=EXIFTOOL) as et:
                 self.assertEqual(keyword, str(et.get_tags([check], tags=["IPTC:Keywords"])[0].get("IPTC:Keywords")))
                 # ExifTool's next write of it reads past the dummy resource (zero bytes there break it).
@@ -386,7 +383,7 @@ class TheFitOfAnIptcSegment(unittest.TestCase):
 
 @requires_exiftool
 class TheFitOfAnXmpSegment(unittest.TestCase):
-    """in_place.jpeg_ranges against ExifTool's own write of a header holding XMP keywords alone: the padding after the
+    """in_place.fitted against ExifTool's own write of a header holding XMP keywords alone: the padding after the
     packet is laid as ExifTool lays it (lines of 100 spaces, `xmp_packet.padding`) whatever the patch took from it or
     gave it."""
 
@@ -406,20 +403,17 @@ class TheFitOfAnXmpSegment(unittest.TestCase):
             if os.path.exists(path):
                 os.remove(path)
         with open(source, "wb") as handle:
-            handle.write(self.header + in_place._EOI)
+            handle.write(self.header + in_place.EOI)
         with ExifToolSession(executable=EXIFTOOL) as et:
             et.set_tags([source], tags={"XMP:Subject": [keyword]}, params=["-m", "-o", target])
         return read(target)
 
     def test_a_patch_that_changes_the_padding_lays_exiftools_shape(self):
-        old = containers.read(io.BytesIO(self.header + in_place._EOI)).of_kind("xmp")[0]
+        old = containers.read(io.BytesIO(self.header + in_place.EOI)).of_kind("xmp")[0]
         seen = 0
         for keyword in ("Beachcombing at low tid", "Beachcombing", "Bea", "Beachcombing at low tide, and the pier"):
-            ranges = in_place.jpeg_ranges(self.header, self.written(keyword))
-            self.assertIsNotNone(ranges, keyword)
-            patched = bytearray(self.header)
-            for at, new in ranges:
-                patched[at:at + len(new)] = new
+            patched = in_place.fitted(self.header, self.written(keyword))
+            self.assertIsNotNone(patched, keyword)
             self.assertEqual(len(self.header), len(patched))
             packet = bytes(patched)[old.offset + 4 + len(b"http://ns.adobe.com/xap/1.0/\0"):old.end]
             meta = packet.rfind(b"</x:xmpmeta>") + len(b"</x:xmpmeta>")
