@@ -8,6 +8,14 @@ CreateDate, QuickTime's copy, is never read as a photo's), with no vector, no fa
 The next index and the owed scan (tagpup.store.photo_fingerprints.owed) owe it nothing, so sync never queues a clip's
 folder again. The photos beside it are indexed exactly as before.
 
+Then what happens to a clip in the library: moved to another of its folders, or renamed in its own, sync follows it
+(the row, its id and its kind go with the file, by its stamp: a clip holds no DocumentID); one still being copied when
+it was indexed (its size changes after) is read again by the next sync; one cut short (a copy that failed) is a row
+of kind 'video' holding nothing read (ExifTool answers such a file with a Warning, "Truncated 'mdat' data", not an
+Error, so it is not a read_error: a photo cut short is read the same way), never decoded, and not read again while it
+stays as it is; two
+libraries holding one folder of clips each record their own rows, and neither's sync touches the other.
+
 The clips are made here by the machine's ffmpeg (tagpup.config.locate_ffmpeg), as tests/test_frames_of_a_video.py makes
 them, in a home of the test's own; ExifTool is real; CLIP and the face models are the stand-ins of
 tests/test_an_index_reads_the_next_photos_ahead.py. Skipped, saying so, on a machine without ffmpeg or ExifTool.
@@ -28,7 +36,7 @@ from test_an_index_reads_the_next_photos_ahead import StandIns, photo, recorded 
 
 import tagpup_cli  # noqa: E402
 from tagpup import config  # noqa: E402
-from tagpup.core import dates, processes  # noqa: E402
+from tagpup.core import dates, paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.services import bake_after_index, baking  # noqa: E402
@@ -36,6 +44,7 @@ from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import photos as photo_service  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
+from tagpup.services import sync, thumbnails  # noqa: E402
 from tagpup.store import db, embeddings, photo_fingerprints  # noqa: E402
 
 TOOLS = config.locate_ffmpeg()
@@ -72,6 +81,16 @@ def rows(library):
     try:
         return {os.path.basename(path): (kind, taken, bool(vectors)) for path, kind, taken, vectors in conn.execute(
             "SELECT p.path, p.kind, p.taken, (SELECT COUNT(*) FROM embeddings e WHERE e.photo_id = p.id) FROM photos p")}
+    finally:
+        conn.close()
+
+
+def ids(library):
+    """{file name: (id, kind, size)} as the library holds it."""
+    conn = db.connect(db.readonly_uri(library), uri=True)
+    try:
+        return {os.path.basename(path): (photo_id, kind, size)
+                for photo_id, path, kind, size in conn.execute("SELECT id, path, kind, size FROM photos")}
     finally:
         conn.close()
 
@@ -158,6 +177,96 @@ class AClipIsIndexedAsAVideo(unittest.TestCase):
             with self.subTest(read=read.__name__):
                 self.assertEqual(["sail.jpg"], [os.path.basename(r["path"]) for r in
                                                 read(Library(self.library), folder, exiftool).values()])
+
+
+@unittest.skipIf(TOOLS.problem, "ffmpeg is not installed on this machine (winget install Gyan.FFmpeg): %s" % TOOLS.problem)
+@unittest.skipIf(own_home.installed_exiftool() is None, "ExifTool not installed")
+class AClipInTheLibrary(unittest.TestCase):
+    """What happens to a clip after it is indexed: sync follows it, reads it again, or leaves it be."""
+
+    index, owed = AClipIsIndexedAsAVideo.index, AClipIsIndexedAsAVideo.owed
+
+    def setUp(self):
+        AClipIsIndexedAsAVideo.setUp(self)
+        self.folder = os.path.join(self.home.root, "Regatta")
+        self.day_two = os.path.join(self.folder, "Day two")
+        os.makedirs(self.day_two)
+        photo(os.path.join(self.day_two, "sail.jpg"), (30, 30, 200))
+
+    def sync(self, library=None, apply=True):
+        return sync.sync(Library(library or self.library), apply=apply, exiftool_path=own_home.installed_exiftool())
+
+    def test_a_clip_moved_to_another_folder_or_renamed_in_its_own_is_followed_by_sync(self):
+        moved, renamed = clip(self.folder, "harbour.mp4"), clip(self.folder, "jetty.mov")
+        self.index(self.folder)
+        before = ids(self.library)
+
+        os.replace(moved, os.path.join(self.day_two, "harbour.mp4"))   # a move keeps the modified time
+        os.replace(renamed, os.path.join(self.folder, "jetty at dusk.mov"))
+        result = self.sync()
+
+        counts = result.details["counts"]
+        self.assertEqual((2, 0, 0, 0), (counts["moved"], counts["missing"], counts["to_remove"], counts["to_check"]),
+                         counts)
+        after = ids(self.library)
+        self.assertEqual(before["harbour.mp4"], after["harbour.mp4"], "the moved clip's row did not follow it")
+        self.assertEqual(before["jetty.mov"], after["jetty at dusk.mov"], "the renamed clip's row did not follow it")
+        self.assertNotIn("jetty.mov", after)
+        self.assertTrue(self.sync(apply=False).details["in_step"], "the library is not in step after the sync")
+        self.assertEqual({}, self.owed(self.folder))
+
+    def test_a_clip_still_being_copied_when_it_was_indexed_is_read_again_by_the_next_sync(self):
+        path = clip(self.folder, "harbour.mp4")
+        self.index(self.folder)
+        photo_id = ids(self.library)["harbour.mp4"][0]
+        with open(path, "ab") as handle:   # the copy goes on: the file grows after its row was made
+            handle.write(b"\x00" * 4096)
+        later = os.stat(path).st_mtime + 10
+        os.utime(path, (later, later))
+
+        result = self.sync()
+
+        counts = result.details["counts"]
+        self.assertEqual((1, 0), (counts["changed"], counts["to_check"]), counts)
+        self.assertEqual((photo_id, "video", os.path.getsize(path)), ids(self.library)["harbour.mp4"],
+                         "the clip's row was not read again")
+        self.assertTrue(self.sync(apply=False).details["in_step"])
+
+    def test_a_clip_cut_short_is_a_row_that_is_never_decoded_and_not_read_again(self):
+        whole = clip(os.path.join(self.home.root, "Elsewhere"), "harbour.mp4")
+        with open(whole, "rb") as handle:
+            head = handle.read(64)   # a copy that failed part way: the start of the file and nothing after
+        os.makedirs(self.folder, exist_ok=True)
+        with open(os.path.join(self.folder, "harbour.mp4"), "wb") as handle:
+            handle.write(head)
+
+        self.index(self.folder)
+
+        photo_id, kind, size = ids(self.library)["harbour.mp4"]
+        self.assertEqual(("video", 64), (kind, size))
+        self.assertEqual(("video", None, False), rows(self.library)["harbour.mp4"], "a date or a vector of a clip cut short")
+        self.assertEqual(1, len(self.models.shown), "a clip was handed to CLIP (the one photo is Day two's)")
+        self.assertEqual([os.path.join(self.day_two, "sail.jpg")], [paths.stored(path) for path, _size in self.models.detected],
+                         "a clip was looked at for faces")
+        self.assertEqual(thumbnails.VIDEO, thumbnails.serve(Library(self.library), photo_id).kind)
+        self.assertIn("All images are up to date", self.index(self.folder))
+        self.assertEqual({}, self.owed(self.folder))
+
+    def test_two_libraries_holding_one_folder_of_clips_each_keep_their_own_rows(self):
+        clip(self.folder, "harbour.mp4")
+        other = self.home.library("jetty.db")
+        self.assertEqual(1, library_actions.create(other).changed)
+        self.index(self.folder)
+        result = CliRunner().invoke(tagpup_cli.cli, ["--db", other, "index", self.folder])
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual(("video", "video"), (rows(self.library)["harbour.mp4"][0], rows(other)["harbour.mp4"][0]))
+
+        os.replace(os.path.join(self.folder, "harbour.mp4"), os.path.join(self.day_two, "harbour.mp4"))
+        before = ids(other)
+        self.assertEqual(1, self.sync().details["counts"]["moved"])
+        self.assertEqual(before, ids(other), "one library's sync changed the other's rows")
+        self.assertEqual(1, self.sync(other).details["counts"]["moved"])
+        self.assertEqual(ids(self.library)["harbour.mp4"][1:], ids(other)["harbour.mp4"][1:])
 
 
 class AClipsDateRule(unittest.TestCase):
