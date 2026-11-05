@@ -157,6 +157,7 @@ class AShareThatStopsAnswering(Videos):
         self.addCleanup(shares.forget)
         self.release = threading.Event()
         self.addCleanup(self.release.set)
+        self.fails = OSError(None, "The specified network name is no longer available", None, 64)
         opened = []
         real = open
 
@@ -164,7 +165,7 @@ class AShareThatStopsAnswering(Videos):
             opened.append(path)
             if len(opened) > 1:   # the share stops answering after the first piece
                 self.release.wait(10)
-                raise OSError(64, "The specified network name is no longer available")
+                raise self.fails
             return real(path, *args, **kwargs)
 
         for patcher in (mock.patch.object(shares, "on_a_network_drive", lambda path: True),
@@ -186,6 +187,24 @@ class AShareThatStopsAnswering(Videos):
         self.assertLess(time.monotonic() - started, 0.25, "a share taken as away is answered at once")
         self.assertEqual((503, "2"), (again.status_code, again.headers["Retry-After"]))
         self.assertIn("away", again.get_json()["error"])
+
+    def test_a_server_that_says_not_found_after_the_wait_is_still_away(self):
+        """The open waited past READ_WAIT (the share taken as away), then the server said "not found" (WinError 53):
+        the share is not back, as a stamp or a listing that heard the same would say."""
+        self.fails = FileNotFoundError(None, "The network path was not found", None, 53)
+        reply = self.ask(asked="bytes=0-", buffered=False)
+        self.addCleanup(reply.close)
+        pieces = iter(reply.response)
+        self.assertEqual(CONTENT[:READ], next(pieces))
+        self.assertEqual(b"", b"".join(pieces), "the wait ran out")
+        server = os.path.splitdrive(self.path)[0] + os.sep
+        real = os.path.exists
+        with mock.patch("os.path.exists", lambda path: path != server and real(path)):   # the server is gone
+            self.release.set()
+            for look in [thread for thread in threading.enumerate() if thread.name == "ShareLook"]:
+                look.join(5)
+        again = self.ask(asked="bytes=%d-" % READ)
+        self.assertEqual(503, again.status_code, "the look that ended in 'not found' did not take the share as back")
 
 
 class TwoLibraries(Videos):

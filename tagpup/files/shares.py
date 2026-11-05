@@ -384,9 +384,17 @@ class FileChanged(OSError):
     name. Nothing of it is answered; the reader asks for the file again."""
 
 
-def _read_span(path, start, length, stamp):
-    """read_span's read, asked of the disk now."""
-    with open(path, "rb") as handle:
+def _read_span(path, start, length, stamp, on_a_share=False):
+    """read_span's read, asked of the disk now; UNANSWERED for a file "not found" on a network share that does not
+    answer (a server gone while the open waited, WinError 53: _share_answers, as stamp_of and listing learn it, so the
+    end of a look that waited does not take the share as back)."""
+    try:
+        handle = open(path, "rb")
+    except (FileNotFoundError, NotADirectoryError):
+        if on_a_share and not _share_answers(path):
+            return UNANSWERED
+        raise
+    with handle:
         found = os.fstat(handle.fileno())
         if (found.st_mtime, found.st_size) != tuple(stamp):
             raise FileChanged("The file changed since it was looked at.")
@@ -406,8 +414,8 @@ def read_span(path, start, length, stamp):
     request is answered at once. The read on a share is bounded but not waited behind (bounded's `waited_behind`)."""
     if not on_a_network_drive(path):
         return _read_span(path, start, length, stamp)
-    state, found = bounded(path, lambda: _read_span(path, start, length, stamp), READ_WAIT, waited_behind=False)
-    if state == "away":
+    state, found = bounded(path, lambda: _read_span(path, start, length, stamp, True), READ_WAIT, waited_behind=False)
+    if state == "away" or found is UNANSWERED:
         raise Unavailable(SHARE_AWAY_SENTENCE % os.path.splitdrive(paths.stored(path))[0])
     if state == "error":
         raise found
