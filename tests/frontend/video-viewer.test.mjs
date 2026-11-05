@@ -4,7 +4,9 @@
  * no src, the stream let go -- when another photo is shown, on Back and on Escape. How it fails: rapid stepping between
  * a video and photos, the same video shown again (it plays on), a record with no `media` (a photo), and the video's
  * error event: a format the browser cannot play, a file gone, a share away, and an error of a video already left.
- * Switching library is another page (web/common/library.js): nothing of the video outlives it. Fictional names only.
+ * Switching library is another page (web/common/library.js): nothing of the video outlives it. A video is not edited:
+ * while one is shown, Rotate, Date Taken and every control that writes are inert with a sentence saying why, and a
+ * photo stepped to after it has them back (stale.js applyPhotoStale). Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -134,6 +136,54 @@ describe("leaving a video while it plays", () => {
     await ctx.settle(200);
     assert.equal(ctx.state.library.activeId, VIDEO);
     assertPlaying(ctx, VIDEO, "ended on the video");
+  });
+});
+
+describe("a video is not edited", () => {
+  const writers = (ctx) => [...ctx.document.querySelectorAll("[data-writes]")];
+  const inert = (ctx) => writers(ctx).filter((node) => node.hasAttribute("inert"));
+  const note = (ctx) => el(ctx, "photo-missing-note");
+
+  function assertHeld(ctx, what) {
+    assert.ok(writers(ctx).length >= 5, `${what}: the page has its write controls`);
+    assert.equal(inert(ctx).length, writers(ctx).length, `${what}: every control that writes is inert`);
+    assert.ok(el(ctx, "btn-edit-date-taken").hasAttribute("inert"), `${what}: Date Taken`);
+    assert.ok(ctx.document.querySelector(".image-rotation-controls").hasAttribute("inert"), `${what}: Rotate`);
+    assert.equal(note(ctx).classList.contains("hidden"), false, `${what}: the sentence is shown`);
+    assert.match(note(ctx).textContent, /This is a video/);
+  }
+
+  function assertEditable(ctx, what) {
+    assert.deepEqual(inert(ctx), [], `${what}: every control that writes is back`);
+    assert.equal(note(ctx).classList.contains("hidden"), true, `${what}: no sentence`);
+  }
+
+  test("opening a video makes Rotate, Date Taken and the save controls inert, and says why", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    await open(ctx, VIDEO);
+    assertHeld(ctx, "the video");
+  });
+
+  test("rapid stepping between a video and photos leaves each with its own controls", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    await open(ctx, VIDEO - 1);
+    assertEditable(ctx, "a photo");
+    for (const key of ["ArrowRight", "ArrowRight", "ArrowLeft"]) press(ctx, key);
+    await ctx.settle(200);
+    assert.equal(ctx.state.library.activeId, VIDEO);
+    assertHeld(ctx, "ended on the video");
+    press(ctx, "ArrowRight");
+    await ctx.settle(120);
+    assertEditable(ctx, "stepped on to a photo");
+  });
+
+  test("a video whose file is gone says so, not that it is a video", async (t) => {
+    const ctx = await viewWithAVideo(t, {
+      photoExtra: (id) => (id === VIDEO ? { media: "video", mtime: MTIME, missing: true } : {}),
+    });
+    await open(ctx, VIDEO);
+    assert.equal(inert(ctx).length, writers(ctx).length);
+    assert.match(note(ctx).textContent, /not on disk/);
   });
 });
 
