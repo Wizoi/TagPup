@@ -10,8 +10,8 @@ Where the packet goes, in this order (live counts of the 2,184 MOV/MP4/M4V in th
 counted read-only 2026-11-05):
   1. Into the clip's one XMP box -- a top-level `uuid` box (80 live, each after moov; none is an MP4 as ExifTool
      writes it: 41 are Adobe Premiere/Media Encoder wrapped, 39 a bare 368-byte self-closing Description, and
-     xmp_packet.edit refuses every one, its properties being attributes, so no live packet reaches a placement into an
-     existing box until the editor handles that form; a box this module appends is the other source) or moov/udta/XMP_ (a .mov as ExifTool writes it; none live, made by a rewrite that falls
+     their properties are attributes, which xmp_packet.edit reads and edits where they stand (79 of the 80; the 80th is
+     over the 65,536-byte read cap and is refused); a box this module appends is the other source) or moov/udta/XMP_ (a .mov as ExifTool writes it; none live, made by a rewrite that falls
      to ExifTool) -- with the free/skip/wide boxes straight after it among its siblings ("the run"; 31 of the 80 have
      one, none has one before it): the new box is written at the old one's place and what is left of the run becomes
      one `free` box after it (only its header is written: a free box's content is never read). Fewer than 8 bytes left
