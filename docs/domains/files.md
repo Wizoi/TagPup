@@ -206,7 +206,7 @@ a JPEG (the XMP packet's size, EXIF Orientation; regions, extended XMP and two X
 
 ## The XMP packet editor
 
-`tagpup/files/xmp_packet.py` (M2 of docs/PLAN_OWN_METADATA.md; no caller yet, M4 wires it): pure, a packet's bytes in
+`tagpup/files/xmp_packet.py` (M2 of docs/PLAN_OWN_METADATA.md; its one caller `segment_edits`, M4): pure, a packet's bytes in
 and out, for a JPEG's segment and a clip's box alike. It owns nine properties (`PROPERTIES`, found by namespace URI):
 dc:subject and lr:hierarchicalSubject (a Bag), dc:description and dc:title (an x-default Alt), exif:DateTimeOriginal,
 xmp:CreateDate, tiff:Orientation, xmpMM:DocumentID and xmpMM:PreservedFileName (text). `read` answers their values;
@@ -223,10 +223,10 @@ Counted this session, read-only, through `scripts/census_segments.py`'s reads (s
 59,598 JPEGs sampled, kr-track's 2,065 and renton_parkrun's 1,308 every one; 4,373 XMP packets, every one read, none
 refused. Each was edited in memory (a caption, a keyword added, an Orientation), nothing written.
 
-- **Refused, each with no instance** (0 of the 4,373): a property written as an attribute or twice, two `rdf:about`
+- **Refused, each with no instance** (0 of the 4,373, nor of the 80 clips' packets): a property written twice (two
+  elements, or an attribute and an element), a Bag or an Alt written as an attribute, two `rdf:about`
   values, a DTD, a comment, a CDATA section, a processing instruction or text beside an element (an edit that clears a
-  property splices from the element before it), a byte order mark or UTF-16, a NUL, a self-closing Description that
-  would take a property (refused by the read-back), an Alt not one x-default item, bytes after the end PI, `end='r'`
+  property splices from the element before it), a byte order mark or UTF-16, a NUL, an Alt not one x-default item, bytes after the end PI, `end='r'`
   (all 4,366 wrapped are `end='w'`). CRLF: none in the packets. A value XML cannot carry (NUL, another C0) is refused;
   `&`, `<`, `>` are escaped and a CR written `&#xD;`. Over `LIMIT` (64 KB, read or made) is refused; that a JPEG's
   segment holds a few bytes less is its container's to check.
@@ -244,6 +244,22 @@ refused. Each was edited in memory (a caption, a keyword added, an Orientation),
   declaration added stays). The previous worker compared it with ExifTool on 5 sidecar copies: the owned and all other
   tags equal.
 - **Not verified**: an ExifTool edit of the same change inside a JPEG, byte for byte (M4's shadow comparison).
+- **A text property written as an attribute of rdf:Description** (Adobe's tools write a clip's packet so) reads as its
+  element does; an edit changes the attribute's value where it stands, its quote kept (`&`, `<`, `>`, the quote, a tab,
+  CR and LF written as references, since a parser reads a plain tab or line break in an attribute as a space), and a
+  cleared one goes with the whitespace before it; it is never turned into an element. A property added to a
+  self-closing `<rdf:Description .../>` opens it (`/>` becomes `>`, its children indented one space past its line, its
+  end tag on a line of its own), its namespace declared inside the start tag. Counted this session, read-only: of the
+  2,184 clips in the three libraries' 2,603 photo folders, 80 hold an XMP packet: 40 wrapped by Adobe Premiere or Media
+  Encoder (`xmp:CreateDate`, `tiff:Orientation`, `xmpMM:DocumentID` attributes, padding of 2,000 B or more), 39 bare
+  368-byte "Adobe XMP Core 5.1.0-jc003" packets (a self-closing Description, `exif:DateTimeOriginal` an attribute, no
+  wrapper), 1 of 206,986 B (over `LIMIT`, refused). 79 read; each was edited in memory (a date, a keyword, a caption,
+  the dates cleared), nothing written: the 40 every one at its length, the 39 only with `grow` (no padding) but for a
+  value of the same length, and each edit made twice gave the bytes of once. JPEGs: 300 of photo_index's 59,600 sampled
+  (seed 20261105) hold 300 packets, every one ExifTool's, none with a property as an attribute or a self-closing
+  Description; ExifTool writes the attribute form only under its `-api Compact=Shorthand` option, which TagPup never
+  passes. Read back by ExifTool (`-validate` clean) and ffprobe in a clip of each shape:
+  `tests/test_an_adobe_clip_packet_edited_and_read_back.py`.
 
 ## The EXIF block editor
 

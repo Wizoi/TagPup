@@ -2,7 +2,10 @@
 
 Pure: bytes in, bytes out, no file and no container; a JPEG's segment and a clip's box both hand it the packet alone.
 
-`read(packet)` is {name: value} of the owned properties the packet holds (a Bag a list of str, the rest a str).
+`read(packet)` is {name: value} of the owned properties the packet holds (a Bag a list of str, the rest a str). A text
+property is read alike written as an element or as an attribute of rdf:Description (`xmp:CreateDate="..."`, as Adobe's
+tools write a clip's packet); an edit changes such an attribute's value where it stands, or removes the attribute, and
+a property added to a self-closing `<rdf:Description .../>` opens it.
 `edit(packet, changes)` sets each named property to its value (None, '' or [] clears it) and answers `containers.Edited`: every byte
 outside the owned properties' own elements is the packet's as it was -- other namespaces, comments, attribute order,
 quotes, whitespace -- and the change is paid for out of the padding before `<?xpacket end`, so the packet keeps its
@@ -54,20 +57,59 @@ class _Refused(Exception):
 class _Node:
     """An element: its namespace URI, local name and prefix, attributes by (URI, local), the {URI: prefix} in scope, and
     its byte offsets: start, after its start tag, its end tag's start, its end (the last two the first's for <a/>)."""
-    __slots__ = ("uri", "local", "prefix", "attrs", "scope", "start", "open_end", "close_start", "end", "children",
-                 "text")
+    __slots__ = ("uri", "local", "prefix", "attrs", "attr_prefixes", "scope", "start", "open_end", "close_start", "end",
+                 "children", "text")
 
     def __init__(self, name, attrs, scope, start, open_end):
         parts = name.split(" ")
         self.uri, self.local = (parts[0], parts[1]) if len(parts) > 1 else ("", parts[0])
         self.prefix = parts[2] if len(parts) > 2 else ""
         self.attrs = {tuple(key.split(" ")[:2]): value for key, value in attrs.items()}
+        self.attr_prefixes = {tuple(key.split(" ")[:2]): (key.split(" ") + ["", ""])[2] for key in attrs}
         self.scope, self.start, self.open_end = scope, start, open_end
         self.close_start = self.end = open_end
         self.children, self.text = [], []
 
     def name(self):
         return (self.uri, self.local)
+
+    def qname(self):
+        return ((self.prefix + ":" if self.prefix else "") + self.local).encode()
+
+    @property
+    def closed(self):
+        """True for an element written <a/>."""
+        return self.end == self.open_end
+
+
+class _Attribute:
+    """A property written as an attribute: the byte offsets of the attribute (the whitespace before it included) and
+    of its value, and the quote around the value."""
+    __slots__ = ("start", "value_start", "value_end", "end", "quote")
+
+    def __init__(self, start, value_start, value_end, end, quote):
+        self.start, self.value_start, self.value_end, self.end, self.quote = start, value_start, value_end, end, quote
+
+
+_ELEMENT_NAME = re.compile(rb"<[^\s/>]+")
+_ATTRIBUTE = re.compile(rb"\s+([^\s=/>]+)\s*=\s*(?:'([^']*)'|\"([^\"]*)\")")
+
+
+def _attribute(data, node, key):
+    """The _Attribute of `node`'s attribute `key` (URI, local), found by its name in the start tag, attribute by
+    attribute (a value may hold another attribute's name); expat has read the tag, so each one matches."""
+    prefix = node.attr_prefixes[key]
+    wanted = ((prefix + ":" if prefix else "") + key[1]).encode("utf-8")
+    at = _ELEMENT_NAME.match(data, node.start).end()
+    while True:
+        found = _ATTRIBUTE.match(data, at)
+        if found is None:
+            raise _Refused("An attribute of rdf:Description could not be found in its start tag.")
+        if found.group(1) == wanted:
+            group = 2 if found.group(2) is not None else 3
+            return _Attribute(found.start(), found.start(group), found.end(group), found.end(),
+                              data[found.start(group) - 1:found.start(group)].decode())
+        at = found.end()
 
 
 def _tree(data):
@@ -178,9 +220,15 @@ class _Packet:
             raise _Refused("The packet names two rdf:about values.")
         self.nodes, self.values = {}, {}
         for description in self.descriptions:
-            attribute = next((key for key in description.attrs if key in _NAMES), None)
-            if attribute:
-                raise _Refused("%s is written as an attribute of rdf:Description." % _NAMES[attribute])
+            for key, value in description.attrs.items():
+                name = _NAMES.get(key)
+                if name and PROPERTIES[name][2] != "Text":
+                    raise _Refused("%s is written as an attribute of rdf:Description, which holds only text." % name)
+                if name in self.nodes:
+                    raise _Refused("%s is written twice." % name)
+                if name:
+                    self.nodes[name] = (description, _attribute(data, description, key))
+                    self.values[name] = value
             for node in description.children:
                 name = _NAMES.get(node.name())
                 if name in self.nodes:
@@ -200,6 +248,13 @@ def read(packet, limit=LIMIT):
 
 def _escaped(text):
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\r", "&#xD;").encode("utf-8")
+
+
+def _escaped_attribute(text, quote):
+    """`text` as an attribute's value between `quote`s: a tab or line break written as a reference, since a parser
+    reads one written plainly as a space."""
+    text = _escaped(text).decode("utf-8").replace("\t", "&#x9;").replace("\n", "&#xA;")
+    return text.replace(quote, "&apos;" if quote == "'" else "&quot;").encode("utf-8")
 
 
 def _wanted(name, value):
@@ -233,6 +288,10 @@ def _changed(packet, name, value):
     """The splice (start, end, bytes) that makes property `name`, which `packet` holds, hold `value`."""
     data, (description, node) = packet.data, packet.nodes[name]
     form = PROPERTIES[name][2]
+    if isinstance(node, _Attribute):
+        if value is None:
+            return node.start, node.end, b""
+        return node.value_start, node.value_end, _escaped_attribute(value, node.quote)
     if value is None:
         index = description.children.index(node)
         return description.children[index - 1].end if index else description.open_end, node.end, b""
@@ -253,7 +312,7 @@ def _changed(packet, name, value):
 
 def _splices(packet, changes):
     """[(start, end, bytes)] that make `changes` ({name: normalised value}, in PROPERTIES' order) of `packet`."""
-    data, out, declared = packet.data, [], {}
+    data, out, declared, opened = packet.data, [], {}, {}
     for name, value in changes.items():
         uri, local, form = PROPERTIES[name]
         if name in packet.nodes:
@@ -267,17 +326,27 @@ def _splices(packet, changes):
             prefix = name.split(":")[0]
             if prefix in description.scope.values():
                 raise _Refused("The prefix %s names another namespace in the packet." % prefix)
-            tag = data[description.start:description.open_end]
+            tag = data[description.start:description.open_end - (2 if description.closed else 1)].rstrip()
             at = tag.rfind(b"xmlns:")
             gap = tag[len(tag[:at].rstrip()):at] if at > 0 else b" "
-            out.append((description.open_end - 1, description.open_end - 1,
-                        gap + b"xmlns:%s='%s'" % (prefix.encode(), uri.encode())))
+            end = description.start + len(tag)
+            out.append((end, end, gap + b"xmlns:%s='%s'" % (prefix.encode(), uri.encode())))
         else:
             prefix = description.scope.get(uri, name.split(":")[0])
-        last = description.children[-1].end if description.children else description.open_end
-        indent = data[last:description.close_start] + b" "
+        if description.closed:
+            # <rdf:Description .../> is opened: its /> becomes >, and its end tag follows what is put in it
+            line = data[data.rfind(b"\n", 0, description.start) + 1:description.start]
+            if id(description) not in opened:
+                opened[id(description)] = description, b"\n" + (b"" if line.strip() else line)
+                out.append((description.open_end - 2, description.open_end, b">"))
+            last, indent = description.open_end, opened[id(description)][1] + b" "
+        else:
+            last = description.children[-1].end if description.children else description.open_end
+            indent = data[last:description.close_start] + b" "
         qname = (prefix + ":" + local if prefix else local).encode()
         out.append((last, last, indent + _element(qname, description.prefix.encode(), form, value, indent)))
+    for description, line in opened.values():
+        out.append((description.open_end, description.open_end, line + b"</%s>" % description.qname()))
     return out
 
 

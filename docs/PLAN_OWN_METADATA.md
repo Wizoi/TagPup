@@ -34,8 +34,9 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
   unknown tag. New value data goes in the slack or segment end; the segment grows only when it has no MakerNote or the census shows its offsets are not affected (M3 decides, from the census classes in docs/domains/files.md).
   A structure that cannot be followed is "not mine" and goes to ExifTool.
 - XMP: an XML-preserving textual edit of the properties TagPup owns; other namespaces kept as bytes; UTF-8, keep the
-  `<?xpacket>` wrapper and its padding and the first `rdf:about`. A packet where a target property occurs twice or in
-  attribute form, or is not well-formed, is refused to ExifTool or with a plain sentence. Extended XMP: main packet edited,
+  `<?xpacket>` wrapper and its padding and the first `rdf:about`. A text property in attribute form is read and edited where it
+  stands (2026-11-05); a packet where a target property occurs twice (or a Bag/Alt in attribute form), or is not
+  well-formed, is refused to ExifTool or with a plain sentence. Extended XMP: main packet edited,
   extension untouched (111 of 3,000 in photo_index, 80 of 2,065 in kr-track, counted 2026-11-03).
 - IPTC: rewrite only 8BIM 0x0404 (2:25, 2:120, 2:05, 1:90 charset); the 8BIM 0x0425 IPTCDigest is left alone (owner 2026-11-03, DECISIONS);
   keep every other 8BIM resource; pad with the dummy resource (`PAD_RESOURCE` 0x0DAC).
