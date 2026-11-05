@@ -17,8 +17,9 @@ counted read-only 2026-11-05):
      bytes before and after, so no other box moves: moov keeps its size, mdat its offset, and the chunk offsets in
      stco/co64 stay true.
   2. A top-level XMP box whose run reaches the end of the file (39 live) grows there: the file is longer, nothing moves.
-  3. A top-level XMP box that does not fit and cannot grow is made a `free` box (its four type bytes) and the packet is
-     appended at the end of the file in a new uuid box. A .mov's moov/udta/XMP_ that does not fit is the rewrite's: to
+  3. A top-level XMP box that does not fit and cannot grow, or whose run would leave a free box of 4 GB or more (a
+     32-bit size cannot say it), is made a `free` box (its four type bytes) and the packet is appended at the end of the
+     file in a new uuid box. A .mov's moov/udta/XMP_ that does not fit is the rewrite's: to
      grow it is to grow udta and moov, which moves mdat when moov comes first; to move it out to a top-level box is to
      take it from the place Adobe's specification gives a QuickTime file.
   4. A clip with no XMP (2,104 live) gets a uuid box appended at the end of the file: what ExifTool writes into an MP4,
@@ -26,8 +27,8 @@ counted read-only 2026-11-05):
      (tests/test_a_clip_patched_in_place.py).
 
 None, the rewrite's, for: no moov, two moov, a moov or udta whose children do not fit in it, a fragmented clip (moof),
-two XMP boxes (which one a reader takes is not this module's to guess), a free box left over of 4 GB or more (a 32-bit
-size cannot say it), a packet that needs an append where the last box has size 0 ("to the end of the file": it would
+two XMP boxes (which one a reader takes is not this module's to guess), a .mov's XMP_ that would leave a free box of
+4 GB or more, a packet that needs an append where the last box has size 0 ("to the end of the file": it would
 take the appended box into itself; none live), and a clip whose walk stops before its end (`Video.tail`): a box that
 claims more than the file holds (it may still be being copied) or bytes that are no box, where an appended box would
 lie past what a reader walks and an XMP box before them is in a file no two readers need agree on. 2 live clips have a
