@@ -122,10 +122,10 @@ def tag_words(library, model):
 
 def _rows(library, key):
     """[(photo id, path)] of the photos holding no vector under `key`, by id, and how many hold one, read now. A clip
-    (kind 'video') is neither: it is never given a vector, so never decoded here."""
+    is neither: a kind owed no vector (store.photos.owes_a_vector) is never decoded here."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        rows = [row for row in store_photos.stamps(conn, with_vectors=key, with_kind=True) if row[4] == "photo"]
+        rows = [row for row in store_photos.stamps(conn, with_vectors=key, with_kind=True) if store_photos.owes_a_vector(row[4])]
     finally:
         conn.close()
     todo = sorted((photo_id, path) for photo_id, path, _mtime, _size, _kind, held in rows if not held)

@@ -372,11 +372,40 @@ def vectors(conn, model):
                         " WHERE e.model = ? ORDER BY e.photo_id", (model,)).fetchall()
 
 
+# What a clip (photos.kind 'video') is not given yet: one rule each, read from here and never spelled as a kind test
+# where it is used, since each changes with its own merge of the video plan (DECISIONS 2026-11-02).
+#: The kinds the index owes a CLIP vector and a fingerprint, and looks at for faces (photo_fingerprints.owed,
+#: counts, checks.without_a_vector, photo_reembed). A clip is owed none until its vector from 5 frames lands
+#: (DECISIONS 2026-11-02, "THE OWNERS' PLANS", item 5): that merge adds 'video' here and splits the face check of
+#: photo_fingerprints.owed from it, as a clip's faces wait for the faces merge.
+VECTOR_KINDS = ("photo",)
+#: The kinds whose picture is drawn as a thumbnail (services.thumbnails): a clip is answered the placeholder, its file
+#: never opened, until its poster frame is made.
+DRAWN_KINDS = ("photo",)
+#: The kinds whose file a bake writes faces into (services.bake_after_index): never a clip (DECISIONS 2026-11-02,
+#: "THE OWNERS' PLANS", item 10; a clip's file is not written, services.file_changes.leave_out_clips).
+BAKED_KINDS = ("photo",)
+#: The kinds a delete sends to the Recycle Bin, so whose bytes a delete copies through this PC
+#: (store.selection_folders.bytes_by_folder): not a clip yet (files.recycle_bin.not_deleted refuses one by its path).
+DELETED_KINDS = ("photo",)
+
+
+def owes_a_vector(kind):
+    """Is a row of this kind ('photo' or 'video', photos.kind) owed a vector? (VECTOR_KINDS)"""
+    return kind in VECTOR_KINDS
+
+
+def sql_kind_in(kinds, column="kind"):
+    """The SQL test that `column` (photos.kind) is one of `kinds` (one of the *_KINDS above), written out: the kinds
+    are this module's constants, never a caller's text."""
+    return "%s IN (%s)" % (column, ", ".join("'%s'" % kind for kind in kinds))
+
+
 def counts(conn, model):
-    """(photos of kind 'photo', photos holding a vector under `model`): what a photo model's switch, retiring the other
-    keys' vectors and the search index count. A clip (kind 'video') holds no vector (PhotoIndex.record_videos) and owes
-    none, so it is not counted among the photos that could hold one."""
-    return conn.execute("SELECT (SELECT COUNT(*) FROM photos WHERE kind = 'photo'),"
+    """(photos owed a vector, VECTOR_KINDS; photos holding a vector under `model`): what a photo model's switch,
+    retiring the other keys' vectors and the search index count. A clip holds no vector (PhotoIndex.record_videos) and
+    owes none, so it is not counted among the photos that could hold one."""
+    return conn.execute("SELECT (SELECT COUNT(*) FROM photos WHERE " + sql_kind_in(VECTOR_KINDS) + "),"
                         " (SELECT COUNT(*) FROM embeddings e JOIN photos p ON p.id = e.photo_id"
                         " WHERE e.model = ?)", (model,)).fetchone()
 

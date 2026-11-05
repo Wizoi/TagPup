@@ -7,6 +7,7 @@ for the few that are wanted. Never a list of paths of the photos: a Select all o
 photo_index (counted 2026-10-04), not 68,000 paths. Reads only.
 """
 from tagpup.store import library_view
+from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
 #: Folder ids read in one statement.
@@ -43,11 +44,12 @@ def described(conn, folder_ids):
 def bytes_by_folder(conn, ids=None, source=None, excluded=()):
     """{folder id: (the bytes -- photos.size, as the index last read them -- of the photos of the selection it holds, the largest
     of them)}: what copies of them would take on this PC (a delete from a place with no Recycle Bin goes through this PC's, #694,
-    #703). One grouped read. A clip is never deleted, so never copied (tagpup.files.recycle_bin.not_deleted): its size is not
-    counted."""
+    #703). One grouped read. A clip is not deleted, so not copied (store.photos.DELETED_KINDS; tagpup.files.recycle_bin.not_deleted):
+    its size is not counted."""
     selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None:
         return {}
     return {folder_id: (total, largest) for folder_id, total, largest in conn.execute(
         "SELECT pf.folder_id, COALESCE(SUM(p.size), 0), COALESCE(MAX(p.size), 0) FROM photo_folder pf JOIN photos p"
-        " ON p.id = pf.photo_id WHERE pf.photo_id IN (%s) AND p.kind <> 'video' GROUP BY pf.folder_id" % selected, params)}
+        " ON p.id = pf.photo_id WHERE pf.photo_id IN (%s) AND %s GROUP BY pf.folder_id"
+        % (selected, store_photos.sql_kind_in(store_photos.DELETED_KINDS, "p.kind")), params)}

@@ -182,7 +182,7 @@ def serve(library, photo_id):
             conn.close()
     if row is None:
         raise NotFound("There is no photo %d in this library." % photo_id)
-    if row.kind == "video":
+    if row.kind not in store_photos.DRAWN_KINDS:
         return Thumb(thumbs.placeholder(), VIDEO)
     root = library.thumbs
     stamp = shares.reachable_stamp(row.path)
@@ -303,7 +303,7 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                 after = batch[-1][0]
                 jobs = []
                 for photo_id, row_path, path, kind in batch:
-                    if kind == "video":
+                    if kind not in store_photos.DRAWN_KINDS:
                         continue   # a clip has no thumbnail of its own to make (serve)
                     counts["photos"] += 1
                     stamp = walk.stamp_of(path)   # a share found away is asked once, its photos skipped
