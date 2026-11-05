@@ -23,7 +23,7 @@ from flask import Blueprint, Response, jsonify, request
 from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.library import picker_name
-from tagpup.core.result import Conflict, NotFound, Refused
+from tagpup.core.result import Conflict, NotFound, Refused, Unavailable
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit
 from tagpup.services import file_changes, file_only
@@ -596,7 +596,7 @@ def _view_error(why):
     if isinstance(why, paths.RootsError):
         # The gate (tagpup.web.roots_gate) answers this before a route runs; this is for what it could not see.
         return responses.error(409, str(why), roots_problem=True)
-    if isinstance(why, thumbnails.Unavailable):
+    if isinstance(why, Unavailable):
         reply = responses.error(503, str(why))
         reply[0].headers["Retry-After"] = "2"
         return reply
@@ -799,7 +799,7 @@ def photo_thumb():
         return responses.error(400, "Invalid 'id' parameter")
     try:
         thumb = thumbnails.serve(library, photo_id)
-    except (NotFound, paths.RootsError, thumbnails.Unavailable) as why:
+    except (NotFound, paths.RootsError, Unavailable) as why:
         return _view_error(why)
     except Exception as e:
         logger.error("Error serving the thumbnail of photo %s: %s", photo_id, e, exc_info=True)

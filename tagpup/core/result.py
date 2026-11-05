@@ -93,3 +93,9 @@ class NotHeld(Conflict):
 class Refused(Exception):
     """A read that will not be answered: a file type the servers do not send, say. A web
     route answers it with 400, as it does a Result that was refused."""
+
+
+class Unavailable(Exception):
+    """A read that cannot be answered just now, and why, as a sentence: the photo's file is on a network share that is
+    away, or is there and refuses to be read. A web route answers it with 503 and Retry-After: ask again in a moment.
+    Raised by tagpup.files.shares (the one owner of "a share is away") and the services reading through it."""

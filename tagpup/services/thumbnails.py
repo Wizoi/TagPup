@@ -32,7 +32,7 @@ import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from tagpup.core.result import NotFound
+from tagpup.core.result import NotFound, Unavailable
 from tagpup.files import images, shares, thumbs
 from tagpup.store import db
 from tagpup.store import photos as store_photos
@@ -58,10 +58,6 @@ ASSUMED_BYTES = 30_000
 #: Photos `warm` reads from the library at once, and decodes at once (threads: Pillow decodes outside the GIL).
 BATCH = 500
 WORKERS = 4
-
-
-class Unavailable(RuntimeError):
-    """The thumbnail cannot be answered just now, and why, as a sentence: the file is not reachable."""
 
 
 class Thumb:
