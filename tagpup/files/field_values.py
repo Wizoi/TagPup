@@ -226,7 +226,7 @@ def read_one(et, photo_path, wanted):
     return held
 
 
-def write(et, photo_path, values, saving=None, scratch_written=None):
+def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=None):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
     field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
     with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
@@ -253,7 +253,10 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
 
     Returns the fields of `values` the write left holding what they held before (fields.XMP_ONLY: a keyword or caption
     save the own writer patches into the XMP alone, OWN_WRITER), even when the patch had no byte to write; file_changes
-    records the file as fields.as_patched says. () for every other write, which writes them all."""
+    records the file as fields.as_patched says. () for every other write, which writes them all.
+
+    `own_writer` chooses a patch's writer for this write alone, True the own, False ExifTool's; None, OWN_WRITER. Only
+    the shadow comparison of the two (tagpup.services.metadata_check) chooses: it writes each side on a copy."""
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -274,7 +277,7 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
         return ()
     checked = own or any(fields.is_struct(field) for field in values)
     if PATCH_IN_PLACE and saving is not None:
-        if OWN_WRITER:
+        if OWN_WRITER if own_writer is None else own_writer:
             # The journal's values, by field (fields.EDITED_AS), never ExifTool's params by the name it is written as.
             def new_header(layout, header):
                 return segment_edits.new_header(layout, header, values)

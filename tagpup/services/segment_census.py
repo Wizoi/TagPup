@@ -87,16 +87,11 @@ def _read(path):
 
 
 def _looked(path):
-    """("read", (layout, header, tail)) | ("not_answered" | "gone" | "unreadable", None), never raising."""
+    """("read", (layout, header, tail)) | (why it was not read, None: shares.why_not_read's words), never raising."""
     state, found = shares.bounded(path, lambda: _read(path), shares.READ_WAIT)
     if state == "ok":
         return "read", found
-    if state == "away":
-        return "not_answered", None
-    if isinstance(found, (FileNotFoundError, NotADirectoryError)):
-        stamp = shares.stamp_of(path)
-        return ("gone" if stamp is None else "not_answered" if stamp is shares.UNANSWERED else "unreadable"), None
-    return "unreadable", None
+    return shares.why_not_read(path, found if state == "error" else None), None
 
 
 def _label(segment, body):
@@ -273,6 +268,18 @@ def _iptc(segment, header, counts):
 # --- the census ---------------------------------------------------------------------------------------------------
 
 
+def is_jpeg(path):
+    """Is the photo at `path` a JPEG by its extension (JPEG_EXTENSIONS)?"""
+    return os.path.splitext(path)[1].lower() in JPEG_EXTENSIONS
+
+
+def drawn(jpegs, sample, seed):
+    """`sample` of the paths `jpegs` (all of them when fewer), drawn with `seed`, in the order of `jpegs`: the census's
+    draw, which the shadow comparison of the writers (tagpup.services.metadata_check) makes too, so both read the same
+    photos."""
+    return [jpegs[index] for index in sorted(random.Random(seed).sample(range(len(jpegs)), min(sample, len(jpegs))))]
+
+
 def census(library, sample=SAMPLE, seed=SEED, timed=TIMED):
     """What `library`'s JPEGs hold in their metadata segments (the module says), with the extensions and kinds of all
     its photos and its journal's files by state. A library whose root this machine does not place answers
@@ -291,15 +298,15 @@ def census(library, sample=SAMPLE, seed=SEED, timed=TIMED):
     for photo_id, path in held:
         extension = os.path.splitext(path)[1].lower() or "(none)"
         by_type["%s %s" % (extension, kinds.get(photo_id, "?"))] += 1
-        if extension in JPEG_EXTENSIONS:
+        if is_jpeg(path):
             jpegs.append(path)
-    chosen = sorted(random.Random(seed).sample(range(len(jpegs)), min(sample, len(jpegs))))
+    chosen = drawn(jpegs, sample, seed)
     looked, counts = collections.Counter(), collections.Counter()
     makers, toolkits, orders = collections.defaultdict(collections.Counter), collections.Counter(), collections.Counter()
     times = []
-    for index in chosen:
+    for path in chosen:
         began = time.perf_counter()
-        state, found = _looked(jpegs[index])
+        state, found = _looked(path)
         if state == "read" and len(times) < timed:
             times.append((time.perf_counter() - began) * 1000)
         if state == "read" and not isinstance(found[0], containers.Jpeg):

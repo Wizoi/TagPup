@@ -54,10 +54,11 @@ RULES = (
     ("the grouping radius is a face model's cuts", None, r"eps\s*=\s*0\.\d|\b(CLUSTER_EPS|GROUPING)\s*=", ()),
     # A photo file's fields are written by the journaled path (file_changes.write_fields), and by the just-look path
     # (file_only, unjournaled by the owner's decision, #527) alone: a bulk write of its own once left rows describing
-    # what the photos used to hold (#1443).
+    # what the photos used to hold (#1443). metadata_check writes copies in its sandbox alone, never a library's photo, by
+    # each writer in turn (field_values.write's own_writer; tests/test_the_two_writers_compared_on_copies.py).
     ("a photo's fields are written by file_changes", os.path.join("tagpup", "services", "file_changes.py"),
      r"field_values\.write\(|from\s+tagpup\.files\.field_values\s+import\s[^\n]*\bwrite\b",
-     (os.path.join("tagpup", "services", "file_only.py"),)),
+     (os.path.join("tagpup", "services", "file_only.py"), os.path.join("tagpup", "services", "metadata_check.py"))),
 )
 
 

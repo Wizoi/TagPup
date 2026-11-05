@@ -89,8 +89,9 @@ from tagpup import launcher
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
-from tagpup.core.result import SHARE_AWAY, NotFound
+from tagpup.core.result import SHARE_AWAY, NotFound, Refused
 from tagpup.services import maintenance
+from tagpup.services import metadata_check, segment_census
 from tagpup.services import refresh_rows
 from tagpup.services import file_changes
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex
@@ -1126,6 +1127,35 @@ def history(ctx, change_id, limit, reveal):
         for row in entry.get("values", []):
             console.print("  %s %s %s: %s -> %s" % (row["action"], row["table"], "/".join(str(k) for k in row["key"]),
                                                    row["old"], row["new"]), markup=False)
+
+
+@cli.command("metadata-check")
+@click.option("--sample", default=metadata_check.SAMPLE, type=int, show_default=True,
+              help="How many of the library's JPEGs to compare, drawn with --seed.")
+@click.option("--seed", default=segment_census.SEED, type=int, show_default=True,
+              help="The draw's seed: the census's, so both read the same photos.")
+@click.option("--reveal", is_flag=True, help="List each difference's photo, operation and values. Paths and values can "
+                                             "name people.")
+@click.pass_context
+def metadata_check_command(ctx, sample, seed, reveal):
+    """Compare TagPup's own JPEG writer with ExifTool's on copies of a sample of the library's
+    JPEGs: seven writes each (a keyword added, the last taken off, a person added, a caption set
+    and cleared, Date Taken moved 90 minutes, a turn right), each written by both on fresh copies
+    in a sandbox in the temporary folder, removed at the end. It never writes the library or its
+    photos. Counts only unless --reveal. Exit status 1 when the writers differ, 2 when the run
+    stopped early (Ctrl+C, the sandbox's disk full)."""
+    library = _existing_library(ctx)
+    try:
+        found = metadata_check.check(library, get_exiftool_path(library.path, read_only=True), sample=sample,
+                                     seed=seed, reveal=reveal, say=lambda line: console.print(line, markup=False))
+    except Refused as e:
+        raise click.ClickException(str(e)) from e
+    for line in metadata_check.lines(found):
+        console.print(line, markup=False, soft_wrap=True)
+    if found["differences"]:
+        raise SystemExit(1)
+    if found["stopped"]:
+        raise SystemExit(2)
 
 
 def _say_rehearsal(result):

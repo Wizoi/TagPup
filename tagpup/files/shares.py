@@ -422,6 +422,61 @@ def read_span(path, start, length, stamp):
     return found
 
 
+#: Why a file's bytes were not read, as a run over many files counts it (tagpup.services.segment_census, metadata_check):
+#: the one spelling of each, why_not_read and read_whole's.
+GONE, NOT_ANSWERED, UNREADABLE, CHANGED = "gone", "not_answered", "unreadable", "changed while read"
+#: The bytes read_whole reads at a time, each piece one read_span: a large photo on a slow share is many waits of
+#: READ_WAIT, not one it cannot be read within (a video is played by pieces of the same size, services.photos.VIDEO_READ).
+READ_PIECE = 1024 * 1024
+
+
+def _not_stamped(stamp):
+    """Why a file whose stamp_of is `stamp` is not read: GONE, NOT_ANSWERED or UNREADABLE; None for a stamp."""
+    if stamp is None:
+        return GONE
+    if stamp is UNANSWERED:
+        return NOT_ANSWERED
+    if stamp is CANNOT_READ:
+        return UNREADABLE
+    return None
+
+
+def why_not_read(path, error):
+    """Why the read of the file at `path` failed, from `error`, what it raised (None: a read on a share not answered in
+    time, bounded's "away"): NOT_ANSWERED, CHANGED, GONE or UNREADABLE. A file "not found" is looked at again (stamp_of),
+    so one on a share that does not answer is not counted gone. The one triage of a read of a library's file that
+    failed, for a run that counts them and goes on."""
+    if error is None or isinstance(error, Unavailable):
+        return NOT_ANSWERED
+    if isinstance(error, FileChanged):
+        return CHANGED
+    if isinstance(error, (FileNotFoundError, NotADirectoryError)):
+        return _not_stamped(stamp_of(path)) or UNREADABLE
+    return UNREADABLE
+
+
+def read_whole(path):
+    """("read", the bytes of the file at `path`) | (why it was not read, None: why_not_read's words), never raising:
+    stamp_of, then the file read a READ_PIECE at a time against that stamp (read_span: the file opened and closed for
+    each, a file that changed between two pieces not read). What a run that copies a library's files reads them by
+    (tagpup.services.metadata_check)."""
+    stamp = stamp_of(path)
+    why = _not_stamped(stamp)
+    if why:
+        return why, None
+    pieces, at = [], 0
+    try:
+        while at < stamp[1]:
+            piece = read_span(path, at, min(READ_PIECE, stamp[1] - at), stamp)
+            if not piece:
+                raise FileChanged("The file ended before the size it was looked at with.")
+            pieces.append(piece)
+            at += len(piece)
+    except (OSError, Unavailable) as error:
+        return why_not_read(path, error), None
+    return "read", b"".join(pieces)
+
+
 def there(path):
     """Is there a file or a folder at `path` that the look could see (stamp_of gave its stamp)? False for one not there,
     one that cannot be read, and one on a share that does not answer: what a check before a write or an open asks, which
