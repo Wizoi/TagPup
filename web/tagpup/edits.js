@@ -278,6 +278,35 @@ export async function postPhotoMetadata(photo, { title = photo.title, tags = pho
     return data;
 }
 
+/**
+ * A save renamed the photo's file (its caption is part of the name): everything the page keeps by the photo's path moves
+ * to the new one -- the record, the selection and its suggestions (the server keeps those by the photo's id, so they
+ * were never lost, only filed under a name the page no longer asks for; finding #2415). The one place a rename is taken.
+ */
+export function photoRenamed(photo, newPath) {
+    const oldPath = photo.path;
+    photo.path = newPath;
+    photo.filename = baseName(newPath);
+    photosRenamed({ [oldPath]: newPath });
+}
+
+/**
+ * Photos were renamed, `renames` {old path: new path} (a save, or Smart Rename's `updated_paths`): their selection and
+ * suggestions move to the new names. Old paths are matched by pathKey, as the server may spell a path other than the scan did (#92).
+ */
+export function photosRenamed(renames) {
+    const moved = new Map(Object.entries(renames).map(([from, to]) => [pathKey(from), to]));
+    const kept = new Map(Object.keys(state.folderSuggestions).map(key => [pathKey(key), key]));
+    for (const [from, to] of moved) {
+        const held = kept.get(from);
+        if (held !== undefined && held !== to) {
+            state.folderSuggestions[to] = state.folderSuggestions[held];
+            delete state.folderSuggestions[held];
+        }
+    }
+    for (const [oldPath, newPath] of Object.entries(renames)) renameInSelection(oldPath, newPath);
+}
+
 /** After a write: redraw the panel for this photo, but only if it is still the one open. */
 export function redrawIfShowing(photo) {
     if (!samePath(state.activePhotoPath, photo.path)) return;
@@ -405,9 +434,7 @@ export async function writeDetailEdits(fields, { intent = null, path = state.act
     }
     clearTyped();
     if (data.new_path && data.new_path !== path) {
-        photo.path = data.new_path;
-        photo.filename = baseName(data.new_path);
-        renameInSelection(path, data.new_path);
+        photoRenamed(photo, data.new_path);
     }
 
     // The file is written. Whatever goes wrong redrawing the page from here on
