@@ -261,7 +261,7 @@ _FILES = {
             "details-panel grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
             "library-selection library-selection-jumps library-tally library-view looking-suggestions navigator "
             "navigator-multi photo-camera photo-details-layout photo-position photo-suggestions-panel search-page selection "
-            "selection-follows-the-photo selection-panel selection-suggestions selection-suggests-who-the-faces-look-like stale-cards suggest-cancel tagging-flow "
+            "selection-follows-the-photo selection-panel selection-suggestions selection-suggests-who-the-faces-look-like stale-cards suggest-cancel suggestions-follow-a-saved-photo tagging-flow "
             "test_a_search_keeps_no_thread_buffers "
             "test_camera_words test_caption_order test_chip_keys_follow_the_server test_view_rules_follow_the_server "
             "test_clip_sees_photos_upright test_embeddings_follow_their_photo "

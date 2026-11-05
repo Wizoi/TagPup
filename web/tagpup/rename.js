@@ -16,6 +16,7 @@ import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
 import { BULK_LIMIT, clearSelection } from './selected.js';
 import { whereWritten } from './write-queue.js';
+import { photosRenamed } from './edits.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -83,6 +84,7 @@ export function wireRenameAndTimeShift() {
                 return res.json().then(e => {
                     // Stopped part-way (the second part of a mixed rename): the names that DID change are shown.
                     if (Array.isArray(e.updated_photos)) {
+                        photosRenamed(e.updated_paths || {});
                         state.folderPhotos = e.updated_photos;
                         clearSelection();
                         state.lastSelectedPath = null;
@@ -101,6 +103,7 @@ export function wireRenameAndTimeShift() {
             // cleared below and was being counted after that, so this said 0.
             const renamedCount = Object.entries(data.updated_paths || {})
                 .filter(([from, to]) => !samePath(from, to)).length;
+            photosRenamed(data.updated_paths || {});
             state.folderPhotos = data.updated_photos;
             clearSelection();
             state.lastSelectedPath = null;
