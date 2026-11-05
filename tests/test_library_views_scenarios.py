@@ -3,7 +3,9 @@
 V1: a library of photos with equal Date Taken is scrolled through the real routes the page uses (/api/library/ids, then
 /api/library/cards for the next window of ids; the page's cursor is its place in the id list): no photo twice, none
 skipped, the equal dates in id order in the order's direction, the undated after the dated, whichever source and
-direction, with a reload in the middle, beside a second library, and at the cap.
+direction, with a reload in the middle, beside a second library, and at the cap. A clip among the photos of a folder is
+one more photo of the view: listed once in Date Taken order by a clip's own date rule, carded as a video, counted under
+its folder and its month by the navigator, found by its file name, and answered the placeholder thumbnail, not kept.
 V8: a view's cards, its ids and the page's cached scan are read again after the index, a rename, a bulk tag or the CLI
 wrote the library: the card says what the disk says, the keyword view lists what the write tagged, the folder scan is
 let go. The find route reads a path literally: `_` and `%` are not wildcards.
@@ -23,6 +25,8 @@ person and a month among the sources; TheOrder's dated-then-undated order), and 
 
 Photos are rows as the indexer records them (tests/view_library.py); fictional names only.
 """
+import datetime
+import json
 import os
 import sys
 import time
@@ -161,6 +165,43 @@ class ScrollingALibraryOfEqualDates(Views):
         self.assertEqual(([], 0), tuple(self.ids(kind="keyword", value="No/Such/Tag")[key] for key in ("ids", "total")))
         for tag in ("Trips/%", "Trips/_oast", "Trips/O'Brien"):
             self.assertEqual([], self.ids(kind="keyword", value=tag)["ids"], tag)
+
+
+class AClipAmongThePhotosOfAFolder(Views):
+    def test_a_clip_is_listed_carded_counted_found_and_thumbnailed_with_the_photos_beside_it(self):
+        # The clip was taken at ten, local time; QuickTime keeps its CreateDate in UTC, which a clip's rule reads as
+        # local time (tagpup.core.dates.CLIP_DATE_FIELDS). Read as given, it would fall outside nine to eleven here
+        # wherever the machine is more than an hour from UTC.
+        ten = datetime.datetime(2024, 6, 1, 10, 0, 0).astimezone()
+        utc = ten.astimezone(datetime.timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
+        before = self.vl.photo("Coast", "before.jpg", "2024:06:01 09:00:00")
+        clip = self.vl.photo("Coast", "Harbour Swim.mov", fields={"QuickTime:CreateDate": utc})
+        after = self.vl.photo("Coast", "after.jpg", "2024:06:01 11:00:00")
+        self.assertEqual([("video",)], self.vl.rows("SELECT kind FROM photos WHERE id = ?", clip))
+        coast = os.path.join(self.vl.pictures, "Coast")
+        for query in (dict(kind="all"), dict(kind="folder", folder=coast), dict(kind="month", value="2024-06")):
+            for order, shown_order in (("taken", [before, clip, after]), ("taken-desc", [after, clip, before])):
+                with self.subTest(query=query, order=order):
+                    listed, shown = self.scroll(order=order, **query)
+                    self.assertEqual(shown_order, listed, "once each, the clip by its own date")
+                    self.assertEqual(listed, shown)
+        media = {card["id"]: card.get("media") for card in self.cards([before, clip, after])}
+        self.assertEqual({before: "photo", clip: "video", after: "photo"}, media)
+
+        folders = self.get("/api/library/navigator", query_string={"section": "folders"}).get_json()["folders"]
+        held = [entry["direct"] for entry in folders if entry["name"] == "Coast"]
+        self.assertEqual([3], held, "the navigator counts the clip under its folder")
+        years = self.get("/api/library/navigator", query_string={"section": "dates"}).get_json()["years"]
+        june = [month["count"] for year in years if str(year["year"]) == "2024"
+                for month in year["months"] if str(month["month"]).endswith("6")]
+        self.assertEqual([3], june, "and under the month it was taken")
+
+        found = self.ids(kind="search", value=json.dumps({"words": "Swim"}))["ids"]
+        self.assertEqual([clip], found, "a search by its file name finds it")
+
+        reply = self.get("/api/photo-thumb", query_string={"id": clip})
+        self.assertEqual((200, "video"), (reply.status_code, reply.headers["X-TagPup-Thumb"]))
+        self.assertIn("no-cache", reply.headers["Cache-Control"], "a placeholder is not kept: the poster frame replaces it")
 
 
 class FindingAPathLiterally(Views):
