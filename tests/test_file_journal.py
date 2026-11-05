@@ -490,7 +490,7 @@ class APatchInPlace(FilesCase):
         self.assertEqual([first], self.recorded())
         record, before = file_journal.patch_of(self.library.path, first)
         self.assertEqual(3, len(record["ranges"]), "a range each of the EXIF, IPTC and XMP segments")
-        self.assertEqual({"v", "size", "ranges"}, set(record), "a patch keeps only the bytes it changes, no hash of the"
+        self.assertEqual({"v", "size", "ranges", "stale"}, set(record), "a patch keeps only the bytes it changes, no hash of the"
                          " rest (DECISIONS 2026-11-03, AN IN-PLACE PATCH CHECKS ONLY THE BYTES IT CHANGED)")
         # Only the bytes that differ, from the first to the last: XPKeywords' UTF-16 to its last differing byte.
         self.assertEqual("Beach".encode("utf-16-le")[:-1] + b"Beach" + b"Beach", before,

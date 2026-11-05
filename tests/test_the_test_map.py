@@ -155,6 +155,18 @@ class EveryTestFileHasOneOwner(unittest.TestCase):
                     self.assertEqual(owner, owners.SCENARIOS[ids[0]][0], "a file's owner is its first scenario's")
         self.assertEqual({o for o, _s in owners.SCENARIOS.values()}, set(owners.OWNERS))
 
+    def test_a_scenario_file_runs_the_scenarios_that_name_it_and_no_other(self):
+        # A file named after another in one scenario's string took that file's ids as well (D2 onto the crash settle
+        # listed under D3 alone, D9 onto four of F11's files): the map ran it for a flow it does not run.
+        named = {}
+        for sid, names in owners._SCENARIO_FILES.items():
+            for name in names.split():
+                named.setdefault(name if name.startswith("test_") else name + ".test.mjs", []).append(sid)
+        for name, (_owner, kind, ids) in owners.FILES.items():
+            if kind == "scenario":
+                with self.subTest(name):
+                    self.assertEqual(named.get(name, []), list(ids))
+
     def test_the_tier_file_and_the_map_agree_about_the_files_that_run_a_flow(self):
         long = tiers.SCENARIO | tiers.SLOW
         self.assertEqual([], sorted(n for n in long if owners.FILES[n][1] != "scenario"),

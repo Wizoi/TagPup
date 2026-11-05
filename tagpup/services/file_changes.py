@@ -378,6 +378,13 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                               stop_at_first_error, et, held, whole, on_planned, alongside, on_chunk)
 
 
+def _holds_already(before, after):
+    """Does a file holding `before` hold what a write of `after` would leave it holding: `after`, but for the fields the
+    writer leaves as they were (fields.as_patched of field_values.left_as_they_were; `after` itself unless the own
+    writer patches)? The plan's one question of a file it need not write."""
+    return fields.reads_same(before, fields.as_patched(before, after, field_values.left_as_they_were(after)))
+
+
 def _refused_whole(photo_paths, why):
     result = Result(attempted=len(photo_paths))
     result.refuse(why)
@@ -457,7 +464,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if fields.reads_same(before, after) and not (alongside is not None and alongside.wants(path)):
+        if _holds_already(before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))
             continue
@@ -504,7 +511,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                 written[path] = detail      # held already, as a file found holding it at the plan is
                 continue
             if outcome == "done":
-                if not fields.reads_same(planned[n][1], planned[n][2]):
+                if not _holds_already(planned[n][1], planned[n][2]):
                     result.changed += 1       # a file held what it was to hold: its rows alone were written
                 if isinstance(detail, dict) and row.followed:
                     detail["faces_turned"] = row.followed
@@ -851,10 +858,13 @@ def _by_bytes(library, row):
     read as any file is), a range this process tore put back first (in_place.TORN). Else (outcome, why): a conflict, never
     overwritten, for a file another program wrote (a byte neither found nor written, another size);
     ("writing", why) for one that cannot be read or put back now: left `writing` with its record for the next settle,
-    never a conflict, since the record is the only way back."""
+    never a conflict, since the record is the only way back. `row.stale` is made the fields the record says the patch
+    left as they were (in_place.left_stale): a file holding every range as written holds fields.as_patched of the write,
+    which the caller reads it against, after a crash as in the write."""
     saved = file_journal.patch_of(library.path, row.id)
     if saved is None:
         return None
+    row.stale = in_place.left_stale(saved[0])
     try:
         found = in_place.held(row.path, *saved)
         if found == in_place.TORN:
@@ -956,10 +966,12 @@ def _held_or_conflict(et, library, row, origin, target, finished, now=None, unre
             if unread_stays:
                 return "writing", str(e)
             return _conflict(library, row, "could not be read: %s" % e)
-    if fields.reads_same(now, target) and held_out:
+    # What the write leaves: `target`, but for the fields a patch whose record was saved left (row.stale, _by_bytes).
+    left = fields.as_patched(origin, target, row.stale)
+    if fields.reads_same(now, left) and held_out:
         _take_held_out(library, row, now, target, seen)
         return OUT, None
-    if fields.reads_same(now, target):
+    if fields.reads_same(now, left):
         # Written already: by a run a crash (or a stop) cut off before it recorded the row, whose
         # stamp from before the write was recorded with it (#265).
         _record_held(library, row, now, target, finished, row.stamp, seen)
@@ -1043,7 +1055,7 @@ def _after_failure(et, library, row, origin, target, finished, on_failure, error
         now = _read_now(et, row, target, stall_stops)
     except field_values.Unreadable:
         now = None
-    if now is not None and fields.reads_same(now, target):
+    if now is not None and fields.reads_same(now, fields.as_patched(origin, target, row.stale)):
         _record_held(library, row, now, target, finished, row.stamp, seen)
         return finished, None
     error = lock_owners.explain(error, row.path)   # after a failure only: who holds the file, if it is held

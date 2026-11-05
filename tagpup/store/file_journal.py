@@ -105,8 +105,10 @@ class FileRow:
     #: Not stored: this process saved a patch's record of the file for the write under way (save_patch), so what the write
     #: left is settled by the file's bytes (tagpup.services.file_changes._by_bytes).
     patched: bool = False
-    #: Not stored: the fields the write under way left holding what they held (field_values.write's answer,
-    #: tagpup.core.fields.PATCH_LEAVES), so the file is verified and recorded as fields.as_patched says it holds.
+    #: The fields the write under way left holding what they held (field_values.write's answer, from
+    #: tagpup.core.fields.XMP_ONLY), so the file is verified and recorded as fields.as_patched says it holds. Not a
+    #: column of its own: it is carried in the patch record's `stale` key, which in_place.left_stale reads back when a
+    #: crash leaves the file to be settled by its bytes (tagpup.services.file_changes._by_bytes).
     stale: tuple = ()
 
     @property

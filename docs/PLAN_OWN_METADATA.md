@@ -62,12 +62,17 @@ PreservedFileName. Bake: XMP-tagpup fields and MWG RegionInfo (stay on ExifTool)
   docs/domains/files.md. Confirms the format split and the extended-XMP scope.
 - **M2** XMP packet editor (pure; shared with the clip patcher).
 - **M3** EXIF and IPTC block editors (IPTCDigest, charset).
-- **M4** wire into `in_place.patch_jpeg` behind `OWN_WRITER = False` with shadow comparison; the %TEMP% header copy goes.
+- **M4** wire into `in_place.patch_jpeg` behind `OWN_WRITER = False` with shadow comparison; the %TEMP% header copy goes
+  with the flip (below).
   Merge 4b-1 built `segment_edits.new_header` (no caller). Wiring hazards for 4b-2 (files owner, 2026-11-05):
   (a) `field_values.write`'s `if patched: return ()` must return new_header's stale tuple, even when the patch changes
   no byte; (b) new_header takes the journal's values keyed by field (`EXIF:Orientation`), not the ExifTool params keyed
   by `WRITTEN_AS`; (c) the shadow comparison includes a packet holding tiff:Orientation and an EXIF with an IFD1
-  Orientation. 4b-2 also deletes the %TEMP% header copy, `in_place._fitted` and the ExifTool-copy arm of `jpeg_ranges`.
+  Orientation. 4b-2 wired it (the patch record keeps the fields left stale; a settle and the planner compare against
+  `fields.as_patched`) and deletes nothing: with `OWN_WRITER` off, the %TEMP% header copy
+  (`field_values._exiftool_header`), `in_place.fitted` and `_fitted` are the live patch, and deleting them first would
+  make every JPEG write a rewrite. They go, and `PATCH_IN_PLACE` and `OWN_WRITER` become one, in the commit that turns
+  the own writer on (4d; main session, 2026-11-05).
 - **M5** own whole-file JPEG rewrite beside the photo, with the reserve (XMP already carries ExifTool's padding, 2,425 bytes (`xmp_packet.RESERVE`), in 4,355 of 4,366 wrapped packets, counted 2026-11-03, so the reserve is mostly EXIF, which never has 64 bytes of slack: 0 of 6,373 sampled);
   `_refuse_dropped` arms go for JPEG; MPF files kept length-stable or refused. The 512 B reserve branch is closed.
 - **M6** optional own read for the journal's field reads, dropped: M1 timed a header read at 23 ms against ExifTool at 52 ms for one photo and 28 ms in a batch (warm cache, 2026-11-03).

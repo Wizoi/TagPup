@@ -30,18 +30,21 @@ attributes: a photo marked hidden or system loses the mark at its write (#2389).
 
 **A patch in place** (DECISIONS 2026-11-02, "THE JPEG PATCH IS BUILT WITH THE VIDEOS'"). A journaled write (one given
 `saving`) of a JPEG whose new fields fit its old EXIF, IPTC and XMP segments writes only those bytes
-(tagpup.files.in_place.patch_jpeg): the same ExifTool command writes the fields into a copy of the photo's header alone,
-on this PC, and the segments it wrote are patched into the photo at their old lengths. What does not fit is rewritten
-as above. The picture is never read or written by a patch; the journal checks the bytes it changed, and the fields
+(tagpup.files.in_place.patch_jpeg). The new segments are made by one of two writers (OWN_WRITER): ExifTool's, the same
+command writing the fields into a copy of the photo's header alone, on this PC, its segments fitted to the old lengths
+(_exiftool_header); or TagPup's own (tagpup.files.segment_edits.new_header, docs/PLAN_OWN_METADATA.md, M4), given the
+journal's values by field, which writes a keyword or caption save into the XMP copy alone and answers the copies it
+left (fields.XMP_ONLY). What does not fit is rewritten as above. The picture is never read or written by a patch; the journal checks the bytes it changed, and the fields
 read back, before the file is done (tagpup.services.file_changes._verified), and reads no other byte of the file.
 """
 import logging
 import os
+import tempfile
 
 from exiftool.exceptions import ExifToolNotRunning
 
 from tagpup.core import fields, paths
-from tagpup.files import bake, containers, exiftool_session, identity, in_place, shares
+from tagpup.files import bake, containers, exiftool_session, identity, in_place, segment_edits, shares
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +73,10 @@ WRITE_OPTIONS = ("-m",)
 #: Whether a journaled write of a JPEG patches it in place when its fields fit (in_place.patch_jpeg); False, every write
 #: is ExifTool's rewrite, as before the patch was built.
 PATCH_IN_PLACE = True
+
+#: Whether a patch's segments are TagPup's own writer's (segment_edits.new_header) rather than ExifTool's write into a copy
+#: of the header (_exiftool_header). Off until the owner turns it on (docs/PLAN_OWN_METADATA.md, verification bar 6).
+OWN_WRITER = False
 
 #: Seconds the picture check may take to read the photo and its new file (shares.bounded): a share that does not answer
 #: in it is away, and the write fails as a stalled share's does, the photo as it was.
@@ -244,9 +251,9 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
     journal's PatchTooLarge is not met here. A patch whose photo's share does not answer raises NotAnswered, the file
     settled by its bytes (file_changes._by_bytes).
 
-    Returns the fields of `values` the write left holding what they held before (fields.PATCH_LEAVES, which a patch of
-    the XMP alone leaves; file_changes records the file as fields.as_patched): () for every write, which writes them
-    all."""
+    Returns the fields of `values` the write left holding what they held before (fields.XMP_ONLY: a keyword or caption
+    save the own writer patches into the XMP alone, OWN_WRITER), even when the patch had no byte to write; file_changes
+    records the file as fields.as_patched says. () for every other write, which writes them all."""
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -267,21 +274,19 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
         return ()
     checked = own or any(fields.is_struct(field) for field in values)
     if PATCH_IN_PLACE and saving is not None:
-        def serialise(source, target):
-            try:
-                _command(et, source, target, params, clear)
-            except exiftool_session.ExifToolFailed:
-                return False        # the rewrite's command says why, of the photo
-            _refuse_dropped(et, source, checked)
-            return True
-
+        if OWN_WRITER:
+            # The journal's values, by field (fields.EDITED_AS), never ExifTool's params by the name it is written as.
+            def new_header(layout, header):
+                return segment_edits.new_header(layout, header, values)
+        else:
+            new_header = _exiftool_header(et, params, clear, checked)
         try:
-            patched = in_place.patch_jpeg(photo_path, serialise, saving)
+            stale = in_place.patch_jpeg(photo_path, new_header, saving)
         except in_place.Away:
             raise NotAnswered("its folder did not answer the patch of its fields in %d s; it is settled by its bytes "
                               "the next time" % in_place.SECONDS) from None
-        if patched:
-            return ()
+        if stale is not None:
+            return stale
     scratch = exiftool_session.scratch_of(photo_path)
     _command(et, photo_path, scratch, params, clear)
     if scratch_written is not None:
@@ -298,6 +303,36 @@ def write(et, photo_path, values, saving=None, scratch_written=None):
         raise
     _landed(photo_path, scratch)
     return ()
+
+
+def left_as_they_were(values):
+    """The fields of `values` a journaled write (one given `saving`) leaves holding what they held: a keyword or caption
+    group's copies outside XMP, while its XMP value is not empty, when the own writer patches (segment_edits.stale_of,
+    fields.XMP_ONLY); () when it does not, ExifTool's writes writing every field. What the file holds after the write is
+    fields.as_patched of these: file_changes asks it of a plan before writing anything, so a file holding that already
+    is not written, journaled or counted (a Save repeated, a tag the photo has added again)."""
+    return segment_edits.stale_of(values) if PATCH_IN_PLACE and OWN_WRITER else ()
+
+
+def _exiftool_header(et, params, clear, checked):
+    """in_place.patch_jpeg's `new_header` by ExifTool: the write's command run on a copy of the photo's header alone, in a
+    folder of this PC's %TEMP%, and the segments it wrote fitted to the photo's (in_place.fitted). Answers (the header,
+    no field left), or None: ExifTool refused (the rewrite's command then says why), or what it wrote does not fit."""
+    def new_header(_layout, header):
+        with tempfile.TemporaryDirectory(prefix="tagpup-patch-") as folder:
+            source, target = os.path.join(folder, "header.jpg"), os.path.join(folder, "written.jpg")
+            with open(source, "wb") as copy:
+                copy.write(header + in_place.EOI)
+            try:
+                _command(et, source, target, params, clear)
+            except exiftool_session.ExifToolFailed:
+                return None
+            _refuse_dropped(et, source, checked)
+            with open(target, "rb") as copy:
+                written = copy.read()
+        made = in_place.fitted(header, written)
+        return (made, ()) if made is not None else None
+    return new_header
 
 
 def _refuse_dropped(et, source, checked):

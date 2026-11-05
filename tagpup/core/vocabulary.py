@@ -243,7 +243,7 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 #: A value a file holds twice, in XMP and in IPTC's older copy: (XMP's fields, IPTC's), each under both names a read
 #: records it by. XMP is the copy read when it holds the value, a text that is not blank; IPTC's only when it holds
 #: none (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS): a keyword or caption save may patch XMP alone and
-#: leave IPTC holding what it held before (tagpup.core.fields.PATCH_LEAVES).
+#: leave IPTC holding what it held before (tagpup.core.fields.XMP_ONLY).
 KEYWORD_COPIES = (("XMP:Subject", "Subject"), ("IPTC:Keywords", "Keywords"))
 CAPTION_COPIES = ((("XMP:Description", "Description"), ("IPTC:Caption-Abstract", "Caption-Abstract")),
                   (("XMP:Title", "Title"), ("IPTC:ObjectName", "ObjectName")))
