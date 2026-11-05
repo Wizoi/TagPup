@@ -2106,6 +2106,12 @@ body.just-looking #faces-strip {
     padding-bottom: 6px;
 }
 
+/* The strip's one line while the faces load, or when they could not be loaded. */
+.faces-note {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
 .face-card {
     flex: 0 0 auto;
     width: 72px;

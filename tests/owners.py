@@ -263,7 +263,7 @@ _FILES = {
     },
     "views": {
         "unit": (
-            "details-panel grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
+            "details-panel faces-say-they-are-loading grid-keys grid-window library-header-strip-toolbar library-moves library-photo-back "
             "library-selection library-selection-jumps library-tally library-view looking-suggestions navigator "
             "navigator-multi photo-camera photo-details-layout photo-position photo-suggestions-panel search-page selection "
             "selection-follows-the-photo selection-panel selection-suggestions selection-suggests-who-the-faces-look-like stale-cards suggest-cancel suggestions-follow-a-saved-photo tagging-flow "
