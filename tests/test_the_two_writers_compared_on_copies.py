@@ -1,4 +1,4 @@
-"""`metadata-check`: TagPup's own JPEG writer and ExifTool's, each given the app's seven writes on fresh copies of a
+"""`metadata-check`: TagPup's own JPEG writer and ExifTool's, each given the app's eight writes on fresh copies of a
 library's photos in a sandbox, compared by what each copy holds (tagpup.services.metadata_check; scenario F1;
 docs/PLAN_OWN_METADATA.md, M4 step 4c).
 
@@ -7,7 +7,9 @@ writer's patch of the XMP alone and ExifTool's rewrite (a disagreement, counted 
 one with two APP13 segments (both rewrite it); one whose packet the XMP editor refuses (its caption cleared is
 ExifTool's patch and the own writer's rewrite); one whose packet holds tiff:Orientation and whose EXIF holds an IFD1
 Orientation; one another program wrote last, holding an IPTCDigest (the XMP toolkit differs by design, KNOWN; the
-digest does not). A photo gone from its folder part way through the run is counted gone and the run goes on; a second
+digest does not); one whose IFD0 is out of order, which ExifTool's write heals and the own patch leaves (the warning was
+the original's: no difference). A copy the own writer leaves out of order, which ExifTool reads with every tag the same
+but warns of, is a difference; so is a side whose second write of the same values changes the file. A photo gone from its folder part way through the run is counted gone and the run goes on; a second
 run while one holds the sandbox is refused, the first's sandbox untouched; a run interrupted (Ctrl+C) stops, says so
 (exit status 2) and leaves no sandbox, and a sandbox a killed run left is removed by the next; a disk without room for
 the copies stops the run before the first; a difference is exit status 1, counts only unless --reveal. Nothing of the
@@ -22,7 +24,8 @@ offset fails it too; KNOWN without the XMP toolkit fails
 test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing; ExifTool's group set aside
 whole (its warning and validation never compared), or -validate not asked, fails
 test_a_copy_exiftool_heals_as_it_reads_is_a_difference; its warning compared between the sides alone, and not against
-the original's, fails test_a_warning_the_original_held_is_no_difference; a stale tag compared with
+the original's, fails test_a_warning_the_original_held_is_no_difference; no second write of the same values fails
+test_a_second_write_of_the_same_values_that_changes_the_file_is_a_difference; a stale tag compared with
 ExifTool's side and not the original's fails test_simple_photos_agree_and_nothing_of_the_library_is_written; a
 disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference; shares.read_whole
 reading a photo whose stamp says it is gone fails test_a_photo_gone_part_way_is_counted_and_the_run_goes_on; a photo read in one read
@@ -95,6 +98,7 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         # A keyword, person or caption added is the own writer's patch of the XMP alone where ExifTool's header writer,
         # writing every copy, rewrites (XPKeywords takes a new entry in IFD0): counted by its direction, no difference.
         self.assertEqual({"rewrite, own patch": 2, "rewrite, own rewrite": 1}, found["how"]["keyword added"])
+        self.assertEqual(3, sum(found["how"]["preserved name set"].values()), "a name with letters outside ASCII kept")
         self.assertIn("keyword added: 3 written, 1 agreed on patch or rewrite", "\n".join(metadata_check.lines(found)))
         self.assertEqual((held, library), ({path: read(path) for path in made}, read(self.library.path)))
 
@@ -269,7 +273,28 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         with mock.patch.object(segment_edits, "new_header", new_header):
             found = self.check(reveal=True)
         said = {each["difference"] for each in found["revealed"] if each["operation"] == "keyword added"}
-        self.assertEqual({"the sides differ in ExifTool:Warning", "the sides differ in ExifTool:Validate"}, said,
+        self.assertEqual({"the sides differ in ExifTool:Warning", "the sides differ in ExifTool:Validate",
+                          "own's second write of the same values changed the file"}, said,
+                         "\n".join(metadata_check.lines(found)))
+
+    def test_a_second_write_of_the_same_values_that_changes_the_file_is_a_difference(self):
+        # The own writer's patch moves a byte of the packet's padding each time it writes: both copies read alike, and
+        # the second write of the same values changes the file all the same.
+        self.photo("a.jpg")
+        real, writes = segment_edits.new_header, []
+
+        def new_header(layout, header, values):
+            made = real(layout, header, values)
+            if made is None or not layout.of_kind("xmp"):
+                return made
+            writes.append(1)
+            written = bytearray(made[0])
+            end = bytes(written).rindex(b"<?xpacket end=")
+            written[end - 2:end] = b" \n" if len(writes) % 2 else b"\n "
+            return bytes(written), made[1]
+        with mock.patch.object(segment_edits, "new_header", new_header):
+            found = self.check()
+        self.assertEqual({"own's second write of the same values changed the file"}, set(found["differences"]),
                          "\n".join(metadata_check.lines(found)))
 
     def test_a_warning_the_original_held_is_no_difference(self):

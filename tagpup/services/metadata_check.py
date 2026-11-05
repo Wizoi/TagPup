@@ -22,7 +22,8 @@ journaled write tries it): once by ExifTool's writer, once by the own writer. Th
 - what ExifTool says of each copy as it reads it (its warning, and its validation's counts: READER_SAYS), where the own
   writer's copy says other than ExifTool's and than the original (one ExifTool heals as it reads still reads the same
   tags, and another reader may refuse it; a warning the original held already is not the writer's);
-- a side failing where the other wrote; a copy that could not be compared.
+- a side failing where the other wrote; a copy that could not be compared;
+- a side whose second write of the same values changes a byte of its copy (each writer's write is idempotent).
 How each side wrote (patch, rewrite, unchanged, failed) is counted, and whether both agree; a disagreement is counted by
 its direction and is no difference (both are a correct write; the bar is what the file holds; main session, 2026-11-05).
 
@@ -40,7 +41,7 @@ from contextlib import closing, contextmanager
 
 from tagpup.core import byte_lock, dates, fields, paths, vocabulary
 from tagpup.core.result import Refused
-from tagpup.files import bake, containers, exiftool_session, field_values, shares
+from tagpup.files import bake, containers, exiftool_session, field_values, names, shares
 from tagpup.services import photos as photo_actions, roots as roots_service, segment_census, tagging
 from tagpup.store import db, inspection
 
@@ -77,10 +78,12 @@ READER_SAYS = "ExifTool"
 KNOWN = frozenset({"XMP:XMP-x:XMPToolkit", "EXIF:IFD1:ThumbnailOffset"})
 #: What every operation's planner reads of a copy.
 READ = tuple(dict.fromkeys(tagging.SAVE_READ + tuple(fields.caption_fields("")) + dates.SHIFTED_FIELDS
-                           + (fields.ORIENTATION,)))
-#: A keyword and a person no photo holds (fictional).
-KEYWORD, PERSON = "Shadow Check/Lantern Walk", "Wren Halloway"
-CAPTION = "Lanterns along the harbour wall"
+                           + (fields.ORIENTATION, names.PRESERVED_NAME)))
+#: A keyword and a person no photo holds (fictional), a caption and a name kept; each but the person holds letters
+#: outside ASCII (IPTC's character set, XMP's escaping, EXIF's UCS-2 XPComment and ASCII ImageDescription).
+KEYWORD, PERSON = "Shadow Check/Lantern Walk \u00e0 Br\u00e9z\u00e9", "Wren Halloway"
+CAPTION = "Lanterns along the harbour wall \u2014 caf\u00e9 & <quay>"
+PRESERVED = "F\u00eate des lanternes \u2014 0412.jpg"
 SHIFT_MINUTES = 90
 SIDES = (("ExifTool", False), ("own", True))
 TWO_AT_ONCE = "Another metadata-check is running on this PC; wait for it to end."
@@ -99,6 +102,11 @@ def _fixed(values):
     return lambda _library: lambda _path, _held: values
 
 
+def _preserved(_library):
+    """Smart Rename's planner (photos.preserve_names): the name kept, unless the photo keeps one already."""
+    return lambda _path, held: {} if held.get(names.PRESERVED_NAME) else {names.PRESERVED_NAME: PRESERVED}
+
+
 #: (name, planner(library) -> plan_one(path, held) answering a file_changes.Plan or a dict of values).
 OPERATIONS = (
     ("keyword added", _keywords(lambda held: [KEYWORD], lambda held: [])),
@@ -108,6 +116,7 @@ OPERATIONS = (
     ("caption cleared", _fixed(fields.caption_fields(""))),
     ("Date Taken shifted", lambda _library: photo_actions.date_shift_plan(SHIFT_MINUTES)),
     ("turned right", lambda _library: photo_actions.rotate_plan("right")),
+    ("preserved name set", _preserved),
 )
 
 
@@ -232,7 +241,7 @@ class _Run:
         for number, (operation, planner) in enumerate(OPERATIONS):
             plan = planner(self.library)(original, before)
             after = plan if isinstance(plan, dict) else plan.after
-            if after is None or fields.reads_same(before, after):
+            if not after or fields.reads_same(before, after):
                 self.skipped[operation] += 1
                 continue
             each = os.path.join(folder, str(number))
@@ -278,6 +287,14 @@ class _Run:
                                    set(stale)):
             self.differ(path, operation, "the sides differ in %s" % tag,
                         [found.get(paths.key(copy), {}).get(tag) for copy in copies])
+        for (name, own), copy in zip(SIDES, copies):
+            with open(copy, "rb") as handle:
+                first = handle.read()
+            how, _stale, error = _written(self.et, copy, after, own)
+            with open(copy, "rb") as handle:
+                if handle.read() != first:
+                    self.differ(path, operation, "%s's second write of the same values changed the file" % name,
+                                error or how)
 
 
 def check(library, exiftool_path, sample=SAMPLE, seed=segment_census.SEED, reveal=False, say=None):
