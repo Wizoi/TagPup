@@ -703,7 +703,7 @@ def _photos_know_their_kind_and_a_patch_is_recorded(conn):
 
 
 def _a_clips_frames_beside_its_vector(conn):
-    """Migration 38 (owner, 2026-11-06; DECISIONS, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", 5): `embedding_frames`,
+    """Migration 38 (owner, 2026-11-06; DECISIONS, "MIGRATION 38: A CLIP'S FRAMES BESIDE ITS VECTOR"): `embedding_frames`,
     a clip's frames 1 to 4 under one photo model, beside its frame 0, which is its row in `embeddings` and carries the stamp:
     a clip is matched on its best frame. The key of `embeddings` is not widened, which would rewrite every photo's vector.
     A frame never outlives its vector: two triggers take a photo's frames with the photo and a vector's with the vector

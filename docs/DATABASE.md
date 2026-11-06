@@ -429,6 +429,13 @@ erDiagram
         BLOB vector
     }
 
+    embedding_frames {
+        INTEGER photo_id PK
+        TEXT model PK
+        INTEGER frame PK
+        BLOB vector
+    }
+
     tag_taxonomy {
         INTEGER id PK
         TEXT tag UK
@@ -507,6 +514,7 @@ erDiagram
 
     photos ||--o{ faces : "contains"
     photos ||--o{ embeddings : "embedded as"
+    photos ||--o{ embedding_frames : "a clip's frames 1 to 4"
     photos ||--o{ photo_people : "shows"
     photos ||--o{ photo_tags : "carries"
     tag_taxonomy ||--o{ photo_tags : "named by"
