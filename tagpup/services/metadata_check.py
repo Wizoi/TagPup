@@ -185,12 +185,18 @@ def _written(et, path, values, own):
 
 def _whole(whole_et, photo_paths):
     """{paths.key(path): {tag: value}} of ExifTool's whole read of each (WHOLE_READ), with what it says of each
-    (READER_READ's READER_SAYS tags)."""
+    (READER_READ's READER_SAYS tags). A copy the second read leaves out (held a moment by another program) is raised,
+    never read as one that says nothing."""
     rows = {paths.key(row.get("SourceFile", "")): row
             for row in json.loads(whole_et.execute(*WHOLE_READ, *photo_paths) or "[]")}
+    answered = set()
     for said in json.loads(whole_et.execute(*READER_READ, *photo_paths) or "[]"):
-        row = rows.setdefault(paths.key(said.get("SourceFile", "")), {})
+        key = paths.key(said.get("SourceFile", ""))
+        answered.add(key)
+        row = rows.setdefault(key, {})
         row.update((tag, value) for tag, value in said.items() if tag.split(":")[0] == READER_SAYS)
+    if set(rows) - answered:
+        raise OSError("ExifTool answered the whole read of a copy and not the read of what it says of it")
     return rows
 
 
@@ -255,7 +261,11 @@ class _Run:
             self.looked["read, not by ExifTool"] += 1
             return None
         self.looked["read"] += 1
-        whole = _whole(self.whole_et, [original]).get(paths.key(original), {})
+        try:
+            whole = _whole(self.whole_et, [original]).get(paths.key(original), {})
+        except OSError as error:
+            self.differ(path, "the original", "a copy could not be compared", str(error))
+            return None
         for number, (operation, planner) in enumerate(OPERATIONS):
             plan = planner(self.library)(original, before)
             after = plan if isinstance(plan, dict) else plan.after
