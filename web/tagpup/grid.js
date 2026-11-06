@@ -414,7 +414,7 @@ function buildThumbnailCard(photo) {
     imgWrapper.className = 'thumbnail-img-wrapper';
 
     // Add AI suggestion badge if suggestions exist
-    if (state.folderSuggestions[photo.path]) {
+    if (upper.suggested(state.folderSuggestions[photo.path])) {
         const aiBadge = document.createElement('span');
         aiBadge.className = 'thumbnail-has-sugg';
         aiBadge.textContent = 'AI';

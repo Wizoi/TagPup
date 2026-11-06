@@ -254,6 +254,24 @@ describe("while the folder's run goes, the box says how it stands", () => {
     assert.equal(ctx.document.getElementById("btn-suggest-tags").disabled, false);
   });
 
+  test("the AI badge marks a photo with suggestions, not one the run could not read", async (t) => {
+    // One rule of what counts as suggested (suggestions.js `suggested`): the list's row and the grid's card follow the
+    // Suggest button, which counts a failed photo as not done.
+    const ctx = await openDuringARun(t, "a.jpg", inTurn(served.completed));
+    const badge = (filename, selector, mark) => {
+      const el = [...ctx.document.querySelectorAll(selector)].find((each) => each.dataset.path.endsWith(filename));
+      assert.ok(el, `no ${selector} for ${filename}`);
+      return Boolean(el.querySelector(mark));
+    };
+    assert.equal(badge("a.jpg", "li[data-path]", ".photo-item-has-sugg"), true, "a.jpg's row has no badge");
+    assert.equal(badge("c.jpg", "li[data-path]", ".photo-item-has-sugg"), false, "c.jpg's row, unread, has a badge");
+    pageExports(ctx.window, "web/tagpup/folder.js").openFolderView();   // back to the grid, drawn as the run left it
+    await flush(ctx.window, 8);
+    assert.equal(badge("a.jpg", ".thumbnail-card[data-path]", ".thumbnail-has-sugg"), true, "a.jpg's card has no badge");
+    assert.equal(badge("c.jpg", ".thumbnail-card[data-path]", ".thumbnail-has-sugg"), false,
+      "c.jpg's card, unread, has a badge");
+  });
+
   test("a photo never analysed with no run says nothing: the box stays hidden", async (t) => {
     for (const reply of [served.idle, served.cancelled, served.error]) {
       const ctx = await openDuringARun(t, "b.jpg", inTurn(reply));

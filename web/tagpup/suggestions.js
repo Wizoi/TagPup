@@ -21,6 +21,14 @@ import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
 
+/**
+ * A photo the folder's run has suggestions for: an entry, and not one the run could not read (the server's _succeeded:
+ * the next Suggest tries it again). The Suggest button, the list's row and the grid's card ask this.
+ */
+export function suggested(entry) {
+    return Boolean(entry) && !entry.error;
+}
+
 export function updateSuggestButtonState(status = null) {
     if (!state.scannedFolder || state.folderPhotos.length === 0) {
         btnSuggestTags.disabled = true;
@@ -37,10 +45,7 @@ export function updateSuggestButtonState(status = null) {
         return;
     }
     // A photo the run could not read is tried again by the next (the server's _succeeded): not done.
-    const hasUnprocessed = state.folderPhotos.some(photo => {
-        const found = state.folderSuggestions[photo.path];
-        return !found || Boolean(found.error);
-    });
+    const hasUnprocessed = state.folderPhotos.some(photo => !suggested(state.folderSuggestions[photo.path]));
     btnSuggestTags.disabled = !hasUnprocessed;
 }
 

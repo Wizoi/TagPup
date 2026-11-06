@@ -40,6 +40,7 @@ export const upper = {
     searchVocabularyChanged: null,
     selectPhoto: null,
     showSortOrder: null,
+    suggested: null,
     updateCameraHighlights: null,
     updateCarryForwardState: null,
     updateFolderAutoApplyState: null,

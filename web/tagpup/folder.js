@@ -523,7 +523,7 @@ export function renderFileList() {
         }
 
         // Display a badge if suggestion is ready for this file
-        if (state.folderSuggestions[photo.path]) {
+        if (upper.suggested(state.folderSuggestions[photo.path])) {
             const badge = document.createElement('span');
             badge.className = 'photo-item-has-sugg';
             badge.textContent = 'AI';

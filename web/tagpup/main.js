@@ -58,7 +58,7 @@ import {
 import {
     applyAllSingleSuggestions, applyFolderSuggestionsLevel, applySuggestedTagsDirect,
     applySuggestedTitle, checkIndexingStatus, checkSuggestionsStatus, forgetFolderSuggestions, renderSuggestionsPanel,
-    cancelSuggestions, startSuggestions, updateFolderAutoApplyState, updateSuggestButtonState
+    cancelSuggestions, startSuggestions, suggested, updateFolderAutoApplyState, updateSuggestButtonState
 } from './suggestions.js';
 import {
     applyTimeShift, populateCameraModelsDropdown, updateCameraHighlights,
@@ -74,7 +74,7 @@ Object.assign(upper, {
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
     openLibraryPhoto, openLibraryView, restoreViewAsLeft,
-    photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder,
+    photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder, suggested,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });
