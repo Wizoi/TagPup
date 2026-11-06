@@ -43,6 +43,7 @@ test_a_disk_without_room_stops_the_run_before_a_copy; the CLI exiting 0 on a dif
 test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing.
 """
 import io
+import json
 import os
 import shutil
 import sys
@@ -338,6 +339,25 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         self.assertEqual([], metadata_check._tags_differing(original, theirs, row("0 1 1", *said[:2]), set()))
         self.assertEqual(["ExifTool:Warning"], metadata_check._tags_differing(
             original, theirs, row("0 2 1", said[0], "Bad IFD0 directory"), set()))
+
+    def test_a_copy_the_second_read_leaves_out_is_a_copy_not_compared_never_silence(self):
+        # A copy another program holds a moment answers the whole read and not the read of what ExifTool says of it:
+        # its warnings are not "none", the copy could not be compared (ExifTool's, the own writer's or the original).
+        self.photo("a.jpg")
+        real = ExifToolSession.execute
+
+        def leaving_out(left):
+            def execute(session, *params, **kwargs):
+                answer = real(session, *params, **kwargs)
+                if metadata_check.READER_READ[:5] != tuple(params[:5]):
+                    return answer
+                rows = json.loads(answer or "[]")
+                return json.dumps([row for row in rows if left not in os.path.basename(row["SourceFile"])])
+            return execute
+        for left in ("own.jpg", "ExifTool.jpg", "original.jpg"):
+            with self.subTest(left=left), mock.patch.object(ExifToolSession, "execute", leaving_out(left)):
+                found = self.check()
+                self.assertIn("a copy could not be compared", found["differences"], left)
 
     def test_a_second_write_of_the_same_values_that_changes_the_file_is_a_difference(self):
         # The own writer's patch moves a byte of the packet's padding each time it writes: both copies read alike, and
