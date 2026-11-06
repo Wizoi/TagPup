@@ -231,6 +231,23 @@ class AClipInTheLibrary(unittest.TestCase):
         self.assertEqual(["done"], self.change_states(clip), "one journaled file, done")
         self.assertEqual(["Trips/Coast"], self.tags_of(clip))
 
+    def test_a_clip_saved_is_stamped_with_its_new_size_and_the_same_save_again_writes_nothing(self):
+        clip, = self.index(self.clip_path)
+        size = os.path.getsize(self.clip_path)
+        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "add_tags": ["Trips/Coast"]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertNotEqual(size, os.path.getsize(self.clip_path), "the patch appended an XMP box")
+        self.assertEqual([(os.path.getsize(self.clip_path),)], self.vl.rows("SELECT size FROM photos WHERE id = ?", clip),
+                         "the row describes the file as written, so the next scan does not read it again")
+        scanned = metadata.MetadataExtractor(EXIFTOOL).batch_read([self.clip_path])[0]["raw_metadata"]
+        recorded = json.loads(self.vl.rows("SELECT raw_metadata FROM photos WHERE id = ?", clip)[0][0])
+        self.assertEqual(scanned, recorded, "and says what a scan reads of it")
+        written = self.read_bytes(self.clip_path)
+        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(["done"], self.change_states(clip), "the same save again journals nothing")
+        self.assertEqual(written, self.read_bytes(self.clip_path), "and writes nothing")
+
     def test_a_selection_of_a_photo_and_a_clip_tagged_writes_both(self):
         photo, clip = self.index(self.photo_path, self.clip_path)
         reply = self.post("library/bulk-edit", {"op": "tags", "selection": {"ids": [photo, clip]},
