@@ -8,8 +8,11 @@ one with two APP13 segments (both rewrite it); one whose packet the XMP editor r
 ExifTool's patch and the own writer's rewrite); one whose packet holds tiff:Orientation and whose EXIF holds an IFD1
 Orientation; one another program wrote last, holding an IPTCDigest (the XMP toolkit differs by design, KNOWN; the
 digest does not); one whose IFD0 is out of order, which ExifTool's write heals and the own patch leaves (the warning was
-the original's: no difference). A copy the own writer leaves out of order, which ExifTool reads with every tag the same
-but warns of, is a difference; so is a side whose second write of the same values changes the file. A photo gone from its folder part way through the run is counted gone and the run goes on; a second
+the original's: no difference). One whose IPTC block lacks its version datasets and holds an empty caption, which
+the own writer's patch of the XMP leaves stale and ExifTool's rewrite gives versions and drops the empty caption (no
+difference: what the file holds reads the same). A copy the own writer leaves out of order, which ExifTool reads with
+every tag the same but warns of (a warning the original lacks), is a difference; so is a caption the own writer puts in
+the wrong field, or a keyword it drops; so is a side whose second write of the same values changes the file. A photo gone from its folder part way through the run is counted gone and the run goes on; a second
 run while one holds the sandbox is refused, the first's sandbox untouched; a run interrupted (Ctrl+C) stops, says so
 (exit status 2) and leaves no sandbox, and a sandbox a killed run left is removed by the next; a disk without room for
 the copies stops the run before the first; a difference is exit status 1, counts only unless --reveal. Nothing of the
@@ -24,7 +27,10 @@ offset fails it too; KNOWN without the XMP toolkit fails
 test_known_tags_differ_by_design_and_a_difference_is_exit_status_one_naming_nothing; ExifTool's group set aside
 whole (its warning and validation never compared), or -validate not asked, fails
 test_a_copy_exiftool_heals_as_it_reads_is_a_difference; its warning compared between the sides alone, and not against
-the original's, fails test_a_warning_the_original_held_is_no_difference; no second write of the same values fails
+the original's, fails test_a_warning_the_original_held_is_no_difference; the version datasets not set aside,
+or a dataset held empty counted against one absent, fails test_an_iptc_block_left_stale_is_no_difference; ExifTool's
+validation compared by its counts, or by its first warning alone, fails
+test_a_copy_with_fewer_of_the_originals_warnings_is_no_difference; no second write of the same values fails
 test_a_second_write_of_the_same_values_that_changes_the_file_is_a_difference; a stale tag compared with
 ExifTool's side and not the original's fails test_simple_photos_agree_and_nothing_of_the_library_is_written; a
 disagreement counted as a difference fails test_a_packet_the_editor_refuses_is_a_disagreement_not_a_difference; shares.read_whole
@@ -273,9 +279,65 @@ class TheTwoWritersComparedOnCopies(FilesCase):
         with mock.patch.object(segment_edits, "new_header", new_header):
             found = self.check(reveal=True)
         said = {each["difference"] for each in found["revealed"] if each["operation"] == "keyword added"}
-        self.assertEqual({"the sides differ in ExifTool:Warning", "the sides differ in ExifTool:Validate",
+        self.assertEqual({"the sides differ in ExifTool:Warning",
                           "own's second write of the same values changed the file"}, said,
                          "\n".join(metadata_check.lines(found)))
+
+    def test_a_wrong_own_write_is_still_a_difference(self):
+        # The own writer puts the caption in the title, not the description, and drops the keyword it was to add: the
+        # set-asides (KNOWN, empty as absent, warnings against the original's) hide neither.
+        self.photo("a.jpg", tags=("Beach",))
+        real = metadata_check._written
+
+        def written(et, path, values, own):
+            if own and "XMP:Description" in values and values["XMP:Description"]:
+                values = dict(values, **{"XMP:Title": values["XMP:Description"], "XMP:Description": ""})
+            if own and metadata_check.KEYWORD in values.get("XMP:Subject", []):
+                values = dict(values, **{"XMP:Subject": [each for each in values["XMP:Subject"]
+                                                         if each != metadata_check.KEYWORD]})
+            return real(et, path, values, own)
+        with mock.patch.object(metadata_check, "_written", written):
+            found = self.check(reveal=True)
+        said = {(each["operation"], each["difference"]) for each in found["revealed"]}
+        for expected in (("caption set", "the sides differ in XMP:XMP-dc:Description"),
+                         ("caption set", "the sides differ in XMP:XMP-dc:Title"),
+                         ("keyword added", "the sides differ in XMP:XMP-dc:Subject")):
+            self.assertIn(expected, said, "\n".join(metadata_check.lines(found)))
+
+    def test_an_iptc_block_left_stale_is_no_difference(self):
+        # Another program's IPTC block holding a keyword and an empty caption, no version dataset (1:00, 2:00): a keyword
+        # added is the own writer's patch of the XMP, the block left stale; ExifTool's rewrite of the block adds the
+        # versions and drops the empty caption. Both copies read the same keywords and caption.
+        a = self.photo("a.jpg", tags=("Beach",))
+        held = read(a)
+        iptc = containers.read(io.BytesIO(held)).of_kind("iptc")[0]
+        datasets = (b"\x1c\x02\x19" + (5).to_bytes(2, "big") + b"Beach" + b"\x1c\x02\x78" + bytes(2))
+        resource = b"8BIM\x04\x04" + bytes(2) + len(datasets).to_bytes(4, "big") + datasets + bytes(len(datasets) % 2)
+        body = b"Photoshop 3.0\0" + resource
+        with open(a, "wb") as handle:
+            handle.write(held[:iptc.offset] + b"\xff\xed" + (len(body) + 2).to_bytes(2, "big") + body
+                         + held[iptc.end:])
+        self.assertEqual("", field_of(a, "IPTC:Caption-Abstract"))
+        self.assertIsNone(field_of(a, "IPTC:ApplicationRecordVersion"))
+        found = self.check()
+        self.assertEqual({"rewrite, own patch": 1}, found["how"]["keyword added"])
+        self.assert_agreed(found, 1)
+
+    def test_a_copy_with_fewer_of_the_originals_warnings_is_no_difference(self):
+        # As ExifTool reads them (-validate): the original says three things, ExifTool's copy one, the own writer's two
+        # of the original's -- no worse than it was, though its validation's counts differ from both. A warning of the
+        # own copy that neither the original nor ExifTool's copy says is a difference.
+        said = ("Entries in IFD0 are out of order", "[minor] Non-standard IFD0 tag 0x9c9b XPTitle",
+                "[minor] IPTC doesn't match XMP")
+
+        def row(counts, *warnings):
+            found = {"ExifTool:Validate": counts, "ExifTool:Warning": warnings[0]}
+            found.update(("ExifTool:Copy%d:Warning" % number, text) for number, text in enumerate(warnings[1:], 1))
+            return found
+        original, theirs = row("0 2 1", *said), row("0 0 1", said[2])
+        self.assertEqual([], metadata_check._tags_differing(original, theirs, row("0 1 1", *said[:2]), set()))
+        self.assertEqual(["ExifTool:Warning"], metadata_check._tags_differing(
+            original, theirs, row("0 2 1", said[0], "Bad IFD0 directory"), set()))
 
     def test_a_second_write_of_the_same_values_that_changes_the_file_is_a_difference(self):
         # The own writer's patch moves a byte of the packet's padding each time it writes: both copies read alike, and
