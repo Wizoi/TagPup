@@ -248,7 +248,8 @@ class AClipInTheLibrary(unittest.TestCase):
         self.assertEqual(1, len(self.models.shown), "a clip was handed to CLIP (the one photo is Day two's)")
         self.assertEqual([os.path.join(self.day_two, "sail.jpg")], [paths.stored(path) for path, _size in self.models.detected],
                          "a clip was looked at for faces")
-        self.assertEqual(thumbnails.VIDEO, thumbnails.serve(Library(self.library), photo_id).kind)
+        self.assertEqual(thumbnails.UNREADABLE, thumbnails.serve(Library(self.library), photo_id, config.locate_ffmpeg).kind,
+                         "no poster of a clip cut short")
         self.assertIn("All images are up to date", self.index(self.folder))
         self.assertEqual({}, self.owed(self.folder))
 

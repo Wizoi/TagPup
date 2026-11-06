@@ -20,6 +20,7 @@ import threading
 
 from flask import Blueprint, Response, jsonify, request
 
+from tagpup import config
 from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.library import picker_name
@@ -795,7 +796,7 @@ def _id_asked():
 def photo_thumb():
     """A photo's thumbnail by id, from the cache (tagpup.services.thumbnails). The URL carries the file's stamp
     (`v`, the modified time the card holds), so a thumbnail whose `v` is the file's is kept by the browser for a
-    year; any other is revalidated by its ETag. A photo that cannot be shown is a small placeholder (header
+    year; any other is revalidated by its ETag. A clip's is its poster frame. A photo that cannot be shown is a small placeholder (header
     X-TagPup-Thumb says which: damaged, unreadable, last known); an id with no photo is a 404 sentence."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
@@ -804,7 +805,7 @@ def photo_thumb():
     if refusal is not None:
         return refusal
     try:
-        thumb = thumbnails.serve(library, photo_id)
+        thumb = thumbnails.serve(library, photo_id, config.locate_ffmpeg)
     except (NotFound, paths.RootsError, Unavailable) as why:
         return _view_error(why)
     except Exception as e:

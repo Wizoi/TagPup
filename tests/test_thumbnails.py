@@ -46,7 +46,7 @@ class Cache(unittest.TestCase):
         self.path = self.vl.path_of(self.id)
 
     def serve(self, photo_id=None):
-        return thumbnails.serve(self.library, photo_id or self.id)
+        return thumbnails.serve(self.library, photo_id or self.id, config.locate_ffmpeg)
 
     def renders(self):
         return mock.patch.object(thumbs, "render", wraps=thumbs.render)
@@ -84,7 +84,7 @@ class FirstAsk(Cache):
     def test_an_id_sqlite_cannot_hold_is_no_photo_and_not_an_overflow(self):
         for wanted in (-1, 0, 2 ** 63, 2 ** 70):
             with self.subTest(wanted=wanted), self.assertRaises(NotFound):
-                thumbnails.serve(self.library, wanted)
+                thumbnails.serve(self.library, wanted, config.locate_ffmpeg)
 
     def test_the_url_names_the_photo_by_id_and_carries_the_stamp(self):
         self.assertEqual("/api/photo-thumb?id=7&v=1717236000.5", thumbnails.url(7, 1717236000.5))
@@ -340,8 +340,8 @@ class TwoLibraries(unittest.TestCase):
         a = first.photo("Pics", "a.jpg", real=True, shade=(250, 0, 0), size=(100, 100))
         b = second.photo("Pics", "a.jpg", real=True, shade=(0, 0, 250), size=(100, 100))
         self.assertEqual(a, b, "both are photo 1")
-        red = picture(thumbnails.serve(first.library, a).content).convert("RGB").getpixel((5, 5))
-        blue = picture(thumbnails.serve(second.library, b).content).convert("RGB").getpixel((5, 5))
+        red = picture(thumbnails.serve(first.library, a, config.locate_ffmpeg).content).convert("RGB").getpixel((5, 5))
+        blue = picture(thumbnails.serve(second.library, b, config.locate_ffmpeg).content).convert("RGB").getpixel((5, 5))
         self.assertGreater(red[0], 200)
         self.assertGreater(blue[2], 200)
         self.assertNotEqual(first.library.thumbs, second.library.thumbs)
@@ -355,9 +355,9 @@ class TwoLibraries(unittest.TestCase):
         shared = os.path.join(home.root, "Shared", "x.jpg")
         a = first.photo("", "", real=True, at=shared)
         b = second.photo("", "", at=shared)
-        thumbnails.serve(first.library, a)
+        thumbnails.serve(first.library, a, config.locate_ffmpeg)
         with mock.patch.object(thumbs, "render", wraps=thumbs.render) as render:
-            thumbnails.serve(second.library, b)
+            thumbnails.serve(second.library, b, config.locate_ffmpeg)
         self.assertEqual(1, render.call_count)
 
 
@@ -371,14 +371,14 @@ class ALibraryMovedToAnotherPlace(unittest.TestCase):
         library = side.library
         ids = [row[0] for row in side.rows("SELECT id FROM photos ORDER BY id")]
         for photo_id in ids[:2]:
-            thumbnails.serve(library, photo_id)
+            thumbnails.serve(library, photo_id, config.locate_ffmpeg)
         before = entries_of(library)
         self.assertEqual(2, len(before))
         copy = os.path.join(home.root, "Copy", "Pictures")
         shutil.copytree(side.pictures, copy, copy_function=shutil.copy2)
         config.set_location(rl.NAME, copy)
         with mock.patch.object(thumbs, "render", wraps=thumbs.render) as render:
-            again = [thumbnails.serve(library, photo_id) for photo_id in ids[:2]]
+            again = [thumbnails.serve(library, photo_id, config.locate_ffmpeg) for photo_id in ids[:2]]
         self.assertEqual(0, render.call_count, "the stamps and the rows' paths are as they were")
         self.assertTrue(all(each.kept for each in again))
         self.assertEqual(before, entries_of(library))
@@ -425,7 +425,7 @@ class AShareThatIsAway(Cache):
     def test_warm_over_an_away_share_asks_once_and_ends_fast(self):
         import time
         started = time.monotonic()
-        counts = thumbnails.warm(self.library, apply=True)
+        counts = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
         self.assertLess(time.monotonic() - started, 2.0)
         self.assertEqual(1, len(counts["away"]))
         self.assertEqual(24, counts["skipped_away"])
@@ -467,8 +467,8 @@ class TwoLibrariesNotDecoding(unittest.TestCase):
         stamp = os.stat(second.path_of(good)).st_mtime
         os.utime(first.path_of(bad), (stamp, stamp))
         self.assertEqual(good, bad)
-        self.assertEqual(thumbnails.DAMAGED, thumbnails.serve(first.library, bad).kind)
-        self.assertEqual(thumbnails.OK, thumbnails.serve(second.library, good).kind)
+        self.assertEqual(thumbnails.DAMAGED, thumbnails.serve(first.library, bad, config.locate_ffmpeg).kind)
+        self.assertEqual(thumbnails.OK, thumbnails.serve(second.library, good, config.locate_ffmpeg).kind)
 
 
 class Warming(Cache):
@@ -479,43 +479,43 @@ class Warming(Cache):
         self.gone = self.vl.photo("Harbour", "gone.jpg")   # a row, no file
 
     def test_a_dry_run_counts_and_writes_nothing(self):
-        counts = thumbnails.warm(self.library)
+        counts = thumbnails.warm(self.library, config.locate_ffmpeg)
         self.assertEqual(4, counts["photos"])
         self.assertEqual((3, 0, 1, 0), (counts["to_make"], counts["present"], counts["missing"], counts["made"]))
         self.assertEqual(3 * thumbnails.ASSUMED_BYTES, counts["estimate"])
         self.assertFalse(os.path.exists(self.library.thumbs), "not even the folder")
 
     def test_apply_makes_them_and_a_second_run_finds_them_there(self):
-        counts = thumbnails.warm(self.library, apply=True)
+        counts = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
         self.assertEqual((3, 0, 1), (counts["made"], counts["failed"], counts["missing"]))
         self.assertGreater(counts["bytes_made"], 0)
         self.assertEqual(3, len(entries_of(self.library)))
-        again = thumbnails.warm(self.library, apply=True)
+        again = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
         self.assertEqual((0, 3, 0), (again["made"], again["present"], again["to_make"]))
 
     def test_the_estimate_is_the_average_entry_once_some_are_kept(self):
         self.serve()
-        counts = thumbnails.warm(self.library)
+        counts = thumbnails.warm(self.library, config.locate_ffmpeg)
         held, size = thumbs.usage(self.library.thumbs)
         self.assertEqual(1, held)
         self.assertEqual(2 * (size // held), counts["estimate"])
 
     def test_a_limit_stops_it_and_a_second_run_goes_on_from_there(self):
-        first = thumbnails.warm(self.library, apply=True, limit=2)
+        first = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True, limit=2)
         self.assertEqual((2, True), (first["made"], first["stopped"]))
-        second = thumbnails.warm(self.library, apply=True, limit=2)
+        second = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True, limit=2)
         self.assertEqual((1, 2), (second["made"], second["present"]))
         self.assertEqual(3, len(entries_of(self.library)))
 
     def test_a_folder_limits_it_to_the_photos_under_it(self):
-        counts = thumbnails.warm(self.library, folder=os.path.join(self.vl.pictures, "Harbour"), apply=True)
+        counts = thumbnails.warm(self.library, config.locate_ffmpeg, folder=os.path.join(self.vl.pictures, "Harbour"), apply=True)
         self.assertEqual(1, counts["made"])
         self.assertEqual(2, counts["photos"])
 
     def test_a_file_that_does_not_decode_is_counted_damaged_and_the_run_goes_on(self):
         with open(self.vl.path_of(self.third), "wb") as handle:
             handle.write(b"not a picture")
-        counts = thumbnails.warm(self.library, apply=True)
+        counts = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
         self.assertEqual((2, 1, 1), (counts["made"], counts["damaged"], counts["missing"]))
 
     def test_a_cache_that_cannot_be_written_is_said(self):
@@ -523,15 +523,15 @@ class Warming(Cache):
         timing: all three when the workers start together, fewer on a loaded machine. It
         asserted three, and failed 3 runs in 8 under load."""
         with mock.patch.object(thumbs, "write", side_effect=OSError(28, "No space left on device")):
-            counts = thumbnails.warm(self.library, apply=True)
+            counts = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
         self.assertEqual((0, True), (counts["made"], counts["stopped_unwritable"]))
         self.assertIn(counts["unwritable"], (1, 2, 3))
 
     def test_apply_also_takes_the_thumbnails_of_photos_the_library_no_longer_holds(self):
         thumbs.write(self.library.thumbs, 4242, "00000000", 1.0, 1, b"orphan")
-        self.assertEqual(0, thumbnails.warm(self.library)["swept"], "a dry run deletes nothing")
+        self.assertEqual(0, thumbnails.warm(self.library, config.locate_ffmpeg)["swept"], "a dry run deletes nothing")
         self.assertEqual(1, len(entries_of(self.library)))
-        counts = thumbnails.warm(self.library, apply=True)
+        counts = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
         self.assertEqual(1, counts["swept"])
         self.assertEqual(3, len(entries_of(self.library)))
 
@@ -540,48 +540,21 @@ class Warming(Cache):
             self.vl.photo("Many", "m%d.jpg" % n, real=True, size=(200, 200))
         with mock.patch.object(thumbs, "write", side_effect=OSError(28, "No space left on device")), \
                 mock.patch.object(thumbs, "render", wraps=thumbs.render) as render:
-            counts = thumbnails.warm(self.library, apply=True)
+            counts = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
         self.assertLessEqual(render.call_count, thumbnails.WORKERS, "not the whole library")
         self.assertEqual((0, True), (counts["made"], counts["stopped_unwritable"]))
         self.assertGreaterEqual(counts["unwritable"], 1)
 
     def test_progress_is_reported_after_each_batch(self):
         seen = []
-        thumbnails.warm(self.library, apply=True, progress=seen.append)
+        thumbnails.warm(self.library, config.locate_ffmpeg, apply=True, progress=seen.append)
         self.assertEqual(1, len(seen))
         self.assertEqual(4, seen[0]["photos"])
 
     def test_a_library_that_cannot_be_read_just_now_fails_loudly(self):
         with mock.patch.object(db, "connect", side_effect=OSError("the library is not there")):
             with self.assertRaises(OSError):
-                thumbnails.warm(self.library)
-
-
-class AClip(Cache):
-    """A clip's row (kind 'video', recorded as the indexer records a read of an .mp4) is answered the placeholder: its
-    file is never opened, since a decode that fails reads the whole file (thumbs.render), and a clip can be 10 GB.
-    Warming skips it."""
-
-    def setUp(self):
-        super().setUp()
-        self.clip = self.vl.photo("Regatta", "harbour.mp4")
-        with open(self.vl.path_of(self.clip), "wb") as handle:
-            handle.write(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 4096)
-
-    def test_a_clip_is_answered_the_placeholder_and_never_decoded(self):
-        with self.renders() as render, mock.patch.object(images, "opened", wraps=images.opened) as opened:
-            answer = self.serve(self.clip)
-        self.assertEqual(0, render.call_count, "the clip's file was decoded")
-        self.assertEqual(0, opened.call_count, "the clip's file was opened")
-        self.assertEqual((thumbnails.VIDEO, False, None), (answer.kind, answer.kept, answer.etag))
-        self.assertEqual(thumbs.placeholder(), answer.content)
-        self.assertEqual([], entries_of(self.library), "something was kept for a clip")
-
-    def test_warming_skips_a_clip_and_makes_the_photos(self):
-        with self.renders() as render:
-            counts = thumbnails.warm(self.library, apply=True)
-        self.assertEqual((1, 1), (counts["photos"], counts["made"]))
-        self.assertEqual([((self.path,), {})], [(c.args, c.kwargs) for c in render.call_args_list])
+                thumbnails.warm(self.library, config.locate_ffmpeg)
 
 
 if __name__ == "__main__":

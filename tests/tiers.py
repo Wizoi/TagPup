@@ -59,6 +59,7 @@ SCENARIO = frozenset({
     "test_no_writes_to_damaged_photos",
     "test_an_index_reads_the_next_photos_ahead",
     "test_a_clip_is_indexed_as_a_video",
+    "test_a_clip_shows_its_poster",
     "test_an_index_reads_a_bake",
     "test_the_index_writes_the_bake",
     "test_a_machine_without_a_card",

@@ -199,9 +199,14 @@ class AClipAmongThePhotosOfAFolder(Views):
         found = self.ids(kind="search", value=json.dumps({"words": "Swim"}))["ids"]
         self.assertEqual([clip], found, "a search by its file name finds it")
 
+        # Its card asks its poster frame by id (a real clip's: tests/test_a_clip_shows_its_poster.py). This one's bytes
+        # are only what a .mov starts with, as a copy that failed leaves: ffmpeg is asked and gives no picture.
+        os.makedirs(coast, exist_ok=True)
+        with open(self.vl.path_of(clip), "wb") as handle:
+            handle.write(b"\x00\x00\x00\x14ftypqt  " + b"\x00" * 4096)
         reply = self.get("/api/photo-thumb", query_string={"id": clip})
-        self.assertEqual((200, "video"), (reply.status_code, reply.headers["X-TagPup-Thumb"]))
-        self.assertIn("no-cache", reply.headers["Cache-Control"], "a placeholder is not kept: the poster frame replaces it")
+        self.assertEqual((200, "unreadable"), (reply.status_code, reply.headers["X-TagPup-Thumb"]))
+        self.assertIn("no-cache", reply.headers["Cache-Control"], "a placeholder is not kept")
 
 
 class FindingAPathLiterally(Views):
