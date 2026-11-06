@@ -26,7 +26,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from tagpup.files import shares
+from tagpup.files import images, shares
 from tagpup.ml import photo_models
 from tagpup.services import search
 from tagpup.services import settings as library_settings
@@ -130,14 +130,14 @@ def tag_words(library, model):
 
 
 def _rows(library, key):
-    """[(photo id, path, kind)] of the photos owed a vector (store.photos.owes_a_vector: photos and clips) holding none
+    """[(photo id, path)] of the photos owed a vector (store.photos.owes_a_vector: photos and clips) holding none
     under `key`, by id, and how many hold one, read now."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         rows = [row for row in store_photos.stamps(conn, with_vectors=key, with_kind=True) if store_photos.owes_a_vector(row[4])]
     finally:
         conn.close()
-    todo = sorted((photo_id, path, kind) for photo_id, path, _mtime, _size, kind, held in rows if not held)
+    todo = sorted((photo_id, path) for photo_id, path, _mtime, _size, _kind, held in rows if not held)
     return todo, len(rows) - len(todo)
 
 
@@ -146,8 +146,8 @@ def plan(library, runtime, model):
     "gone" (of those, the file is not there), "seconds" (the estimate)}. ValueError for a model not to be made."""
     _settings, key = _key_of(runtime, library, model)
     todo, held = _rows(library, key)
-    there = [kind for _photo_id, path, kind in todo if shares.stamp_of(path) is not None]   # a share away counts there
-    clips = sum(1 for kind in there if kind == "video")
+    there = [path for _photo_id, path in todo if shares.stamp_of(path) is not None]   # a share away counts there
+    clips = sum(1 for path in there if images.is_clip(path))   # the pass's own test (PhotoEmbeddings.prepared)
     return {"key": key, "photos": len(todo) + held, "held": held, "to_embed": len(todo), "gone": len(todo) - len(there),
             "seconds": (len(there) - clips) * SECONDS_A_PHOTO + clips * SECONDS_A_CLIP}
 
@@ -175,7 +175,7 @@ def run(library, runtime, model, progress=None, should_stop=None, report=None):
             todo, held = _rows(library, key)
             if todo:
                 clip.load()
-            counts = embed_pass(embeddings, [(path, photo_id) for photo_id, path, _kind in todo], keep,
+            counts = embed_pass(embeddings, [(path, photo_id) for photo_id, path in todo], keep,
                                 progress=progress, should_stop=should_stop, batch=BATCH)
     finally:
         index.close()
@@ -256,7 +256,7 @@ def embed_pass(embeddings, todo, keep, progress=None, should_stop=None, workers=
                     not_read(problem)
                     continue
                 found = embeddings.vectors(prepared)
-                prepared = None   # a clip's frames go with it
+                future = prepared = None   # a clip's frames go with them, not held to the next read
                 waiting.append((item[1], stamp, found[0], found[1:]))
                 counts["embedded"] += 1
                 if len(waiting) >= batch:
