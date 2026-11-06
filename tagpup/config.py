@@ -27,11 +27,12 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import threading
 import time
 from typing import NamedTuple, Optional
 
-from tagpup.core import machine, paths
+from tagpup.core import machine, paths, processes
 
 CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -173,6 +174,46 @@ def locate_ffmpeg():
             return Ffmpeg(None, None, FFMPEG_MISSING)
         _FFMPEG["found"] = Ffmpeg(ffmpeg, ffprobe, None)
         return _FFMPEG["found"]
+
+
+#: What ffmpeg_problem answers when the programs are there and one does not run: reinstalling is what helps.
+FFMPEG_BROKEN = ("ffmpeg was found at %s but does not run (%s); reinstall it: winget uninstall Gyan.FFmpeg, "
+                 "then winget install Gyan.FFmpeg")
+
+_FFMPEG_RUNS = set()
+
+
+def _does_not_run(program):
+    """Why `program -version` fails, or None when it runs."""
+    try:
+        done = processes.run([program, "-version"], capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return "it gave no answer in 30 seconds"
+    except OSError as e:
+        return str(e)
+    if done.returncode != 0:
+        return "it exited with %d" % done.returncode
+    return None
+
+
+def ffmpeg_problem():
+    """None when ffmpeg and ffprobe are found and each runs; else the sentence that says what the owner does:
+    FFMPEG_MISSING, or FFMPEG_BROKEN naming the program that does not run. The prerequisite the server and the
+    CLI's index runs check before they start (owner, 2026-11-06). A pass is kept for the process for the programs
+    it found (each -version costs about half a second); a failure is looked at again at every call."""
+    found = locate_ffmpeg()
+    if found.problem:
+        return found.problem
+    with _FFMPEG_LOCK:
+        if found in _FFMPEG_RUNS:
+            return None
+    for program in (found.ffmpeg, found.ffprobe):
+        why = _does_not_run(program)
+        if why:
+            return FFMPEG_BROKEN % (program, why)
+    with _FFMPEG_LOCK:
+        _FFMPEG_RUNS.add(found)
+    return None
 
 
 #: The file in a home that says where this machine keeps each root of the libraries.
