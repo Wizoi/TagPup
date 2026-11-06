@@ -196,6 +196,12 @@ XMP_ONLY = {
     "XMP:Description": tuple(field for field in caption_fields("") if not field.startswith("XMP:")),
 }
 
+#: The fields a journaled write of a clip may name (DECISIONS 2026-11-05, M7): a keyword or caption save's. Only the XMP
+#: field of each group is written, into the clip's XMP packet (tagpup.files.segment_edits.new_packet); every other copy is
+#: left as it was, whatever the XMP value (segment_edits.clip_stale_of): a clip's EXIF and IPTC, if any, are not TagPup's
+#: to write. A Date Taken, a rotation and a rename of a clip are refused before they are planned.
+CLIP_FIELDS = frozenset(keyword_fields([], [])) | frozenset(caption_fields(""))
+
 #: Where TagPup's own JPEG writer (tagpup.files.segment_edits) puts each field a journaled write names: (segment kind,
 #: the property or field its editor names it by), xmp_packet's, exif_block's or iptc_block's. A target after the first
 #: is written only where its segment holds it already, as ExifTool's write of "Orientation" (WRITTEN_AS) updates an XMP
