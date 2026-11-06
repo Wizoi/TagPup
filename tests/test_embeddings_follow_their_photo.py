@@ -11,6 +11,9 @@ Lifted: test_rename_moves_suggestions_and_embeddings. Its two route tests are th
 rename's placeholder step removed, so a swap collides on the unique path, fails it). A rename keeping the vectors and a
 folder's removal taking them are scenario V9 (test_suggest_then_apply_all, through the routes; mutation: move_rows_in
 deleting the photo's vectors, or remove_under deleting no photo, fails it).
+
+A clip's frames 1 to 4 beside its vector (migration 38) follow the vector: replaced with it, taken with it or with the
+photo, and put back with the photo by an undo (AClipsFrames).
 """
 import os
 import sys
@@ -25,7 +28,7 @@ from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
-from tagpup.store import db, embeddings, photos  # noqa: E402
+from tagpup.store import db, embeddings, journal, photos  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -159,6 +162,79 @@ class Vectors(unittest.TestCase):
             conn.close()
         self.assertEqual(VECTOR, vectors[photo_id])
         self.assertNotIn(other_id, vectors)
+
+
+class AClipsFrames(unittest.TestCase):
+    """A clip is matched on its best frame: its vector is frame 0 and carries the stamp; frames 1 to 4 are kept beside
+    it, by the one writer (embeddings.put, put_by_id), and never outlive it."""
+
+    FRAMES = [bytes([n]) * 16 for n in range(1, 5)]
+
+    def setUp(self):
+        self.lib = TempLibrary(self)
+        self.clip = self.lib.photo("harbour.mp4")
+        self.lib.hold(os.path.dirname(self.clip))
+        self.photo_id = self.write(lambda conn: photo_rows.add_read(conn, self.clip, {}))
+        self.keep(MODEL, self.FRAMES)
+
+    def write(self, work):
+        conn = db.connect(self.lib.library.path)
+        try:
+            answer = work(conn)
+            conn.commit()
+            return answer
+        finally:
+            conn.close()
+
+    def keep(self, model, frames):
+        self.write(lambda conn: embeddings.put(conn, self.clip, model, 1.0, 1, VECTOR, None, frames=frames))
+
+    def frames(self, model=MODEL):
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            return embeddings.frames_of(conn, self.photo_id, model)
+        finally:
+            conn.close()
+
+    def test_deleting_the_clip_takes_its_frames(self):
+        self.assertEqual(self.FRAMES, self.frames())
+        photos.forget_photo(self.lib.library.path, self.clip)
+        self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embedding_frames"))
+
+    def test_embedding_it_again_with_fewer_frames_leaves_exactly_the_new_ones(self):
+        again = [b"\x07" * 16, b"\x08" * 16]
+        self.keep(MODEL, again)
+        self.assertEqual(again, self.frames())
+        self.write(lambda conn: embeddings.put_by_id(conn, self.photo_id, MODEL, 2.0, 2, VECTOR, None))
+        self.assertEqual([], self.frames(), "a vector written with no frames has none")
+
+    def test_more_than_four_is_refused_and_nothing_changes(self):
+        with self.assertRaises(ValueError):
+            self.keep(MODEL, self.FRAMES + [b"\x09" * 16])
+        self.assertEqual(self.FRAMES, self.frames())
+
+    def test_a_clip_gone_meanwhile_gets_no_frames(self):
+        photos.forget_photo(self.lib.library.path, self.clip)
+        self.assertIs(False, self.write(lambda conn: embeddings.put_by_id(conn, self.photo_id, MODEL, 1.0, 1, VECTOR, None,
+                                                                          frames=self.FRAMES)))
+        self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embedding_frames"))
+
+    def test_forgetting_the_vectors_takes_the_frames(self):
+        self.assertEqual(1, self.write(lambda conn: embeddings.forget(conn, self.clip)))
+        self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embedding_frames"))
+
+    def test_retiring_a_model_takes_its_frames_and_keeps_the_others(self):
+        self.keep(OTHER, self.FRAMES[:2])
+        (last, _), = self.write(lambda conn: embeddings.next_under(conn, MODEL, 0, 10))
+        self.assertEqual(1, self.write(lambda conn: embeddings.delete_between(conn, MODEL, 0, last)))
+        self.assertEqual(([], self.FRAMES[:2]), (self.frames(), self.frames(OTHER)))
+
+    def test_a_journaled_delete_of_the_clip_and_its_undo_bring_the_frames_back(self):
+        deletion = journal.apply(self.lib.library.path, "delete", [journal.delete("photos", (self.photo_id,), {})])
+        self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embedding_frames"))
+        journal.undo(self.lib.library.path, deletion.change_id)
+        self.assertEqual(self.FRAMES, self.frames())
+        self.assertEqual(VECTOR, self.write(lambda conn: embeddings.get(conn, self.clip, MODEL)).vector)
 
 
 class AnEmbedding(unittest.TestCase):
