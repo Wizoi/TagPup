@@ -725,10 +725,11 @@ export function rotatePhoto(direction) {
     })
     .then(data => {
         if (data.success) {
-            // The photo's new mtime is its images' new URL, here and in the grid.
+            // The photo's new mtime is its images' new URL, here and in the grid; the route answers the file's stamp
+            // with every rotation it made, so the next save names it.
             const photo = state.folderPhotos.find(p => p.path === path) || { path };
-            photo.mtime = data.mtime || Date.now() / 1000;
-            if (Number.isFinite(data.size)) photo.size = data.size;
+            photo.mtime = data.mtime;
+            photo.size = data.size;
             mainImage.src = photoFileUrl(photo, 800);
             // The faces' boxes turned with the file; the strip and the boxes ask again.
             renderPhotoFaces(path);
