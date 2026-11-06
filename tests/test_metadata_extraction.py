@@ -99,11 +99,12 @@ class TestExtractTags(unittest.TestCase):
 
 
 class TestExtractCaptions(unittest.TestCase):
-    def test_the_description_comes_first_then_the_title(self):
-        """page_record takes captions[0] as the title, so order matters; which copy of each is read, XMP's or IPTC's, is
-        test_tag_writes_keep_the_index_true.XmpIsTheCopyRead's."""
+    def test_the_title_comes_first_then_the_description(self):
+        """page_record takes captions[0] as the title, so order matters (DECISIONS 2026-11-06); which copy of each is
+        read, XMP's or IPTC's, is test_tag_writes_keep_the_index_true.XmpIsTheCopyRead's."""
         meta = {"XMP:Title": "title", "IPTC:Caption-Abstract": "abstract"}
-        self.assertEqual(["abstract", "title"], extract_captions(meta))
+        self.assertEqual(["title", "abstract"], extract_captions(meta))
+        self.assertEqual(["object", "abstract"], extract_captions({"IPTC:ObjectName": "object", **meta, "XMP:Title": " "}))
 
     def test_blank_captions_are_dropped(self):
         self.assertEqual(extract_captions({"XMP:Description": "   "}), [])
@@ -114,11 +115,13 @@ class TestExtractCaptions(unittest.TestCase):
         self.assertEqual(["Beach"], extract_tags({"XMP:Subject": [" ", ""], "IPTC:Keywords": ["Beach"]}))
         self.assertEqual(["Beach"], extract_tags({"XMP:Subject": " ", "IPTC:Keywords": "Beach"}))
 
-    def test_smart_rename_names_a_photo_by_the_caption_the_index_shows(self):
-        """XMP's description wins over IPTC's caption whichever ExifTool answered first; the title only when neither."""
+    def test_smart_rename_names_a_photo_by_the_title_the_index_shows(self):
+        """The title, XMP's else IPTC's ObjectName; the description only when the photo holds no title, XMP's winning over
+        IPTC's whichever ExifTool answered first (DECISIONS 2026-11-06)."""
         from tagpup.files.names import caption_for_name
         self.assertEqual("xmp", caption_for_name({"IPTC:Caption-Abstract": "iptc", "XMP:Description": "xmp"}))
-        self.assertEqual("iptc", caption_for_name({"XMP:Title": "title", "IPTC:Caption-Abstract": "iptc"}))
+        self.assertEqual("title", caption_for_name({"XMP:Title": "title", "IPTC:Caption-Abstract": "iptc"}))
+        self.assertEqual("object", caption_for_name({"XMP:Description": "xmp", "IPTC:ObjectName": "object"}))
         self.assertEqual("title", caption_for_name({"XMP:Title": " title "}))
         self.assertEqual("", caption_for_name({"XMP:Description": " "}))
 

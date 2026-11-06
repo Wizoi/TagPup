@@ -15,10 +15,8 @@ logger = logging.getLogger(__name__)
 PRESERVED_NAME = "XMP-xmpMM:PreservedFileName"
 
 #: What Smart Rename reads from each photo: the name it had before it was first renamed,
-#: and its caption.
-RENAME_FIELDS = [PRESERVED_NAME, "XMP:PreservedFileName",
-                 "XMP:Title", "Title", "XMP:Description", "Description",
-                 "IPTC:Caption-Abstract", "Caption-Abstract"]
+#: and every field its title is read from (vocabulary.CAPTION_FIELDS: the title, else the description).
+RENAME_FIELDS = [PRESERVED_NAME, "XMP:PreservedFileName", *vocabulary.CAPTION_FIELDS]
 
 
 def _field(meta, *names):
@@ -41,10 +39,9 @@ def preserved_name(meta):
 
 
 def caption_for_name(meta):
-    """The caption a photo's new name carries: the first caption the index shows for it (vocabulary.extract_captions:
-    the description, XMP's when it holds one, else IPTC's, then the title); "" for none."""
-    captions = vocabulary.extract_captions(meta)
-    return captions[0] if captions else ""
+    """The text a photo's new name carries: its title as the page shows it (vocabulary.title_of: XMP's Title, else
+    IPTC's ObjectName, else the description); "" for none."""
+    return vocabulary.title_of(meta)
 
 
 def read_for_renaming(exiftool_path, photo_paths):

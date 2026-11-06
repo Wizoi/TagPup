@@ -246,7 +246,7 @@ def is_clip(path):
 #: not change (DECISIONS 2026-11-02, items 1 and 3); its tags and caption are patched into its XMP only while writing
 #: clips is on (field_values.CLIP_PATCH_IN_PLACE; DECISIONS 2026-11-05, M7). The one sentence of the refusal
 #: (tagpup.services.file_changes.leave_out_clips, field_values.write).
-CLIP_NOT_EDITED = ("TagPup writes only a video's tags and caption, and only while writing videos is turned on; it does "
+CLIP_NOT_EDITED = ("TagPup writes only a video's tags and title, and only while writing videos is turned on; it does "
                    "not change a video's Date Taken, turn or name: this video's file was left as it is.")
 
 #: Why a clip whose tags or caption are saved is not written, when writing clips is on (field_values.CLIP_PATCH_IN_PLACE):

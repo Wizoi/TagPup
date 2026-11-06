@@ -66,10 +66,9 @@ class TheOrder(Captioned):
         self.assertEqual("Anchor & <b>rope</b>", found[self.anchor])
         self.assertIsNone(found[self.none_a])
         two = self.vl.photo("2023", "g.jpg", fields={"IPTC:Caption-Abstract": "Bay", "XMP:Title": "Aardvark"})
-        self.assertEqual(["Bay", "Aardvark"], self.vl.captions_of(two), "two captions, the first the one the page shows")
+        self.assertEqual(["Aardvark", "Bay"], self.vl.captions_of(two), "two texts, the first the title the page shows")
         listed = self.ids()
-        self.assertLess(listed.index(self.anchor), listed.index(two))
-        self.assertLess(listed.index(two), listed.index(self.harbour), "by Bay, not by Aardvark")
+        self.assertLess(listed.index(two), listed.index(self.anchor), "by the title Aardvark, not by the caption Bay")
 
     def test_text_that_is_not_json_or_an_empty_list_is_no_caption_and_never_an_error(self):
         self.vl.conn.execute("UPDATE photos SET captions = ? WHERE id = ?", ("not json {", self.zebra))

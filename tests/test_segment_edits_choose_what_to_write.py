@@ -175,23 +175,27 @@ def caption(text):
     return {field: fields.field_values(value) for field, value in fields.caption_fields(text).items()}
 
 
+def title(text):
+    return {field: fields.field_values(value) for field, value in fields.title_fields(text).items()}
+
+
 class TheMapCoversEveryWriter(unittest.TestCase):
 
     def test_every_field_a_writer_names_has_its_place_and_the_rest_go_to_the_rewrite(self):
-        written = (list(keyword_fields_of()) + list(caption("x")) + list(fields.date_taken_fields("2019-06-15T10:30:00"))
+        written = (list(keyword_fields_of()) + list(caption("x")) + list(title("x"))
+                   + list(fields.date_taken_fields("2019-06-15T10:30:00"))
                    + list(dates.SHIFTED_FIELDS) + [fields.ORIENTATION, names.PRESERVED_NAME])
         self.assertEqual([], [field for field in written if field not in fields.EDITED_AS])
         owned = {"xmp": xmp_packet.PROPERTIES, "exif": exif_block.FIELDS, "iptc": iptc_block.DATASETS}
         for field, targets in fields.EDITED_AS.items():
             for kind, name in targets:
                 self.assertIn(name, owned[kind], field)
-        for field in (identity.DOCUMENT_ID_FIELD, "XMP:Title", "IPTC:ObjectName", fields.REGION_INFO,
-                      "EXIF:SubSecTimeOriginal"):
+        for field in (identity.DOCUMENT_ID_FIELD, fields.REGION_INFO, "EXIF:SubSecTimeOriginal"):
             self.assertNotIn(field, fields.EDITED_AS)
 
     def test_a_write_naming_a_field_not_mapped_is_no_patch(self):
         layout, data = header()
-        for field in ("XMP-tagpup:FaceVectors", fields.REGION_INFO, "XMP:Title", identity.DOCUMENT_ID_FIELD):
+        for field in ("XMP-tagpup:FaceVectors", fields.REGION_INFO, "XMP:Rating", identity.DOCUMENT_ID_FIELD):
             with self.subTest(field), self.assertLogs("tagpup.files.segment_edits", "INFO") as said:
                 self.assertIsNone(segment_edits.new_header(layout, data, {**keywords([PERSON]), field: ["x"]}))
             self.assertIn("not a field the own writer writes", said.output[0])
@@ -307,7 +311,7 @@ class AKeywordOrCaptionSave(unittest.TestCase):
 
 
 class AClipsSave(unittest.TestCase):
-    """The packet of a clip's XMP box made new by a keyword or caption save; the clip's file is in_place.patch_clip's."""
+    """The packet of a clip's XMP box made new by a keyword or title save; the clip's file is in_place.patch_clip's."""
 
     def made(self, old, values, keywords_elsewhere=()):
         found = segment_edits.new_packet(old, values, keywords_elsewhere=keywords_elsewhere)
@@ -323,21 +327,20 @@ class AClipsSave(unittest.TestCase):
         self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
 
     def test_adobes_wrapped_packet_is_edited_where_it_stands(self):
-        new, stale = self.made(shapes.PREMIERE, {**keywords(["Pier"]), **caption("The pier at noon")})
+        new, stale = self.made(shapes.PREMIERE, {**keywords(["Pier"]), **title("The pier at noon")})
         self.assertEqual(len(shapes.PREMIERE), len(new))
         held = xmp_packet.read(new)
         self.assertEqual((["Pier"], "The pier at noon", "xmp.did:7c2d0e4a"),
-                         (held["dc:subject"], held["dc:description"], held["xmpMM:DocumentID"]))
-        self.assertEqual({"IPTC:Keywords", "EXIF:XPKeywords", "IPTC:Caption-Abstract", "EXIF:ImageDescription",
-                          "EXIF:XPComment"}, set(stale))
-        self.assertEqual((new, stale), self.made(new, {**keywords(["Pier"]), **caption("The pier at noon")}),
+                         (held["dc:subject"], held["dc:title"], held["xmpMM:DocumentID"]))
+        self.assertEqual({"IPTC:Keywords", "EXIF:XPKeywords", "IPTC:ObjectName"}, set(stale))
+        self.assertEqual((new, stale), self.made(new, {**keywords(["Pier"]), **title("The pier at noon")}),
                          "a save made twice leaves the packet as it is")
 
     def test_a_clip_with_no_packet_is_given_the_blank_one_and_none_when_the_save_says_nothing(self):
         new, _ = self.made(None, keywords(["Pier"]))
         self.assertEqual((len(xmp_packet.blank()), ["Pier"]), (len(new), xmp_packet.read(new)["dc:subject"]))
-        self.assertEqual((None, ("IPTC:Keywords", "EXIF:XPKeywords", "IPTC:Caption-Abstract", "EXIF:ImageDescription",
-                                 "EXIF:XPComment")), self.made(None, {**keywords([]), **caption("")}))
+        self.assertEqual((None, ("IPTC:Keywords", "EXIF:XPKeywords", "IPTC:ObjectName")),
+                         self.made(None, {**keywords([]), **title("")}))
 
     def test_a_cleared_value_leaves_every_copy_outside_xmp_stale(self):
         # A JPEG's last keyword comes off every copy (#2433); a clip's EXIF and IPTC copies are not TagPup's to write.
@@ -352,16 +355,16 @@ class AClipsSave(unittest.TestCase):
                 self.assertIsInstance(refused, containers.Refusal)
                 self.assertIn("QuickTime", refused.reason)
                 self.made(old, keywords(["Pier"]), keywords_elsewhere=["Pier", "Dunes"])
-                self.made(old, caption("The pier at noon"), keywords_elsewhere=["Pier"])
+                self.made(old, title("The pier at noon"), keywords_elsewhere=["Pier"])
 
     def test_a_packet_the_editor_refuses_is_no_patch_and_a_field_not_a_clips_is_refused(self):
         with self.assertLogs("tagpup.files.segment_edits", "INFO") as said:
             self.assertIsNone(segment_edits.new_packet(b"<x:xmpmeta>", keywords(["Pier"]), keywords_elsewhere=()))
         self.assertIn("not well-formed", said.output[0])
-        for field in (fields.ORIENTATION, *fields.date_taken_fields("2019-06-15T10:30:00")):
+        for field in (fields.ORIENTATION, *fields.date_taken_fields("2019-06-15T10:30:00"), *caption("")):
             with self.subTest(field), self.assertRaises(ValueError):
                 segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]}, keywords_elsewhere=())
-        self.assertEqual(set(keywords([])) | set(caption("")), set(fields.CLIP_FIELDS))
+        self.assertEqual(set(keywords([])) | set(title("")), set(fields.CLIP_FIELDS))
 
 
 class ADateOrARotation(unittest.TestCase):

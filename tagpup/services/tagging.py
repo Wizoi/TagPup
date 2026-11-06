@@ -1,4 +1,4 @@
-"""Actions on photos' tags and captions."""
+"""Actions on photos' tags and titles."""
 import logging
 import os
 
@@ -15,7 +15,7 @@ from tagpup.store import db, person_ids, photos, taxonomy
 logger = logging.getLogger(__name__)
 
 
-#: `base` not given: no check of the file's tags and caption (the CLI, the MCP). None is a page's record of a photo
+#: `base` not given: no check of the file's tags and title (the CLI, the MCP). None is a page's record of a photo
 #: ExifTool could not read; a dict is what the page read.
 NO_BASE = object()
 
@@ -41,34 +41,50 @@ def refuse_under_people(library, tags):
 
 
 def _held_title(now):
-    """The caption the file holds, as the page reads it (the first of its captions, trimmed)."""
-    found = vocabulary.extract_captions({field: now.get(field) for field in vocabulary.CAPTION_FIELDS})
-    return vocabulary.trimmed(found[0]) if found else ""
+    """The title the file holds, as the page shows it (vocabulary.title_of: its Title, else its Description)."""
+    return vocabulary.title_of({field: now.get(field) for field in vocabulary.CAPTION_FIELDS})
 
 
-#: Every field _differs_from_base reads of the file: the fields its tags come from and every field its caption is
-#: shown from -- the page's title is the first caption, a Title (XMP:Title, IPTC:ObjectName) when the photo holds no
-#: Description. The save read the description fields alone, found no caption on a photo titled only, and refused every
-#: save from the page of it as changed on disk (6,123 photos of one library, 2026-11-06). The prefixed names alone, as
-#: _caption_problem asks: a read answers a field under its group's name (field_values), so a bare name holds nothing,
-#: and a bare key in what the file holds broke the recording of a file that held the save already
-#: (store.photos.follow_fields reads each key as group:name).
+#: Every field _differs_from_base reads of the file: the fields its tags come from and every field its title is
+#: shown from -- XMP:Title, else IPTC:ObjectName, else the Description a photo with no title shows as its title
+#: (vocabulary.CAPTION_FIELDS). The save once read the description fields alone, found no title on a photo titled only,
+#: and refused every save from the page of it as changed on disk (6,123 photos of one library, 2026-11-06). The
+#: prefixed names alone, as _caption_problem asks: a read answers a field under its group's name (field_values), so a
+#: bare name holds nothing, and a bare key in what the file holds broke the recording of a file that held the save
+#: already (store.photos.follow_fields reads each key as group:name).
 BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(name for name in vocabulary.CAPTION_FIELDS
                                                                   if ":" in name)))
 
 
 def _differs_from_base(now, base):
-    """Does the file hold other tags or another caption than the page read (`base`, {"tags", "title"})? The tags
-    as a SET of keyword paths, the caption trimmed: the two things a save writes over. `now` holds BASE_READ."""
+    """Does the file hold other tags or another title than the page read (`base`, {"tags", "title"})? The tags
+    as a SET of keyword paths, the title trimmed: the two things a save writes over. `now` holds BASE_READ."""
     return (set(_tags_held(now)) != set(base.get("tags") or [])
             or _held_title(now) != vocabulary.trimmed(base.get("title") or ""))
+
+
+def _caption_moved(now, title):
+    """The caption fields a save of `title` clears, {field: ""}: on a photo holding no title of its own, whose page
+    shows its Description as the title, every caption field holding that very text when it is the title saved -- the
+    save moves the caption into the title and leaves no copy of it behind (DECISIONS 2026-11-06, THE TITLE AND THE
+    CAPTION ARE TWO VALUES). A caption that is not the title saved is never written: a photo whose title differs from
+    its Description keeps it, and so does one whose title was changed or cleared. `now` holds BASE_READ and the
+    caption fields."""
+    title = vocabulary.trimmed(title or "")
+    if not title or vocabulary.holds_title(now) or _held_title(now) != title:
+        return {}
+    return {field: "" for field in fields.caption_fields("")
+            if title in (vocabulary.trimmed(text) for text in fields.field_values(now.get(field)))}
 
 
 @file_changes.exclusively()
 @roots_service.canonical_args("photo_path")
 def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rename_format, stamp=None, base=NO_BASE):
-    """Save one photo's caption, tags and Date Taken -- the photo panel -- and rename it
-    after its new caption if Smart Rename named it.
+    """Save one photo's title, tags and Date Taken -- the photo panel -- and rename it
+    after its new title if Smart Rename named it.
+
+    The title is written to the title fields alone (fields.title_fields); no caption field is written but those a
+    title moved out of the Description clears (_caption_moved; DECISIONS 2026-11-06).
 
     `tags` is the photo's whole tag list. Only the ones the file does not hold yet are
     checked (tagpup.core.validation): one written by another program must not stop the
@@ -108,14 +124,14 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     not made from what the file holds. Not given at all is no check.
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
-    written, `change`, and `index_warning` when the renamed photo's new name already had
-    rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way; `pictures_refused` when the write
+    written, `change`, `base`, the tags and title the file holds after the write (the page's next `base`), and
+    `index_warning` when the renamed photo's new name already had rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way; `pictures_refused` when the write
     changed the picture's bytes and was made again (file_changes).
     """
     result = Result(attempted=1)
     _held, loose = libraries.split(library, [photo_path])
     files_only = bool(loose)
-    wanted = fields.caption_fields(title or "")
+    wanted = fields.title_fields(title or "")
     if date_taken:
         wanted.update(fields.date_taken_fields(date_taken))
     photo_path = paths.stored(photo_path)
@@ -124,7 +140,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         return result
     # One ExifTool session and one read before the write: the tags the file holds, the
     # plan's before, and the name Smart Rename kept.
-    read = list(dict.fromkeys(SAVE_READ + BASE_READ + tuple(wanted)))
+    read = list(dict.fromkeys(SAVE_READ + BASE_READ + tuple(wanted) + tuple(fields.caption_fields(""))))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         now = field_values.read_one(et, photo_path, read)
         if base is None:
@@ -144,6 +160,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
         after.update(wanted)
+        after.update(_caption_moved(now, title))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:
             written = file_only.write_fields(exiftool_path, [photo_path], list(after), plan, et=et,
@@ -169,7 +186,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.details["pictures_refused"] = written.details["pictures_refused"]
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"],
-                              base={"tags": _tags_held(after), "title": vocabulary.trimmed(title or "")})
+                              base={"tags": _tags_held(after), "title": _held_title({**now, **after})})
         touched = 1 if (written.changed or renamed) else 0
         result.details.update({file_only.FILE_ONLY: touched if files_only else 0,
                                file_only.WITH_ROWS: 0 if files_only else touched})

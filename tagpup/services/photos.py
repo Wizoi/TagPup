@@ -39,7 +39,7 @@ def page_record(path, meta, mtime=0.0, size=0):
         "filename": os.path.basename(path),
         "tags": meta.get("tags", []),
         "people": meta.get("people", []),
-        "title": captions[0] if captions else "",
+        "title": captions[0] if captions else "",   # the first is the title (vocabulary.title_of)
         "mtime": mtime,
         "size": size,
         "year": dates.shown_year(None if year is None else str(year)),

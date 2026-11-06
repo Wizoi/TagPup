@@ -48,6 +48,10 @@ def caption_in(path):
     return (fields.field_values(in_file(path, "XMP:Description").get("XMP:Description")) or [""])[0]
 
 
+def title_in(path):
+    return (fields.field_values(in_file(path, "XMP:Title").get("XMP:Title")) or [""])[0]
+
+
 def write_into(path, **tags):
     with ExifToolSession(executable=EXIFTOOL) as et:
         et.set_tags([path], tags=tags, params=["-overwrite_original"])
@@ -141,7 +145,8 @@ class TheViewReadsTheFile(Fresh):
         reply = self.save(record, tags=record["tags"] + ["Trips/Lakes"])
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual(["Activity/Sailing", "Trips/Coast", "Trips/Lakes"], sorted(tags_in(path)))
-        self.assertEqual("Harbour at dawn", caption_in(path), "the caption the file held is kept")
+        self.assertEqual(("Harbour at dawn", ""), (title_in(path), caption_in(path)),
+                         "the caption the file held, shown as its title, is kept: moved into the title")
 
     def test_a_caption_another_program_wrote_is_kept_by_a_tag_save(self):
         path, photo_id = self.make("a.jpg", 4, ["Trips/Coast"])
@@ -150,7 +155,7 @@ class TheViewReadsTheFile(Fresh):
         self.assertEqual("Written elsewhere", record["title"])
         reply = self.save(record, tags=record["tags"] + ["Trips/Lakes"])
         self.assertEqual(200, reply.status_code, reply.data)
-        self.assertEqual("Written elsewhere", caption_in(path))
+        self.assertEqual(("Written elsewhere", ""), (title_in(path), caption_in(path)))
 
     def test_a_date_taken_edit_from_the_view_keeps_the_files_tags(self):
         path, photo_id = self.make("a.jpg", 5, ["Trips/Coast"], row="unread")

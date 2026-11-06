@@ -61,8 +61,8 @@ def tags_in(path):
     return fields.field_values(in_file(path, "XMP:Subject").get("XMP:Subject"))
 
 
-def caption_in(path):
-    return (fields.field_values(in_file(path, "XMP:Description").get("XMP:Description")) or [""])[0]
+def title_in(path):
+    return (fields.field_values(in_file(path, "XMP:Title").get("XMP:Title")) or [""])[0]
 
 
 def write_into(path, **tags):
@@ -144,7 +144,7 @@ class AnEditWritesTheFileOnly(Base):
         body = reply.get_json()
         self.assertEqual((1, 0), (body["file_only"], body["with_rows"]))
         self.assertEqual(["Trips/Lighthouse", "People/Rowan Thackeray"], tags_in(photo))
-        self.assertEqual("Lamp room", caption_in(photo))
+        self.assertEqual("Lamp room", title_in(photo))
         self.assert_library_unchanged()
         self.assertEqual([self.lighthouse], self.not_held(photo), "the write made the folder the library's")
 
@@ -343,7 +343,7 @@ class ASmartRename(Base):
         self.assertNotEqual(paths.key(renamed), paths.key(new_path))
         self.assertTrue(os.path.exists(new_path))
         self.assertFalse(os.path.exists(renamed))
-        self.assertEqual("Second", caption_in(new_path))
+        self.assertEqual("Second", title_in(new_path))
         self.assert_library_unchanged()
 
 
@@ -610,7 +610,7 @@ class AWriteWhosePictureChanged(Base):
         self.assertEqual(200, saved.status_code, saved.data)
         self.assertEqual((1, 1, 2), (saved.get_json().get("pictures_refused"), saved.get_json()["file_only"],
                                      len(self.made)))
-        self.assertEqual(("Lamp room", ["Trips/Lighthouse"]), (caption_in(photo), tags_in(photo)))
+        self.assertEqual(("Lamp room", ["Trips/Lighthouse"]), (title_in(photo), tags_in(photo)))
         with self.flipping(1):
             turned = self.post("/photo/rotate", {"path": photo, "direction": "left"})
         self.assertEqual((200, 1), (turned.status_code, turned.get_json().get("pictures_refused")), turned.data)

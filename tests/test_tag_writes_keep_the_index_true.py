@@ -278,8 +278,10 @@ class XmpIsTheCopyRead(FilesCase):
         self.assertEqual("Relay at the lake", shown)
         result = tagging.save_photo(self.library, a, "Relay at the lake, later", [], None, EXIFTOOL, "",
                                     base={"tags": [], "title": shown})
-        self.assertEqual((True, "Relay at the lake, later", "Relay at the lake, later"),
-                         (result.ok, field_of(a, "XMP:Description"), field_of(a, "IPTC:Caption-Abstract")))
+        # The title is saved to the title fields; the caption, changed from what was shown, is kept (DECISIONS 2026-11-06).
+        self.assertEqual((True, "Relay at the lake, later", "Relay at the lake", "Relay at dusk"),
+                         (result.ok, field_of(a, "XMP:Title"), field_of(a, "XMP:Description"),
+                          field_of(a, "IPTC:Caption-Abstract")))
         # A blank XMP description holds none: 12,469 photo_index rows hold one beside an IPTC caption (counted
         # 2026-11-03), and show the IPTC caption.
         b = self.made("b.jpg", {"IPTC:Caption-Abstract": "Relay at dusk"},
@@ -337,7 +339,7 @@ class XmpIsTheCopyRead(FilesCase):
                                   refresh_rows.apart(self.library)[0]["apart"]))
 
         saved = save("Relay at the lake, later")
-        self.assertEqual((True, "Relay at the lake, later"), (saved.ok, field_of(a, "XMP:Description")))
+        self.assertEqual((True, "Relay at the lake, later"), (saved.ok, field_of(a, "XMP:Title")))
 
     def test_a_row_a_server_saved_between_the_plan_and_the_write_is_skipped_and_the_run_succeeds(self):
         # The server has the library open: a row it saves after the plan was read is derived by the new rule already.
