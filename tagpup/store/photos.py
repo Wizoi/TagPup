@@ -374,11 +374,10 @@ def vectors(conn, model):
 
 # What a clip (photos.kind 'video') is not given yet: one rule each, read from here and never spelled as a kind test
 # where it is used, since each changes with its own merge of the video plan (DECISIONS 2026-11-02).
-#: The kinds the index owes a CLIP vector (photo_fingerprints.owed, counts, checks.without_a_vector, photo_reembed). A
-#: clip is owed none until the indexer makes its vector of its five frames, frame 0 its vector and frames 1 to 4
-#: beside it (embeddings.FRAMES; DECISIONS 2026-11-02, "THE OWNERS' PLANS", item 5, and 2026-11-06, migration 38):
-#: that merge adds 'video' here.
-VECTOR_KINDS = ("photo",)
+#: The kinds the index owes a CLIP vector (photo_fingerprints.owed, counts, checks.without_a_vector, photo_reembed): a
+#: clip's is made of its five frames, frame 0 its vector and frames 1 to 4 beside it (embeddings.FRAMES; DECISIONS
+#: 2026-11-02, "THE OWNERS' PLANS", item 5, and 2026-11-06, migration 38; tagpup_cli.py's _index_clips).
+VECTOR_KINDS = ("photo", "video")
 #: The kinds the index looks at for faces (photo_fingerprints.owed's UNEXAMINED): not a clip, whose faces wait for the
 #: faces merge (migration 39).
 FACE_KINDS = ("photo",)
@@ -403,8 +402,8 @@ def sql_kind_in(kinds, column="kind"):
 
 def counts(conn, model):
     """(photos owed a vector, VECTOR_KINDS; photos holding a vector under `model`): what a photo model's switch,
-    retiring the other keys' vectors and the search index count. A kind owed none (a clip, until its vector of its
-    frames lands) is not counted among the photos that could hold one."""
+    retiring the other keys' vectors and the search index count. A clip is counted as a photo: its vector is its frame
+    0's."""
     return conn.execute("SELECT (SELECT COUNT(*) FROM photos WHERE " + sql_kind_in(VECTOR_KINDS) + "),"
                         " (SELECT COUNT(*) FROM embeddings e JOIN photos p ON p.id = e.photo_id"
                         " WHERE e.model = ?)", (model,)).fetchone()

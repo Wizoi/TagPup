@@ -43,6 +43,11 @@ class NoFrames(Exception):
         super().__init__(problem)
         self.problem, self.whose = problem, whose
 
+    @property
+    def lasting(self):
+        """Is it the file's as it is (video_frames.THE_FILE), found again by every read until the file changes?"""
+        return self.whose == video_frames.THE_FILE
+
 
 class PhotoEmbeddings:
     """The photos' vectors under one CLIP model: the library's when the file is as it
@@ -206,6 +211,11 @@ class PhotoEmbeddings:
                                     for picture in self.frames_of(file_path)], frames=True)
         return Prepared(stamp, self.clip.input_of(file_path, seen=seen, load=load))
 
+    def frames_bytes(self):
+        """What a clip's frames shown CLIP hold at most while they are read ahead: CLIP_PICTURES pictures, each at most
+        video_frames.MAX_SIDE on its longer side (ClipModel.input_bytes). The index's read-ahead reserves it."""
+        return CLIP_PICTURES * self.clip.input_bytes(video_frames.MAX_SIDE, video_frames.MAX_SIDE)
+
     def frames_of(self, file_path):
         """The CLIP_PICTURES frames of the clip at `file_path`, upright RGB pictures, fewer for a clip cut short after
         its index (video_frames.frames), on the processor; NoFrames when ffmpeg gives none."""
@@ -267,6 +277,11 @@ class Prepared:
 
     def __init__(self, stamp, image_input, frames=False):
         self.stamp, self.image_input, self.frames = stamp, image_input, frames
+
+    def of_the_file(self, mtime, size):
+        """Was the file read as a record stamped (`mtime`, `size`) describes it (store.photos.describes)? Not when it
+        changed between its metadata's read and this one: its vector is not recorded with that record."""
+        return store_photos.describes(mtime, size, self.stamp)
 
 
 def _record(row, people="people"):

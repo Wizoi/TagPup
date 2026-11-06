@@ -94,6 +94,7 @@ from tagpup.services import maintenance
 from tagpup.services import metadata_check, segment_census
 from tagpup.services import refresh_rows
 from tagpup.services import file_changes
+from tagpup.services import search as search_service
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex
 from tagpup.store.locks import PathLocker
 from tagpup.store import taxonomy as store_taxonomy
@@ -503,14 +504,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     for why, count in sorted(left_unread.items()):
         console.print(f"[bold yellow]{count} photo(s) were not read: {why}.[/bold yellow] They are left as they were; "
                       f"the next index reads them.")
-    # A clip (kind 'video') is recorded by its stamp and what ExifTool read of it, with no vector: nothing decoded, no
-    # face looked for, nothing written to its file (so no lock), no turn on the graphics card. A transaction a chunk.
+    # A clip (kind 'video') is shown CLIP its frames after the photos, in the same turn of the graphics card (_index_clips):
+    # no face looked for, no identity and no bake written to its file.
     clips = [m for m in to_index_meta if m.get("kind") == "video"]
     to_index_meta = [m for m in to_index_meta if m.get("kind") != "video"]
-    for start in range(0, len(clips), VIDEO_CHUNK):
-        photo_index.build_or_update([None] * len(clips[start:start + VIDEO_CHUNK]), clips[start:start + VIDEO_CHUNK])
-    if clips:
-        console.print(f"Recorded [bold green]{len(clips)}[/bold green] video(s).")
     tagged_count = sum(1 for m in to_index_meta if m["tags"] or m["people"] or m["captions"])
 
     console.print(
@@ -518,12 +515,12 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         f"([bold]{tagged_count}[/bold] already tagged, "
         f"[bold]{len(to_index_meta) - tagged_count}[/bold] untagged)."
     )
+    if clips:
+        console.print(f"Indexing [bold green]{len(clips)}[/bold green] video(s) from their frames.")
 
     # If there is nothing at all to index
-    if not to_index_meta:
-        if clips:
-            console.print("[green]No photos to index besides the videos.[/green]")
-        elif skipped_count > 0:
+    if not to_index_meta and not clips:
+        if skipped_count > 0:
             console.print("[green]No new images found. Index remains current.[/green]")
         else:
             console.print("[yellow]No photos found to index.[/yellow]")
@@ -540,11 +537,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # for the read below, which does not decode it again.
     looked, complete = ({}, False) if force_reembed else _kept_with_no_model(
         to_index_meta, embeddings, set() if skip_faces else unexamined)
+    # A clip is kept by its stamp alone: there is no decode of it to fingerprint.
+    complete = complete and all(embeddings.kept(m["path"], compare=False)[0] is not None for m in clips)
     early = {key: answer["decoded"] for key, answer in looked.items() if answer["decoded"] is not None}
     face_processor = None
     if not complete:
         embeddings = runtime.embeddings(Library(db_path), photo_index)
-        face_processor = runtime.faces(Library(db_path), settings) if not skip_faces else None
+        face_processor = runtime.faces(Library(db_path), settings) if to_index_meta and not skip_faces else None
 
     # Per-photo write locks, shared with every other indexer of the libraries in this
     # folder, wherever each was started from.
@@ -559,6 +558,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     stop_file = os.environ.get(indexing_service.STOP_FILE)
     turn = photos = bar = None
     total_new_indexed = 0
+    clip_counts, clips_unread = Counter(), []
     after = upto = 0
     # The folders a recorded batch held a photo of, in order, and the fingerprint of each recorded photo's picture the
     # index knows, with the stamp it was recorded under (_recorded): what the bake after the index writes, and the decodes
@@ -696,19 +696,24 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                                       budget=READ_AHEAD_BYTES)
         # The bar is moved by hand: tqdm iterating `photos` kept the last photo it handed on, and its pictures, while
         # it waited for the next one -- outside what the read-ahead counts.
-        bar = tqdm(total=len(to_index_meta), desc=indexing_service.GENERATING_EMBEDDINGS, disable=progress_line.asked())
+        # The photos and then the clips, one count.
+        total = len(to_index_meta) + len(clips)
+        bar = tqdm(total=total, desc=indexing_service.GENERATING_EMBEDDINGS, disable=progress_line.asked())
         # The server is told each time the whole percent moves (a fact a photo would be thousands of lines), and at
         # least every job_runs.PROGRESS_EVERY seconds: a percent of photo_index's 59,523 photos at under 2 a second is
-        # over activity.STUCK_AFTER, and the run would read as stuck.
-        embedded, percent_said, said_at = 0, 0, time.monotonic()
-        _say(indexing_service.phase_fact("embeddings", 0, len(to_index_meta)))
-        for meta, begun, result in photos:
+        # over activity.STUCK_AFTER, and the run would read as stuck; a clip takes about 2 s.
+        said = {"done": 0, "percent": 0, "at": time.monotonic()}
+
+        def step():
             bar.update(1)
-            embedded += 1
-            percent = embedded * 100 // len(to_index_meta)
-            if percent != percent_said or time.monotonic() - said_at >= job_runs.PROGRESS_EVERY:
-                percent_said, said_at = percent, time.monotonic()
-                _say(indexing_service.phase_fact("embeddings", embedded, len(to_index_meta)))
+            said["done"] += 1
+            percent = said["done"] * 100 // total
+            if percent != said["percent"] or time.monotonic() - said["at"] >= job_runs.PROGRESS_EVERY:
+                said.update(percent=percent, at=time.monotonic())
+                _say(indexing_service.phase_fact("embeddings", said["done"], total))
+        _say(indexing_service.phase_fact("embeddings", 0, total))
+        for meta, begun, result in photos:
+            step()
             if begun is None:
                 continue
             path = meta["path"]
@@ -850,6 +855,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             total_new_indexed += len(batch_embeddings)
             vectors.update(batch_vectors)
             batch_vectors.clear()
+        photos.close()
+        clip_counts, clips_unread = _index_clips(clips, embeddings, locker, photo_index, force_reembed, locked_out,
+                                                 failed_photos, step)
         upto = face_records.newest_face(Library(db_path))
 
         if locked_out:
@@ -870,7 +878,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
         if failed_photos:
             _say(progress_line.fact("failed", photos=len(failed_photos)), indexing_service.FAILED + str(len(failed_photos)))
-        if total_new_indexed > 0:
+        if total_new_indexed > 0 or clip_counts["made"]:
             console.print("[bold green]Indexing successfully completed![/bold green]")
         else:
             console.print("[yellow]No new embeddings generated.[/yellow]")
@@ -879,6 +887,15 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         console.print(KEPT_LINE % (vectors["stamp"], vectors["same"], vectors["baked"], vectors["made"],
                                    vectors["examined"]),
                       markup=False, soft_wrap=True, highlight=False)
+        if clips:
+            console.print(CLIPS_LINE % (clip_counts["stamp"], clip_counts["made"], clip_counts["later"],
+                                        clip_counts["unread"]), markup=False, soft_wrap=True, highlight=False)
+        if clips_unread:
+            console.print(CLIPS_UNREAD % len(clips_unread), markup=False, soft_wrap=True, highlight=False)
+            for p, problem in clips_unread[:5]:
+                console.print(f"  - {p}: {problem}", markup=False, soft_wrap=True, highlight=False)
+            if len(clips_unread) > 5:
+                console.print(f"  ... and {len(clips_unread) - 5} more", markup=False)
         if unreadable:
             console.print(
                 f"[bold yellow]{len(unreadable)} photo(s) could not be read: the file is damaged.[/bold yellow] "
@@ -937,8 +954,100 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                           list(touched.values()), handed, stop_file)
 
 
-#: How many clips the index records in one transaction (PhotoIndex.build_or_update, no vector).
-VIDEO_CHUNK = 100
+#: How many clips the index records in one transaction (PhotoIndex.build_or_update): what a stop loses at most. Each
+#: clip's vector is written with its frames, all or none (store.embeddings.put).
+CLIP_CHUNK = 20
+
+#: The line an index of clips ends with, counts only (_index_clips): what became of each clip's vector, the four adding
+#: up to the clips it recorded.
+CLIPS_LINE = ("Video vectors: %d kept (the file as it was), %d made from their frames, %d left for the next index (ffmpeg "
+              "could not read the frames now, or the file changed as it was read), %d that ffmpeg cannot read.")
+
+#: What the index says of the clips ffmpeg cannot read as they are (search.NoFrames.lasting), before it names a few.
+CLIPS_UNREAD = ("%d video(s) could not be read by ffmpeg: they are in the index without a vector, so search and Suggest "
+                "do not find them, and every index of their folder tries them again. Play one to see whether it is "
+                "damaged.")
+
+
+def _index_clips(clips, embeddings, locker, photo_index, force_reembed, locked_out, failed, step):
+    """Each of `clips` [records of MetadataExtractor.batch_read, kind 'video'] recorded with the vectors of its frames
+    (PhotoEmbeddings.prepared, vectors): frame 0's is its vector, frames 1 to 4 go beside it, CLIP_CHUNK clips a
+    transaction, so a stop leaves each clip with all of them or none, owed still. Run on the thread that has the
+    graphics card, after the photos; ffmpeg reads the next clips' frames on the read-ahead's threads, never loading the
+    model. A clip another live process holds joins `locked_out`, unrecorded. One whose vector is kept by its stamp is
+    recorded with the vector it holds. One whose file is not as its record was read (its stamp as ffmpeg ran is not the
+    record's) is recorded with no vector, and is owed still. One ffmpeg gives no frame of is recorded with no vector:
+    the file's as it is (NoFrames.lasting) is listed, and every index of its folder tries it again (its vector owed
+    still); the moment's (a share away, too slow) is left for the next run. One that fails otherwise joins `failed`,
+    unrecorded. `step()` after each clip, the run's progress. Returns (Counter of "stamp", "made", "later" and
+    "unread": the clips recorded, by what became of their vector; [(path, problem)] of the clips ffmpeg cannot read)."""
+    counts, waiting, unread, vectors, metas = Counter(), Counter(), [], [], []
+
+    def record():
+        if metas:
+            photo_index.build_or_update(vectors, metas)
+            for meta in metas:
+                locker.release(meta["path"])
+            counts.update(waiting)
+            waiting.clear()
+            del vectors[:], metas[:]
+
+    def begin(meta):
+        if not locker.acquire(meta["path"]):
+            locked_out.append(meta["path"])
+            return None
+        # Asked again with the lock held: another index of the folder may have made it while this one waited.
+        kept = not force_reembed and embeddings.kept(meta["path"], compare=False)[0] is not None
+        if not kept:
+            embeddings.clip.load()   # here, on the thread that has the card: a read never loads it
+        return {"kept": kept}
+
+    def read(meta, begun, reserve):
+        if begun["kept"]:
+            return None
+        reserve(embeddings.frames_bytes())
+        return embeddings.prepared(meta["path"], load=False)
+
+    def vector_of(meta, begun, result):
+        """(vector or None, what became of it, the problem of a clip ffmpeg cannot read or None)."""
+        try:
+            prepared = result.result()
+        except search_service.NoFrames as missed:
+            logger.info(f"No vector: ffmpeg gave no frame of {meta['path']}: {missed.problem}")
+            return (None, "unread", missed.problem) if missed.lasting else (None, "later", None)
+        if begun["kept"]:
+            return None, "stamp", None
+        if not prepared.of_the_file(meta["mtime"], meta["size"]):
+            logger.info(f"No vector: {meta['path']} changed after its metadata was read")
+            return None, "later", None
+        found = embeddings.vectors(prepared)
+        meta["frames"], meta["fingerprint"] = found[1:], None
+        return found[0], "made", None
+
+    with read_ahead.ReadAhead(clips, begin, read, threads=READ_THREADS, ahead=READ_AHEAD,
+                              budget=READ_AHEAD_BYTES) as ahead:
+        for meta, begun, result in ahead:
+            step()
+            if begun is None:
+                continue
+            try:
+                vector, why, problem = vector_of(meta, begun, result)
+            except Exception as e:
+                logger.error(f"Error indexing {meta['path']}: {e}")
+                failed.append(meta["path"])
+                locker.release(meta["path"])
+                continue
+            finally:
+                result = None   # its frames go with it
+            if problem:
+                unread.append((meta["path"], problem))
+            vectors.append(vector)
+            metas.append(meta)
+            waiting[why] += 1
+            if len(metas) >= CLIP_CHUNK:
+                record()
+        record()
+    return counts, unread
 
 
 #: What the index says of the photos it owes only their files' bake (photo_fingerprints.NO_FINGERPRINT), counts only.
