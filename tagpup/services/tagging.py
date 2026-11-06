@@ -6,7 +6,7 @@ from tagpup.core import fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, metadata, names
+from tagpup.files import exiftool_session, field_values, images, metadata, names
 from tagpup.services import file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
@@ -137,6 +137,14 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     if date_taken:
         wanted.update(fields.date_taken_fields(date_taken))
     photo_path = paths.stored(photo_path)
+    # A clip this save may not write is refused with its own sentence before anything is compared: a clip titled only in
+    # QuickTime:Title shows that title, which the compare below does not read, and was refused as changed on disk (#2584).
+    # The read is the write's (write_fields asks again with all of it); a file of a folder the library does not hold
+    # names none, as file_only.write_fields asks.
+    clip_read = None if files_only else list(fields.keyword_fields([], [])) + list(wanted)
+    if not file_changes.leave_out_clips(Result(), [photo_path], read=clip_read):
+        result.refuse(images.CLIP_NOT_EDITED)
+        return result
     if stamp is not None and photo_actions.changed_on_disk(photo_path, stamp):
         result.refuse(CHANGED_ON_DISK_SENTENCE, CHANGED_ON_DISK)
         return result

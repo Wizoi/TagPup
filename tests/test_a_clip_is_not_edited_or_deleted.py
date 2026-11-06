@@ -93,6 +93,29 @@ class AClipBesideAPhoto(unittest.TestCase):
     def test_a_tag_save_from_the_photo_panel_is_refused_with_the_sentence_while_writing_clips_is_off(self):
         self.assert_refused("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"]})
 
+    def test_a_save_of_a_clip_titled_in_quicktime_alone_is_refused_with_the_clip_sentence_not_as_changed_on_disk(self):
+        """#2584: 2,017 photo_index clips hold only QuickTime:Title (counted 2026-11-06). The page shows it as the title;
+        the save's compare reads the title fields alone, so a tag save from the panel was refused 409 'changed on disk'
+        before the clip refusal was asked."""
+        titled = os.path.join(self.folder, "slipway.mov")
+        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                              "-t", "1", "-pix_fmt", "yuv420p", "-metadata", "title=Slipway at dusk", titled],
+                             capture_output=True)
+        self.assertEqual(0, made.returncode, made.stderr)
+        clip = self.vl.photo("Harbour", "slipway.mov", at=titled, fields={"QuickTime:Title": "Slipway at dusk"})
+        reply = self.client.get("/library/api/library/photo", query_string={"id": clip})
+        self.assertEqual(200, reply.status_code, reply.data)
+        record = reply.get_json()["photo"]
+        self.assertEqual("Slipway at dusk", record["title"])
+        before = digest(titled)
+        saved = self.post("photo/save-metadata", {
+            "path": record["path"], "title": record["title"], "tags": record["tags"] + ["Trips/Coast"],
+            "stamp": {"mtime": record["mtime"], "size": record["size"]},
+            "base": {"tags": record["tags"], "title": record["title"]}})
+        self.assertNotEqual(409, saved.status_code, saved.data)
+        self.assertIn(images.CLIP_NOT_EDITED, saved.get_json()["error"])
+        self.assertEqual(before, digest(titled), "the clip's file is byte for byte as it was")
+
     def test_a_turn_is_refused_with_the_sentence_and_the_clip_is_not_written(self):
         self.assert_refused("photo/rotate", {"path": self.clip_path, "direction": "left"})
 
