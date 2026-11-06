@@ -52,7 +52,7 @@ _HEADER = 8
 _MOST = 2 ** 32 - 1
 #: The most an old packet may hold for its bytes to be blanked (an XMP packet is at most 64 KB): what a patch keeps of
 #: the old bytes is bounded by this and a few headers, far under the journal's cap (file_journal.PATCH_CAP, 1 MB).
-_OLD_MOST = 1 << 16
+OLD_MOST = 1 << 16
 _PACKET_END = b"<?xpacket end="
 
 
@@ -79,7 +79,7 @@ def patch(layout, packet):
     after = layout.slack_beside(box)[1]
     end = after[-1].end if after else box.end
     written = _box(box, packet)
-    if box.end - box.payload > _OLD_MOST or end - box.offset - len(written) > _MOST:
+    if box.end - box.payload > OLD_MOST or end - box.offset - len(written) > _MOST:
         return None
     placed = _placed(box, packet, end)
     if placed is not None:
@@ -119,7 +119,7 @@ def _placed(box, packet, end):
     if left == 0:
         return ((at, written),)
     # The free box's header, and the old packet's bytes still in its content (a shorter packet leaves its tail there)
-    # blanked: the old packet is at most _OLD_MOST, so this is at most that and a header.
+    # blanked: the old packet is at most OLD_MOST, so this is at most that and a header.
     free_at = at + len(written)
     return (at, written), (free_at, left.to_bytes(4, "big") + b"free" + b" " * max(0, box.end - free_at - _HEADER))
 

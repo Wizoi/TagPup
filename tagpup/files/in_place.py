@@ -40,7 +40,7 @@ import io
 import os
 import threading
 
-from tagpup.files import containers, shares, xmp_packet
+from tagpup.files import clip_patch, containers, shares, xmp_packet
 
 VERSION = 2
 
@@ -340,6 +340,56 @@ def patch_jpeg(path, new_header, saving):
         if changes:
             _written(lent, path, changes, stale, saving)
         return tuple(stale)
+
+
+# --- a clip's patch ------------------------------------------------------------------------------------------------
+
+
+def patch_clip(path, new_packet, saving):
+    """Write a journaled write's fields into the XMP of the clip (MOV/MP4/M4V) at `path` by a patch (the module): the
+    fields it left holding what they held (a tuple) once the file holds them -- a patch saved by `saving(record, before)`
+    (the journal's, which commits the record before this writes a byte, and raises when it will not, nothing then
+    written) and written; or nothing to write, the packet already holding them, the fields left all the same. None when
+    it is not a patch's (clip_patch says when, and new_packet), nothing written: the clip is not written.
+
+    `new_packet(old)` is the writer's (segment_edits.new_packet, its values given): given the packet of the clip's one
+    XMP box (bytes; None for a clip with none), it answers (the new packet, the fields left stale), None for no patch, or
+    a containers.Refusal, raised here as Refused. Raises Refused(OPEN_ELSEWHERE) at once when another program holds the
+    clip open; Away when its share does not answer, the file as it was or as far as the patch wrote it (held settles
+    it); any other OSError the open or a write raised; whatever `new_packet` or `saving` raises."""
+    with _opened_to_patch(path) as lent:
+        found = lent.bounded(path, lambda: _packet_of(lent.handle))
+        if found is None:
+            return None
+        layout, old = found
+        made = new_packet(old)
+        if made is None:
+            return None
+        if isinstance(made, containers.Refusal):
+            raise Refused(made.reason)
+        packet, stale = made
+        if packet == old:
+            return tuple(stale)
+        placed = clip_patch.patch(layout, packet)
+        if placed is None:
+            return None
+        _written(lent, path, placed.ranges, stale, saving, grow=True, size=placed.size)
+        return tuple(stale)
+
+
+def _packet_of(handle):
+    """(the clip's layout, the packet its one XMP box holds, None for none) of the open file, or None when it is not a
+    patch's: no MOV/MP4/M4V, two XMP boxes, or one holding more than clip_patch.OLD_MOST. Reads the boxes' headers and
+    the packet, no other byte."""
+    layout = containers.read(handle)
+    if not isinstance(layout, containers.Video) or len(layout.xmp) > 1:
+        return None
+    if not layout.xmp:
+        return layout, None
+    (_, box), = layout.xmp
+    if box.end - box.payload > clip_patch.OLD_MOST:
+        return None
+    return layout, _read_at(handle, box.payload, box.end - box.payload)
 
 
 # --- the open file, shared by both patches ----------------------------------------------------------------------------
