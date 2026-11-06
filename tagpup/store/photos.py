@@ -374,11 +374,14 @@ def vectors(conn, model):
 
 # What a clip (photos.kind 'video') is not given yet: one rule each, read from here and never spelled as a kind test
 # where it is used, since each changes with its own merge of the video plan (DECISIONS 2026-11-02).
-#: The kinds the index owes a CLIP vector and a fingerprint, and looks at for faces (photo_fingerprints.owed,
-#: counts, checks.without_a_vector, photo_reembed). A clip is owed none until its vector from 5 frames lands
-#: (DECISIONS 2026-11-02, "THE OWNERS' PLANS", item 5): that merge adds 'video' here and splits the face check of
-#: photo_fingerprints.owed from it, as a clip's faces wait for the faces merge.
+#: The kinds the index owes a CLIP vector (photo_fingerprints.owed, counts, checks.without_a_vector, photo_reembed). A
+#: clip is owed none until the indexer makes its vector of its five frames, frame 0 its vector and frames 1 to 4
+#: beside it (embeddings.FRAMES; DECISIONS 2026-11-02, "THE OWNERS' PLANS", item 5, and 2026-11-06, migration 38):
+#: that merge adds 'video' here.
 VECTOR_KINDS = ("photo",)
+#: The kinds the index looks at for faces (photo_fingerprints.owed's UNEXAMINED): not a clip, whose faces wait for the
+#: faces merge (migration 39).
+FACE_KINDS = ("photo",)
 #: The kinds whose file a bake writes faces into (services.bake_after_index): never a clip (DECISIONS 2026-11-02,
 #: "THE OWNERS' PLANS", item 10; a clip's file is not written, services.file_changes.leave_out_clips).
 BAKED_KINDS = ("photo",)
@@ -400,8 +403,8 @@ def sql_kind_in(kinds, column="kind"):
 
 def counts(conn, model):
     """(photos owed a vector, VECTOR_KINDS; photos holding a vector under `model`): what a photo model's switch,
-    retiring the other keys' vectors and the search index count. A clip holds no vector (PhotoIndex.record_videos) and
-    owes none, so it is not counted among the photos that could hold one."""
+    retiring the other keys' vectors and the search index count. A kind owed none (a clip, until its vector of its
+    frames lands) is not counted among the photos that could hold one."""
     return conn.execute("SELECT (SELECT COUNT(*) FROM photos WHERE " + sql_kind_in(VECTOR_KINDS) + "),"
                         " (SELECT COUNT(*) FROM embeddings e JOIN photos p ON p.id = e.photo_id"
                         " WHERE e.model = ?)", (model,)).fetchone()
@@ -484,9 +487,11 @@ def stored_spelling(conn, photo_path):
 
 def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo or a clip: `row` has kind ('photo' when absent), mtime, size, tags, captions,
-    raw_metadata (as values), embedding (bytes), fingerprint and document_id; the embedding is kept
-    under `model`, stamped with the row's mtime and size, with the fingerprint, the (key, hash) of the picture it was
-    made of, or none (embeddings.put: a row with no fingerprint forgets the photo's), and the photo's people are
+    raw_metadata (as values), embedding (bytes), frames (a clip's frames 1 to n, bytes each), fingerprint and
+    document_id; the embedding is kept under `model`, stamped with the row's mtime and size, with its frames in the same
+    statement's transaction (embeddings.put: written together, so a stop leaves both or neither) and the fingerprint,
+    the (key, hash) of the picture it was made of, or none (a row with no fingerprint forgets the photo's), and the
+    photo's people are
     rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits. Returns the row's id.
 
     A photo indexed before is updated in place, under the spelling its row already has.
@@ -530,7 +535,8 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
             raise ValueError("An embedding is kept under the model that made it; none was named.")
-        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"], row.get("fingerprint"))
+        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"], row.get("fingerprint"),
+                       frames=row.get("frames", ()))
     return photo_id
 
 

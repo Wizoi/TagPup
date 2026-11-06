@@ -76,8 +76,9 @@ def same_picture(vector_stamp, file_stamp, row=NOT_READ, decoded=None):
 #: Why the index owes a photo work (owed). NO_VECTOR: it holds no vector under the library's photo model. STALE: its
 #: vector's stamp does not describe its file (same_picture not STAMPED): the index's decode tells a metadata write (kept)
 #: from another picture (worked out). UNEXAMINED: never examined for faces by the library's detector
-#: (faces_detected.unexamined): no face row and no record of a look. NO_FINGERPRINT: its vector's stamp describes its
-#: file and it has no row here: its file is the bake's to write (no model, no card), the row following the write.
+#: (faces_detected.unexamined): no face row and no record of a look; a kind looked at for faces only
+#: (store.photos.FACE_KINDS). NO_FINGERPRINT: its vector's stamp describes its file and it has no row here: its file is
+#: the bake's to write (no model, no card), the row following the write; a kind baked only (store.photos.BAKED_KINDS).
 NO_VECTOR, STALE, UNEXAMINED, NO_FINGERPRINT = "no vector", "stale", "unexamined", "no fingerprint"
 
 #: A photo the index owes work: its path as the walk spelled it, and why (a tuple of NO_VECTOR or STALE, and UNEXAMINED).
@@ -90,7 +91,8 @@ def owed(conn, photo_key, detector, on_disk, folder=None):
     embeddings.model_key), a vector whose stamp does not describe the file, a current vector with no fingerprint row
     (NO_FINGERPRINT), or -- `detector` a faces_detected name, None when faces are not asked (--skip-faces) -- never
     examined for faces. A row whose stamp does not describe its file is sync's to read again (store.photos.describes),
-    not a reason here; nor is a row of a kind owed none of these (a clip: store.photos.owes_a_vector). Nothing decoded, nothing written: one read of the rows' stamps with their vectors'
+    not a reason here. A clip is owed a vector (store.photos.VECTOR_KINDS) and neither a look for faces (FACE_KINDS)
+    nor a fingerprint (BAKED_KINDS: its file is never baked). Nothing decoded, nothing written: one read of the rows' stamps with their vectors'
     (store.photos.stamps), one of the never-examined and one of the ids holding a fingerprint (a scan of this table's
     keys: 0.11 s on a process's first ask, 0.02 s warm; the whole answer 0.48 s, faces not asked, on photo_index's
     59,524 photos, 2026-10-28)."""
@@ -101,17 +103,15 @@ def owed(conn, photo_key, detector, on_disk, folder=None):
                                                                          with_kind=True):
         disk = on_disk.get(paths.key(path))
         if disk is None or not store_photos.owes_a_vector(kind):
-            # A clip has no vector, no fingerprint and no faces looked for: the index owes it nothing once its row
-            # describes its file (it would queue every clip's folder on every sync).
             continue
         reasons = ()
         if vector is None:
             reasons = (NO_VECTOR,)
         elif same_picture(vector, disk[1:]) != STAMPED:
             reasons = (STALE,)
-        elif photo_id not in fingerprinted:
+        elif photo_id not in fingerprinted and kind in store_photos.BAKED_KINDS:
             reasons = (NO_FINGERPRINT,)
-        if photo_id in unexamined:
+        if photo_id in unexamined and kind in store_photos.FACE_KINDS:
             reasons += (UNEXAMINED,)
         if reasons:
             found[photo_id] = Owed(disk[0], reasons)
