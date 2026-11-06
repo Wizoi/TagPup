@@ -17,6 +17,7 @@ import { updateSelectedThumbnailsCount } from './selection.js';
 import { BULK_LIMIT, clearSelection } from './selected.js';
 import { whereWritten } from './write-queue.js';
 import { photosRenamed } from './edits.js';
+import { isVideo } from './media.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -146,9 +147,10 @@ export function populateCameraModelsDropdown() {
     btnToggleTimeshift.disabled = false;
     timeshiftCameraSelect.innerHTML = '';
 
-    // Group photos by camera model
+    // Group photos by camera model: a folder's clips are listed with its photos, and a time shift is its photos only.
     const modelCounts = {};
-    state.folderPhotos.forEach(photo => {
+    const shiftable = state.folderPhotos.filter(photo => !isVideo(photo));
+    shiftable.forEach(photo => {
         const model = cameraModelOf(photo);
         modelCounts[model] = (modelCounts[model] || 0) + 1;
     });
@@ -156,7 +158,7 @@ export function populateCameraModelsDropdown() {
     // The option for every camera
     const optAll = document.createElement('option');
     optAll.value = ALL_CAMERAS;
-    optAll.textContent = `${ALL_CAMERAS} (${state.folderPhotos.length} photos)`;
+    optAll.textContent = `${ALL_CAMERAS} (${shiftable.length} photos)`;
     timeshiftCameraSelect.appendChild(optAll);
 
     // Sort camera models alphabetically
@@ -177,9 +179,9 @@ export function cameraModelOf(photo) {
     return (photo && photo.camera) || UNKNOWN_CAMERA;
 }
 
-/** Is `photo` one a time shift for `camera` is about? As the server decides it. */
+/** Is `photo` one a time shift for `camera` is about? As the server decides it: never a clip (folder_time_shift). */
 export function onCamera(photo, camera) {
-    return camera === ALL_CAMERAS || cameraModelOf(photo) === camera;
+    return !isVideo(photo) && (camera === ALL_CAMERAS || cameraModelOf(photo) === camera);
 }
 
 export function applyTimeShift() {

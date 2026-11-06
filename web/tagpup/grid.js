@@ -18,6 +18,7 @@ import {
 import { baseOf, photoChangedOnDisk, photoRenamed, queueWriteOf, stampOf, takeStamp } from './edits.js';
 import { renderFileList, visiblePhotos } from './folder.js';
 import { openLibraryPhoto, photoFileUrl, selectPhoto } from './photo.js';
+import { isVideo } from './media.js';
 import { createVGrid } from './vgrid.js';
 import { cardLabel, settleRoving, wireGridKeys } from './grid-keys.js';
 import { markStale } from './stale.js';
@@ -384,9 +385,10 @@ function buildThumbnailCard(photo) {
     card.className = 'thumbnail-card';
     card.setAttribute('role', 'option');
     card.tabIndex = -1;          // the grid is one tab stop; grid-keys.js gives it to one card
-    // A card of a library view is its photo's `thumb` (the cache's thumbnail by id) and cannot be
-    // edited in place: its title is not in the card, and a save from it would write a title over tags it lacks.
-    const inLibrary = Boolean(photo.thumb);
+    // A card of a library view is selected by its photo's id and cannot be edited in place: its title is not in the
+    // card, and a save from it would write a title over tags it lacks. Asked of the view, not of the card: a folder's
+    // clip carries a `thumb` too (its poster) and is a folder's card, selected by its path.
+    const inLibrary = Boolean(state.library);
     const selected = inLibrary ? isIdSelected(photo.id) : isSelected(photo.path);
     if (selected) {
         card.classList.add('selected');
@@ -422,7 +424,7 @@ function buildThumbnailCard(photo) {
     }
 
     // A video's card says so; its picture is the video's poster, its middle frame (services/thumbnails; media.js plays it).
-    if (photo.media === 'video') {
+    if (isVideo(photo)) {
         const playMark = document.createElement('span');
         playMark.className = 'thumbnail-play-mark';
         playMark.textContent = '▶';
@@ -432,8 +434,14 @@ function buildThumbnailCard(photo) {
     }
 
     // The picture is asked for by the grid, once the card has stayed in view (vgrid.js).
+    // A card with a `thumb` is drawn by it (the cache's, by id): every library card, and a folder's clip the index has
+    // recorded -- a clip's picture is only ever its poster, as /api/photo-file refuses a video. A folder's clip the
+    // index has not recorded has none yet: the grey card with its play mark, asking for nothing, until the folder is
+    // opened after the index records it. A folder's photo is its file.
     const img = document.createElement('img');
-    img.dataset.src = inLibrary ? api.image(photo.thumb) : photoFileUrl(photo, 300);
+    if (photo.thumb) img.dataset.src = api.image(photo.thumb);
+    else if (isVideo(photo)) img.classList.add('failed');
+    else img.dataset.src = photoFileUrl(photo, 300);
     img.alt = '';           // the card's label says what it is
     // A picture that cannot be had (the file is gone, the share is away) is a grey card, not a broken-image icon.
     img.addEventListener('error', () => img.classList.add('failed'));

@@ -1,7 +1,10 @@
 // TagPup's page: a video in the photo panel. A library view's card and photo carry `media` ('photo' or 'video', from the
-// library's row: GET /api/library/cards and /api/library/photo); a record without it (a folder's scan) is a photo. A
-// video is played by the browser from GET /api/video-file, which answers ranges, so seeking asks for the part it needs.
+// library's row: GET /api/library/cards and /api/library/photo), and so does a folder's (GET /api/folder/scan); a record
+// without it is a photo. A video is played by the browser from GET /api/video-file by its id, which answers ranges, so
+// seeking asks for the part it needs.
 //
+//  * a folder's clip the index has not recorded has no id: nothing is asked, and the status line says it plays once
+//    the folder is indexed (its card is a placeholder until then: grid.js);
 //  * the panel shows one of the two: a video hides the image and empties its src, so the zoom and the face boxes, which
 //    look for a picture, stand down; a photo stops the video and shows the image (stale.js says whether it is there);
 //  * the video stops whenever the panel is hidden -- Back, Escape, another view, a folder -- and when another photo is
@@ -38,6 +41,13 @@ export function showMedia(photo, pictureUrl) {
         mainImage.src = pictureUrl;
         return;
     }
+    if (photo.id === undefined) {
+        // A folder's clip the index has not recorded: never its file as a picture (/api/photo-file refuses a video).
+        stopVideo();
+        mainImage.src = '';
+        setStatus('ready', NOT_INDEXED, { transient: false });
+        return;
+    }
     mainImage.src = '';
     mainImage.classList.add('hidden');
     mainVideo.classList.remove('hidden');
@@ -60,6 +70,7 @@ export function stopVideo() {
 const FORMAT = 'This video’s format cannot be played in this browser (an HEVC video needs the HEVC extension).';
 const UNREAD = 'This video could not be read.';
 const GONE = 'This video’s file is not there.';
+const NOT_INDEXED = 'This video has not been indexed yet: it plays here once its folder is indexed.';
 const AWAY = 'This video could not be read just now: the share or the server is not answering. Open it again in a moment.';
 
 /** The video failed: ask the server whether it refused (gone, away) before blaming the format, and say which. */
