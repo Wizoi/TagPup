@@ -90,7 +90,7 @@ class Twins(unittest.TestCase):
         folders added and ignored, and the journal's names and states."""
         conn = db.connect(db.readonly_uri(side.db_path), uri=True)
         try:
-            listing = sorted((path, tags) for path, _m, _s, tags, _p, _c, _r in store_photos.rows_under(
+            listing = sorted((path, tags) for path, _m, _s, tags, *_rest in store_photos.rows_under(
                 conn, side.base))
             held = sorted(folders.of(conn).listed())
             added = added_folders.every(conn)

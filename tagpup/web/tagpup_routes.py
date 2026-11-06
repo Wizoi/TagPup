@@ -374,8 +374,9 @@ def folder_suggest_start():
         return responses.error(409, refusal)
 
     def photos():
+        # A folder's photos: its clips are listed with them (scan_folder) and Suggest does not look at a clip.
         return {key: meta for key, meta in _folder_photos(library, folder).items()
-                if not library_actions.is_ignored(meta["path"], ignored)}
+                if meta["media"] == "photo" and not library_actions.is_ignored(meta["path"], ignored)}
     runtime = state.runtime()
     work = suggestion_jobs.work_for(library, photos, runtime, runtime.index_queues.of(library), looking=looking,
                                     held_now=(lambda: not library_actions.suggest_how(library, folder, ignored)[1])
@@ -454,9 +455,10 @@ def folder_time_shift():
     except Exception as e:
         logger.error("Error scanning folder on the fly for time shift: %s", e)
         return responses.error(500, "Folder must be scanned first, and scan fallback failed: %s" % e)
-    # The photos of the camera asked for (tagpup.core.fields).
+    # The photos of the camera asked for (tagpup.core.fields): never a clip, whose Date Taken is not changed
+    # (images.CLIP_NOT_EDITED); the page counts the same photos (rename.js onCamera).
     targets = [paths.stored(record["path"]) for record in photos.values()
-               if fields.on_camera(record.get("raw_metadata"), camera_model)]
+               if record["media"] == "photo" and fields.on_camera(record.get("raw_metadata"), camera_model)]
     if not targets:
         return jsonify({"success": True, "message": "No photos matched the camera model"})
     try:
@@ -477,6 +479,14 @@ def folder_time_shift():
     return jsonify({"success": True, "updated_photos": list(photos.values()),
                     "updated_count": result.changed, "requested_count": result.attempted,
                     **_where(result)})
+
+
+def _with_clips(photos, before):
+    """A folder's photos read again after Smart Rename (photos.read_folder, photos only), with the clips of its scan
+    `before` as they were: a rename leaves a clip as it is (file_changes.leave_out_clips), and the page, which shows
+    what it is answered, would drop them from the folder."""
+    kept = {key: record for key, record in before.items() if record["media"] == "video"}
+    return {**kept, **photos}
 
 
 @routes.post("/api/folder/rename-photos")
@@ -521,7 +531,7 @@ def folder_rename_photos():
                 # again and the page told which names changed, so it shows them instead of the old ones.
                 cache.pop(folder)
                 try:
-                    changed = photo_actions.read_folder(library, folder, state.exiftool(library))
+                    changed = _with_clips(photo_actions.read_folder(library, folder, state.exiftool(library)), known)
                 except Exception as again:
                     # The folder cannot be read again just now: the cache stays dropped, and the answer is
                     # a plain error (the page's Refresh reads the files).
@@ -534,7 +544,7 @@ def folder_rename_photos():
         # Their saved suggestions are kept by the photo's id, and went with the rows.
         # The folder is read again from its files, as the page is about to show it.
         cache.pop(folder)
-        photos = photo_actions.read_folder(library, folder, state.exiftool(library))
+        photos = _with_clips(photo_actions.read_folder(library, folder, state.exiftool(library)), known)
         cache.put(folder, photos)
     except Exception as e:
         logger.error("Error smart renaming photos: %s", e, exc_info=True)
