@@ -35,6 +35,7 @@ import { applyPhotoStale } from './stale.js';
 import { showMedia } from './media.js';
 import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
+import { showSmartRenameParts } from './rename-one.js';
 
 // ---- Detected faces ----------------------------------------------------
 // Face recognition already ran for this photo -- the suggester needs it to propose
@@ -380,6 +381,7 @@ export function showPhoto(path) {
     const typing = state.titleShown.path === path && inputPhotoTitle.value !== state.titleShown.title;
     if (!typing) inputPhotoTitle.value = photo.title || '';
     state.titleShown = { path, title: photo.title || '' };
+    showSmartRenameParts(path);
     updateSaveButton();
 
     renderTags(photo.tags);

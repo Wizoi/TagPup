@@ -64,6 +64,7 @@ import {
     applyTimeShift, populateCameraModelsDropdown, updateCameraHighlights,
     wireRenameAndTimeShift
 } from './rename.js';
+import { wireSmartRenameOne } from './rename-one.js';
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
@@ -140,6 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
     wireThumbnailGrid();
     wireThumbnailSize();
     wireRenameAndTimeShift();
+    wireSmartRenameOne();
 
     wireKeyboard();
 

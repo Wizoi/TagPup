@@ -158,6 +158,9 @@ export const state = {
     // the same photo again; if the field no longer holds what was put there, somebody
     // is typing, and the refresh must not write over it. Up here for the same reason.
     titleShown: { path: null, title: '' },
+    // The grouping box beside the open photo's name (rename-one.js): the photo it was filled for, what was put in it,
+    // and the number of the request whose answer counts (a reply for a photo left since is dropped).
+    smartRenameOne: { path: null, filled: '', asked: 0 },
 
     // Abort controller for scan fetches
     scanAbortController: null,

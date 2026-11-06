@@ -202,6 +202,11 @@
                                 <div class="detail-item">
                                     <span class="detail-label">File Path</span>
                                     <span class="detail-value clickable" id="detail-path"></span>
+                                    <!-- Smart Rename of this photo alone: the grouping its name holds, to edit; its number is kept (web/tagpup/rename-one.js). -->
+                                    <div class="title-edit-container" data-writes>
+                                        <input type="text" id="input-smart-rename-one" placeholder="Grouping" title="The grouping of this photo's name: change it and press Smart Rename. The photo keeps its number.">
+                                        <button type="button" id="btn-smart-rename-one" class="btn btn-secondary btn-sm" title="Rename this photo by the grouping beside it, keeping its number">Smart Rename</button>
+                                    </div>
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label">Date Taken</span>
