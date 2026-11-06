@@ -132,6 +132,8 @@ class AClipBesideAPhoto(unittest.TestCase):
         self.assertIn(images.CLIP_NOT_EDITED, body["error"])
         self.assertEqual([paths.key(self.photo_path)], [paths.key(old) for old in body["updated_paths"]])
         self.assertFalse(os.path.exists(self.photo_path), "the photo is renamed")
+        self.assertIn(paths.key(self.clip_path), [paths.key(record["path"]) for record in body["updated_photos"]],
+                      "the folder the page is answered still holds the clip (#2564)")
         self.assert_clip_untouched()
 
     def test_a_delete_of_the_clip_is_refused_with_the_sentence_and_nothing_is_copied_or_removed(self):

@@ -11,12 +11,13 @@ import {
 import { flagField, setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
-import { renderFileList } from './folder.js';
+import { countSaid, renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
-import { BULK_LIMIT, clearSelection } from './selected.js';
+import { BULK_LIMIT, clearSelection, selectedRecords } from './selected.js';
 import { whereWritten } from './write-queue.js';
 import { photosRenamed } from './edits.js';
+import { isVideo } from './media.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -62,7 +63,16 @@ export function wireRenameAndTimeShift() {
             alert(`Select up to ${BULK_LIMIT.toLocaleString()} photos at a time.`);
             return;
         }
-        if (!confirm(`Are you sure you want to smart-rename the ${state.selectedThumbnails.length} selected photos?`)) {
+        // What will be renamed: the selected photos. A clip is not renamed (images.CLIP_NOT_EDITED), and is said apart.
+        const chosen = selectedRecords();
+        const clips = chosen.filter(isVideo);
+        if (clips.length === chosen.length) {
+            alert('Smart Rename renames photos, and only videos are selected.');
+            return;
+        }
+        const asked = [`Are you sure you want to smart-rename the ${countSaid(chosen.filter(r => !isVideo(r)))} selected?`];
+        if (clips.length) asked.push(`A video is not renamed: the ${countSaid(clips)} selected keep their names.`);
+        if (!confirm(asked.join('\n\n'))) {
             return;
         }
 
@@ -146,9 +156,10 @@ export function populateCameraModelsDropdown() {
     btnToggleTimeshift.disabled = false;
     timeshiftCameraSelect.innerHTML = '';
 
-    // Group photos by camera model
+    // Group photos by camera model: a folder's clips are listed with its photos, and a time shift is its photos only.
     const modelCounts = {};
-    state.folderPhotos.forEach(photo => {
+    const shiftable = state.folderPhotos.filter(photo => !isVideo(photo));
+    shiftable.forEach(photo => {
         const model = cameraModelOf(photo);
         modelCounts[model] = (modelCounts[model] || 0) + 1;
     });
@@ -156,7 +167,7 @@ export function populateCameraModelsDropdown() {
     // The option for every camera
     const optAll = document.createElement('option');
     optAll.value = ALL_CAMERAS;
-    optAll.textContent = `${ALL_CAMERAS} (${state.folderPhotos.length} photos)`;
+    optAll.textContent = `${ALL_CAMERAS} (${shiftable.length} photos)`;
     timeshiftCameraSelect.appendChild(optAll);
 
     // Sort camera models alphabetically
@@ -177,9 +188,9 @@ export function cameraModelOf(photo) {
     return (photo && photo.camera) || UNKNOWN_CAMERA;
 }
 
-/** Is `photo` one a time shift for `camera` is about? As the server decides it. */
+/** Is `photo` one a time shift for `camera` is about? As the server decides it: never a clip (folder_time_shift). */
 export function onCamera(photo, camera) {
-    return camera === ALL_CAMERAS || cameraModelOf(photo) === camera;
+    return !isVideo(photo) && (camera === ALL_CAMERAS || cameraModelOf(photo) === camera);
 }
 
 export function applyTimeShift() {

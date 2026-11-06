@@ -166,17 +166,19 @@ class AClipIsIndexedAsAVideo(unittest.TestCase):
         self.assertEqual((False, None, [], None), held["harbour.mp4"], "the clip was given an identity, a vector or a face")
         self.assertEqual({}, self.owed(folder))
 
-    def test_the_folder_view_and_a_time_shift_still_read_photos_only(self):
-        # Until the pages can show a clip (merge B), a folder opened lists its photos, and a time shift, which reads its
-        # folder through read_folder, never reaches a clip to write it.
+    def test_a_folder_opened_and_read_again_after_a_rename_lists_its_clip_beside_its_photo(self):
+        # The folder view lists a folder's clips (video, merge B2), and so does its read after Smart Rename, which the
+        # page shows as the folder (#2564), each by the real reader. Suggest and a time shift take the photos only
+        # (tests/test_folder_scan_follows_the_library.py).
         folder = os.path.join(self.home.root, "Moorings")
         clip(folder, "harbour.mp4")
         photo(os.path.join(folder, "sail.jpg"), (30, 30, 200))
         exiftool = own_home.installed_exiftool()
         for read in (photo_service.scan_folder, photo_service.read_folder):
             with self.subTest(read=read.__name__):
-                self.assertEqual(["sail.jpg"], [os.path.basename(r["path"]) for r in
-                                                read(Library(self.library), folder, exiftool).values()])
+                found = {os.path.basename(r["path"]): r["media"]
+                         for r in read(Library(self.library), folder, exiftool).values()}
+                self.assertEqual({"harbour.mp4": "video", "sail.jpg": "photo"}, found)
 
 
 @unittest.skipIf(TOOLS.problem, "ffmpeg is not installed on this machine (winget install Gyan.FFmpeg): %s" % TOOLS.problem)

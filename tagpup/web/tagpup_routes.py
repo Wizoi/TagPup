@@ -374,8 +374,9 @@ def folder_suggest_start():
         return responses.error(409, refusal)
 
     def photos():
+        # A folder's photos: its clips are listed with them (scan_folder) and Suggest does not look at a clip.
         return {key: meta for key, meta in _folder_photos(library, folder).items()
-                if not library_actions.is_ignored(meta["path"], ignored)}
+                if meta["media"] == "photo" and not library_actions.is_ignored(meta["path"], ignored)}
     runtime = state.runtime()
     work = suggestion_jobs.work_for(library, photos, runtime, runtime.index_queues.of(library), looking=looking,
                                     held_now=(lambda: not library_actions.suggest_how(library, folder, ignored)[1])
@@ -454,9 +455,10 @@ def folder_time_shift():
     except Exception as e:
         logger.error("Error scanning folder on the fly for time shift: %s", e)
         return responses.error(500, "Folder must be scanned first, and scan fallback failed: %s" % e)
-    # The photos of the camera asked for (tagpup.core.fields).
+    # The photos of the camera asked for (tagpup.core.fields): never a clip, whose Date Taken is not changed
+    # (images.CLIP_NOT_EDITED); the page counts the same photos (rename.js onCamera).
     targets = [paths.stored(record["path"]) for record in photos.values()
-               if fields.on_camera(record.get("raw_metadata"), camera_model)]
+               if record["media"] == "photo" and fields.on_camera(record.get("raw_metadata"), camera_model)]
     if not targets:
         return jsonify({"success": True, "message": "No photos matched the camera model"})
     try:
@@ -532,7 +534,8 @@ def folder_rename_photos():
                                        updated_photos=_sorted(changed))
             return responses.error(500, result.message())
         # Their saved suggestions are kept by the photo's id, and went with the rows.
-        # The folder is read again from its files, as the page is about to show it.
+        # The folder is read again from its files, as the page is about to show it: its clips with its photos
+        # (read_folder), whatever moved the library since it was opened.
         cache.pop(folder)
         photos = photo_actions.read_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)

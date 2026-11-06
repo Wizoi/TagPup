@@ -662,12 +662,13 @@ def count_under(conn, folder):
 
 
 def rows_under(conn, folder):
-    """(path, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON) of
-    each photo under a folder, at any depth."""
+    """(path, mtime, size, tags JSON, people JSON, captions JSON, raw_metadata JSON, id, kind) of
+    each photo and clip under a folder, at any depth: what the folder scan (services.photos.scan_folder) trusts a row by,
+    and the id a clip's poster is asked by."""
     where, params = store_roots.sql_under(conn, "path", folder)
     return store_roots.natives(conn, conn.execute(
         "SELECT p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions,"
-        " p.raw_metadata FROM photos p WHERE " + where, params).fetchall(), 0, raw=(6,))
+        " p.raw_metadata, p.id, p.kind FROM photos p WHERE " + where, params).fetchall(), 0, raw=(6,))
 
 
 # ---- What sync and the re-read of a row read --------------------------------------------------

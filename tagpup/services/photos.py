@@ -49,6 +49,9 @@ def page_record(path, meta, mtime=0.0, size=0):
         # metadata does not say, which the panel shows as nothing.
         "camera": gear.camera or "",
         "lens": gear.lens or "",
+        # 'photo' or 'video', as the index gives a row its kind (images.kind_of, photos.kind) and a library card carries
+        # it: the page plays a video and draws it by its poster, never asks /api/photo-file for it (media.js, grid.js).
+        "media": images.kind_of(path),
     }
     if meta.get("read_error"):
         # ExifTool could not read it: it shows as holding nothing, which a save must not take for what the file holds.
@@ -132,30 +135,18 @@ def scan_folder(library, folder, exiftool_path):
     photo Suggest saw but the index never read -- is read now (docs/findings.md, #94).
     The reader is told what the library says about people, as the indexer is; the
     server's scan used the default face roots alone.
+
+    A clip is listed beside the photos (`media` 'video'). One the index has recorded carries its row's `id` and `thumb`,
+    its poster by id (thumbnails.url, as a library card's): the only way a clip's picture is served, made by B1's bounded
+    ffmpeg runs, so a folder of fifty clips is not fifty at once. One the index has not recorded has neither, and the
+    page shows it a placeholder until the next open after the index records it (the photos counter moved: scan_stamp).
     """
     folder = paths.stored(folder)
-    # Photos only: a clip is not shown in a folder until the page can show one (video, merge B).
-    listed = {key: stamp for key, stamp in images.stamps_under(folder).items() if images.kind_of(stamp[0]) == "photo"}
+    listed = images.stamps_under(folder)
     if not listed:
         return {}
 
-    known = {}
-    try:
-        conn = db.connect(db.readonly_uri(library.path), uri=True)
-        try:
-            for path, mtime, size, tags, people, captions, raw_meta in photos.rows_under(conn, folder):
-                known[paths.key(path)] = {
-                    "path": paths.stored(path), "mtime": mtime, "size": size,
-                    "tags": json.loads(tags) if tags else [],
-                    "people": json.loads(people) if people else [],
-                    "captions": json.loads(captions) if captions else [],
-                    "raw_metadata": json.loads(raw_meta) if raw_meta else {},
-                }
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.warning("Failed to query index DB for folder scan cache: %s", e)
-
+    known = _rows_under(library, folder)
     found, to_read = {}, []
     for key, (file, mtime, size) in listed.items():   # the stamps the listing gave: no look at each file (#2104)
         row = known.get(key)
@@ -170,20 +161,57 @@ def scan_folder(library, folder, exiftool_path):
             found.update(_read(library, [(f, mt, sz) for f, mt, sz in to_read], exiftool_path))
         except Exception as e:
             logger.error("Error running ExifTool during scan: %s", e)
-    return found
+    return _with_posters(found, known)
 
 
 @roots_service.canonical_args("folder")
 def read_folder(library, folder, exiftool_path):
-    """Every photo under `folder` read from its file, whatever the index holds, as page
-    records keyed by paths.key: the folder after Smart Rename, and a time shift on a
-    folder never opened. `mtime` and `size` come from the reader."""
+    """Every photo and clip under `folder` read from its file, whatever the index holds, as page
+    records keyed by paths.key, listed as scan_folder lists them: the folder after Smart Rename, which the page shows
+    as the folder. A rename leaves a clip as it is (images.CLIP_NOT_EDITED, file_changes.leave_out_clips), and it stays
+    on the page: its record is read here with the photos', whatever moved the library since the folder was opened
+    (#2564). `mtime` and `size` come from the reader."""
     folder = paths.stored(folder)
-    # Photos only: a time shift reads its folder here, and must never write a clip.
-    image_files = [f for f in images.photos_under(folder) if images.kind_of(f) == "photo"]
-    if not image_files:
+    files = images.photos_under(folder)
+    if not files:
         return {}
-    return _read(library, [(f, None, None) for f in image_files], exiftool_path)
+    found = _read(library, [(f, None, None) for f in files], exiftool_path)
+    return _with_posters(found, _rows_under(library, folder))
+
+
+def _rows_under(library, folder):
+    """{paths.key: what the index holds of it} of each photo and clip under `folder` (photos.rows_under): what
+    scan_folder trusts a row by, and a recorded clip's id. Empty, logged, when the library cannot be read: the folder
+    is then read from its files, and a clip shows its placeholder."""
+    known = {}
+    try:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            for path, mtime, size, tags, people, captions, raw_meta, photo_id, kind in photos.rows_under(conn, folder):
+                known[paths.key(path)] = {
+                    "path": paths.stored(path), "mtime": mtime, "size": size, "id": photo_id, "kind": kind,
+                    "tags": json.loads(tags) if tags else [],
+                    "people": json.loads(people) if people else [],
+                    "captions": json.loads(captions) if captions else [],
+                    "raw_metadata": json.loads(raw_meta) if raw_meta else {},
+                }
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("Failed to query index DB for folder scan cache: %s", e)
+    return known
+
+
+def _with_posters(found, known):
+    """`found`, each clip the index has recorded (`known`, _rows_under) given its row's `id` and `thumb`, its poster by
+    id: the one place a folder's clip gets the picture the page draws it by (scan_folder, read_folder)."""
+    for key, record in found.items():
+        row = known.get(key)
+        if row and row["kind"] == "video":
+            # Its poster is stamped by the file as listed: the cache keys a poster by the file's stamp, not the row's.
+            record["id"] = row["id"]
+            record["thumb"] = thumbnails.url(row["id"], record["mtime"])
+    return found
 
 
 def _read(library, files, exiftool_path):
