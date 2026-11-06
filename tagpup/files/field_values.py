@@ -84,10 +84,6 @@ PATCH_IN_PLACE = True
 #: 2026-11-05, M7). Off, every write of a clip is refused (images.CLIP_NOT_EDITED), until the owner's trial on 20 copies.
 CLIP_PATCH_IN_PLACE = False
 
-#: Where a clip holds keywords TagPup does not write (14 live .mp4 clips, counted 2026-11-05): read before the last
-#: keyword is taken off its XMP (segment_edits.new_packet's `keywords_elsewhere`).
-QUICKTIME_KEYWORDS = "QuickTime:Subject"
-
 #: Whether a patch's segments are TagPup's own writer's (segment_edits.new_header) rather than ExifTool's write into a copy
 #: of the header (_exiftool_header). Off until the owner turns it on (docs/PLAN_OWN_METADATA.md, verification bar 6).
 OWN_WRITER = False
@@ -345,7 +341,9 @@ def _clip_written(et, photo_path, values, saving):
         raise Refused(images.CLIP_NOT_EDITED)
     elsewhere = ()
     if "XMP:Subject" in values and not fields.field_values(values["XMP:Subject"]):
-        elsewhere = read_one(et, photo_path, [QUICKTIME_KEYWORDS])[QUICKTIME_KEYWORDS]
+        # The keywords a clip holds where TagPup does not write them (fields.CLIP_KEYWORDS), read before the last
+        # keyword is taken off its XMP (segment_edits.new_packet's `keywords_elsewhere`).
+        elsewhere = read_one(et, photo_path, [fields.CLIP_KEYWORDS])[fields.CLIP_KEYWORDS]
     saved = []
 
     def saved_first(record, before):

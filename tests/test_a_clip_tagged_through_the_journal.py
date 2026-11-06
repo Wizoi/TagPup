@@ -116,8 +116,8 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
         def with_quicktime(files, tags, **options):
             rows = answer(files, tags=tags, **options)
             for row in rows:
-                if field_values.QUICKTIME_KEYWORDS in tags:
-                    row[field_values.QUICKTIME_KEYWORDS] = "Trips/Coast"
+                if fields.CLIP_KEYWORDS in tags:
+                    row[fields.CLIP_KEYWORDS] = "Trips/Coast"
             return rows
 
         with writing_clips(), mock.patch.object(self.et, "get_tags", side_effect=with_quicktime):

@@ -289,7 +289,7 @@ AWAY_WHY = "its folder could not be reached just now (a network share that did n
 def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
     `read`, the fields it reads of each file, may patch: only while writing clips is on (field_values.CLIP_PATCH_IN_PLACE)
-    and only a keyword or caption save (every field read in fields.CLIP_FIELDS; DECISIONS 2026-11-05, M7). Any other clip
+    and only a keyword or caption save (every field read in fields.CLIP_READ; DECISIONS 2026-11-05, M7). Any other clip
     is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
     write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
     nothing, planned and journaled for nothing, and never the error that stops a write at its first
@@ -299,7 +299,7 @@ def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     journal to settle a patch a crash cut short) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps
     a name; a save of a clip is refused before its rename."""
     patched = (read is not None and field_values.CLIP_PATCH_IN_PLACE
-               and set(read) <= fields.CLIP_FIELDS)
+               and set(read) <= fields.CLIP_READ)
     photos = []
     for path in photo_paths:
         if images.is_clip(path) and not patched:
