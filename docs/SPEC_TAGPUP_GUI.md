@@ -126,6 +126,17 @@ one a few inches above. Taking one removes it, and when nothing is left the box 
 away rather than becoming a heading over two empty lists. A person is matched by who
 they are, so a bare suggested name counts as present on a photo tagged with their path.
 
+A photo with nothing to offer yet says why in one line (`role=status`), from the folder's
+last `suggest-status` poll (owner, 2026-11-05): while the folder's run waits or is under
+way, the server's own `message` as it is sent (waiting for the folder's index, or for the
+graphics card and who has it), else `Suggesting... 2 / 3`; the line is replaced by the
+photo's chips when its suggestions arrive. After a run, a photo it could not read says the
+run's error and "Start Photo Analysis again to retry", and that button stays enabled while
+any photo of the folder has failed. A photo never analysed with no run under way says
+nothing: the box stays hidden. A reply for a folder no longer open, or arriving after the
+library view opened, shows nothing; a run started in another tab is seen when the folder
+is opened again.
+
 ### 0.1 Feedback, Scope and Undo
 
 **One status channel.** Results and validation go to the status line, which was

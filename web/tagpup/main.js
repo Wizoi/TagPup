@@ -57,8 +57,8 @@ import {
 } from './selection.js';
 import {
     applyAllSingleSuggestions, applyFolderSuggestionsLevel, applySuggestedTagsDirect,
-    applySuggestedTitle, checkIndexingStatus, checkSuggestionsStatus, renderSuggestionsPanel,
-    cancelSuggestions, startSuggestions, updateFolderAutoApplyState, updateSuggestButtonState
+    applySuggestedTitle, checkIndexingStatus, checkSuggestionsStatus, forgetFolderSuggestions, renderSuggestionsPanel,
+    cancelSuggestions, startSuggestions, suggested, updateFolderAutoApplyState, updateSuggestButtonState
 } from './suggestions.js';
 import {
     applyTimeShift, populateCameraModelsDropdown, updateCameraHighlights,
@@ -68,13 +68,13 @@ import {
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
     addedFromView, applySuggestedTagsDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
-    facesFollowTags,
+    facesFollowTags, forgetFolderSuggestions,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderPhotoFacesHere, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
     openLibraryPhoto, openLibraryView, restoreViewAsLeft,
-    photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder,
+    photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder, suggested,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });

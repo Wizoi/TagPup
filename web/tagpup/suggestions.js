@@ -6,7 +6,7 @@ import { samePath } from './common/paths.js';
 import { leafOf, peopleListHas, personLabelOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
-    btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
+    btnApplyAllSingleSugg, btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
     indexProgressContainer, indexProgressText, inputPhotoTitle, statusDot, statusText,
     suggestedPeopleContainer, suggestedTagsContainer, suggestionsSection, suggestProgressBar,
     suggestProgressContainer, suggestProgressText
@@ -20,6 +20,14 @@ import { isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
+
+/**
+ * A photo the folder's run has suggestions for: an entry, and not one the run could not read (the server's _succeeded:
+ * the next Suggest tries it again). The Suggest button, the list's row and the grid's card ask this.
+ */
+export function suggested(entry) {
+    return Boolean(entry) && !entry.error;
+}
 
 export function updateSuggestButtonState(status = null) {
     if (!state.scannedFolder || state.folderPhotos.length === 0) {
@@ -36,7 +44,8 @@ export function updateSuggestButtonState(status = null) {
         btnSuggestTags.disabled = false;
         return;
     }
-    const hasUnprocessed = state.folderPhotos.some(photo => !state.folderSuggestions[photo.path]);
+    // A photo the run could not read is tried again by the next (the server's _succeeded): not done.
+    const hasUnprocessed = state.folderPhotos.some(photo => !suggested(state.folderSuggestions[photo.path]));
     btnSuggestTags.disabled = !hasUnprocessed;
 }
 
@@ -161,13 +170,24 @@ export function checkIndexingStatus(folderPath) {
 }
 
 /**
+ * The open folder's suggestions, its run and its poll forgotten: a folder closed or another opened, or the server let
+ * them go. A reply of the poll already under way lands nowhere (checkSuggestionsStatus).
+ */
+export function forgetFolderSuggestions() {
+    clearInterval(state.progressTimer);
+    state.progressTimer = null;
+    state.folderSuggestions = {};
+    state.suggestRun = null;
+}
+
+/**
  * The server no longer holds what a Suggest that only looked found (it is kept in memory, for a while): it
  * let it go after a while, or the folder was added to the library and it was dropped. The page says which,
  * forgets the copy it held -- here and in this browser's cache -- and Suggest is run again.
  */
 export function suggestionsLetGo() {
     state.suggestionsInMemory = null;
-    state.folderSuggestions = {};
+    forgetFolderSuggestions();
     saveToLocalStorageCache();
     btnFolderAutoApply.disabled = true;
     renderFileList();
@@ -186,11 +206,25 @@ export function suggestionsLetGo() {
 
 export function checkSuggestionsStatus(folderPath) {
     if (state.progressTimer) clearInterval(state.progressTimer);
+    let timer = null;
 
     function queryProgress() {
         api.json(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
             .then(data => {
                 if (state.library) return;   // likewise: its progress and suggestions belong to a folder
+                // A poll forgotten or replaced (forgetFolderSuggestions, another checkSuggestionsStatus) shows nothing:
+                // its folder's scan may still be the open one while the next folder's is under way.
+                if (timer !== state.progressTimer) return;
+                // A reply for a folder left behind (another opened meanwhile) is that folder's: it shows nothing here,
+                // and its poll stops.
+                if (!state.scannedFolder || !samePath(folderPath, state.scannedFolder)) {
+                    clearInterval(timer);
+                    return;
+                }
+                state.suggestRun = {
+                    status: data.status, message: data.message || '',
+                    completed: data.completed || 0, total: data.total || 0,
+                };
                 // Where what it found is kept: in memory (a folder the library does not hold), or in the library.
                 if (data.in_memory) {
                     state.suggestionsInMemory = folderPath;
@@ -231,6 +265,12 @@ export function checkSuggestionsStatus(folderPath) {
                     // Merge progressive suggestions
                     state.folderSuggestions = data.suggestions || {};
                     renderFileList(); // updates tags badge dynamically
+                    // The open photo's box, hidden or a line, says how far the run has got until its own
+                    // suggestions come; chips shown are left (a redraw under the pointer would close a face popup).
+                    if (state.activePhotoPath && (suggestionsSection.classList.contains('hidden')
+                        || suggestionsSection.querySelector('.suggestions-note'))) {
+                        renderSuggestionsPanel(state.activePhotoPath);
+                    }
                     updateSelectedThumbnailsCount();
                     saveToLocalStorageCache();
                 } 
@@ -264,6 +304,8 @@ export function checkSuggestionsStatus(folderPath) {
                     clearInterval(state.progressTimer);
                     suggestProgressContainer.classList.add('hidden');
                     updateSuggestButtonState(data.status);
+                    // The box's waiting line goes: the run ended without this photo's suggestions.
+                    if (state.activePhotoPath) renderSuggestionsPanel(state.activePhotoPath);
                     if (data.status === 'cancelled') {
                         setStatus('ready', 'Suggest was cancelled; what it suggested before is kept.', { transient: false });
                     }
@@ -280,7 +322,7 @@ export function checkSuggestionsStatus(folderPath) {
 
     // Query once immediately, then poll
     queryProgress();
-    state.progressTimer = setInterval(queryProgress, 1500);
+    timer = state.progressTimer = setInterval(queryProgress, 1500);
 }
 
 /**
@@ -304,11 +346,44 @@ function sayWhereTheyAre(data) {
         { transient: false });
 }
 
+/**
+ * The line the box shows for a photo with nothing to offer yet (owner, 2026-11-05): while the folder's run waits or
+ * is under way, the server's own line, else its count; after it, a photo the run could not read says why. Otherwise
+ * none, and the box stays hidden as it was: a photo never analysed with no run says nothing.
+ */
+function suggestionsNote(sugg) {
+    const run = state.suggestRun;
+    if (run && (run.status === 'preparing' || run.status === 'running')) {
+        return run.message || (run.total ? `Suggesting... ${run.completed} / ${run.total}` : 'Suggesting...');
+    }
+    if (sugg && sugg.error) {
+        return `This photo could not be analysed: ${sugg.error}. Start Photo Analysis again to retry.`;
+    }
+    return null;
+}
+
+/** The box holding only a line of words, as the faces' strip does while it loads (photo.js); null puts the lists back. */
+function sayAboutSuggestions(words) {
+    let note = suggestionsSection.querySelector('.suggestions-note');
+    if (words && !note) {
+        note = document.createElement('div');
+        note.className = 'suggestions-note';
+        note.setAttribute('role', 'status');
+        suggestionsSection.appendChild(note);
+    }
+    if (note && !words) note.remove();
+    else if (note) note.textContent = words;
+    suggestionsSection.querySelector('.suggestions-content').classList.toggle('hidden', Boolean(words));
+    btnApplyAllSingleSugg.classList.toggle('hidden', Boolean(words));
+}
+
 // Render suggestions box in right pane for active photo
 export function renderSuggestionsPanel(photoPath) {
     const sugg = state.folderSuggestions[photoPath];
-    if (!sugg) {
-        suggestionsSection.classList.add('hidden');
+    const note = !sugg || sugg.error ? suggestionsNote(sugg) : null;
+    sayAboutSuggestions(note);
+    if (note || !sugg) {
+        suggestionsSection.classList.toggle('hidden', !note);
         return;
     }
 

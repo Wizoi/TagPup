@@ -63,7 +63,7 @@ function quietTheFolder() {
     indexProgressContainer.classList.add('hidden');
     state.scannedFolder = null;
     state.folderPhotos = [];
-    state.folderSuggestions = {};
+    upper.forgetFolderSuggestions();
     forgetSelectionFaces();
     upper.checkFolderMembership(null);   // nothing is held back, no folder is asked to be added: every photo is held
     btnToggleRename.disabled = true;
