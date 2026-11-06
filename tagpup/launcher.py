@@ -106,6 +106,10 @@ STARTING_WAIT = 60
 #: How the server exits when another already answers on its ports: not a crash.
 PORTS_TAKEN = 3
 
+#: How the server exits when a prerequisite is missing (ffmpeg, config.ffmpeg_problem): it started nothing, and
+#: says what to install. The server launchers pause on it, so the sentence stays on the screen.
+MISSING_PREREQUISITE = 4
+
 #: The size at which a server's console output (an install's logs.STARTED_LOG) is rotated as the
 #: next server starts.
 CONSOLE_LOG_MAX = 5 * 1024 * 1024

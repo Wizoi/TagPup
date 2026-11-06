@@ -15,7 +15,9 @@ under its server.
 
 It says where it answers in a record of its own (tagpup.launcher), lets a launch or an
 install drain it before an update (tagpup.web.lifecycle), and exits PORTS_TAKEN when
-another server already answers on its ports. Beside its requests it runs the background tasks
+another server already answers on its ports. Without ffmpeg (a prerequisite, tagpup.config.ffmpeg_problem) it
+starts nothing -- no making way, no ports, no migration -- says what to install and exits MISSING_PREREQUISITE;
+`--check` asks only that, for an install's check that a version starts. Beside its requests it runs the background tasks
 (tagpup.runtime.BACKGROUND): the recurring jobs, letting idle models go, and watching
 each library's folders (tagpup.jobs.watching).
 """
@@ -136,7 +138,17 @@ def main(argv=None):
                              "when the apps have logins; until then the apps answer anyone who can reach them")
     parser.add_argument("--installed", default=None,
                         help="the installed app's folder, which the launchers name (kept so they need no change)")
+    parser.add_argument("--check", action="store_true",
+                        help="only check that the server could start: every module imports and ffmpeg runs; "
+                             "exits %d with what to install when it does not" % launcher.MISSING_PREREQUISITE)
     args = parser.parse_args(argv)
+
+    if args.check:
+        problem = tagpup_config.ffmpeg_problem()
+        if problem:
+            print(problem, file=sys.stderr, flush=True)
+            return launcher.MISSING_PREREQUISITE
+        return 0
 
     # Without the reloader this process is the server, which is what the child flag
     # means; setting it here lets the log and the browser ask one question either way.
@@ -147,6 +159,16 @@ def main(argv=None):
     # and two processes rotating one file fail on Windows.
     if os.environ.get(RELOADER + "_CHILD"):
         logger.info("Logging to %s", logs.to_file(logs.SERVER_PROGRAM))
+
+    # ffmpeg is a prerequisite of the server (owner, 2026-11-06): without it nothing is started -- before making way,
+    # so a new version without it never drains the old server -- and the window says what to install.
+    problem = tagpup_config.ffmpeg_problem()
+    if problem:
+        tell("Not started: " + problem)
+        logger.error("Not started: %s", problem)
+        return launcher.MISSING_PREREQUISITE
+
+    if os.environ.get(RELOADER + "_CHILD"):
         # The runs' logs kept to the last few of each library and kind, as the server starts (DECISIONS 2026-10-28).
         runtimes.retire_run_logs()
 
