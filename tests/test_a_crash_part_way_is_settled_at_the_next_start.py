@@ -195,7 +195,7 @@ class AnInPlacePatchCutShort(FilesCase):
     def test_written_by_another_program_to_another_size_it_is_a_conflict_never_overwritten(self):
         change, file_id = self.killed(step=file_changes.PATCH_SAVED)
         write_outside(self.a, {"XMP:Description": "Written elsewhere"})
-        self.assertEqual(in_place.RESIZED, self.against_its_record(file_id))
+        self.assertEqual(in_place.NEITHER, self.against_its_record(file_id))
         start_again(self.library)
         self.assertEqual((["conflict"], ["Beach"], "Written elsewhere", None),
                          (self.states(change), keywords_of(self.a), field_of(self.a, "XMP:Description"),

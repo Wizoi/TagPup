@@ -109,29 +109,46 @@ def _bounded(path, call):
 
 
 def held(path, record, before):
-    """What the file at `path` holds against its patch's `record` and the bytes its ranges held `before`: NEW, every
-    range as the patch wrote it; OLD, every range as it was; TORN, each byte one or the other but not all of one (a
-    write this process cut short); NEITHER, a byte that is neither (another program wrote it); RESIZED, the file is not
-    the size it was. Reads the file's size and its ranges, no other byte. Raises OSError when the file cannot be read
+    """What the file at `path` holds against its patch's `record` and the bytes its ranges held `before`: NEW, the size
+    after and every range as the patch wrote it; OLD, the size before and every range as it was; TORN, a size from the
+    one to the other and each byte of a range there one or the other, but not all of one (a write or a put back this
+    process cut short); NEITHER, another size or a byte that is neither (another program wrote it, or the disk lost what
+    this one wrote). Reads the file's size and its ranges, no other byte. Raises OSError when the file cannot be read
     (Away, when its share does not answer)."""
     return _bounded(path, lambda: _held(path, record, before))
 
 
 def _held(path, record, before):
-    spans = _spans(record)
+    spans, size_before, size_after = _spans(record), record["size"], record["size_after"]
     with open(path, "rb") as handle:
         size = handle.seek(0, os.SEEK_END)
-        if size != record["size"]:
-            return RESIZED
-        now = b"".join(_read_at(handle, at, length) for at, length, _new in spans)
-        new = b"".join(after for _at, _length, after in spans)
-    if now == new:
+        if not size_before <= size <= size_after:
+            return NEITHER
+        now = [_read_at(handle, at, min(length, size - at)) for at, length, _new in spans]
+    if size == size_after and now == [after for _at, _length, after in spans]:
         return NEW
-    if now == before:
+    if size == size_before and b"".join(now) == before:
         return OLD
-    if len(now) == len(new) == len(before) and all(n in (o, a) for n, o, a in zip(now, before, new)):
+    olds = _old_parts(spans, size_before, before)
+    if all(_old_or_new(found, old, after) for found, old, (_at, _length, after) in zip(now, olds, spans)):
         return TORN
     return NEITHER
+
+
+def _old_or_new(found, old, new):
+    """Whether each byte of `found`, a range as the file holds it, is the byte `old` or `new` held at its place: `old` is
+    shorter where the range runs past the file's old size, a place that held no byte before."""
+    return all(byte == new[k] or (k < len(old) and byte == old[k]) for k, byte in enumerate(found))
+
+
+def _old_parts(spans, size_before, before):
+    """The bytes each range of `spans` held `before` (its part inside the file's old size, `size_before`)."""
+    parts, at_old = [], 0
+    for at, length, _new in spans:
+        inside = max(0, min(length, size_before - at))
+        parts.append(before[at_old:at_old + inside])
+        at_old += inside
+    return parts
 
 
 def put_back(path, record, before):

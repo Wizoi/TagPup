@@ -3,7 +3,10 @@ tagpup.files.in_place, record v2; DECISIONS 2026-11-05), its record, and what th
 crash can leave it (scenario D3).
 
 The file is made byte by byte, no clip and no library: the record's rules are the bytes' alone. The record says the size
-before and after and keeps the old bytes of the ranges inside the old size, nothing else read or written.
+before and after and keeps the old bytes of the ranges inside the old size, nothing else read or written. A crash
+part-way leaves the file at either size or between, each byte of a range old or new (TORN, put back and written again);
+a size outside the two, or a byte neither old nor new -- an appended run of zeros a power cut left among them -- is
+another program's or the disk's, NEITHER, a conflict never overwritten.
 """
 import os
 import sys
@@ -30,6 +33,10 @@ class AFileGrownByItsPatch(unittest.TestCase):
     def held(self):
         with open(self.path, "rb") as handle:
             return handle.read()
+
+    def holding(self, data):
+        with open(self.path, "wb") as handle:
+            handle.write(data)
 
     def recorded(self, changes, grow=True):
         with open(self.path, "rb") as handle:
@@ -58,6 +65,26 @@ class AFileGrownByItsPatch(unittest.TestCase):
                 self.recorded(changes, grow)
         saved, _before = self.recorded([(100, b"abc")], grow=False)
         self.assertEqual((len(OLD), len(OLD)), (saved["size"], saved["size_after"]), "a patch at its old size")
+
+    def test_a_grown_file_is_told_new_old_torn_or_neither_by_its_size_and_ranges(self):
+        saved, before = self.recorded([(100, b"abc"), (len(OLD), BOX)])
+        inside = OLD[:100] + b"abc" + OLD[103:]
+        grown = inside + BOX
+        cases = {
+            "untouched": (OLD, in_place.OLD),
+            "every range written": (grown, in_place.NEW),
+            "the first range alone": (inside, in_place.TORN),
+            "the box half appended": (inside + BOX[:17], in_place.TORN),
+            "the box appended, the first range not yet": (OLD + BOX, in_place.TORN),
+            "a byte of the first range neither": (OLD[:101] + b"#" + OLD[102:] + BOX, in_place.NEITHER),
+            "zeros where the box was to be": (inside + bytes(len(BOX)), in_place.NEITHER),
+            "longer than the patch makes it": (grown + b"more", in_place.NEITHER),
+            "shorter than it was": (OLD[:-1], in_place.NEITHER),
+        }
+        for why, (data, expected) in cases.items():
+            with self.subTest(why):
+                self.holding(data)
+                self.assertEqual(expected, in_place.held(self.path, saved, before))
 
 
 if __name__ == "__main__":
