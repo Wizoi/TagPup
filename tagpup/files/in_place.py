@@ -44,8 +44,8 @@ range, the record saying its size after). No other byte is read, nor any hash ta
 2026-11-03). It is not a patch's, nothing written, for no MOV/MP4/M4V, two XMP boxes, a box over OLD_MOST, a packet the
 writer cannot make, or a clip clip_patch will not place (a tail, no moov, fragments): such a clip is not written until
 the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a photo is; one another program holds open
-(a player, an editor) is refused at once with a sentence (Refused, OPEN_ELSEWHERE; owner, 2026-11-05, Q7), never
-waited for. A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
+(a player, an editor) is refused at once with a sentence (tagpup.core.result.Refused, OPEN_ELSEWHERE; owner,
+2026-11-05, Q7), never waited for. A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
 (held: OLD, TORN, NEW); a torn grown file is put back to its old bytes and size (put_back).
 """
 import base64
@@ -53,6 +53,7 @@ import io
 import os
 import threading
 
+from tagpup.core.result import Refused
 from tagpup.files import clip_patch, containers, lock_owners, shares, xmp_packet
 
 VERSION = 2
@@ -70,9 +71,6 @@ EOI = b"\xff\xd9"
 class Away(OSError):
     """The share of the photo did not answer a read or write of it in SECONDS. What a write left is settled by its bytes
     against the record the journal saved (held), the next time."""
-
-class Refused(Exception):
-    """A patch that will not be made, and why, as a sentence: nothing was written."""
 
 
 #: Why a clip open in another program when it is saved is refused at once, never waited for (owner, 2026-11-05).

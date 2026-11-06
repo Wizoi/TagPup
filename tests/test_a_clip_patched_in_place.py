@@ -30,6 +30,7 @@ import own_home  # noqa: E402
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import fields, processes  # noqa: E402
+from tagpup.core.result import Refused  # noqa: E402
 from tagpup.files import clip_patch, containers, exiftool_session, in_place, segment_edits, xmp_packet  # noqa: E402
 from tagpup.files.containers import XMP_UUID, Box, Video  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -508,7 +509,7 @@ class AClipSavedInPlace(FfmpegClips):
         path = self.clip("first.mp4")
         before = self.bytes_of(path)
         with open(path, "rb"):
-            with self.assertRaises(in_place.Refused) as refused:
+            with self.assertRaises(Refused) as refused:
                 self.save(path, ("Wren Ashcombe",))
         self.assertIn("open in another program", str(refused.exception))
         self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
