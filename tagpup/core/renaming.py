@@ -7,9 +7,8 @@ the grouping and the number back out of a name the format made.
 """
 import re
 
-#: What separates the parts of a Smart Rename name. Editing a photo's caption renames
-#: it by splitting its name here, so a grouping may not hold one (the "grouping" kind
-#: of tagpup.core.validation).
+#: What separates the parts of a Smart Rename name, so a grouping may not hold one (the
+#: "grouping" kind of tagpup.core.validation): parts_of reads a name back by the format.
 SEPARATOR = " - "
 
 #: Characters a Windows file name may not hold.
@@ -44,8 +43,9 @@ def parts_of(fmt, base):
     holds no number where the format puts one (a camera's "IMG_0412", a name given by hand). The number is the text
     of the name, its zeros kept ("07"). Read with the caption and without it, as file_base makes both. The grouping is
     the shortest that is followed by a number: a name made before a grouping could not hold " - " (findings #29;
-    "2019-06 - Summer Camp - 03 - Start", 9,882 of photo_index's names, counted 2026-11-05) gives "2019-06 - Summer
-    Camp" and 03, which Smart Rename then refuses as a grouping until it is retyped."""
+    "2019-06 - Summer Camp - 03 - Start", 10,223 of photo_index's photos, counted 2026-11-05) gives "2019-06 - Summer
+    Camp" and 03, which Smart Rename then refuses as a grouping until it is retyped. The one reader of a Smart Rename
+    name: Smart Rename of one photo and a caption edit's rename (metadata.title_filename) both read it here."""
     for made in (fmt, fmt.replace(" - {caption}", "").replace("- {caption}", "").replace("{caption}", "")):
         pattern = re.escape(made)
         for field, wanted in (("grouping", "(?P<grouping>.+?)"), ("index", "(?P<index>[0-9]+)"),
