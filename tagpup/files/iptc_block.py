@@ -9,8 +9,10 @@ each read in the block's character set with a trailing run of NULs off. `edit(bo
 (None, '' or [] clears it), each value cut as a write cuts it (`fields.as_written`), and answers `containers.Edited`: only the 0x0404
 resource's data changes, and in it only the owned datasets (a dataset held is rewritten where its first one was, a new
 one goes at the end of its record), the character set (1:90) and the version dataset (1:00, 2:00) of a record that
-lacks one, as ExifTool adds them; every other dataset and every other resource, the IPTCDigest (0x0425) among
-them (DECISIONS 2026-11-03: left stale, as ExifTool leaves it), keep their bytes. Zero bytes after the last dataset are
+holds a dataset and lacks its version, so 1:00 only beside another dataset of record 1 (a 1:90), where ExifTool adds
+1:00 to every block it writes (no reader reads the versions; metadata_check.KNOWN); every other dataset and every
+other resource, the IPTCDigest (0x0425) among them (DECISIONS 2026-11-03: left stale, as ExifTool leaves it), keep
+their bytes. Zero bytes after the last dataset are
 dropped, as ExifTool drops them, so an edit is ExifTool's byte for byte where it lays the datasets as ExifTool does. The body
 keeps its length when the change fits, the dummy resource (`containers.PAD_RESOURCE`) at its end taking up or giving
 the room as the in-place patch lays it; `length_changed` says it did not fit, for the caller to choose a patch or a
@@ -31,7 +33,7 @@ DATASETS = {"IPTC:ObjectName": (2, 5), "IPTC:Keywords": (2, 25), "IPTC:Caption-A
 _LIST = "IPTC:Keywords"
 CHARSET = (1, 90)
 UTF8 = b"\x1b%G"
-#: The version dataset of each record and its value (4), as ExifTool adds it to a record that lacks one.
+#: The version dataset of each record and its value (4), added to a record that holds a dataset and lacks one.
 VERSIONS = {1: ((1, 0), b"\0\x04"), 2: ((2, 0), b"\0\x04")}
 LIMIT = containers.MOST_BODY
 #: What a value may not hold: NUL and the C0 controls but tab, line feed and carriage return.
