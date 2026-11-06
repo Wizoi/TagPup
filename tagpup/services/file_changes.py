@@ -381,7 +381,8 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     written in the one that marks each file `done` (a bulk assignment's faces); a photo it names is in the change even when its
     file holds what it is to hold already, and then only its rows are written.
 
-    More than batches.MAX_BATCH photos are refused (too_many), nothing read, unless `uncapped` (the tag tree's rewrites only); more than
+    More than batches.MAX_BATCH photos are refused (too_many), nothing read, unless `uncapped` (the tag tree's rewrites, and
+    the one-off sweep of captions repeating the title, tagging.clear_duplicate_captions); more than
     batches.CHUNK are a batch (the module's docstring): refused, nothing read, when batches.MOST_WAITING wait already, or when it
     is cancelled before its turn.
     """

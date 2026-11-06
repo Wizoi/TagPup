@@ -74,8 +74,96 @@ def _caption_moved(now):
     shown = _held_title(now)
     if not shown or vocabulary.holds_title(now):
         return {}
-    return {field: "" for field in fields.caption_fields("")
-            if shown in (vocabulary.trimmed(text) for text in fields.field_values(now.get(field)))}
+    return {field: "" for field in fields.caption_fields("") if _holds_text(now, field, shown)}
+
+
+def _holds_text(now, field, text):
+    """Does `field` of `now` (what a file holds, or a row's raw_metadata) hold `text`, trimmed as the reader trims it?
+    The one test of a caption field holding the title: a save's (_caption_moved) and the sweep's (duplicate_captions)."""
+    return text in (vocabulary.trimmed(held) for held in fields.field_values(now.get(field)))
+
+
+# ---- The one-off sweep of captions that repeat the title -------------------------------------------------------------
+
+#: The caption fields the sweep clears where they hold the photo's own title (duplicate_captions): every field a caption
+#: is held in (fields.caption_fields) but EXIF:XPComment, Windows' Comment, which it never touches (the Files owner's
+#: plan, 2026-11-06).
+DUPLICATE_FIELDS = tuple(field for field in fields.caption_fields("") if field != "EXIF:XPComment")
+#: What the sweep reads of each file: the title fields and DUPLICATE_FIELDS, by their prefixed names (BASE_READ's reason).
+DUPLICATE_READ = tuple(dict.fromkeys(tuple(fields.title_fields("")) + DUPLICATE_FIELDS))
+#: The sweep's change, as History names it.
+CLEAR_DUPLICATES = "clear duplicate captions"
+#: Why a photo the index named is left alone when its file is read: no caption field holds its title (any more).
+NO_DUPLICATE = "no caption field holds its title"
+
+
+def duplicate_captions(meta):
+    """The DUPLICATE_FIELDS of `meta` (what a file holds, or a row's raw_metadata) holding the photo's own title exactly,
+    trimmed (vocabulary.own_title: XMP:Title, else IPTC:ObjectName); [] for a photo with no title of its own. A caption
+    holding the title and more ("Relay at the lake" beside the title "Relay") is not one."""
+    title = vocabulary.own_title(meta)
+    return [field for field in DUPLICATE_FIELDS if _holds_text(meta, field, title)] if title else []
+
+
+def duplicate_candidates(library):
+    """([path] of the photos whose index row holds a caption repeating its title, {what: how many}), read from the
+    index alone, no file: the photos the sweep reads. The row holds XMP's description and IPTC's caption, not EXIF's
+    ImageDescription (fields.as_read), which the file's read finds. A clip is left out: the sweep writes photos only.
+    Counts: `photos` read, `to read` (the paths), each of DUPLICATE_FIELDS the rows hold so, `captions kept` (a photo with
+    a title of its own and a caption holding other text), `clips left alone` (a clip whose row holds one)."""
+    counts = {"photos": 0, "to read": 0}
+    counts.update({field: 0 for field in DUPLICATE_FIELDS if fields.scan_reads(field)})
+    counts.update({"captions kept": 0, "clips left alone": 0})
+    found = []
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        for path, raw in photos.raw_rows(conn):
+            repeated = duplicate_captions(raw)
+            if images.is_clip(path):
+                counts["clips left alone"] += bool(repeated)
+                continue
+            counts["photos"] += 1
+            title = vocabulary.own_title(raw)
+            if title and any(text != title for field in DUPLICATE_FIELDS
+                             for text in (vocabulary.trimmed(held) for held in fields.field_values(raw.get(field)))):
+                counts["captions kept"] += 1
+            if repeated:
+                found.append(path)
+                for field in repeated:
+                    if field in counts:
+                        counts[field] += 1
+    finally:
+        conn.close()
+    counts["to read"] = len(found)
+    return found, counts
+
+
+def clear_duplicate_captions(library, exiftool_path, apply=False):
+    """The one-off sweep (scripts/clear_duplicate_captions.py): clear each of DUPLICATE_FIELDS that holds the photo's
+    own title exactly (duplicate_captions), in every photo the index names (duplicate_candidates). A caption that differs
+    is kept, EXIF:XPComment is never written, a clip never read. The title and the caption are two values (DECISIONS
+    2026-11-06), and a save stops making new copies; this clears the copies made before.
+
+    A dry run (the default) reads the index alone and writes nothing: the Result's details["counts"]. With `apply`, one
+    change of photo files (file_changes.write_fields, uncapped: a batch, its chunks of batches.CHUNK, the lock let go
+    between them, Cancel or Ctrl+C honoured, each file read again before its write and a file changed since a conflict,
+    each row following its file in the transaction that marks it done), undoable as one. A photo whose file no longer
+    holds a repeated caption, or cannot be read, is skipped; re-run, the photos done are no longer named by the index,
+    so a run stopped part-way is continued by running it again."""
+    found, counts = duplicate_candidates(library)
+    if not apply or not found:
+        result = Result(attempted=len(found), details={"change": None, "conflicts": [], "written": {}})
+    else:
+        def plan_one(_path, held):
+            repeated = duplicate_captions(held)
+            if not repeated:
+                return file_changes.skip(NO_DUPLICATE)
+            return file_changes.Plan(after={field: "" for field in repeated}, detail=repeated)
+
+        result = file_changes.write_fields(library, CLEAR_DUPLICATES, exiftool_path, found, list(DUPLICATE_READ), plan_one,
+                                           summary={"photos": len(found)}, unreadable="skip", uncapped=True)
+    result.details.update(counts=counts, dry_run=not apply)
+    return result
 
 
 @file_changes.exclusively()
