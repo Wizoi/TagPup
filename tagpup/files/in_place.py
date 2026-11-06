@@ -34,6 +34,19 @@ yet), a new segment is longer than the old, or an EXIF segment would move (a mak
 the file); the own writer's by segment_edits' rules. The photo is opened once, with no sharing on Windows, from the
 read of its header to the last byte written, so no other program writes it, nor reads it half written, meanwhile; one
 that holds it open already makes it the rewrite's. Every read and write of it is bounded (shares.bounded, SECONDS).
+
+**A clip's patch** (`patch_clip`). A MOV/MP4/M4V's keyword and caption save is its XMP alone (fields.CLIP_FIELDS; every
+copy outside XMP is left stale, segment_edits.clip_stale_of). The clip's boxes are walked (containers.read: their
+headers only) and its one XMP box's packet read, at most clip_patch.OLD_MOST; the new packet is the caller's
+(`new_packet`, segment_edits.new_packet, a blank one for a clip with none), placed by clip_patch: over the old box and
+the free boxes after it, grown where it ends the file, or appended in a new box at the end (the file grows by its last
+range, the record saying its size after). No other byte is read, nor any hash taken, of a clip of any size (DECISIONS
+2026-11-03). It is not a patch's, nothing written, for no MOV/MP4/M4V, two XMP boxes, a box over OLD_MOST, a packet the
+writer cannot make, or a clip clip_patch will not place (a tail, no moov, fragments): such a clip is not written until
+the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a photo is; one another program holds open
+(a player, an editor) is refused at once with a sentence (Refused, OPEN_ELSEWHERE; owner, 2026-11-05, Q7), never
+waited for. A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
+(held: OLD, TORN, NEW); a torn grown file is put back to its old bytes and size (put_back).
 """
 import base64
 import io

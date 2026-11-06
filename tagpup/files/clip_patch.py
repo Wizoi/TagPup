@@ -2,9 +2,11 @@
 when the clip needs the rewrite (docs/PLAN_OWN_METADATA.md, M7; DECISIONS 2026-11-02, "VIDEO IS MEDIA TAGPUP MANAGES" 3:
 overwrite the XMP slot, use an adjacent free box, or append at the end).
 
-Pure: the clip's layout (`containers.Video`, read by the caller from the file it holds open) and the new packet's bytes
-in, a `Patch` or None out; no file is opened here and nothing is written. The packet is made by the XMP editor
-(xmp_packet, called from one place); this module only places it.
+Pure: the clip's layout (`containers.Video`, read by in_place.patch_clip from the file it holds open) and the new
+packet's bytes in, a `Patch` or None out; no file is opened here and nothing is written. The packet is made by
+segment_edits.new_packet (the XMP editor's one caller); this module only places it. "The rewrite's", below, is a clip
+TagPup does not write until the whole-file clip rewrite, a later merge (owner, 2026-11-05: Q2, Q4): no ExifTool
+rewrite of a clip is made meanwhile.
 
 Where the packet goes, in this order (live counts of the 2,184 MOV/MP4/M4V in the folders the three libraries hold,
 counted read-only 2026-11-05):
