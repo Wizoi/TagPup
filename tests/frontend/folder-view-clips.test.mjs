@@ -2,7 +2,7 @@
  * A folder's clips in its grid and its panel (video, merge B2): the folder scan lists a clip beside the photos with
  * `media: "video"`, and a clip the index has recorded with its `id` and `thumb` (its poster by id). A clip's picture is
  * ONLY its poster through /api/photo-thumb -- /api/photo-file refuses a video -- and a clip the index has not recorded
- * is a grey card with the play mark, asking for nothing, until the folder is opened again after the index records it.
+ * is a grey card with the play mark, asking for nothing, until the folder is scanned again after the index records it.
  * A folder's card is selected by its path, a clip's too (a folder view's selection is by path, not by id, whatever
  * picture the card shows). Opening a recorded clip plays it from /api/video-file by its id, as a library view's does;
  * opening one not recorded says so and asks for nothing. Fictional names only.

@@ -437,7 +437,7 @@ function buildThumbnailCard(photo) {
     // A card with a `thumb` is drawn by it (the cache's, by id): every library card, and a folder's clip the index has
     // recorded -- a clip's picture is only ever its poster, as /api/photo-file refuses a video. A folder's clip the
     // index has not recorded has none yet: the grey card with its play mark, asking for nothing, until the folder is
-    // opened after the index records it. A folder's photo is its file.
+    // scanned again after the index records it. A folder's photo is its file.
     const img = document.createElement('img');
     if (photo.thumb) img.dataset.src = api.image(photo.thumb);
     else if (isVideo(photo)) img.classList.add('failed');
