@@ -252,6 +252,18 @@ class ClipModel:
                 image_features /= image_features.norm(dim=-1, keepdim=True)
                 return image_features[0].cpu().numpy().tolist()
 
+    def embed_inputs(self, image_inputs):
+        """The vectors of several pictures picture_input made, in their order, in one pass on the model's device: a
+        clip's frames (tagpup.services.search.PhotoEmbeddings.vectors)."""
+        with self._running():
+            batch = torch.stack(list(image_inputs)).to(self.device)
+            if self.device == "cuda":
+                batch = batch.half()
+            with torch.inference_mode():
+                image_features = self.model.encode_image(batch)
+                image_features /= image_features.norm(dim=-1, keepdim=True)
+                return image_features.cpu().numpy().tolist()
+
     def embed_text(self, text):
         """Embed a text query for semantic search."""
         try:

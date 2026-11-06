@@ -18,7 +18,7 @@ import numpy as np
 
 from tagpup.core import paths
 from tagpup.core.fields import read_document_id
-from tagpup.files import images, shares
+from tagpup.files import images, shares, video_frames
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
 from tagpup.store import derived as store_derived
@@ -30,6 +30,19 @@ from tagpup.store import taxonomy as store_taxonomy
 logger = logging.getLogger("tagpup_cli.embedder")
 index_log = logging.getLogger("tagpup_cli.index")
 
+#: The pictures a clip's vectors are made of: its vector, frame 0's, and the frames kept beside it
+#: (store.embeddings.FRAMES), equally spaced through the clip (tagpup.files.video_frames).
+CLIP_PICTURES = 1 + store_embeddings.FRAMES
+
+
+class NoFrames(Exception):
+    """ffmpeg gave no frame of a clip: `problem`, its sentence (it names no file), and `whose` (video_frames.THE_FILE:
+    the file as it is, found again until it changes; THE_MOMENT or TOO_SLOW: a later read may succeed)."""
+
+    def __init__(self, problem, whose):
+        super().__init__(problem)
+        self.problem, self.whose = problem, whose
+
 
 class PhotoEmbeddings:
     """The photos' vectors under one CLIP model: the library's when the file is as it
@@ -39,10 +52,13 @@ class PhotoEmbeddings:
     written on a connection of its own. Without one, nothing is kept.
     """
 
-    def __init__(self, clip, photo_index=None, remember=True, model_key=None):
+    def __init__(self, clip, photo_index=None, remember=True, model_key=None, ffmpeg=None):
         #: None when only the vectors kept are read (`model_key` given): the CLI's index asks what it keeps of each
         #: photo before it builds a model, and an index where every photo is kept builds none (tagpup_cli.py).
         self.clip = clip
+        #: What tagpup.config.locate_ffmpeg answered: a clip's frames are read with it (prepared). Handed in by the
+        #: runtime (Runtime.embeddings, Runtime.ffmpeg); a run not given it refuses a clip.
+        self.ffmpeg = ffmpeg
         self.photo_index = photo_index
         #: False: the library's vectors are read, and none is ever written (a Just look run,
         #: tagpup.jobs.suggestions: a vector is a row of the library).
@@ -96,10 +112,11 @@ class PhotoEmbeddings:
         found = photo_fingerprints.of_path(self.photo_index.conn, file_path)
         return (found.key, bytes(found.hash)) if found else None
 
-    def keep(self, file_path, embedding, stamp=None):
+    def keep(self, file_path, embedding, stamp=None, frames=()):
         """Keep the vector in the library, stamped with `stamp`: the file's (mtime, size)
         as it was opened to be embedded, else as it is now. Taken after, a photo rotated
-        while it was embedded kept the vector from before the turn as current (#86).
+        while it was embedded kept the vector from before the turn as current (#86). A clip's `frames` (its frames 1 to
+        n, `vectors` past the first) are kept with it in the same transaction (store.embeddings.put).
 
         By path, a photo with no row is given one (store.embeddings.put: Suggest's photo of a folder just added); a
         pass over the rows it read keeps by id (keep_batch). No fingerprint is taken here, so the photo's row is
@@ -117,9 +134,10 @@ class PhotoEmbeddings:
                 return False
 
             vector = np.array(embedding, dtype=np.float32).tobytes()
+            beside = _frame_bytes(frames)
 
             def store(conn):
-                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector, None)
+                store_embeddings.put(conn, file_path, self.model_key, stamp[0], stamp[1], vector, None, frames=beside)
                 return True
 
             # On a connection of its own. Every worker in the suggestion pool writes its
@@ -137,19 +155,21 @@ class PhotoEmbeddings:
             return False
 
     def keep_batch(self, found):
-        """Keep each of `found` [(photo id, vector, (mtime, size) of the file as it was opened)] at that row, by id, in
-        ONE transaction (one connection, one take of the write lock, one commit; #1839): a pass over the rows it read
+        """Keep each of `found` [(photo id, vector, (mtime, size) of the file as it was opened, a clip's frames 1 to n or
+        ())] at that row, by id, in ONE transaction (one connection, one take of the write lock, one commit; #1839): a pass over the rows it read
         (tagpup.services.photo_reembed). A row gone meanwhile is not kept, and none is made for it (put_by_id); the
         fingerprint row of each kept is forgotten, as keep's. How many
         were kept; none in a looking run or without a library. A write that fails raises: what earlier batches kept is
         kept, and the photos of this one are made again by the next run."""
         if not found or not self.remember or not self._library():
             return 0
-        rows = [(photo_id, np.asarray(vector, dtype=np.float32).tobytes(), stamp) for photo_id, vector, stamp in found]
+        rows = [(photo_id, np.asarray(vector, dtype=np.float32).tobytes(), stamp, _frame_bytes(frames))
+                for photo_id, vector, stamp, frames in found]
 
         def store(conn):
-            return sum(store_embeddings.put_by_id(conn, photo_id, self.model_key, stamp[0], stamp[1], vector, None)
-                       for photo_id, vector, stamp in rows)
+            return sum(store_embeddings.put_by_id(conn, photo_id, self.model_key, stamp[0], stamp[1], vector, None,
+                                                  frames=frames)
+                       for photo_id, vector, stamp, frames in rows)
 
         return self.photo_index.write_on_own_connection(store, label="the vectors of %d photos" % len(rows))
 
@@ -176,9 +196,32 @@ class PhotoEmbeddings:
         decoded picture to `seen` when given: what the indexer knows of the file from that read). Nothing is kept and
         nothing runs on the graphics card: the indexer prepares the next photos on threads of their own while the card
         is on this one (tagpup_cli.py's index; docs/AI_PIPELINE.md, phase 1b), with `load` False: a read never loads
-        the model (ClipModel.picture_input). Raises images.Unreadable for a picture that does not decode."""
+        the model (ClipModel.picture_input). Raises images.Unreadable for a picture that does not decode.
+
+        A clip (images.is_clip, by its name, as the index gave its row its kind) is shown its CLIP_PICTURES frames,
+        read by ffmpeg (video_frames.frames; `seen` is not told): NoFrames when ffmpeg gives none."""
         stamp = shares.read_stamp(file_path)
+        if images.is_clip(file_path):
+            return Prepared(stamp, [self.clip.picture_input(picture, load=load)
+                                    for picture in self.frames_of(file_path)], frames=True)
         return Prepared(stamp, self.clip.input_of(file_path, seen=seen, load=load))
+
+    def frames_of(self, file_path):
+        """The CLIP_PICTURES frames of the clip at `file_path`, upright RGB pictures, fewer for a clip cut short after
+        its index (video_frames.frames), on the processor; NoFrames when ffmpeg gives none."""
+        if self.ffmpeg is None:
+            raise NoFrames("This run was not given ffmpeg, which reads a video's frames.", video_frames.THE_MOMENT)
+        found = video_frames.frames(self.ffmpeg, file_path, CLIP_PICTURES)
+        if found.problem:
+            raise NoFrames(found.problem, found.whose)
+        return [images.from_jpeg(picture) for picture in found.pictures]
+
+    def vectors(self, prepared):
+        """[vector, then a clip's frames 1 to n] of what `prepared` made, on the model's device: a photo's one, in a
+        pass of its own (ClipModel.embed_input); a clip's frames in one pass together (embed_inputs)."""
+        if prepared.frames:
+            return self.clip.embed_inputs(prepared.image_input)
+        return [self.clip.embed_input(prepared.image_input)]
 
     def opened(self, file_path):
         """(the file's stamp, taken before it is opened, and its picture decoded upright): the decode `prepared` makes,
@@ -193,10 +236,15 @@ class PhotoEmbeddings:
 
     def made(self, file_path, prepared):
         """The vector of a photo `prepared` (Prepared), made on the model's device and kept, stamped with the file as
-        it was opened."""
-        embedding = self.clip.embed_input(prepared.image_input)
-        self.keep(file_path, embedding, prepared.stamp)
-        return embedding
+        it was opened; a clip's with its frames."""
+        found = self.vectors(prepared)
+        self.keep(file_path, found[0], prepared.stamp, frames=found[1:])
+        return found[0]
+
+
+def _frame_bytes(frames):
+    """A clip's frames 1 to n as kept (float32 bytes each)."""
+    return [np.asarray(frame, dtype=np.float32).tobytes() for frame in frames]
 
 
 class Stale:
@@ -215,10 +263,10 @@ class Stale:
 
 class Prepared:
     """A photo made ready for CLIP on the processor (PhotoEmbeddings.prepared): `stamp`, the file's (mtime, size) before
-    it was opened, and `image_input`, what the model is shown."""
+    it was opened, and `image_input`, what the model is shown -- with `frames`, a clip's, the list of its frames'."""
 
-    def __init__(self, stamp, image_input):
-        self.stamp, self.image_input = stamp, image_input
+    def __init__(self, stamp, image_input, frames=False):
+        self.stamp, self.image_input, self.frames = stamp, image_input, frames
 
 
 def _record(row, people="people"):
@@ -382,20 +430,15 @@ class PhotoIndex:
         by_id = {record["id"]: record for record in found}
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
-    def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512):
-        """Batch insert/update photos inside the SQLite database (transaction-safe). Each meta's "fingerprint", the (key,
-        hash) of the picture its vector was made of (tagpup.files.images.fingerprint), is recorded with the vector; a
-        meta with none forgets the photo's row (store.embeddings.put)."""
-        if not embeddings or self.conn is None:
-            return
-        self._record(metas, [np.array(emb, dtype=np.float32).tobytes() for emb in embeddings])
-
-    def record_videos(self, metas: List[Dict[str, Any]]):
-        """Record the clips the indexer read (each meta of kind 'video'), with no vector: a clip is a row the library
-        keeps by its stamp and its metadata; nothing is decoded and nothing written to its file. One transaction."""
+    def build_or_update(self, embeddings: List[Optional[List[float]]], metas: List[Dict[str, Any]], dim: int = 512):
+        """Record each of `metas` with its vector in `embeddings`, in one transaction: None writes no vector (a clip
+        whose frames were not had, or whose vector is kept by its stamp: the one it holds stays, frames and all). Each
+        meta's "fingerprint", the (key, hash) of the picture its vector was made of (tagpup.files.images.fingerprint),
+        is recorded with the vector, a meta with none forgetting the photo's row; a clip's "frames", its frames 1 to n,
+        with its vector (store.embeddings.put)."""
         if not metas or self.conn is None:
             return
-        self._record(metas, [None] * len(metas))
+        self._record(metas, [None if emb is None else np.array(emb, dtype=np.float32).tobytes() for emb in embeddings])
 
     def _record(self, metas, blobs):
         """Record each of `metas` with its vector's bytes in `blobs` (None: no vector), in one transaction."""
@@ -419,6 +462,7 @@ class PhotoIndex:
                     "captions": meta.get("captions", []),
                     "raw_metadata": meta.get("raw_metadata", {}),
                     "embedding": blob,
+                    "frames": _frame_bytes(meta.get("frames", ())),
                     "fingerprint": meta.get("fingerprint"),
                     # The photo's identity beside its path. Where the file has one it is
                     # already in raw_metadata; where it does not, the extractor has

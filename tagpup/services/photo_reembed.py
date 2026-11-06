@@ -158,7 +158,8 @@ def run(library, runtime, model, progress=None, should_stop=None, report=None):
             raise RuntimeError("the model's vectors would be kept under %s, not %s" % (embeddings.model_key, key))
 
         def keep(found):
-            return embeddings.keep_batch([(photo_id, vector, stamp) for photo_id, stamp, vector in found])
+            # A photo has no frames beside its vector (a clip is not among the rows yet: store.photos.VECTOR_KINDS).
+            return embeddings.keep_batch([(photo_id, vector, stamp, ()) for photo_id, stamp, vector in found])
 
         with runtime.gpu_turn("making the vectors of %s:%s (%s)" % (model[0], model[1], library.name), (clip,),
                               cancelled=should_stop, report=report):

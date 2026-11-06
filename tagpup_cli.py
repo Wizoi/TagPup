@@ -508,7 +508,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     clips = [m for m in to_index_meta if m.get("kind") == "video"]
     to_index_meta = [m for m in to_index_meta if m.get("kind") != "video"]
     for start in range(0, len(clips), VIDEO_CHUNK):
-        photo_index.record_videos(clips[start:start + VIDEO_CHUNK])
+        photo_index.build_or_update([None] * len(clips[start:start + VIDEO_CHUNK]), clips[start:start + VIDEO_CHUNK])
     if clips:
         console.print(f"Recorded [bold green]{len(clips)}[/bold green] video(s).")
     tagged_count = sum(1 for m in to_index_meta if m["tags"] or m["people"] or m["captions"])
@@ -937,7 +937,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                           list(touched.values()), handed, stop_file)
 
 
-#: How many clips the index records in one transaction (PhotoIndex.record_videos).
+#: How many clips the index records in one transaction (PhotoIndex.build_or_update, no vector).
 VIDEO_CHUNK = 100
 
 
