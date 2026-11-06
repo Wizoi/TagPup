@@ -14,6 +14,7 @@ import io
 import json
 import os
 import signal
+import socket
 import sys
 import unittest
 from unittest import mock
@@ -247,10 +248,14 @@ class StoppedPartWay(CaptionSweep):
             self.assert_cleared(path)
 
     def test_a_second_ctrl_c_during_the_read_back_does_not_say_nothing_was_written(self):
-        for n in range(7):
-            self.repeated("more %d.jpg" % n)
+        more = [self.repeated("more %d.jpg" % n) for n in range(7)]
+        real, read_at_the_stop = file_changes._read_back, []
 
-        def again(*_args, **_kwargs):
+        def again(et, library, wrote, read=None):
+            if not isinstance(sys.exc_info()[1], KeyboardInterrupt):
+                return real(et, library, wrote, read)     # a chunk's own read back, before the first press
+            # The read back after the first press: the files written since the last chunk, not all of them.
+            read_at_the_stop.append(len(wrote))
             signal.raise_signal(signal.SIGINT)
             return []
         with mock.patch.object(file_changes, "_reached", side_effect=pressed_at("file written", 9)), \
@@ -260,6 +265,19 @@ class StoppedPartWay(CaptionSweep):
         self.assertNotIn("before anything was written", said)
         self.assertIn("stopped again: at least 8 file(s) written", said)
         self.assertIn("the next open of the library finishes settling them", said)
+        self.assertEqual([0], read_at_the_stop, "the ninth file is under way, its chunk's eight read back already")
+        # The files not reached were taken out before the read back: the next open settles the one under way, not
+        # three more written as a kill leaves them.
+        [(change, _op, _status)] = self.changes()
+        self.assertEqual([], self.rows("SELECT id FROM change_files WHERE change_id = ? AND state = 'planned'", (change,)))
+        # The script's process has ended (a process of this machine that is gone owns the change).
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", ("%s:4000000:1" % socket.gethostname(), change))
+        self.assertEqual(1, file_changes.settle(self.library, EXIFTOOL))
+        self.assertEqual("applied", self.changes()[0][2])
+        for path in (self.photos + more)[:9]:
+            self.assert_cleared(path)
+        for path in (self.photos + more)[9:]:
+            self.assertEqual((TITLE, TITLE, TITLE), self.captions_of(path), "a file not reached was written")
 
     def test_a_ctrl_c_while_exiftool_starts_is_a_message_not_a_traceback(self):
         with mock.patch.object(clear_duplicate_captions.runtime, "exiftool", side_effect=KeyboardInterrupt):

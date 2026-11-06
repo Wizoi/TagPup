@@ -16,7 +16,7 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
    Otherwise mark it `writing`, write it, and in one transaction record its row
    (tagpup.store.photos.follow_fields) and mark it
    `done` (a save reads its file back whole first and records all of it: `whole`). Then the
-   files written are read back, in one read, and a file that does not
+   files written are read back, in one read a chunk (batches.CHUNK), and a file that does not
    hold quite what was written -- IPTC cuts a keyword at 64 bytes -- is recorded, in the
    journal and its row, as it holds it (_read_back). The change is `applied` once every
    file is done or a conflict.
@@ -520,12 +520,25 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     result.details["change"] = change_id
     if batch is not None:
         batch.change_id = change_id
+    def read_back():
+        """The files written since the last read back, read back (_read_back): a chunk's at its end, so that a stop
+        reads back one chunk, not every file of a long change."""
+        for row in _read_back(et, library, wrote, read_whole):
+            # ExifTool said it wrote it, and it holds what it held (#276).
+            result.changed -= 1
+            written.pop(row.path, None)
+            result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
+        wrote.clear()
+        read_whole.clear()
+
     try:
         _reached("plan committed")
         if on_planned is not None:
             on_planned(change_id)
         stalled = None
         for n, row in enumerate(rows):
+            if n and n % batches.CHUNK == 0:
+                read_back()
             if n and n % batches.CHUNK == 0 and on_chunk is not None:
                 on_chunk(n, len(rows))
             if n and n % batches.CHUNK == 0 and not between_chunks(batch):
@@ -567,11 +580,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                 # own error, as a clip leave_out_clips refuses is: the photos after it are written.
                 file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
                 break
-        for row in _read_back(et, library, wrote, read_whole):
-            # ExifTool said it wrote it, and it holds what it held (#276).
-            result.changed -= 1
-            written.pop(row.path, None)
-            result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
+        read_back()
         stopped = result.details.get("stopped")
         if stopped and stopped.get("share"):
             _share_stopped(library, operation in file_journal.INTERNAL, change_id, result, stopped, stalled)
@@ -585,7 +594,15 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                               % (stopped["after"], stopped["of"], result.changed,
                                  _kept_as(operation in file_journal.INTERNAL, change_id)))
     except BaseException as stopped:
-        # The files recorded done so far are read back all the same: settling reads
+        if isinstance(stopped, KeyboardInterrupt):
+            # First, in one transaction, the files not reached are taken out (_settle_stopped takes out what is left): a
+            # second Ctrl+C in what follows leaves no file planned for the next open to write, only the one under way.
+            try:
+                file_journal.withdraw(library.path, [r.id for r in file_journal.files_of(library.path, change_id)
+                                                     if r.state == "planned"])
+            except Exception as problem:
+                logger.warning("Could not take the files not reached out of change %s: %s", change_id, problem)
+        # The files recorded done since the last chunk's read back are read back all the same: settling reads
         # back only the files it writes (docs/findings.md, #286).
         _read_back(et, library, wrote)
         if isinstance(stopped, KeyboardInterrupt):

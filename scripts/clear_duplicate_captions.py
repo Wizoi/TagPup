@@ -7,9 +7,10 @@ two values (DECISIONS 2026-11-06), and a save no longer makes such a copy; this 
 Dry run by default: the counts the index gives, no file read, nothing written. With --apply, the files the index names
 are read and written as ONE change of the library's journal (History lists it; `tagpup_cli.py undo <id>` takes it back),
 each photo's row following its file. It is long on a share (hours): it prints a line as each chunk of files is done.
-Ctrl+C stops it after the file under way and reads back the files written (it says so, and it takes a while); what was
+Ctrl+C stops it after the file under way and reads back the files written since the last chunk (it says so); what was
 written is kept (applied and undoable); run it again to continue, the photos done are not read again. A second Ctrl+C
-skips the read back: the next open of the library finishes settling those files. A file changed since it was read is a
+skips that read back: the files not reached were taken out first, and the next open of the library settles the one under
+way. A file changed since it was read is a
 conflict, left as it is and counted. Counts only: no path, no name, no caption.
 
 Run it while the app is idle (no server writing the library), and back the library up first. A title changed by another
@@ -73,7 +74,7 @@ class Progress:
             return None
 
     def interrupted(self, _signum=None, _frame=None):
-        """Ctrl+C: say so before the read back of the files written, which takes a while; the second press is the
+        """Ctrl+C: say so before the read back of the files written since the last chunk; the second press is the
         read back's end (it is the person's, and it is taken)."""
         self.presses += 1
         if self.presses == 1:
