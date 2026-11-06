@@ -24,7 +24,9 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
    holds -- what the plan read: written again; what it was to hold: marked done and its
    row recorded; neither: a conflict. A settle of more than batches.CHUNK files is a batch, carried out a chunk at a
    time as a write is (_finish): a writer that waits takes the lock between chunks, and Cancel (or a hand-over) stops
-   it there, the rest left as they are for the next start. A file a patch was writing in place is settled by its bytes first, against the
+   it there, the rest left as they are for the next start; a writer let in between two chunks leaves a photo the settle
+   has still to write alone, as its error (unsettled), or the settle would find it changed and the cut-off edit be lost
+   on it as a conflict. A file a patch was writing in place is settled by its bytes first, against the
    record the patch saved before its first byte (_by_bytes): a patch this process cut short is put back and written
    again, one another program wrote over is a conflict, one that cannot be read stays `writing` with its record. Files the crash left `planned` are written too, so
    the edit the person asked for is finished. A change another live process is writing
@@ -466,6 +468,12 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         return _stopped_before_writing(result)
     planned, followed = [], []
     for path in stored:
+        why = unsettled(path)
+        if why:
+            result.fail(path, why)
+            if stop_at_first_error:
+                break
+            continue
         now = held.get(paths.key(path))
         if isinstance(now, field_values.NotAnswered) or paths.key(path) in away:
             not_answered.append(path)
@@ -1263,6 +1271,9 @@ def rename(library, operation, renames, aside, exiftool_path=None, summary=None)
     moves.update({old: new for old, new in renames.items() if old != new})
     if not moves:
         return Renamed(dict(renames), {}, 0, [])
+    for old in moves:
+        if unsettled(old):
+            raise names.RenameFailed(unsettled(old), [])
     fingerprints = {old: _fingerprint(old) for old in moves}
     if any(found and not found["ino"] for found in fingerprints.values()):
         # A renamed file is known by its file id; without one a copy cannot be told from it.
@@ -1406,7 +1417,6 @@ def settle(library, exiftool_path):
             continue
         try:
             if not _finish(library, change, exiftool_path):
-                logger.info("%s: change %d is left half done until its files can be read", library.path, change.id)
                 file_journal.release(library.path, change.id)
                 continue
         except Exception:
@@ -1422,6 +1432,23 @@ def settle(library, exiftool_path):
 #: done for the next start, not taken up again by the settle every write begins with.
 _put_off = set()
 
+#: The files a settle of this process has still to write, {paths.key(path): change id}: a chunk's taken out once it is
+#: settled, a stopped settle's kept until the next start (_put_off). A writer let in between two chunks (let_others_in)
+#: refuses them (unsettled): written ahead of the settle, the settle would find the file holding neither what the cut-off
+#: change read nor what it was to leave, and mark it a conflict, the cut-off change's edit lost on it. Read and changed
+#: only under the lock of changes of photo files.
+_unsettled = {}
+
+#: Why a write leaves a photo of _unsettled alone.
+UNSETTLED = ("its file is still to be written by change %d, which was cut short: it is being finished now, or, stopped, "
+             "the next time TagPup starts; nothing was written to it, try again once it is finished")
+
+
+def unsettled(path):
+    """The sentence a write gives for a photo whose file a settle of this process has still to write (_unsettled), or None."""
+    change_id = _unsettled.get(paths.key(path))
+    return None if change_id is None else UNSETTLED % change_id
+
 
 class _NoTurn(Exception):
     """A long settle could not take a batch's turn: another batch of this process is running, or the server is handing
@@ -1435,7 +1462,13 @@ def _settle_turn(library, change, count):
     any (batches.listing, batches.cancel; a hand-over's batches.stop_all). Never waited for: the lock is held, and the
     batch ahead needs it (_NoTurn). None, no batch, for a short settle."""
     if batches.current() is not None:
-        yield batches.current().stop
+        # A write's own batch is listed with the change it settles while it does (batches.listing), then its own.
+        batch = batches.current()
+        planned_already, batch.change_id = batch.change_id, change.id
+        try:
+            yield batch.stop
+        finally:
+            batch.change_id = planned_already
         return
     if count <= batches.CHUNK:
         yield None
@@ -1472,6 +1505,8 @@ def _finish(library, change, exiftool_path):
         logger.info("%s: change %d is left half done for the next settle: %s", library.path, change.id, why)
         return False
     if left:
+        if (library.key, change.id) not in _put_off:      # a stop said so itself (_settle_files)
+            logger.info("%s: change %d is left half done until its files can be read", library.path, change.id)
         return False
     file_journal.finish(library.path, change.id, also=face_batch.tidy)
     return True
@@ -1487,9 +1522,12 @@ def _settle_files(library, change, exiftool_path, changed, stop):
     # change's own write a crash cut off, told from no other, and is done.
     kept = (face_batch.photos_kept(library, change.id)
             if not undoing and any(row.state == "planned" for row in changed) else set())
+    put_off = False
     with field_values.session(exiftool_path) as session:
         et, wrote = exiftool_session.StaysDead(session), {}
         try:
+            for row in changed:
+                _unsettled[paths.key(row.path)] = change.id
             for start in range(0, len(changed), batches.CHUNK):
                 if start:
                     # Each chunk read back before the next: a stop, or a kill, leaves no more than one chunk unread.
@@ -1499,6 +1537,7 @@ def _settle_files(library, change, exiftool_path, changed, stop):
                                 start, len(changed))
                     if stop is not None and stop.is_set():
                         _put_off.add((library.key, change.id))
+                        put_off = True
                         logger.info("%s: change %d: its settle was stopped as asked after %d of %d file(s); the %d left "
                                     "are settled the next time the library is opened", library.path, change.id, start,
                                     len(changed), len(changed) - start)
@@ -1522,7 +1561,13 @@ def _settle_files(library, change, exiftool_path, changed, stop):
                         left = left or outcome == "writing"
                     except _Stalled:
                         return True
+                for row in chunk:
+                    _unsettled.pop(paths.key(row.path), None)
         finally:
+            if not put_off:
+                for row in changed:
+                    if _unsettled.get(paths.key(row.path)) == change.id:
+                        del _unsettled[paths.key(row.path)]
             _read_back(et, library, wrote)
     return left
 
