@@ -875,7 +875,8 @@ def _by_bytes(library, row):
     """The one rule of a file a patch was writing (its record saved: file_journal.save_patch), settled by its bytes before
     any field of it is read. None when it holds every range as it was (to be written again) or as the patch wrote it (then
     read as any file is), a range this process tore put back first (in_place.TORN). Else (outcome, why): a conflict, never
-    overwritten, for a file another program wrote (a byte neither found nor written, another size);
+    overwritten, for a file another program wrote (a byte neither found nor written, another size) or whose record
+    an earlier TagPup saved (in_place.held: NEITHER);
     ("writing", why) for one that cannot be read or put back now: left `writing` with its record for the next settle,
     never a conflict, since the record is the only way back. `row.stale` is made the fields the record says the patch
     left as they were (in_place.left_stale): a file holding every range as written holds fields.as_patched of the write,
@@ -891,9 +892,10 @@ def _by_bytes(library, row):
     except OSError as e:
         return "writing", "%s: could not be read or put back now (%s); it is settled by its bytes the next time" % (
             row.named(), e.strerror or type(e).__name__)
-    if found in (in_place.NEITHER, in_place.RESIZED):
+    if found == in_place.NEITHER:
         return _conflict(library, row, "changed since its patch was saved: it holds bytes the patch neither found nor"
-                                       " wrote, and is not overwritten")
+                                       " wrote, or another size, or its patch was saved by an earlier TagPup whose"
+                                       " record this one does not read; it is not overwritten")
     return None
 
 

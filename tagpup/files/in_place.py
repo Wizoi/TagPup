@@ -8,9 +8,11 @@ its record here first (`record`), gives it to the journal (`saving`, tagpup.stor
 when that returns writes a byte; whoever meets the file next settles it by its bytes (`held`), putting back what this
 process tore (`put_back`), never what another program wrote.
 
-A record is JSON, as `change_files.patch` holds it: {"v": 1, "size": the file's size, "ranges": [{"at", "len", "after":
-the new bytes, base64}], "stale": [the fields the patch leaves holding what they held]}; the bytes the ranges held
-before, concatenated in the ranges' order, are kept beside it (`change_files.patch_before`). `stale` (a keyword or
+A record is JSON, as `change_files.patch` holds it: {"v": 2, "size": the file's size before, "size_after": its size
+once written, "ranges": [{"at", "len", "after": the new bytes, base64}], "stale": [the fields the patch leaves holding
+what they held]}; the bytes the ranges held before, those inside the old size, concatenated in the ranges' order, are
+kept beside it (`change_files.patch_before`). A patch grows the file only by its last range (a clip's XMP box appended
+at its end, or grown where it ends; DECISIONS 2026-11-05), so every byte past the old size is one the patch writes. `stale` (a keyword or
 caption save that writes the XMP copy alone, fields.XMP_ONLY) is what a file holding every range as written holds of
 the write: fields.as_patched, read back by `left_stale` when a crash leaves the file to be settled by its bytes. The new bytes are kept too, so a range this process tore is told from one another program
 wrote. A patch checks only the bytes it changed, against those two (DECISIONS 2026-11-03, "AN IN-PLACE PATCH CHECKS ONLY
@@ -40,7 +42,7 @@ import threading
 
 from tagpup.files import containers, shares, xmp_packet
 
-VERSION = 1
+VERSION = 2
 
 #: Seconds a read or write of the photo may take (shares.bounded): a share that does not answer in it is away (Away).
 SECONDS = 30.0
@@ -57,7 +59,7 @@ class Away(OSError):
     against the record the journal saved (held), the next time."""
 
 #: What a file holds against its record (held).
-NEW, OLD, TORN, NEITHER, RESIZED = "new", "old", "torn", "neither", "resized"
+NEW, OLD, TORN, NEITHER = "new", "old", "torn", "neither"
 
 
 def _spans(record):
@@ -69,21 +71,25 @@ def _read_at(handle, at, length):
     return handle.read(length)
 
 
-def record(handle, changes, stale=()):
+def record(handle, changes, stale=(), grow=False):
     """(record, before) of a patch writing `changes`, [(at, new bytes)], into the file open in `handle` (binary, read),
-    leaving the fields `stale` as they were: the record as the journal saves it, and the bytes the ranges hold now, the
-    only bytes of the file read. Ranges are sorted and may not overlap, be empty or run past the end. Writes nothing."""
+    leaving the fields `stale` as they were: the record as the journal saves it, and the bytes the ranges hold now inside
+    the file, the only bytes of it read. Ranges are sorted and may not overlap or be empty; each lies inside the file,
+    but the last of a patch that may `grow` the file, which starts inside it or at its end and may run past the end
+    (the file is then `size_after` long). Writes nothing."""
     size = handle.seek(0, os.SEEK_END)
     changes = sorted((int(at), bytes(new)) for at, new in changes)
     end = 0
-    for at, new in changes:
-        if not new or at < end or at + len(new) > size:
-            raise ValueError("a patch's ranges are each some bytes inside the file, none overlapping another")
+    for index, (at, new) in enumerate(changes):
+        past = at + len(new) > size and not (grow and index == len(changes) - 1)
+        if not new or at < end or at > size or past:
+            raise ValueError("a patch's ranges are each some bytes inside the file, none overlapping another; only the"
+                             " last of a patch that grows the file runs past its end")
         end = at + len(new)
     spans = [(at, len(new), new) for at, new in changes]
-    before = b"".join(_read_at(handle, at, length) for at, length, _new in spans)
+    before = b"".join(_read_at(handle, at, min(length, size - at)) for at, length, _new in spans)
     ranges = [{"at": at, "len": length, "after": base64.b64encode(new).decode("ascii")} for at, length, new in spans]
-    return {"v": VERSION, "size": size, "ranges": ranges, "stale": list(stale)}, before
+    return {"v": VERSION, "size": size, "size_after": max(size, end), "ranges": ranges, "stale": list(stale)}, before
 
 
 def left_stale(record):
@@ -103,42 +109,63 @@ def _bounded(path, call):
 
 
 def held(path, record, before):
-    """What the file at `path` holds against its patch's `record` and the bytes its ranges held `before`: NEW, every
-    range as the patch wrote it; OLD, every range as it was; TORN, each byte one or the other but not all of one (a
-    write this process cut short); NEITHER, a byte that is neither (another program wrote it); RESIZED, the file is not
-    the size it was. Reads the file's size and its ranges, no other byte. Raises OSError when the file cannot be read
-    (Away, when its share does not answer)."""
+    """What the file at `path` holds against its patch's `record` and the bytes its ranges held `before`: NEW, the size
+    after and every range as the patch wrote it; OLD, the size before and every range as it was; TORN, a size from the
+    one to the other and each byte of a range there one or the other, but not all of one (a write or a put back this
+    process cut short); NEITHER, another size or a byte that is neither (another program wrote it, or the disk lost what
+    this one wrote). A record of another version (v1, saved by the TagPup installed before record v2, which says no
+    size after) is NEITHER without a look at the file: a conflict, never written over. Reads the file's size and its
+    ranges, no other byte. Raises OSError when the file cannot be read (Away, when its share does not answer)."""
     return _bounded(path, lambda: _held(path, record, before))
 
 
 def _held(path, record, before):
-    spans = _spans(record)
+    if record.get("v") != VERSION:
+        return NEITHER
+    spans, size_before, size_after = _spans(record), record["size"], record["size_after"]
     with open(path, "rb") as handle:
         size = handle.seek(0, os.SEEK_END)
-        if size != record["size"]:
-            return RESIZED
-        now = b"".join(_read_at(handle, at, length) for at, length, _new in spans)
-        new = b"".join(after for _at, _length, after in spans)
-    if now == new:
+        if not size_before <= size <= size_after:
+            return NEITHER
+        now = [_read_at(handle, at, min(length, size - at)) for at, length, _new in spans]
+    if size == size_after and now == [after for _at, _length, after in spans]:
         return NEW
-    if now == before:
+    if size == size_before and b"".join(now) == before:
         return OLD
-    if len(now) == len(new) == len(before) and all(n in (o, a) for n, o, a in zip(now, before, new)):
+    olds = _old_parts(spans, size_before, before)
+    if all(_old_or_new(found, old, after) for found, old, (_at, _length, after) in zip(now, olds, spans)):
         return TORN
     return NEITHER
 
 
-def put_back(path, record, before):
-    """Write the bytes the ranges held `before` back into the file at `path`, flushed to the disk, and read them back:
-    raises OSError when the file cannot be written or does not then hold them (Away, when its share does not answer)."""
-    spans, at_old, changes = _spans(record), 0, []
+def _old_or_new(found, old, new):
+    """Whether each byte of `found`, a range as the file holds it, is the byte `old` or `new` held at its place: `old` is
+    shorter where the range runs past the file's old size, a place that held no byte before."""
+    return all(byte == new[k] or (k < len(old) and byte == old[k]) for k, byte in enumerate(found))
+
+
+def _old_parts(spans, size_before, before):
+    """The bytes each range of `spans` held `before` (its part inside the file's old size, `size_before`)."""
+    parts, at_old = [], 0
     for at, length, _new in spans:
-        changes.append((at, before[at_old:at_old + length]))
-        at_old += length
+        inside = max(0, min(length, size_before - at))
+        parts.append(before[at_old:at_old + inside])
+        at_old += inside
+    return parts
+
+
+def put_back(path, record, before):
+    """Write the bytes the ranges held `before` back into the file at `path`, then cut it to the size it was, flushed to
+    the disk, and read them back: raises OSError when the file cannot be written or does not then hold them (Away, when
+    its share does not answer). The cut is last, so a put back cut short leaves the file TORN or OLD, never NEITHER:
+    settled by its bytes as the patch's own crash is."""
+    spans = _spans(record)
+    changes = [(at, old) for (at, _length, _new), old in zip(spans, _old_parts(spans, record["size"], before)) if old]
 
     def put():
         with _alone(path) as handle:
             _write(handle, changes)
+            _truncate(handle, record["size"])
 
     _bounded(path, put)
     if held(path, record, before) != OLD:
@@ -170,6 +197,13 @@ def _write(handle, changes):
     for at, new in changes:
         handle.seek(at)
         handle.write(new)
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+def _truncate(handle, size):
+    """Cut the open file to `size` bytes, flushed to the disk."""
+    handle.truncate(size)
     handle.flush()
     os.fsync(handle.fileno())
 
