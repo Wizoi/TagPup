@@ -99,8 +99,9 @@ file's XMP; kr-track and renton_parkrun none; counted 2026-11-03), and a save fr
 photo indexed or saved afterwards is derived by the rule (the indexer, `follow_fields`); the rows of before are derived
 again, once, from their own raw_metadata by `scripts/rederive_captions.py` (`refresh_rows.rederive`: a dry run that
 counts and rehearses, `--apply` one journaled change, undoable, the search words with it), run with `--apply` on each
-library before the install and again after it (a save by the still-installed old server between the run and
-the install re-derives that row the old way; the script is idempotent).
+library (idempotent). It orders the stored captions -- the caption sort, a library card's caption, the search words --
+and is not needed before an install: the page's title is `vocabulary.title_of` over the row's raw_metadata, the rule
+the save compares by, whatever order the row stores (#2582).
 
 A photo's title and its caption are two values (DECISIONS 2026-11-06). The title is XMP:Title, else IPTC:ObjectName
 (`vocabulary.TITLE_COPIES`, written by `fields.title_fields`: the photo panel's save); the caption is the Description,
@@ -109,8 +110,9 @@ read), which no page writes. The title shown is `vocabulary.title_of`: the title
 `captions` hold the title first. A save of a photo with no title, its Description shown as the title, moves it: the
 Title gets it and every caption field holding that text is cleared in the same write (`tagging._caption_moved`); a
 title changed or cleared there keeps the Description. Rows stored before the rule put the Description first
-(photo_index 8,263, kr-track and renton_parkrun none; counted 2026-11-06): `scripts/rederive_captions.py --apply`
-before the install, as above; a save from one is refused as changed on disk until then.
+(photo_index 8,263, kr-track and renton_parkrun none; counted 2026-11-06): their page shows the title all the same and
+saves; until `scripts/rederive_captions.py --apply` orders them, as above, their card's caption and caption sort read
+the Description first.
 
 ## Rows removed by a whole sync (DECISIONS 2026-10-28)
 

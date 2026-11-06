@@ -313,7 +313,8 @@ class TestBuildPhotoUIRecord(unittest.TestCase):
             "tags": ["Trips/Texas"],
             "people": ["Jane Doe"],
             "captions": ["A trip"],
-            "raw_metadata": {"EXIF:DateTimeOriginal": "2014:07:04 10:00:00"},
+            # The title is read from what the file holds (vocabulary.title_of), as the save compares it (#2582).
+            "raw_metadata": {"EXIF:DateTimeOriginal": "2014:07:04 10:00:00", "XMP:Title": "A trip"},
         }
         rec = page_record(r"D:\Library\a.jpg", meta, mtime=123.0, size=456)
         self.assertEqual(rec["filename"], "a.jpg")

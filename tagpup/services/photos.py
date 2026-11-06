@@ -31,7 +31,6 @@ def page_record(path, meta, mtime=0.0, size=0):
     """
     path = paths.stored(path)
     raw_meta = meta.get("raw_metadata", {})
-    captions = meta.get("captions", [])
     year = meta["year"] if "year" in meta else dates.photo_year(raw_meta, path)
     gear = photo_meta.gear(raw_meta)
     record = {
@@ -39,7 +38,10 @@ def page_record(path, meta, mtime=0.0, size=0):
         "filename": os.path.basename(path),
         "tags": meta.get("tags", []),
         "people": meta.get("people", []),
-        "title": captions[0] if captions else "",   # the first is the title (vocabulary.title_of)
+        # The title by the one rule the save compares by (vocabulary.title_of over what the file holds), never the
+        # stored `captions`, whose order is the indexer's of the day: a row stored before the title came first showed
+        # its Description while the save read its Title, and every save of it was refused as changed on disk (#2582).
+        "title": vocabulary.title_of(raw_meta),
         "mtime": mtime,
         "size": size,
         "year": dates.shown_year(None if year is None else str(year)),

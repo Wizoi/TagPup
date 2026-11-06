@@ -8,6 +8,7 @@ differs from the title is never written. A cleared title is cleared, and the nex
 titled only in its title fields was refused as changed on disk after its title was cleared). Undo puts the old title
 back and writes no caption; Smart Rename names a photo by its title; the page and the index show the same title.
 Each fails on the trunk before this change (the save wrote the Description fields and showed the Description first).
+The page's title is the file's by that one rule whatever order the row stores its captions in (#2582).
 Real ExifTool on JPEGs made here; rows as the indexer makes them (photo_rows.add_read); fictional names.
 """
 import json
@@ -124,6 +125,27 @@ class ATitleAndACaption(S.Fresh):
         self.assertEqual(200, undone.status_code, undone.data)
         self.assertEqual(before, self.held(path))
         self.assertEqual("Pier at noon", self.record(photo_id)["title"])
+
+    def test_a_row_stored_with_its_description_first_shows_the_title_and_its_save_is_accepted(self):
+        """#2582: a row the indexer stored before the title came first holds `captions` [Description, Title]; the page
+        showed the Description as the title while the save compared the file's Title, and refused the save (409)."""
+        held = {"XMP:Title": "Pier at noon", "IPTC:ObjectName": "Pier at noon",
+                "XMP:Description": "The whole crew rowing out past the harbour wall"}
+        path, photo_id = self.made("a.jpg", 67, held)
+        conn = S.db.connect(self.library.path)
+        try:   # the order the indexer stored before DECISIONS 2026-11-06 (8,263 rows of one library, counted 2026-11-06)
+            conn.execute("UPDATE photos SET captions = ? WHERE id = ?",
+                         (json.dumps([held["XMP:Description"], held["XMP:Title"]]), photo_id))
+            conn.commit()
+        finally:
+            conn.close()
+        record = self.record(photo_id)
+        self.assertEqual("Pier at noon", record["title"], "the page shows the file's title, not the stored first")
+        body, _after = self.saved(self.save(record, tags=record["tags"] + ["Trips/Lakes"]))
+        self.assertEqual(["Trips/Coast", "Trips/Lakes"], sorted(S.tags_in(path)))
+        self.assertEqual({**{field: "Pier at noon" for field in TITLE_FIELDS}, "XMP:Description": held["XMP:Description"]},
+                         {field: text for field, text in self.held(path).items() if text})
+        self.assertEqual("Pier at noon", body["base"]["title"])
 
     def test_smart_rename_names_a_photo_by_its_title(self):
         path, _photo_id = self.made("Regatta - 07.jpg", 66, {"XMP:Title": "Pier at noon",
