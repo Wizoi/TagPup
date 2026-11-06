@@ -481,14 +481,6 @@ def folder_time_shift():
                     **_where(result)})
 
 
-def _with_clips(photos, before):
-    """A folder's photos read again after Smart Rename (photos.read_folder, photos only), with the clips of its scan
-    `before` as they were: a rename leaves a clip as it is (file_changes.leave_out_clips), and the page, which shows
-    what it is answered, would drop them from the folder."""
-    kept = {key: record for key, record in before.items() if record["media"] == "video"}
-    return {**kept, **photos}
-
-
 @routes.post("/api/folder/rename-photos")
 def folder_rename_photos():
     library = state.require()
@@ -531,7 +523,7 @@ def folder_rename_photos():
                 # again and the page told which names changed, so it shows them instead of the old ones.
                 cache.pop(folder)
                 try:
-                    changed = _with_clips(photo_actions.read_folder(library, folder, state.exiftool(library)), known)
+                    changed = photo_actions.read_folder(library, folder, state.exiftool(library))
                 except Exception as again:
                     # The folder cannot be read again just now: the cache stays dropped, and the answer is
                     # a plain error (the page's Refresh reads the files).
@@ -542,9 +534,10 @@ def folder_rename_photos():
                                        updated_photos=_sorted(changed))
             return responses.error(500, result.message())
         # Their saved suggestions are kept by the photo's id, and went with the rows.
-        # The folder is read again from its files, as the page is about to show it.
+        # The folder is read again from its files, as the page is about to show it: its clips with its photos
+        # (read_folder), whatever moved the library since it was opened.
         cache.pop(folder)
-        photos = _with_clips(photo_actions.read_folder(library, folder, state.exiftool(library)), known)
+        photos = photo_actions.read_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)
     except Exception as e:
         logger.error("Error smart renaming photos: %s", e, exc_info=True)

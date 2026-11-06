@@ -9,7 +9,8 @@ library's photos counter as it was before the scan, which the triggers move for 
 A folder's clips are listed beside its photos (video, merge B2): a clip the index has not recorded is a card with no
 picture until it is; once recorded, the next open gives it its id and its poster by id (/api/photo-thumb), the one way a
 clip's picture is served. A clip and a photo of one base name are two records. Suggest and a time shift are a folder's
-photos only.
+photos only. Smart Rename answers the folder read again from its files, its clips with it, whatever moved the library
+since the folder was opened (#2564: a tag saved on one of its photos, the index recording the clip).
 """
 import os
 import sys
@@ -143,6 +144,25 @@ class AFolderOfPhotosAndAClip(unittest.TestCase):
             self.client.post("/library/api/folder/time-shift", json={
                 "folder_path": self.folder, "camera_model": "All Cameras", "shift_minutes": 5})
         self.assertEqual(["dawn.jpg", "dusk.jpg"], shifted["targets"], "a time shift was asked to write the clip")
+
+    def test_smart_rename_after_the_library_moved_answers_the_folder_with_its_clip(self):
+        # #2564: the folder is opened, then the library moves -- the index records the clip, as it does a while after
+        # the open -- and the folder's photos are renamed. The answer, which the page shows as the folder, and the next
+        # open both list the clip: a rename never touches a clip, and it does not take it off the page either.
+        self.assertNotIn("thumb", self.scan()["dusk.mp4"])
+        clip_id = self.record_the_clip()
+        reply = self.client.post("/library/api/folder/rename-photos", json={
+            "folder_path": self.folder, "grouping": "Lighthouse", "photo_paths": self.photos})
+        self.assertEqual(200, reply.status_code, reply.data)
+        answered = {os.path.basename(record["path"]): record for record in reply.get_json()["updated_photos"]}
+        self.assertIn("dusk.mp4", answered, "Smart Rename's answer dropped the folder's clip")
+        self.assertEqual(("video", clip_id), (answered["dusk.mp4"]["media"], answered["dusk.mp4"]["id"]))
+        self.assertTrue(answered["dusk.mp4"]["thumb"].startswith("/api/photo-thumb?id=%d&v=" % clip_id))
+        self.assertEqual(2, sum(record["media"] == "photo" for record in answered.values()))
+        self.assertTrue(os.path.exists(self.clip), "the clip keeps its name")
+        reopened = self.scan()
+        self.assertIn("dusk.mp4", reopened, "the next open after the rename lost the clip")
+        self.assertEqual(clip_id, reopened["dusk.mp4"]["id"])
 
 
 class ALooseFolderWhenTheTreeChanges(unittest.TestCase):

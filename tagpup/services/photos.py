@@ -146,6 +146,43 @@ def scan_folder(library, folder, exiftool_path):
     if not listed:
         return {}
 
+    known = _rows_under(library, folder)
+    found, to_read = {}, []
+    for key, (file, mtime, size) in listed.items():   # the stamps the listing gave: no look at each file (#2104)
+        row = known.get(key)
+        if row and photos.describes(row["mtime"], row["size"], (mtime, size)):
+            found[key] = page_record(row["path"], row, mtime, size)
+        else:
+            to_read.append((file, mtime, size))
+
+    if to_read:
+        logger.info("Scan found %d new/modified files in %s. Running ExifTool...", len(to_read), folder)
+        try:
+            found.update(_read(library, [(f, mt, sz) for f, mt, sz in to_read], exiftool_path))
+        except Exception as e:
+            logger.error("Error running ExifTool during scan: %s", e)
+    return _with_posters(found, known)
+
+
+@roots_service.canonical_args("folder")
+def read_folder(library, folder, exiftool_path):
+    """Every photo and clip under `folder` read from its file, whatever the index holds, as page
+    records keyed by paths.key, listed as scan_folder lists them: the folder after Smart Rename, which the page shows
+    as the folder. A rename leaves a clip as it is (images.CLIP_NOT_EDITED, file_changes.leave_out_clips), and it stays
+    on the page: its record is read here with the photos', whatever moved the library since the folder was opened
+    (#2564). `mtime` and `size` come from the reader."""
+    folder = paths.stored(folder)
+    files = images.photos_under(folder)
+    if not files:
+        return {}
+    found = _read(library, [(f, None, None) for f in files], exiftool_path)
+    return _with_posters(found, _rows_under(library, folder))
+
+
+def _rows_under(library, folder):
+    """{paths.key: what the index holds of it} of each photo and clip under `folder` (photos.rows_under): what
+    scan_folder trusts a row by, and a recorded clip's id. Empty, logged, when the library cannot be read: the folder
+    is then read from its files, and a clip shows its placeholder."""
     known = {}
     try:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -162,21 +199,12 @@ def scan_folder(library, folder, exiftool_path):
             conn.close()
     except Exception as e:
         logger.warning("Failed to query index DB for folder scan cache: %s", e)
+    return known
 
-    found, to_read = {}, []
-    for key, (file, mtime, size) in listed.items():   # the stamps the listing gave: no look at each file (#2104)
-        row = known.get(key)
-        if row and photos.describes(row["mtime"], row["size"], (mtime, size)):
-            found[key] = page_record(row["path"], row, mtime, size)
-        else:
-            to_read.append((file, mtime, size))
 
-    if to_read:
-        logger.info("Scan found %d new/modified files in %s. Running ExifTool...", len(to_read), folder)
-        try:
-            found.update(_read(library, [(f, mt, sz) for f, mt, sz in to_read], exiftool_path))
-        except Exception as e:
-            logger.error("Error running ExifTool during scan: %s", e)
+def _with_posters(found, known):
+    """`found`, each clip the index has recorded (`known`, _rows_under) given its row's `id` and `thumb`, its poster by
+    id: the one place a folder's clip gets the picture the page draws it by (scan_folder, read_folder)."""
     for key, record in found.items():
         row = known.get(key)
         if row and row["kind"] == "video":
@@ -184,20 +212,6 @@ def scan_folder(library, folder, exiftool_path):
             record["id"] = row["id"]
             record["thumb"] = thumbnails.url(row["id"], record["mtime"])
     return found
-
-
-@roots_service.canonical_args("folder")
-def read_folder(library, folder, exiftool_path):
-    """Every photo under `folder` read from its file, whatever the index holds, as page
-    records keyed by paths.key: the folder after Smart Rename, and a time shift on a
-    folder never opened. `mtime` and `size` come from the reader."""
-    folder = paths.stored(folder)
-    # Photos only: what Smart Rename shows after it renamed, and a clip is never renamed here (images.CLIP_NOT_EDITED,
-    # file_changes.leave_out_clips); the routes keep the folder's clips' records as they were.
-    image_files = [f for f in images.photos_under(folder) if images.kind_of(f) == "photo"]
-    if not image_files:
-        return {}
-    return _read(library, [(f, None, None) for f in image_files], exiftool_path)
 
 
 def _read(library, files, exiftool_path):
