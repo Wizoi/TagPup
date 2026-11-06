@@ -112,8 +112,10 @@ Title gets the title saved and every caption field holding the text shown is cle
 (`tagging._caption_moved`), whether the title saved is that text, another, or none: one rule, so a cleared title stays
 cleared. A photo with a title of its own keeps its Description. Rows stored before the rule put the Description first
 (photo_index 8,263, kr-track and renton_parkrun none; counted 2026-11-06): their page shows the title all the same and
-saves; until `scripts/rederive_captions.py --apply` orders them, as above, their card's caption and caption sort read
-the Description first.
+saves; until `scripts/rederive_captions.py --apply` orders them, as above, the order by caption reads
+their Description first. A library card carries no caption of its own (`store.library_view.card_rows`): the title a
+card shows is the panel's record's (`web/tagpup/library-source.js`), `title_of`, as a folder's page records are; only
+the order by caption (`caption_sql`) reads the stored `captions`.
 
 ## Rows removed by a whole sync (DECISIONS 2026-10-28)
 
