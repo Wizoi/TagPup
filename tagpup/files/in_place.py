@@ -34,13 +34,26 @@ yet), a new segment is longer than the old, or an EXIF segment would move (a mak
 the file); the own writer's by segment_edits' rules. The photo is opened once, with no sharing on Windows, from the
 read of its header to the last byte written, so no other program writes it, nor reads it half written, meanwhile; one
 that holds it open already makes it the rewrite's. Every read and write of it is bounded (shares.bounded, SECONDS).
+
+**A clip's patch** (`patch_clip`). A MOV/MP4/M4V's keyword and caption save is its XMP alone (fields.CLIP_FIELDS; every
+copy outside XMP is left stale, segment_edits.clip_stale_of). The clip's boxes are walked (containers.read: their
+headers only) and its one XMP box's packet read, at most clip_patch.OLD_MOST; the new packet is the caller's
+(`new_packet`, segment_edits.new_packet, a blank one for a clip with none), placed by clip_patch: over the old box and
+the free boxes after it, grown where it ends the file, or appended in a new box at the end (the file grows by its last
+range, the record saying its size after). No other byte is read, nor any hash taken, of a clip of any size (DECISIONS
+2026-11-03). It is not a patch's, nothing written, for no MOV/MP4/M4V, two XMP boxes, a box over OLD_MOST, a packet the
+writer cannot make, or a clip clip_patch will not place (a tail, no moov, fragments): such a clip is not written until
+the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a photo is; one another program holds open
+(a player, an editor) is refused at once with a sentence (Refused, OPEN_ELSEWHERE; owner, 2026-11-05, Q7), never
+waited for. A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
+(held: OLD, TORN, NEW); a torn grown file is put back to its old bytes and size (put_back).
 """
 import base64
 import io
 import os
 import threading
 
-from tagpup.files import containers, shares, xmp_packet
+from tagpup.files import clip_patch, containers, shares, xmp_packet
 
 VERSION = 2
 
@@ -57,6 +70,17 @@ EOI = b"\xff\xd9"
 class Away(OSError):
     """The share of the photo did not answer a read or write of it in SECONDS. What a write left is settled by its bytes
     against the record the journal saved (held), the next time."""
+
+class Refused(Exception):
+    """A patch that will not be made, and why, as a sentence: nothing was written."""
+
+
+#: Why a clip open in another program when it is saved is refused at once, never waited for (owner, 2026-11-05).
+OPEN_ELSEWHERE = ("it is open in another program (a player, an editor): close it there and save again; nothing was "
+                  "written")
+#: Windows' errors of a file another program holds open: a sharing violation, a lock violation. Not access denied
+#: (lock_owners.HELD counts it too), which a read-only file answers as well.
+_OPEN_ELSEWHERE_ERRORS = (32, 33)
 
 #: What a file holds against its record (held).
 NEW, OLD, TORN, NEITHER = "new", "old", "torn", "neither"
@@ -311,14 +335,13 @@ def patch_jpeg(path, new_header, saving):
     Raises Away when the photo's share does not answer, the file as it was or as far as the patch wrote it (held settles
     it); an OSError that is no sharing violation or refusal to open; whatever `new_header` or `saving` raises."""
     try:
-        handle = _bounded(path, lambda: _alone(path))
+        lent = _opened(path)
     except Away:
         raise
     except OSError:
         return None         # held open by another program, read-only, gone: the rewrite's, which says why
-    lent = _Lent(handle)
-    try:
-        found = lent.bounded(path, lambda: _header_of(handle))
+    with lent:
+        found = lent.bounded(path, lambda: _header_of(lent.handle))
         if found is None:
             return None
         layout, header = found
@@ -328,12 +351,100 @@ def patch_jpeg(path, new_header, saving):
         new, stale = made
         changes = _ranges(layout, header, new)
         if changes:
-            saved, before = lent.bounded(path, lambda: record(handle, changes, stale))
-            saving(saved, before)
-            lent.bounded(path, lambda: _write(handle, changes))
+            _written(lent, path, changes, stale, saving)
         return tuple(stale)
-    finally:
-        lent.close()
+
+
+# --- a clip's patch ------------------------------------------------------------------------------------------------
+
+
+def patch_clip(path, new_packet, saving):
+    """Write a journaled write's fields into the XMP of the clip (MOV/MP4/M4V) at `path` by a patch (the module): the
+    fields it left holding what they held (a tuple) once the file holds them -- a patch saved by `saving(record, before)`
+    (the journal's, which commits the record before this writes a byte, and raises when it will not, nothing then
+    written) and written; or nothing to write, the packet already holding them, the fields left all the same. None when
+    it is not a patch's (clip_patch says when, and new_packet), nothing written: the clip is not written.
+
+    `new_packet(old)` is the writer's (segment_edits.new_packet, its values given): given the packet of the clip's one
+    XMP box (bytes; None for a clip with none), it answers (the new packet, the fields left stale), None for no patch, or
+    a containers.Refusal, raised here as Refused. Raises Refused(OPEN_ELSEWHERE) at once when another program holds the
+    clip open; Away when its share does not answer, the file as it was or as far as the patch wrote it (held settles
+    it); any other OSError the open or a write raised; whatever `new_packet` or `saving` raises."""
+    with _opened_to_patch(path) as lent:
+        found = lent.bounded(path, lambda: _packet_of(lent.handle))
+        if found is None:
+            return None
+        layout, old = found
+        made = new_packet(old)
+        if made is None:
+            return None
+        if isinstance(made, containers.Refusal):
+            raise Refused(made.reason)
+        packet, stale = made
+        if packet == old:
+            return tuple(stale)
+        placed = clip_patch.patch(layout, packet)
+        if placed is None:
+            return None
+        _written(lent, path, placed.ranges, stale, saving, grow=True, size=placed.size)
+        return tuple(stale)
+
+
+def _packet_of(handle):
+    """(the clip's layout, the packet its one XMP box holds, None for none) of the open file, or None when it is not a
+    patch's: no MOV/MP4/M4V, two XMP boxes, or one holding more than clip_patch.OLD_MOST. Reads the boxes' headers and
+    the packet, no other byte."""
+    layout = containers.read(handle)
+    if not isinstance(layout, containers.Video) or len(layout.xmp) > 1:
+        return None
+    if not layout.xmp:
+        return layout, None
+    (_, box), = layout.xmp
+    if box.end - box.payload > clip_patch.OLD_MOST:
+        return None
+    return layout, _read_at(handle, box.payload, box.end - box.payload)
+
+
+# --- the open file, shared by both patches ----------------------------------------------------------------------------
+
+
+def _opened(path):
+    """The file at `path` opened alone (_alone) on a bounded call, lent to the patch's later calls (_Lent, a context
+    manager that closes it). Raises Away, or the OSError the open raised."""
+    return _Lent(_bounded(path, lambda: _alone(path)))
+
+
+def _opened_to_patch(path):
+    """_opened, but a file another program holds open is Refused(OPEN_ELSEWHERE) at once, never retried. Raises Away, or
+    any other OSError the open raised."""
+    try:
+        return _opened(path)
+    except Away:
+        raise
+    except OSError as error:
+        if getattr(error, "winerror", None) in _OPEN_ELSEWHERE_ERRORS:
+            raise Refused(OPEN_ELSEWHERE) from None
+        raise
+
+
+def _written(lent, path, changes, stale, saving, grow=False, size=None):
+    """Write `changes`, [(at, new bytes)], into the file `lent` holds: its record made (record), saved by `saving` (the
+    journal's, which commits it before a byte is written), then the bytes written and flushed. ValueError, nothing saved
+    nor written, when the record's size after is not `size`, the size its writer worked out (None: not checked)."""
+    saved, before = lent.bounded(path, lambda: record(lent.handle, changes, stale, grow))
+    if size is not None and saved["size_after"] != size:
+        raise ValueError("a patch's record says the file is %d bytes once written, its writer %d"
+                         % (saved["size_after"], size))
+    saving(saved, before)
+    lent.bounded(path, lambda: _write(lent.handle, changes))
+
+
+class _Raised:
+    """What a bounded call raised that is no OSError (a writer's fault, a test's crash), carried out of shares.bounded,
+    which would make it an OSError of its text, to be raised as itself."""
+
+    def __init__(self, error):
+        self.error = error
 
 
 class _Lent:
@@ -354,19 +465,33 @@ class _Lent:
                 self.started, self.ended = True, False
             try:
                 return work()
+            except OSError:
+                raise
+            except Exception as error:
+                return _Raised(error)
             finally:
                 with self.gate:
                     self.ended = True
                     if self.lent:
                         self.handle.close()
         try:
-            return _bounded(path, call)
+            value = _bounded(path, call)
         except Away:
             with self.gate:
                 self.lent = True
                 if not self.started or self.ended:
                     self.handle.close()
             raise
+        if isinstance(value, _Raised):
+            raise value.error
+        return value
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_raised):
+        self.close()
+        return False
 
     def close(self):
         with self.gate:

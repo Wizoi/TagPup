@@ -1,7 +1,13 @@
-"""A journaled write's field values made into new bytes for a JPEG header's three metadata segments (docs/PLAN_OWN_METADATA.md, M4).
+"""A journaled write's field values made into new bytes for a JPEG header's three metadata segments (docs/PLAN_OWN_METADATA.md, M4),
+or for a clip's XMP packet (M7).
 
 Pure: a header's bytes and layout in, bytes out; no file, nothing written. The one caller of the three block editors
 (xmp_packet, exif_block, iptc_block): each field goes where `fields.EDITED_AS` says, as the editor names it.
+
+`new_packet(old, values)` is a clip's: the packet its XMP box holds (None, a clip with none: xmp_packet.blank()) made to
+hold a keyword or caption save (fields.CLIP_FIELDS), grown when it must be (tagpup.files.clip_patch places it); every
+copy outside XMP is left stale (`clip_stale_of`), also when the XMP value is cleared; the last keyword taken off a clip
+whose keywords are in QuickTime's Subject is refused, a sentence (KEPT_IN_QUICKTIME).
 
 `new_header(layout, header, values)` is (the header with only its edited segments' bodies changed, the fields left
 stale), or None when the write is not a patch -- a field the own writer does not write, a value it cannot spell, a
@@ -54,6 +60,49 @@ def stale_of(values):
     not empty (fields.XMP_ONLY)."""
     return tuple(field for xmp_field, leaves in fields.XMP_ONLY.items() if fields.field_values(values.get(xmp_field))
                  for field in leaves if field in values)
+
+
+def clip_stale_of(values):
+    """The fields of `values` a clip's patch leaves as they were: each group's copies outside XMP (fields.XMP_ONLY),
+    whatever its XMP value. A clip's write is its XMP alone; unlike a JPEG's (stale_of, #2433), a cleared value does not
+    send the write to every copy: a clip has none TagPup writes."""
+    return tuple(field for leaves in fields.XMP_ONLY.values() for field in leaves if field in values)
+
+
+#: Why the last keyword is not taken off a clip whose keywords are held in QuickTime's Subject (14 live clips, counted
+#: 2026-11-05; owner, 2026-11-05).
+KEPT_IN_QUICKTIME = ("its keywords are also held in the clip's QuickTime Subject, which TagPup does not write: with none "
+                     "left in its XMP they would be read from there again, so the last one is not taken off; nothing "
+                     "was written")
+
+
+def new_packet(old, values, keywords_elsewhere=()):
+    """(the clip's new XMP packet, the fields of `values` left stale) of a keyword or caption save, `values` naming only
+    fields.CLIP_FIELDS (another raises ValueError: the caller refuses it before planning). `old` is the packet the clip's
+    one XMP box holds (bytes, at most xmp_packet.LIMIT), None for a clip with none, which is given xmp_packet.blank().
+    The packet is `old` itself when it already holds the values (None, a clip with none and nothing to write). None when
+    it is not a patch: a value it cannot spell, a packet the editor refuses (the clip waits for the whole-file rewrite).
+    containers.Refusal(KEPT_IN_QUICKTIME) for a write clearing XMP:Subject of a clip holding `keywords_elsewhere`, the
+    keywords its QuickTime Subject holds, as the caller read them."""
+    unknown = sorted(set(values) - fields.CLIP_FIELDS)
+    if unknown:
+        raise ValueError("%s is not a field a clip's write names (fields.CLIP_FIELDS)" % unknown[0])
+    stale = clip_stale_of(values)
+    wanted = {field: texts for field, texts in values.items() if field not in stale}
+    if "XMP:Subject" in wanted and not fields.field_values(wanted["XMP:Subject"]) and keywords_elsewhere:
+        return containers.Refusal(KEPT_IN_QUICKTIME)
+    base = xmp_packet.blank() if old is None else old
+    try:
+        changes = {name: _value(field, name, texts) for field, texts in wanted.items()
+                   for _kind, name in fields.EDITED_AS[field]}
+    except _NotAPatch as why:
+        log.info("Not a clip's patch: %s", why)
+        return None
+    result = xmp_packet.edit(base, changes, grow=True)
+    if not isinstance(result, containers.Edited):
+        log.info("Not a clip's patch: %s", result.reason)
+        return None
+    return (old if result.body == base else result.body), stale
 
 
 def _iso(text):

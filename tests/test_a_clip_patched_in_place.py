@@ -9,6 +9,12 @@ free keeps its offset and its size, so moov's chunk offsets (stco/co64) stay tru
 2 GB and 4 GB are read from Box objects built by hand. Then real clips made by ffmpeg in a home of the test's own are
 patched and read back by ExifTool (its -validate too) and ffprobe, which decodes every frame; skipped, saying so, on a
 machine without either.
+
+A clip's save as its writer makes it (AClipSavedInPlace; in_place.patch_clip, the packet segment_edits.new_packet's): a
+clip with no XMP is given a box at its end and no byte it held changes (the outside bytes are compared here, in the
+test, never by the patch: DECISIONS 2026-11-03); a clip with a tail or two XMP boxes is not patched, nothing written and
+ExifTool not asked; one open in another program is refused at once, a sentence; one killed after its record is saved,
+part-way or after its last byte is told OLD, TORN (put back to its old bytes and size) or NEW by its bytes.
 """
 import io
 import json
@@ -17,12 +23,14 @@ import shutil
 import struct
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from tagpup import config  # noqa: E402
-from tagpup.core import processes  # noqa: E402
-from tagpup.files import clip_patch, containers  # noqa: E402
+from tagpup.core import fields, processes  # noqa: E402
+from tagpup.files import clip_patch, containers, exiftool_session, in_place, segment_edits, xmp_packet  # noqa: E402
 from tagpup.files.containers import XMP_UUID, Box, Video  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
@@ -284,9 +292,9 @@ class APacketPlacedInAClip(unittest.TestCase):
         self.assertEqual(clip_patch.IN_PLACE, clip_patch.patch(layout_of(data), sized(65536, ("Lakes",))).how)
 
 
-@unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
-class AClipMadeByFfmpegReadBack(unittest.TestCase):
-    """Clips made by the real ffmpeg, patched, and read back by ExifTool and ffprobe."""
+class FfmpegClips(unittest.TestCase):
+    """Clips made by the real ffmpeg in a home of the class's own, copied for each test, and read back by ExifTool and
+    ffprobe."""
 
     @classmethod
     def setUpClass(cls):
@@ -334,6 +342,10 @@ class AClipMadeByFfmpegReadBack(unittest.TestCase):
         self.assertIn("<rdf:li>%s</rdf:li>" % words[0], out["format"]["tags"]["xmp"])
         self.assertEqual(["10"], [stream["nb_read_frames"] for stream in out["streams"]])
 
+@unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
+class AClipMadeByFfmpegReadBack(FfmpegClips):
+    """Clips made by the real ffmpeg, patched, and read back by ExifTool and ffprobe."""
+
     def test_appended_overwritten_widened_and_grown_each_read_back(self):
         for name in self.made:
             with self.subTest(name):
@@ -348,6 +360,26 @@ class AClipMadeByFfmpegReadBack(unittest.TestCase):
                 self.patched(path, packet(("Wren Ashcombe",) + tuple("word %d" % i for i in range(200))),
                              clip_patch.GROWN)
                 self.read_back(path, ("Wren Ashcombe",) + tuple("word %d" % i for i in range(200)))
+
+    def test_a_clip_with_no_xmp_is_given_the_blank_packet_edited_and_it_reads_back(self):
+        """The first save of a clip with no XMP (2,104 live): xmp_packet.blank() edited, appended in a uuid box; its
+        padding takes the first save, so the box is the blank's length."""
+        blank = xmp_packet.blank()
+        self.assertEqual({}, xmp_packet.read(blank))
+        words, caption = ("Wren Ashcombe", "Hiking"), "At the lake"
+        edited = xmp_packet.edit(blank, {"dc:subject": list(words), "dc:description": caption,
+                                         "lr:hierarchicalSubject": ["People/Wren Ashcombe"]})
+        self.assertEqual(len(blank), len(edited.body))
+        for name in self.made:
+            with self.subTest(name):
+                path = self.clip(name)
+                self.patched(path, edited.body, clip_patch.APPENDED)
+                self.read_back(path, words)
+                with ExifToolSession(executable=EXIFTOOL) as session:
+                    held = session.get_tags([path], tags=["XMP:Description", "XMP:HierarchicalSubject"],
+                                            params=["-a"])[0]
+                self.assertEqual((caption, "People/Wren Ashcombe"),
+                                 (held.get("XMP:Description"), held.get("XMP:HierarchicalSubject")))
 
     def test_exiftools_xmp_box_before_mdat_is_retired_and_the_packet_appended(self):
         path = self.clip("first.mp4")
@@ -379,6 +411,132 @@ class AClipMadeByFfmpegReadBack(unittest.TestCase):
             layout = containers.read(handle)
         self.assertEqual([("moov", "udta", "XMP_"), ("uuid",)], [where for where, _ in layout.xmp])
         self.assertIsNone(clip_patch.patch(layout, packet(("Hiking",))))
+
+
+def keywords(words):
+    """The journal's values of a keyword save of `words`, as tagging's planner hands them to the writer."""
+    return {field: fields.field_values(value)
+            for field, value in fields.keyword_fields(*fields.expand_tag_fields(words)).items()}
+
+
+class Crash(Exception):
+    """The process killed."""
+
+
+@unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
+class AClipSavedInPlace(FfmpegClips):
+    """A keyword save of a real clip through in_place.patch_clip, the journal's `saving` a stand-in that keeps the
+    record."""
+
+    def setUp(self):
+        self.saved = []
+        # The patch never asks ExifTool: only the test's own read back, after it, does.
+        self.no_exiftool = mock.patch.object(exiftool_session.ExifToolSession, "__init__",
+                                             side_effect=AssertionError("ExifTool asked by a clip's patch"))
+
+    def save(self, path, words, **kw):
+        with self.no_exiftool:
+            return in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words), **kw),
+                                       lambda record, before: self.saved.append((record, before)))
+
+    def bytes_of(self, path):
+        with open(path, "rb") as handle:
+            return handle.read()
+
+    def test_a_clip_with_no_xmp_gets_a_box_at_its_end_and_every_byte_it_held_is_kept(self):
+        for name in self.made:
+            with self.subTest(name):
+                path, self.saved = self.clip(name), []
+                before = self.bytes_of(path)
+                self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), self.save(path, ("Wren Ashcombe", "Hiking")))
+                after = self.bytes_of(path)
+                self.assertEqual(before, after[:len(before)])
+                self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
+                self.read_back(path, ("Wren Ashcombe", "Hiking"))
+                self.save(path, ("Wren Ashcombe", "Hiking"))
+                self.assertEqual((1, after), (len(self.saved), self.bytes_of(path)), "a save made twice writes nothing")
+
+    def test_a_movs_xmp_and_the_bare_packet_last_in_an_mp4_are_saved_where_they_are(self):
+        mov = self.clip("clip.mov")
+        with ExifToolSession(executable=EXIFTOOL) as session:
+            session.set_tags([mov], tags={"XMP:Subject": ["Hiking"]}, params=["-m", "-overwrite_original"])
+        bare = self.clip("last.mp4")
+        with open(bare, "ab") as handle:
+            handle.write(xmp_box(shapes.BARE))
+        for path, how in ((mov, clip_patch.IN_PLACE), (bare, clip_patch.GROWN)):
+            with self.subTest(how):
+                before = self.bytes_of(path)
+                with open(path, "rb") as handle:
+                    (_, box), = containers.read(handle).xmp
+                self.save(path, ("Wren Ashcombe",))
+                after = self.bytes_of(path)
+                self.assertEqual(before[:box.offset], after[:box.offset])
+                if how == clip_patch.IN_PLACE:
+                    self.assertEqual((len(before), before[box.end:]), (len(after), after[box.end:]))
+                else:
+                    self.assertGreater(len(after), len(before))
+                self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
+                self.read_back(path, ("Wren Ashcombe",))
+
+    def test_a_clip_with_a_tail_or_two_xmp_boxes_is_not_patched_and_nothing_is_written(self):
+        tail = self.clip("first.mp4")
+        with open(tail, "ab") as handle:
+            handle.write(b"\x00\x00\x00\x10\x01\x02\x03\x04" + bytes(8))
+        two = self.clip("last.mp4")
+        with open(two, "ab") as handle:
+            handle.write(xmp_box(OLD) + xmp_box(OLD))
+        for path in (tail, two):
+            with self.subTest(os.path.basename(path)):
+                before = self.bytes_of(path)
+                self.assertIsNone(self.save(path, ("Wren Ashcombe",)))
+                self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
+
+    @unittest.skipUnless(os.name == "nt", "a file open elsewhere is refused by Windows' sharing")
+    def test_a_clip_open_in_another_program_is_refused_at_once_with_a_sentence(self):
+        path = self.clip("first.mp4")
+        before = self.bytes_of(path)
+        with open(path, "rb"):
+            with self.assertRaises(in_place.Refused) as refused:
+                self.save(path, ("Wren Ashcombe",))
+        self.assertIn("open in another program", str(refused.exception))
+        self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
+        self.save(path, ("Wren Ashcombe",))
+        self.read_back(path, ("Wren Ashcombe",))
+
+    def test_a_save_killed_part_way_is_told_by_its_bytes_and_a_torn_one_put_back(self):
+        """ExifTool's uuid box before mdat, too small for the new packet: retired, and the packet appended (three
+        ranges, one past the old end)."""
+        words = ("Wren Ashcombe",) + tuple("word %d" % i for i in range(200))
+        path = self.clip("first.mp4")
+        with ExifToolSession(executable=EXIFTOOL) as session:
+            session.set_tags([path], tags={"XMP:Subject": ["Hiking"]}, params=["-m", "-overwrite_original"])
+        original = self.bytes_of(path)
+
+        def killed_after_saving(record, before):
+            self.saved.append((record, before))
+            raise Crash("killed once its record was saved")
+
+        def torn(handle, changes):
+            (at, first), *_, (end, last) = changes
+            for where, written in ((at, first), (end, last[:len(last) // 2])):
+                handle.seek(where)
+                handle.write(written)
+            handle.flush()
+            raise Crash("killed half way")
+
+        with self.no_exiftool, self.assertRaises(Crash):
+            in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words)), killed_after_saving)
+        self.assertEqual((original, in_place.OLD), (self.bytes_of(path), in_place.held(path, *self.saved[-1])))
+        with mock.patch.object(in_place, "_write", torn), self.assertRaises(Crash):
+            self.save(path, words)
+        record, before = self.saved[-1]
+        self.assertEqual((3, len(original), in_place.TORN),
+                         (len(record["ranges"]), record["size"], in_place.held(path, record, before)))
+        in_place.put_back(path, record, before)
+        self.assertEqual(original, self.bytes_of(path))
+        self.save(path, words)
+        self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
+        self.read_back(path, words)
 
 
 if __name__ == "__main__":
