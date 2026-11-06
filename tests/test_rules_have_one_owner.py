@@ -118,6 +118,8 @@ LINE_RULES = (
     # so no other open of a photo slips past shares' bounded looks.
     ("a JPEG patched outside field_values.write", FIELD_VALUES, r"(?<!def )\bpatch_jpeg\(",
      "done = in_place.patch_jpeg(path, serialise, saving)", "in_place.patch_jpeg(", ""),
+    ("a clip patched outside field_values.write", FIELD_VALUES, r"(?<!def )\bpatch_clip\(",
+     "stale = in_place.patch_clip(path, packet, saving)", "in_place.patch_clip(", ""),
     ("a file opened by CreateFileW outside in_place._alone", IN_PLACE, r"\bCreateFileW\b",
      'create = kernel.CreateFileW', ".CreateFileW", ""),
     # Other processes are started, run and stopped through tagpup.core.processes: every spawn decided for itself
