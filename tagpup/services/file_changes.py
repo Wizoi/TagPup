@@ -802,12 +802,8 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
         elif left == SCRATCH_UNDER_WAY:
             failed = exiftool_session.written_lately(failed)
     if isinstance(failed, field_values.PictureChanged):
-        logger.warning("%s: its write changed the picture's bytes; the new file was discarded, and it is written once more",
-                       row.named())
-        _running.pictures_refused = _counted_so_far()[1] + 1
-        failed = _written(et, row, target, saving)
-        if isinstance(failed, field_values.PictureChanged):
-            failed = field_values.PictureChanged(file_journal.PICTURE_CHANGED)
+        # Made twice (field_values.written_once_more): the journal's note of it, which the doctor counts.
+        failed = field_values.PictureChanged(file_journal.PICTURE_CHANGED)
     # What the file holds now: `target`, but for the fields the write left as they were (row.stale).
     held = fields.as_patched(origin, target, row.stale)
     if failed is None and row.patched:
@@ -832,11 +828,16 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
 
 def _written(et, row, target, saving=None):
     """None when field_values.write wrote `target` into the file of `row`, the fields it left as they were in
-    `row.stale`; else what it raised."""
+    `row.stale`; else what it raised. A new file whose picture changed is written once more, logged and counted
+    (field_values.written_once_more; `pictures_refused`)."""
+    def again():
+        logger.warning("%s: its write changed the picture's bytes; the new file was discarded, and it is written once more",
+                       row.named())
+        _running.pictures_refused = _counted_so_far()[1] + 1
     row.stale = ()
     try:
-        row.stale = tuple(field_values.write(et, row.path, target, saving=saving,
-                                             scratch_written=lambda: _reached(SCRATCH_WRITTEN)))
+        row.stale = tuple(field_values.written_once_more(et, row.path, target, again, saving=saving,
+                                                         scratch_written=lambda: _reached(SCRATCH_WRITTEN)))
     except Exception as e:
         return e
     return None
