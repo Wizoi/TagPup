@@ -22,7 +22,9 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
    file is done or a conflict.
 3. **Settle**, at start (settle_once): a file a crash left `writing` is settled by what it
    holds -- what the plan read: written again; what it was to hold: marked done and its
-   row recorded; neither: a conflict. A file a patch was writing in place is settled by its bytes first, against the
+   row recorded; neither: a conflict. A settle of more than batches.CHUNK files is a batch, carried out a chunk at a
+   time as a write is (_finish): a writer that waits takes the lock between chunks, and Cancel (or a hand-over) stops
+   it there, the rest left as they are for the next start. A file a patch was writing in place is settled by its bytes first, against the
    record the patch saved before its first byte (_by_bytes): a patch this process cut short is put back and written
    again, one another program wrote over is a conflict, one that cannot be read stays `writing` with its record. Files the crash left `planned` are written too, so
    the edit the person asked for is finished. A change another live process is writing
@@ -1373,10 +1375,14 @@ def settle(library, exiftool_path):
     in this one -- left half done: each file it left planned or writing is settled by
     what it holds, forward or, for an undo under way, back. Returns how many changes
     were finished. A change that cannot be finished now -- one of its files on a share that does not answer, or one
-    ExifTool does not answer for, as _finish says -- is logged, released and left as it is for the next time: it does NOT
-    raise, so a caller that must know asks the journal afterwards (tagpup.store.file_journal.unfinished)."""
+    ExifTool does not answer for, as _finish says, or one whose settle was stopped as asked -- is logged, released and
+    left as it is for the next time: it does NOT raise, so a caller that must know asks the journal afterwards
+    (tagpup.store.file_journal.unfinished). A change whose settle this process was asked to stop is not taken up again
+    by this process (_put_off): the next start settles it, not the next save."""
     finished = 0
     for change in file_journal.unfinished(library.path):
+        if (library.key, change.id) in _put_off:
+            continue
         if change.owner and file_journal.owner_alive(change.owner):
             continue
         if not file_journal.claim(library.path, change.id, change.owner):
@@ -1395,50 +1401,113 @@ def settle(library, exiftool_path):
     return finished
 
 
+#: The changes (library key, change id) whose settle this process was asked to stop (Cancel, a hand-over): left half
+#: done for the next start, not taken up again by the settle every write begins with.
+_put_off = set()
+
+
+class _NoTurn(Exception):
+    """A long settle could not take a batch's turn: another batch of this process is running, or the server is handing
+    over to a new version. The change is left as it is, for the next settle."""
+
+
+@contextlib.contextmanager
+def _settle_turn(library, change, count):
+    """The stop a settle of `count` files of `change` honours between its chunks (_finish): the batch this thread carries
+    out already (a write's settle), or, for more than batches.CHUNK files, a batch of its own, listed and cancelled as
+    any (batches.listing, batches.cancel; a hand-over's batches.stop_all). Never waited for: the lock is held, and the
+    batch ahead needs it (_NoTurn). None, no batch, for a short settle."""
+    if batches.current() is not None:
+        yield batches.current().stop
+        return
+    if count <= batches.CHUNK:
+        yield None
+        return
+    with contextlib.ExitStack() as held:
+        try:
+            batch = held.enter_context(batches.claim(library, change.operation, count, wait=False))
+        except (Conflict, Refused) as why:
+            raise _NoTurn(str(why)) from None
+        batch.change_id = change.id
+        yield batch.stop
+
+
 def _finish(library, change, exiftool_path):
     """Settle the files `change` left; True when it is finished. A file on a share that does not answer (file_states), or
     that ExifTool does not answer for (_Stalled), is left as it is, and the change unfinished, for a settle once it can be
-    read: it is never a conflict for not answering, and the write whose settle met it waits no deadline for it (#1921)."""
+    read: it is never a conflict for not answering, and the write whose settle met it waits no deadline for it (#1921).
+
+    A batches.CHUNK of files at a time, as a write is carried out: each chunk's files are looked at (file_states), settled
+    and read back before the next; between two chunks a line says how far it has got (counts only), a writer that waits
+    takes the lock (let_others_in), and a settle asked to stop (_settle_turn) stops, its files not reached left as they
+    are for the next start (_put_off), the change unfinished. A settle that cannot take its turn is left whole."""
     undoing = change.undoing
     pending = [row for row in file_journal.files_of(library.path, change.id)
                if row.state in (("writing", "done") if undoing else ("planned", "writing"))]
     renames = [row for row in pending if row.is_rename]
-    if renames:
-        _settle_renames(library, renames, forward=not undoing, redo=True)
     changed = [row for row in pending if not row.is_rename]
-    left = False
+    try:
+        with _settle_turn(library, change, len(changed)) as stop:
+            if renames:
+                _settle_renames(library, renames, forward=not undoing, redo=True)
+            left = _settle_files(library, change, exiftool_path, changed, stop) if changed else False
+    except _NoTurn as why:
+        logger.info("%s: change %d is left half done for the next settle: %s", library.path, change.id, why)
+        return False
+    if left:
+        return False
+    file_journal.finish(library.path, change.id, also=face_batch.tidy)
+    return True
+
+
+def _settle_files(library, change, exiftool_path, changed, stop):
+    """_finish's files that are not renames, a chunk at a time. True when any is left as it is (away, not answered for,
+    unreadable now, or not reached before a stop)."""
+    undoing, left = change.undoing, False
     # A planned file was never written by this change (it is marked writing before its write): one found holding the change's
     # after was written by another program and is taken out, as the forward loop takes it out (#1937), unless the change holds
     # it for its faces too (a bulk assignment's, face_batch.Work.wants). A file left writing that holds the after is this
     # change's own write a crash cut off, told from no other, and is done.
     kept = (face_batch.photos_kept(library, change.id)
             if not undoing and any(row.state == "planned" for row in changed) else set())
-    if changed:
-        away = {paths.key(path) for path, state in file_states([row.path for row in changed]) if state == AWAY}
-        with field_values.session(exiftool_path) as session:
-            et, wrote = exiftool_session.StaysDead(session), {}
-            for row in changed:
-                if paths.key(row.path) in away:
-                    left = True
-                    continue
-                try:
-                    if undoing:
-                        outcome, _why = _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict",
-                                               stall_stops=True)
-                    else:
-                        outcome, _why = _carry(et, library, row, row.before, row.after, "done", on_failure="conflict",
-                                               wrote=wrote, stall_stops=True,
-                                               held_out=row.state == "planned" and row.photo_id not in kept)
-                    # A patched file that cannot be read now stays `writing` with its record (_by_bytes).
-                    left = left or outcome == "writing"
-                except _Stalled:
-                    left = True
-                    break
+    with field_values.session(exiftool_path) as session:
+        et, wrote = exiftool_session.StaysDead(session), {}
+        try:
+            for start in range(0, len(changed), batches.CHUNK):
+                if start:
+                    # Each chunk read back before the next: a stop, or a kill, leaves no more than one chunk unread.
+                    _read_back(et, library, wrote)
+                    wrote.clear()
+                    logger.info("%s: change %d, left half done: %d of %d file(s) settled", library.path, change.id,
+                                start, len(changed))
+                    if stop is not None and stop.is_set():
+                        _put_off.add((library.key, change.id))
+                        logger.info("%s: change %d: its settle was stopped as asked after %d of %d file(s); the %d left "
+                                    "are settled the next time the library is opened", library.path, change.id, start,
+                                    len(changed), len(changed) - start)
+                        return True
+                    let_others_in(stop)
+                chunk = changed[start:start + batches.CHUNK]
+                away = {paths.key(path) for path, state in file_states([row.path for row in chunk]) if state == AWAY}
+                for row in chunk:
+                    if paths.key(row.path) in away:
+                        left = True
+                        continue
+                    try:
+                        if undoing:
+                            outcome, _why = _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict",
+                                                   stall_stops=True)
+                        else:
+                            outcome, _why = _carry(et, library, row, row.before, row.after, "done", on_failure="conflict",
+                                                   wrote=wrote, stall_stops=True,
+                                                   held_out=row.state == "planned" and row.photo_id not in kept)
+                        # A patched file that cannot be read now stays `writing` with its record (_by_bytes).
+                        left = left or outcome == "writing"
+                    except _Stalled:
+                        return True
+        finally:
             _read_back(et, library, wrote)
-    if left:
-        return False
-    file_journal.finish(library.path, change.id, also=face_batch.tidy)
-    return True
+    return left
 
 
 _settled = set()
