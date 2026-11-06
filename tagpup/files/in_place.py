@@ -53,7 +53,7 @@ import io
 import os
 import threading
 
-from tagpup.files import clip_patch, containers, shares, xmp_packet
+from tagpup.files import clip_patch, containers, lock_owners, shares, xmp_packet
 
 VERSION = 2
 
@@ -78,9 +78,6 @@ class Refused(Exception):
 #: Why a clip open in another program when it is saved is refused at once, never waited for (owner, 2026-11-05).
 OPEN_ELSEWHERE = ("it is open in another program (a player, an editor): close it there and save again; nothing was "
                   "written")
-#: Windows' errors of a file another program holds open: a sharing violation, a lock violation. Not access denied
-#: (lock_owners.HELD counts it too), which a read-only file answers as well.
-_OPEN_ELSEWHERE_ERRORS = (32, 33)
 
 #: What a file holds against its record (held).
 NEW, OLD, TORN, NEITHER = "new", "old", "torn", "neither"
@@ -422,7 +419,7 @@ def _opened_to_patch(path):
     except Away:
         raise
     except OSError as error:
-        if getattr(error, "winerror", None) in _OPEN_ELSEWHERE_ERRORS:
+        if getattr(error, "winerror", None) in lock_owners.SHARING:
             raise Refused(OPEN_ELSEWHERE) from None
         raise
 
