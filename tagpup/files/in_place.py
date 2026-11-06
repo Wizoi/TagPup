@@ -311,14 +311,13 @@ def patch_jpeg(path, new_header, saving):
     Raises Away when the photo's share does not answer, the file as it was or as far as the patch wrote it (held settles
     it); an OSError that is no sharing violation or refusal to open; whatever `new_header` or `saving` raises."""
     try:
-        handle = _bounded(path, lambda: _alone(path))
+        lent = _opened(path)
     except Away:
         raise
     except OSError:
         return None         # held open by another program, read-only, gone: the rewrite's, which says why
-    lent = _Lent(handle)
-    try:
-        found = lent.bounded(path, lambda: _header_of(handle))
+    with lent:
+        found = lent.bounded(path, lambda: _header_of(lent.handle))
         if found is None:
             return None
         layout, header = found
@@ -328,12 +327,37 @@ def patch_jpeg(path, new_header, saving):
         new, stale = made
         changes = _ranges(layout, header, new)
         if changes:
-            saved, before = lent.bounded(path, lambda: record(handle, changes, stale))
-            saving(saved, before)
-            lent.bounded(path, lambda: _write(handle, changes))
+            _written(lent, path, changes, stale, saving)
         return tuple(stale)
-    finally:
-        lent.close()
+
+
+# --- the open file, shared by both patches ----------------------------------------------------------------------------
+
+
+def _opened(path):
+    """The file at `path` opened alone (_alone) on a bounded call, lent to the patch's later calls (_Lent, a context
+    manager that closes it). Raises Away, or the OSError the open raised."""
+    return _Lent(_bounded(path, lambda: _alone(path)))
+
+
+def _written(lent, path, changes, stale, saving, grow=False, size=None):
+    """Write `changes`, [(at, new bytes)], into the file `lent` holds: its record made (record), saved by `saving` (the
+    journal's, which commits it before a byte is written), then the bytes written and flushed. ValueError, nothing saved
+    nor written, when the record's size after is not `size`, the size its writer worked out (None: not checked)."""
+    saved, before = lent.bounded(path, lambda: record(lent.handle, changes, stale, grow))
+    if size is not None and saved["size_after"] != size:
+        raise ValueError("a patch's record says the file is %d bytes once written, its writer %d"
+                         % (saved["size_after"], size))
+    saving(saved, before)
+    lent.bounded(path, lambda: _write(lent.handle, changes))
+
+
+class _Raised:
+    """What a bounded call raised that is no OSError (a writer's fault, a test's crash), carried out of shares.bounded,
+    which would make it an OSError of its text, to be raised as itself."""
+
+    def __init__(self, error):
+        self.error = error
 
 
 class _Lent:
@@ -354,19 +378,33 @@ class _Lent:
                 self.started, self.ended = True, False
             try:
                 return work()
+            except OSError:
+                raise
+            except Exception as error:
+                return _Raised(error)
             finally:
                 with self.gate:
                     self.ended = True
                     if self.lent:
                         self.handle.close()
         try:
-            return _bounded(path, call)
+            value = _bounded(path, call)
         except Away:
             with self.gate:
                 self.lent = True
                 if not self.started or self.ended:
                     self.handle.close()
             raise
+        if isinstance(value, _Raised):
+            raise value.error
+        return value
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_raised):
+        self.close()
+        return False
 
     def close(self):
         with self.gate:
