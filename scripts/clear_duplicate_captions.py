@@ -9,9 +9,9 @@ are read and written as ONE change of the library's journal (History lists it; `
 each photo's row following its file. It is long on a share (hours): it prints a line as each chunk of files is done.
 Ctrl+C stops it after the file under way and reads back the files written since the last chunk (it says so); what was
 written is kept (applied and undoable); run it again to continue, the photos done are not read again. A second Ctrl+C
-skips that read back: the files not reached were taken out first, and the next open of the library settles the one under
-way. A file changed since it was read is a
-conflict, left as it is and counted. Counts only: no path, no name, no caption.
+skips that read back: the files not reached were taken out first (a second press while they are taken out may leave them
+in), and the next open of the library settles what is left: the one under way, and any not taken out, written then. A file
+changed since it was read is a conflict, left as it is and counted. Counts only: no path, no name, no caption.
 
 Run it while the app is idle (no server writing the library), and back the library up first. A title changed by another
 program between the plan and the write is not detected (only the caption fields are compared). Undo is refused once any
