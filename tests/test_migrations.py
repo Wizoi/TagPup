@@ -1079,8 +1079,9 @@ class TheOwnersLibraryAt36MeetsMigration37(Migrated):
         self.assertEqual(self.files_at_36, file_journal.files_of(self.db_path, self.saved), "the files read alike at 36 and 37")
 
     def test_two_processes_opening_it_at_once_apply_it_once(self):
-        code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema; print(len(schema.ensure(%r)))"
-                % (ROOT, self.db_path))
+        code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema;"
+                " schema.MIGRATIONS = tuple(m for m in schema.MIGRATIONS if m.version <= 37); schema.LATEST = 37;"
+                " print(len(schema.ensure(%r)))" % (ROOT, self.db_path))   # each the app with 37 as its latest
         env = dict(os.environ, TAGPUP_HOME=self.home.root)
         running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True) for _ in range(2)]
         answers = []
@@ -1310,10 +1311,10 @@ class ANewLibrary(unittest.TestCase):
         schema.ensure(path)
         self.assertEqual([], backups(path))
         self.assertEqual([(0,)], db_rows(path, "SELECT COUNT(*) FROM changes"))
-        self.assertEqual([(32,), (33,), (34,), (35,), (36,), (37,)],
+        self.assertEqual([(32,), (33,), (34,), (35,), (36,), (37,), (38,)],
                          db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
         self.assertEqual([], db_rows(path, "SELECT name FROM sqlite_master WHERE name IN ('faces_pending', 'idx_faces_name')"),
-                         "made at the baseline and taken to 37 by the same runner")
+                         "made at the baseline and taken to 38 by the same runner")
         self.assertEqual([("idx_embeddings_stamp",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'idx_embeddings_stamp'"),
                          "the index from migration 35, not the baseline")
         self.assertEqual([("face_embeddings",)], db_rows(path, "SELECT name FROM sqlite_master WHERE name = 'face_embeddings'"))
@@ -1336,8 +1337,8 @@ class ANewLibrary(unittest.TestCase):
             out, err = each.communicate(timeout=120)
             self.assertEqual(0, each.returncode, err)
             answers.append(out.strip())
-        self.assertEqual(6, sum(int(answer) for answer in answers), answers)
-        self.assertEqual([(32,), (33,), (34,), (35,), (36,), (37,)],
+        self.assertEqual(7, sum(int(answer) for answer in answers), answers)
+        self.assertEqual([(32,), (33,), (34,), (35,), (36,), (37,), (38,)],
                          db_rows(path, "SELECT version FROM schema_version ORDER BY version"))
 
 
