@@ -190,11 +190,12 @@ const note = (ctx) => ctx.document.querySelector("#suggestions-section .suggesti
 
 /**
  * The folder D:\Library\2020 of the fixture's run (a, b, c) open, and `photo` of it. `status(url)` answers each poll;
- * D:\Library\2021 holds one photo of its own and no run.
+ * D:\Library\2021 holds one photo of its own and no run; `theirScan`, if given, answers its scan.
  */
-async function openDuringARun(t, photo, status) {
+const theirs = () => [photoRecord({ filename: "d.jpg", path: `${OTHER}\\d.jpg` })];
+
+async function openDuringARun(t, photo, status, { theirScan = theirs } = {}) {
   const ours = ["a.jpg", "b.jpg", "c.jpg"].map((filename) => photoRecord({ filename }));
-  const theirs = [photoRecord({ filename: "d.jpg", path: `${OTHER}\\d.jpg` })];
   const server = new FakeServer()
     .on("/api/tags", [])
     .on("/api/taxonomy/tree", TAXONOMY)
@@ -202,7 +203,7 @@ async function openDuringARun(t, photo, status) {
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100 })
     .on("/api/folder/membership", { photos_not_held: 0 })
-    .on("/api/folder/scan", (url) => (url.includes("2021") ? theirs : ours))
+    .on("/api/folder/scan", (url) => (url.includes("2021") ? theirScan() : ours))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/library/ids", { source: {}, total: 0, ids: [], complete: true })
     .on("/api/folder/suggest-status", status);
@@ -281,6 +282,39 @@ describe("while the folder's run goes, the box says how it stands", () => {
     assert.equal(Object.keys(state.folderSuggestions).length, 0, "2020's suggestions are held for 2021");
     assert.equal(state.suggestRun.status, "idle");
   });
+
+  // A folder opened forgets the one left behind -- its suggestions, its run and its poll -- in one place
+  // (forgetFolderSuggestions): the old poll asked again while the new folder's scan is under way landed its run in the
+  // page, and the scan's reply saved 2020's suggestions as 2021's in this browser's cache.
+  for (const when of ["asked again while the scan is under way", "under way when the folder is opened"]) {
+    test(`a poll of the folder left behind, ${when}, lands nowhere`, async (t) => {
+      let releasePoll;
+      let releaseScan;
+      const late = new Promise((resolve) => { releasePoll = resolve; });
+      const scanning = new Promise((resolve) => { releaseScan = resolve; });
+      let first = true;
+      const ctx = await openDuringARun(t, "a.jpg", (url) => {
+        if (url.includes("2021")) return served.idle;
+        if (first) { first = false; return served.waiting_for_the_card; }
+        return late;
+      }, { theirScan: () => scanning });
+      if (when.startsWith("under way")) await wait(POLL_MS);   // 2020's next poll is asked, and not answered yet
+      await openFolder(ctx, OTHER);   // 2021's scan is under way
+      if (when.startsWith("asked again")) await wait(POLL_MS);   // a poll of 2020 still going is asked now
+      releasePoll(served.running);
+      await flush(ctx.window, 8);
+      releaseScan(theirs());
+      await flush(ctx.window, 8);
+      const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+      assert.deepEqual(Object.keys(state.folderSuggestions), [], "2020's suggestions are held for 2021");
+      assert.notEqual(state.suggestRun && state.suggestRun.status, "running", "2020's run is 2021's");
+      const { folderCacheKey } = pageExports(ctx.window, "web/tagpup/cache.js");
+      const kept = JSON.parse(ctx.window.localStorage.getItem(folderCacheKey(OTHER)));
+      assert.ok(kept, "2021's scan was not kept");
+      const leaked = Object.keys(kept.suggestions || {}).filter((key) => key.includes("2020"));
+      assert.deepEqual(leaked, [], "2021's cache holds 2020's suggestions");
+    });
+  }
 
   test("the library view opened mid-poll shows no box", async (t) => {
     let release;

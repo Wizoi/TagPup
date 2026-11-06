@@ -164,8 +164,13 @@ export function checkIndexingStatus(folderPath) {
     state.indexProgressTimer = setInterval(queryProgress, 1000);
 }
 
-/** The open folder's suggestions and its run forgotten: a folder closed or another opened, or the server let them go. */
+/**
+ * The open folder's suggestions, its run and its poll forgotten: a folder closed or another opened, or the server let
+ * them go. A reply of the poll already under way lands nowhere (checkSuggestionsStatus).
+ */
 export function forgetFolderSuggestions() {
+    clearInterval(state.progressTimer);
+    state.progressTimer = null;
     state.folderSuggestions = {};
     state.suggestRun = null;
 }
@@ -202,6 +207,9 @@ export function checkSuggestionsStatus(folderPath) {
         api.json(`/api/folder/suggest-status?path=${encodeURIComponent(folderPath)}`)
             .then(data => {
                 if (state.library) return;   // likewise: its progress and suggestions belong to a folder
+                // A poll forgotten or replaced (forgetFolderSuggestions, another checkSuggestionsStatus) shows nothing:
+                // its folder's scan may still be the open one while the next folder's is under way.
+                if (timer !== state.progressTimer) return;
                 // A reply for a folder left behind (another opened meanwhile) is that folder's: it shows nothing here,
                 // and its poll stops.
                 if (!state.scannedFolder || !samePath(folderPath, state.scannedFolder)) {
