@@ -152,16 +152,17 @@ def _old_parts(spans, size_before, before):
 
 
 def put_back(path, record, before):
-    """Write the bytes the ranges held `before` back into the file at `path`, flushed to the disk, and read them back:
-    raises OSError when the file cannot be written or does not then hold them (Away, when its share does not answer)."""
-    spans, at_old, changes = _spans(record), 0, []
-    for at, length, _new in spans:
-        changes.append((at, before[at_old:at_old + length]))
-        at_old += length
+    """Write the bytes the ranges held `before` back into the file at `path`, then cut it to the size it was, flushed to
+    the disk, and read them back: raises OSError when the file cannot be written or does not then hold them (Away, when
+    its share does not answer). The cut is last, so a put back cut short leaves the file TORN or OLD, never NEITHER:
+    settled by its bytes as the patch's own crash is."""
+    spans = _spans(record)
+    changes = [(at, old) for (at, _length, _new), old in zip(spans, _old_parts(spans, record["size"], before)) if old]
 
     def put():
         with _alone(path) as handle:
             _write(handle, changes)
+            _truncate(handle, record["size"])
 
     _bounded(path, put)
     if held(path, record, before) != OLD:
@@ -193,6 +194,13 @@ def _write(handle, changes):
     for at, new in changes:
         handle.seek(at)
         handle.write(new)
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+def _truncate(handle, size):
+    """Cut the open file to `size` bytes, flushed to the disk."""
+    handle.truncate(size)
     handle.flush()
     os.fsync(handle.fileno())
 

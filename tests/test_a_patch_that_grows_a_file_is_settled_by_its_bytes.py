@@ -6,12 +6,14 @@ The file is made byte by byte, no clip and no library: the record's rules are th
 before and after and keeps the old bytes of the ranges inside the old size, nothing else read or written. A crash
 part-way leaves the file at either size or between, each byte of a range old or new (TORN, put back and written again);
 a size outside the two, or a byte neither old nor new -- an appended run of zeros a power cut left among them -- is
-another program's or the disk's, NEITHER, a conflict never overwritten.
+another program's or the disk's, NEITHER, a conflict never overwritten. A put back writes the old bytes first and
+cuts the file to its old size last, so a put back cut short is itself TORN or OLD, and settled the same way.
 """
 import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tagpup.files import in_place  # noqa: E402
@@ -21,6 +23,10 @@ OLD = bytes(range(256)) * 4
 #: A box appended at the end, 40 bytes.
 BOX = b"\x00\x00\x00\x28uuid" + b"B" * 32
 
+
+class Killed(OSError):
+    """The process killed at a step of a put back: an OSError, which the put back's bounded thread
+    (shares.bounded) passes up as it is."""
 
 class AFileGrownByItsPatch(unittest.TestCase):
     def setUp(self):
@@ -85,6 +91,34 @@ class AFileGrownByItsPatch(unittest.TestCase):
             with self.subTest(why):
                 self.holding(data)
                 self.assertEqual(expected, in_place.held(self.path, saved, before))
+
+
+    def test_put_back_returns_a_grown_file_to_its_old_size_and_bytes(self):
+        saved, before = self.recorded([(100, b"abc"), (len(OLD), BOX)])
+        inside = OLD[:100] + b"abc" + OLD[103:]
+        for why, data in {"every range written": inside + BOX, "the box half appended": inside + BOX[:17],
+                          "the box appended, the first range not yet": OLD + BOX}.items():
+            with self.subTest(why):
+                self.holding(data)
+                in_place.put_back(self.path, saved, before)
+                self.assertEqual(OLD, self.held())
+
+    def test_a_put_back_killed_before_or_after_its_cut_is_torn_or_old_and_put_back_again(self):
+        saved, before = self.recorded([(100, b"abc"), (len(OLD), BOX)])
+        real = in_place._truncate
+
+        def after_the_cut(handle, size):
+            real(handle, size)
+            raise Killed("after the cut")
+        for why, cut, left in (("before its cut", mock.Mock(side_effect=Killed("before the cut")), in_place.TORN),
+                               ("after its cut", after_the_cut, in_place.OLD)):
+            with self.subTest(why):
+                self.holding(OLD[:100] + b"abc" + OLD[103:] + BOX)
+                with mock.patch.object(in_place, "_truncate", cut), self.assertRaises(Killed):
+                    in_place.put_back(self.path, saved, before)
+                self.assertEqual(left, in_place.held(self.path, saved, before))
+                in_place.put_back(self.path, saved, before)
+                self.assertEqual(OLD, self.held())
 
 
 if __name__ == "__main__":
