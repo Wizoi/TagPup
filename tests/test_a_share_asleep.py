@@ -730,6 +730,8 @@ class AFolderOnAShareThatDoesNotAnswerIsRefusedAsAway(unittest.TestCase):
          lambda folder: {"folder_path": folder, "camera_model": "Canon EOS 80D", "shift_minutes": 60}),
         ("tagpup", "post", "/api/folder/rename-photos",
          lambda folder: {"folder_path": folder, "photo_paths": [folder + "\\IMG_0001.jpg"], "grouping": "Coast"}),
+        # The Smart Rename of one photo, from the box beside its name.
+        ("tagpup", "post", "/api/photo/smart-rename", lambda folder: {"path": folder + "\\IMG_0001.jpg", "grouping": "Coast"}),
         ("tagpup", "post", "/api/sync/review/include", lambda folder: {"folder": folder}),
         ("tuner", "get", "/api/folder/subfolders", lambda folder: {"path": folder}),
         ("tuner", "post", "/api/folder/index-start", lambda folder: {"folder_paths": [folder]}),

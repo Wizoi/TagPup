@@ -275,16 +275,19 @@ def title_filename(photo_path: str, new_title: str, rename_format: str, preserve
     """Where a Smart-Renamed photo goes when its caption becomes `new_title`: the path whose name
     `rename_format` (the library's renaming.format setting, tagpup.services.settings) gives it, a free
     name where that one is taken; or `photo_path` when nothing is to move. A photo is Smart-Renamed
-    when it holds the name it had before in `preserved` (XMP-xmpMM:PreservedFileName, "" for none).
-    Nothing is renamed here: the caller renames, through the file journal (docs/findings.md, #298)."""
+    when it holds the name it had before in `preserved` (XMP-xmpMM:PreservedFileName, "" for none). Its grouping and
+    number are read by renaming.parts_of, Smart Rename's own reader: a split at " - " took the second part of a grouping
+    made before one could not hold " - " ("2019-06 - Summer Camp - 03 - Start") as the number, and dropped the number.
+    A name the format did not make is left as it is. Nothing is renamed here: the caller renames, through the file
+    journal (docs/findings.md, #298)."""
     if not preserved or not os.path.exists(photo_path):
         return photo_path
     try:
         base_name, ext = os.path.splitext(os.path.basename(photo_path))
-        parts = [p.strip() for p in base_name.split(" - ")]
-        if len(parts) < 2:
+        parts = renaming.parts_of(rename_format, base_name)
+        if parts is None:
             return photo_path
-        grouping, index_str = parts[0], parts[1]
+        grouping, index_str = parts
         new_name = renaming.file_base(rename_format, grouping, index_str, new_title) + ext
         folder = os.path.dirname(photo_path)
         new_path = os.path.join(folder, new_name)

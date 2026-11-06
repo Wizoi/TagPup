@@ -28,6 +28,7 @@ BATCHES = {
     "/api/folder/time-shift": "write_fields takes the claim; over the cap it is refused",
     "/api/folder/rename-photos": "the original names are written by write_fields under Smart Rename's lock (a batch waiting ahead "
                                  "refuses it rather than wait); Smart Rename refuses over the cap before it reads a caption",
+    "/api/photo/smart-rename": "one photo: the original name is written by write_fields under Smart Rename's lock, as rename-photos",
     "/api/taxonomy/rename": "the tag tree's rewrite: no cap (owner, 2026-10-11), a batch with progress and Cancel",
     "/api/taxonomy/delete-confirm": "the tag tree's rewrite: no cap, a batch",
     "/api/tags/merge": "the tag tree's rewrite: no cap, a batch",
