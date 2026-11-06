@@ -454,6 +454,20 @@ def opened(photo_path, upright):
     return img
 
 
+def from_jpeg(data):
+    """The RGB picture of JPEG bytes in memory: a clip's frame (tagpup.files.video_frames), upright already (ffmpeg
+    applies a video's rotation). Raises Unreadable when the bytes do not decode."""
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            picture = img.convert("RGB")
+            picture.load()
+            return picture
+    except Exception as error:
+        if not _decoder_failed(error):
+            raise
+        raise damage(data, error) from error
+
+
 #: What a fingerprint is a hash of, as a bake and a library's fingerprint row name it (docs/PHASE6_DESIGN.md, section 7):
 #: sha256 of the upright RGB decode, under the Pillow requirements.txt pins. A change of what is hashed, or a Pillow whose
 #: decode differs, is a new key, so a fingerprint made the old way is never compared with one made the new way.

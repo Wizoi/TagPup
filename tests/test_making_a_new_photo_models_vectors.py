@@ -21,8 +21,13 @@ test declares in the table of photo models (stand_in_models.OTHER_PHOTO_MODEL). 
 - At 40% the switch is refused, from the command line (set-photo-model) as in the gear, with the counts; after a full
   run its dry run passes and writes nothing, and says how many words Suggest makes again under the new model; applied it
   is one change of the journal, and its undo puts the old model back.
-- Clips beside the photos (rows of kind 'video', which hold no vector and owe none): the run never opens one, the
-  counts and the switch's gate count photos only, and retiring the old model's vectors is not refused for them.
+- Clips beside the photos (rows of kind 'video', each owed a vector made of its frames, with frames 1 to 4 beside
+  it): the dry run counts them among the photos owed the new vector; once they hold it, the switch's gate and the
+  retiring of the old model's vectors count them as photos holding one, and neither is refused for them. The run
+  makes a clip's vector of its five frames as the index does (frame 0's the vector, frames 1 to 4 beside it in the
+  same write) and counts it among those embedded; a clip ffmpeg cannot read as it is is listed by the CLI, not counted
+  as a photo that could not be read, and one ffmpeg could not read at the moment (a share away) is counted unread and
+  tried again. ffmpeg is stood in for at its seam (video_frames.frames).
 - A run waits for its turn on the graphics card before it reads what is left: one that waited behind another run finds
   what that run made.
 - Beside a running server (#1843): the server, which keeps its turn on the card between Suggest runs, gives it up to
@@ -49,10 +54,13 @@ import numpy as np  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
+import io  # noqa: E402
+
 import tagpup_cli  # noqa: E402
+from tagpup import config  # noqa: E402
 from tagpup.core import gpu_turns, paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.files import images  # noqa: E402
+from tagpup.files import images, video_frames  # noqa: E402
 from tagpup.ml import gpu  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -133,6 +141,32 @@ class _Clip:
         if self.on_forward:
             self.on_forward(len(self.forwards))
         return vector(self.dim, zlib.crc32(paths.key(path).encode())).tolist()
+
+    def picture_input(self, picture, load=True):
+        """A clip's frame (a decoded picture): told apart by its colour."""
+        assert not load, "a read ahead never loads the model"
+        return picture.getpixel((0, 0))
+
+    def embed_inputs(self, colours):
+        self.forwards.append(("frames", len(colours)))
+        return [frame_vector(self.dim, colour).tolist() for colour in colours]
+
+
+def frame_vector(dim, colour):
+    """The stand-in model's vector of a frame of this colour."""
+    return vector(dim, colour[0] * 65536 + colour[1] * 256 + colour[2])
+
+
+def frame(colour):
+    """A frame as ffmpeg hands one back (video_frames.Frames.pictures): JPEG bytes."""
+    out = io.BytesIO()
+    Image.new("RGB", (32, 24), colour).save(out, "JPEG", quality=95)
+    return out.getvalue()
+
+
+#: A clip's five frames, each its own colour, and each's colour as the decode reads it back.
+FIVE = tuple(frame((40 * n, 90, 200 - 40 * n)) for n in range(5))
+FIVE_READ = tuple(images.from_jpeg(picture).getpixel((0, 0)) for picture in FIVE)
 
 
 class _Library(unittest.TestCase):
@@ -501,12 +535,12 @@ class TheSwitchWaitsForTheRun(_Library):
 
 
 class ClipsBesideThePhotos(_Library):
-    """Three clips in the folder, recorded as the indexer records a read of an .mp4 (kind 'video', no vector). Before
-    clips were counted apart, they were three photos holding no vector: the run tried to decode each, and the switch
-    and the retiring of the old vectors were refused at 10 of 13."""
+    """Three clips in the folder, recorded as the index records one: kind 'video', its vector under SO400M and its
+    frames 1 to 4 beside it."""
 
     def setUp(self):
         super().setUp()
+        self.clip_paths = []
         conn = db.connect(self.library.path)
         try:
             for n in range(3):
@@ -514,10 +548,48 @@ class ClipsBesideThePhotos(_Library):
                 with open(path, "wb") as handle:
                     handle.write(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2048)
                 photo_rows.add_read(conn, path, {"QuickTime:CreateDate": "2021:07:04 18:30:00"})
+                mtime, size = shares.read_stamp(path)
+                store_embeddings.put(conn, path, OLD_KEY, mtime, size, vector(OLD_DIM, 30 + n).tobytes(), None,
+                                     frames=[vector(OLD_DIM, 40 + f).tobytes() for f in range(4)])
+                self.clip_paths.append(path)
             conn.commit()
         finally:
             conn.close()
         self.assertEqual([("video", 3)], read(self.library.path, "SELECT kind, COUNT(*) FROM photos WHERE kind = 'video'"))
+        self.answers, self.asked = {}, []
+
+        def frames(tools, path, count, *args, **kwargs):
+            self.asked.append((os.path.basename(path), count))
+            return self.answers.get(os.path.basename(path), video_frames.Frames(FIVE[:count], None))
+        for patcher in (mock.patch.object(video_frames, "frames", frames),
+                        mock.patch.object(config, "ffmpeg_problem", return_value=None),
+                        mock.patch.object(config, "locate_ffmpeg", return_value=config.Ffmpeg("ffmpeg", "ffprobe", None))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def held_new(self, path):
+        """(the vector, [frames 1 to n]) the clip holds under the new key, as float32 arrays, or None."""
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            row = store_embeddings.get(conn, path, NEW_KEY)
+            if row is None:
+                return None
+            return (np.frombuffer(row.vector, dtype=np.float32),
+                    [np.frombuffer(f, dtype=np.float32) for f in store_embeddings.frames_of(conn, store_photos_id(self.library.path, path), NEW_KEY)])
+        finally:
+            conn.close()
+
+    def give_new_with_frames(self, clips):
+        """The clips' vectors under the new model, as the index keeps a clip's: with its frames 1 to 4."""
+        conn = db.connect(self.library.path)
+        try:
+            for path in clips:
+                mtime, size = shares.read_stamp(path)
+                store_embeddings.put(conn, path, NEW_KEY, mtime, size, vector(NEW_DIM, 8).tobytes(), None,
+                                     frames=[vector(NEW_DIM, 9 + f).tobytes() for f in range(4)])
+            conn.commit()
+        finally:
+            conn.close()
 
     set_model = TheSwitchWaitsForTheRun.set_model
 
@@ -529,28 +601,63 @@ class ClipsBesideThePhotos(_Library):
         finally:
             conn.close()
 
-    def test_the_run_never_opens_a_clip_and_the_switch_and_the_retiring_count_photos_only(self):
+    def test_the_clips_are_owed_the_new_vector_and_counted_by_the_switch_and_the_retiring_as_photos(self):
         dry = " ".join(self.cli().output.split())
-        self.assertIn("harbour: 10 photo(s), 0 hold a vector under %s already, 10 hold none" % NEW_KEY, dry)
+        self.assertIn("harbour: 13 photo(s), 0 hold a vector under %s already, 13 hold none" % NEW_KEY, dry)
+        self.assertEqual(13, self.without_a_vector(NEW_KEY), "the clips are not owed the new vector")
 
-        with mock.patch.object(images, "opened", wraps=images.opened) as opened:
-            ran = self.cli("--apply")
-        self.assertEqual(0, ran.exit_code, ran.output)
-        said = " ".join(ran.output.split())
-        self.assertIn("Embedded 10 of 10: 10 kept, 0 not kept", said)
-        self.assertEqual([], [call.args[0] for call in opened.call_args_list if call.args[0].endswith(".mp4")],
-                         "a clip was decoded")
-        self.assertEqual(set(map(paths.key, self.photos)), self.new_vectors())
-
+        self.give_new(self.photos)
+        dry = self.set_model()
+        self.assertIn(library_settings.PHOTOS_HELD % (10, 13, NEW_KEY, 3), " ".join(dry.output.split()))
+        self.give_new_with_frames(self.clip_paths)
         dry = self.set_model()
         self.assertEqual(0, dry.exit_code, dry.output)
-        self.assertIn(library_settings.PHOTOS_HELD % (10, 10, NEW_KEY, 0), " ".join(dry.output.split()))
+        self.assertIn(library_settings.PHOTOS_HELD % (13, 13, NEW_KEY, 0), " ".join(dry.output.split()))
         self.assertEqual(0, self.set_model("--apply").exit_code)
 
         own, counted, plans = retire_photo_vectors.plan(self.library)
-        self.assertEqual((NEW_KEY, (10, 10)), (own, counted))
+        self.assertEqual((NEW_KEY, (13, 13)), (own, counted))
         self.assertEqual([None], [planned.refused for planned in plans], "retiring the old vectors was refused")
         self.assertEqual((0, 0), (self.without_a_vector(NEW_KEY), self.without_a_vector(OLD_KEY)))
+
+    def test_a_run_makes_each_clips_vector_of_its_five_frames_and_keeps_frames_1_to_4_beside_it(self):
+        counts = self.embed()
+        self.assertEqual((13, 13, 0, 0, {}, []), (counts["to_embed"], counts["kept"], counts["not_kept"], counts["gone"],
+                                                  counts["unread"], counts["clips_unread"]))
+        self.assertEqual(sorted((os.path.basename(path), 5) for path in self.clip_paths), sorted(self.asked))
+        made = [frame_vector(NEW_DIM, colour) for colour in FIVE_READ]
+        for path in self.clip_paths:
+            held, beside = self.held_new(path)
+            np.testing.assert_allclose(made[0], held, atol=1e-6)
+            self.assertEqual(4, len(beside), "a clip's frames 1 to 4 were not kept with its vector")
+            for want, got in zip(made[1:], beside):
+                np.testing.assert_allclose(want, got, atol=1e-6)
+        for path in self.photos:
+            self.assertEqual([], self.held_new(path)[1], "a photo was given frames")
+        self.assertEqual(0, self.without_a_vector(NEW_KEY))
+        self.assertEqual(3, self.clips[-1].forwards.count(("frames", 5)), "a clip's frames were not one pass")
+
+    def test_a_clip_ffmpeg_cannot_read_is_listed_not_counted_unread_and_one_away_is_tried_again(self):
+        damaged, away = (os.path.basename(path) for path in self.clip_paths[:2])
+        self.answers[damaged] = video_frames.Frames((), video_frames.NO_FRAME, video_frames.THE_FILE)
+        self.answers[away] = video_frames.Frames((), video_frames.SHARE_AWAY, video_frames.THE_MOMENT)
+        result = self.cli("--apply")
+        self.assertEqual(0, result.exit_code, result.output)
+        said = " ".join(result.output.split())
+        self.assertIn("Embedded 11 of 13: 11 kept, 0 not kept (the photo was removed meanwhile, or the write failed); 0 "
+                      "file(s) gone, 1 could not be read: NoFrames x1", said)
+        self.assertIn(tagpup_cli.CLIPS_NOT_EMBEDDED % 1, said)
+        self.assertIn("- %s: %s" % (self.clip_paths[0], video_frames.NO_FRAME), said)
+        self.assertNotIn(video_frames.SHARE_AWAY, said, "the clip away was named as one ffmpeg cannot read")
+        self.assertEqual((None, None), (self.held_new(self.clip_paths[0]), self.held_new(self.clip_paths[1])))
+        self.assertEqual(4, len(self.held_new(self.clip_paths[2])[1]))
+
+        del self.answers[away]   # the share is back: the next run makes it, and tries the damaged one again
+        self.asked.clear()
+        counts = self.embed()
+        self.assertEqual((2, 1, 1), (counts["to_embed"], counts["kept"], len(counts["clips_unread"])))
+        self.assertEqual(sorted([(damaged, 5), (away, 5)]), sorted(self.asked))
+        self.assertEqual(4, len(self.held_new(self.clip_paths[1])[1]))
 
 
 class ARunWaitsForTheCard(_Library):

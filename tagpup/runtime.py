@@ -456,6 +456,10 @@ class _OnTheCard:
         self._turn.ensure()
         return self._model.embed_input(*args, **kwargs)
 
+    def embed_inputs(self, *args, **kwargs):
+        self._turn.ensure()
+        return self._model.embed_inputs(*args, **kwargs)
+
     def embed_text(self, *args, **kwargs):
         self._turn.ensure()
         return self._model.embed_text(*args, **kwargs)
@@ -1033,5 +1037,11 @@ class Runtime:
         _unload(dropped)
 
     def embeddings(self, library, photo_index):
-        """The photos' vectors under the library's CLIP model, kept in `photo_index`."""
-        return search.PhotoEmbeddings(self.clip(library), photo_index)
+        """The photos' vectors under the library's CLIP model, kept in `photo_index`; a clip's made of the frames the
+        machine's ffmpeg gives (ffmpeg)."""
+        return search.PhotoEmbeddings(self.clip(library), photo_index, ffmpeg=self.ffmpeg())
+
+    def ffmpeg(self):
+        """The machine's ffmpeg (tagpup.config.locate_ffmpeg), a prerequisite of every process that makes a clip's
+        vectors (config.ffmpeg_problem, checked where it starts): what PhotoEmbeddings reads a clip's frames with."""
+        return tagpup_config.locate_ffmpeg()

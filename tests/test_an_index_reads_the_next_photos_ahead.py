@@ -75,8 +75,8 @@ FACE_SIDE = scrfd_adaface.NEW_FACE_FLOOR
 class StandIns:
     """CLIP and the face models stood in for, on the real ClipModel and the new library's face model (ScrfdAdaFace, its
     own `picture` of the photo as stored): CLIP's input is the picture's size and colour, its vector those numbers; the
-    detector finds one face at the top left of the picture as stored, its vector the picture's colour. Each picture each
-    was handed is noted, and the threads that handed them."""
+    detector finds one face at the top left of the picture as stored, its vector the picture's colour; a clip's frames
+    are each embedded as a photo is. Each picture each was handed is noted, and the threads that handed them."""
 
     def __init__(self, testcase):
         self.shown, self.detected, self.card_threads = [], [], set()
@@ -92,6 +92,10 @@ class StandIns:
             with stand_ins.lock:
                 stand_ins.shown.append(image_input)
             return [width / 100.0, height / 100.0] + [value / 255.0 for value in colour] + [0.0, 0.0, 1.0]
+
+        def embed_inputs(model, image_inputs):
+            # A clip's frames, in one pass: each the vector embed_input makes of it.
+            return [embed_input(model, image_input) for image_input in image_inputs]
 
         def detect_and_embed(model, picture):
             stand_ins.card_threads.add(threading.current_thread().name)
@@ -109,6 +113,7 @@ class StandIns:
                         mock.patch.object(clip.ClipModel, "_init_model"),
                         mock.patch.object(clip.ClipModel, "picture_input", picture_input),
                         mock.patch.object(clip.ClipModel, "embed_input", embed_input),
+                        mock.patch.object(clip.ClipModel, "embed_inputs", embed_inputs),
                         mock.patch.object(scrfd_adaface.ScrfdAdaFace, "_init_models"),
                         mock.patch.object(scrfd_adaface.ScrfdAdaFace, "missing", return_value=None),
                         mock.patch.object(scrfd_adaface.ScrfdAdaFace, "detect_and_embed", detect_and_embed)):

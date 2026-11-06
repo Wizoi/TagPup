@@ -151,9 +151,12 @@ def count(conn, model):
 
 def key_totals(conn):
     """{key: (vectors, bytes)} of every key the library holds vectors under: one scan of the table, the vectors' lengths
-    read and not the vectors (2.6 s cold on photo_index, 2026-10-24). What a dry run of retiring a photo model's vectors
-    reads (tagpup.services.retire_photo_vectors)."""
-    return {model: (count, int(size)) for model, count, size in conn.execute(
+    read and not the vectors (2.6 s cold on photo_index, 2026-10-24), and one of the clips' frames, whose bytes are
+    counted with their vectors' (a vector deleted takes its frames, embedding_frames_go_with_their_vector). What a dry
+    run of retiring a photo model's vectors reads (tagpup.services.retire_photo_vectors)."""
+    frames = {model: int(size) for model, size in conn.execute(
+        "SELECT model, TOTAL(LENGTH(vector)) FROM embedding_frames GROUP BY model")}
+    return {model: (count, int(size) + frames.get(model, 0)) for model, count, size in conn.execute(
         "SELECT model, COUNT(*), TOTAL(LENGTH(vector)) FROM embeddings GROUP BY model")}
 
 
@@ -165,8 +168,11 @@ def model_of(key):
 
 def next_under(conn, key, after, limit):
     """[(rowid, bytes)] of the next `limit` vectors under `key` above rowid `after`, by rowid: a search of the integer
-    primary key, the vectors' lengths and not the vectors."""
-    return conn.execute("SELECT rowid, LENGTH(vector) FROM embeddings WHERE model = ? AND rowid > ? ORDER BY rowid"
+    primary key, the vectors' lengths and not the vectors, each with its clip's frames' (which go with it), read by the
+    frames' key (photo_id, model)."""
+    return conn.execute("SELECT e.rowid, LENGTH(e.vector) + (SELECT IFNULL(SUM(LENGTH(f.vector)), 0)"
+                        " FROM embedding_frames f WHERE f.photo_id = e.photo_id AND f.model = e.model)"
+                        " FROM embeddings e WHERE e.model = ? AND e.rowid > ? ORDER BY e.rowid"
                         " LIMIT ?", (key, after, limit)).fetchall()
 
 

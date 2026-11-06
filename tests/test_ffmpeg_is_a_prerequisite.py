@@ -3,8 +3,8 @@
 The owner double-clicks TagPup on a machine without ffmpeg (or with one a broken upgrade left that does not run): the
 window says what to install and stays open, and nothing was started -- no running server was asked to make way, no port
 bound, no migration begun. An install hands over to a new version only when that version would start: one without
-ffmpeg leaves the old server running and says why. The CLI's `index`, `thumbs warm` and `sync --apply` say the same
-sentence and write nothing; a sync's dry run needs none. An install says it, and installs. With ffmpeg there, each
+ffmpeg leaves the old server running and says why. The CLI's `index`, `thumbs warm`, `sync --apply` and
+`embed-photos --apply` say the same sentence and write nothing; a sync's dry run needs none. An install says it, and installs. With ffmpeg there, each
 starts as it did.
 """
 import hashlib
@@ -139,7 +139,7 @@ class AnInstallsHandOver(unittest.TestCase):
 
 
 class TheCli(unittest.TestCase):
-    """index, thumbs warm and sync --apply: the sentence, exit 1, nothing written."""
+    """index, thumbs warm, sync --apply and embed-photos --apply: the sentence, exit 1, nothing written."""
 
     def setUp(self):
         self.vl = ViewLibrary(self)
@@ -167,7 +167,8 @@ class TheCli(unittest.TestCase):
     def test_each_index_run_is_refused_with_the_sentence_and_writes_nothing(self):
         folder = os.path.join(self.vl.pictures, "Regatta")
         before = self.files()
-        for args in (("index", folder), ("thumbs", "warm"), ("thumbs", "warm", "--apply"), ("sync", "--apply")):
+        for args in (("index", folder), ("thumbs", "warm"), ("thumbs", "warm", "--apply"), ("sync", "--apply"),
+                     ("embed-photos", "--model", "ViT-Other-14:other-weights", "--apply")):
             for problem in (MISSING, BROKEN):
                 with self.subTest(args=args, problem=problem[:20]):
                     result = self.run_cli(problem, *args)

@@ -14,6 +14,8 @@ to it (set-photo-model): photo_index holds about 244 MB of them that nothing rea
 - A photo removed meanwhile (a sync) takes its vectors with it, and the run counts only what it deleted.
 - A library whose own model does not hold its photos' vectors (rotated since, each rotation taking the vectors away) is
   refused, nothing written: the vectors that would go are the most complete it holds.
+- A clip holds its frames 1 to 4 beside its vector under each model (as the index keeps them): the plan's MB and the
+  run's count them with the vector, and they go with it, the own key's staying (#2571).
 
 The library is made on SigLIP 2 SO400M, a new library's model, and switched to one the test declares in the table of
 photo models (stand_in_models.OTHER_PHOTO_MODEL): SO400M is the old model here. Fictional names; a library in a home of
@@ -292,6 +294,44 @@ class BesideTheRun(_Library):
         self.assertIn("9 vectors under %s deleted" % OLD_KEY, retired.said())
         self.assertEqual([], self.vectors(OLD_KEY))
         self.assertEqual(9, len(self.vectors(NEW_KEY)))
+
+
+class AClipsFramesGoWithItsVector(_Library):
+    """A clip beside the ten photos, indexed under both models: its vector and its frames 1 to 4 under each, as the
+    index keeps them (store.embeddings.put_by_id with its frames)."""
+
+    switch = False
+
+    def setUp(self):
+        super().setUp()
+        path = os.path.join(self.folder, "regatta.mp4")
+        with open(path, "wb") as handle:
+            handle.write(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2048)
+        conn = db.connect(self.library.path)
+        try:
+            photo_id = photo_rows.add_read(conn, path, {"QuickTime:CreateDate": "2021:07:04 18:30:00"})
+            mtime, size = shares.read_stamp(path)
+            for key, dim in ((OLD_KEY, OLD_DIM), (NEW_KEY, NEW_DIM)):
+                store_embeddings.put_by_id(conn, photo_id, key, mtime, size, vector(dim, 20), None,
+                                           frames=[vector(dim, 21 + n) for n in range(4)])
+            conn.commit()
+        finally:
+            conn.close()
+        switched = photo_reembed.switch(self.library, NEW, apply=True)
+        self.assertFalse(switched.refused, switched.refused)
+
+    def test_the_frames_are_counted_with_their_vector_and_go_with_it(self):
+        held, plans = self.plans()
+        self.assertEqual((11, 11), held)
+        (old,) = [planned for planned in plans if planned.key == OLD_KEY]
+        # Eleven vectors and the clip's four frames, each 1152 float32s.
+        self.assertEqual((11, (11 + 4) * OLD_DIM * 4), (old.vectors, old.bytes))
+        with mock.patch.object(retire_photo_vectors, "VECTOR_CHUNK", 4):
+            done = retire_photo_vectors.apply(self.library, old)
+        self.assertEqual((11, old.bytes), (done.deleted, done.bytes), "the run counted the vectors without their frames")
+        frames = "SELECT COUNT(*) FROM embedding_frames WHERE model = ?"
+        self.assertEqual([(0,), (4,)], read(self.library.path, frames, (OLD_KEY,)) + read(self.library.path, frames,
+                                                                                          (NEW_KEY,)))
 
 
 class NotOnItsOwnModel(_Library):

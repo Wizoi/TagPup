@@ -9,8 +9,13 @@ any vector is kept under the key (store.photos.stamps with_vectors, the gate's c
 it stopped, and a second run finds nothing left. Each vector is kept at the row it was read from, by id, a batch
 a transaction (PhotoEmbeddings.keep_batch): a photo removed meanwhile is skipped, never given a row back.
 
+A clip (a row of kind 'video') is shown its frames, as the index shows it them (search.PhotoEmbeddings.prepared,
+vectors; ffmpeg from the runtime): frame 0's vector is its vector, frames 1 to 4 are kept beside it in the same write.
+
 A file that does not decode, or cannot be read, is counted by why, logged, and tried again by the next run (no list of
-skipped photos: DECISIONS 2026-10-17); a file not found is counted as gone. Gone and unread together past UNREAD_LIMIT
+skipped photos: DECISIONS 2026-10-17); a file not found is counted as gone. A clip ffmpeg cannot read as it is
+(search.NoFrames.lasting) is listed apart, as the index lists it, and not counted as unread: it is the file's, not a
+drive away. Gone and unread together past UNREAD_LIMIT
 stop the pass (Unreachable, STOPPED): Windows answers an unmounted drive and a share that stopped answering as files
 not found, and a library's files really gone are a handful (#1838). Faces are never looked at, and nothing is journaled: the table is derived (DECISIONS
 2026-10-16). The pass itself (embed_pass) is the AI pipeline harness's too (scripts/measure_pipeline_holdouts.py).
@@ -21,7 +26,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from tagpup.files import shares
+from tagpup.files import images, shares
 from tagpup.ml import photo_models
 from tagpup.services import search
 from tagpup.services import settings as library_settings
@@ -46,6 +51,10 @@ BATCH = 256
 #: Seconds a photo, read ahead and embedded by SigLIP 2 SO400M on the owner's card (0.034 to 0.041 measured, phase 5
 #: step 2): what the dry run's estimate is made of.
 SECONDS_A_PHOTO = 0.04
+
+#: Seconds a clip: ffmpeg's reads of its five frames, on the read-ahead's threads (an estimate, not measured: the dry
+#: run's guess for the clips among the rows).
+SECONDS_A_CLIP = 2.0
 
 #: The group of settings a switch of photo model acknowledges (validation.SETTING_GROUPS): the consequences the gear's
 #: dialog asks the owner to tick, named by the command line that switches.
@@ -121,8 +130,8 @@ def tag_words(library, model):
 
 
 def _rows(library, key):
-    """[(photo id, path)] of the photos holding no vector under `key`, by id, and how many hold one, read now. A clip
-    is neither: a kind owed no vector (store.photos.owes_a_vector) is never decoded here."""
+    """[(photo id, path)] of the photos owed a vector (store.photos.owes_a_vector: photos and clips) holding none
+    under `key`, by id, and how many hold one, read now."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         rows = [row for row in store_photos.stamps(conn, with_vectors=key, with_kind=True) if store_photos.owes_a_vector(row[4])]
@@ -137,9 +146,10 @@ def plan(library, runtime, model):
     "gone" (of those, the file is not there), "seconds" (the estimate)}. ValueError for a model not to be made."""
     _settings, key = _key_of(runtime, library, model)
     todo, held = _rows(library, key)
-    gone = sum(1 for _photo_id, path in todo if shares.stamp_of(path) is None)   # not a share that does not answer
-    return {"key": key, "photos": len(todo) + held, "held": held, "to_embed": len(todo), "gone": gone,
-            "seconds": (len(todo) - gone) * SECONDS_A_PHOTO}
+    there = [path for _photo_id, path in todo if shares.stamp_of(path) is not None]   # a share away counts there
+    clips = sum(1 for path in there if images.is_clip(path))   # the pass's own test (PhotoEmbeddings.prepared)
+    return {"key": key, "photos": len(todo) + held, "held": held, "to_embed": len(todo), "gone": len(todo) - len(there),
+            "seconds": (len(there) - clips) * SECONDS_A_PHOTO + clips * SECONDS_A_CLIP}
 
 
 def run(library, runtime, model, progress=None, should_stop=None, report=None):
@@ -153,47 +163,57 @@ def run(library, runtime, model, progress=None, should_stop=None, report=None):
     index = search.PhotoIndex(library.path, key)
     index.open()
     try:
-        embeddings = search.PhotoEmbeddings(clip, index)
+        embeddings = search.PhotoEmbeddings(clip, index, ffmpeg=runtime.ffmpeg())
         if embeddings.model_key != key:
             raise RuntimeError("the model's vectors would be kept under %s, not %s" % (embeddings.model_key, key))
 
         def keep(found):
-            return embeddings.keep_batch([(photo_id, vector, stamp) for photo_id, stamp, vector in found])
+            return embeddings.keep_batch([(photo_id, vector, stamp, frames) for photo_id, stamp, vector, frames in found])
 
         with runtime.gpu_turn("making the vectors of %s:%s (%s)" % (model[0], model[1], library.name), (clip,),
                               cancelled=should_stop, report=report):
             todo, held = _rows(library, key)
             if todo:
                 clip.load()
-            counts = embed_pass(clip, [(path, photo_id) for photo_id, path in todo], keep,
+            counts = embed_pass(embeddings, [(path, photo_id) for photo_id, path in todo], keep,
                                 progress=progress, should_stop=should_stop, batch=BATCH)
     finally:
         index.close()
     return dict(counts, key=key, held=held)
 
 
-def embed_pass(clip, todo, keep, progress=None, should_stop=None, workers=6, batch=256, unread_limit=UNREAD_LIMIT):
-    """Each of `todo` [(file, what keep is told of it)] embedded by `clip`: decoded, padded and resized
-    (ClipModel.input_of, never loading the model) on `workers` threads ahead of the forward on this one, as the indexer
-    reads ahead, and handed to `keep([(what, (mtime, size), vector)])` -> how many it kept, `batch` at a time, the last
-    ones too when the pass is stopped (`should_stop`, asked before each photo) or fails: what was kept is not embedded
-    again by the next run. A file not found ("gone"), and a photo that cannot be read (by why, logged), are counted
-    apart; more of the two together than `unread_limit` of the pass (at least 20) raise Unreachable. {"to_embed", "embedded", "kept", "not_kept", "gone",
-    "unread" {why: count}, "stopped", "seconds"}, handed to `progress` after each batch too."""
+def embed_pass(embeddings, todo, keep, progress=None, should_stop=None, workers=6, batch=256,
+               unread_limit=UNREAD_LIMIT):
+    """Each of `todo` [(file, what keep is told of it)] embedded by `embeddings` (search.PhotoEmbeddings): a photo
+    decoded, padded and resized, a clip's frames read by ffmpeg (PhotoEmbeddings.prepared, never loading the model) on
+    `workers` threads ahead of the forward on this one, as the indexer reads ahead, and handed to
+    `keep([(what, (mtime, size), vector, a clip's frames 1 to n or [])])` -> how many it kept, `batch` at a time, the
+    last ones too when the pass is stopped (`should_stop`, asked before each photo) or fails: what was kept is not
+    embedded again by the next run. A file not found ("gone"), and a photo that cannot be read (by why, logged), are
+    counted apart; more of the two together than `unread_limit` of the pass (at least 20) raise Unreachable. A clip
+    ffmpeg cannot read as it is (search.NoFrames.lasting) is neither: its (file, ffmpeg's sentence) joins
+    "clips_unread". {"to_embed", "embedded", "kept", "not_kept", "gone", "unread" {why: count}, "clips_unread",
+    "stopped", "seconds"}, handed to `progress` after each batch too."""
     counts = {"to_embed": len(todo), "embedded": 0, "kept": 0, "not_kept": 0, "gone": 0, "unread": {},
-              "stopped": False, "seconds": 0.0}
+              "clips_unread": [], "stopped": False, "seconds": 0.0}
     limit = max(20, int(unread_limit * len(todo)))
     started = time.perf_counter()
     waiting = []
 
     def read(item):
         stat = os.stat(item[0])   # unbounded: the read of the photo's picture, next, has no deadline (by design)
-        return item, (stat.st_mtime, stat.st_size), clip.input_of(item[0], load=False)
+        return (stat.st_mtime, stat.st_size), embeddings.prepared(item[0], load=False)
 
     def missed(problem=None):
         not_read = counts["gone"] + sum(counts["unread"].values())
         if not_read > limit:
             raise Unreachable(STOPPED % (not_read, len(todo)), counts) from problem
+
+    def not_read(problem):
+        why = type(problem).__name__
+        logger.warning("A photo was not embedded (%s); the next run tries it again.", why)
+        counts["unread"][why] = counts["unread"].get(why, 0) + 1
+        missed(problem)
 
     def hand_over():
         kept = keep(waiting) if waiting else 0
@@ -210,35 +230,41 @@ def embed_pass(clip, todo, keep, progress=None, should_stop=None, workers=6, bat
                 item = next(items, None)
                 if item is None:
                     return
-                pending.append(pool.submit(read, item))
+                pending.append((item, pool.submit(read, item)))
         try:
             fill()
             while pending:
                 if should_stop is not None and should_stop():
                     counts["stopped"] = True
                     break
-                future = pending.popleft()
+                item, future = pending.popleft()
                 fill()
                 try:
-                    item, stamp, picture = future.result()
+                    stamp, prepared = future.result()
                 except FileNotFoundError as problem:   # a file gone, or a drive or share not connected
                     counts["gone"] += 1
                     missed(problem)
                     continue
-                except Exception as problem:   # images.Unreadable, a locked file, a share that does not answer
-                    why = type(problem).__name__
-                    logger.warning("A photo was not embedded (%s); the next run tries it again.", why)
-                    counts["unread"][why] = counts["unread"].get(why, 0) + 1
-                    missed(problem)
+                except search.NoFrames as problem:
+                    if not problem.lasting:   # the moment's: a share away, ffmpeg too slow
+                        not_read(problem)
+                        continue
+                    logger.info("No vector: ffmpeg gave no frame of %s: %s", item[0], problem.problem)
+                    counts["clips_unread"].append((item[0], problem.problem))
                     continue
-                waiting.append((item[1], stamp, clip.embed_input(picture)))
+                except Exception as problem:   # images.Unreadable, a locked file, a share that does not answer
+                    not_read(problem)
+                    continue
+                found = embeddings.vectors(prepared)
+                future = prepared = None   # a clip's frames go with them, not held to the next read
+                waiting.append((item[1], stamp, found[0], found[1:]))
                 counts["embedded"] += 1
                 if len(waiting) >= batch:
                     hand_over()
                     if progress is not None:
                         progress(dict(counts))
         finally:
-            for future in pending:
+            for _item, future in pending:
                 future.cancel()
             hand_over()
     return counts
