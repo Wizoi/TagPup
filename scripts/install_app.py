@@ -417,6 +417,10 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
     say("\nInstalled %s. Start the apps with the launchers above." % name)
     for line in still_running(name, destination, hand_over):
         say(line)
+    # Said, not refused: the install is the code; ffmpeg is the machine's, installed beside it (owner, 2026-11-06).
+    problem = tagpup_config.ffmpeg_problem()
+    if problem:
+        say("%s. TagPup and the CLI's index will not start until it is installed." % problem)
     return name, removed
 
 
