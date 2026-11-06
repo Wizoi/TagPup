@@ -12,6 +12,9 @@ quotes, whitespace -- and the change is paid for out of the padding before `<?xp
 length; only `grow=True` lets it grow, laying `reserve` bytes of fresh padding. A value equal to what the packet holds
 changes no byte; a Bag keeps the order it is given, a repeat dropped.
 
+`blank()` is a wrapped packet holding nothing, with RESERVE bytes of padding: a clip with no XMP is given it,
+edited, as its first packet (tagpup.files.segment_edits.new_packet; tagpup.files.clip_patch appends it).
+
 Either answers `containers.Refusal`, a sentence, for a packet it does not wholly understand: it never repairs one and never returns
 bytes on doubt (an edit is parsed again and read back before it is answered). What it refuses, with the counts of the
 three libraries behind each rule: docs/domains/files.md, "The XMP packet editor".
@@ -355,6 +358,21 @@ def padding(size):
     the first line short. Padding of one size is always the same bytes, so an edit undone gives the packet back."""
     lines = (b"\n" + b" " * 100) * (size // 101 + 1)
     return lines[len(lines) - size + 1:] + b"\n" if size else b""
+
+
+#: A packet holding one empty rdf:Description, laid out as ExifTool lays one (its padding follows: blank).
+_BLANK = (b"<?xpacket begin='\xef\xbb\xbf' id='W5M0MpCehiHzreSzNTczkc9d'?>\n"
+          b"<x:xmpmeta xmlns:x='adobe:ns:meta/'>\n"
+          b"<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n\n"
+          b" <rdf:Description rdf:about=''/>\n"
+          b"</rdf:RDF>\n"
+          b"</x:xmpmeta>\n")
+
+
+def blank():
+    """A wrapped packet holding no property, with RESERVE bytes of padding, which a first save fills: the packet of a
+    clip that has none (2,104 live, counted 2026-11-05), always the same bytes."""
+    return _BLANK + padding(RESERVE) + b"<?xpacket end='w'?>"
 
 
 def _padded(pad, need, grow, reserve):
