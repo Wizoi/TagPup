@@ -27,9 +27,10 @@ import test_a_clip_patched_in_place as patched  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
-from tagpup.core import fields, processes  # noqa: E402
+from tagpup.core import fields, paths, processes  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.files import containers, field_values, images, metadata, segment_edits  # noqa: E402
+from tagpup.files import containers, field_values, images, in_place, metadata, segment_edits  # noqa: E402
+from tagpup.services import file_only  # noqa: E402
 from tagpup.store import photos  # noqa: E402
 
 EXIFTOOL = patched.EXIFTOOL
@@ -218,6 +219,55 @@ class AClipInTheLibrary(unittest.TestCase):
         reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Pier"]})
         self.assertIn(segment_edits.KEPT_IN_QUICKTIME, reply.get_json()["error"])
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "the last is kept")
+
+    def change_states(self, photo_id):
+        return [state for state, in self.vl.rows("SELECT state FROM change_files WHERE photo_id = ?", photo_id)]
+
+    def test_a_tag_save_from_the_photo_panel_writes_the_clips_xmp_and_journals_it_done(self):
+        clip, = self.index(self.clip_path)
+        reply = self.post("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((["Trips/Coast"], ["Trips/Coast"]), self.read_now(self.clip_path))
+        self.assertEqual(["done"], self.change_states(clip), "one journaled file, done")
+        self.assertEqual(["Trips/Coast"], self.tags_of(clip))
+
+    def test_a_selection_of_a_photo_and_a_clip_tagged_writes_both(self):
+        photo, clip = self.index(self.photo_path, self.clip_path)
+        reply = self.post("library/bulk-edit", {"op": "tags", "selection": {"ids": [photo, clip]},
+                                                "params": {"add": ["Trips/Coast"]}})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        done = reply.get_json()
+        self.assertEqual((2, 0), (done["changed"], done["error_count"]), done["errors"])
+        self.assertEqual(["Trips/Coast"], self.read_now(self.clip_path)[1])
+        self.assertEqual(["Trips/Coast"], self.read_now(self.photo_path)[1])
+
+    def test_add_to_all_selected_with_the_clip_open_in_a_player_names_it_and_writes_the_photo_after_it(self):
+        photo, clip = self.index(self.photo_path, self.clip_path)
+        with open(self.clip_path, "rb"):
+            before = self.read_bytes(self.clip_path)
+            reply = self.post("photos/bulk-tags", {"paths": [self.clip_path, self.photo_path], "add_tags": ["Trips/Coast"]})
+        body = reply.get_json()
+        self.assertIn(in_place.OPEN_ELSEWHERE, body["error"])
+        self.assertEqual([paths.key(self.photo_path)], [paths.key(path) for path in body["written"]],
+                         "the clip's refusal does not stop the write: the photo after it is written")
+        self.assertEqual(["Trips/Coast"], self.read_now(self.photo_path)[1])
+        self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was")
+        self.assertEqual([], self.tags_of(clip))
+
+    def read_bytes(self, path):
+        with open(path, "rb") as handle:
+            return handle.read()
+
+    def test_a_write_of_a_folder_the_library_does_not_hold_refuses_a_clip_with_writing_clips_on(self):
+        before = self.read_bytes(self.clip_path)
+
+        def plan_one(path, held):
+            raise AssertionError("a clip is not planned")
+
+        result = file_only.write_fields(EXIFTOOL, [self.clip_path], sorted(fields.CLIP_FIELDS), plan_one)
+        self.assertEqual([images.CLIP_NOT_EDITED], [why for _path, why in result.errors],
+                         "no journal to settle a patch a crash cut short")
+        self.assertEqual(before, self.read_bytes(self.clip_path))
 
 
 if __name__ == "__main__":
