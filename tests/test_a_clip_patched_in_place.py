@@ -434,9 +434,10 @@ class AClipSavedInPlace(FfmpegClips):
         self.no_exiftool = mock.patch.object(exiftool_session.ExifToolSession, "__init__",
                                              side_effect=AssertionError("ExifTool asked by a clip's patch"))
 
-    def save(self, path, words, **kw):
+    def save(self, path, words, keywords_elsewhere=()):
         with self.no_exiftool:
-            return in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words), **kw),
+            return in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words),
+                                                                                 keywords_elsewhere=keywords_elsewhere),
                                        lambda record, before: self.saved.append((record, before)))
 
     def bytes_of(self, path):
@@ -525,7 +526,8 @@ class AClipSavedInPlace(FfmpegClips):
             raise Crash("killed half way")
 
         with self.no_exiftool, self.assertRaises(Crash):
-            in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words)), killed_after_saving)
+            in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words), keywords_elsewhere=()),
+                                killed_after_saving)
         self.assertEqual((original, in_place.OLD), (self.bytes_of(path), in_place.held(path, *self.saved[-1])))
         with mock.patch.object(in_place, "_write", torn), self.assertRaises(Crash):
             self.save(path, words)

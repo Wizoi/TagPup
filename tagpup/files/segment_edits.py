@@ -76,14 +76,15 @@ KEPT_IN_QUICKTIME = ("its keywords are also held in the clip's QuickTime Subject
                      "was written")
 
 
-def new_packet(old, values, keywords_elsewhere=()):
+def new_packet(old, values, *, keywords_elsewhere):
     """(the clip's new XMP packet, the fields of `values` left stale) of a keyword or caption save, `values` naming only
     fields.CLIP_FIELDS (another raises ValueError: the caller refuses it before planning). `old` is the packet the clip's
     one XMP box holds (bytes, at most xmp_packet.LIMIT), None for a clip with none, which is given xmp_packet.blank().
     The packet is `old` itself when it already holds the values (None, a clip with none and nothing to write). None when
     it is not a patch: a value it cannot spell, a packet the editor refuses (the clip waits for the whole-file rewrite).
     containers.Refusal(KEPT_IN_QUICKTIME) for a write clearing XMP:Subject of a clip holding `keywords_elsewhere`, the
-    keywords its QuickTime Subject holds, as the caller read them."""
+    keywords its QuickTime Subject holds, as the caller read them: required, so a caller cannot forget it and let the
+    last keyword come off XMP only to be read back from QuickTime (#2538)."""
     unknown = sorted(set(values) - fields.CLIP_FIELDS)
     if unknown:
         raise ValueError("%s is not a field a clip's write names (fields.CLIP_FIELDS)" % unknown[0])
