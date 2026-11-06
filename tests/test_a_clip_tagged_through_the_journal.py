@@ -14,7 +14,9 @@ write command (field_values._command) fails the test if asked. No ExifTool write
 without ffmpeg or ExifTool. Fictional names only.
 """
 import contextlib
+import json
 import os
+import struct
 import sys
 import unittest
 from unittest import mock
@@ -22,10 +24,13 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_a_clip_patched_in_place as patched  # noqa: E402
+import web_client  # noqa: E402
+from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
-from tagpup.core import fields  # noqa: E402
+from tagpup.core import fields, processes  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.files import containers, field_values, images, segment_edits  # noqa: E402
+from tagpup.files import containers, field_values, images, metadata, segment_edits  # noqa: E402
+from tagpup.store import photos  # noqa: E402
 
 EXIFTOOL = patched.EXIFTOOL
 TOOLS = patched.TOOLS
@@ -121,6 +126,98 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
             self.assert_refused(segment_edits.KEPT_IN_QUICKTIME, path, keywords([]))
             self.write(path, keywords(["Trips/Harbour"]))
         self.read_back(path, ("Trips/Harbour",))
+
+
+def with_quicktime_subject(path, words):
+    """Give the .mp4 at `path` (ffmpeg's: its moov the last box) a QuickTime Subject holding `words`, as the 14 live clips
+    hold theirs: a Microsoft Xtra atom in the moov's udta, ExifTool's family-1 group 'Microsoft', one value each (counted
+    read-only 2026-11-05). ExifTool does not write it, so the test lays it as Windows does (ExifTool's Microsoft.pm,
+    ProcessXtra: entry size, name length, name, a 4-byte count, then each value's size, type 8 and its UTF-16LE text)."""
+    values = b""
+    for word in words:
+        text = (word + "\0").encode("utf-16-le")
+        values += struct.pack(">IH", 6 + len(text), 8) + text
+    entry = struct.pack(">I", len(b"Subject")) + b"Subject" + struct.pack(">I", len(words)) + values
+    entry = struct.pack(">I", 4 + len(entry)) + entry
+    xtra = struct.pack(">I", 8 + len(entry)) + b"Xtra" + entry
+    udta = struct.pack(">I", 8 + len(xtra)) + b"udta" + xtra
+    with open(path, "rb") as handle:
+        data = handle.read()
+    at = 0
+    while True:
+        size, kind = struct.unpack(">I4s", data[at:at + 8])
+        if at + size == len(data):
+            break
+        at += size
+    assert kind == b"moov", "ffmpeg's .mp4 ends with its moov"
+    with open(path, "wb") as handle:
+        handle.write(data[:at] + struct.pack(">I", size + len(udta)) + data[at + 4:] + udta)
+
+
+@unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
+class AClipInTheLibrary(unittest.TestCase):
+    """A library holding a photo and a real ffmpeg clip, each row recorded by the indexer's own read
+    (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own) with writing
+    clips on."""
+
+    def setUp(self):
+        self.app, self.home = web_client.app_for(self, "tagpup")
+        self.client = self.app.test_client()
+        self.vl = ViewLibrary(self, "library", home=self.home)
+        for patcher in (mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL), writing_clips()):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.vl.tree("Trips/Coast", "Trips/Harbour", "Trips/Pier")
+        self.folder = os.path.join(self.vl.pictures, "Harbour")
+        os.makedirs(self.folder, exist_ok=True)
+        self.photo_path = os.path.join(self.folder, "pier.jpg")
+        make_jpeg(self.photo_path, size=(32, 32))
+        self.clip_path = os.path.join(self.folder, "jetty.mp4")
+        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                              "-t", "1", "-pix_fmt", "yuv420p", self.clip_path], capture_output=True)
+        self.assertEqual(0, made.returncode, made.stderr)
+
+    def index(self, *photo_paths):
+        """Record each of `photo_paths` as the indexer reads it now; their ids."""
+        ids = []
+        for record in metadata.MetadataExtractor(EXIFTOOL).batch_read(list(photo_paths)):
+            photos.record_indexed(self.vl.conn, record["path"], record)
+            ids.append(photos.ensure_row(self.vl.conn, record["path"]))
+        self.vl.conn.commit()
+        return ids
+
+    def tags_of(self, photo_id):
+        return json.loads(self.vl.rows("SELECT tags FROM photos WHERE id = ?", photo_id)[0][0] or "[]")
+
+    def read_now(self, path):
+        """The tags the index reads of `path` now, and its XMP:Subject."""
+        record = metadata.MetadataExtractor(EXIFTOOL).batch_read([path])[0]
+        return record["tags"], fields.field_values(record["raw_metadata"].get("XMP:Subject"))
+
+    def post(self, route, body):
+        return self.client.post("/library/api/" + route, json=body)
+
+    def test_a_tag_added_to_a_clip_whose_tags_are_in_its_quicktime_subject_keeps_them(self):
+        with_quicktime_subject(self.clip_path, ["Trips/Coast", "Trips/Pier"])
+        clip, = self.index(self.clip_path)
+        self.assertEqual(["Trips/Coast", "Trips/Pier"], self.tags_of(clip), "the index reads its QuickTime Subject")
+        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "add_tags": ["Trips/Harbour"]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        both = ["Trips/Coast", "Trips/Pier", "Trips/Harbour"]
+        self.assertEqual((both, both), self.read_now(self.clip_path), "its XMP holds the old tags and the new")
+        self.assertEqual(both, self.tags_of(clip), "and so does its row")
+
+    def test_a_tag_taken_off_a_clip_that_holds_it_in_its_quicktime_subject_stays_off(self):
+        with_quicktime_subject(self.clip_path, ["Trips/Coast", "Trips/Pier"])
+        clip, = self.index(self.clip_path)
+        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Coast"]})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path),
+                         "the index reads its XMP, not the QuickTime copy TagPup does not write")
+        self.assertEqual(["Trips/Pier"], self.tags_of(clip))
+        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Pier"]})
+        self.assertIn(segment_edits.KEPT_IN_QUICKTIME, reply.get_json()["error"])
+        self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "the last is kept")
 
 
 if __name__ == "__main__":
