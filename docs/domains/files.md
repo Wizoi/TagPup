@@ -99,8 +99,23 @@ file's XMP; kr-track and renton_parkrun none; counted 2026-11-03), and a save fr
 photo indexed or saved afterwards is derived by the rule (the indexer, `follow_fields`); the rows of before are derived
 again, once, from their own raw_metadata by `scripts/rederive_captions.py` (`refresh_rows.rederive`: a dry run that
 counts and rehearses, `--apply` one journaled change, undoable, the search words with it), run with `--apply` on each
-library before the install and again after it (a save by the still-installed old server between the run and
-the install re-derives that row the old way; the script is idempotent).
+library (idempotent). It orders the stored captions -- the caption sort, a library card's caption, the search words --
+and is not needed before an install: the page's title is `vocabulary.title_of` over the row's raw_metadata, the rule
+the save compares by, whatever order the row stores (#2582).
+
+A photo's title and its caption are two values (DECISIONS 2026-11-06). The title is XMP:Title, else IPTC:ObjectName
+(`vocabulary.TITLE_COPIES`, written by `fields.title_fields`: the photo panel's save); the caption is the Description,
+XMP's else IPTC's Caption-Abstract (`DESCRIPTION_COPIES`; EXIF:ImageDescription and XPComment are written copies, never
+read), which no page writes. The title shown is `vocabulary.title_of`: the title, else the Description, so the index's
+`captions` hold the title first. A save of a photo with no title, its Description shown as the title, moves it: the
+Title gets the title saved and every caption field holding the text shown is cleared in the same write
+(`tagging._caption_moved`), whether the title saved is that text, another, or none: one rule, so a cleared title stays
+cleared. A photo with a title of its own keeps its Description. Rows stored before the rule put the Description first
+(photo_index 8,263, kr-track and renton_parkrun none; counted 2026-11-06): their page shows the title all the same and
+saves; until `scripts/rederive_captions.py --apply` orders them, as above, the order by caption reads
+their Description first. A library card carries no caption of its own (`store.library_view.card_rows`): the title a
+card shows is the panel's record's (`web/tagpup/library-source.js`), `title_of`, as a folder's page records are; only
+the order by caption (`caption_sql`) reads the stored `captions`.
 
 ## Rows removed by a whole sync (DECISIONS 2026-10-28)
 
@@ -370,16 +385,17 @@ bodies changed (every marker and length byte the header's) and the fields it lef
 caller rewrites the file, nothing written. It is the one caller of the three editors
 (`tests/test_the_block_editors_have_one_caller.py`; one named exception, `in_place`'s `xmp_packet.padding`).
 
-- **What maps to what** (`fields.EDITED_AS`): XMP:Subject, XMP:HierarchicalSubject, XMP:Description,
+- **What maps to what** (`fields.EDITED_AS`): XMP:Subject, XMP:HierarchicalSubject, XMP:Description, XMP:Title,
   XMP:DateTimeOriginal, XMP:CreateDate, XMP-xmpMM:PreservedFileName to the packet's dc:subject,
-  lr:hierarchicalSubject, dc:description, exif:DateTimeOriginal, xmp:CreateDate, xmpMM:PreservedFileName; EXIF
+  lr:hierarchicalSubject, dc:description, dc:title, exif:DateTimeOriginal, xmp:CreateDate, xmpMM:PreservedFileName; EXIF
   DateTimeOriginal, CreateDate, ImageDescription, XPComment, XPKeywords and Orientation to the EXIF block's (not the
-  three SubSecTime: no write names them, a Date Taken is set to the second); IPTC:Keywords and Caption-Abstract to the IPTC block's. EXIF:Orientation is also written to a
+  three SubSecTime: no write names them, a Date Taken is set to the second); IPTC:Keywords, Caption-Abstract and ObjectName to the IPTC block's. EXIF:Orientation is also written to a
   tiff:Orientation the packet holds, never one made (ExifTool's ungrouped "Orientation"). Not mapped, so no patch:
-  XMP:Title and IPTC:ObjectName (no writer writes them), the DocumentID (a rewrite mints it), a bake's fields.
+  the DocumentID (a rewrite mints it), a bake's fields.
 - **The XMP-only rule** (DECISIONS 2026-11-03; `fields.XMP_ONLY`): a keyword save goes to XMP alone while its
-  XMP:Subject is not empty, a caption save while its XMP:Description is not; IPTC:Keywords and EXIF:XPKeywords, or
-  IPTC:Caption-Abstract, EXIF:ImageDescription and EXIF:XPComment, are answered stale and keep their bytes. The last
+  XMP:Subject is not empty, a title save while its XMP:Title is not, a caption save while its XMP:Description is
+  not; IPTC:Keywords and EXIF:XPKeywords, IPTC:ObjectName, or IPTC:Caption-Abstract, EXIF:ImageDescription and
+  EXIF:XPComment, are answered stale and keep their bytes. The last
   keyword taken off, or a caption cleared, writes every copy (#2433: XMP holding none, the reader would take IPTC's and
   the value would come back), a patch where they all fit, else a rewrite. XMP is given the planner's whole set
   (`tagging.keywords_planner` reads XMP and IPTC), so a photo whose keywords were in IPTC alone (151 in photo_index,

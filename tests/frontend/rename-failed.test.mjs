@@ -43,11 +43,11 @@ const status = (document) => document.getElementById("status-text").textContent;
 afterEach(() => closeAllApps());
 
 describe("A save whose rename failed", () => {
-  test("says the caption saved and why the photo was not renamed, in one line", async (t) => {
+  test("says the title saved and why the photo was not renamed, in one line", async (t) => {
     const app = await openA(t, served.rename_failed);
     await saveCaption(app, "Start line");
     assert.equal(status(app.document),
-      `Saved the caption, but could not rename the photo: ${served.rename_failed.rename_failed}`);
+      `Saved the title, but could not rename the photo: ${served.rename_failed.rename_failed}`);
     assert.ok(!app.document.querySelector('.write-queue-entry[data-status="failed"]'), "the caption saved: no Retry");
   });
 

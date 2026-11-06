@@ -46,4 +46,33 @@ describe("a rotate refreshes every image of the photo", () => {
     assert.match(thumb().getAttribute("src"), /v=2000/);
     assert.match(document.getElementById("main-image").getAttribute("src"), /v=2000/);
   });
+
+  test("a rotate whose stamp the route could not look at reads the photo again for its real stamp", async (t) => {
+    // The route answers shares.known_stamp(path) or (None, None): a share slow to answer gives no stamp.
+    let scans = 0;
+    const server = new FakeServer()
+      .on("/api/folder/scan", () => {
+        scans += 1;
+        return PHOTOS.map((p) => ({ ...p, size: 500, ...(scans > 1 && p.filename === "a.jpg" ? { mtime: 3000, size: 640 } : {}) }));
+      })
+      .on("/api/taxonomy/tree", [])
+      .on("/api/people", [])
+      .on("/api/tags", [])
+      .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
+      .on("/api/folder/suggest-status", { status: "idle" })
+      .on("/api/photo/rotate", { success: true, mtime: null, size: null });
+    const { window, document } = await loadApp("tagpup", { server, t });
+    window.alert = () => {};
+    await openFolder({ window, document }, "D:\\p");
+    await new Promise((r) => window.setTimeout(r, 60));
+    document.querySelector('#photo-list .photo-item-file[data-path="D:\\\\p\\\\a.jpg"]')
+      .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => window.setTimeout(r, 40));
+    const before = scans;
+    document.getElementById("btn-rotate-left").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => window.setTimeout(r, 120));
+
+    assert.equal(scans, before + 1, "the photo was read again after a rotate with no stamp");
+    assert.match(document.getElementById("main-image").getAttribute("src"), /v=3000/);
+  });
 });

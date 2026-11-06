@@ -50,6 +50,7 @@ SCENARIO = frozenset({
     "test_a_crash_part_way_is_settled_at_the_next_start",
     "test_a_file_holds_what_exiftool_kept",
     "test_stale_record_precondition",
+    "test_a_photos_title_and_caption",
     "test_derived_follow_writes",
     "test_just_look_edits",
     "test_just_look_delete_and_rename_rules",

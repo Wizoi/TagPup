@@ -536,7 +536,7 @@ function buildThumbnailCard(photo) {
 
                     statusDot.className = data.rename_failed ? 'status-indicator-dot error' : 'status-indicator-dot';
                     statusText.textContent = data.rename_failed
-                        ? `Saved the caption, but could not rename the photo: ${data.rename_failed}` : 'Ready';
+                        ? `Saved the title, but could not rename the photo: ${data.rename_failed}` : 'Ready';
                     saveToLocalStorageCache();
                 } else {
                     throw new Error(data.error || 'Failed to save');

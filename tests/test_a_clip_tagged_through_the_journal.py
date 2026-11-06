@@ -74,7 +74,7 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
 
     def test_with_writing_clips_off_every_write_of_a_clip_is_refused_and_exiftool_never_writes_it(self):
         path = self.clip("clip.mov")
-        for values in (keywords(["Trips/Coast"]), fields.caption_fields("Jetty at dusk"),
+        for values in (keywords(["Trips/Coast"]), fields.title_fields("Jetty at dusk"),
                        fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]}):
             with self.subTest(sorted(values)[0]):
                 self.assert_refused(images.CLIP_NOT_EDITED, path, values)
@@ -87,7 +87,7 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
                            {**keywords(["Trips/Coast"]), **fields.date_taken_fields("2020:01:01 12:00:00")}):
                 with self.subTest(sorted(values)[0]):
                     self.assert_refused(images.CLIP_NOT_EDITED, path, values)
-            values = {**keywords(["Trips/Coast"]), **fields.caption_fields("Jetty at dusk")}
+            values = {**keywords(["Trips/Coast"]), **fields.title_fields("Jetty at dusk")}
             self.assertEqual(segment_edits.clip_stale_of(values), self.write(path, values))
         self.assertEqual(1, len(self.saved), "one patch, its record saved before its bytes")
         self.read_back(path, ("Trips/Coast",))

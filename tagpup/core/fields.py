@@ -177,10 +177,10 @@ def keyword_fields(flat, hierarchical):
 
 
 def caption_fields(caption):
-    """Every field a caption write sets. An empty caption clears them all.
-
-    Written by saving a photo and by the CLI's writer, which each kept their own copy
-    of this list.
+    """Every field a photo's caption is held in -- its extended information, not its title (title_fields) -- and what
+    a write of `caption` sets each to. An empty caption clears them all. No page writes a caption (DECISIONS
+    2026-11-06, THE TITLE AND THE CAPTION ARE TWO VALUES): a save clears the ones holding the text it moves into the
+    title (tagpup.services.tagging), and nothing else writes them.
     """
     return {
         "XMP:Description": caption,
@@ -192,21 +192,30 @@ def caption_fields(caption):
     }
 
 
-#: The fields a keyword or caption save leaves holding what they held when it patches the file's XMP alone, by the XMP
-#: field whose value makes it so: every field keyword_fields and caption_fields set outside XMP, refreshed by the next
+def title_fields(title):
+    """Every field a photo's title is held in, and what a write of `title` sets each to: the one list. The title is
+    what the page's title field saves and Smart Rename names a photo by (DECISIONS 2026-11-06, THE TITLE AND THE
+    CAPTION ARE TWO VALUES); an empty title clears them both."""
+    return {"XMP:Title": title, "IPTC:ObjectName": title}
+
+
+#: The fields a keyword, title or caption save leaves holding what they held when it patches the file's XMP alone, by
+#: the XMP field whose value makes it so: every field keyword_fields, title_fields and caption_fields set outside XMP, refreshed by the next
 #: rewrite that writes them (DECISIONS 2026-11-03, A KEYWORD OR CAPTION SAVE WRITES THE XMP COPY ONLY). The index reads
 #: XMP (vocabulary.KEYWORD_COPIES). A group is left only while its XMP field's value is not empty: XMP holding none, the
 #: reader would take the left copy and the value removed would come back (#2433; tagpup.files.segment_edits).
 XMP_ONLY = {
     "XMP:Subject": tuple(field for field in keyword_fields([], []) if not field.startswith("XMP:")),
+    "XMP:Title": tuple(field for field in title_fields("") if not field.startswith("XMP:")),
     "XMP:Description": tuple(field for field in caption_fields("") if not field.startswith("XMP:")),
 }
 
-#: The fields a journaled write of a clip may name (DECISIONS 2026-11-05, M7): a keyword or caption save's. Only the XMP
+#: The fields a journaled write of a clip may name (DECISIONS 2026-11-05, M7): a keyword or title save's (a page
+#: writes no caption, DECISIONS 2026-11-06). Only the XMP
 #: field of each group is written, into the clip's XMP packet (tagpup.files.segment_edits.new_packet); every other copy is
 #: left as it was, whatever the XMP value (segment_edits.clip_stale_of): a clip's EXIF and IPTC, if any, are not TagPup's
 #: to write. A Date Taken, a rotation and a rename of a clip are refused before they are planned.
-CLIP_FIELDS = frozenset(keyword_fields([], [])) | frozenset(caption_fields(""))
+CLIP_FIELDS = frozenset(keyword_fields([], [])) | frozenset(title_fields(""))
 
 #: The fields a journaled write of a clip may read (tagpup.services.file_changes.leave_out_clips): those it may write
 #: and those its tags are read from, a clip's QuickTime Subject among them (read, never written).
@@ -215,12 +224,13 @@ CLIP_READ = CLIP_FIELDS | frozenset(TAG_SOURCE_FIELDS)
 #: Where TagPup's own JPEG writer (tagpup.files.segment_edits) puts each field a journaled write names: (segment kind,
 #: the property or field its editor names it by), xmp_packet's, exif_block's or iptc_block's. A target after the first
 #: is written only where its segment holds it already, as ExifTool's write of "Orientation" (WRITTEN_AS) updates an XMP
-#: tiff:Orientation held and makes none. A field not here is not the own writer's: XMP:Title and IPTC:ObjectName (no
-#: writer writes them), the DocumentID (minted by a rewrite), a bake's fields; a write naming one is ExifTool's.
+#: tiff:Orientation held and makes none. A field not here is not the own writer's: the DocumentID (minted by a
+#: rewrite), a bake's fields; a write naming one is ExifTool's.
 EDITED_AS = {
     "XMP:Subject": (("xmp", "dc:subject"),),
     "XMP:HierarchicalSubject": (("xmp", "lr:hierarchicalSubject"),),
     "XMP:Description": (("xmp", "dc:description"),),
+    "XMP:Title": (("xmp", "dc:title"),),
     "XMP:DateTimeOriginal": (("xmp", "exif:DateTimeOriginal"),),
     "XMP:CreateDate": (("xmp", "xmp:CreateDate"),),
     "XMP-xmpMM:PreservedFileName": (("xmp", "xmpMM:PreservedFileName"),),
@@ -232,6 +242,7 @@ EDITED_AS = {
     ORIENTATION: (("exif", "Orientation"), ("xmp", "tiff:Orientation")),
     "IPTC:Keywords": (("iptc", "IPTC:Keywords"),),
     "IPTC:Caption-Abstract": (("iptc", "IPTC:Caption-Abstract"),),
+    "IPTC:ObjectName": (("iptc", "IPTC:ObjectName"),),
 }
 
 

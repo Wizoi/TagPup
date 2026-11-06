@@ -245,20 +245,25 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 #: A value a file holds twice, in XMP and in IPTC's older copy: (XMP's fields, IPTC's), each under both names a read
 #: records it by. XMP is the copy read when it holds the value, a text that is not blank; IPTC's only when it holds
 #: none (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS): a keyword or caption save may patch XMP alone and
-#: leave IPTC holding what it held before (tagpup.core.fields.XMP_ONLY).
+#: leave IPTC holding what it held before (tagpup.core.fields.XMP_ONLY). A title's copies (TITLE_COPIES) are
+#: XMP:Title and IPTC:ObjectName (tagpup.core.fields.title_fields), a caption's (DESCRIPTION_COPIES) the Description.
 #: A clip's keywords may be in its QuickTime Subject (fields.CLIP_KEYWORDS), which TagPup reads and never writes: read
 #: as XMP's copy when XMP holds none. ExifTool answers it beside XMP's, and the bare "Subject" is whichever it answered
 #: last (tagpup.files.metadata.structured), so a copy is read by the first of its names that holds a value
 #: (_read_copy), the prefixed names first.
 KEYWORD_COPIES = (("XMP:Subject", fields.CLIP_KEYWORDS, "Subject"), ("IPTC:Keywords", "Keywords"))
-CAPTION_COPIES = ((("XMP:Description", "Description"), ("IPTC:Caption-Abstract", "Caption-Abstract")),
-                  (("XMP:Title", "Title"), ("IPTC:ObjectName", "ObjectName")))
+TITLE_COPIES = (("XMP:Title", "Title"), ("IPTC:ObjectName", "ObjectName"))
+DESCRIPTION_COPIES = (("XMP:Description", "Description"), ("IPTC:Caption-Abstract", "Caption-Abstract"))
+#: The title first, then the caption: the first a photo holds is its title as the page shows it (title_of). A photo
+#: with a Description and no Title shows the Description as its title (DECISIONS 2026-11-06, THE TITLE AND THE
+#: CAPTION ARE TWO VALUES: the first save moves it into the title, tagpup.services.tagging).
+CAPTION_COPIES = (TITLE_COPIES, DESCRIPTION_COPIES)
 
 #: Keywords, flat and hierarchical: every field a photo's tags may be read from. The hierarchy is XMP's alone.
 KEYWORD_FIELDS = KEYWORD_COPIES[0] + KEYWORD_COPIES[1]
 HIERARCHY_FIELDS = ("XMP:HierarchicalSubject", "HierarchicalSubject")
 
-#: Captions and titles, most wanted first: the first a photo holds (by CAPTION_COPIES) is the one shown.
+#: Titles and captions, the title first: the first a photo holds (by CAPTION_COPIES) is the title shown.
 CAPTION_FIELDS = tuple(name for copies in CAPTION_COPIES for copy in copies for name in copy)
 
 
@@ -322,15 +327,28 @@ def extract_tags(meta):
 
 
 def extract_captions(meta):
-    """A photo's captions and titles -- each distinct text once, in order.
+    """A photo's title and caption -- each distinct text once, in order: the index's `captions`, which a search reads
+    every word of.
 
-    The reader records every field twice, prefixed and bare, and the same title is
+    The reader records every field twice, prefixed and bare, and the same text is
     usually written to several fields, so reading them all listed each caption two or
-    more times: 99.6% of indexed rows carried a duplicate. The first caption is the
-    one everything shows: the description, XMP's when it holds one, else IPTC's
-    Caption-Abstract, then the title, XMP's, else IPTC's ObjectName (CAPTION_COPIES).
+    more times: 99.6% of indexed rows carried a duplicate. The first is the photo's
+    title as everything shows it (title_of): XMP's Title when it holds one, else IPTC's
+    ObjectName, else the description, XMP's, else IPTC's Caption-Abstract (CAPTION_COPIES).
     """
     return list(dict.fromkeys(c for copies in CAPTION_COPIES for c in _read_copy(meta, copies) if c))
+
+
+def title_of(meta):
+    """A photo's title as the page shows it, the index orders by and Smart Rename names it by: the first of its
+    captions (extract_captions), trimmed; "" for none. The one rule of which text is the title."""
+    found = extract_captions(meta)
+    return found[0] if found else ""
+
+
+def holds_title(meta):
+    """Does the photo hold a title of its own (TITLE_COPIES), not only a description shown as one?"""
+    return bool(_read_copy(meta, TITLE_COPIES))
 
 
 def captions_held(meta):

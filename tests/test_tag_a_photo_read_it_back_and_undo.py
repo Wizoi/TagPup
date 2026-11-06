@@ -295,26 +295,36 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual(["Beach", "Places/Quay/Pier"], keywords_of(a), "a deep tag whole, no level of it alone")
         raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
         self.assertEqual(MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"], raw)
-        self.assertEqual("Quay at dusk", raw["Description"])
+        self.assertEqual("Quay at dusk", raw["Title"])
         self.assertTrue(any(":" not in key for key in raw), "a read records the bare names too")
         written = os.stat(a).st_mtime_ns
-        again = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
-                                   "2019-06-15T10:30:00", EXIFTOOL, "")
+        # The row of a file that holds the save already is made to say what the file holds: a row left saying another
+        # title is put right by the save that writes nothing (the read of the caption fields under bare names broke
+        # it: "Could not record what 1 file(s) hold", and the row stayed).
+        db.write_with_connection(self.library.path, lambda conn: conn.execute(
+            "UPDATE photos SET raw_metadata = ? WHERE path = ?",
+            (json.dumps(dict(raw, Title="Quay at noon", **{"XMP:Title": "Quay at noon"})), a)))
+        with self.assertNoLogs(file_changes.logger.name, level="WARNING"):
+            again = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
+                                       "2019-06-15T10:30:00", EXIFTOOL, "")
         self.assertEqual((True, 0, None, written), (again.ok, again.changed, again.details["change"],
                                                     os.stat(a).st_mtime_ns), "a file holding it all was written")
+        followed = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
+        self.assertEqual(("Quay at dusk", "Quay at dusk"), (followed["XMP:Title"], followed["Title"]),
+                         "the row of a file holding the save already was not made to say what it holds")
 
         undone = self.undo(change)
 
         self.assertEqual((1, []), (undone.changed, undone.errors))
         self.assertEqual(["Beach"], keywords_of(a))
-        self.assertIsNone(field_of(a, "XMP:Description"))
+        self.assertEqual((None, None), (field_of(a, "XMP:Title"), field_of(a, "IPTC:ObjectName")))
         self.assertEqual(["Beach"], self.indexed(a))
 
     def test_a_save_takes_a_date_refuses_a_tag_it_may_not_set_and_answers_a_write_that_fails(self):
         a = self.make_read("a.jpg")
         refused = tagging.save_photo(self.library, a, "Start", ["Beach", "Places|Harbour"], None, EXIFTOOL, "")
         self.assertIn('"|"', refused.refused)
-        self.assertEqual((["Beach"], None), (keywords_of(a), field_of(a, "XMP:Description")), "a refused save wrote")
+        self.assertEqual((["Beach"], None), (keywords_of(a), field_of(a, "XMP:Title")), "a refused save wrote")
         timed = tagging.save_photo(self.library, a, "Start", ["Beach"], "2019-06-15T10:30:07", EXIFTOOL, "")
         self.assertTrue(timed.ok, timed.message())
         self.assertEqual("2019:06:15 10:30:07", str(field_of(a, "EXIF:DateTimeOriginal")), "the date in the same write")
@@ -404,7 +414,7 @@ class ASaveFromThePage(S.Fresh):
         body = reply.get_json()
         self.assertEqual((200, True, path), (reply.status_code, body["success"], body["new_path"]), reply.data)
         self.assertIn("held by Viewer", body["rename_failed"])
-        self.assertEqual("Start line", S.caption_in(path))
+        self.assertEqual("Start line", S.title_in(path))
 
     def test_a_save_that_renames_or_attempts_no_rename_has_no_warning(self):
         path, record = self.smart_renamed()
@@ -434,7 +444,7 @@ class ASaveFromThePage(S.Fresh):
         with self.flipping_once(path), self.assertLogs(file_changes.logger, "WARNING"):
             saved = self.save(self.record(photo_id), title="A caption")
         self.assertEqual((200, 1), (saved.status_code, saved.get_json()["pictures_refused"]), saved.data)
-        self.assertEqual("A caption", S.caption_in(path))
+        self.assertEqual("A caption", S.title_in(path))
         with self.flipping_once(path), self.assertLogs(file_changes.logger, "WARNING"):
             turned = self.post("/photo/rotate", {"path": path, "direction": "right"})
         self.assertEqual((200, 1), (turned.status_code, turned.get_json()["pictures_refused"]), turned.data)

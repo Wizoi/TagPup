@@ -17,8 +17,9 @@ written by the real ExifTool (XmpIsTheCopyRead). Reading the union of both copie
 test_a_keyword_left_only_in_iptc_is_no_tag_and_a_rename_does_not_bring_it_back and
 test_the_caption_shown_is_xmps_and_a_save_from_it_is_not_refused; preferring an XMP packet over IPTC whatever it holds
 fails test_a_photo_with_iptc_keywords_and_no_xmp_keywords_keeps_its_tags. A row stored by the old rule (IPTC's caption
-first) is refused on save until scripts/rederive_captions.py derives it again: without it
-test_a_row_stored_by_the_old_rule_is_refused_on_save_until_it_is_derived_again fails.
+first) shows the file's title all the same (the page reads it by vocabulary.title_of from the row's raw_metadata, #2582)
+and its save is accepted; scripts/rederive_captions.py orders its stored captions and search words again: without it
+test_a_row_stored_by_the_old_rule_is_derived_again_and_its_save_is_accepted fails.
 
 Rows are seeded the way the indexer writes them -- native paths, and raw_metadata in
 the shape real rows have, bare aliases and all -- never through the code under test.
@@ -44,7 +45,6 @@ from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of, requir
 
 from tagpup.core.fields import keyword_fields  # noqa: E402
 from tagpup.core.vocabulary import extract_tags  # noqa: E402
-from tagpup.core.result import CHANGED_ON_DISK  # noqa: E402
 from tagpup.services import photos as photo_actions, refresh_rows, tagging  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import derived  # noqa: E402
@@ -262,6 +262,12 @@ class XmpIsTheCopyRead(FilesCase):
     def captions(self, path):
         return json.loads(self.rows("SELECT captions FROM photos WHERE path = ?", (path,))[0][0])
 
+    def shown(self, path):
+        """The title the page shows of the photo, from its row as the library view hands it to page_record."""
+        captions, raw = self.rows("SELECT captions, raw_metadata FROM photos WHERE path = ?", (path,))[0]
+        return photo_actions.page_record(path, {"captions": json.loads(captions or "[]"),
+                                                "raw_metadata": json.loads(raw or "{}")})["title"]
+
     def test_a_keyword_left_only_in_iptc_is_no_tag_and_a_rename_does_not_bring_it_back(self):
         # What a save that patches XMP alone leaves when it takes a keyword off: IPTC still holds it.
         a = self.made("a.jpg", {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach", "Cross Country"],
@@ -274,12 +280,15 @@ class XmpIsTheCopyRead(FilesCase):
     def test_the_caption_shown_is_xmps_and_a_save_from_it_is_not_refused(self):
         a = self.made("a.jpg", {"XMP:Description": "Relay at the lake", "IPTC:Caption-Abstract": "Relay at dusk"})
         self.assertEqual(["Relay at the lake"], self.captions(a))
-        shown = photo_actions.page_record(a, {"captions": self.captions(a), "raw_metadata": {}})["title"]
+        shown = self.shown(a)
         self.assertEqual("Relay at the lake", shown)
         result = tagging.save_photo(self.library, a, "Relay at the lake, later", [], None, EXIFTOOL, "",
                                     base={"tags": [], "title": shown})
-        self.assertEqual((True, "Relay at the lake, later", "Relay at the lake, later"),
-                         (result.ok, field_of(a, "XMP:Description"), field_of(a, "IPTC:Caption-Abstract")))
+        # The title is saved to the title fields; the Description it showed leaves the caption, and IPTC's caption,
+        # another text, is kept (DECISIONS 2026-11-06; #2583).
+        self.assertEqual((True, "Relay at the lake, later", None, "Relay at dusk"),
+                         (result.ok, field_of(a, "XMP:Title"), field_of(a, "XMP:Description"),
+                          field_of(a, "IPTC:Caption-Abstract")))
         # A blank XMP description holds none: 12,469 photo_index rows hold one beside an IPTC caption (counted
         # 2026-11-03), and show the IPTC caption.
         b = self.made("b.jpg", {"IPTC:Caption-Abstract": "Relay at dusk"},
@@ -292,7 +301,7 @@ class XmpIsTheCopyRead(FilesCase):
             code = rederive_captions.main(["--db", self.library.path, *apply])
         return code, said.getvalue()
 
-    def test_a_row_stored_by_the_old_rule_is_refused_on_save_until_it_is_derived_again(self):
+    def test_a_row_stored_by_the_old_rule_is_derived_again_and_its_save_is_accepted(self):
         # photo_index: 383 rows whose stored captions the old rule (every caption field, IPTC's first) made, 104 of them
         # showing IPTC's caption where the file's XMP holds another; kr-track and renton_parkrun none (2026-11-03).
         a = self.made("a.jpg", {"XMP:Description": "Relay at the lake", "IPTC:Caption-Abstract": "Relay at dusk"})
@@ -312,13 +321,8 @@ class XmpIsTheCopyRead(FilesCase):
 
         self.assertEqual(([photo_id], [photo_id]), (found("dusk"), found("lake")))
 
-        def save(title):
-            shown = photo_actions.page_record(a, {"captions": self.captions(a), "raw_metadata": {}})["title"]
-            return tagging.save_photo(self.library, a, title, [], None, EXIFTOOL, "", base={"tags": [], "title": shown})
-
-        refused = save("Relay at the lake, later")
-        self.assertEqual((False, CHANGED_ON_DISK, "Relay at the lake"),
-                         (refused.ok, refused.refused_kind, field_of(a, "XMP:Description")))
+        # The page shows the file's caption whatever the stored order (#2582): a save of the row is not refused.
+        self.assertEqual("Relay at the lake", self.shown(a))
 
         code, said = self.rederive()
         self.assertEqual(0, code, said)
@@ -336,8 +340,9 @@ class XmpIsTheCopyRead(FilesCase):
         self.assertEqual((0, 0), (refresh_rows.rederive(self.library, apply=True).changed,
                                   refresh_rows.apart(self.library)[0]["apart"]))
 
-        saved = save("Relay at the lake, later")
-        self.assertEqual((True, "Relay at the lake, later"), (saved.ok, field_of(a, "XMP:Description")))
+        saved = tagging.save_photo(self.library, a, "Relay at the lake, later", [], None, EXIFTOOL, "",
+                                   base={"tags": [], "title": self.shown(a)})
+        self.assertEqual((True, "Relay at the lake, later"), (saved.ok, field_of(a, "XMP:Title")))
 
     def test_a_row_a_server_saved_between_the_plan_and_the_write_is_skipped_and_the_run_succeeds(self):
         # The server has the library open: a row it saves after the plan was read is derived by the new rule already.
