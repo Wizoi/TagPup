@@ -488,6 +488,14 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
+        if (images.is_clip(path) and field_values.takes_off_every_keyword(after)
+                and fields.field_values(now.get(fields.CLIP_KEYWORDS))):
+            # A clip left with no keyword in its XMP while its QuickTime Subject (read, never written) holds one: its tags
+            # would be read from there again (the last tag taken off one of the 14 live clips holding them only there). The
+            # writer's refusal, said here from what was read, as the writer says it when the plan did not read QuickTime:
+            # its XMP being empty already, the plan would call it held and the tag-tree edit say nothing of why.
+            result.fail(path, segment_edits.KEPT_IN_QUICKTIME)
+            continue
         if _holds_already(path, before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))

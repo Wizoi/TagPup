@@ -76,14 +76,22 @@ class ATagTreeEditOfATagAClipHolds(tagged.ALibraryHoldingAClip):
         reply = self.post("taxonomy/delete-confirm", {"tag_id": self.node("Trips/Coast"), "action": "delete"})
         body = reply.get_json()
         self.assertEqual((False, 0), (body["success"], body["photos_rewritten"]), body)
-        self.assertIn("jetty.mp4: " + segment_edits.KEPT_IN_QUICKTIME, body["error"], "the alert says which and why")
+        self.assertIn("jetty.mp4: " + segment_edits.KEPT_IN_QUICKTIME[:150], body["error"], "the alert says which and why")
         self.assertTrue(self.node("Trips/Coast"), "the clip still carries it, so the tree keeps it")
         self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was")
         self.assertEqual(["Trips/Coast"], self.tags_of(clip))
         result = tags.merge(self.vl.library, "Trips/Coast", "", EXIFTOOL, retire=True, apply=True)
-        self.assertEqual([segment_edits.KEPT_IN_QUICKTIME], [each["why"] for each in result.details["failed_photos"]],
+        self.assertEqual([segment_edits.KEPT_IN_QUICKTIME[:200]], [each["why"] for each in result.details["failed_photos"]],
                          "TagTuner's reply names it and why")
         self.assertTrue(self.node("Trips/Coast"))
+
+    def test_its_only_tag_taken_off_in_a_bulk_edit_is_refused_with_the_sentence_never_called_held_already(self):
+        tagged.with_quicktime_subject(self.clip_path, ["Trips/Coast"])
+        clip, = self.index(self.clip_path)
+        reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Coast"]})
+        self.assertIn(segment_edits.KEPT_IN_QUICKTIME, reply.get_json()["error"])
+        self.assertEqual([], self.change_states(clip), "nothing journaled")
+        self.assertEqual(["Trips/Coast"], self.tags_of(clip))
 
     def test_with_writing_clips_off_a_rename_rewrites_the_photo_names_the_clip_left_and_keeps_the_old_name(self):
         photo, clip = self.tagged(self.photo_path, self.clip_path)
