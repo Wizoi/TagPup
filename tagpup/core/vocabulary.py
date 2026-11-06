@@ -19,6 +19,8 @@ works on what they hand over, and touches neither.
 import collections
 import unicodedata
 
+from tagpup.core import fields
+
 SEPARATOR = "/"
 
 
@@ -244,7 +246,11 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 #: records it by. XMP is the copy read when it holds the value, a text that is not blank; IPTC's only when it holds
 #: none (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS): a keyword or caption save may patch XMP alone and
 #: leave IPTC holding what it held before (tagpup.core.fields.XMP_ONLY).
-KEYWORD_COPIES = (("XMP:Subject", "Subject"), ("IPTC:Keywords", "Keywords"))
+#: A clip's keywords may be in its QuickTime Subject (fields.CLIP_KEYWORDS), which TagPup reads and never writes: read
+#: as XMP's copy when XMP holds none. ExifTool answers it beside XMP's, and the bare "Subject" is whichever it answered
+#: last (tagpup.files.metadata.structured), so a copy is read by the first of its names that holds a value
+#: (_read_copy), the prefixed names first.
+KEYWORD_COPIES = (("XMP:Subject", fields.CLIP_KEYWORDS, "Subject"), ("IPTC:Keywords", "Keywords"))
 CAPTION_COPIES = ((("XMP:Description", "Description"), ("IPTC:Caption-Abstract", "Caption-Abstract")),
                   (("XMP:Title", "Title"), ("IPTC:ObjectName", "ObjectName")))
 
@@ -257,7 +263,7 @@ CAPTION_FIELDS = tuple(name for copies in CAPTION_COPIES for copy in copies for 
 
 
 def _held_caption_fields():
-    from tagpup.core import fields   # the one spelling of the fields a caption write sets
+    # fields: the one spelling of the fields a caption write sets
     written = [name for field in fields.caption_fields("") for name in (field, field.split(":", 1)[-1])]
     return CAPTION_FIELDS + tuple(name for name in dict.fromkeys(written) if name not in CAPTION_FIELDS)
 
@@ -289,9 +295,15 @@ def _values(meta, fields):
 
 def _read_copy(meta, copies):
     """The values of one value held twice (KEYWORD_COPIES, a pair of CAPTION_COPIES): XMP's when it holds one, else
-    IPTC's. A field present but blank holds none."""
-    xmp, iptc = copies
-    return _values(meta, xmp) or _values(meta, iptc)
+    IPTC's, each read by the first of its names that holds a value (a photo's bare name holds what its prefixed one
+    does; a clip's bare "Subject" may be its QuickTime copy, read only when XMP holds none). A field present but blank
+    holds none."""
+    for names in copies:
+        for name in names:
+            found = _values(meta, (name,))
+            if found:
+                return found
+    return []
 
 
 def extract_tags(meta):

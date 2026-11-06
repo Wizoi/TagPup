@@ -30,6 +30,7 @@ import own_home  # noqa: E402
 import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import fields, processes  # noqa: E402
+from tagpup.core.result import Refused  # noqa: E402
 from tagpup.files import clip_patch, containers, exiftool_session, in_place, segment_edits, xmp_packet  # noqa: E402
 from tagpup.files.containers import XMP_UUID, Box, Video  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -434,9 +435,10 @@ class AClipSavedInPlace(FfmpegClips):
         self.no_exiftool = mock.patch.object(exiftool_session.ExifToolSession, "__init__",
                                              side_effect=AssertionError("ExifTool asked by a clip's patch"))
 
-    def save(self, path, words, **kw):
+    def save(self, path, words, keywords_elsewhere=()):
         with self.no_exiftool:
-            return in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words), **kw),
+            return in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words),
+                                                                                 keywords_elsewhere=keywords_elsewhere),
                                        lambda record, before: self.saved.append((record, before)))
 
     def bytes_of(self, path):
@@ -491,12 +493,23 @@ class AClipSavedInPlace(FfmpegClips):
                 self.assertIsNone(self.save(path, ("Wren Ashcombe",)))
                 self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
 
+    def test_a_share_that_fails_part_way_through_the_walk_is_could_not_be_read_not_no_patch(self):
+        """#2540: a read that fails while the clip's boxes are walked raises, so the caller says the clip could not be
+        read (and tries again), never that it cannot be patched."""
+        path = self.clip("first.mp4")
+        before = self.bytes_of(path)
+        gone = OSError(64, "The specified network name is no longer available")
+        with mock.patch.object(containers, "_read_video", side_effect=gone), self.assertRaises(OSError) as raised:
+            self.save(path, ("Wren Ashcombe",))
+        self.assertEqual(64, raised.exception.errno)
+        self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
+
     @unittest.skipUnless(os.name == "nt", "a file open elsewhere is refused by Windows' sharing")
     def test_a_clip_open_in_another_program_is_refused_at_once_with_a_sentence(self):
         path = self.clip("first.mp4")
         before = self.bytes_of(path)
         with open(path, "rb"):
-            with self.assertRaises(in_place.Refused) as refused:
+            with self.assertRaises(Refused) as refused:
                 self.save(path, ("Wren Ashcombe",))
         self.assertIn("open in another program", str(refused.exception))
         self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
@@ -525,7 +538,8 @@ class AClipSavedInPlace(FfmpegClips):
             raise Crash("killed half way")
 
         with self.no_exiftool, self.assertRaises(Crash):
-            in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words)), killed_after_saving)
+            in_place.patch_clip(path, lambda old: segment_edits.new_packet(old, keywords(words), keywords_elsewhere=()),
+                                killed_after_saving)
         self.assertEqual((original, in_place.OLD), (self.bytes_of(path), in_place.held(path, *self.saved[-1])))
         with mock.patch.object(in_place, "_write", torn), self.assertRaises(Crash):
             self.save(path, words)

@@ -286,17 +286,23 @@ PRESENT, GONE, AWAY = "present", "gone", "away"
 AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
 
 
-def leave_out_clips(result, photo_paths, unreadable="fail"):
-    """The paths of `photo_paths` that are not clips (images.is_clip), in order. A clip's file is never written
-    (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a write over every
-    photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for nothing, planned and
-    journaled for nothing, and never the error that stops a write at its first (`stop_at_first_error`): the photos named
-    beside it are written. The one place of the refusal, asked by every writer of photo files before it reads one
-    (write_fields, file_only.write_fields) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps a name;
-    a save of a clip is refused before its rename."""
+def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
+    """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
+    `read`, the fields it reads of each file, may patch: only while writing clips is on (field_values.CLIP_PATCH_IN_PLACE)
+    and only a keyword or caption save (every field read in fields.CLIP_READ; DECISIONS 2026-11-05, M7). Any other clip
+    is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
+    write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
+    nothing, planned and journaled for nothing, and never the error that stops a write at its first
+    (`stop_at_first_error`): the photos named beside it are written. A Save carrying a Date Taken reads it, so it is
+    refused whole. The one place of the refusal, asked by every writer of photo files before it reads one (write_fields,
+    which gives `read`; file_only.write_fields, which does not: a clip of a folder the library does not hold has no
+    journal to settle a patch a crash cut short) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps
+    a name; a save of a clip is refused before its rename."""
+    patched = (read is not None and field_values.CLIP_PATCH_IN_PLACE
+               and set(read) <= fields.CLIP_READ)
     photos = []
     for path in photo_paths:
-        if images.is_clip(path):
+        if images.is_clip(path) and not patched:
             (result.skip if unreadable == "skip" else result.fail)(path, images.CLIP_NOT_EDITED)
         else:
             photos.append(path)
@@ -395,11 +401,11 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                               stop_at_first_error, et, held, whole, on_planned, alongside, on_chunk)
 
 
-def _holds_already(before, after):
-    """Does a file holding `before` hold what a write of `after` would leave it holding: `after`, but for the fields the
-    writer leaves as they were (fields.as_patched of field_values.left_as_they_were; `after` itself unless the own
-    writer patches)? The plan's one question of a file it need not write."""
-    return fields.reads_same(before, fields.as_patched(before, after, field_values.left_as_they_were(after)))
+def _holds_already(path, before, after):
+    """Does the file at `path` holding `before` hold what a write of `after` would leave it holding: `after`, but for the
+    fields the writer leaves as they were (fields.as_patched of field_values.left_as_they_were; `after` itself unless the
+    own writer patches, or a clip's)? The plan's one question of a file it need not write."""
+    return fields.reads_same(before, fields.as_patched(before, after, field_values.left_as_they_were(after, path)))
 
 
 def _refused_whole(photo_paths, why):
@@ -440,8 +446,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     if problem:
         result.refuse(problem)
         return result
-    # A clip is left out before anything is read of it (leave_out_clips).
-    stored = leave_out_clips(result, [paths.stored(p) for p in photo_paths], unreadable)
+    # A clip is left out before anything is read of it (leave_out_clips), unless this write may patch it.
+    stored = leave_out_clips(result, [paths.stored(p) for p in photo_paths], unreadable, read)
     batch = batches.current()
     if fresh is None:
         # A photo on a share that does not answer is its error at once: read, it would cost ExifTool's whole deadline
@@ -482,13 +488,15 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if _holds_already(before, after) and not (alongside is not None and alongside.wants(path)):
+        if _holds_already(path, before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))
             continue
         planned.append((path, before, after, plan.detail))
     _follow(library, followed)
-    wrote, read_whole = {}, ({} if whole else None)
+    # What each file read back whole holds, for _read_back not to read it again: every file of a `whole` write, a clip's
+    # of any (_carry).
+    wrote, read_whole = {}, {}
     if not planned:
         return result
     if batch is not None and batch.stop.is_set():
@@ -518,7 +526,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             now = planned[n][1] if fresh is not None else None
             try:
                 outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
-                                      wrote=wrote, now=now, whole=read_whole, stall_stops=True,
+                                      wrote=wrote, now=now, whole=read_whole if whole or images.is_clip(path) else None,
+                                      stall_stops=True,
                                       held_out=not (alongside is not None and alongside.wants(path)))
             except _Stalled:
                 stalled = row
@@ -529,7 +538,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                 written[path] = detail      # held already, as a file found holding it at the plan is
                 continue
             if outcome == "done":
-                if not _holds_already(planned[n][1], planned[n][2]):
+                if not _holds_already(path, planned[n][1], planned[n][2]):
                     result.changed += 1       # a file held what it was to hold: its rows alone were written
                 if isinstance(detail, dict) and row.followed:
                     detail["faces_turned"] = row.followed
@@ -542,7 +551,9 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             if row.read_only:
                 # Told apart, and an error all the same: a run that stops at its first error stops here too.
                 result.details.setdefault("read_only", []).append(path)
-            if stop_at_first_error:
+            if stop_at_first_error and not isinstance(why, Refused):
+                # A clip the writer refused (open in another program, not patchable, its last QuickTime keyword) is its
+                # own error, as a clip leave_out_clips refuses is: the photos after it are written.
                 file_journal.withdraw(library.path, [r.id for r in rows[n + 1:]])
                 break
         for row in _read_back(et, library, wrote, read_whole):
@@ -779,8 +790,11 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     a conflict. A file written goes in `wrote`, for _read_back. `now` is what the file
     holds when the caller has just read it in this session; otherwise it is read here.
     `whole`, a dict, asks for the file written to be read back whole and recorded so
-    (_read_whole). Returns (outcome, why): `finished`, "conflict" or "failed"; OUT, with `held_out`, as _held_or_conflict
+    (_read_whole); a clip's always is (its patch appends an XMP box: its row says what a scan reads, stamped with the new
+    size). Returns (outcome, why): `finished`, "conflict" or "failed"; OUT, with `held_out`, as _held_or_conflict
     says. `stall_stops`, a forward write's: a file ExifTool does not answer for raises _Stalled (_read_now)."""
+    if whole is None and images.is_clip(row.path):
+        whole = {}
     settled = _held_or_conflict(et, library, row, origin, target, finished, now, stall_stops=stall_stops, held_out=held_out)
     if settled is not None:
         return settled

@@ -44,8 +44,8 @@ range, the record saying its size after). No other byte is read, nor any hash ta
 2026-11-03). It is not a patch's, nothing written, for no MOV/MP4/M4V, two XMP boxes, a box over OLD_MOST, a packet the
 writer cannot make, or a clip clip_patch will not place (a tail, no moov, fragments): such a clip is not written until
 the whole-file rewrite (owner, 2026-11-05, Q2). It is opened once, alone, as a photo is; one another program holds open
-(a player, an editor) is refused at once with a sentence (Refused, OPEN_ELSEWHERE; owner, 2026-11-05, Q7), never
-waited for. A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
+(a player, an editor) is refused at once with a sentence (tagpup.core.result.Refused, OPEN_ELSEWHERE; owner,
+2026-11-05, Q7), never waited for. A crash after its record is saved, part-way or after the last byte is settled by its bytes like a photo's
 (held: OLD, TORN, NEW); a torn grown file is put back to its old bytes and size (put_back).
 """
 import base64
@@ -53,7 +53,8 @@ import io
 import os
 import threading
 
-from tagpup.files import clip_patch, containers, shares, xmp_packet
+from tagpup.core.result import Refused
+from tagpup.files import clip_patch, containers, lock_owners, shares, xmp_packet
 
 VERSION = 2
 
@@ -71,16 +72,10 @@ class Away(OSError):
     """The share of the photo did not answer a read or write of it in SECONDS. What a write left is settled by its bytes
     against the record the journal saved (held), the next time."""
 
-class Refused(Exception):
-    """A patch that will not be made, and why, as a sentence: nothing was written."""
-
 
 #: Why a clip open in another program when it is saved is refused at once, never waited for (owner, 2026-11-05).
 OPEN_ELSEWHERE = ("it is open in another program (a player, an editor): close it there and save again; nothing was "
                   "written")
-#: Windows' errors of a file another program holds open: a sharing violation, a lock violation. Not access denied
-#: (lock_owners.HELD counts it too), which a read-only file answers as well.
-_OPEN_ELSEWHERE_ERRORS = (32, 33)
 
 #: What a file holds against its record (held).
 NEW, OLD, TORN, NEITHER = "new", "old", "torn", "neither"
@@ -392,15 +387,18 @@ def patch_clip(path, new_packet, saving):
 
 def _packet_of(handle):
     """(the clip's layout, the packet its one XMP box holds, None for none) of the open file, or None when it is not a
-    patch's: no MOV/MP4/M4V, two XMP boxes, or one holding more than clip_patch.OLD_MOST. Reads the boxes' headers and
-    the packet, no other byte."""
+    patch's: no MOV/MP4/M4V, or no XMP box a patch reads (clip_patch.xmp_box). Raises the OSError of a read that failed
+    on the way (a share gone part-way through the walk), which is "could not be read", never "not a patch's" (#2540).
+    Reads the boxes' headers and the packet, no other byte."""
     layout = containers.read(handle)
-    if not isinstance(layout, containers.Video) or len(layout.xmp) > 1:
+    if isinstance(layout, containers.Unreadable) and layout.error is not None:
+        raise layout.error
+    if not isinstance(layout, containers.Video):
         return None
     if not layout.xmp:
         return layout, None
-    (_, box), = layout.xmp
-    if box.end - box.payload > clip_patch.OLD_MOST:
+    box = clip_patch.xmp_box(layout)
+    if box is None:
         return None
     return layout, _read_at(handle, box.payload, box.end - box.payload)
 
@@ -422,7 +420,7 @@ def _opened_to_patch(path):
     except Away:
         raise
     except OSError as error:
-        if getattr(error, "winerror", None) in _OPEN_ELSEWHERE_ERRORS:
+        if getattr(error, "winerror", None) in lock_owners.SHARING:
             raise Refused(OPEN_ELSEWHERE) from None
         raise
 

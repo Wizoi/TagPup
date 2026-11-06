@@ -309,8 +309,8 @@ class AKeywordOrCaptionSave(unittest.TestCase):
 class AClipsSave(unittest.TestCase):
     """The packet of a clip's XMP box made new by a keyword or caption save; the clip's file is in_place.patch_clip's."""
 
-    def made(self, old, values, **kw):
-        found = segment_edits.new_packet(old, values, **kw)
+    def made(self, old, values, keywords_elsewhere=()):
+        found = segment_edits.new_packet(old, values, keywords_elsewhere=keywords_elsewhere)
         self.assertIsInstance(found, tuple, found)
         return found
 
@@ -356,11 +356,11 @@ class AClipsSave(unittest.TestCase):
 
     def test_a_packet_the_editor_refuses_is_no_patch_and_a_field_not_a_clips_is_refused(self):
         with self.assertLogs("tagpup.files.segment_edits", "INFO") as said:
-            self.assertIsNone(segment_edits.new_packet(b"<x:xmpmeta>", keywords(["Pier"])))
+            self.assertIsNone(segment_edits.new_packet(b"<x:xmpmeta>", keywords(["Pier"]), keywords_elsewhere=()))
         self.assertIn("not well-formed", said.output[0])
         for field in (fields.ORIENTATION, *fields.date_taken_fields("2019-06-15T10:30:00")):
             with self.subTest(field), self.assertRaises(ValueError):
-                segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]})
+                segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]}, keywords_elsewhere=())
         self.assertEqual(set(keywords([])) | set(caption("")), set(fields.CLIP_FIELDS))
 
 

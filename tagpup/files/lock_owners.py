@@ -84,8 +84,11 @@ KNOWN = {
 TAGPUP = {"python": "another TagPup process", "pythonw": "another TagPup process",
           "exiftool": "ExifTool, which TagPup started", "exiftool(-k)": "ExifTool, which TagPup started"}
 
-#: Windows' error numbers of a file held open by another program: access denied, sharing violation, lock violation.
-HELD = (5, 32, 33)
+#: Windows' error numbers of a file another program has open: a sharing violation, a lock violation. Never access denied,
+#: which a read-only file answers as well (in_place refuses a clip open elsewhere by these alone).
+SHARING = (32, 33)
+#: Windows' error numbers of a file held open by another program: access denied, and SHARING.
+HELD = (5,) + SHARING
 #: What an error says in words (ExifTool's, which has no number) when a held file is the likely cause.
 HELD_WORDS = re.compile(r"permission denied|access is denied|used by another process|sharing violation|"
                         r"error renaming temporary file|locked by another", re.IGNORECASE)

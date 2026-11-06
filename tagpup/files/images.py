@@ -241,11 +241,19 @@ def is_clip(path):
     return kind_of(path) == "video"
 
 
-#: Why a clip's file is not written: a write of its tags, caption, Date Taken, turn or name is ExifTool's rewrite of the
-#: whole file -- gigabytes, over a share -- and the date the library shows is read from the clip's own QuickTime dates,
-#: which it does not change (DECISIONS 2026-11-02, items 1 and 3). The one sentence of the refusal
-#: (tagpup.services.file_changes.leave_out_clips).
-CLIP_NOT_EDITED = "Videos cannot be edited in TagPup yet: this video's file was left as it is."
+#: Why a clip's file is not written: a write of its Date Taken, turn or name is ExifTool's rewrite of the whole file --
+#: gigabytes, over a share -- and the date the library shows is read from the clip's own QuickTime dates, which it does
+#: not change (DECISIONS 2026-11-02, items 1 and 3); its tags and caption are patched into its XMP only while writing
+#: clips is on (field_values.CLIP_PATCH_IN_PLACE; DECISIONS 2026-11-05, M7). The one sentence of the refusal
+#: (tagpup.services.file_changes.leave_out_clips, field_values.write).
+CLIP_NOT_EDITED = ("TagPup writes only a video's tags and caption, and only while writing videos is turned on; it does "
+                   "not change a video's Date Taken, turn or name: this video's file was left as it is.")
+
+#: Why a clip whose tags or caption are saved is not written, when writing clips is on (field_values.CLIP_PATCH_IN_PLACE):
+#: its XMP cannot be patched where it is (a tail after its last box, two XMP boxes, no moov; in_place.patch_clip), and
+#: ExifTool's rewrite of the whole file is not made (DECISIONS 2026-11-05, M7, Q2).
+CLIP_NOT_PATCHED = ("TagPup cannot save into this video's file yet (its boxes are laid out in a way TagPup does not "
+                    "patch): nothing was written.")
 
 #: Why a clip is not deleted: a clip on a share goes through this PC's Recycle Bin as a copy of the whole file
 #: (DECISIONS 2026-11-02, item 7, a later merge). The one sentence of the refusal (tagpup.files.recycle_bin.problem).
