@@ -6,6 +6,11 @@ keyword or caption save in XMP alone while XMP keeps a value (the other copies r
 last keyword comes off -- or None, and the write goes to the rewrite with nothing written. The headers here are laid
 out as a camera's file after an ExifTool write (a big-endian EXIF block with its values after each table, an XMP packet
 with ExifTool's padding, a Photoshop block with its digest); the names are fictional.
+
+A clip's save (M7, AClipsSave): `segment_edits.new_packet` makes the clip's new XMP packet from the one its box holds
+-- Adobe's wrapped packet edited where it stands, the bare one grown, the blank one for a clip with none -- every copy
+outside XMP left stale, also when the XMP value is cleared; the last keyword taken off a clip whose keywords are in
+QuickTime's Subject is refused with a sentence (owner, 2026-11-05: 14 live clips).
 """
 import hashlib
 import io
@@ -17,7 +22,9 @@ from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(WORKSPACE_DIR))
+sys.path.insert(0, WORKSPACE_DIR)
 
+import test_xmp_packet_edits_what_it_owns as shapes  # noqa: E402
 from tagpup.core import dates, fields  # noqa: E402
 from tagpup.files import (containers, exif_block, identity, in_place, iptc_block, names,  # noqa: E402
                           segment_edits, xmp_packet)
@@ -297,6 +304,64 @@ class AKeywordOrCaptionSave(unittest.TestCase):
         longer = mock.Mock(side_effect=lambda body, changes: containers.Edited(body + b" ", False))
         with mock.patch.object(xmp_packet, "edit", longer), self.assertRaises(AssertionError):
             segment_edits.new_header(layout, data, keywords([PERSON, "Shore"]))
+
+
+class AClipsSave(unittest.TestCase):
+    """The packet of a clip's XMP box made new by a keyword or caption save; the clip's file is in_place.patch_clip's."""
+
+    def made(self, old, values, **kw):
+        found = segment_edits.new_packet(old, values, **kw)
+        self.assertIsInstance(found, tuple, found)
+        return found
+
+    def test_the_bare_packet_is_grown_and_its_own_properties_kept(self):
+        new, stale = self.made(shapes.BARE, keywords([PERSON, "Pier"]))
+        self.assertGreater(len(new), len(shapes.BARE))
+        held = xmp_packet.read(new)
+        self.assertEqual(([PERSON, "Pier"], [PERSON], "2017-08-19T09:41:27+01:00"),
+                         (held["dc:subject"], held["lr:hierarchicalSubject"], held["exif:DateTimeOriginal"]))
+        self.assertEqual(("IPTC:Keywords", "EXIF:XPKeywords"), stale)
+
+    def test_adobes_wrapped_packet_is_edited_where_it_stands(self):
+        new, stale = self.made(shapes.PREMIERE, {**keywords(["Pier"]), **caption("The pier at noon")})
+        self.assertEqual(len(shapes.PREMIERE), len(new))
+        held = xmp_packet.read(new)
+        self.assertEqual((["Pier"], "The pier at noon", "xmp.did:7c2d0e4a"),
+                         (held["dc:subject"], held["dc:description"], held["xmpMM:DocumentID"]))
+        self.assertEqual({"IPTC:Keywords", "EXIF:XPKeywords", "IPTC:Caption-Abstract", "EXIF:ImageDescription",
+                          "EXIF:XPComment"}, set(stale))
+        self.assertEqual((new, stale), self.made(new, {**keywords(["Pier"]), **caption("The pier at noon")}),
+                         "a save made twice leaves the packet as it is")
+
+    def test_a_clip_with_no_packet_is_given_the_blank_one_and_none_when_the_save_says_nothing(self):
+        new, _ = self.made(None, keywords(["Pier"]))
+        self.assertEqual((len(xmp_packet.blank()), ["Pier"]), (len(new), xmp_packet.read(new)["dc:subject"]))
+        self.assertEqual((None, ("IPTC:Keywords", "EXIF:XPKeywords", "IPTC:Caption-Abstract", "EXIF:ImageDescription",
+                                 "EXIF:XPComment")), self.made(None, {**keywords([]), **caption("")}))
+
+    def test_a_cleared_value_leaves_every_copy_outside_xmp_stale(self):
+        # A JPEG's last keyword comes off every copy (#2433); a clip's EXIF and IPTC copies are not TagPup's to write.
+        self.assertEqual((), segment_edits.stale_of(keywords([])))
+        new, stale = self.made(self.made(None, keywords(["Pier"]))[0], keywords([]))
+        self.assertEqual((("IPTC:Keywords", "EXIF:XPKeywords"), {}), (stale, xmp_packet.read(new)))
+
+    def test_the_last_keyword_taken_off_a_clip_whose_keywords_are_in_quicktime_is_refused_with_a_sentence(self):
+        for old in (None, shapes.PREMIERE):
+            with self.subTest(packet=old is not None):
+                refused = segment_edits.new_packet(old, keywords([]), keywords_elsewhere=["Pier"])
+                self.assertIsInstance(refused, containers.Refusal)
+                self.assertIn("QuickTime", refused.reason)
+                self.made(old, keywords(["Pier"]), keywords_elsewhere=["Pier", "Dunes"])
+                self.made(old, caption("The pier at noon"), keywords_elsewhere=["Pier"])
+
+    def test_a_packet_the_editor_refuses_is_no_patch_and_a_field_not_a_clips_is_refused(self):
+        with self.assertLogs("tagpup.files.segment_edits", "INFO") as said:
+            self.assertIsNone(segment_edits.new_packet(b"<x:xmpmeta>", keywords(["Pier"])))
+        self.assertIn("not well-formed", said.output[0])
+        for field in (fields.ORIENTATION, *fields.date_taken_fields("2019-06-15T10:30:00")):
+            with self.subTest(field), self.assertRaises(ValueError):
+                segment_edits.new_packet(None, {**keywords(["Pier"]), field: ["1"]})
+        self.assertEqual(set(keywords([])) | set(caption("")), set(fields.CLIP_FIELDS))
 
 
 class ADateOrARotation(unittest.TestCase):
