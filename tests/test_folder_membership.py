@@ -226,7 +226,10 @@ class IgnoredFolders(unittest.TestCase):
         from tagpup.core import paths
         from tagpup.web import tagpup_routes
         scanned = [os.path.join(self.held, "regatta_01.jpg"), os.path.join(self.scans, "scan_01.jpg")]
-        tagpup_routes.folders.of(self.library).put(self.root, {paths.key(p): {"path": p} for p in scanned})
+        from tagpup.services import photos as photo_actions
+        # The kept scan's records as the scan makes them (services.photos.page_record).
+        tagpup_routes.folders.of(self.library).put(self.root, {paths.key(p): photo_actions.page_record(p, {})
+                                                               for p in scanned})
         reply = self.client.post("/library/api/folder/suggest-start", json={"folder_path": self.root})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual(1, len(self.started))
