@@ -1685,14 +1685,16 @@ def thumbs_warm(ctx, folder, limit, apply_):
               help="The photo model whose vectors to make, as open_clip names it: ViT-SO400M-14-SigLIP2:webli.")
 @click.option("--apply", "apply_", is_flag=True, help="Make the vectors. Without it, only counts what it would make.")
 @click.pass_context
+@_needs_ffmpeg(when=lambda kwargs: kwargs["apply_"])
 @_holds_the_roots
 def embed_photos(ctx, model, apply_):
     """Make another photo model's vectors for the library's photos, beside its own model's, so the library can be
     switched to it in the gear (which refuses while too few photos hold one). A dry run unless --apply: counts the
     photos that hold none yet, and the time it would take. With --apply they are embedded on a turn of the graphics
     card, waited for behind any other run. The library's model and settings stay as they are, and nothing reads the
-    new vectors until the switch. Faces are not touched. Ctrl+C stops it after the photo under way; what was made is
-    kept, and the next run makes the rest."""
+    new vectors until the switch. A video's vector is made of its frames, read by ffmpeg (needed with --apply), as
+    the index makes it. Faces are not touched. Ctrl+C stops it after the photo under way; what was made is kept, and
+    the next run makes the rest."""
     library = _existing_library(ctx)
     runtime = get_runtime()
     try:
@@ -1779,6 +1781,11 @@ def set_photo_model(ctx, model, apply_):
         library.name, wanted[0], wanted[1], change, change), markup=False, soft_wrap=True)
 
 
+#: What `embed-photos` says of the clips ffmpeg cannot read as they are (search.NoFrames.lasting), before it names a few.
+CLIPS_NOT_EMBEDDED = ("%d video(s) could not be read by ffmpeg: they hold no vector under the new model, and the next run "
+                      "tries them again. Play one to see whether it is damaged.")
+
+
 def _embedded_lines(counts):
     """What `embed-photos` says of a run: what it kept, and why the rest was not."""
     console.print("Embedded %d of %d: %d kept, %d not kept (the photo was removed meanwhile, or the write failed); %d "
@@ -1787,6 +1794,13 @@ def _embedded_lines(counts):
                       sum(counts["unread"].values()),
                       (": " + ", ".join("%s x%d" % item for item in sorted(counts["unread"].items())))
                       if counts["unread"] else ""), markup=False, soft_wrap=True)
+    unread = counts["clips_unread"]
+    if unread:
+        console.print(CLIPS_NOT_EMBEDDED % len(unread), markup=False, soft_wrap=True, highlight=False)
+        for path, problem in unread[:5]:
+            console.print(f"  - {path}: {problem}", markup=False, soft_wrap=True, highlight=False)
+        if len(unread) > 5:
+            console.print(f"  ... and {len(unread) - 5} more", markup=False)
 
 
 @contextlib.contextmanager
