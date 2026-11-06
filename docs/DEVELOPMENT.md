@@ -22,6 +22,10 @@ interpreter by path:
 
 The suite is `unittest`; **pytest is not installed**.
 
+**ffmpeg is a prerequisite** of the server and of the CLI's `index`, `thumbs warm` and `sync --apply` (owner,
+2026-11-06): `winget install Gyan.FFmpeg`. Without it they start nothing and say so (`tagpup.config.ffmpeg_problem`);
+an install says it too, and installs. The tests that make clips need it as well.
+
 **The servers auto-reload on `.py` changes.** Saving any Python file restarts a running
 TagPup or TagTuner, which destroys every piece of in-memory state — the folder queue,
 `index_status`, the identify cache — and can leave an indexer subprocess running with
