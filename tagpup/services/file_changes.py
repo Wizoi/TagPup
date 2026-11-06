@@ -592,7 +592,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             stopped.left = _settle_stopped(library, change_id, et)
             # What the journal holds done, not what this loop had counted: the file under way may be done already.
             try:
-                stopped.written = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "done")
+                stopped.written = files_done(library, change_id)
             except Exception:
                 stopped.written = None
             stopped.change = change_id
@@ -600,6 +600,12 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
+
+
+def files_done(library, change_id):
+    """How many files of change `change_id` the journal holds done: what a write that is being stopped says it has written
+    (a count, no path). The one under way may be written and not yet counted."""
+    return sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "done")
 
 
 def _kept_as(internal, change_id, left=0):

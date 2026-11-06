@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import os
+import signal
 import sys
 import unittest
 from unittest import mock
@@ -42,6 +43,18 @@ def stopped_at(step, nth):
             seen.append(name)
             if len(seen) == nth:
                 raise KeyboardInterrupt
+    return reached
+
+
+def pressed_at(step, nth):
+    """A stand-in for file_changes._reached that is the person pressing Ctrl+C the `nth` time `step` is reached."""
+    seen = []
+
+    def reached(name):
+        if name == step:
+            seen.append(name)
+            if len(seen) == nth:
+                signal.raise_signal(signal.SIGINT)
     return reached
 
 
@@ -110,16 +123,25 @@ class AShelfOfPhotos(CaptionSweep):
         self.title_only = self.made("title only.jpg", {"XMP:Title": TITLE, "IPTC:ObjectName": TITLE})
         # A title in IPTC alone (no XMP:Title): its ObjectName is the title.
         self.iptc_titled = self.made("iptc.jpg", {"IPTC:ObjectName": "Finish line", "IPTC:Caption-Abstract": "Finish line"})
+        # A Description and no title of its own: shown as its title, not a copy of one (341 in photo_index, 2026-11-06).
+        self.untitled = self.made("untitled.jpg", {"XMP:Description": TITLE, "IPTC:Caption-Abstract": TITLE})
+        # Its Description is the title, its IPTC caption other words: cleared, the photo shows the IPTC words after
+        # (104 in photo_index, 2026-11-06).
+        self.hidden = self.made("hidden.jpg", {"XMP:Title": TITLE, "XMP:Description": TITLE,
+                                               "IPTC:Caption-Abstract": "Second leg, the handover"})
         # A video whose row holds the same copy: never read, never written (0 such clips in the live libraries).
         self.clip = os.path.join(self.folder, "clip.mp4")
         self.indexed_as(self.clip, {"XMP:Title": TITLE, "XMP:Description": TITLE})
 
     def test_a_dry_run_counts_from_the_index_and_writes_nothing(self):
-        before = {path: digest(path) for path in (self.same, self.more, self.title_only, self.iptc_titled)}
+        before = {path: digest(path) for path in (self.same, self.more, self.title_only, self.iptc_titled,
+                                                  self.untitled, self.hidden)}
         code, said = self.sweep()
         self.assertEqual(0, code, said)
-        for counted in ("photos 4", "to read 3", "XMP:Description 1", "IPTC:Caption-Abstract 3", "captions kept 1",
-                        "clips left alone 1", "nothing was read or written"):
+        for counted in ("photos 6", "to read 4", "XMP:Description 2", "IPTC:Caption-Abstract 3", "captions kept 2",
+                        "clips left alone 1", "newly shown IPTC captions 1", "nothing was read or written",
+                        "1 photo(s) will newly show their IPTC caption", "title changed by another program",
+                        "Undo is refused once any swept photo is saved again", "undoing takes hours"):
             self.assertIn(counted, said)
         self.assertEqual(before, {path: digest(path) for path in before})
         self.assertEqual([], self.changes())
@@ -128,11 +150,15 @@ class AShelfOfPhotos(CaptionSweep):
 
     def test_apply_clears_each_copy_of_the_title_and_keeps_the_rest_as_one_undoable_change(self):
         untouched = digest(self.title_only)
+        untitled = digest(self.untitled)
         code, said = self.sweep("--apply")
         self.assertEqual(0, code, said)
-        self.assertIn("Cleared: 3 photo file(s) written", said)
+        self.assertIn("Cleared: 4 photo file(s) written", said)
         self.assertIn("Conflicts: 0", said)
+        self.assertIn("1 photo(s) will newly show their IPTC caption", said)
         self.assert_cleared(self.same)
+        # The IPTC words stay in the file, to be shown now that the Description repeating the title is gone.
+        self.assertEqual((None, "Second leg, the handover"), self.captions_of(self.hidden)[:2])
         # XPComment, Windows' Comment, is never touched.
         self.assertEqual(TITLE, field_of(self.same, "EXIF:XPComment"))
         # The caption holding more than the title is kept; its IPTC copy of the title alone is cleared.
@@ -140,9 +166,10 @@ class AShelfOfPhotos(CaptionSweep):
         self.assertEqual((None, None, None), self.captions_of(self.iptc_titled))
         self.assertEqual("Finish line", field_of(self.iptc_titled, "IPTC:ObjectName"))
         self.assertEqual(untouched, digest(self.title_only), "a photo with a title alone was written")
+        self.assertEqual(untitled, digest(self.untitled), "a photo with a Description and no title of its own was written")
         [(change, _operation, status)] = self.changes()
         self.assertEqual("applied", status)
-        self.assertEqual(3, self.rows("SELECT COUNT(*) FROM change_files WHERE change_id = ? AND state = 'done'",
+        self.assertEqual(4, self.rows("SELECT COUNT(*) FROM change_files WHERE change_id = ? AND state = 'done'",
                                       (change,))[0][0])
         self.assertIn("Recorded as change %d" % change, said)
 
@@ -164,7 +191,7 @@ class AShelfOfPhotos(CaptionSweep):
         with mock.patch.object(file_changes, "_reached", side_effect=meanwhile):
             code, said = self.sweep("--apply")
         self.assertEqual(1, code, said)
-        self.assertIn("Cleared: 2 photo file(s) written", said)
+        self.assertIn("Cleared: 3 photo file(s) written", said)
         self.assertIn("Conflicts: 1", said)
         self.assertEqual("Relay, rewritten in another program", field_of(self.more, "IPTC:Caption-Abstract"))
         self.assert_cleared(self.same)
@@ -201,6 +228,44 @@ class StoppedPartWay(CaptionSweep):
         for path in self.photos:
             self.assert_cleared(path)
         self.assertEqual(["applied", "applied"], [status for _id, _op, status in self.changes()])
+
+    def test_a_ctrl_c_says_it_is_reading_back_and_a_second_says_how_many_were_written(self):
+        # More than a few files written when it stops: a stop is a read back of every one of them.
+        more = [self.repeated("more %d.jpg" % n) for n in range(7)]
+
+        with mock.patch.object(file_changes, "_reached", side_effect=pressed_at("file written", 9)):
+            code, said = self.sweep("--apply")
+        self.assertEqual(130, code, said)
+        self.assertLess(said.index("stopping: reading back the files written (8 recorded so far), press Ctrl+C again only if you must"),
+                        said.index("stopped: 9 file(s) written"))
+        for line in ("2 of 12 files carried out.", "4 of 12 files carried out.", "8 of 12 files carried out."):
+            self.assertIn(line, said)
+        self.assertNotIn("10 of 12", said)
+        self.assertNotIn(self.folder, said, "a path was printed")
+        self.assertNotIn(TITLE, said, "a caption was printed")
+        for path in (self.photos + more)[:9]:
+            self.assert_cleared(path)
+
+    def test_a_second_ctrl_c_during_the_read_back_does_not_say_nothing_was_written(self):
+        for n in range(7):
+            self.repeated("more %d.jpg" % n)
+
+        def again(*_args, **_kwargs):
+            signal.raise_signal(signal.SIGINT)
+            return []
+        with mock.patch.object(file_changes, "_reached", side_effect=pressed_at("file written", 9)), \
+                mock.patch.object(file_changes, "_read_back", side_effect=again):
+            code, said = self.sweep("--apply")
+        self.assertEqual(130, code, said)
+        self.assertNotIn("before anything was written", said)
+        self.assertIn("stopped again: at least 8 file(s) written", said)
+        self.assertIn("the next open of the library finishes settling them", said)
+
+    def test_a_ctrl_c_while_exiftool_starts_is_a_message_not_a_traceback(self):
+        with mock.patch.object(clear_duplicate_captions.runtime, "exiftool", side_effect=KeyboardInterrupt):
+            code, said = self.sweep("--apply")
+        self.assertEqual(130, code, said)
+        self.assertIn("stopped before anything was written", said)
 
     def test_a_process_killed_mid_chunk_is_finished_by_the_next_run(self):
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file writing", 3)):
