@@ -387,13 +387,13 @@ def written_once_more(et, photo_path, values, again, **options):
 def left_as_they_were(values, photo_path):
     """The fields of `values` a journaled write (one given `saving`) of `photo_path` leaves holding what they held: a
     keyword or caption group's copies outside XMP, while its XMP value is not empty, when the own writer patches
-    (segment_edits.stale_of, fields.XMP_ONLY), and a clip's every copy outside XMP while writing clips is on
-    (segment_edits.clip_stale_of: _clip_written writes its XMP alone); () when it does not, ExifTool's writes writing
+    (segment_edits.stale_of, fields.XMP_ONLY), and a clip's every copy outside XMP (segment_edits.clip_stale_of: a clip
+    is written only by _clip_written, which patches its XMP alone); () when it does not, ExifTool's writes writing
     every field. What the file holds after the write is fields.as_patched of these: file_changes asks it of a plan
     before writing anything, so a file holding that already is not written, journaled or counted (a Save repeated, a tag
     the photo has added again)."""
     if images.is_clip(photo_path):
-        return segment_edits.clip_stale_of(values) if CLIP_PATCH_IN_PLACE else ()
+        return segment_edits.clip_stale_of(values)
     return segment_edits.stale_of(values) if PATCH_IN_PLACE and OWN_WRITER else ()
 
 
