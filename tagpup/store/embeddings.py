@@ -14,6 +14,10 @@ changes only metadata carries the stamp forward (`restamp`), from the stamp the 
 just before the write -- never the row's, which lags a file changed elsewhere (#84); one
 that changes how the photo looks takes the vector away (`forget`). A file changed any
 other way no longer matches its stamp, and is embedded again.
+
+A video clip has more than one picture: its vector is its frame 0, and its frames 1 to FRAMES are rows of
+`embedding_frames` beside it (migration 38), written with it by `put` and `put_by_id` and taken with it, or with the
+photo, by the two triggers. A photo has none.
 """
 import collections
 
@@ -22,6 +26,9 @@ from tagpup.store import roots as store_roots
 #: A photo's vector for one model, and the stamp of the file it was computed from.
 #: `vector` is float32 bytes.
 Stored = collections.namedtuple("Stored", "mtime size vector")
+
+#: The most frames a vector carries beside it: a clip's frames 1 to 4, its frame 0 being the vector itself.
+FRAMES = 4
 
 
 def model_key(model_name, pretrained, preserve_full_frame, max_aspect_ratio, force_image_size):
@@ -44,29 +51,59 @@ def get(conn, photo_path, model):
     return Stored(*row) if row else None
 
 
-def put(conn, photo_path, model, mtime, size, vector, fingerprint):
+def put(conn, photo_path, model, mtime, size, vector, fingerprint, frames=()):
     """Keep `vector` as the photo's under `model`, computed from the file at `mtime` and
     `size`, replacing any before it. A photo with no row gets one (photos.ensure_row).
     `fingerprint`, required, is the (key, hash) of the picture the vector was made of, recorded as the photo's row, or
-    None, which forgets the row (photo_fingerprints.follows). The caller commits."""
+    None, which forgets the row (photo_fingerprints.follows). `frames`, a clip's, are its frames 1 to n (at most FRAMES,
+    float32 bytes each), replacing all it had under `model`; a photo has none. The caller commits."""
     from tagpup.store import photos   # photos imports this module
+    frames = _checked(frames)
     photo_id = photos.ensure_row(conn, photo_path)
+    _drop_frames(conn, photo_id, model)
     conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
                  " VALUES (?, ?, ?, ?, ?)", (photo_id, model, mtime, size, vector))
+    _put_frames(conn, photo_id, model, frames)
     _follows(conn, photo_id, fingerprint)
 
 
-def put_by_id(conn, photo_id, model, mtime, size, vector, fingerprint):
-    """Keep `vector` as the photo `photo_id`'s under `model`, as put does, with its `fingerprint` (as put), while the
-    photo has a row: True when it was written, False when the row is gone (removed by a sync or a delete meanwhile), and
-    no row is made for it -- a pass over the rows it read (tagpup.services.photo_reembed) never brings back one taken
-    away. The caller commits."""
+def put_by_id(conn, photo_id, model, mtime, size, vector, fingerprint, frames=()):
+    """Keep `vector` as the photo `photo_id`'s under `model`, as put does, with its `fingerprint` and `frames` (as put),
+    while the photo has a row: True when it was written, False when the row is gone (removed by a sync or a delete
+    meanwhile), and no row is made for it -- a pass over the rows it read (tagpup.services.photo_reembed) never brings
+    back one taken away. The caller commits."""
+    frames = _checked(frames)
+    _drop_frames(conn, photo_id, model)
     written = conn.execute("INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
                            " SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM photos WHERE id = ?)",
                            (photo_id, model, mtime, size, vector, photo_id)).rowcount > 0
     if written:
+        _put_frames(conn, photo_id, model, frames)
         _follows(conn, photo_id, fingerprint)
     return written
+
+
+def _checked(frames):
+    frames = tuple(frames)
+    if len(frames) > FRAMES:
+        raise ValueError("a vector carries at most %d frames beside it, not %d" % (FRAMES, len(frames)))
+    return frames
+
+
+def _drop_frames(conn, photo_id, model):
+    # A replaced vector fires no delete trigger (INSERT OR REPLACE, recursive_triggers off): its frames go here.
+    conn.execute("DELETE FROM embedding_frames WHERE photo_id = ? AND model = ?", (photo_id, model))
+
+
+def _put_frames(conn, photo_id, model, frames):
+    conn.executemany("INSERT INTO embedding_frames (photo_id, model, frame, vector) VALUES (?, ?, ?, ?)",
+                     [(photo_id, model, number, frame) for number, frame in enumerate(frames, 1)])
+
+
+def frames_of(conn, photo_id, model):
+    """[vector] of a photo's frames 1 to n under `model`, in order, by photo id: a clip's; [] for a photo."""
+    return [vector for (vector,) in conn.execute(
+        "SELECT vector FROM embedding_frames WHERE photo_id = ? AND model = ? ORDER BY frame", (photo_id, model))]
 
 
 def _follows(conn, photo_id, fingerprint):

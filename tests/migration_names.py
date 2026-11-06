@@ -16,13 +16,17 @@ migration 33: a library it makes is at 32, as the owner's were, and it refuses o
 import contextlib
 from unittest import mock
 
-from tagpup.store import schema
+from tagpup.store import journal, schema
 
 #: The migrations the code really has: `ahead` adds to these, however many times it is nested.
 REAL = schema.MIGRATIONS
 
 #: The latest real schema: what `schema.LATEST` is outside `ahead`, which changes it for as long as it holds.
 BASE = REAL[-1].version
+
+#: The tables the journal keys that a real migration made, by its version: the app before it neither keys nor cascades to
+#: them (`up_to`), so a journaled delete on a library without the table plans no read of it.
+JOURNALED_SINCE = {38: ("embedding_frames",)}
 
 #: The table the default step makes (and touches): one of its own, no table the journal keys.
 STEP_TABLE = "tagpup_test_step"
@@ -72,9 +76,14 @@ def ahead(*steps):
 @contextlib.contextmanager
 def up_to(version):
     """Within it the code knows the real migrations up to `version` and none after: the app as it was before the next one was
-    written. The libraries this process found current are forgotten on the way in and out."""
+    written, its journal keying none of the tables a later one made (JOURNALED_SINCE). The libraries this process found
+    current are forgotten on the way in and out."""
     kept = tuple(m for m in REAL if m.version <= version)
-    with mock.patch.object(schema, "MIGRATIONS", kept), mock.patch.object(schema, "LATEST", kept[-1].version):
+    later = {table for since, tables in JOURNALED_SINCE.items() if since > version for table in tables}
+    keys = {table: key for table, key in journal.KEYS.items() if table not in later}
+    cascades = {pair: how for pair, how in journal.CASCADES.items() if pair[1] not in later and pair[0] not in later}
+    with mock.patch.object(schema, "MIGRATIONS", kept), mock.patch.object(schema, "LATEST", kept[-1].version), \
+            mock.patch.object(journal, "KEYS", keys), mock.patch.object(journal, "CASCADES", cascades):
         schema.forget()
         try:
             yield kept
