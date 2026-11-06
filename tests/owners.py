@@ -86,6 +86,7 @@ SCENARIOS = {
     "I8": ("apps", "A page save from a stale record is refused, not overwritten."),
     "I9": ("apps", "A page's saved scan of an older shape is read again, not trusted."),
     "I10": ("apps", "A background run that failed overnight says, from its row, what happened and what to do next; TagPup's own work in the way never asks."),
+    "I11": ("apps", "On a machine without ffmpeg (or with one that does not run) the server and the CLI's index runs start nothing and say what to install; an install says so and leaves the old server running."),
 }
 
 #: scenario id -> its scenario files; a file listed under more than one runs more than one scenario (the first is its owner's).
@@ -152,6 +153,7 @@ _SCENARIO_FILES = {
     "I8": "test_stale_record_precondition",
     "I9": "scenario-a-scan-kept-by-an-older-page",
     "I10": "test_a_failed_run_says_what_to_do",
+    "I11": "test_ffmpeg_is_a_prerequisite",
     "P1": "test_people_by_id_at_once",
     "P2": (
         "test_a_cropped_picture_gets_new_faces test_bulk_faces_and_tags test_cluster_faces_on_a_crowded_library test_clustering_meets_naming "
