@@ -5,7 +5,8 @@
  * is a grey card with the play mark, asking for nothing, until the folder is scanned again after the index records it.
  * A folder's card is selected by its path, a clip's too (a folder view's selection is by path, not by id, whatever
  * picture the card shows). Opening a recorded clip plays it from /api/video-file by its id, as a library view's does;
- * opening one not recorded says so and asks for nothing. Fictional names only.
+ * opening one not recorded says so and asks for nothing. A folder's counts say its photos and its videos apart, and Smart
+ * Rename's and Apply All's confirmations count what they will do: photos (#2565). Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -108,5 +109,55 @@ describe("a folder's clip in the panel", () => {
     assert.match(ctx.document.getElementById("status-text").textContent, /not been indexed/);
     const fileOfAClip = ctx.server.urls().filter((url) => /photo-file|video-file/.test(url) && url.includes("noon"));
     assert.deepEqual(fileOfAClip, []);
+  });
+});
+
+describe("a folder's counts with clips in it", () => {
+  afterEach(() => closeAllApps());
+
+  const select = (ctx, names) => {
+    pageExports(ctx.window, "web/tagpup/selected.js").setSelection(names.map((name) => `${FOLDER}\\${name}`));
+    pageExports(ctx.window, "web/tagpup/selection.js").updateSelectedThumbnailsCount();   // as a click on a card does
+  };
+  const asking = (ctx) => {
+    const asked = [];
+    ctx.window.confirm = (message) => { asked.push(message); return false; };
+    return asked;
+  };
+
+  test("the folder view and the grid's menu say the photos and the videos apart", async (t) => {
+    const ctx = await folderWithClips(t);
+    assert.equal(ctx.document.getElementById("folder-view-stats").textContent, "2 photos, 2 videos");
+    pageExports(ctx.window, "web/tagpup/grid.js").showGridContextMenu(10, 10, "");
+    assert.equal(ctx.document.getElementById("context-menu-count").textContent,
+      "Nothing selected (2 photos, 2 videos in folder)");
+  });
+
+  test("Smart Rename's confirmation counts the photos it renames and names the videos it leaves", async (t) => {
+    const ctx = await folderWithClips(t);
+    select(ctx, ["dawn.jpg", "dusk.jpg", "dusk.mp4"]);
+    const asked = asking(ctx);
+    ctx.document.getElementById("rename-grouping-input").value = "Lighthouse";
+    ctx.document.getElementById("btn-apply-rename").click();
+    assert.equal(asked.length, 1, "Smart Rename did not ask first");
+    assert.match(asked[0], /smart-rename the 2 photos selected\?/);
+    assert.match(asked[0], /the 1 video selected keep their names/);
+  });
+
+  test("Smart Rename of photos alone says photos, with nothing of videos", async (t) => {
+    const ctx = await folderWithClips(t);
+    select(ctx, ["dawn.jpg"]);
+    const asked = asking(ctx);
+    ctx.document.getElementById("rename-grouping-input").value = "Lighthouse";
+    ctx.document.getElementById("btn-apply-rename").click();
+    assert.match(asked[0], /smart-rename the 1 photo selected\?$/);
+  });
+
+  test("Apply All's confirmation counts the photos, which are all Suggest looks at", async (t) => {
+    const ctx = await folderWithClips(t);
+    select(ctx, ["dusk.jpg", "dusk.mp4", "noon.mov"]);
+    const asked = asking(ctx);
+    pageExports(ctx.window, "web/tagpup/suggestions.js").applyFolderSuggestionsLevel();
+    assert.match(asked[0], /^Auto-apply AI suggestions to the 1 photo selected\?/);
   });
 });

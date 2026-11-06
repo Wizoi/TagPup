@@ -28,6 +28,11 @@ export const BULK_LIMIT = 5000;
 /** The most ids, or excluded ids, a request may list (tagpup.services.selection.MAX_LISTED). */
 export const LIST_LIMIT = 20000;
 
+/** The records of the folder's selected photos and clips (state.folderPhotos), in the folder's order. */
+export function selectedRecords() {
+    return state.folderPhotos.filter(photo => state.selectedKeys.has(pathKey(photo.path)));
+}
+
 /** Is this photo selected? O(1), whatever its spelling of the path. */
 export function isSelected(path) {
     return state.selectedKeys.has(pathKey(path));

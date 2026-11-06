@@ -18,6 +18,7 @@ import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { libraryPosition } from './library-source.js';
 import { replaceAddress } from './history-entries.js';
+import { isVideo } from './media.js';
 
 export function wireChangeDogPark() {
     if (btnChangeDb) {
@@ -411,6 +412,19 @@ export function isPhotoTagged(photo) {
         || (photo.title || '').trim().length > 0;
 }
 
+/**
+ * A count of a folder's records as the page says one: "9 photos, 3 videos" where both are, "1 photo", "3 videos", and
+ * "0 photos" for none. The one spelling of it (#2565): the folder view's line, the grid's menu, and the confirmations of
+ * Smart Rename and Apply All, which count what they will do.
+ */
+export function countSaid(records) {
+    const said = (n, one) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
+    const videos = records.filter(isVideo).length;
+    const photos = records.length - videos;
+    if (!videos) return said(photos, 'photo');
+    return photos ? `${said(photos, 'photo')}, ${said(videos, 'video')}` : said(videos, 'video');
+}
+
 /** How much of the loaded folder has been tagged. */
 export function taggedCounts() {
     const total = state.folderPhotos.length;
@@ -602,7 +616,8 @@ export function openFolderView() {
     folderViewContent.classList.remove('hidden');
 
     // Populate Folder View details
-    folderViewStats.textContent = `${state.library ? state.library.total.toLocaleString() : state.folderPhotos.length} photos`;
+    folderViewStats.textContent = state.library
+        ? `${state.library.total.toLocaleString()} photos` : countSaid(state.folderPhotos);
     
     upper.renderThumbnails();
     upper.updateSelectedThumbnailsCount();

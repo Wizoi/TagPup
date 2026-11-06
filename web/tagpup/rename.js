@@ -11,10 +11,10 @@ import {
 import { flagField, setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
-import { renderFileList } from './folder.js';
+import { countSaid, renderFileList } from './folder.js';
 import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
-import { BULK_LIMIT, clearSelection } from './selected.js';
+import { BULK_LIMIT, clearSelection, selectedRecords } from './selected.js';
 import { whereWritten } from './write-queue.js';
 import { photosRenamed } from './edits.js';
 import { isVideo } from './media.js';
@@ -63,7 +63,12 @@ export function wireRenameAndTimeShift() {
             alert(`Select up to ${BULK_LIMIT.toLocaleString()} photos at a time.`);
             return;
         }
-        if (!confirm(`Are you sure you want to smart-rename the ${state.selectedThumbnails.length} selected photos?`)) {
+        // What will be renamed: the selected photos. A clip is not renamed (images.CLIP_NOT_EDITED), and is said apart.
+        const chosen = selectedRecords();
+        const clips = chosen.filter(isVideo);
+        const asked = [`Are you sure you want to smart-rename the ${countSaid(chosen.filter(r => !isVideo(r)))} selected?`];
+        if (clips.length) asked.push(`A video is not renamed: the ${countSaid(clips)} selected keep their names.`);
+        if (!confirm(asked.join('\n\n'))) {
             return;
         }
 

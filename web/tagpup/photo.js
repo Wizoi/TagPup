@@ -29,7 +29,7 @@ import {
     leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
 } from './edits.js';
-import { renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
+import { countSaid, renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale } from './stale.js';
 import { showMedia } from './media.js';
@@ -838,7 +838,7 @@ export function deleteActivePhoto() {
 
             // Update UI statistics
             updateListStats();
-            folderViewStats.textContent = `${state.folderPhotos.length} photos`;
+            folderViewStats.textContent = countSaid(state.folderPhotos);
 
             // Re-render components
             renderFileList();

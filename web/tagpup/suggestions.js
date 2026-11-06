@@ -16,10 +16,12 @@ import { saveToLocalStorageCache } from './cache.js';
 import { fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson } from './tags.js';
 import { postPhotoMetadata, queuePhotoWrite, queueWriteOf, redrawIfShowing } from './edits.js';
 import { isJustLooking, libraryName } from './looking.js';
-import { isPhotoTagged, renderFileList, scanFolder } from './folder.js';
+import { countSaid, isPhotoTagged, renderFileList, scanFolder } from './folder.js';
 import { saveSingleTitle } from './photo.js';
 import { recordUndo, snapshotPhotos } from './undo.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
+import { selectedRecords } from './selected.js';
+import { isVideo } from './media.js';
 
 /**
  * A photo the folder's run has suggestions for: an entry, and not one the run could not read (the server's _succeeded:
@@ -614,12 +616,11 @@ export function applyFolderSuggestionsLevel() {
     // before writing it. The common mistake is not misreading the button -- it is
     // having the wrong selection, and a count of photos alone does not surface
     // that. This is the last point at which it costs nothing.
-    const alreadyTagged = state.selectedThumbnails.filter(p => {
-        const photo = state.folderPhotos.find(x => x.path === p);
-        return photo && isPhotoTagged(photo);
-    }).length;
+    // Suggest looks at a folder's photos only, never a clip: the count is of the photos (#2565).
+    const photos = selectedRecords().filter(photo => !isVideo(photo));
+    const alreadyTagged = photos.filter(isPhotoTagged).length;
     const scope = [
-        `Auto-apply AI suggestions to ${state.selectedThumbnails.length} selected photo(s)?`,
+        `Auto-apply AI suggestions to the ${countSaid(photos)} selected?`,
         '',
         alreadyTagged
             ? `${alreadyTagged} of them already have tags. Suggestions are added to what is there; nothing is removed.`
