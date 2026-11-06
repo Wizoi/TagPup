@@ -110,7 +110,11 @@ class NotAnswered(Unreadable):
 
 class PictureChanged(Exception):
     """The new file ExifTool wrote of a photo holds picture bytes other than the photo's (the picture check, #2377): it
-    was removed, and the photo is as it was. The journal writes once more (tagpup.services.file_changes._carry)."""
+    was removed, and the photo is as it was. Every writer of a photo writes once more (written_once_more)."""
+
+
+#: Why a write failed whose new file's picture differed from the photo's in both of its tries (written_once_more).
+CHANGED_TWICE = "its write changed the picture's bytes twice; the new file was discarded each time and the photo is as it was"
 
 
 def session(exiftool_path):
@@ -307,6 +311,24 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
         raise
     _landed(photo_path, scratch)
     return ()
+
+
+def written_once_more(et, photo_path, values, again, **options):
+    """write(et, photo_path, values, **options), made once more when its new file's picture differed (PictureChanged:
+    discarded, the photo as it was), for a held photo's write (tagpup.services.file_changes._carry) and a Just-look
+    photo's (tagpup.services.file_only) alike (DECISIONS 2026-11-05, #2476). `again()`, the caller's, is called before
+    the second write, to log it and count it (the result's `pictures_refused`). A second PictureChanged raises
+    PictureChanged(CHANGED_TWICE); any other failure of either write is raised as it is, for the caller to settle.
+    Returns what write returns. The photo is not looked at between the two: the picture check compares the second new
+    file with the photo as it is then."""
+    try:
+        return write(et, photo_path, values, **options)
+    except PictureChanged:
+        again()
+    try:
+        return write(et, photo_path, values, **options)
+    except PictureChanged:
+        raise PictureChanged(CHANGED_TWICE) from None
 
 
 def left_as_they_were(values):
