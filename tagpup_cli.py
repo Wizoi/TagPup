@@ -537,8 +537,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # for the read below, which does not decode it again.
     looked, complete = ({}, False) if force_reembed else _kept_with_no_model(
         to_index_meta, embeddings, set() if skip_faces else unexamined)
-    # A clip is kept by its stamp alone: there is no decode of it to fingerprint.
-    complete = complete and all(embeddings.kept(m["path"], compare=False)[0] is not None for m in clips)
+    # A run with a clip builds the model: a clip is owed by its stamp alone (no decode to fingerprint), so one listed is
+    # one to make, and _index_clips asks again, with its lock held, whether another index made it meanwhile.
+    complete = complete and not clips
     early = {key: answer["decoded"] for key, answer in looked.items() if answer["decoded"] is not None}
     face_processor = None
     if not complete:
