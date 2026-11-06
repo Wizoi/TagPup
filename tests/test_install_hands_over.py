@@ -560,9 +560,9 @@ class ForReal(unittest.TestCase):
     def test_a_new_version_that_does_not_serve_gives_the_owner_the_old_one_back(self):
         old = self.start_old(self.install(OLD))
         new_code = self.install(NEW)
-        # It imports and answers --help, then exits: what the check before cannot see.
+        # It imports and answers --check, then exits: what the check before cannot see.
         with open(os.path.join(new_code, "tagpup_web.py"), "w", encoding="utf-8") as handle:
-            handle.write("import sys\nsys.exit(0 if '--help' in sys.argv else 7)\n")
+            handle.write("import sys\nsys.exit(0 if '--check' in sys.argv else 7)\n")
         self.assertFalse(self.hand_over())
         self.assertIsNotNone(old.wait(timeout=30), "the old server was never ended")
         self.assertEqual({OLD}, {self.version(port) for port in self.ports.values()}, self.said)
