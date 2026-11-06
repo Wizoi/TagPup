@@ -25,9 +25,15 @@ a photo, 1.5-3 GB for photo_index), and nothing in it is the only copy of anythi
 * **A cache that cannot be written** (folder missing and not makeable, read-only, disk full) costs
   only the cache: the thumbnail is made and answered, not kept, and the first time is logged. A file that cannot
   be read is `Unavailable`, a sentence, never a traceback and never a placeholder that looks like a verdict.
-* **A clip** (a row of kind 'video') is answered the placeholder, kind VIDEO, its file never opened: a decode that
-  fails reads the whole file (tagpup.files.thumbs.render), and a clip can be gigabytes. Nothing is kept; warming skips
-  it. Its poster frame is the folder view's work (the video plan's merge B).
+* **A clip** (a row of kind 'video') is drawn by its poster frame, its middle frame through ffmpeg
+  (tagpup.files.thumbs.poster), never by Pillow (a decode that fails reads the whole file, and a clip can be gigabytes),
+  and kept as a photo's thumbnail is; warming makes them too. ffmpeg is found by the caller (`find_ffmpeg`, the entry
+  point's tagpup.config.locate_ffmpeg: config is not this layer's), asked only for a clip, so an install is seen without
+  a restart. At most thumbs.POSTER_RUNS ffmpeg runs at once in a process, each within thumbs.POSTER_SECONDS (then killed
+  with its tree). No ffmpeg: the UNREADABLE placeholder, nothing kept or remembered, said once in the log with the
+  winget install. A clip ffmpeg cannot read (cut short, not a video, too slow): the UNREADABLE placeholder, remembered
+  by its stamp as a damaged photo is. A server stopped while a poster is made leaves its ffmpeg child to end by itself
+  (thumbs.poster); nothing half made is kept.
 """
 import logging
 import os
@@ -46,11 +52,8 @@ logger = logging.getLogger(__name__)
 #: What a thumbnail's entry is, for the page to read.
 OK, DAMAGED, UNREADABLE, LAST_KNOWN = "ok", "damaged", "unreadable", "last known"
 
-#: What a thumbnail of a photo is when it is the cache's own.
+#: What a thumbnail of a photo or a clip is.
 KINDS = (OK, DAMAGED, UNREADABLE, LAST_KNOWN)
-
-#: What the thumbnail of a clip is: the placeholder, made of no file and never kept.
-VIDEO = "video"
 
 #: What warming says of a thumbnail it made and could not keep.
 UNWRITABLE = "unwritable"
@@ -108,8 +111,9 @@ _undecodable = {}
 _undecodable_guard = threading.Lock()
 UNDECODABLE_MOST = 5000
 
-#: The cache folders this process has said it could not write.
+#: The cache folders this process has said it could not write, and whether it has said ffmpeg is missing.
 _warned = set()
+_NO_FFMPEG = "no ffmpeg"
 
 
 def _remember_undecodable(key, kind):
@@ -126,9 +130,24 @@ def _warn_once(root, why):
                        root, why)
 
 
-def _make(root, photo_id, row_path, path, stamp):
-    """The Thumb of the photo at `path` whose file has `stamp` (mtime, size): from the cache, else made now and
-    kept. Raises Unavailable when the file cannot be read."""
+def _draw(kind, path, find_ffmpeg):
+    """The JPEG bytes of the thumbnail of the file at `path`, a row of `kind` (photos.kind): a clip's poster frame, a
+    photo's decode. Raises what thumbs.render and thumbs.poster raise, and NoFfmpeg."""
+    if kind != "video":
+        return thumbs.render(path)
+    tools = find_ffmpeg()
+    if tools.problem:
+        raise NoFfmpeg(tools.problem)
+    return thumbs.poster(path, tools)
+
+
+class NoFfmpeg(Exception):
+    """The machine has no ffmpeg (tagpup.config.FFMPEG_MISSING, the sentence that names the winget install)."""
+
+
+def _make(root, photo_id, row_path, path, stamp, kind, find_ffmpeg):
+    """The Thumb of the photo or clip (`kind`) at `path` whose file has `stamp` (mtime, size): from the cache, else
+    made now and kept. Raises Unavailable when the file cannot be read."""
     path_hash = _hash_of(row_path)
     mtime, size = stamp
     etag = thumbs.etag_of(photo_id, path_hash, mtime, size)
@@ -145,13 +164,24 @@ def _make(root, photo_id, row_path, path, stamp):
         if found is not None:
             return Thumb(found, OK, etag, mtime, kept=True)
         try:
-            made = thumbs.render(path)
+            made = _draw(kind, path, find_ffmpeg)
+        except NoFfmpeg as why:   # not remembered: an install is seen at the next ask
+            if _NO_FFMPEG not in _warned:
+                _warned.add(_NO_FFMPEG)
+                logger.warning("Videos are shown a placeholder for want of ffmpeg: %s.", why)
+            return Thumb(thumbs.placeholder(), UNREADABLE)
+        except thumbs.NoPoster as why:
+            logger.info("No poster of video %d: %s", photo_id, why.problem)
+            _remember_undecodable(key, UNREADABLE)
+            return Thumb(thumbs.placeholder(), UNREADABLE)
         except images.Unreadable:
             _remember_undecodable(key, DAMAGED)
             return Thumb(thumbs.placeholder(), DAMAGED)
         except OSError as why:
             raise Unavailable("The photo's file could not be read just now (%s): try again in a moment." % (
                 why.strerror or type(why).__name__)) from why
+        except Unavailable:   # a clip that cannot be reached just now (thumbs.poster): no verdict, try again
+            raise
         except Exception as why:   # a picture Pillow gives up on in some way that is not damage: no verdict
             logger.warning("Could not make a thumbnail of photo %d: %s", photo_id, why)
             _remember_undecodable(key, UNREADABLE)
@@ -168,10 +198,11 @@ def _make(root, photo_id, row_path, path, stamp):
         return Thumb(made, OK, etag if kept else None, mtime, kept=kept)
 
 
-def serve(library, photo_id):
-    """The Thumb of photo `photo_id` of `library`. Raises NotFound -- with its sentence -- for an id the
-    library has no photo of, or one whose file is not there and was never shown; Unavailable when the file cannot
-    be reached; paths.RootsError for a photo under a root this machine does not place."""
+def serve(library, photo_id, find_ffmpeg):
+    """The Thumb of photo `photo_id` of `library` (a clip's: its poster frame; `find_ffmpeg`, tagpup.config.locate_ffmpeg,
+    is asked only for a clip). Raises NotFound -- with its sentence -- for an id the library has no photo of, or one
+    whose file is not there and was never shown; Unavailable when the file cannot be reached; paths.RootsError for a
+    photo under a root this machine does not place."""
     # An id SQLite cannot hold names no photo: a sentence, not an overflow.
     row = None
     if 0 < photo_id < 2 ** 63:
@@ -182,17 +213,15 @@ def serve(library, photo_id):
             conn.close()
     if row is None:
         raise NotFound("There is no photo %d in this library." % photo_id)
-    if row.kind not in store_photos.DRAWN_KINDS:
-        return Thumb(thumbs.placeholder(), VIDEO)
     root = library.thumbs
-    stamp = shares.reachable_stamp(row.path)
+    stamp = shares.reachable_stamp(row.path, "video" if row.kind == "video" else "photo")
     if stamp is None:
         last = thumbs.newest(root, photo_id, _hash_of(row.row_path))
         if last is not None:
             return Thumb(last, LAST_KNOWN)
         raise NotFound("The file of photo %d (%s) is not there, and no thumbnail of it was kept." % (
             photo_id, os.path.basename(row.path)))
-    return _make(root, photo_id, row.row_path, row.path, stamp)
+    return _make(root, photo_id, row.row_path, row.path, stamp, row.kind, find_ffmpeg)
 
 
 # ---- Taking one away -----------------------------------------------------------------------------
@@ -271,13 +300,15 @@ def clear(library):
 
 # ---- Filling it ahead of time ------------------------------------------------------------------
 
-def warm(library, folder=None, limit=None, apply=False, progress=None, workers=WORKERS):
-    """Make the thumbnails of the library's photos -- those under `folder`, at any depth, or all -- that have none for
+def warm(library, find_ffmpeg, folder=None, limit=None, apply=False, progress=None, workers=WORKERS):
+    """Make the thumbnails of the library's photos and clips (a clip's: its poster frame; `find_ffmpeg`,
+    tagpup.config.locate_ffmpeg, asked once) -- those under `folder`, at any depth, or all -- that have none for
     their file as it is now: a dry run unless `apply`, which only counts. `limit` stops after that many are
     made (a run can be repeated: what is there is found there, and the walk goes on from it). Reads the library
     and the files, writes only the cache.
 
-    Returns {"photos": looked at, "present": already cached, "to_make": without one, "made", "damaged": not
+    Returns {"photos": looked at (clips with them), "present": already cached, "to_make": without one, "made", "posters":
+    of them, the clips', "no_ffmpeg": clips without one, not made for want of ffmpeg ("ffmpeg": why), "damaged": not
     decoded (found not to), "missing": file not there, "failed": file not reachable,
     "unwritable": made and not kept (the cache cannot be written), "away": the shares found away (each asked once, its photos
     not walked: "skipped_away" counts them), "stopped_unwritable": the first unwritable cache ended the run, "swept": entries of photos the library no longer
@@ -287,7 +318,9 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
     root = library.thumbs
     held, bytes_cached = thumbs.usage(root)
     average = bytes_cached // held if held else ASSUMED_BYTES
-    counts = {"photos": 0, "present": 0, "to_make": 0, "made": 0, "damaged": 0, "missing": 0, "failed": 0,
+    tools = find_ffmpeg()
+    counts = {"photos": 0, "present": 0, "to_make": 0, "made": 0, "posters": 0, "no_ffmpeg": 0, "ffmpeg": tools.problem,
+              "damaged": 0, "missing": 0, "failed": 0,
               "unwritable": 0, "away": [], "skipped_away": 0,
               "stopped_unwritable": False, "bytes_cached": bytes_cached, "bytes_made": 0, "estimate": 0, "stopped": False, "average": average}
     conn = _look(library)
@@ -303,8 +336,6 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                 after = batch[-1][0]
                 jobs = []
                 for photo_id, row_path, path, kind in batch:
-                    if kind not in store_photos.DRAWN_KINDS:
-                        continue   # a clip has no thumbnail of its own to make (serve)
                     counts["photos"] += 1
                     stamp = walk.stamp_of(path)   # a share found away is asked once, its photos skipped
                     if stamp is shares.UNANSWERED:
@@ -320,11 +351,15 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                     if os.path.isfile(thumbs.entry_path(root, photo_id, path_hash, *stamp)):   # unbounded: the cache
                         counts["present"] += 1
                         continue
+                    if kind == "video" and tools.problem:
+                        counts["no_ffmpeg"] += 1
+                        continue
                     counts["to_make"] += 1
                     counts["estimate"] += average
                     if apply and (limit is None or counts["made"] + len(jobs) < limit):
-                        jobs.append((photo_id, row_path, path, stamp))
-                for result in pool.map(lambda job: _warm_one(root, *job, stop), jobs):
+                        jobs.append((photo_id, row_path, path, stamp, kind))
+                results = pool.map(lambda job: _warm_one(root, *job, lambda: tools, stop), jobs)
+                for job, result in zip(jobs, results):
                     if result is None:
                         counts["failed"] += 1
                     elif result == SKIPPED:
@@ -337,6 +372,7 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                         counts["to_make"] -= 1
                     else:
                         counts["made"] += 1
+                        counts["posters"] += job[4] == "video"
                         counts["bytes_made"] += result
                 if limit is not None and counts["made"] >= limit:
                     counts["stopped"] = True
@@ -354,14 +390,14 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
     return counts
 
 
-def _warm_one(root, photo_id, row_path, path, stamp, stop):
+def _warm_one(root, photo_id, row_path, path, stamp, kind, find_ffmpeg, stop):
     """Make one entry for `warm`: its size in bytes, or DAMAGED / UNREADABLE for a picture that does not decode,
     UNWRITABLE for one made and not kept (which sets `stop`: the rest are SKIPPED, not decoded), or None when the
     file could not be read."""
     if stop.is_set():
         return SKIPPED
     try:
-        made = _make(root, photo_id, row_path, path, stamp)
+        made = _make(root, photo_id, row_path, path, stamp, kind, find_ffmpeg)
     except Unavailable:
         return None
     if made.kind != OK:

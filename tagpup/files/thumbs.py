@@ -16,6 +16,9 @@ An entry is `<shard>/<id>_<path hash>_<mtime ms>_<size>.jpg`:
 * `mtime ms` and `size`, the stamp of the file the picture was made from: a file changed is another entry,
   and the one it replaces is deleted.
 
+A clip's entry is its poster frame (`poster`: the middle frame, through ffmpeg, tagpup.files.video_frames), kept
+and named as a photo's is; a photo's is decoded by Pillow (`render`).
+
 An entry is written to a temporary file in its shard and renamed over its name (`os.replace`), so a reader
 never sees half of one and two writers of one entry leave one whole file. A crash between the two leaves a
 `.tmp-` file, which `sweep_temporaries` removes once it is old. Nothing is bounded: the owner's decision
@@ -28,7 +31,8 @@ import re
 import threading
 import time
 
-from tagpup.files import images
+from tagpup.core.result import Unavailable
+from tagpup.files import images, video_frames
 
 #: The long side of a thumbnail, in pixels.
 SIZE = 300
@@ -230,6 +234,49 @@ def render(photo_path):
         with open(photo_path, "rb") as handle:
             data = handle.read()
         raise images.damage(data, error) from error
+
+
+#: Seconds a clip's poster may take, every ffmpeg run of it together: a card waits for it, so far less than
+#: video_frames.DEFAULT_SECONDS; past it the run is killed with its tree (video_frames) and the clip has no poster.
+POSTER_SECONDS = 15
+
+#: ffmpeg runs making posters at once in this process: a grid scrolled fast over a folder of clips starts no more, the
+#: rest wait their turn.
+POSTER_RUNS = 3
+_poster_runs = threading.BoundedSemaphore(POSTER_RUNS)
+
+
+class NoPoster(Exception):
+    """A clip whose file, as it is now, gives no picture: ffmpeg cannot read it as a video (not one, or cut short before
+    its index), decodes no frame of it, or takes longer than POSTER_SECONDS. `problem` is video_frames' sentence, which
+    names no file."""
+
+    def __init__(self, problem):
+        super().__init__(problem)
+        self.problem = problem
+
+
+def _lasting():
+    """The problems of video_frames that are the file's as it is, not the moment's."""
+    return (video_frames.NOT_A_VIDEO, video_frames.NO_FRAME, video_frames.TOO_LONG % POSTER_SECONDS)
+
+
+def poster(clip_path, tools):
+    """The thumbnail of the clip at `clip_path`: its middle frame (video_frames.poster), a JPEG no larger than SIZE on a
+    side, upright. `tools` is what tagpup.config.locate_ffmpeg answered, with no problem. At most POSTER_RUNS at once
+    in a process. Raises NoPoster for a file that gives no picture as it is, and Unavailable when it cannot be reached
+    or read just now (a share asleep, a file another program holds, ffmpeg that could not be started).
+
+    A process stopped while a poster is made (the server closed, Ctrl+C in the CLI) does not wait for its ffmpeg: the
+    child is left to end by itself, which it does at once when it next writes to the pipe its parent no longer reads,
+    or when a read of a share it is blocked in answers. Nothing is kept of it: an entry is written only after."""
+    with _poster_runs:
+        found = video_frames.poster(tools, clip_path, max_side=SIZE, seconds=POSTER_SECONDS)
+    if found.pictures:
+        return found.pictures[0]
+    if found.problem in _lasting():
+        raise NoPoster(found.problem)
+    raise Unavailable("The video's picture could not be made just now (%s): try again in a moment." % found.problem.rstrip("."))
 
 
 _placeholder = None

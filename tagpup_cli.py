@@ -1485,7 +1485,8 @@ def _megabytes(size):
               help="Make the thumbnails. Without it, only counts what is there and what would be made.")
 @click.pass_context
 def thumbs_warm(ctx, folder, limit, apply_):
-    """Make the thumbnails the library's photos lack, ahead of the first time each is asked for. A dry run unless
+    """Make the thumbnails the library's photos lack, and the poster frames of its videos (through ffmpeg), ahead of
+    the first time each is asked for. A dry run unless
     --apply: it counts the photos that have a thumbnail for their file as it is now, those that need one (and
     about how much they will take), those whose file is not there, damaged ones, which are not decoded, and
     reads nothing but the library and the files' sizes and times. It can be stopped and run again: what is made is
@@ -1509,7 +1510,7 @@ def thumbs_warm(ctx, folder, limit, apply_):
 
     try:
         with library_roots.pinned(library):
-            counts = thumbnails.warm(library, folder=folder, limit=limit, apply=apply_,
+            counts = thumbnails.warm(library, tagpup_config.locate_ffmpeg, folder=folder, limit=limit, apply=apply_,
                                      progress=progress if apply_ else None)
     except library_roots.RootsChanged:
         console.print(library_roots.STOPPED, markup=False, soft_wrap=True)
@@ -1524,12 +1525,17 @@ def thumbs_warm(ctx, folder, limit, apply_):
                   "(not decoded), %d could not be reached." % (
                       counts["photos"], counts["present"], counts["to_make"], counts["missing"], counts["damaged"], counts["failed"]),
                   markup=False, soft_wrap=True)
+    if counts["no_ffmpeg"]:
+        console.print("%d video(s) get no poster: %s." % (counts["no_ffmpeg"], counts["ffmpeg"]),
+                      markup=False, soft_wrap=True)
     if not apply_:
         shown = counts["to_make"] if limit is None else min(counts["to_make"], limit)
         console.print("--apply would make %d, about %s at %s each. Nothing was written." % (
             shown, _megabytes(shown * counts["average"]), _megabytes(counts["average"])), markup=False, soft_wrap=True)
         return
     console.print("Made %d, %s." % (counts["made"], _megabytes(counts["bytes_made"])), markup=False)
+    if counts["posters"]:
+        console.print("Of them, %d are the poster frames of videos." % counts["posters"], markup=False)
     if counts["swept"]:
         console.print("Deleted %d thumbnail(s) of photos the library no longer holds." % counts["swept"], markup=False)
     if counts["away"]:

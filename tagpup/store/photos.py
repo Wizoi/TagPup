@@ -379,9 +379,6 @@ def vectors(conn, model):
 #: (DECISIONS 2026-11-02, "THE OWNERS' PLANS", item 5): that merge adds 'video' here and splits the face check of
 #: photo_fingerprints.owed from it, as a clip's faces wait for the faces merge.
 VECTOR_KINDS = ("photo",)
-#: The kinds whose picture is drawn as a thumbnail (services.thumbnails): a clip is answered the placeholder, its file
-#: never opened, until its poster frame is made.
-DRAWN_KINDS = ("photo",)
 #: The kinds whose file a bake writes faces into (services.bake_after_index): never a clip (DECISIONS 2026-11-02,
 #: "THE OWNERS' PLANS", item 10; a clip's file is not written, services.file_changes.leave_out_clips).
 BAKED_KINDS = ("photo",)
@@ -568,7 +565,7 @@ def remove_under(conn, folder):
 #: A photo as the thumbnail cache asks for it: its id, its path as the row holds it (what the cache's
 #: entry is keyed by, so that a library moved to another place keeps its entries), and its native path.
 #: What a thumbnail is made from: the photo's id, its path as the row holds it, its native path, and its kind
-#: ('photo' or 'video', photos.kind): a clip's thumbnail is never decoded from its file.
+#: ('photo' or 'video', photos.kind): a clip's thumbnail is its poster frame, never a decode of its file.
 ThumbRow = collections.namedtuple("ThumbRow", "id row_path path kind")
 
 

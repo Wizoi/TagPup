@@ -421,7 +421,7 @@ function buildThumbnailCard(photo) {
         imgWrapper.appendChild(aiBadge);
     }
 
-    // A video's card says so; its picture is the video's first frame (media.js plays it).
+    // A video's card says so; its picture is the video's poster, its middle frame (services/thumbnails; media.js plays it).
     if (photo.media === 'video') {
         const playMark = document.createElement('span');
         playMark.className = 'thumbnail-play-mark';
