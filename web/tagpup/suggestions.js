@@ -618,6 +618,10 @@ export function applyFolderSuggestionsLevel() {
     // that. This is the last point at which it costs nothing.
     // Suggest looks at a folder's photos only, never a clip: the count is of the photos (#2565).
     const photos = selectedRecords().filter(photo => !isVideo(photo));
+    if (photos.length === 0) {
+        alert('Suggestions are for photos, and only videos are selected.');
+        return;
+    }
     const alreadyTagged = photos.filter(isPhotoTagged).length;
     const scope = [
         `Auto-apply AI suggestions to the ${countSaid(photos)} selected?`,

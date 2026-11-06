@@ -160,4 +160,17 @@ describe("a folder's counts with clips in it", () => {
     pageExports(ctx.window, "web/tagpup/suggestions.js").applyFolderSuggestionsLevel();
     assert.match(asked[0], /^Auto-apply AI suggestions to the 1 photo selected\?/);
   });
+
+  test("with only videos selected, neither asks about 0 photos: each says there is no photo to work on", async (t) => {
+    const ctx = await folderWithClips(t);
+    select(ctx, ["dusk.mp4", "noon.mov"]);
+    const asked = asking(ctx);
+    const told = [];
+    ctx.window.alert = (message) => told.push(message);
+    ctx.document.getElementById("rename-grouping-input").value = "Lighthouse";
+    ctx.document.getElementById("btn-apply-rename").click();
+    pageExports(ctx.window, "web/tagpup/suggestions.js").applyFolderSuggestionsLevel();
+    assert.deepEqual(asked, [], "asked about 0 photos");
+    assert.equal(told.length, 2, "each should say why it did nothing");
+  });
 });

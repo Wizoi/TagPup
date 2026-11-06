@@ -66,6 +66,10 @@ export function wireRenameAndTimeShift() {
         // What will be renamed: the selected photos. A clip is not renamed (images.CLIP_NOT_EDITED), and is said apart.
         const chosen = selectedRecords();
         const clips = chosen.filter(isVideo);
+        if (clips.length === chosen.length) {
+            alert('Smart Rename renames photos, and only videos are selected.');
+            return;
+        }
         const asked = [`Are you sure you want to smart-rename the ${countSaid(chosen.filter(r => !isVideo(r)))} selected?`];
         if (clips.length) asked.push(`A video is not renamed: the ${countSaid(clips)} selected keep their names.`);
         if (!confirm(asked.join('\n\n'))) {
