@@ -1,0 +1,11 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-11-05 | low: an undo of a change holding a clip the writer would refuse to put back (writing clips off: field_values.clip_refused; or its last keyword taken off while QuickTime holds one its XMP did not) is refused WHOLE in its rehearsal (`_undoable` answers it as "cannot be undone at all"), the photos beside the clip in that change not put back either, rather than undoing the photos and leaving the clip a conflict; chosen so a change is never half undone with a stuck conflict nothing reports, and it can be undone once writing clips is on again (tests/test_a_clip_tag_undone.py). | decided: M7 B3b, the brief's "the change stays applied" taken for a mixed change too |
+| B-2 | 2026-11-05 | low: `_carry` passes `keywords_elsewhere=()` to every undo's write, including an interrupted undo of a clip written again at the next start, which `_undoable`'s QuickTime check did not see in that process. Its QuickTime Subject is never written by TagPup, so only another program could change it between the rehearsal and the settle, and that changes the clip's bytes: settled NEITHER, a conflict, never written. No branch added for it. | decided: no live instance (writing clips is off; 0 clip patch records) |
+| B-3 | 2026-11-05 | low: the M7 design says a clip whose share stops answering part-way is "settled by its bytes at the next start"; the code (`_after_failure`, by its bytes) settles it at once when the clip answers again by then (torn: put back, the clip taken out of its change, the change failed), and only one still away is left `writing` for the next start. The code is the better rule; the design note is stale (tests/test_a_clip_patch_cut_short.py states the code's). | decided: the code's rule |
+| B-4 | 2026-11-05 | low: test_a_clip_patch_cut_short's player test (GET /api/video-file, Range bytes=0-99 after a tag write) answered something other than 206 once, in the file's first run, when a sibling test in the same run had failed on an assertion; not reproduced in five runs after. Nothing to do until it is seen again. | open |

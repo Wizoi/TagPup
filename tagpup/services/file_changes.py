@@ -79,7 +79,7 @@ from tagpup.core import fields, paths
 from tagpup.core.result import Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, metadata, names, shares
+from tagpup.files import exiftool_session, field_values, images, in_place, lock_owners, metadata, names, segment_edits, shares
 from tagpup.services import baking, batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, file_journal, photos, schema
@@ -808,11 +808,13 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     row.patched = False
     _reached("file writing")
     saving = _saving(library, row)
-    failed = _written(et, row, target, saving)
+    # An undo takes a clip back to what it held: its QuickTime keywords were checked against what it undoes (_undoable).
+    elsewhere = () if finished == "undone" else None
+    failed = _written(et, row, target, saving, elsewhere)
     if exiftool_session.scratch_in_the_way(failed):
         left = _removed_scratch(row.path, stamp, interrupted)
         if left is None:
-            failed = _written(et, row, target, saving)      # once: a second failure is the write's own
+            failed = _written(et, row, target, saving, elsewhere)      # once: a second failure is the write's own
         elif left == SCRATCH_UNDER_WAY:
             failed = exiftool_session.written_lately(failed)
     if isinstance(failed, field_values.PictureChanged):
@@ -840,10 +842,10 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     return finished, None
 
 
-def _written(et, row, target, saving=None):
+def _written(et, row, target, saving=None, keywords_elsewhere=None):
     """None when field_values.write wrote `target` into the file of `row`, the fields it left as they were in
     `row.stale`; else what it raised. A new file whose picture changed is written once more, logged and counted
-    (field_values.written_once_more; `pictures_refused`)."""
+    (field_values.written_once_more; `pictures_refused`). `keywords_elsewhere`, a clip's, as write takes it."""
     def again():
         logger.warning("%s: its write changed the picture's bytes; the new file was discarded, and it is written once more",
                        row.named())
@@ -851,7 +853,8 @@ def _written(et, row, target, saving=None):
     row.stale = ()
     try:
         row.stale = tuple(field_values.written_once_more(et, row.path, target, again, saving=saving,
-                                                         scratch_written=lambda: _reached(SCRATCH_WRITTEN)))
+                                                         scratch_written=lambda: _reached(SCRATCH_WRITTEN),
+                                                         keywords_elsewhere=keywords_elsewhere))
     except Exception as e:
         return e
     return None
@@ -1456,7 +1459,8 @@ def _undoable(library, change_id, exiftool_path, check):
     file it left done; or (None, why it cannot be undone at all, None). `check(conn,
     change_id)` is the one account of whether it may be undone now
     (tagpup.services.journal.why_not: a newer change of the same files among it), asked on
-    a read-only connection, once, before anything is written."""
+    a read-only connection, once, before anything is written. A clip the writer would refuse to put back
+    (_clip_not_undone) refuses the whole undo, so the change stays applied, never half undone nor a conflict (#2546)."""
     change = file_journal.change(library.path, change_id)
     if change is None:
         return None, "there is no change %d" % change_id, None
@@ -1486,18 +1490,38 @@ def _undoable(library, change_id, exiftool_path, check):
     if changed:
         if not exiftool_path:
             return None, "undoing change %d rewrites photo files, and needs ExifTool" % change_id, None
+        wanted = {f for row in changed for f in row.after}
+        if any(images.is_clip(row.path) for row in changed):
+            wanted.add(fields.CLIP_KEYWORDS)
         with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-            held = field_values.read(et, [row.path for row in changed],
-                                     sorted({f for row in changed for f in row.after}))
+            held = field_values.read(et, [row.path for row in changed], sorted(wanted))
         for row in changed:
             now = held.get(paths.key(row.path))
             if now is None or isinstance(now, Exception):
                 refused.append((row, "could not be read: %s" % now))
-            elif fields.reads_same(now, row.after):
-                ready.append(row)
-            else:
+            elif not fields.reads_same(now, row.after):
                 refused.append((row, "no longer holds what the change left"))
+            elif images.is_clip(row.path) and (why := _clip_not_undone(row, now)):
+                # The writer would refuse it: the undo is refused whole, the change left applied, to be undone later.
+                return None, "%s: %s" % (row.named(), why), None
+            else:
+                ready.append(row)
     return change, ready, refused
+
+
+def _clip_not_undone(row, now):
+    """Why the writer (field_values.write) would refuse to put back the clip of `row`, which holds `now`, else None:
+    writing clips off (field_values.clip_refused), or its last keyword taken off while its QuickTime Subject holds one
+    the XMP it undoes did not (segment_edits.KEPT_IN_QUICKTIME). One whose XMP held every QuickTime keyword goes back
+    to an empty XMP:Subject: what it held before the change, its keywords read from QuickTime again (_carry passes
+    keywords_elsewhere=() to an undo)."""
+    why = field_values.clip_refused(row.before)
+    if why or not field_values.takes_off_every_keyword(row.before):
+        return why
+    kept = set(fields.field_values(now.get("XMP:Subject")))
+    if set(fields.field_values(now.get(fields.CLIP_KEYWORDS))) - kept:
+        return segment_edits.KEPT_IN_QUICKTIME
+    return None
 
 
 @_exclusive

@@ -156,10 +156,11 @@ def with_quicktime_subject(path, words):
 
 
 @unittest.skipIf(EXIFTOOL is None or TOOLS.problem, "ExifTool or ffmpeg is not installed on this machine")
-class AClipInTheLibrary(unittest.TestCase):
+class ALibraryHoldingAClip(unittest.TestCase):
     """A library holding a photo and a real ffmpeg clip, each row recorded by the indexer's own read
     (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own) with writing
-    clips on."""
+    clips on. No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
+    test_a_clip_patch_cut_short)."""
 
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
@@ -198,6 +199,16 @@ class AClipInTheLibrary(unittest.TestCase):
     def post(self, route, body):
         return self.client.post("/library/api/" + route, json=body)
 
+    def change_states(self, photo_id):
+        return [state for state, in self.vl.rows("SELECT state FROM change_files WHERE photo_id = ?", photo_id)]
+
+    def read_bytes(self, path):
+        with open(path, "rb") as handle:
+            return handle.read()
+
+
+class AClipInTheLibrary(ALibraryHoldingAClip):
+
     def test_a_tag_added_to_a_clip_whose_tags_are_in_its_quicktime_subject_keeps_them(self):
         with_quicktime_subject(self.clip_path, ["Trips/Coast", "Trips/Pier"])
         clip, = self.index(self.clip_path)
@@ -219,9 +230,6 @@ class AClipInTheLibrary(unittest.TestCase):
         reply = self.post("photos/bulk-tags", {"paths": [self.clip_path], "remove_tags": ["Trips/Pier"]})
         self.assertIn(segment_edits.KEPT_IN_QUICKTIME, reply.get_json()["error"])
         self.assertEqual((["Trips/Pier"], ["Trips/Pier"]), self.read_now(self.clip_path), "the last is kept")
-
-    def change_states(self, photo_id):
-        return [state for state, in self.vl.rows("SELECT state FROM change_files WHERE photo_id = ?", photo_id)]
 
     def test_a_tag_save_from_the_photo_panel_writes_the_clips_xmp_and_journals_it_done(self):
         clip, = self.index(self.clip_path)
@@ -270,10 +278,6 @@ class AClipInTheLibrary(unittest.TestCase):
         self.assertEqual(["Trips/Coast"], self.read_now(self.photo_path)[1])
         self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was")
         self.assertEqual([], self.tags_of(clip))
-
-    def read_bytes(self, path):
-        with open(path, "rb") as handle:
-            return handle.read()
 
     def test_a_write_of_a_folder_the_library_does_not_hold_refuses_a_clip_with_writing_clips_on(self):
         before = self.read_bytes(self.clip_path)

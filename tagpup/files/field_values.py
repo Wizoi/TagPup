@@ -241,7 +241,7 @@ def read_one(et, photo_path, wanted):
     return held
 
 
-def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=None):
+def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=None, keywords_elsewhere=None):
     """Write `values` ({field: value}) into a photo, in one ExifTool command, clearing a
     field whose value is empty, telling ExifTool an objection it calls minor does not stop it (WRITE_OPTIONS: a photo
     with two rdf:about attributes in its XMP takes a write; DECISIONS 2026-10-27). Raises
@@ -273,9 +273,10 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
     `own_writer` chooses a patch's writer for this write alone, True the own, False ExifTool's; None, OWN_WRITER. Only
     the shadow comparison of the two (tagpup.services.metadata_check) chooses: it writes each side on a copy.
 
-    A clip (images.is_clip) is never ExifTool's to write: _clip_written patches its XMP or refuses it."""
+    A clip (images.is_clip) is never ExifTool's to write: _clip_written patches its XMP or refuses it, given its
+    `keywords_elsewhere` (None: read from the clip)."""
     if images.is_clip(photo_path):
-        return _clip_written(et, photo_path, values, saving)
+        return _clip_written(et, photo_path, values, saving, keywords_elsewhere)
     own = [field for field in values if str(field).startswith(bake.NAMESPACE + ":")]
     if own and getattr(et, "config_file", None) != bake.config_path():
         raise ValueError("%s is written only by a session that knows TagPup's namespace (field_values.session); this one "
@@ -327,7 +328,21 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
     return ()
 
 
-def _clip_written(et, photo_path, values, saving):
+def clip_refused(values):
+    """images.CLIP_NOT_EDITED when a write of `values` to a clip is refused before the clip is looked at -- writing clips
+    off, or a field outside fields.CLIP_FIELDS -- else None: the one rule, asked by _clip_written and, before anything is
+    written, by an undo's rehearsal (tagpup.services.file_changes._undoable), so the change it refuses stays applied."""
+    if not CLIP_PATCH_IN_PLACE or not set(values) <= fields.CLIP_FIELDS:
+        return images.CLIP_NOT_EDITED
+    return None
+
+
+def takes_off_every_keyword(values):
+    """Does a write of `values` leave a clip's XMP holding no keyword (segment_edits.KEPT_IN_QUICKTIME's case)?"""
+    return "XMP:Subject" in values and not fields.field_values(values["XMP:Subject"])
+
+
+def _clip_written(et, photo_path, values, saving, keywords_elsewhere=None):
     """write() of a clip: the fields it left as they were (segment_edits.clip_stale_of) once its XMP holds `values`, by a
     patch of its XMP in place (in_place.patch_clip), saved by `saving` before a byte is written. Raises Refused, nothing
     written, while CLIP_PATCH_IN_PLACE is off, for a write that is not the journal's (no `saving`: nothing could settle a
@@ -336,11 +351,12 @@ def _clip_written(et, photo_path, values, saving):
     keywords in QuickTime too (in_place's and segment_edits' sentences). Raises Unreadable when it could not be read
     before a byte was written (NotAnswered: its share did not answer); a write that failed after its record was saved
     raises as it failed, the file settled by its bytes. ExifTool only reads: the clip's QuickTime keywords, before the
-    patch opens the file alone, when the save takes the last keyword off its XMP."""
-    if not CLIP_PATCH_IN_PLACE or saving is None or not set(values) <= fields.CLIP_FIELDS:
+    patch opens the file alone, when the save takes the last keyword off its XMP and the caller has not said them
+    (`keywords_elsewhere`: an undo's, () when what it undoes held every one of them in XMP too)."""
+    if saving is None or clip_refused(values):
         raise Refused(images.CLIP_NOT_EDITED)
-    elsewhere = ()
-    if "XMP:Subject" in values and not fields.field_values(values["XMP:Subject"]):
+    elsewhere = keywords_elsewhere or ()
+    if keywords_elsewhere is None and takes_off_every_keyword(values):
         # The keywords a clip holds where TagPup does not write them (fields.CLIP_KEYWORDS), read before the last
         # keyword is taken off its XMP (segment_edits.new_packet's `keywords_elsewhere`).
         elsewhere = read_one(et, photo_path, [fields.CLIP_KEYWORDS])[fields.CLIP_KEYWORDS]

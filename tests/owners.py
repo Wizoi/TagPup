@@ -60,7 +60,7 @@ SCENARIOS = {
     "F9": ("files", "A run holds one map of the roots; a root moved meanwhile stops a write with a sentence."),
     "F10": ("files", "One photo whatever its path's spelling."),
     "F11": ("files", "Add a folder: it is queued, indexed by the CLI with progress, its photos' bakes read from their files under the library's keys, followed from every entry point, when it recorded a photo, by a matching of the faces it made that writes nothing, and a second run reads nothing."),
-    "F12": ("files", "A clip in a folder is indexed as a row of kind video, dated by its QuickTime dates, with no vector and nothing written to its file; the owed scan never queues it again, the folder view and a time shift leave it out, and the photos beside it are indexed as before; sync follows a clip moved or renamed, reads again one whose copy went on, a clip cut short is a row never decoded, and two libraries holding one folder of clips keep their own rows; a save, a turn, a tag edit, a Smart Rename or a delete naming a clip leaves its file as it was with a sentence, the photos beside it written."),
+    "F12": ("files", "A clip in a folder is indexed as a row of kind video, dated by its QuickTime dates, with no vector and nothing written to its file; the owed scan never queues it again, the folder view and a time shift leave it out, and the photos beside it are indexed as before; sync follows a clip moved or renamed, reads again one whose copy went on, a clip cut short is a row never decoded, and two libraries holding one folder of clips keep their own rows; a save, a turn, a tag edit, a Smart Rename or a delete naming a clip leaves its file as it was with a sentence, the photos beside it written; a clip's tag save undone puts its XMP back, and while writing clips is off its undo is refused whole, the change still applied; a clip's write cut short is settled by its bytes at the next start (written again, cut back, recorded, or a conflict), two writes of it run one after the other, and the player streams it at its new size."),
     "V1": ("views", "A view lists each photo once, in the owner's order, with its count."),
     "V2": ("views", "A typed search ANDs its words and ranks nothing."),
     "V3": ("views", "Suggest, and the analyse-only run, from start to end."),
@@ -137,7 +137,10 @@ _SCENARIO_FILES = {
         "test_an_index_is_one_run_under_its_sync test_index_progress_end_to_end test_new_faces_are_matched_after_an_index test_an_index_reads_the_next_photos_ahead "
         "test_an_index_reads_a_bake test_a_machine_without_a_card"
     ),
-    "F12": "test_a_clip_is_indexed_as_a_video test_a_clip_is_not_edited_or_deleted test_a_clip_tagged_through_the_journal",
+    "F12": (
+        "test_a_clip_is_indexed_as_a_video test_a_clip_is_not_edited_or_deleted test_a_clip_tagged_through_the_journal "
+        "test_a_clip_tag_undone test_a_clip_patch_cut_short"
+    ),
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
