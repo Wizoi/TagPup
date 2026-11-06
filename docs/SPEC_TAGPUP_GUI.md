@@ -203,6 +203,7 @@ Scheduled jobs, Snapshots, Server and Logs are folded until opened, each showing
 - Sequential renaming based on a custom `[Grouping] - [Index] - [Caption]` format.
 - Evicts conflicts automatically to temporary filenames.
 - Preserves the original filename in `XMP-xmpMM:PreservedFileName` metadata.
+- **Smart Rename of one photo**: beside the open photo's file name, a grouping box filled from its name (`/api/photo/smart-rename-parts`) and editable, with a button that renames that photo alone in the library's format (`/api/photo/smart-rename`, `web/tagpup/rename-one.js`): the photo keeps its number, a name with none takes the folder's next, and a name another photo holds is refused, not taken.
 
 ### 3. Tag Taxonomy Tree Manager
 - Open the hierarchical tree modal from the gear at the right of the top bar: **Tag editor**. The editor is one module both pages open (`web/common/tag-editor.js`), and TagTuner's gear opens the same one; its routes are served by both apps.
