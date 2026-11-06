@@ -72,6 +72,7 @@ The system reads and writes metadata using the following tags:
 ### Read Fields
 - **Keywords / Tags**: `IPTC:Keywords`, `XMP:Subject`, `XMP:HierarchicalSubject`
 - **People / Faces**: the leaf of a hierarchical tag under a root the library's tree marks as holding faces (e.g., `John Doe` from `Family/Immediate/John Doe`). `XMP:PersonInImage` and `XMP:RegionName` are not read at all (owner, 2026-10-15).
+- **Titles**: `XMP:Title`, `IPTC:ObjectName` (the title shown is the Title, else the Description: `vocabulary.title_of`)
 - **Captions / Descriptions**: `IPTC:Caption-Abstract`, `XMP:Description`
 - **Title / Name**: `XMP:Title`, `IPTC:ObjectName`
 - **Date Taken**: `EXIF:DateTimeOriginal`, `XMP:DateTimeOriginal`, `EXIF:CreateDate`
@@ -84,7 +85,8 @@ The system reads and writes metadata using the following tags:
 Tags and captions are written back using ExifTool:
 - **Flat Tags & People names**: Written to `XMP:Subject`, `IPTC:Keywords` (in append `+=` mode) and `EXIF:XPKeywords` (semicolon-separated string).
 - **Hierarchical Paths**: Paths (containing `/`) are written to `XMP:HierarchicalSubject`.
-- **Captions**: Written to `XMP:Description`, `IPTC:Caption-Abstract`, `EXIF:ImageDescription` (which maps to `System.Title` in Windows), and `EXIF:XPComment` (which maps to `System.Comment`/Caption in Windows).
+- **Titles**: Written to `XMP:Title` and `IPTC:ObjectName` by the photo panel's save (`fields.title_fields`).
+- **Captions**: Held in `XMP:Description`, `IPTC:Caption-Abstract`, `EXIF:ImageDescription` (which maps to `System.Title` in Windows), and `EXIF:XPComment` (which maps to `System.Comment`/Caption in Windows); no writer sets them, and a save clears only those holding the text it moves into the title (DECISIONS 2026-11-06).
 
 ---
 
