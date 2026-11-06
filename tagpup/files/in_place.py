@@ -58,6 +58,17 @@ class Away(OSError):
     """The share of the photo did not answer a read or write of it in SECONDS. What a write left is settled by its bytes
     against the record the journal saved (held), the next time."""
 
+class Refused(Exception):
+    """A patch that will not be made, and why, as a sentence: nothing was written."""
+
+
+#: Why a clip open in another program when it is saved is refused at once, never waited for (owner, 2026-11-05).
+OPEN_ELSEWHERE = ("it is open in another program (a player, an editor): close it there and save again; nothing was "
+                  "written")
+#: Windows' errors of a file another program holds open: a sharing violation, a lock violation. Not access denied
+#: (lock_owners.HELD counts it too), which a read-only file answers as well.
+_OPEN_ELSEWHERE_ERRORS = (32, 33)
+
 #: What a file holds against its record (held).
 NEW, OLD, TORN, NEITHER = "new", "old", "torn", "neither"
 
@@ -338,6 +349,19 @@ def _opened(path):
     """The file at `path` opened alone (_alone) on a bounded call, lent to the patch's later calls (_Lent, a context
     manager that closes it). Raises Away, or the OSError the open raised."""
     return _Lent(_bounded(path, lambda: _alone(path)))
+
+
+def _opened_to_patch(path):
+    """_opened, but a file another program holds open is Refused(OPEN_ELSEWHERE) at once, never retried. Raises Away, or
+    any other OSError the open raised."""
+    try:
+        return _opened(path)
+    except Away:
+        raise
+    except OSError as error:
+        if getattr(error, "winerror", None) in _OPEN_ELSEWHERE_ERRORS:
+            raise Refused(OPEN_ELSEWHERE) from None
+        raise
 
 
 def _written(lent, path, changes, stale, saving, grow=False, size=None):
