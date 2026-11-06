@@ -130,8 +130,8 @@ class WhatTheFileKept(KeptCase):
         cases = {
             "a long keyword": (lambda a: self.add([a], [LONG]), "IPTC:Keywords", LONG[:64]),
             "a letter IPTC cannot hold": (lambda a: self.add([a], ["Places/" + L_STROKE + "odz"]), "IPTC:Keywords", "Places/?odz"),
-            "a number": (lambda a: self.caption([a], "1.50"), "XMP:Description", "1.5"),
-            "a boolean": (lambda a: self.caption([a], "true"), "XMP:Description", "True"),
+            "a number": (lambda a: self.caption([a], "1.50"), "XMP:Title", "1.5"),
+            "a boolean": (lambda a: self.caption([a], "true"), "XMP:Title", "True"),
         }
         for label, (write, field, kept) in cases.items():
             with self.subTest(label):
