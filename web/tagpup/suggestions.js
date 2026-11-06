@@ -36,7 +36,11 @@ export function updateSuggestButtonState(status = null) {
         btnSuggestTags.disabled = false;
         return;
     }
-    const hasUnprocessed = state.folderPhotos.some(photo => !state.folderSuggestions[photo.path]);
+    // A photo the run could not read is tried again by the next (the server's _succeeded): not done.
+    const hasUnprocessed = state.folderPhotos.some(photo => {
+        const found = state.folderSuggestions[photo.path];
+        return !found || Boolean(found.error);
+    });
     btnSuggestTags.disabled = !hasUnprocessed;
 }
 

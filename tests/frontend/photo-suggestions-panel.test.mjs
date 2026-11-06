@@ -249,6 +249,8 @@ describe("while the folder's run goes, the box says how it stands", () => {
     const ctx = await openDuringARun(t, "c.jpg", inTurn(served.completed));
     assert.match(note(ctx).textContent, /cannot identify image file/);
     assert.match(note(ctx).textContent, /Start Photo Analysis again/);
+    // Every photo has an entry, one of them a failure: the button the line names can be clicked.
+    assert.equal(ctx.document.getElementById("btn-suggest-tags").disabled, false);
   });
 
   test("a photo never analysed with no run says nothing: the box stays hidden", async (t) => {
