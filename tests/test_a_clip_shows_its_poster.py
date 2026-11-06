@@ -244,6 +244,47 @@ class WarmingAhead(Clips):
         self.assertEqual(0, runs.count, "the card finds the poster warm made")
 
 
+@NEEDS_FFMPEG
+class AClipPastTheCardsDeadline(Clips):
+    """A deadline is the moment's (contending ffmpeg runs, a slow share), not the file's: no verdict is kept."""
+
+    def watch(self):
+        real, asked = video_frames.poster, []
+
+        def poster(tools, path, max_side=video_frames.MAX_SIDE, seconds=video_frames.DEFAULT_SECONDS):
+            asked.append(seconds)
+            return real(tools, path, max_side=max_side, seconds=seconds)
+
+        patcher = mock.patch.object(video_frames, "poster", poster)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return asked
+
+    def test_a_poster_past_the_cards_deadline_is_try_again_remembers_nothing_and_warm_makes_it_with_more_time(self):
+        asked = self.watch()
+        with mock.patch.object(thumbs, "POSTER_SECONDS", 0.001):
+            for _ in range(2):
+                with self.assertRaises(Unavailable):
+                    self.serve()
+        self.assertEqual([0.001, 0.001], asked, "the second ask runs ffmpeg again: nothing was remembered")
+        self.assertEqual([], entries_of(self.library))
+        made = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
+        self.assertEqual((1, 1, 0, 0), (made["made"], made["posters"], made["damaged"], made["too_long"]))
+        self.assertEqual(thumbs.WARM_POSTER_SECONDS, asked[-1], "warm waits longer than a card does")
+        self.assertGreater(thumbs.WARM_POSTER_SECONDS, thumbs.POSTER_SECONDS)
+
+    def test_warm_counts_a_clip_past_even_its_deadline_apart_from_the_damaged_and_tries_it_next_run(self):
+        asked = self.watch()
+        with mock.patch.object(thumbs, "WARM_POSTER_SECONDS", 0.001):
+            late = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
+        self.assertEqual((0, 0, 1), (late["made"], late["damaged"], late["too_long"]))
+        self.assertEqual((0, 0), (late["failed"], late["posters"]))
+        self.assertEqual([], entries_of(self.library))
+        again = thumbnails.warm(self.library, config.locate_ffmpeg, apply=True)
+        self.assertEqual((1, 0), (again["made"], again["too_long"]))
+        self.assertEqual(2, len(asked), "retried: nothing was remembered")
+
+
 class NoFfmpegOrNoAnswer(Clips):
     """No ffmpeg run is needed, or allowed, here: the clip's bytes are only what a .mp4 starts with."""
 

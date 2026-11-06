@@ -237,8 +237,11 @@ def render(photo_path):
 
 
 #: Seconds a clip's poster may take, every ffmpeg run of it together: a card waits for it, so far less than
-#: video_frames.DEFAULT_SECONDS; past it the run is killed with its tree (video_frames) and the clip has no poster.
+#: video_frames.DEFAULT_SECONDS; past it the run is killed with its tree (video_frames) and the card is told to try again.
 POSTER_SECONDS = 15
+
+#: The same for `thumbs warm`, where nothing waits on a card: a big clip on a share is made there.
+WARM_POSTER_SECONDS = 120
 
 #: ffmpeg runs making posters at once in this process: a grid scrolled fast over a folder of clips starts no more, the
 #: rest wait their turn.
@@ -248,34 +251,36 @@ _poster_runs = threading.BoundedSemaphore(POSTER_RUNS)
 
 class NoPoster(Exception):
     """A clip whose file, as it is now, gives no picture: ffmpeg cannot read it as a video (not one, or cut short before
-    its index), decodes no frame of it, or takes longer than POSTER_SECONDS. `problem` is video_frames' sentence, which
-    names no file."""
+    its index) or decodes no frame of it. `problem` is video_frames' sentence, which names no file."""
 
     def __init__(self, problem):
         super().__init__(problem)
         self.problem = problem
 
 
-def _lasting():
-    """The problems of video_frames that are the file's as it is, not the moment's."""
-    return (video_frames.NOT_A_VIDEO, video_frames.NO_FRAME, video_frames.TOO_LONG % POSTER_SECONDS)
+class TookTooLong(Unavailable):
+    """The deadline passed before the poster was made: the moment's, not the file's (contending ffmpeg runs, a slow
+    share), so nothing is remembered and it is tried again."""
 
 
-def poster(clip_path, tools):
+def poster(clip_path, tools, seconds=None):
     """The thumbnail of the clip at `clip_path`: its middle frame (video_frames.poster), a JPEG no larger than SIZE on a
     side, upright. `tools` is what tagpup.config.locate_ffmpeg answered, with no problem. At most POSTER_RUNS at once
-    in a process. Raises NoPoster for a file that gives no picture as it is, and Unavailable when it cannot be reached
-    or read just now (a share asleep, a file another program holds, ffmpeg that could not be started).
+    in a process, within `seconds` (POSTER_SECONDS when None). Raises NoPoster for a file that gives no picture as it
+    is, TookTooLong when the deadline passed, and Unavailable when it cannot be reached or read just now (a share
+    asleep, a file another program holds, ffmpeg that could not be started).
 
     A process stopped while a poster is made (the server closed, Ctrl+C in the CLI) does not wait for its ffmpeg: the
     child is left to end by itself, which it does at once when it next writes to the pipe its parent no longer reads,
     or when a read of a share it is blocked in answers. Nothing is kept of it: an entry is written only after."""
     with _poster_runs:
-        found = video_frames.poster(tools, clip_path, max_side=SIZE, seconds=POSTER_SECONDS)
+        found = video_frames.poster(tools, clip_path, max_side=SIZE, seconds=POSTER_SECONDS if seconds is None else seconds)
     if found.pictures:
         return found.pictures[0]
-    if found.problem in _lasting():
+    if found.whose == video_frames.THE_FILE:
         raise NoPoster(found.problem)
+    if found.whose == video_frames.TOO_SLOW:
+        raise TookTooLong("The video's picture took too long just now (%s): try again in a moment." % found.problem.rstrip("."))
     raise Unavailable("The video's picture could not be made just now (%s): try again in a moment." % found.problem.rstrip("."))
 
 

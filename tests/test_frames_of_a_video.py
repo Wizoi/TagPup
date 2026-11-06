@@ -158,7 +158,7 @@ class FramesOfAVideo(unittest.TestCase):
         for path in (self.cut_before_index, self.not_a_video):
             with self.subTest(os.path.basename(path)):
                 found, started = self.frames(path)
-                self.assertEqual(((), video_frames.NOT_A_VIDEO), found)
+                self.assertEqual(((), video_frames.NOT_A_VIDEO, video_frames.THE_FILE), found)
                 self.assertEqual(1, len(started.children), "the look at the duration only")
 
     def test_a_file_not_there_or_on_a_share_asleep_starts_nothing(self):
@@ -202,7 +202,7 @@ class AHungProgram(unittest.TestCase):
             done, problem = video_frames._run([sys.executable, "-c", "import time; time.sleep(60)"],
                                               time.monotonic() + 1, 1)
         self.assertIsNone(done)
-        self.assertEqual(video_frames.TOO_LONG % 1, problem)
+        self.assertEqual((video_frames.TOO_LONG % 1, video_frames.TOO_SLOW), problem)
         self.assertLess(time.monotonic() - began, 30)
         self.assertFalse(processes.is_alive(started.children[0][1]))
 
@@ -237,7 +237,8 @@ class AChildThatCannotBeWaitedFor(unittest.TestCase):
         ended = []
         done, problem = self.run_with(child, ended.append)
         self.assertIsNone(done)
-        self.assertTrue(problem and problem.endswith("."), problem)
+        self.assertTrue(problem and problem[0].endswith("."), problem)
+        self.assertEqual(video_frames.THE_MOMENT, problem[1])
         self.assertEqual([child.pid], ended)
 
     def test_a_taskkill_that_hangs_does_not_escape_and_the_child_is_still_killed(self):

@@ -17,7 +17,8 @@ moment after the last frame, where an exact seek decodes nothing (a clip of half
 with no duration (a raw stream) gives one frame, its first, read without a seek (ffmpeg cannot seek in one): there is
 nothing to space them by, and decoding the whole stream to count its frames is the read this module exists to avoid.
 
-How it fails, each as a plain `problem` and no picture, never an exception: ffmpeg not found (the sentence
+How it fails, each as a plain `problem` and no picture (and `whose`: THE_FILE's, which another call would find
+again, or THE_MOMENT's, which it might not; this module is the one place that says which), never an exception: ffmpeg not found (the sentence
 locate_ffmpeg gives); the file not there, unreadable, or on a share that does not answer (one bounded look first,
 tagpup.files.shares.stamp_of: a share asleep holds no ffmpeg); a file ffmpeg cannot read as a video (not a video, or cut
 short before its index); ffmpeg past the call's deadline, `seconds` for the whole call (killed with its tree through
@@ -58,14 +59,26 @@ NO_FRAME = "ffmpeg decoded no frame of this video."
 TOO_LONG = "ffmpeg took longer than %g s and was stopped."
 
 
+#: A problem that is the file's as it is: another call finds it again until the file changes.
+THE_FILE = "file"
+
+#: A problem that is the moment's (a share away, ffmpeg not started, the deadline passed): a later call may succeed.
+THE_MOMENT = "moment"
+
+#: The deadline passed: the moment's, and told apart because a longer deadline is the remedy.
+TOO_SLOW = "too slow"
+
+
 class Frames(NamedTuple):
-    """The pictures (JPEG bytes, in the video's order) and, when there are none, why."""
+    """The pictures (JPEG bytes, in the video's order) and, when there are none, why (`problem`) and whose it is
+    (`whose`: THE_FILE, THE_MOMENT or TOO_SLOW; None when there is no problem)."""
     pictures: Tuple[bytes, ...]
     problem: Optional[str]
+    whose: Optional[str] = None
 
 
-def _refused(problem):
-    return Frames((), problem)
+def _refused(problem, whose=THE_MOMENT):
+    return Frames((), problem, whose)
 
 
 def frames(tools, path, count, max_side=MAX_SIDE, seconds=DEFAULT_SECONDS):
@@ -84,17 +97,17 @@ def frames(tools, path, count, max_side=MAX_SIDE, seconds=DEFAULT_SECONDS):
     deadline = time.monotonic() + seconds
     span, problem = _span(tools.ffprobe, path, deadline, seconds)
     if problem:
-        return _refused(problem)
+        return _refused(*problem)
     times = [None] if span is None else [span * (2 * i + 1) / (2 * count) for i in range(count)]
     pictures = []
     for at in times:
         picture, problem = _picture(tools.ffmpeg, path, at, max_side, deadline, seconds)
         if problem:
-            return _refused(problem)
+            return _refused(*problem)
         if picture:
             pictures.append(picture)
     if not pictures:
-        return _refused(NO_FRAME)
+        return _refused(NO_FRAME, THE_FILE)
     return Frames(tuple(pictures), None)
 
 
@@ -113,7 +126,7 @@ def _rate(said):
 
 def _span(ffprobe, path, deadline, seconds):
     """(seconds from the first frame of the video's first picture stream to the start of its last, or None when it
-    has no duration; problem)."""
+    has no duration; problem: (sentence, whose) or None)."""
     done, problem = _run([ffprobe, "-v", "error", "-select_streams", "V:0",
                           "-show_entries", "stream=codec_type,duration,r_frame_rate:format=duration", "-of", "json",
                           path],
@@ -128,7 +141,7 @@ def _span(ffprobe, path, deadline, seconds):
     streams = said.get("streams") or []
     if not streams:
         _log("ffprobe", err, path)
-        return None, NOT_A_VIDEO
+        return None, (NOT_A_VIDEO, THE_FILE)
     for value in (streams[0].get("duration"), (said.get("format") or {}).get("duration")):
         try:
             found = float(value)
@@ -161,26 +174,26 @@ def _picture(ffmpeg, path, at, max_side, deadline, seconds):
 
 
 def _run(args, deadline, seconds):
-    """((exit code, stdout, stderr), None), or (None, problem): `args` run with whatever is left before
+    """((exit code, stdout, stderr), None), or (None, (sentence, whose)): `args` run with whatever is left before
     `deadline`, both pipes drained together, killed with its tree when the time is up."""
     left = deadline - time.monotonic()
     if left <= 0:
-        return None, TOO_LONG % seconds
+        return None, (TOO_LONG % seconds, TOO_SLOW)
     try:
         child = processes.start(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as problem:
-        return None, "ffmpeg could not be started: %s." % (problem.strerror or problem)
+        return None, ("ffmpeg could not be started: %s." % (problem.strerror or problem), THE_MOMENT)
     try:
         out, err = child.communicate(timeout=left)
     except subprocess.TimeoutExpired:
         _end(child, args)
-        return None, TOO_LONG % seconds
+        return None, (TOO_LONG % seconds, TOO_SLOW)
     except BaseException as problem:
         _end(child, args)
         if not isinstance(problem, Exception):
             raise
         logger.warning("Waiting for %s failed: %s", args[0], problem)
-        return None, "ffmpeg could not be run to the end: %s." % (problem,)
+        return None, ("ffmpeg could not be run to the end: %s." % (problem,), THE_MOMENT)
     return (child.returncode, out, err), None
 
 

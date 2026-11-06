@@ -1525,6 +1525,9 @@ def thumbs_warm(ctx, folder, limit, apply_):
                   "(not decoded), %d could not be reached." % (
                       counts["photos"], counts["present"], counts["to_make"], counts["missing"], counts["damaged"], counts["failed"]),
                   markup=False, soft_wrap=True)
+    if counts["too_long"]:
+        console.print("%d video(s) took too long to make a poster of (not damaged): run it again to try them once more."
+                      % counts["too_long"], markup=False, soft_wrap=True)
     if counts["no_ffmpeg"]:
         console.print("%d video(s) get no poster: %s." % (counts["no_ffmpeg"], counts["ffmpeg"]),
                       markup=False, soft_wrap=True)
