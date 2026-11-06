@@ -284,8 +284,9 @@ class XmpIsTheCopyRead(FilesCase):
         self.assertEqual("Relay at the lake", shown)
         result = tagging.save_photo(self.library, a, "Relay at the lake, later", [], None, EXIFTOOL, "",
                                     base={"tags": [], "title": shown})
-        # The title is saved to the title fields; the caption, changed from what was shown, is kept (DECISIONS 2026-11-06).
-        self.assertEqual((True, "Relay at the lake, later", "Relay at the lake", "Relay at dusk"),
+        # The title is saved to the title fields; the Description it showed leaves the caption, and IPTC's caption,
+        # another text, is kept (DECISIONS 2026-11-06; #2583).
+        self.assertEqual((True, "Relay at the lake, later", None, "Relay at dusk"),
                          (result.ok, field_of(a, "XMP:Title"), field_of(a, "XMP:Description"),
                           field_of(a, "IPTC:Caption-Abstract")))
         # A blank XMP description holds none: 12,469 photo_index rows hold one beside an IPTC caption (counted

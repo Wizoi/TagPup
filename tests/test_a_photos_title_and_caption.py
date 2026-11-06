@@ -91,11 +91,37 @@ class ATitleAndACaption(S.Fresh):
         self.assertEqual(("Harbour at dawn", "Harbour at dawn"), (self.record(photo_id)["title"], body["base"]["title"]))
         self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "Harbour at dawn",
                                                       "tags": record["tags"], **after}))
-        # A title typed over the Description it showed is the title; the Description is kept, as the caption.
-        other, other_id = self.made("b.jpg", 63, {"XMP:Description": "Harbour at dawn"})
-        self.saved(self.save(self.record(other_id), title="Harbour at noon"))
-        self.assertEqual(("Harbour at noon", "Harbour at dawn"), (self.held(other)["XMP:Title"],
-                                                                  self.held(other)["XMP:Description"]))
+
+    def test_a_title_changed_or_cleared_over_a_description_shown_as_the_title_moves_it_out_too(self):
+        """#2583: one rule whatever title is saved: the Description shown as the title leaves every caption field
+        holding it. A cleared title came back as the Description; a changed one left the old Description behind."""
+        moved = {"XMP:Description": "Harbour at dawn", "IPTC:Caption-Abstract": "Harbour at dawn"}
+        kept = {"EXIF:XPComment": "Taken from the end of the pier"}
+        changed, changed_id = self.made("b.jpg", 63, {**moved, **kept})
+        self.saved(self.save(self.record(changed_id), title="Harbour at noon"))
+        self.assertEqual({**{field: "Harbour at noon" for field in TITLE_FIELDS}, **kept},
+                         {field: text for field, text in self.held(changed).items() if text})
+        self.assertEqual("Harbour at noon", self.record(changed_id)["title"])
+        cleared, cleared_id = self.made("c.jpg", 68, {**moved, **kept})
+        earlier = self.last_change()
+        body, after = self.saved(self.save(self.record(cleared_id), title=""))
+        self.assertEqual(kept, {field: text for field, text in self.held(cleared).items() if text})
+        self.assertEqual(("", ""), (body["base"]["title"], self.record(cleared_id)["title"]), "it stays cleared")
+        self.saved(self.post("/photo/save-metadata", {"path": body["new_path"], "title": "",
+                                                      "tags": ["Trips/Coast", "Trips/Lakes"], **after}))
+        # Undo of both saves, the latest first, puts the Description back: the page shows it as the title again.
+        for change in range(self.last_change(), earlier, -1):
+            undone = self.client.post("/library/api/history/%d/undo" % change, json={"apply": True})
+            self.assertEqual(200, undone.status_code, undone.data)
+        self.assertEqual({**{field: "" for field in TITLE_FIELDS + CAPTION_FIELDS}, **moved, **kept}, self.held(cleared))
+        self.assertEqual("Harbour at dawn", self.record(cleared_id)["title"])
+
+    def last_change(self):
+        conn = S.db.connect(S.db.readonly_uri(self.library.path), uri=True)
+        try:
+            return conn.execute("SELECT COALESCE(MAX(id), 0) FROM changes").fetchone()[0]
+        finally:
+            conn.close()
 
     def test_a_cleared_title_is_cleared_and_the_next_save_is_accepted(self):
         """#2581: titled only in XMP:Title and IPTC:ObjectName, the title cleared was written to the Description fields,

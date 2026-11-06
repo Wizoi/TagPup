@@ -108,8 +108,9 @@ A photo's title and its caption are two values (DECISIONS 2026-11-06). The title
 XMP's else IPTC's Caption-Abstract (`DESCRIPTION_COPIES`; EXIF:ImageDescription and XPComment are written copies, never
 read), which no page writes. The title shown is `vocabulary.title_of`: the title, else the Description, so the index's
 `captions` hold the title first. A save of a photo with no title, its Description shown as the title, moves it: the
-Title gets it and every caption field holding that text is cleared in the same write (`tagging._caption_moved`); a
-title changed or cleared there keeps the Description. Rows stored before the rule put the Description first
+Title gets the title saved and every caption field holding the text shown is cleared in the same write
+(`tagging._caption_moved`), whether the title saved is that text, another, or none: one rule, so a cleared title stays
+cleared. A photo with a title of its own keeps its Description. Rows stored before the rule put the Description first
 (photo_index 8,263, kr-track and renton_parkrun none; counted 2026-11-06): their page shows the title all the same and
 saves; until `scripts/rederive_captions.py --apply` orders them, as above, their card's caption and caption sort read
 the Description first.

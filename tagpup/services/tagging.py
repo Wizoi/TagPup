@@ -63,18 +63,19 @@ def _differs_from_base(now, base):
             or _held_title(now) != vocabulary.trimmed(base.get("title") or ""))
 
 
-def _caption_moved(now, title):
-    """The caption fields a save of `title` clears, {field: ""}: on a photo holding no title of its own, whose page
-    shows its Description as the title, every caption field holding that very text when it is the title saved -- the
-    save moves the caption into the title and leaves no copy of it behind (DECISIONS 2026-11-06, THE TITLE AND THE
-    CAPTION ARE TWO VALUES). A caption that is not the title saved is never written: a photo whose title differs from
-    its Description keeps it, and so does one whose title was changed or cleared. `now` holds BASE_READ and the
-    caption fields."""
-    title = vocabulary.trimmed(title or "")
-    if not title or vocabulary.holds_title(now) or _held_title(now) != title:
+def _caption_moved(now):
+    """The caption fields a save clears, {field: ""}: on a photo holding no title of its own, whose page shows its
+    Description as the title, every caption field holding that very text, whatever title is saved -- the same text
+    (the promotion), another, or none. The text shown as the title moves out of the caption in one rule: a save of the
+    same moves it into the title and leaves no copy behind, a changed title replaces it, a cleared one clears it, and
+    no save leaves it to come back as the title (DECISIONS 2026-11-06, THE TITLE AND THE CAPTION ARE TWO VALUES;
+    #2583). A photo with a title of its own keeps its Description, and a caption field holding other text is never
+    written. `now` holds BASE_READ and the caption fields."""
+    shown = _held_title(now)
+    if not shown or vocabulary.holds_title(now):
         return {}
     return {field: "" for field in fields.caption_fields("")
-            if title in (vocabulary.trimmed(text) for text in fields.field_values(now.get(field)))}
+            if shown in (vocabulary.trimmed(text) for text in fields.field_values(now.get(field)))}
 
 
 @file_changes.exclusively()
@@ -83,8 +84,9 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     """Save one photo's title, tags and Date Taken -- the photo panel -- and rename it
     after its new title if Smart Rename named it.
 
-    The title is written to the title fields alone (fields.title_fields); no caption field is written but those a
-    title moved out of the Description clears (_caption_moved; DECISIONS 2026-11-06).
+    The title is written to the title fields alone (fields.title_fields); no caption field is written but those that
+    hold the Description a photo with no title showed as its title, which the save clears (_caption_moved; DECISIONS
+    2026-11-06).
 
     `tags` is the photo's whole tag list. Only the ones the file does not hold yet are
     checked (tagpup.core.validation): one written by another program must not stop the
@@ -160,7 +162,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
         after.update(wanted)
-        after.update(_caption_moved(now, title))
+        after.update(_caption_moved(now))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:
             written = file_only.write_fields(exiftool_path, [photo_path], list(after), plan, et=et,
