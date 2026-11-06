@@ -423,8 +423,11 @@ def _retag(library, old, new, carrying, exiftool_path, result, always_move=False
                       % (stopped, old))
         return False
     if unwritten:
-        result.fail(old, "%d of %d photo(s) could not be rewritten, so '%s' was kept; they "
-                         "still carry it." % (unwritten, len(carrying), old))
+        # The page alerts this sentence alone: it names the first photo left and why (a clip's refusal among them).
+        first = (result.details.get("failed_photos") or [None])[0]
+        result.fail(old, "%d of %d photo(s) could not be rewritten, so '%s' was kept; they still carry it.%s"
+                    % (unwritten, len(carrying), old,
+                       " The first, %s: %s" % (os.path.basename(first["path"]), first["why"]) if first else ""))
         return False
     moving = new and (carrying or always_move)
     try:

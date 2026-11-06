@@ -488,6 +488,14 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
+        if (images.is_clip(path) and field_values.takes_off_every_keyword(after)
+                and fields.field_values(now.get(fields.CLIP_KEYWORDS))):
+            # A clip left with no keyword in its XMP while its QuickTime Subject (read, never written) holds one: its tags
+            # would be read from there again (the last tag taken off one of the 14 live clips holding them only there). The
+            # writer's refusal, said here from what was read, as the writer says it when the plan did not read QuickTime:
+            # its XMP being empty already, the plan would call it held and the tag-tree edit say nothing of why.
+            result.fail(path, segment_edits.KEPT_IN_QUICKTIME)
+            continue
         if _holds_already(path, before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))
@@ -1459,8 +1467,10 @@ def _undoable(library, change_id, exiftool_path, check):
     file it left done; or (None, why it cannot be undone at all, None). `check(conn,
     change_id)` is the one account of whether it may be undone now
     (tagpup.services.journal.why_not: a newer change of the same files among it), asked on
-    a read-only connection, once, before anything is written. A clip the writer would refuse to put back
-    (_clip_not_undone) refuses the whole undo, so the change stays applied, never half undone nor a conflict (#2546)."""
+    a read-only connection, once, before anything is written. A clip the writer would refuse to put back (writing clips
+    off: field_values.clip_refused) refuses the whole undo, so the change stays applied, never half undone nor a conflict
+    (#2546). Never its last keyword kept in QuickTime: an undo writes what the clip's XMP held before (_carry passes
+    keywords_elsewhere=()), its keywords read from QuickTime again if that was none."""
     change = file_journal.change(library.path, change_id)
     if change is None:
         return None, "there is no change %d" % change_id, None
@@ -1491,8 +1501,6 @@ def _undoable(library, change_id, exiftool_path, check):
         if not exiftool_path:
             return None, "undoing change %d rewrites photo files, and needs ExifTool" % change_id, None
         wanted = {f for row in changed for f in row.after}
-        if any(images.is_clip(row.path) for row in changed):
-            wanted.add(fields.CLIP_KEYWORDS)
         with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
             held = field_values.read(et, [row.path for row in changed], sorted(wanted))
         for row in changed:
@@ -1501,27 +1509,12 @@ def _undoable(library, change_id, exiftool_path, check):
                 refused.append((row, "could not be read: %s" % now))
             elif not fields.reads_same(now, row.after):
                 refused.append((row, "no longer holds what the change left"))
-            elif images.is_clip(row.path) and (why := _clip_not_undone(row, now)):
+            elif images.is_clip(row.path) and (why := field_values.clip_refused(row.before)):
                 # The writer would refuse it: the undo is refused whole, the change left applied, to be undone later.
                 return None, "%s: %s" % (row.named(), why), None
             else:
                 ready.append(row)
     return change, ready, refused
-
-
-def _clip_not_undone(row, now):
-    """Why the writer (field_values.write) would refuse to put back the clip of `row`, which holds `now`, else None:
-    writing clips off (field_values.clip_refused), or its last keyword taken off while its QuickTime Subject holds one
-    the XMP it undoes did not (segment_edits.KEPT_IN_QUICKTIME). One whose XMP held every QuickTime keyword goes back
-    to an empty XMP:Subject: what it held before the change, its keywords read from QuickTime again (_carry passes
-    keywords_elsewhere=() to an undo)."""
-    why = field_values.clip_refused(row.before)
-    if why or not field_values.takes_off_every_keyword(row.before):
-        return why
-    kept = set(fields.field_values(now.get("XMP:Subject")))
-    if set(fields.field_values(now.get(fields.CLIP_KEYWORDS))) - kept:
-        return segment_edits.KEPT_IN_QUICKTIME
-    return None
 
 
 @_exclusive

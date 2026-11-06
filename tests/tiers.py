@@ -43,6 +43,7 @@ SCENARIO = frozenset({
     "test_a_clip_patched_in_place",
     "test_a_clip_tagged_through_the_journal",
     "test_a_clip_tag_undone",
+    "test_a_tag_tree_edit_of_a_tag_a_clip_holds",
     "test_a_clip_patch_cut_short",
     "test_an_adobe_clip_packet_edited_and_read_back",
     "test_time_shift",
