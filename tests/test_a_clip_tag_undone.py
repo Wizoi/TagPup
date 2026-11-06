@@ -61,8 +61,7 @@ class AClipTagUndone(tagged.ALibraryHoldingAClip):
         written = self.read_bytes(self.clip_path), self.read_bytes(self.photo_path)
         with tagged.writing_clips(False):
             rehearsal = self.undo(change, apply=False)
-            self.assertTrue(rehearsal.refused)
-            self.assertIn(images.CLIP_NOT_EDITED, " ".join(rehearsal.details["rehearsal"]["differences"]))
+            self.assertIn(images.CLIP_NOT_EDITED, rehearsal.refused or "", "the rehearsal names it and why")
             undone = self.undo(change)
         self.assertTrue(undone.refused, "nothing written, not even the photo beside it")
         self.assertEqual(written, (self.read_bytes(self.clip_path), self.read_bytes(self.photo_path)))
