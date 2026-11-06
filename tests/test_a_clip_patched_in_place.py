@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
-from tagpup.files import clip_patch, containers  # noqa: E402
+from tagpup.files import clip_patch, containers, xmp_packet  # noqa: E402
 from tagpup.files.containers import XMP_UUID, Box, Video  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
@@ -348,6 +348,26 @@ class AClipMadeByFfmpegReadBack(unittest.TestCase):
                 self.patched(path, packet(("Wren Ashcombe",) + tuple("word %d" % i for i in range(200))),
                              clip_patch.GROWN)
                 self.read_back(path, ("Wren Ashcombe",) + tuple("word %d" % i for i in range(200)))
+
+    def test_a_clip_with_no_xmp_is_given_the_blank_packet_edited_and_it_reads_back(self):
+        """The first save of a clip with no XMP (2,104 live): xmp_packet.blank() edited, appended in a uuid box; its
+        padding takes the first save, so the box is the blank's length."""
+        blank = xmp_packet.blank()
+        self.assertEqual({}, xmp_packet.read(blank))
+        words, caption = ("Wren Ashcombe", "Hiking"), "At the lake"
+        edited = xmp_packet.edit(blank, {"dc:subject": list(words), "dc:description": caption,
+                                         "lr:hierarchicalSubject": ["People/Wren Ashcombe"]})
+        self.assertEqual(len(blank), len(edited.body))
+        for name in self.made:
+            with self.subTest(name):
+                path = self.clip(name)
+                self.patched(path, edited.body, clip_patch.APPENDED)
+                self.read_back(path, words)
+                with ExifToolSession(executable=EXIFTOOL) as session:
+                    held = session.get_tags([path], tags=["XMP:Description", "XMP:HierarchicalSubject"],
+                                            params=["-a"])[0]
+                self.assertEqual((caption, "People/Wren Ashcombe"),
+                                 (held.get("XMP:Description"), held.get("XMP:HierarchicalSubject")))
 
     def test_exiftools_xmp_box_before_mdat_is_retired_and_the_packet_appended(self):
         path = self.clip("first.mp4")
