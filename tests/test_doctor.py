@@ -125,6 +125,18 @@ class TheRules(Library):
         self.assertEqual({"vectors whose photo is gone": 1, "people listed for a photo that is gone": 1,
                           "suggestions for a photo that is gone": 1}, self.broken())
 
+    def test_a_clips_frames_whose_vector_is_gone(self):
+        # Written past the store (embeddings.put): the triggers take a vector's frames with it, so only a write that
+        # skips the one writer, or a copy restored without its triggers, leaves one.
+        clip = photo_rows.add_read(self.conn, os.path.join(self.dir, "harbour.mp4"), {})
+        self.conn.execute("INSERT INTO embedding_frames (photo_id, model, frame, vector) VALUES (?, 'm', 1, x'00')", (clip,))
+        self.conn.commit()
+        self.assertEqual(checks.Check("frames whose vector is gone", 1, [clip]), checks.frames_without_their_vector(self.conn))
+        self.assertEqual({"frames whose vector is gone": 1}, self.broken())
+        self.conn.execute("INSERT INTO embeddings (photo_id, model, vector) VALUES (?, 'm', x'00')", (clip,))
+        self.assertEqual(checks.Check("frames whose vector is gone", 0, []), checks.frames_without_their_vector(self.conn),
+                         "a frame beside its vector is whole")
+
     def test_photos_without_a_vector_for_the_model_are_counted_not_broken(self):
         for name in ("a.jpg", "b.jpg"):
             self.photo(name)

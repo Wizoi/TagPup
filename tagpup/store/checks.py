@@ -211,6 +211,15 @@ def vectors_without_a_photo(conn):
     return _without_a_photo(conn, "embeddings", "vectors whose photo is gone")
 
 
+def frames_without_their_vector(conn):
+    """The photo ids holding a clip's frame with no vector under its model beside it (migration 38): what the two triggers
+    and the one writer (embeddings.put, put_by_id) make none. The keys alone, from the two tables' primary-key indexes:
+    no vector is read."""
+    return _check("frames whose vector is gone", [photo_id for (photo_id,) in conn.execute(
+        "SELECT DISTINCT f.photo_id FROM embedding_frames f WHERE NOT EXISTS"
+        " (SELECT 1 FROM embeddings e WHERE e.photo_id = f.photo_id AND e.model = f.model) ORDER BY f.photo_id")])
+
+
 def people_without_a_photo(conn):
     """People listed for a photo that is gone."""
     return _without_a_photo(conn, "photo_people", "people listed for a photo that is gone")
@@ -337,7 +346,7 @@ def unrooted_by_folder(conn):
 
 #: The rules a library keeps, in the order a report lists them.
 RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excluded,
-         people_out_of_date, orphan_nodes, crops_without_a_face, vectors_without_a_photo,
+         people_out_of_date, orphan_nodes, crops_without_a_face, vectors_without_a_photo, frames_without_their_vector,
          people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
          rooted_rows_convert, native_rows_under_a_root, photo_tags_out_of_date, photo_folders_out_of_date,
          folders_out_of_date, search_index_out_of_date, face_person_ids_out_of_step,
