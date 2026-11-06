@@ -46,9 +46,16 @@ def _held_title(now):
     return vocabulary.trimmed(found[0]) if found else ""
 
 
+#: Every field _differs_from_base reads of the file: the fields its tags come from and every field its caption is
+#: shown from -- the page's title is the first caption, a Title (XMP:Title, IPTC:ObjectName) when the photo holds no
+#: Description. The save read the description fields alone, found no caption on a photo titled only, and refused every
+#: save from the page of it as changed on disk (6,123 photos of one library, 2026-11-06).
+BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + vocabulary.CAPTION_FIELDS))
+
+
 def _differs_from_base(now, base):
     """Does the file hold other tags or another caption than the page read (`base`, {"tags", "title"})? The tags
-    as a SET of keyword paths, the caption trimmed: the two things a save writes over."""
+    as a SET of keyword paths, the caption trimmed: the two things a save writes over. `now` holds BASE_READ."""
     return (set(_tags_held(now)) != set(base.get("tags") or [])
             or _held_title(now) != vocabulary.trimmed(base.get("title") or ""))
 
@@ -113,7 +120,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         return result
     # One ExifTool session and one read before the write: the tags the file holds, the
     # plan's before, and the name Smart Rename kept.
-    read = list(dict.fromkeys(SAVE_READ + tuple(wanted)))
+    read = list(dict.fromkeys(SAVE_READ + BASE_READ + tuple(wanted)))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
         now = field_values.read_one(et, photo_path, read)
         if base is None:

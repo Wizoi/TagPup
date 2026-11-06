@@ -394,6 +394,52 @@ class TheFileIsComparedWithWhatThePageRead(Fresh):
         self.assertLess(len(json.dumps({"base": base})), 200, "a photo's base is about a hundred bytes")
 
 
+class ACaptionHeldAsATitleOnly(Fresh):
+    """A photo whose caption another program put in its title fields alone (XMP:Title, IPTC:ObjectName; no
+    Description): the page shows that title as its caption and names it in `base`. The save read the description
+    fields only, found no caption, and refused every save from the page as changed on disk -- the owner, naming face
+    after face of a group photo in a library view, was told the photo changed on disk when nothing had written it."""
+
+    def make_titled(self, name, seed, file_tags):
+        path = os.path.join(self.folder, name)
+        damaged_photos.whole_jpeg(path, seed=seed)
+        write_into(path, Subject=list(file_tags), **{"XMP:Title": "Pier at noon", "IPTC:ObjectName": "Pier at noon"})
+        conn = db.connect(self.library.path)
+        try:
+            photo_id = photo_rows.add_read(conn, path, {"XMP:Subject": list(file_tags), "XMP:Title": "Pier at noon",
+                                                        "IPTC:ObjectName": "Pier at noon"})
+            conn.commit()
+        finally:
+            conn.close()
+        return path, photo_id
+
+    def test_naming_face_after_face_puts_each_person_on_the_photo(self):
+        path, photo_id = self.make_titled("a.jpg", 41, ["People/Orla Penhallow"])
+        record = self.record(photo_id)
+        self.assertEqual("Pier at noon", record["title"])
+        # What the page sends for each face named (edits.postPhotoMetadata) and takes from each reply (takeStamp).
+        stamp = {"mtime": record["mtime"], "size": record["size"]}
+        base = {"tags": record["tags"], "title": record["title"]}
+        where, tags = record["path"], list(record["tags"])
+        for person in ("People/Tamsin Okonkwo", "People/Ewan Marchetti", "People/Bryony Sallis"):
+            tags = tags + [person]
+            reply = self.post("/photo/save-metadata", {"path": where, "title": record["title"], "tags": tags,
+                                                      "stamp": stamp, "base": base})
+            self.assertEqual(200, reply.status_code, reply.data)
+            body = reply.get_json()
+            where, base = body["new_path"], body["base"]
+            stamp = {"mtime": body["mtime"], "size": body["size"]}
+        self.assertEqual(sorted(tags), sorted(tags_in(where)))
+
+    def test_a_title_another_program_changed_after_the_page_read_it_is_still_refused(self):
+        path, photo_id = self.make_titled("a.jpg", 42, ["Trips/Coast"])
+        record = self.record(photo_id)
+        write_into(path, **{"XMP:Title": "Pier at dusk", "IPTC:ObjectName": "Pier at dusk"})
+        reply = self.save(record, tags=["Trips/Coast", "Trips/Lakes"], stamp=stamp_of(path))
+        self.assertEqual(409, reply.status_code, reply.data)
+        self.assertEqual(["Trips/Coast"], tags_in(path))
+
+
 class TheServersCacheCarriesTheFilesStamp(Fresh):
     def test_after_a_bulk_write_the_cached_scan_has_the_new_stamp_and_a_save_from_it_passes(self):
         a, _ida = self.make("a.jpg", 40, ["Trips/Coast"])
