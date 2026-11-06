@@ -59,7 +59,7 @@ class Away(OSError):
     against the record the journal saved (held), the next time."""
 
 #: What a file holds against its record (held).
-NEW, OLD, TORN, NEITHER, RESIZED = "new", "old", "torn", "neither", "resized"
+NEW, OLD, TORN, NEITHER = "new", "old", "torn", "neither"
 
 
 def _spans(record):
@@ -113,12 +113,15 @@ def held(path, record, before):
     after and every range as the patch wrote it; OLD, the size before and every range as it was; TORN, a size from the
     one to the other and each byte of a range there one or the other, but not all of one (a write or a put back this
     process cut short); NEITHER, another size or a byte that is neither (another program wrote it, or the disk lost what
-    this one wrote). Reads the file's size and its ranges, no other byte. Raises OSError when the file cannot be read
-    (Away, when its share does not answer)."""
+    this one wrote). A record of another version (v1, saved by the TagPup installed before record v2, which says no
+    size after) is NEITHER without a look at the file: a conflict, never written over. Reads the file's size and its
+    ranges, no other byte. Raises OSError when the file cannot be read (Away, when its share does not answer)."""
     return _bounded(path, lambda: _held(path, record, before))
 
 
 def _held(path, record, before):
+    if record.get("v") != VERSION:
+        return NEITHER
     spans, size_before, size_after = _spans(record), record["size"], record["size_after"]
     with open(path, "rb") as handle:
         size = handle.seek(0, os.SEEK_END)

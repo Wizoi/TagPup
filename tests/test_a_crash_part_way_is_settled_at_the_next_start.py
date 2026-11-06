@@ -25,6 +25,7 @@ test_a_bake_settled_at_the_next_start_keeps_its_change_and_the_conflict_the_doct
 bake, one that may pass too, fails test_a_bake_whose_file_ends_a_conflict_that_may_pass_is_erased_with_it.
 """
 import contextlib
+import json
 import os
 import socket
 import stat
@@ -138,7 +139,9 @@ class AnInPlacePatchCutShort(FilesCase):
     XMP, three ranges), the process killed at each point of the write (test_file_journal.cut_patch), and the next start: untouched or all old, it is written again; torn by the patch, put back
     and written again; all new, done; another program's write, a conflict never overwritten; unreadable, left `writing`
     with its record and the change let go. Another program's write is told by the ranges and the size alone: a byte of a
-    range that is neither old nor new, or another size (no byte outside the ranges is read, DECISIONS 2026-11-03)."""
+    range that is neither old nor new, or another size (no byte outside the ranges is read, DECISIONS 2026-11-03). A
+    record the version installed before saved (v1, no size after; 0 live, counted 2026-11-05) met by this one is a
+    conflict, never written over."""
 
     def setUp(self):
         super().setUp()
@@ -231,6 +234,18 @@ class AnInPlacePatchCutShort(FilesCase):
         self.assertEqual((["conflict"], written, None), (self.states(change), self.held(),
                                                          file_journal.patch_of(self.library.path, file_id)))
 
+
+    def test_a_record_an_earlier_tagpup_saved_is_a_conflict_never_overwritten(self):
+        # The version installed before this one (record v1, which has no size after) killed once its record was saved;
+        # this version starts next. The file is untouched, but its record is not one this version reads.
+        change, file_id = self.killed(step=file_changes.PATCH_SAVED)
+        record, _before = file_journal.patch_of(self.library.path, file_id)
+        earlier = {key: value for key, value in record.items() if key != "size_after"}
+        self.execute("UPDATE change_files SET patch = ? WHERE id = ?", (json.dumps(dict(earlier, v=1)), file_id))
+        start_again(self.library)
+        self.assertEqual((["conflict"], self.original, None), (self.states(change), self.held(),
+                                                               file_journal.patch_of(self.library.path, file_id)))
+        self.assertIn("earlier TagPup", self.rows("SELECT note FROM change_files WHERE id = ?", (file_id,))[0][0])
 
 @requires_exiftool
 class APictureAWriteDamagesTwice(FilesCase):
