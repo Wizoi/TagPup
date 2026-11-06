@@ -263,6 +263,8 @@ Scheduled jobs, Snapshots, Server and Logs are folded until opened, each showing
 
 ## Backend APIs
 
+**What it needs to start.** ffmpeg is a prerequisite of the server *(owner, 2026-11-06)*. Without it (`tagpup.config.ffmpeg_problem`: not found, or found and `-version` does not run) `tagpup_web.py` starts nothing -- it does not make way for a running server, bind a port, run a migration or start a background task -- prints "TagPup: Not started: ffmpeg not found; install it with winget install Gyan.FFmpeg" (or that it was found and does not run, and to reinstall it), logs it, and exits 4 (`launcher.MISSING_PREREQUISITE`); TagPup.cmd and TagTuner.cmd then wait for a key, so the sentence stays on the screen. `tagpup_web.py --check` asks only that (exit 4 and the sentence on stderr, or 0): an install's hand-over checks a new version with it before it ends the old server, so a new version on a machine without ffmpeg leaves the old one running and says why.
+
 **Who can reach it.** The server listens on this PC only: 127.0.0.1 and ::1, one socket each, so `localhost` answers at once whichever address the browser tries first (`tagpup.web.app.bind`) *(owner, 2026-09-26)*. `tagpup_web.py --listen lan` binds every interface instead; it is for phase 10, when the apps have logins, and off by default. Every request must also name this machine in its Host header and, when it has one, its Origin (`tagpup.web.security`), else 403.
 
 ### `GET` Endpoints

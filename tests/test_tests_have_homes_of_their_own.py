@@ -228,12 +228,18 @@ class NoSandboxIsMadeByHand(unittest.TestCase):
         self.addCleanup(own_home.end_processes, home.root)
         owner = os.path.join(home.root, "owner_profile")
         os.makedirs(owner)
+        # ffmpeg, a prerequisite of the server: the machine's, found before the profile is the test's (winget's
+        # folder is under the real one), and handed over on PATH.
+        tools = tagpup_config.locate_ffmpeg()
+        if tools.problem:
+            self.skipTest(tools.problem)
         # The owner's shell: their profile (here the test's), none of a home's folders set.
         with mock.patch.dict(os.environ, {"LOCALAPPDATA": owner}):
             for name in tagpup_config.own_home_environment(home.root):
                 os.environ.pop(name, None)
             env = sandbox.environment(home.root, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1",
                                       TAGPUP_WEB_NO_WARMUP="1", TAGPUP_WEB_RELOADED="1")
+        env["PATH"] = os.path.dirname(tools.ffmpeg) + os.pathsep + env.get("PATH", "")
         ports = [free_port(), free_port()]
         log = open(os.path.join(home.root, "server.log"), "wb")
         self.addCleanup(log.close)

@@ -35,7 +35,7 @@ started in its place, on its ports, as a process of its own with a hidden consol
 version. The old server is ended before the new one starts -- they share the ports the
 pages and bookmarks use, and two servers starting on one library run its migrations at
 once -- so first the new version is checked to start at all (`starts`: its tagpup_web.py
---help, every module the server imports); and when it does not answer once started, the
+--check, every module the server imports and its prerequisite, ffmpeg); and when it does not answer once started, the
 old version is started again. A server run from a checkout, one of another installed
 folder are left alone.
 Two installs at once take turns (HANDOVER_LOCK); the second leaves the server to the first,
@@ -105,6 +105,10 @@ STARTING_WAIT = 60
 
 #: How the server exits when another already answers on its ports: not a crash.
 PORTS_TAKEN = 3
+
+#: How the server exits when a prerequisite is missing (ffmpeg, config.ffmpeg_problem): it started nothing, and
+#: says what to install. The server launchers pause on it, so the sentence stays on the screen.
+MISSING_PREREQUISITE = 4
 
 #: The size at which a server's console output (an install's logs.STARTED_LOG) is rotated as the
 #: next server starts.
@@ -431,7 +435,7 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
 #: install leaves it to the first, which starts what current.txt names when it starts it.
 HANDOVER_LOCK = "handover.lock"
 
-#: How long the check that a version starts at all may take (its tagpup_web.py --help, about
+#: How long the check that a version starts at all may take (its tagpup_web.py --check, about
 #: 2 s here, 36-41 s under another suite's load); how long a server an install started has
 #: to answer as its version: START_MULTIPLE times what that check took, never under
 #: START_WAIT (a quiet machine's 2 s would give 20 s) nor over START_CEILING (#807).
@@ -485,9 +489,10 @@ def _environment(home):
 
 def starts(python, code, home):
     """Does the server of `code` start at all -- does its tagpup_web.py import every module
-    the server needs, and answer --help? None when it does, else why not."""
+    the server needs, and find ffmpeg running (its --check)? None when it does, else why not: the last line it
+    printed, the sentence that says what to install when ffmpeg is missing."""
     try:
-        done = processes.run([console_python(python), os.path.join(code, "tagpup_web.py"), "--help"],
+        done = processes.run([console_python(python), os.path.join(code, "tagpup_web.py"), "--check"],
                              cwd=home, env=_environment(home), stdin=subprocess.DEVNULL, capture_output=True,
                              text=True, errors="replace", timeout=CHECK_WAIT)
     except (OSError, subprocess.SubprocessError) as e:

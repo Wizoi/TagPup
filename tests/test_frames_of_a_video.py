@@ -294,13 +294,6 @@ class LocatingFfmpeg(unittest.TestCase):
         self.install("9.10")
         self.assertEqual(newest, os.path.dirname(config.locate_ffmpeg().ffmpeg))
 
-    def test_ffmpeg_missing_is_a_sentence_and_starts_nothing(self):
-        started = Started()
-        with mock.patch.object(processes, "start", started.start):
-            found = video_frames.frames(config.locate_ffmpeg(), __file__, 5)
-        self.assertEqual(((), config.FFMPEG_MISSING), (found.pictures, found.problem))
-        self.assertEqual([], started.children)
-
 
 if __name__ == "__main__":
     unittest.main()

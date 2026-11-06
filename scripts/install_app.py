@@ -88,7 +88,19 @@ LAUNCHER = (
     '"{python}" "%TAGPUP_HOME%\\scripts\\install_app.py" --apply --if-changed --to "%~dp0."\r\n'
     'set /p TAGPUP_VERSION=<"%~dp0current.txt"\r\n'
     '"{python}" "%~dp0versions\\%TAGPUP_VERSION%\\{script}" {args} %*\r\n'
+    "{after}"
 )
+
+#: What a server launcher does after its server exits: when it did not start for want of a prerequisite (ffmpeg),
+#: it waits for a key, so the sentence saying what to install does not flash and vanish. Only on that exit: a
+#: server a hand-over ended leaves no window waiting.
+SERVER_AFTER = "if %%ERRORLEVEL%% EQU %d pause\r\n" % launches.MISSING_PREREQUISITE
+
+
+def launcher_text(home, python, script, args):
+    """The .cmd that starts `script` of the current version: a server's pauses on a missing prerequisite."""
+    after = SERVER_AFTER if script == "tagpup_web.py" else ""
+    return LAUNCHER.format(home=home, python=python, script=script, args=args, after=after)
 
 
 #: Shortcut -> (the launcher it runs, its icon in web/common/icons, what it says).
@@ -383,7 +395,7 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
     for launcher, (script, args) in LAUNCHERS.items():
         # newline="" keeps the CRLFs the template already has: cmd.exe wants them.
         with open(os.path.join(destination, launcher), "w", encoding="utf-8", newline="") as handle:
-            handle.write(LAUNCHER.format(home=home, python=python, script=script, args=args))
+            handle.write(launcher_text(home, python, script, args))
     current = os.path.join(destination, "current.txt")
     with open(current + ".writing", "w", encoding="utf-8") as handle:
         handle.write(name)
@@ -405,6 +417,10 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
     say("\nInstalled %s. Start the apps with the launchers above." % name)
     for line in still_running(name, destination, hand_over):
         say(line)
+    # Said, not refused: the install is the code; ffmpeg is the machine's, installed beside it (owner, 2026-11-06).
+    problem = tagpup_config.ffmpeg_problem()
+    if problem:
+        say("%s. TagPup and the CLI's index will not start until it is installed." % problem)
     return name, removed
 
 

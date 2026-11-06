@@ -100,6 +100,8 @@ SCENARIO = frozenset({
     "test_suggest_then_apply_all",
     # The real CLI's index in a process, read as the server reads it.
     "test_index_progress_end_to_end",
+    # The server's real --check in a process, and an install, on a machine without ffmpeg.
+    "test_ffmpeg_is_a_prerequisite",
 })
 
 TIERS = ("fast", "scenario", "slow")

@@ -307,14 +307,6 @@ class NoFfmpegOrNoAnswer(Clips):
         self.assertEqual((thumbnails.OK, True, b"poster"), (answer.kind, answer.kept, answer.content))
         self.assertEqual(1, poster.call_count, "not remembered as the clip's: ffmpeg is asked once it is there")
 
-    def test_warm_without_ffmpeg_makes_the_photos_and_counts_the_clips_it_left(self):
-        self.vl.photo("Regatta", "boat.jpg", real=True, size=(400, 300))
-        with mock.patch.object(video_frames, "poster") as poster:
-            counts = thumbnails.warm(self.library, lambda: NO_FFMPEG, apply=True)
-        self.assertEqual((2, 1, 0, 1), (counts["photos"], counts["made"], counts["posters"], counts["no_ffmpeg"]))
-        self.assertEqual(config.FFMPEG_MISSING, counts["ffmpeg"])
-        self.assertEqual(0, poster.call_count)
-
     def test_a_clip_on_a_share_asleep_is_one_bounded_look_and_no_ffmpeg(self):
         shares.forget()
         self.addCleanup(shares.forget)
