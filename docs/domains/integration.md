@@ -62,3 +62,7 @@ condition not met is the domain's queue.
   it added 3 and deleted 4 that its scenarios cover. Condition 5: the failure kinds and the unknown-kind rule each have a
   live or user-made instance (a CLI from the repository beside the installed server writes a newer kind). The Activity
   page does not yet read `needs_you`: its page test, made from the real reply (row 22), comes with the page.
+- 2026-11-06, ffmpeg as a prerequisite: I11 added (`tests/test_ffmpeg_is_a_prerequisite.py`, 14 tests, mapped to the `apps`
+  owner, so condition 6 holds for it): the server and the CLI's index stop at start with the install sentence, and a hand-over
+  to a version without ffmpeg leaves the old server running. Condition 5: the one kept arm (the thumbnail placeholder) has a
+  user-made instance (ffmpeg removed while the server runs); three unreachable arms and two tests were deleted.
