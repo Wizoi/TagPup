@@ -447,7 +447,7 @@ export async function writeDetailEdits(fields, { intent = null, path = state.act
     }
     if (data.rename_failed) {
         // The caption is saved, the file keeps its name: said, and kept on the line until the next thing happens.
-        setStatus('error', `Saved the caption, but could not rename the photo: ${data.rename_failed}${pictureCheckSaid(data)}`,
+        setStatus('error', `Saved the title, but could not rename the photo: ${data.rename_failed}${pictureCheckSaid(data)}`,
             { transient: false });
     } else {
         const said = pictureCheckSaid(data);
