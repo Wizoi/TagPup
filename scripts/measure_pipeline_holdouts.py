@@ -472,12 +472,12 @@ def run_candidate(runtime, library, target, model, sample, report):
     result = {"candidate": label_of(model), "model_key": key, "pool": len(sample["rows"])}
     index = search.PhotoIndex(target, key)
     index.open()
-    embeddings = search.PhotoEmbeddings(clip, index)
+    embeddings = search.PhotoEmbeddings(clip, index, ffmpeg=runtime.ffmpeg())
     if embeddings.model_key != key:
         raise RuntimeError("the model's vectors would be kept under %s, not %s" % (embeddings.model_key, key))
 
     def keep(found):
-        return sum(embeddings.keep(path, vector, stamp) for path, stamp, vector in found)
+        return sum(embeddings.keep(path, vector, stamp, frames=frames) for path, stamp, vector, frames in found)
 
     sampler = sandbox.Sampler(interval=250).start()
     try:
@@ -496,7 +496,7 @@ def run_candidate(runtime, library, target, model, sample, report):
             # The pass embed-photos makes a library's vectors with (photo_reembed.embed_pass); more of the copy's
             # photos than its UNREAD_LIMIT not read stops the candidate (Unreachable): a share gone is not a library
             # of fewer photos.
-            result["pass"] = photo_reembed.embed_pass(clip, todo, keep, progress=say_every(report, todo))
+            result["pass"] = photo_reembed.embed_pass(embeddings, todo, keep, progress=say_every(report, todo))
             index.close()
             index.load()
             result.update(vectors=index.indexed, dimension=index.dim, rows_in_the_copy=index.count,

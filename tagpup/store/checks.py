@@ -243,8 +243,8 @@ def one_file_two_rows(conn):
 
 def without_a_vector(conn, model):
     """How many photos have no CLIP vector under `model` (tagpup.store.embeddings), the one
-    search reads. Reported, not broken: the next index of their folders computes them. A row of a kind owed none
-    (a clip: store.photos.VECTOR_KINDS) is not counted."""
+    search reads. Reported, not broken: the next index of their folders computes them (a clip ffmpeg cannot read stays
+    among them, and its folder is indexed again by every sync). Of the kinds owed one (store.photos.VECTOR_KINDS)."""
     return conn.execute("SELECT COUNT(*) FROM photos p WHERE " + store_photos.sql_kind_in(store_photos.VECTOR_KINDS, "p.kind")
                         + " AND NOT EXISTS"
                         " (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)",
