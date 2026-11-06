@@ -492,6 +492,17 @@ class AClipSavedInPlace(FfmpegClips):
                 self.assertIsNone(self.save(path, ("Wren Ashcombe",)))
                 self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
 
+    def test_a_share_that_fails_part_way_through_the_walk_is_could_not_be_read_not_no_patch(self):
+        """#2540: a read that fails while the clip's boxes are walked raises, so the caller says the clip could not be
+        read (and tries again), never that it cannot be patched."""
+        path = self.clip("first.mp4")
+        before = self.bytes_of(path)
+        gone = OSError(64, "The specified network name is no longer available")
+        with mock.patch.object(containers, "_read_video", side_effect=gone), self.assertRaises(OSError) as raised:
+            self.save(path, ("Wren Ashcombe",))
+        self.assertEqual(64, raised.exception.errno)
+        self.assertEqual(([], before), (self.saved, self.bytes_of(path)))
+
     @unittest.skipUnless(os.name == "nt", "a file open elsewhere is refused by Windows' sharing")
     def test_a_clip_open_in_another_program_is_refused_at_once_with_a_sentence(self):
         path = self.clip("first.mp4")

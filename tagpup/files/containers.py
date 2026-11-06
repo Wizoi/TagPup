@@ -20,7 +20,7 @@ cut short, a box that claims more than the file holds, or bytes that are no box 
             (`stray`), which break ExifTool's next write and Windows' reader.
 """
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 #: The usertype of the `uuid` box that holds a video's XMP.
 XMP_UUID = bytes.fromhex("BE7ACFCB97A942E89C71999491E3AFAC")
@@ -86,8 +86,10 @@ class Edited:
 
 @dataclass(frozen=True)
 class Unreadable:
-    """Not a layout this reads, or a read that failed: `reason` says which, in a sentence."""
+    """Not a layout this reads, or a read that failed: `reason` says which, in a sentence; `error`, the OSError of a read
+    that failed (a share gone part-way), None for bytes that are no layout this reads."""
     reason: str
+    error: object = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -260,7 +262,7 @@ def read(handle):
             return _read_video(handle, file_size)
         return Unreadable("neither a JPEG nor a MOV/MP4/M4V: it starts with no JPEG marker and no ftyp or skip box")
     except OSError as problem:
-        return Unreadable("the file could not be read: %s" % problem)
+        return Unreadable("the file could not be read: %s" % problem, problem)
 
 
 def _read_at(handle, offset, count):

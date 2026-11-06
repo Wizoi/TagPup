@@ -389,15 +389,18 @@ def patch_clip(path, new_packet, saving):
 
 def _packet_of(handle):
     """(the clip's layout, the packet its one XMP box holds, None for none) of the open file, or None when it is not a
-    patch's: no MOV/MP4/M4V, two XMP boxes, or one holding more than clip_patch.OLD_MOST. Reads the boxes' headers and
-    the packet, no other byte."""
+    patch's: no MOV/MP4/M4V, or no XMP box a patch reads (clip_patch.xmp_box). Raises the OSError of a read that failed
+    on the way (a share gone part-way through the walk), which is "could not be read", never "not a patch's" (#2540).
+    Reads the boxes' headers and the packet, no other byte."""
     layout = containers.read(handle)
-    if not isinstance(layout, containers.Video) or len(layout.xmp) > 1:
+    if isinstance(layout, containers.Unreadable) and layout.error is not None:
+        raise layout.error
+    if not isinstance(layout, containers.Video):
         return None
     if not layout.xmp:
         return layout, None
-    (_, box), = layout.xmp
-    if box.end - box.payload > clip_patch.OLD_MOST:
+    box = clip_patch.xmp_box(layout)
+    if box is None:
         return None
     return layout, _read_at(handle, box.payload, box.end - box.payload)
 

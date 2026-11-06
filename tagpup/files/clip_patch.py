@@ -72,16 +72,16 @@ def patch(layout, packet):
     (containers.Video), or None when the clip needs the rewrite (the module says when)."""
     if not _understood(layout):
         return None
-    found = layout.xmp
-    if len(found) > 1:
-        return None
-    if not found:
+    if not layout.xmp:
         return _appended(layout, packet, ())
-    (where, box), = found
+    box = xmp_box(layout)
+    if box is None:
+        return None
+    (where, _), = layout.xmp
     after = layout.slack_beside(box)[1]
     end = after[-1].end if after else box.end
     written = _box(box, packet)
-    if box.end - box.payload > OLD_MOST or end - box.offset - len(written) > _MOST:
+    if end - box.offset - len(written) > _MOST:
         return None
     placed = _placed(box, packet, end)
     if placed is not None:
@@ -91,6 +91,16 @@ def patch(layout, packet):
     if end == layout.file_size and box.offset + len(written) > end:
         return Patch(((box.offset, written),), box.offset + len(written), GROWN)
     return _appended(layout, packet, ((box.offset + 4, b"free"), (box.payload, b" " * (box.end - box.payload))))
+
+
+def xmp_box(layout):
+    """The one XMP box of the clip laid out as `layout` (containers.Video) whose packet a patch reads and replaces; None
+    when it holds none, or none a patch may read: two XMP boxes, or one holding more than OLD_MOST (the module). The one
+    statement of which box that is, for patch and for in_place, which reads its packet."""
+    if len(layout.xmp) != 1:
+        return None
+    (_, box), = layout.xmp
+    return box if box.end - box.payload <= OLD_MOST else None
 
 
 def _understood(layout):
