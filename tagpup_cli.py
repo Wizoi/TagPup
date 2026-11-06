@@ -1549,9 +1549,6 @@ def thumbs_warm(ctx, folder, limit, apply_):
     if counts["too_long"]:
         console.print("%d video(s) took too long to make a poster of (not damaged): run it again to try them once more."
                       % counts["too_long"], markup=False, soft_wrap=True)
-    if counts["no_ffmpeg"]:
-        console.print("%d video(s) get no poster: %s." % (counts["no_ffmpeg"], counts["ffmpeg"]),
-                      markup=False, soft_wrap=True)
     if not apply_:
         shown = counts["to_make"] if limit is None else min(counts["to_make"], limit)
         console.print("--apply would make %d, about %s at %s each. Nothing was written." % (

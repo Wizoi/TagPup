@@ -30,7 +30,9 @@ a photo, 1.5-3 GB for photo_index), and nothing in it is the only copy of anythi
   and kept as a photo's thumbnail is; warming makes them too. ffmpeg is found by the caller (`find_ffmpeg`, the entry
   point's tagpup.config.locate_ffmpeg: config is not this layer's), asked only for a clip, so an install is seen without
   a restart. At most thumbs.POSTER_RUNS ffmpeg runs at once in a process, each within thumbs.POSTER_SECONDS (then killed
-  with its tree; warm gives thumbs.WARM_POSTER_SECONDS, nothing waits on it). No ffmpeg: the UNREADABLE placeholder, nothing kept or remembered, said once in the log with the
+  with its tree; warm gives thumbs.WARM_POSTER_SECONDS, nothing waits on it). ffmpeg is a prerequisite: the server and
+  the CLI's warm do not start without it (tagpup.config.ffmpeg_problem). Gone after the start-up check (uninstalled
+  while the server runs): the UNREADABLE placeholder, nothing kept or remembered, said once in the log with the
   winget install. A clip ffmpeg cannot read (cut short, not a video): the UNREADABLE placeholder, remembered
   by its stamp as a damaged photo is. A poster past its deadline is the moment's, not the file's: Unavailable
   (503), nothing remembered, and `warm` counts it as "too_long", never damaged. A server stopped while a poster is made leaves its ffmpeg child to end by itself
@@ -313,7 +315,7 @@ def warm(library, find_ffmpeg, folder=None, limit=None, apply=False, progress=No
     and the files, writes only the cache.
 
     Returns {"photos": looked at (clips with them), "present": already cached, "to_make": without one, "made", "posters":
-    of them, the clips', "no_ffmpeg": clips without one, not made for want of ffmpeg ("ffmpeg": why), "damaged": not
+    of them, the clips', "damaged": not
     decoded (found not to), "missing": file not there, "failed": file not reachable, "too_long": clips whose poster
     passed thumbs.WARM_POSTER_SECONDS (the moment's, not damage: the next run tries them again),
     "unwritable": made and not kept (the cache cannot be written), "away": the shares found away (each asked once, its photos
@@ -325,7 +327,7 @@ def warm(library, find_ffmpeg, folder=None, limit=None, apply=False, progress=No
     held, bytes_cached = thumbs.usage(root)
     average = bytes_cached // held if held else ASSUMED_BYTES
     tools = find_ffmpeg()
-    counts = {"photos": 0, "present": 0, "to_make": 0, "made": 0, "posters": 0, "no_ffmpeg": 0, "ffmpeg": tools.problem,
+    counts = {"photos": 0, "present": 0, "to_make": 0, "made": 0, "posters": 0,
               "damaged": 0, "missing": 0, "failed": 0, "too_long": 0,
               "unwritable": 0, "away": [], "skipped_away": 0,
               "stopped_unwritable": False, "bytes_cached": bytes_cached, "bytes_made": 0, "estimate": 0, "stopped": False, "average": average}
@@ -356,9 +358,6 @@ def warm(library, find_ffmpeg, folder=None, limit=None, apply=False, progress=No
                     path_hash = _hash_of(row_path)
                     if os.path.isfile(thumbs.entry_path(root, photo_id, path_hash, *stamp)):   # unbounded: the cache
                         counts["present"] += 1
-                        continue
-                    if kind == "video" and tools.problem:
-                        counts["no_ffmpeg"] += 1
                         continue
                     counts["to_make"] += 1
                     counts["estimate"] += average

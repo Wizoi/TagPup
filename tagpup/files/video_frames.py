@@ -5,7 +5,7 @@ MANAGES" 9 and 10, "THE OWNERS' PLANS" 5): five frames at equal spacing, never t
 run that seeks in the file before it decodes (`-ss` before `-i`), so a ten-gigabyte video on a share costs five short
 reads, not a read of the whole file.
 
-    tools = tagpup.config.locate_ffmpeg()          # which ffmpeg the machine has, or why there is none
+    tools = tagpup.config.locate_ffmpeg()          # which ffmpeg the machine has (found: a prerequisite)
     found = video_frames.frames(tools, path, 5)    # Frames(pictures=(jpeg bytes, ...), problem=None)
     found = video_frames.poster(tools, path)       # one picture, from the middle of the video
 
@@ -18,13 +18,14 @@ with no duration (a raw stream) gives one frame, its first, read without a seek 
 nothing to space them by, and decoding the whole stream to count its frames is the read this module exists to avoid.
 
 How it fails, each as a plain `problem` and no picture (and `whose`: THE_FILE's, which another call would find
-again, or THE_MOMENT's, which it might not; this module is the one place that says which), never an exception: ffmpeg not found (the sentence
-locate_ffmpeg gives); the file not there, unreadable, or on a share that does not answer (one bounded look first,
+again, or THE_MOMENT's, which it might not; this module is the one place that says which), never an exception: the file not there, unreadable, or on a share that does not answer (one bounded look first,
 tagpup.files.shares.stamp_of: a share asleep holds no ffmpeg); a file ffmpeg cannot read as a video (not a video, or cut
 short before its index); ffmpeg past the call's deadline, `seconds` for the whole call (killed with its tree through
 tagpup.core.processes, so a run blocked on a share that stopped answering half way ends too). A file cut short after its
 index gives the frames before the cut and no problem: fewer pictures than asked. Two calls at once share nothing: each
-starts processes of its own. A problem names no file: a file's name can hold a person's name.
+starts processes of its own. A problem names no file: a file's name can hold a person's name. ffmpeg itself is found:
+it is a prerequisite of every process that asks (tagpup.config.ffmpeg_problem), and the one caller, thumbs.poster, is
+reached only through a check that it is there (tagpup.services.thumbnails).
 """
 import json
 import logging
@@ -83,9 +84,7 @@ def _refused(problem, whose=THE_MOMENT):
 
 def frames(tools, path, count, max_side=MAX_SIDE, seconds=DEFAULT_SECONDS):
     """`count` frames of the video at `path`, equally spaced (see the module); `tools` is what
-    tagpup.config.locate_ffmpeg answered."""
-    if tools.problem:
-        return _refused(tools.problem)
+    tagpup.config.locate_ffmpeg answered, with no problem."""
     count = max(1, int(count))
     stamp = shares.stamp_of(path)
     if stamp is None:
