@@ -89,6 +89,8 @@ KEYS = {
     "tag_taxonomy": ("id",),
     "face_embeddings": ("face_id", "model"),
     "embeddings": ("photo_id", "model"),
+    # A clip's frames 1 to 4 beside its vector (migration 38): recorded with its photo, put back with it by an undo.
+    "embedding_frames": ("photo_id", "model", "frame"),
     "suggestions": ("photo_id",),
     "settings": ("key",),
     # A photo's record of the detector that looked at it, keyed by the photo's id, which SQLite never hands out again
@@ -156,7 +158,13 @@ RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
 CASCADES = {
     ("faces", "face_embeddings"): ("face_id", RECORDED),
     ("photos", "faces"): ("photo_id", RECORDED),
+    # A clip's frames, found with its photo, before its vector: deleted first, so the vector's trigger finds none.
+    ("photos", "embedding_frames"): ("photo_id", RECORDED),
     ("photos", "embeddings"): ("photo_id", RECORDED),
+    # The trigger embedding_frames_go_with_their_vector. A cascade is followed by the parent's first key column, so a
+    # vector deleted by a change would record every model's frames of its photo: no change deletes a vector but with its
+    # photo (forget, a retiring and a replacement write unjournaled), whose frames are all found above.
+    ("embeddings", "embedding_frames"): ("photo_id", RECORDED),
     ("photos", "suggestions"): ("photo_id", RECORDED),
     ("photos", "photo_people"): ("photo_id", REBUILT),
     ("photos", "photo_tags"): ("photo_id", REBUILT),

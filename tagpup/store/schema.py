@@ -702,6 +702,22 @@ def _photos_know_their_kind_and_a_patch_is_recorded(conn):
     conn.execute("ALTER TABLE change_files ADD COLUMN patch_before BLOB")
 
 
+def _a_clips_frames_beside_its_vector(conn):
+    """Migration 38 (owner, 2026-11-06; DECISIONS, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", 5): `embedding_frames`,
+    a clip's frames 1 to 4 under one photo model, beside its frame 0, which is its row in `embeddings` and carries the stamp:
+    a clip is matched on its best frame. The key of `embeddings` is not widened, which would rewrite every photo's vector.
+    A frame never outlives its vector: two triggers take a photo's frames with the photo and a vector's with the vector
+    (forgotten, retired); a vector replaced (INSERT OR REPLACE fires no delete trigger) has its frames replaced by its one
+    writer, store.embeddings.put. Spelled here, not imported: a migration is frozen. Additive: a new table, empty, and
+    two triggers; nothing that was there changes."""
+    conn.execute("CREATE TABLE embedding_frames (photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
+                 " model TEXT NOT NULL, frame INTEGER NOT NULL, vector BLOB NOT NULL, PRIMARY KEY (photo_id, model, frame))")
+    conn.execute("CREATE TRIGGER embedding_frames_go_with_their_photo AFTER DELETE ON photos"
+                 " BEGIN DELETE FROM embedding_frames WHERE photo_id = OLD.id; END")
+    conn.execute("CREATE TRIGGER embedding_frames_go_with_their_vector AFTER DELETE ON embeddings"
+                 " BEGIN DELETE FROM embedding_frames WHERE photo_id = OLD.photo_id AND model = OLD.model; END")
+
+
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
@@ -746,6 +762,15 @@ MIGRATIONS = (
               "there was); nothing that was there changes, so no backup",
               ("change_files",),
               (RowsKept("photos", "change_files"),) + STANDARD),
+    # It touches no table: `embedding_frames` is new and empty, and naming it, a table the journal keys, would refuse the
+    # undo of every change of rows made at 37 (journal.schema_gap_blocker), though no such change can name a frame: one
+    # that put back a clip's vector made at 37 puts it back with no frames, as it was. The watch holds every row as it
+    # was, and `embeddings` is counted by name.
+    Migration(38, "a clip's frames beside its vector", _a_clips_frames_beside_its_vector, ADDITIVE,
+              "adds the empty table embedding_frames, a clip's frames 1 to 4 beside its vector, and the triggers that take "
+              "them with the photo or the vector; nothing that was there changes, so no backup",
+              (),
+              (RowsKept("embeddings"),) + STANDARD),
 )
 
 LATEST = MIGRATIONS[-1].version

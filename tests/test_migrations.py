@@ -1,11 +1,12 @@
 """The migration runner, and a library meeting a step it has not had (docs/DATABASE.md, "The baseline"; tagpup.store.schema).
 
-There are six real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused);
+There are seven real migrations: the baseline (schema 32), which makes a NEW library whole (a library below it is refused);
 33, which moves each face's vector to `face_embeddings` under FaceNet's key and drops `faces.embedding`, the empty
 `faces_pending` and the redundant `idx_faces_name`, on a library kept at 32 and on a new one alike; 34, which adds the
 empty `photo_fingerprints`; 35, which adds `idx_embeddings_stamp`; 36, which adds `job_runs.parent`, `heartbeat` and
-`progress`; and 37, which adds `photos.kind` and `change_files.patch` and `patch_before` (34 to 37 additive: no backup, and a
-change made before each stays undoable).
+`progress`; 37, which adds `photos.kind` and `change_files.patch` and `patch_before`; and 38, which adds the empty
+`embedding_frames` and the two triggers that take a clip's frames with its photo and its vector (34 to 38 additive: no backup,
+and a change made before each stays undoable).
 The runner is held to what it promises by SYNTHETIC steps after the latest real one (tests/migration_names.py):
 
 * one that adds takes nothing and is watched to change nothing that was there; one that destroys takes one backup, under
@@ -32,7 +33,10 @@ The runner is held to what it promises by SYNTHETIC steps after the latest real 
   without a patch, nothing else, the deletion still undoable and the photo back as a 'photo', a second open a no-op; a
   photo the indexer or Suggest adds after it is a 'photo', and no kind but 'photo' and 'video' is stored; the files read
   alike at 36 and at 37; two processes opening it at once apply it once; killed part way it is still at 36 and migrates at
-  the next open; the app before 37 refuses it after.
+  the next open; the app before 37 refuses it after. The owner's library at 37, with a photo deleted by a journaled change,
+  meets the real 38: no backup, the table and its two triggers and nothing else, every vector byte for byte, the deletion
+  still undoable, a second open a no-op; two processes opening it at once apply it once; killed part way it is still at 37
+  and migrates at the next open; the app before 38 refuses it after.
 * A library below the baseline is refused with a sentence before anything is written to it, whoever opens it.
 
 A step is declared once, in tests/migration_names.py, not in a list of names in every test that says which ran (#689). However
@@ -272,7 +276,7 @@ class AFailedCheck(Migrated):
 
 class TheRealMigrations(unittest.TestCase):
     def test_each_says_what_it_is_and_names_its_checks(self):
-        baseline, dropping, fingerprints, stamps, nesting, kinds = schema.MIGRATIONS
+        baseline, dropping, fingerprints, stamps, nesting, kinds, frames = schema.MIGRATIONS
         self.assertEqual((32, schema.ADDITIVE), (baseline.version, baseline.kind))
         self.assertEqual((33, schema.DESTRUCTIVE, ("faces_pending", "faces", "face_embeddings"), "face vectors in face_embeddings"),
                          (dropping.version, dropping.kind, dropping.touches, dropping.name))
@@ -292,7 +296,12 @@ class TheRealMigrations(unittest.TestCase):
                          (kinds.version, kinds.kind, kinds.touches, kinds.name))
         self.assertNotIn("change_files", journal.KEYS)
         self.assertIsNone(journal.schema_gap_blocker(36, 37))
-        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 37, 37))
+        # No table touched: `embedding_frames`, new and empty, is keyed by the journal, and a change made at 37 stays undoable.
+        self.assertEqual((38, schema.ADDITIVE, (), "a clip's frames beside its vector"),
+                         (frames.version, frames.kind, frames.touches, frames.name))
+        self.assertIn("embedding_frames", journal.KEYS)
+        self.assertIsNone(journal.schema_gap_blocker(37, 38))
+        self.assertEqual((schema.BASELINE, schema.LATEST, migration_names.BASE), (32, 38, 38))
         for migration in schema.MIGRATIONS:
             self.assertIn(migration.kind, schema.KINDS)
             self.assertTrue(migration.why and "\n" not in migration.why)
@@ -1013,6 +1022,7 @@ class TheOwnersLibraryAt36MeetsMigration37(Migrated):
         self.assertEqual(36, self.version())
         self.before = (self.objects(), self.counts(), self.dump())
         self.files_at_36 = file_journal.files_of(self.db_path, self.saved)
+        self.enterContext(migration_names.up_to(37))   # the app with 37 as its latest: 38 is its own class's
 
     objects = TheOwnersLibraryAt32MeetsMigration33.objects
     counts = TheOwnersLibraryAt32MeetsMigration33.counts
@@ -1114,6 +1124,102 @@ class TheOwnersLibraryAt36MeetsMigration37(Migrated):
         with migration_names.up_to(36), self.assertRaises(schema.NewerLibrary) as refused:
             schema.ensure(self.db_path)
         self.assertEqual((37, 36), (refused.exception.found, refused.exception.known))
+        self.assertEqual(before, digest(self.db_path), "nothing written")
+
+
+class TheOwnersLibraryAt37MeetsMigration38(Migrated):
+    """Made and seeded by the app before 38, as the three live libraries are (at 37: 59,618, 2,065 and 1,309 vectors in
+    `embeddings`, one model each; 2,179, 5 and 0 clips, none with a vector; counted read-only 2026-11-06), with a photo and
+    its vector deleted by a journaled change at 37, then opened by this one (owner, 2026-11-06; DECISIONS, "MIGRATION 38: A
+    CLIP'S FRAMES BESIDE ITS VECTOR")."""
+
+    NAME = "a clip's frames beside its vector"
+    MADE = {("table", "embedding_frames"), ("trigger", "embedding_frames_go_with_their_photo"),
+            ("trigger", "embedding_frames_go_with_their_vector")}
+
+    def setUp(self):
+        with migration_names.up_to(37):
+            super().setUp()
+            self.whole = self.dump()
+            self.deletion = journal.apply(self.db_path, "delete", [journal.delete("photos", (self.ids["prize"],), {})]).change_id
+        self.assertEqual(37, self.version())
+        self.before = (self.objects(), self.counts(), self.dump())
+        self.enterContext(migration_names.up_to(38))   # the app with 38 as its latest
+
+    objects = TheOwnersLibraryAt32MeetsMigration33.objects
+    counts = TheOwnersLibraryAt32MeetsMigration33.counts
+
+    def test_it_adds_the_empty_table_keeps_every_vector_byte_for_byte_and_a_deletion_at_37_stays_undoable(self):
+        objects, counts, dump = self.before
+        self.assertEqual(2, len(dump["embeddings"]), "the vectors of the two photos left, as the indexer stored them")
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(38, self.version())
+        after = self.objects()
+        self.assertEqual(self.MADE, set(after) - set(objects), "the table and its two triggers, nothing else new")
+        self.assertEqual(objects, {k: v for k, v in after.items() if k not in self.MADE}, "nothing else changed")
+        counts.update(schema_version=counts["schema_version"] + 1, changes=counts["changes"] + 1, embedding_frames=0)
+        self.assertEqual(counts, self.counts())
+        self.assertEqual(dump, self.dump(), "every row as it was, each vector byte for byte")
+        self.assertEqual([], backups(self.db_path), "an additive migration takes none")
+        operation, version, status, summary = self.recorded()[-1]
+        self.assertEqual(("migration 38: " + self.NAME, 37, "applied", schema.ADDITIVE),
+                         (operation, version, status, summary["kind"]))
+        self.assertIn("nothing that was there changed", summary["checks"])
+        self.assertIn("rows kept in embeddings", summary["checks"])
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        self.addCleanup(conn.close)
+        self.assertEqual([], journal.refusal(conn, self.deletion))
+        journal.undo(self.db_path, self.deletion)
+        self.assertEqual(self.whole, self.dump(), "the photo back with its vector, and no frame")
+        self.assertEqual([(0,)], self.query("SELECT COUNT(*) FROM embedding_frames"))
+        schema.forget()
+        self.assertEqual([], schema.ensure(self.db_path), "a second open applies nothing")
+
+    def test_two_processes_opening_it_at_once_apply_it_once(self):
+        code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema; print(len(schema.ensure(%r)))"
+                % (ROOT, self.db_path))
+        env = dict(os.environ, TAGPUP_HOME=self.home.root)
+        running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True) for _ in range(2)]
+        answers = []
+        for each in running:
+            out, err = each.communicate(timeout=120)
+            self.assertEqual(0, each.returncode, err)
+            answers.append(out.strip())
+        self.assertEqual(1, sum(int(answer) for answer in answers), answers)
+        self.assertEqual(38, self.version())
+        self.assertEqual(self.before[2], self.dump())
+        self.assertEqual(["migration 38: " + self.NAME], [op for op, *_ in self.recorded() if op.startswith("migration 38")])
+
+    def test_killed_part_way_it_is_still_at_37_and_migrates_at_the_next_open(self):
+        code = textwrap.dedent("""
+            import os, sys
+            sys.path.insert(0, %(root)r)
+            from tagpup.store import schema
+            [real] = [m for m in schema.MIGRATIONS if m.version == 38]
+
+            def killed(conn):
+                real.apply(conn)
+                os._exit(9)   # the power goes: the table made, nothing committed
+
+            schema.MIGRATIONS = tuple(m for m in schema.MIGRATIONS if m.version < 38) + (real._replace(apply=killed),)
+            schema.ensure(%(path)r)
+            """) % {"root": ROOT, "path": self.db_path}
+        child = processes.start([sys.executable, "-c", code], env=dict(os.environ, TAGPUP_HOME=self.home.root),
+                                stdout=-1, stderr=-1, text=True)
+        _out, err = child.communicate(timeout=120)
+        self.assertEqual(9, child.returncode, err)
+        self.assertEqual(37, self.version())
+        self.assertEqual(self.before, (self.objects(), self.counts(), self.dump()), "as it was")
+        schema.forget()
+        self.assertEqual([self.NAME], schema.ensure(self.db_path))
+        self.assertEqual(38, self.version())
+
+    def test_the_app_before_38_refuses_it_after(self):
+        schema.ensure(self.db_path)
+        before = digest(self.db_path)
+        with migration_names.up_to(37), self.assertRaises(schema.NewerLibrary) as refused:
+            schema.ensure(self.db_path)
+        self.assertEqual((38, 37), (refused.exception.found, refused.exception.known))
         self.assertEqual(before, digest(self.db_path), "nothing written")
 
 
