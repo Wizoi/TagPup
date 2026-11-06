@@ -298,10 +298,20 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual("Quay at dusk", raw["Description"])
         self.assertTrue(any(":" not in key for key in raw), "a read records the bare names too")
         written = os.stat(a).st_mtime_ns
-        again = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
-                                   "2019-06-15T10:30:00", EXIFTOOL, "")
+        # The row of a file that holds the save already is made to say what the file holds: a row left saying another
+        # caption is put right by the save that writes nothing (the read of the caption fields under bare names broke
+        # it: "Could not record what 1 file(s) hold", and the row stayed).
+        db.write_with_connection(self.library.path, lambda conn: conn.execute(
+            "UPDATE photos SET raw_metadata = ? WHERE path = ?",
+            (json.dumps(dict(raw, Description="Quay at noon", **{"XMP:Description": "Quay at noon"})), a)))
+        with self.assertNoLogs(file_changes.logger.name, level="WARNING"):
+            again = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
+                                       "2019-06-15T10:30:00", EXIFTOOL, "")
         self.assertEqual((True, 0, None, written), (again.ok, again.changed, again.details["change"],
                                                     os.stat(a).st_mtime_ns), "a file holding it all was written")
+        followed = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
+        self.assertEqual(("Quay at dusk", "Quay at dusk"), (followed["XMP:Description"], followed["Description"]),
+                         "the row of a file holding the save already was not made to say what it holds")
 
         undone = self.undo(change)
 

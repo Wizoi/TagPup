@@ -49,8 +49,12 @@ def _held_title(now):
 #: Every field _differs_from_base reads of the file: the fields its tags come from and every field its caption is
 #: shown from -- the page's title is the first caption, a Title (XMP:Title, IPTC:ObjectName) when the photo holds no
 #: Description. The save read the description fields alone, found no caption on a photo titled only, and refused every
-#: save from the page of it as changed on disk (6,123 photos of one library, 2026-11-06).
-BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + vocabulary.CAPTION_FIELDS))
+#: save from the page of it as changed on disk (6,123 photos of one library, 2026-11-06). The prefixed names alone, as
+#: _caption_problem asks: a read answers a field under its group's name (field_values), so a bare name holds nothing,
+#: and a bare key in what the file holds broke the recording of a file that held the save already
+#: (store.photos.follow_fields reads each key as group:name).
+BASE_READ = tuple(dict.fromkeys(fields.TAG_SOURCE_FIELDS + tuple(name for name in vocabulary.CAPTION_FIELDS
+                                                                  if ":" in name)))
 
 
 def _differs_from_base(now, base):
