@@ -274,6 +274,24 @@ def _holds_the_roots(command):
     return run
 
 
+def _needs_ffmpeg(when=lambda kwargs: True):
+    """A command that indexes, or makes posters, refused before it opens anything when ffmpeg is not found or does not
+    run (tagpup.config.ffmpeg_problem; owner, 2026-11-06: a prerequisite, checked early): the sentence says what to
+    install, exit 1, nothing written. `when` says from the command's options whether this run needs it (a sync's
+    dry run does not)."""
+    def wrap(command):
+        @functools.wraps(command)
+        def run(ctx, *args, **kwargs):
+            if when(kwargs):
+                problem = tagpup_config.ffmpeg_problem()
+                if problem:
+                    console.print("Not run: %s" % problem, markup=False, soft_wrap=True)
+                    raise SystemExit(1)
+            return command(ctx, *args, **kwargs)
+        return run
+    return wrap
+
+
 #: The line an index ends with, counts only: what became of each photo's vector (photo_fingerprints.same_picture), the
 #: four adding up to the photos the run indexed; and the photos never examined for faces whose detection ran (one that
 #: failed, NotDetected, records nothing and is owed still).
@@ -327,6 +345,7 @@ def _folders_now(ctx, param, directories):
 @click.option("--no-subfolders", is_flag=True,
               help="Only the photos directly in each DIRECTORY, not in its subfolders.")
 @click.pass_context
+@_needs_ffmpeg()
 @_holds_the_roots
 def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, no_subfolders: bool = False):
     """Phase 1: Scan and index a tagged photo library: one or more DIRECTORIES, in one run
@@ -1244,6 +1263,7 @@ SYNC_FOUND = (("new", "new file(s), in %d folder(s)", "new_folders"), ("changed"
 @click.option("--apply", "apply_", is_flag=True,
               help="Write the rows, index the new files, and record the run. Without it, only says what it would do.")
 @click.pass_context
+@_needs_ffmpeg(when=lambda kwargs: kwargs["apply_"])
 def sync(ctx, folder, apply_):
     """Bring the library in step with its folders: rows read again for files changed
     outside the apps, rows following files that moved, new files indexed, and the rows of
@@ -1484,6 +1504,7 @@ def _megabytes(size):
 @click.option("--apply", "apply_", is_flag=True,
               help="Make the thumbnails. Without it, only counts what is there and what would be made.")
 @click.pass_context
+@_needs_ffmpeg()
 def thumbs_warm(ctx, folder, limit, apply_):
     """Make the thumbnails the library's photos lack, and the poster frames of its videos (through ffmpeg), ahead of
     the first time each is asked for. A dry run unless
