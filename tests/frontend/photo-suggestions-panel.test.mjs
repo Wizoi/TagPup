@@ -10,10 +10,18 @@
  * The layout follows from that: suggestions on the left because they are the thing to
  * act on, the detected faces on the right as reference and as the place to pick up a
  * match the suggester was not confident enough to propose.
+ *
+ * While the folder's run waits or is under way, a photo with nothing yet says the run's own line or its count, and a
+ * photo the run could not read says why (owner, 2026-11-05); the replies are the real SuggestionRuns.status()'s
+ * (tests/test_suggest_status_replies.py writes fixtures/suggest_status.json).
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  loadApp, FakeServer, photoRecord, flush, click, openFolder, pageExports, peopleRecordsOf, PEOPLE_ROUTE, REPO_ROOT,
+} from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -171,5 +179,126 @@ describe("the analysis row", () => {
     const row = ctx.document.querySelector(".analysis-row");
     assert.equal(ctx.document.getElementById("suggestions-section").parentElement, row);
     assert.equal(ctx.document.getElementById("faces-section").parentElement, row);
+  });
+});
+
+const served = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "frontend", "fixtures", "suggest_status.json"), "utf8"));
+const OTHER = "D:\\Library\\2021";
+const POLL_MS = 1600;
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const note = (ctx) => ctx.document.querySelector("#suggestions-section .suggestions-note");
+
+/**
+ * The folder D:\Library\2020 of the fixture's run (a, b, c) open, and `photo` of it. `status(url)` answers each poll;
+ * D:\Library\2021 holds one photo of its own and no run.
+ */
+async function openDuringARun(t, photo, status) {
+  const ours = ["a.jpg", "b.jpg", "c.jpg"].map((filename) => photoRecord({ filename }));
+  const theirs = [photoRecord({ filename: "d.jpg", path: `${OTHER}\\d.jpg` })];
+  const server = new FakeServer()
+    .on("/api/tags", [])
+    .on("/api/taxonomy/tree", TAXONOMY)
+    .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
+    .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
+    .on("/api/folder/index-status", { status: "completed", percent: 100 })
+    .on("/api/folder/membership", { photos_not_held: 0 })
+    .on("/api/folder/scan", (url) => (url.includes("2021") ? theirs : ours))
+    .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
+    .on("/api/library/ids", { source: {}, total: 0, ids: [], complete: true })
+    .on("/api/folder/suggest-status", status);
+  const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
+  await openFolder(ctx, "D:/Library/2020");
+  await openRow(ctx, photo);
+  return ctx;
+}
+
+async function openRow(ctx, filename) {
+  const row = [...ctx.document.querySelectorAll("li[data-path]")].find((li) => li.dataset.path.endsWith(filename));
+  assert.ok(row, `no row for ${filename}`);
+  row.click();
+  await flush(ctx.window, 8);
+}
+
+/** Replies in turn, the last kept. */
+const inTurn = (...replies) => () => (replies.length > 1 ? replies.shift() : replies[0]);
+
+describe("while the folder's run goes, the box says how it stands", () => {
+  test("opened while the run waits for the graphics card: the server's own line, then its chips when it completes", async (t) => {
+    const ctx = await openDuringARun(t, "b.jpg", inTurn(served.waiting_for_the_card, served.completed));
+    assert.ok(!hidden(section(ctx)), "the box is hidden while the run waits");
+    assert.equal(note(ctx).textContent, served.waiting_for_the_card.message);
+    assert.equal(note(ctx).getAttribute("role"), "status");
+    await wait(POLL_MS);
+    await flush(ctx.window, 8);
+    assert.equal(note(ctx), null, "the waiting line stayed after the run completed");
+    assert.match(chips(ctx, "suggested-tags-container").join(" "), /Activity\/Rowing/);
+  });
+
+  test("waiting for the folder's index: that line", async (t) => {
+    const ctx = await openDuringARun(t, "b.jpg", inTurn(served.waiting_for_the_index));
+    assert.equal(note(ctx).textContent, served.waiting_for_the_index.message);
+  });
+
+  test("under way, this photo not done yet: how far the run has got", async (t) => {
+    const ctx = await openDuringARun(t, "b.jpg", inTurn(served.running));
+    assert.equal(note(ctx).textContent, "Suggesting... 2 / 3");
+    assert.ok(hidden(ctx.document.querySelector("#suggestions-section .suggestions-content")));
+  });
+
+  test("a photo the run could not read says why, and how to try again", async (t) => {
+    const ctx = await openDuringARun(t, "c.jpg", inTurn(served.completed));
+    assert.match(note(ctx).textContent, /cannot identify image file/);
+    assert.match(note(ctx).textContent, /Start Photo Analysis again/);
+  });
+
+  test("a photo never analysed with no run says nothing: the box stays hidden", async (t) => {
+    for (const reply of [served.idle, served.cancelled, served.error]) {
+      const ctx = await openDuringARun(t, "b.jpg", inTurn(reply));
+      assert.ok(hidden(section(ctx)), `a box for ${reply.status}`);
+      assert.equal(note(ctx), null);
+    }
+  });
+
+  test("the late reply of a folder left behind changes nothing in the folder opened after it", async (t) => {
+    let release;
+    const late = new Promise((resolve) => { release = resolve; });
+    let first = true;
+    const ctx = await openDuringARun(t, "a.jpg", (url) => {
+      if (url.includes("2021")) return served.idle;
+      if (first) { first = false; return served.waiting_for_the_card; }
+      return late;   // the poll of 2020 under way when 2021 is opened
+    });
+    await wait(POLL_MS);   // 2020's next poll is asked, and not answered yet
+    await openFolder(ctx, OTHER);
+    await openRow(ctx, "d.jpg");
+    release(served.running);
+    await flush(ctx.window, 8);
+    assert.ok(hidden(section(ctx)), "2020's run shows in 2021's photo");
+    assert.ok(hidden(ctx.document.getElementById("suggest-progress-container")), "2020's progress shows in 2021");
+    const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+    assert.equal(Object.keys(state.folderSuggestions).length, 0, "2020's suggestions are held for 2021");
+    assert.equal(state.suggestRun.status, "idle");
+  });
+
+  test("the library view opened mid-poll shows no box", async (t) => {
+    let release;
+    const late = new Promise((resolve) => { release = resolve; });
+    let first = true;
+    const ctx = await openDuringARun(t, "b.jpg", () => {
+      if (first) { first = false; return served.waiting_for_the_card; }
+      return late;
+    });
+    assert.ok(note(ctx), "no line before the view opened");
+    await wait(POLL_MS);
+    pageExports(ctx.window, "web/tagpup/library-view.js").openLibraryView({ kind: "all" });
+    await flush(ctx.window, 8);
+    release(served.running);
+    await flush(ctx.window, 8);
+    const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+    assert.equal(state.suggestRun, null);
+    assert.ok(hidden(ctx.document.getElementById("suggest-progress-container")));
+    // The photo's pane closes with the folder; nothing redraws the box with the run's line.
+    assert.ok(section(ctx).closest(".hidden"), "the box shows in the library view");
+    assert.equal(state.activePhotoPath, null);
   });
 });
