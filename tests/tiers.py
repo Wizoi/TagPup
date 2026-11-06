@@ -42,6 +42,7 @@ SCENARIO = frozenset({
     "test_the_two_writers_compared_on_copies",
     "test_a_clip_patched_in_place",
     "test_a_clip_tagged_through_the_journal",
+    "test_a_clip_tag_undone",
     "test_an_adobe_clip_packet_edited_and_read_back",
     "test_time_shift",
     "test_a_crash_part_way_is_settled_at_the_next_start",
