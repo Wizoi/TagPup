@@ -86,9 +86,8 @@ def _holds_text(now, field, text):
 # ---- The one-off sweep of captions that repeat the title -------------------------------------------------------------
 
 #: The caption fields the sweep clears where they hold the photo's own title (duplicate_captions): every field a caption
-#: is held in (fields.caption_fields) but EXIF:XPComment, Windows' Comment, which it never touches (the Files owner's
-#: plan, 2026-11-06).
-DUPLICATE_FIELDS = tuple(field for field in fields.caption_fields("") if field != "EXIF:XPComment")
+#: is held in but Windows' Comment (fields.SWEPT_CAPTION_FIELDS).
+DUPLICATE_FIELDS = fields.SWEPT_CAPTION_FIELDS
 #: What the sweep reads of each file: the title fields and DUPLICATE_FIELDS, by their prefixed names (BASE_READ's reason).
 DUPLICATE_READ = tuple(dict.fromkeys(tuple(fields.title_fields("")) + DUPLICATE_FIELDS))
 #: The sweep's change, as History names it.
@@ -141,7 +140,7 @@ def duplicate_candidates(library):
 def clear_duplicate_captions(library, exiftool_path, apply=False):
     """The one-off sweep (scripts/clear_duplicate_captions.py): clear each of DUPLICATE_FIELDS that holds the photo's
     own title exactly (duplicate_captions), in every photo the index names (duplicate_candidates). A caption that differs
-    is kept, EXIF:XPComment is never written, a clip never read. The title and the caption are two values (DECISIONS
+    is kept, Windows' Comment (XPComment) is never written, a clip never read. The title and the caption are two values (DECISIONS
     2026-11-06), and a save stops making new copies; this clears the copies made before.
 
     A dry run (the default) reads the index alone and writes nothing: the Result's details["counts"]. With `apply`, one

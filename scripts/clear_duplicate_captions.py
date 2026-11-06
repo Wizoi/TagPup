@@ -1,6 +1,6 @@
-"""Clear the captions that repeat a photo's title: XMP:Description, IPTC:Caption-Abstract and EXIF:ImageDescription, each
+"""Clear the captions that repeat a photo's title: XMP:Description, IPTC:Caption-Abstract and EXIF's ImageDescription, each
 where it holds exactly the photo's own title (XMP:Title, else IPTC:ObjectName), trimmed. A caption that differs ("the
-title and more") is kept, EXIF:XPComment is never touched, a video is skipped. A one-off: the title and the caption are
+title and more") is kept, Windows' Comment (XPComment) is never touched, a video is skipped. A one-off: the title and the caption are
 two values (DECISIONS 2026-11-06), and a save no longer makes such a copy; this clears the copies made before
 (tagpup.services.tagging.clear_duplicate_captions).
 
