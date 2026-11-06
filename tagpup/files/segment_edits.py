@@ -72,8 +72,7 @@ def clip_stale_of(values):
 #: Why the last keyword is not taken off a clip whose keywords are held in QuickTime's Subject (14 live clips, counted
 #: 2026-11-05; owner, 2026-11-05).
 KEPT_IN_QUICKTIME = ("its keywords are also held in the clip's QuickTime Subject, which TagPup does not write: with none "
-                     "left in its XMP they would be read from there again, so the last one is not taken off; nothing "
-                     "was written")
+                     "left in its XMP they would be read back from there, so the last one stays; nothing was written")
 
 
 def new_packet(old, values, *, keywords_elsewhere):

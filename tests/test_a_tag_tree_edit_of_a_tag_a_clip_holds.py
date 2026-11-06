@@ -81,7 +81,7 @@ class ATagTreeEditOfATagAClipHolds(tagged.ALibraryHoldingAClip):
         self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was")
         self.assertEqual(["Trips/Coast"], self.tags_of(clip))
         result = tags.merge(self.vl.library, "Trips/Coast", "", EXIFTOOL, retire=True, apply=True)
-        self.assertEqual([segment_edits.KEPT_IN_QUICKTIME[:200]], [each["why"] for each in result.details["failed_photos"]],
+        self.assertEqual([segment_edits.KEPT_IN_QUICKTIME], [each["why"] for each in result.details["failed_photos"]],
                          "TagTuner's reply names it and why")
         self.assertTrue(self.node("Trips/Coast"))
 
