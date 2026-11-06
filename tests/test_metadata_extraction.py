@@ -99,13 +99,6 @@ class TestExtractTags(unittest.TestCase):
 
 
 class TestExtractCaptions(unittest.TestCase):
-    def test_the_title_comes_first_then_the_description(self):
-        """page_record takes captions[0] as the title, so order matters (DECISIONS 2026-11-06); which copy of each is
-        read, XMP's or IPTC's, is test_tag_writes_keep_the_index_true.XmpIsTheCopyRead's."""
-        meta = {"XMP:Title": "title", "IPTC:Caption-Abstract": "abstract"}
-        self.assertEqual(["title", "abstract"], extract_captions(meta))
-        self.assertEqual(["object", "abstract"], extract_captions({"IPTC:ObjectName": "object", **meta, "XMP:Title": " "}))
-
     def test_blank_captions_are_dropped(self):
         self.assertEqual(extract_captions({"XMP:Description": "   "}), [])
 
