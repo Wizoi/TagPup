@@ -98,6 +98,9 @@ def caption_sql(column="captions"):
 #: Ids read in one statement.
 CHUNK = 500
 
+#: A clip: the `photos.kind` of a video (migration 37); every other row is a photo.
+VIDEO = "video"
+
 # ---- A source's photos -----------------------------------------------------------------------
 
 def month_range(month):
@@ -418,6 +421,11 @@ def all_ids(conn, source, cap, order=TAKEN):
     scope = _scope(conn, source)
     if scope is None:
         return [], 0
+    return _ids_of(conn, scope, cap, order)
+
+
+def _ids_of(conn, scope, cap, order):
+    """all_ids of a source's Scope."""
     if order in _KEYED:
         key, index, nullable = _KEYED[order]
         from_, where, params = _by_index(conn, scope, index)
@@ -449,6 +457,23 @@ def source_ids(conn, source, cap, order=TAKEN):
     snapshots. The transaction is the connection's own and read-only; it ends with the connection."""
     db.begin(conn)
     return all_ids(conn, source, cap, order)
+
+
+def view_ids(conn, source, cap, order=TAKEN):
+    """(ids, total, video ids) of a source, read in ONE transaction, as source_ids is: what a library view is told. The
+    video ids are those of the source's photos whose kind is VIDEO, every one of the source's whatever `cap` cut, by id:
+    the view's count by kind is their number and `total` less it, from the same snapshot and the same where as the list,
+    so the two cannot disagree (#2569). One more read of the source, of ids and kind alone; the whole library's is a scan
+    of photos, as no index holds the kind (photo_index, 61,797 rows: 39 ms warm, 2026-11-07)."""
+    db.begin(conn)
+    scope = _scope(conn, source)
+    if scope is None:
+        return [], 0, []
+    ids, total = _ids_of(conn, scope, cap, order)
+    videos = [photo_id for (photo_id,) in conn.execute(
+        "SELECT p.id FROM %s WHERE (%s) AND p.kind = ? ORDER BY p.id" % (scope.from_, scope.where),
+        list(scope.params) + [VIDEO])]
+    return ids, total, videos
 
 
 def existing_ids(conn, photo_ids):
