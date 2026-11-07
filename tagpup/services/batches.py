@@ -68,14 +68,17 @@ def current():
 
 
 @contextlib.contextmanager
-def claim(library, operation, photos, wait=True):
+def claim(library, operation, photos, wait=True, change_id=None):
     """Wait for this process's turn to carry out a batch of `photos` photos, and hold it. Conflict, nothing begun, when MOST_WAITING
     are waiting already; Refused when it was cancelled while it waited. Inside a batch's own claim it is that batch. Without `wait`
-    (a caller holding the lock of changes of photo files, which the batch ahead needs) any batch ahead is a Conflict at once."""
+    (a caller holding the lock of changes of photo files, which the batch ahead needs) any batch ahead is a Conflict at once.
+    `change_id`: the journal's change it carries out, known before it waits (a settle's: file_changes._settle_in_turn), so that
+    listing names it once, waiting."""
     if current() is not None:
         yield current()
         return
     batch = Batch(library, operation, photos)
+    batch.change_id = change_id
     with _turn:
         if _line and not wait:
             raise Conflict("A batch of photo files is running; try again when it has finished.")

@@ -298,7 +298,9 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 **The journal** (7.5). Every bulk edit and maintenance operation is one `changes`
 row: what it found and what it left, applied only where the rows are still what the plan read, rehearsed by
 a dry run that applies and undoes inside a rolled-back transaction, undoable on the same terms. A bulk edit that writes photo files marks each file `writing`, then `done` in the same transaction
-that records its row; a crash is settled at the next start by what the file holds. Keys the journal can
+that records its row; a crash is settled at the next start by what the file holds (`file_changes.settle_once`, from
+`runtime.library_settings`: in the web server on a thread of its own, its photos refused to a save until it reaches them
+and a long one listed on Activity as a batch; in the CLI inline; DECISIONS 2026-11-07). Keys the journal can
 restore are AUTOINCREMENT (never reused). `History`/`undo` are in the CLI and the pages' gear; the MCP server has `history`.
 
 **One batch model** (`tagpup/services/batches.py`, `file_changes.write_fields`; owner, 2026-10-11). A batch of photo files -- more

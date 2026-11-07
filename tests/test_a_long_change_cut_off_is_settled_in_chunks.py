@@ -6,6 +6,10 @@ two chunks leaves a photo the settle has still to write alone, saying why, so th
 a conflict, and an Undo of an older change of its photos let in is refused as any undo with a newer change of its files;
 a settle that cannot take its turn (a batch running, a hand-over) is left whole for the next.
 
+In the server the settle runs on a thread of its own, so the request that opens the library returns at once (#2610;
+DECISIONS 2026-11-07): the change is taken and its photos refused before it returns, the thread waits its turn as a
+batch, listed and cancelled as one, and the CLI opening the library meanwhile leaves the change to it.
+
 Real JPEGs written by the real ExifTool in a home of the test's own; rows as the indexer records a read
 (photo_rows.add_read, through FilesCase.make); the kill is a BaseException at a step of the write (crash_at), with the
 change's owner a process of this machine that has ended. Chunks of two (batches.CHUNK) over twelve photos. Each test
@@ -24,8 +28,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, keywords_of, requires_exiftool  # noqa: E402
 
+from tagpup import runtime  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 from tagpup.files import names  # noqa: E402
 from tagpup.services import batches, file_changes, tagging  # noqa: E402
+from tagpup.store import schema  # noqa: E402
 
 GONE = "%s:4000000:1" % socket.gethostname()      # a process of this machine that has ended
 PHOTOS = 12
@@ -244,6 +252,225 @@ class ALongChangeCutOff(CutOff):
         # One row, the write's own batch, cancellable here: not a batch of another process that cannot be.
         self.assertEqual([(self.change, True)], [(each["id"], each["here"]) for each in listed])
         self.assert_settled()
+
+
+def settle_threads():
+    """The settles running on a thread of their own (file_changes.SETTLE_THREAD)."""
+    return [thread for thread in threading.enumerate() if thread.name.startswith("SettleThread")]
+
+
+@requires_exiftool
+class OnAThreadInTheServer(CutOff):
+    """What the server's first request does (runtime.library_settings) with the server's settle on a thread."""
+
+    def setUp(self):
+        super().setUp()
+        on = mock.patch.object(runtime, "_settle_on_a_thread", True)
+        on.start()
+        self.addCleanup(on.stop)
+        self.addCleanup(self.join_settles)
+        self.writers = []
+        reached = mock.patch.object(file_changes, "_reached", side_effect=self.reached)
+        reached.start()
+        self.addCleanup(reached.stop)
+        self.step = None
+
+    def reached(self, name):
+        if name == "file written":
+            self.writers.append(threading.current_thread().name)
+        if self.step is not None:
+            self.step(name)
+
+    def settled(self):
+        """The files the settle's thread wrote."""
+        return [name for name in self.writers if name.startswith("SettleThread")]
+
+    def join_settles(self):
+        for thread in settle_threads():
+            thread.join(120)
+            self.assertFalse(thread.is_alive(), "a settle never ended")
+
+    def open_in_the_server(self):
+        """runtime.library_settings, as the request that first opens the library calls it: it returns before the settle
+        has written a file, and writes none in the request's thread."""
+        runtime.library_settings(self.library)
+        self.assertNotIn(threading.current_thread().name, self.writers, "the request that opened the library settled it")
+
+    def bulk_ahead(self):
+        """A bulk write of the owner's holding this process's batch turn until the returned event is set."""
+        holding, done = threading.Event(), threading.Event()
+
+        def bulk():
+            with batches.claim(self.library, "add to all selected", 30):
+                holding.set()
+                done.wait(60)
+        ahead = threading.Thread(target=bulk)
+        ahead.start()
+        holding.wait(30)
+        self.addCleanup(ahead.join, 30)
+        self.addCleanup(done.set)
+        return done
+
+    def next_start(self):
+        """The server ends and starts again: nothing kept, the change's owner gone."""
+        self.join_settles()
+        for kept in (file_changes._settled, file_changes._put_off, file_changes._unsettled):
+            kept.clear()
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, self.change))
+
+    def save(self, path):
+        return tagging.change_tags(self.library, [path], ["Lighthouse"], [], EXIFTOOL)
+
+    def test_the_open_returns_at_once_its_photos_are_refused_until_the_settle_reaches_them_then_saved(self):
+        go = self.bulk_ahead()
+        self.open_in_the_server()
+        # The page sees the settle: a batch of this process, waiting its turn, cancellable, naming the change.
+        wait_until(lambda: [row["state"] for row in batches.listing(self.library) if row["id"] == self.change]
+                   == [batches.QUEUED], "the settle is listed, waiting its turn")
+        listed = [row for row in batches.listing(self.library) if row["id"] == self.change]
+        self.assertEqual([(True, 10)], [(row["here"], row["photos"]) for row in listed])
+        self.assertIsNotNone(listed[0]["ticket"])
+        # Meanwhile a photo it has to write is refused at once, saying why; another is saved.
+        refused = self.save(self.photos[11])
+        self.assertFalse(refused.ok)
+        self.assertIn("still to be written by an earlier change", str(refused.errors))
+        self.assertEqual(["Beach"], keywords_of(self.photos[11]))
+        self.assertTrue(self.save(self.other).ok)
+        self.assertEqual("planned", self.status(self.change))
+
+        go.set()
+        self.join_settles()
+        self.assert_settled()
+        self.assertEqual(9, len(self.settled()), "only the nine files never reached are written")
+        self.assertEqual({}, file_changes._unsettled)
+        self.assertTrue(self.save(self.photos[11]).ok)
+        self.assertEqual(["Beach", "Harbour", "Lighthouse"], keywords_of(self.photos[11]))
+
+    def test_a_second_request_opening_it_starts_no_second_settle(self):
+        go = self.bulk_ahead()
+        self.open_in_the_server()
+        self.open_in_the_server()
+        self.assertEqual(1, len(settle_threads()))
+        go.set()
+        self.join_settles()
+        self.assert_settled()
+        self.assertEqual(9, len(self.settled()))
+
+    def test_cancel_while_it_runs_keeps_the_photos_it_did_not_reach_refused_until_the_next_start(self):
+        def step(name):
+            if name == "file recorded" and threading.current_thread() in settle_threads() and self.step is step:
+                self.step = None
+                batches.cancel(self.library, [row for row in batches.listing(self.library)
+                                              if row["id"] == self.change][0]["ticket"])
+        self.step = step
+        self.open_in_the_server()
+        self.join_settles()
+        self.assertEqual(("planned", ["done"] * 4 + ["planned"] * 8), (self.status(self.change), self.states(self.change)))
+        refused = self.save(self.photos[11])
+        self.assertFalse(refused.ok)
+        self.assertIn("still to be written by an earlier change", str(refused.errors))
+
+        self.stamps.update({path: os.stat(path).st_mtime_ns for path in self.photos[3:4]})
+        self.next_start()
+        self.writers.clear()
+        self.open_in_the_server()
+        self.join_settles()
+        self.assertEqual(8, len(self.settled()))
+        self.assert_settled()
+
+    def test_cancel_while_it_waits_its_turn_writes_nothing_and_keeps_its_photos_refused_until_the_next_start(self):
+        go = self.bulk_ahead()
+        self.open_in_the_server()
+        wait_until(lambda: any(row["id"] == self.change for row in batches.listing(self.library)), "the settle waits")
+        ticket = [row for row in batches.listing(self.library) if row["id"] == self.change][0]["ticket"]
+        self.assertTrue(batches.cancel(self.library, ticket))
+        self.join_settles()
+        go.set()
+        self.assertEqual([], self.writers)
+        self.assertEqual(["done"] * 2 + ["writing"] + ["planned"] * 9, self.states(self.change))
+        self.assertFalse(self.save(self.photos[11]).ok)
+        # The next save's settle does not take it up in this process either.
+        self.assertEqual(0, file_changes.settle(self.library, EXIFTOOL))
+
+        self.next_start()
+        self.open_in_the_server()
+        self.join_settles()
+        self.assert_settled()
+        self.assertEqual(9, len(self.settled()))
+
+    def test_two_libraries_opened_one_after_the_other_are_settled_one_at_a_time(self):
+        # A second library, holding photos of its own, a change of theirs cut off the same way.
+        first = self.library
+        self.library = Library(self.home.library("second.db"))
+        schema.ensure(self.library.path)
+        theirs = [self.make("second %02d.jpg" % n) for n in range(4)]
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", 1)):
+            with self.assertRaises(Crash):
+                self.add(theirs)
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, self.last_change()))
+        second, self.library = self.library, first
+
+        self.open_in_the_server()
+        runtime.library_settings(second)
+        self.join_settles()
+        self.assert_settled()
+        for path in theirs:
+            self.assertEqual(["Beach", "Harbour"], keywords_of(path), path)
+        # One settle at a time: every write of one library's before any of the other's.
+        order = [name for index, name in enumerate(self.writers) if index == 0 or self.writers[index - 1] != name]
+        self.assertEqual(2, len(order), self.writers)
+
+    def test_an_error_on_the_thread_is_logged_and_leaves_the_change_unsettled_for_the_next_settle(self):
+        with mock.patch.object(file_changes, "_settle_files", side_effect=RuntimeError("the disk said no")), \
+                self.assertLogs(file_changes.logger, "ERROR") as said:
+            self.open_in_the_server()
+            self.join_settles()
+        self.assertTrue(any("could not be finished now" in line for line in said.output), said.output)
+        self.assertEqual([("planned", None)], self.rows("SELECT status, owner FROM changes WHERE id = ?", (self.change,)))
+        self.assertEqual(["done"] * 2 + ["writing"] + ["planned"] * 9, self.states(self.change))
+        self.assertEqual({}, file_changes._unsettled)
+
+    def test_killed_part_way_on_the_thread_the_next_start_finishes_it_writing_no_file_twice(self):
+        def step(name):
+            if name == "file written" and len(self.writers) == 5:
+                raise Crash(name)
+        self.step = step
+        hook = mock.patch.object(threading, "excepthook", lambda args: None)
+        with hook:
+            self.open_in_the_server()
+            self.join_settles()
+        # Killed as its fifth file was written: the fifth written and not recorded, the rest never reached.
+        states = self.states(self.change)
+        self.assertEqual((1, 5), (states.count("writing"), len(self.settled())), states)
+        planned = states.count("planned")
+        self.assertTrue(planned, states)
+        self.stamps.update({path: os.stat(path).st_mtime_ns
+                            for path, state in zip(self.photos, states) if state != "planned"})
+        self.step = None
+        self.writers.clear()
+        self.next_start()
+        self.open_in_the_server()
+        self.join_settles()
+        self.assert_settled()
+        self.assertEqual(planned, len(self.settled()), "only the files never reached are written")
+
+    def test_the_cli_opening_it_while_the_server_settles_leaves_the_change_to_the_server(self):
+        go = self.bulk_ahead()
+        self.open_in_the_server()
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cli = ("import sys\n"
+               "from tagpup.core.library import Library\n"
+               "from tagpup.services import file_changes\n"
+               "print('FINISHED=%d' % file_changes.settle_once(Library(sys.argv[1]), sys.argv[2]))\n")
+        done = processes.run([sys.executable, "-c", cli, self.library.path, EXIFTOOL], cwd=root, capture_output=True,
+                             text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertIn("FINISHED=0", done.stdout)
+        self.assertEqual(["done"] * 2 + ["writing"] + ["planned"] * 9, self.states(self.change))
+        go.set()
+        self.join_settles()
+        self.assert_settled()
+        self.assertEqual(9, len(self.settled()))
 
 
 @requires_exiftool

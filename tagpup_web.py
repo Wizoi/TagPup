@@ -237,6 +237,8 @@ def main(argv=None):
     # It keeps its models between runs -- with 0, for good -- and gives them up, with its
     # turn on the graphics card, when another process waits for it (tagpup.ml.gpu, #774).
     runtime = Runtime(idle_after=idle, keep_models=True)
+    # A change of photo files a kill left half done is settled on a thread, not in the request that opens its library.
+    runtimes.settle_on_a_thread()
     # What runs beside the requests (tagpup.runtime.BACKGROUND): the recurring jobs --
     # snapshots -- of every library in the data folder, in the
     # process that runs them (none a test started), and letting idle models go
