@@ -16,6 +16,7 @@ import os
 import signal
 import socket
 import sys
+import threading
 import unittest
 from unittest import mock
 
@@ -29,6 +30,7 @@ import photo_rows  # noqa: E402
 from test_file_journal import EXIFTOOL, Crash, FilesCase, crash_at, field_of, write_outside  # noqa: E402
 
 from tagpup.core.fields import scan_reads  # noqa: E402
+from tagpup.files import shares  # noqa: E402
 from tagpup.services import batches, file_changes, journal as journal_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -196,6 +198,61 @@ class AShelfOfPhotos(CaptionSweep):
         self.assertIn("Conflicts: 1", said)
         self.assertEqual("Relay, rewritten in another program", field_of(self.more, "IPTC:Caption-Abstract"))
         self.assert_cleared(self.same)
+
+
+class OnAShareThatIsSlowToAnswer(CaptionSweep):
+    """The first --apply of 2026-11-06 ran on an idle share: its first look was slow, the share was taken as away for 30 s,
+    every photo looked at meanwhile was left out, and the script said "Left alone: 43754 (no caption holds the title any
+    more, or unreadable)" -- the owner read "nothing to do" (#2622). The share is stood in for at its seam, as
+    test_a_share_asleep does: the photos' folder is on a network drive whose looks (os.stat) hang while it is asleep."""
+
+    def setUp(self):
+        super().setUp()
+        self.photos = [self.repeated("photo %d.jpg" % n) for n in range(3)]
+        self.awake, self.looks = threading.Event(), []
+        under = os.path.normcase(self.folder)
+        shares.forget()
+        self.addCleanup(shares.forget)
+        self.addCleanup(self.awake.set)
+        real_stat = os.stat
+
+        def stat(path, *args, **kwargs):
+            if os.path.normcase(str(path)).startswith(under):
+                self.looks.append(path)
+                if len(self.looks) <= self.slow_looks and not self.awake.is_set():
+                    self.awake.wait(self.asleep_for)
+            return real_stat(path, *args, **kwargs)
+        for patcher in (mock.patch.object(os, "stat", stat),
+                        mock.patch.object(shares, "on_a_network_drive",
+                                          lambda path: os.path.normcase(str(path)).startswith(under)),
+                        mock.patch.object(shares, "SHARE_WAIT", 0.05), mock.patch.object(shares, "AWAY_SECONDS", 1.0)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_a_share_slow_to_wake_is_looked_at_again_and_every_photo_is_cleared(self):
+        """Its first look takes 0.3 s, past the 0.05 s a look is waited for: the share is away, and answers once that
+        look ends. Fails on the code before: every photo left alone, nothing written."""
+        self.asleep_for, self.slow_looks = 0.3, 1
+        code, said = self.sweep("--apply")
+        self.assertEqual(0, code, said)
+        self.assertIn("Cleared: 3 photo file(s) written", said)
+        self.assertIn("0 away", said)
+        for path in self.photos:
+            self.assert_cleared(path)
+
+    def test_a_share_that_stays_away_is_said_as_away_and_to_run_again_not_nothing_to_clear(self):
+        """Asleep throughout (every look hangs past its wait): one more look after the window, then each photo is left
+        alone as away, and the script says so and to run it again, exit 1. Fails on the code before: "Left alone: 3 (no
+        caption holds the title any more, or unreadable)", exit 0."""
+        self.asleep_for, self.slow_looks = 30, 10 ** 6
+        code, said = self.sweep("--apply")
+        self.assertEqual(1, code, said)
+        self.assertIn("Cleared: 0 photo file(s) written", said)
+        self.assertIn("Left alone: 0 with no caption holding the title any more, 0 unreadable, 3 away", said)
+        self.assertIn("3 photo(s) were not reached: their network share did not answer. Run this again", said)
+        self.assertNotIn(self.folder, said, "a path was printed")
+        self.awake.set()
+        self.assertEqual([], self.changes(), "nothing was written, nothing recorded")
 
 
 class StoppedPartWay(CaptionSweep):
