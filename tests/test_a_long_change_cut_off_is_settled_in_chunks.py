@@ -153,7 +153,7 @@ class ALongChangeCutOff(CutOff):
         # Nor does a save of a photo it left planned write ahead of it: the next start writes the cut-off edit first.
         refused = tagging.change_tags(self.library, [self.photos[11]], ["Lighthouse"], [], EXIFTOOL)
         self.assertFalse(refused.ok)
-        self.assertIn("still to be written by change %d" % self.change, str(refused.errors))
+        self.assertIn("still to be written by an earlier change", str(refused.errors))
         self.assertEqual(["Beach"], keywords_of(self.photos[11]))
 
         # The next start does, and writes each file left once.
@@ -188,7 +188,7 @@ class ALongChangeCutOff(CutOff):
         self.assertEqual(1, finished)
         self.assertFalse(tried["saved"])
         for said in (tried["save said"], tried["rename said"]):
-            self.assertIn("still to be written by change %d" % self.change, said)
+            self.assertIn("still to be written by an earlier change", said)
         self.assertTrue(os.path.exists(next_to_last), "the rename moved a photo the settle had still to write")
         # Settled whole, no conflict: the cut-off edit is on every photo.
         self.assert_settled()

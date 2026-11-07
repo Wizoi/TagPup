@@ -1432,22 +1432,22 @@ def settle(library, exiftool_path):
 #: done for the next start, not taken up again by the settle every write begins with.
 _put_off = set()
 
-#: The files a settle of this process has still to write, {paths.key(path): change id}: a chunk's taken out once it is
-#: settled, a stopped settle's kept until the next start (_put_off). A writer let in between two chunks (let_others_in)
-#: refuses them (unsettled): written ahead of the settle, the settle would find the file holding neither what the cut-off
-#: change read nor what it was to leave, and mark it a conflict, the cut-off change's edit lost on it. Read and changed
-#: only under the lock of changes of photo files.
+#: The files a settle of this process has still to write, {paths.key(path): (library key, change id)}: a chunk's taken
+#: out once it is settled, a stopped settle's kept until the next start (_put_off). A writer let in between two chunks
+#: (let_others_in) refuses them (unsettled), in any library holding the file: written ahead of the settle, the settle
+#: would find the file holding neither what the cut-off change read nor what it was to leave, and mark it a conflict, the
+#: cut-off change's edit lost on it. Read and changed only under the lock of changes of photo files.
 _unsettled = {}
 
-#: Why a write leaves a photo of _unsettled alone.
-UNSETTLED = ("its file is still to be written by change %d, which was cut short: it is being finished now, or, stopped, "
-             "the next time TagPup starts; nothing was written to it, try again once it is finished")
+#: Why a write leaves a photo of _unsettled alone; no change id, which may be another library's.
+UNSETTLED = ("its file is still to be written by an earlier change of the same files that was cut short: it is being "
+             "finished now, or, stopped, the next time TagPup starts; nothing was written to it, try again once it is "
+             "finished")
 
 
 def unsettled(path):
     """The sentence a write gives for a photo whose file a settle of this process has still to write (_unsettled), or None."""
-    change_id = _unsettled.get(paths.key(path))
-    return None if change_id is None else UNSETTLED % change_id
+    return UNSETTLED if paths.key(path) in _unsettled else None
 
 
 class _NoTurn(Exception):
@@ -1522,12 +1522,12 @@ def _settle_files(library, change, exiftool_path, changed, stop):
     # change's own write a crash cut off, told from no other, and is done.
     kept = (face_batch.photos_kept(library, change.id)
             if not undoing and any(row.state == "planned" for row in changed) else set())
-    put_off = False
+    put_off, mine = False, (library.key, change.id)
     with field_values.session(exiftool_path) as session:
         et, wrote = exiftool_session.StaysDead(session), {}
         try:
             for row in changed:
-                _unsettled[paths.key(row.path)] = change.id
+                _unsettled[paths.key(row.path)] = mine
             for start in range(0, len(changed), batches.CHUNK):
                 if start:
                     # Each chunk read back before the next: a stop, or a kill, leaves no more than one chunk unread.
@@ -1562,11 +1562,12 @@ def _settle_files(library, change, exiftool_path, changed, stop):
                     except _Stalled:
                         return True
                 for row in chunk:
-                    _unsettled.pop(paths.key(row.path), None)
+                    if _unsettled.get(paths.key(row.path)) == mine:
+                        del _unsettled[paths.key(row.path)]
         finally:
             if not put_off:
                 for row in changed:
-                    if _unsettled.get(paths.key(row.path)) == change.id:
+                    if _unsettled.get(paths.key(row.path)) == mine:
                         del _unsettled[paths.key(row.path)]
             _read_back(et, library, wrote)
     return left
