@@ -57,6 +57,22 @@ def clip_prompt(word, year=None, person=False):
     return "a photo of %s in %s" % (thing, year) if year is not None else "a photo of %s" % thing
 
 
+def best_frame(nearest, k):
+    """The `k` photos nearest a query, each once at its best: `nearest` is [(similarity, photo id)] of every vector the
+    vector index found (a clip holds one for each of its frames, its photo id repeated), and a photo's similarity is its
+    nearest vector's -- a clip is matched on its best frame (DECISIONS 2026-11-06, migration 38). [(similarity, photo
+    id)], most alike first, ties by photo id: the order does not depend on the order the vectors were read in.
+
+    Asked of the vector index for k * (its most vectors a photo): those hold at least `k` photos when the index does.
+    The one statement of the rule; PhotoIndex.search reads it."""
+    best = {}
+    for similarity, photo_id in nearest:
+        if photo_id not in best or similarity > best[photo_id]:
+            best[photo_id] = similarity
+    return sorted(((similarity, photo_id) for photo_id, similarity in best.items()),
+                  key=lambda found: (-found[0], found[1]))[:k]
+
+
 def offered_tags(entry, file_person=None):
     """What Apply All writes for one photo from its saved suggestions `entry`: the
     `tags` and `people` the panel showed.

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from tagpup.core import paths
+from tagpup.core import paths, suggesting
 from tagpup.core.fields import read_document_id
 from tagpup.files import images, shares, video_frames
 from tagpup.ml.vector_index import VectorIndex
@@ -303,7 +303,8 @@ class PhotoIndex:
     """A library's photos as CLIP sees them: the nearest-neighbour index over their vectors
     under one model, and what indexing writes.
 
-    In memory it keeps only what a search needs: each vector, by its photo's id. What a
+    In memory it keeps only what a search needs: each vector, by its photo's id -- a clip's
+    frames too, each by the clip's id, so that a clip is matched on its best frame (search). What a
     photo holds -- its path, tags, people, captions, raw_metadata, year -- is read from
     the library by id, for a search's results alone (search), or for every photo when a
     caller asks (records). It held every row's record as well, parsed: on photo_index
@@ -324,9 +325,10 @@ class PhotoIndex:
         #: loads the photos without vectors, and refuses to write one.
         self.model = model
         self.conn: Optional[sqlite3.Connection] = None
-        #: The vectors, each item its photo's id.
+        #: The vectors, each item its photo's id: a clip's frames are items of their own, its id repeated, so
+        #: `index.ntotal` counts vectors and `indexed` photos.
         self.index: Optional[VectorIndex] = None
-        #: How many photos the library holds, and how many of them hold a vector.
+        #: How many photos the library holds, and how many of them hold a vector (each counted once).
         self.count = 0
         self.indexed = 0
         self.dim = 512  # Default
@@ -407,25 +409,30 @@ class PhotoIndex:
             return False
 
     def _read_rows(self, vectors=True) -> bool:
-        """Read the photos' vectors on self.conn into memory, by photo id; with `vectors` False,
-        none of them (open)."""
+        """Read the photos' vectors on self.conn into memory, by photo id, and a clip's frames beside its vector,
+        each by the clip's id (store.photos.frame_vectors); with `vectors` False, none of them (open)."""
         # Taken before the rows: a write landing in between costs one reload
         # later, never a missed one. See reload_if_changed.
         self._signature = self._photos_signature()
         with self._read_lock:
             self.count, _vectored = store_photos.counts(self.conn, self.model)
-            rows = store_photos.vectors(self.conn, self.model) if vectors and self.model is not None else []
+            reading = vectors and self.model is not None
+            rows = store_photos.vectors(self.conn, self.model) if reading else []
+            frames = store_photos.frame_vectors(self.conn, self.model) if reading else []
         ids, embeddings = [], []
         for photo_id, emb_bytes in rows:
             if emb_bytes:
                 ids.append(photo_id)
                 embeddings.append(np.frombuffer(emb_bytes, dtype=np.float32))
-        del rows
         self.indexed = len(ids)
+        for photo_id, emb_bytes in frames:
+            ids.append(photo_id)
+            embeddings.append(np.frombuffer(emb_bytes, dtype=np.float32))
+        del rows, frames
         if embeddings:
             self.dim = len(embeddings[0])
             self.index = VectorIndex(embeddings, ids)
-            index_log.info(f"Loaded {len(ids)} vectors of {self.count} photos from SQLite.")
+            index_log.info(f"Loaded {len(ids)} vectors of {self.indexed} photos of {self.count} from SQLite.")
         else:
             self.index = None
         return True
@@ -492,12 +499,12 @@ class PhotoIndex:
             raise e
 
     def search(self, query_vector: List[float], k: int = 15) -> List[Tuple[float, Dict[str, Any]]]:
-        """The `k` photos nearest `query_vector`: [(similarity, record)], nearest first, each
-        record read from the library for this answer (records). A photo removed since the
-        vectors were read is left out."""
+        """The `k` photos nearest `query_vector`: [(similarity, record)], nearest first, ties by photo id, each
+        record read from the library for this answer (records). A clip is matched on its best frame, and is one of
+        the `k` once (suggesting.best_frame). A photo removed since the vectors were read is left out."""
         if self.index is None:
             return []
-        nearest = self.index.search(query_vector, k)
+        nearest = suggesting.best_frame(self.index.search(query_vector, k * CLIP_PICTURES), k)
         found = {record["id"]: record for record in self.records([photo_id for _sim, photo_id in nearest])}
         return [(sim, found[photo_id]) for sim, photo_id in nearest if photo_id in found]
 
@@ -513,6 +520,9 @@ class PhotoIndex:
         For an index held across requests -- Suggest's -- which otherwise went on
         answering from the photos as they were when it was first loaded: photos
         indexed since were never neighbours, and tags saved since never counted.
+
+        A vector or a clip's frames written meanwhile without its photo's row moving (Suggest keeping a vector it
+        made) is not searched until the photos generation next moves, the frames as the vectors.
         """
         with self._load_lock:
             if self.conn is None:
