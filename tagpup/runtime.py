@@ -989,7 +989,8 @@ class Runtime:
             self._end(lease)
         try:
             photo_index.reload_if_changed()
-            model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words, remember=remember)
+            model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words, remember=remember,
+                                            embeddings=self.embeddings(library, photo_index, clip, remember=remember))
         except BaseException:
             end()
             raise
@@ -1036,12 +1037,12 @@ class Runtime:
             dropped = self._release()
         _unload(dropped)
 
-    def embeddings(self, library, photo_index):
-        """The photos' vectors under the library's CLIP model, kept in `photo_index`; a clip's made of the frames the
-        machine's ffmpeg gives (ffmpeg)."""
-        return search.PhotoEmbeddings(self.clip(library), photo_index, ffmpeg=self.ffmpeg())
-
-    def ffmpeg(self):
-        """The machine's ffmpeg (tagpup.config.locate_ffmpeg), a prerequisite of every process that makes a clip's
-        vectors (config.ffmpeg_problem, checked where it starts): what PhotoEmbeddings reads a clip's frames with."""
-        return tagpup_config.locate_ffmpeg()
+    def embeddings(self, library, photo_index, clip=None, remember=True):
+        """The photos' vectors under a CLIP model, kept in `photo_index`: the one maker of a search.PhotoEmbeddings
+        that makes vectors (#2603: Suggest's was built without ffmpeg and refused every clip). `clip` is the library's
+        when not given; a run's (begin: on the card), embed-photos' (another model's) or a harness's is handed in.
+        A clip's vector is made of the frames the machine's ffmpeg gives (tagpup.config.locate_ffmpeg, a prerequisite
+        of every process that makes one: config.ffmpeg_problem, checked where it starts). Not `remember`: nothing made
+        is kept (a Just look run)."""
+        return search.PhotoEmbeddings(self.clip(library) if clip is None else clip, photo_index, remember=remember,
+                                      ffmpeg=tagpup_config.locate_ffmpeg())

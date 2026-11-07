@@ -13,6 +13,7 @@ from unittest import mock
 
 from tagpup.core import validation
 from tagpup.ml import photo_models, scrfd_adaface
+from tagpup.services import search
 from tagpup.services import settings as library_settings
 from tagpup.services import suggester
 
@@ -177,4 +178,6 @@ class Clip:
 
 def run_for(photo_index, faces, dim, words=()):
     """What a Suggest run over `photo_index` is handed (model_for_run), CLIP stood in for and `faces` the face model."""
-    return suggester.model_for_run(photo_index, Clip(dim), faces, list(words))
+    clip = Clip(dim)
+    return suggester.model_for_run(photo_index, clip, faces, list(words),
+                                   embeddings=search.PhotoEmbeddings(clip, photo_index))

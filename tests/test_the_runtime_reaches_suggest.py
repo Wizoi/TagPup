@@ -82,12 +82,12 @@ class ARuntime(unittest.TestCase):
         next run without a restart. Found in review of 5.5, where the runtime read them
         once, at start. Now they are the library's, changed in its settings."""
         library_settings.change(self.library, {"candidates.tags": "Kayak"})
-        runtime = Runtime(build_clip=lambda settings: types.SimpleNamespace(),
+        runtime = Runtime(build_clip=lambda settings: types.SimpleNamespace(settings=settings),
                           build_faces=lambda settings: types.SimpleNamespace())
         self.addCleanup(runtime.forget, self.library)
         asked = []
         with mock.patch("tagpup.services.suggester.model_for_run",
-                        side_effect=lambda index, clip, faces, words, remember: asked.append(words)):
+                        side_effect=lambda index, clip, faces, words, **kwargs: asked.append(words)):
             runtime.begin(self.library).end()
             library_settings.change(self.library, {"candidates.tags": "Kayak, Canoe"})
             runtime.begin(self.library).end()

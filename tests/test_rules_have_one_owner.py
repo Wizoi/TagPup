@@ -25,9 +25,13 @@ CLUSTERING = os.path.join("tagpup", "core", "clustering.py")
 IMAGES = os.path.join("tagpup", "files", "images.py")
 SUGGESTING = os.path.join("tagpup", "core", "suggesting.py")
 LIBRARY = os.path.join("tagpup", "core", "library.py")
+RUNTIME = os.path.join("tagpup", "runtime.py")
 #: (what, the one file that may say it, what only it may spell, the files besides it that may). owner None: anywhere
 #: in tagpup is a copy. `allowed` is a path prefix or a path.
 RULES = (
+    # The photos' vectors are made by the runtime's PhotoEmbeddings, which hands it ffmpeg: Suggest built its own
+    # without, and refused every clip (#2603). The CLI's index reads what is kept with no model (PhotoEmbeddings(None).
+    ("a PhotoEmbeddings that makes vectors is the runtime's", RUNTIME, r"PhotoEmbeddings\((?!None\b)", ()),
     ("a background face is decided in clustering", CLUSTERING, r"0\.10?\s*\*\s*max_area|area\s*<\s*2000", ()),
     ("a face crop is encoded by images", IMAGES, r"format\s*=\s*['\"]JPEG['\"]", ()),
     # The tutorial's seeding copies a PNG without its metadata: a file, not a photo.

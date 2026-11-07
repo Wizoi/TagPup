@@ -24,7 +24,6 @@ from tagpup.core.library import Library
 from tagpup.ml import photo_models
 from tagpup.services import identify
 from tagpup.services import faces as face_records
-from tagpup.services import search
 from tagpup.store import db, person_ids
 from tagpup.store import faces as store_faces
 from tagpup.store import faces_detected as store_faces_detected
@@ -777,12 +776,13 @@ class SuggestionModel:
         return notes
 
 
-def model_for_run(photo_index, clip, faces, configured_words, *, remember=True):
+def model_for_run(photo_index, clip, faces, configured_words, *, embeddings, remember=True):
     """Ready the suggester for one run over a library, on the run's thread: its tag tree,
     the words CLIP is asked about -- `configured_words`, the library's, and the tree's, but
     no one's name (tagpup.core.suggesting) -- and their embeddings, before the parallel
     photos need them. `photo_index` is the library's, loaded; `clip` and `faces` the
-    models (tagpup.runtime). Not `remember`: nothing computed is kept in the library -- no
+    models, and `embeddings` the photos' vectors under `clip` (tagpup.runtime.Runtime.embeddings, which gives it
+    ffmpeg for a clip's frames). Not `remember`: nothing computed is kept in the library -- no
     vector, no face, no candidate word's embedding -- and what it reads of it is what it
     holds (a Just look run)."""
     taxonomy = TagTaxonomy(photo_index.db_path)
@@ -794,5 +794,4 @@ def model_for_run(photo_index, clip, faces, configured_words, *, remember=True):
     suggester._precompute_candidates()
     # Who is known, read once for the run, now: a read that fails fails the run's start, with its sentence.
     suggester.knows_named_faces()
-    return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index, remember=remember),
-                           suggester.face_roots)
+    return SuggestionModel(suggester, embeddings, suggester.face_roots)

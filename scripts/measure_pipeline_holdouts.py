@@ -146,7 +146,7 @@ def vectors_check(source, rows, size, seed, report):
         clip = runtime.clip(library)
         index = search.PhotoIndex(target, runtime.model_key(library))
         index.open()
-        embeddings = search.PhotoEmbeddings(clip, index, remember=False)
+        embeddings = runtime.embeddings(library, index, clip, remember=False)
         stored, single, pictures, skipped, kinds = [], [], [], {}, []
         with runtime.gpu_turn("measuring the vectors again (AI pipeline phase 0)", (clip,)):
             clip.load()
@@ -472,7 +472,7 @@ def run_candidate(runtime, library, target, model, sample, report):
     result = {"candidate": label_of(model), "model_key": key, "pool": len(sample["rows"])}
     index = search.PhotoIndex(target, key)
     index.open()
-    embeddings = search.PhotoEmbeddings(clip, index, ffmpeg=runtime.ffmpeg())
+    embeddings = runtime.embeddings(library, index, clip)
     if embeddings.model_key != key:
         raise RuntimeError("the model's vectors would be kept under %s, not %s" % (embeddings.model_key, key))
 
@@ -518,7 +518,8 @@ def run_candidate(runtime, library, target, model, sample, report):
                     held.append((record, kept))
             result["held_out_without_a_current_vector"] = unvectored
             model_run = suggester.model_for_run(index, clip, runtime.faces(library, settings),
-                                                runtime.candidate_words(library), remember=False)
+                                                runtime.candidate_words(library), remember=False,
+                                                embeddings=runtime.embeddings(library, index, clip, remember=False))
             truths = [own_tags(record, model_run.suggester.taxonomy, model_run.face_roots) for record, _v in held]
             scoring = time.perf_counter()
             result["held_out"] = len(held)
