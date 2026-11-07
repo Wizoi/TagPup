@@ -96,7 +96,7 @@ _SCENARIO_FILES = {
     # test_a_photo_written_by_its_own_editors runs F1 too (the own writer's saves); its crash settles are D3's.
     "D3": (
         "test_journal test_a_crash_part_way_is_settled_at_the_next_start test_a_photo_written_by_its_own_editors "
-        "test_a_patch_that_grows_a_file_is_settled_by_its_bytes"
+        "test_a_patch_that_grows_a_file_is_settled_by_its_bytes test_a_long_change_cut_off_is_settled_in_chunks"
     ),
     "D4": "test_snapshots",
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
@@ -124,7 +124,8 @@ _SCENARIO_FILES = {
         "test_batches test_bulk_edits test_bulk_edits_real_exiftool test_bulk_edits_stalled_exiftool "
         "test_bulk_writes_start_from_the_file test_a_bake_is_planned_from_the_library "
         "test_an_index_reads_a_bake "
-        "test_the_index_writes_the_bake"
+        "test_the_index_writes_the_bake test_a_caption_repeating_the_title_is_cleared "
+        "test_a_long_change_cut_off_is_settled_in_chunks"
     ),
     "F4": "test_folder_watcher test_one_walk_of_a_library_at_a_time test_sync",
     "F5": "test_scenario_two_libraries_share_a_folder",

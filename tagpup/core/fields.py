@@ -192,6 +192,12 @@ def caption_fields(caption):
     }
 
 
+#: The caption fields a copy of the title is cleared from by the one-off sweep (tagpup.services.tagging.
+#: clear_duplicate_captions): every one of caption_fields but XPComment, Windows' Comment, which it never touches (the
+#: Files owner's plan, 2026-11-06).
+SWEPT_CAPTION_FIELDS = tuple(field for field in caption_fields("") if field != "EXIF:XPComment")
+
+
 def title_fields(title):
     """Every field a photo's title is held in, and what a write of `title` sets each to: the one list. The title is
     what the page's title field saves and Smart Rename names a photo by (DECISIONS 2026-11-06, THE TITLE AND THE

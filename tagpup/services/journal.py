@@ -103,6 +103,7 @@ UNDO_CHECKS = {
     "apply all suggestions": None,
     "rename tag": None,
     "remove tag": None,
+    tagging.CLEAR_DUPLICATES: None,
     "rename after caption": None,
     "smart rename": None,
     "smart rename: original names": None,

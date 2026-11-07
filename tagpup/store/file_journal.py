@@ -496,7 +496,10 @@ def newer_overlapping(conn, change_id):
     file it wrote: the same photo, or the same file by its path -- one a rename left
     under its new name included. An undo of `change_id` would take back part of a file
     the newer change planned from, as an undo of rows would rows a newer change wrote
-    over (tagpup.store.journal). The caller's connection. An internal change (INTERNAL) is one only while it has
+    over (tagpup.store.journal). The caller's connection. A file still `planned` in a change not finished counts too:
+    a write under way, or one a kill cut short that a settle is finishing (an undo let in between its chunks, or by
+    another process, would put back a file the change is still to write, and the change would find it changed and lose
+    its edit on it as a conflict). An internal change (INTERNAL) is one only while it has
     the file `writing` -- one writer of a file at a time, across processes (the undo is refused "being written now");
     once done it is none: it is no operation, and a later bake is written over the file again by the next index."""
     internal, params = not_internal("c.operation")
@@ -505,9 +508,9 @@ def newer_overlapping(conn, change_id):
         " JOIN change_files theirs ON theirs.change_id > mine.change_id"
         " AND (theirs.photo_id = mine.photo_id OR theirs.path = mine.path OR theirs.path = mine.new_path)"
         " JOIN changes c ON c.id = theirs.change_id"
-        " WHERE mine.change_id = ? AND mine.state = 'done' AND theirs.state IN ('writing', 'done')"
-        " AND c.undone IS NULL AND c.status IN ('planned', 'applied') AND (theirs.state = 'writing' OR " + internal
-        + ") ORDER BY c.id", (change_id,) + params).fetchall()
+        " WHERE mine.change_id = ? AND mine.state = 'done' AND theirs.state IN ('planned', 'writing', 'done')"
+        " AND c.undone IS NULL AND c.status IN ('planned', 'applied') AND (theirs.state = 'writing' OR (" + internal
+        + " AND (theirs.state = 'done' OR c.status = 'planned'))) ORDER BY c.id", (change_id,) + params).fetchall()
 
 
 def states_with_patches(conn):

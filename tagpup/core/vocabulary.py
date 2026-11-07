@@ -346,9 +346,16 @@ def title_of(meta):
     return found[0] if found else ""
 
 
+def own_title(meta):
+    """The title the photo holds of its own (TITLE_COPIES: XMP:Title, else IPTC:ObjectName), trimmed; "" for none, a
+    photo showing its description as its title among them."""
+    found = _read_copy(meta, TITLE_COPIES)
+    return found[0] if found else ""
+
+
 def holds_title(meta):
     """Does the photo hold a title of its own (TITLE_COPIES), not only a description shown as one?"""
-    return bool(_read_copy(meta, TITLE_COPIES))
+    return bool(own_title(meta))
 
 
 def captions_held(meta):

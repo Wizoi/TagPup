@@ -614,6 +614,17 @@ def thumb_rows(conn, folder=None, after=0, limit=1000):
     return [ThumbRow(photo_id, row_path, store_roots.from_row(conn, row_path), kind) for photo_id, row_path, kind in rows]
 
 
+def raw_rows(conn):
+    """(path, raw_metadata as read) of every row holding raw_metadata, one row at a time: what a pass over the fields
+    every photo was read holding reads (the one-off sweep of captions repeating the title,
+    tagpup.services.tagging.duplicate_candidates). The path native; the raw_metadata's own SourceFile left as stored,
+    unread. One scan of the table (photo_index: about 68,000 rows)."""
+    roots = store_roots.roots_for(conn)
+    for path, raw_json in conn.execute("SELECT path, raw_metadata FROM photos"
+                                       " WHERE raw_metadata IS NOT NULL AND raw_metadata != ''"):
+        yield paths.from_row(path, roots), json.loads(raw_json)
+
+
 def row_paths(conn):
     """{photo id: path as the row holds it} of every photo: what sweeping the cache compares its entries
     with. 68,000 short strings; one scan of the table, once per sweep."""
