@@ -3,7 +3,8 @@ is settled by whatever opens the library next a chunk at a time, as a write is c
 lock between two chunks, Cancel stops it at the next chunk with the rest left planned for the next start, a line says
 how far it has got, and no file is written twice (tagpup.services.file_changes.settle). A save or a rename let in between
 two chunks leaves a photo the settle has still to write alone, saying why, so that the cut-off edit is not lost on it as
-a conflict; a settle that cannot take its turn (a batch running, a hand-over) is left whole for the next.
+a conflict, and an Undo of an older change of its photos let in is refused as any undo with a newer change of its files;
+a settle that cannot take its turn (a batch running, a hand-over) is left whole for the next.
 
 Real JPEGs written by the real ExifTool in a home of the test's own; rows as the indexer records a read
 (photo_rows.add_read, through FilesCase.make); the kill is a BaseException at a step of the write (crash_at), with the
@@ -39,7 +40,9 @@ def wait_until(check, what):
 
 
 @requires_exiftool
-class ALongChangeCutOff(FilesCase):
+class CutOff(FilesCase):
+    """Twelve photos holding Beach, a change adding Harbour to all twelve cut off at the third, its owner gone."""
+
     def setUp(self):
         super().setUp()
         chunk = mock.patch.object(batches, "CHUNK", 2)
@@ -52,6 +55,7 @@ class ALongChangeCutOff(FilesCase):
             self.addCleanup(kept.update, saved)
         self.photos = [self.make("photo %02d.jpg" % n) for n in range(PHOTOS)]
         self.other = self.make("not in the change.jpg")
+        self.before_the_cut()
         # Killed as the third file is written, before its row: two done, one written, nine never reached.
         with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written", 3)):
             with self.assertRaises(Crash):
@@ -60,6 +64,9 @@ class ALongChangeCutOff(FilesCase):
         self.execute("UPDATE changes SET owner = ? WHERE id = ?", (GONE, self.change))
         self.assertEqual(["done"] * 2 + ["writing"] + ["planned"] * 9, self.states(self.change))
         self.stamps = {path: os.stat(path).st_mtime_ns for path in self.photos[:3]}
+
+    def before_the_cut(self):
+        """What the owner did before the long change: nothing."""
 
     def open_library(self, step=None):
         """What the server's first request does (runtime.library_settings): settle_once, `step(name)` seeing each step
@@ -87,6 +94,9 @@ class ALongChangeCutOff(FilesCase):
         self.assertEqual(self.stamps, {path: os.stat(path).st_mtime_ns for path in self.stamps},
                          "a file written before the kill was written again")
 
+
+@requires_exiftool
+class ALongChangeCutOff(CutOff):
     def test_the_next_open_settles_it_a_chunk_at_a_time_and_a_save_that_waits_gets_its_turn(self):
         save = {}
 
@@ -234,6 +244,38 @@ class ALongChangeCutOff(FilesCase):
         # One row, the write's own batch, cancellable here: not a batch of another process that cannot be.
         self.assertEqual([(self.change, True)], [(each["id"], each["here"]) for each in listed])
         self.assert_settled()
+
+
+@requires_exiftool
+class AnOlderChangeOfItsPhotos(CutOff):
+    def before_the_cut(self):
+        # The owner added Gull to the last photo before the long change.
+        self.assertTrue(self.add([self.photos[11]], tags=("Gull",)).ok)
+        self.older = self.last_change()
+
+    def test_an_undo_of_it_let_in_between_chunks_is_refused_and_the_settle_finishes(self):
+        tried = {}
+
+        def step(name):
+            if name == "file recorded" and "thread" not in tried:
+                # The owner undoes the older change from History while the next open settles the long one.
+                def undoing():
+                    result = self.undo(self.older)
+                    tried["ok"], tried["said"] = result.ok, result.message()
+                tried["thread"] = threading.Thread(target=undoing)
+                tried["thread"].start()
+                wait_until(lambda: file_changes._waiting == 1, "the undo waits for the lock")
+
+        finished, _said, _wrote = self.open_library(step)
+        tried["thread"].join(60)
+        self.assertEqual(1, finished)
+        self.assertFalse(tried["ok"], "the undo put back a photo the settle had still to write")
+        self.assertIn("change %d (add to all selected), applied after it, wrote the same photo files" % self.change,
+                      tried["said"])
+        self.assertEqual("applied", self.status(self.older))
+        # Settled whole, no conflict: the last photo holds both edits.
+        self.assertEqual(("applied", ["done"] * PHOTOS), (self.status(self.change), self.states(self.change)))
+        self.assertEqual(["Beach", "Gull", "Harbour"], keywords_of(self.photos[11]))
 
 
 if __name__ == "__main__":
