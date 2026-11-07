@@ -62,7 +62,7 @@ class PhotoEmbeddings:
         #: photo before it builds a model, and an index where every photo is kept builds none (tagpup_cli.py).
         self.clip = clip
         #: What tagpup.config.locate_ffmpeg answered: a clip's frames are read with it (prepared). Handed in by the
-        #: runtime (Runtime.embeddings, Runtime.ffmpeg); a run not given it refuses a clip.
+        #: runtime (Runtime.embeddings, the one maker of one that makes vectors); a run not given it refuses a clip.
         self.ffmpeg = ffmpeg
         self.photo_index = photo_index
         #: False: the library's vectors are read, and none is ever written (a Just look run,

@@ -154,7 +154,9 @@ def clear_duplicate_captions(library, exiftool_path, apply=False, on_planned=Non
     change of photo files (file_changes.write_fields, uncapped: a batch, its chunks of batches.CHUNK, the lock let go
     between them, Cancel or Ctrl+C honoured, each file read again before its write and a file changed since a conflict,
     each row following its file in the transaction that marks it done), undoable as one. A photo whose file no longer
-    holds a repeated caption, or cannot be read, is skipped; re-run, the photos done are no longer named by the index,
+    holds a repeated caption, or cannot be read, is skipped, counted by why in details["left alone"] ({"nothing to
+    clear", "unreadable", "away": on a share that did not answer, given one more look by write_fields}); re-run, the
+    photos done are no longer named by the index,
     so a run stopped part-way is continued by running it again. `on_planned(change_id)` and `on_chunk(done, of)` are
     file_changes.write_fields's: the script says how far it has got."""
     found, counts = duplicate_candidates(library)
@@ -170,7 +172,13 @@ def clear_duplicate_captions(library, exiftool_path, apply=False, on_planned=Non
         result = file_changes.write_fields(library, CLEAR_DUPLICATES, exiftool_path, found, list(DUPLICATE_READ), plan_one,
                                            summary={"photos": len(found)}, unreadable="skip", uncapped=True,
                                            on_planned=on_planned, on_chunk=on_chunk)
+    # Why each photo was left alone: a share that did not answer is not "nothing to clear" (#2622).
+    away = {paths.key(path) for path in result.details.get("not_answered", [])}
+    left = {"nothing to clear": 0, "unreadable": 0, "away": 0}
+    for path, why in result.skipped:
+        left["away" if paths.key(path) in away else "nothing to clear" if why == NO_DUPLICATE else "unreadable"] += 1
     result.details.update(counts=counts, dry_run=not apply)
+    result.details["left alone"] = left
     return result
 
 

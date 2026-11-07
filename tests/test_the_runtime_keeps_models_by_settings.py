@@ -155,7 +155,7 @@ class UnloadingModel(FakeModel):
 class FakeRun:
     """What model_for_run makes, for a run: it answers from the photo index it was given."""
 
-    def __init__(self, photo_index, clip, faces, words, remember=True):
+    def __init__(self, photo_index, clip, faces, words, remember=True, embeddings=None):
         self.photo_index, self.clip, self.faces = photo_index, clip, faces
         self.model_key = photo_index.model
         self.answered, self.failed = [], []

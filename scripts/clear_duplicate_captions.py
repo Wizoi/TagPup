@@ -11,7 +11,9 @@ Ctrl+C stops it after the file under way and reads back the files written since 
 written is kept (applied and undoable); run it again to continue, the photos done are not read again. A second Ctrl+C
 skips that read back: the files not reached were taken out first (a second press while they are taken out may leave them
 in), and the next open of the library settles what is left: the one under way, and any not taken out, written then. A file
-changed since it was read is a conflict, left as it is and counted. Counts only: no path, no name, no caption.
+changed since it was read is a conflict, left as it is and counted. A photo on a network share that did not answer (looked
+at once more after the share's 30 s) is left alone and counted apart: run it again when the share is back. Counts only:
+no path, no name, no caption.
 
 Run it while the app is idle (no server writing the library), and back the library up first. A title changed by another
 program between the plan and the write is not detected (only the caption fields are compared). Undo is refused once any
@@ -84,7 +86,12 @@ class Progress:
         raise KeyboardInterrupt
 
 
-def run(db_path, apply, out=print):
+def say(line):
+    """A line of the run's output, flushed: a log the output is redirected to is current while it runs (#2623)."""
+    print(line, flush=True)
+
+
+def run(db_path, apply, out=say):
     """Say what the sweep of `db_path` finds, or does with `apply`. Returns the exit code."""
     name = os.path.splitext(os.path.basename(db_path))[0]
     if not os.path.isfile(db_path):
@@ -130,9 +137,14 @@ def run(db_path, apply, out=print):
             % (counts["to read"], shown))
         return 0
     conflicts = len(result.details["conflicts"])
-    out("Cleared: %d photo file(s) written. Left alone: %d (no caption holds the title any more, or unreadable). "
-        "Conflicts: %d (changed since they were read; not written). Failed: %d."
-        % (result.changed, len(result.skipped), conflicts, len(result.errors) - conflicts))
+    left = result.details["left alone"]
+    out("Cleared: %d photo file(s) written. Left alone: %d with no caption holding the title any more, %d unreadable, "
+        "%d away (their network share did not answer). Conflicts: %d (changed since they were read; not written). "
+        "Failed: %d." % (result.changed, left["nothing to clear"], left["unreadable"], left["away"], conflicts,
+                         len(result.errors) - conflicts))
+    if left["away"]:
+        out("%d photo(s) were not reached: their network share did not answer. Run this again when it is back to "
+            "continue." % left["away"])
     out("%d photo(s) will newly show their IPTC caption (a different one remained when the XMP Description was cleared)."
         % shown)
     stopped = result.details.get("stopped")
@@ -141,7 +153,7 @@ def run(db_path, apply, out=print):
     change = result.details.get("change")
     out("Recorded as change %d in History; to undo it: tagpup_cli.py --db \"%s\" undo %d --apply" % (change, db_path, change)
         if change is not None else "Nothing was recorded: no file was written.")
-    return 0 if result.ok else 1
+    return 0 if result.ok and not left["away"] else 1
 
 
 def main(argv=None):

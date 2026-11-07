@@ -163,7 +163,7 @@ def run(library, runtime, model, progress=None, should_stop=None, report=None):
     index = search.PhotoIndex(library.path, key)
     index.open()
     try:
-        embeddings = search.PhotoEmbeddings(clip, index, ffmpeg=runtime.ffmpeg())
+        embeddings = runtime.embeddings(library, index, clip)
         if embeddings.model_key != key:
             raise RuntimeError("the model's vectors would be kept under %s, not %s" % (embeddings.model_key, key))
 
