@@ -7,6 +7,8 @@ or a person.
     .venv/Scripts/python.exe scripts/measure_pipeline_holdouts.py models --source data/photo_index.db --out <folder>
         --work <folder> [--candidates model:weights:size ...] [--packages <folder>] [--pool N]
     .venv/Scripts/python.exe scripts/measure_pipeline_holdouts.py table --source data/photo_index.db --out <folder>
+    .venv/Scripts/python.exe scripts/measure_pipeline_holdouts.py clips --source data/photo_index.db --out <folder>
+        --work <folder> [--sample N] [--keep-work]
 
 * `faces` (c), read-only, no model: every named face of the library (services.identify.named_faces, the library's
   face model's vectors) is matched against the named faces of every OTHER photo -- held out by photo, never by face, so a face is
@@ -31,6 +33,14 @@ or a person.
   does not hold: `--packages` names a folder holding it. `--pool N`, for a smoke run: each candidate embeds only N
   photos, the held-out ones and others drawn at random as their neighbours; the baseline's neighbours are still every
   photo's, so a pooled run checks the harness and compares nothing.
+
+* `clips` (d), no model, on a copy of the library in `--work`: Suggest's neighbour cut (NEIGHBOUR_CUT) read for clips
+  (findings #2626): a clip is matched on the best of its five frames (PhotoIndex.search), so its likeness is the most of
+  five draws, against its frame 0 alone. `--sample` photos with a tag that is not a person and every clip are searched
+  under each, held out by photo and by folder: each neighbour's likeness by rank, clips and photos apart, and at each cut
+  the share of the neighbour slots that clips take with the precision and recall of the tags Suggest offers from the
+  neighbours alone (services.suggester.neighbours_model: the words, which the cut does not pass, would need CLIP). The
+  owner sets the clips' cut from it (DECISIONS 2026-11-07); Suggest keeps 0.35 until then.
 
 A candidate must be a pair the table of photo models holds (tagpup/ml/photo_models.py: its word cut is read from it, and
 a pair it lacks would fail on the first photo with a zero-shot word), and a size only where the model takes one: `models`
@@ -543,6 +553,27 @@ def pooled(rows, held, pool, seed):
     return list(held) + random.Random(seed).sample(others, max(0, min(len(others), pool - len(held))))
 
 
+#: Written in the work folder once its copy of the library is whole: a copy stopped part-way is made again.
+READY = "copy-is-ready"
+
+
+def work_copy(source, work):
+    """The copy of the library `source` in `work` ((its path, {root: place})): made once, its roots placed in the work
+    folder (sandbox.place_roots), and kept between runs; a copy stopped part-way (no READY) is made again. The source is
+    only read (sandbox.copy_library)."""
+    target = os.path.join(work, "data", "measured.db")
+    ready = os.path.join(work, READY)
+    if not os.path.exists(ready):
+        if os.path.exists(target):
+            os.remove(target)   # a copy stopped part-way
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        sandbox.copy_library(source, target)
+        write_json(os.path.join(work, "placed.json"), sandbox.place_roots(target, work))
+        open(ready, "w").close()
+    with open(os.path.join(work, "placed.json"), encoding="utf-8") as handle:
+        return target, json.load(handle)
+
+
 def models_check(source, work, out, candidates, census, size, timing, seed, report, pool=None):
     """(b), phase 5: the copy of the library in `work` (made once, kept between runs), and each of `candidates`
     measured by run_candidate into `out`, one file each, written as it is done: a candidate whose file is there is
@@ -552,17 +583,8 @@ def models_check(source, work, out, candidates, census, size, timing, seed, repo
     from tagpup.services import search
     from tagpup.services import tags as tags_service
     rows, counts = census
-    target = os.path.join(work, "data", "measured.db")
-    ready = os.path.join(work, "copy-is-ready")
-    if not os.path.exists(ready):
-        if os.path.exists(target):
-            os.remove(target)   # a copy stopped part-way
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        sandbox.copy_library(source, target)
-        write_json(os.path.join(work, "placed.json"), sandbox.place_roots(target, work))
-        open(ready, "w").close()
-    with open(os.path.join(work, "placed.json"), encoding="utf-8") as handle:
-        placed = json.load(handle)
+    target, placed = work_copy(source, work)
+    ready = os.path.join(work, READY)
     owner_places = tagpup_config.machine_roots()   # the owner's map, read before the sandbox's home is entered
     sandbox.enter(work)
     library = Library(target)
@@ -686,6 +708,203 @@ def table(out, report):
                 "-" if pairs is None else "%d (%d)" % (pairs["pairs"], pairs["right"])))
 
 
+# ---- (d) Suggest's neighbour cut for clips (findings #2626, #2628) ------------------------------------------------
+
+#: The cuts the clips check reads Suggest's neighbours at, NEIGHBOUR_CUT (Suggest's, unchanged) among them.
+CLIP_CUTS = tuple(round(0.20 + 0.05 * n, 2) for n in range(15))
+
+#: The ranks the clips check's table of likeness prints, of the NEIGHBOURS.
+RANKS = (1, 2, 3, 5, 10, 15)
+
+#: The two ways a clip is matched: on its best frame (Suggest's since migration 38, PhotoIndex.search) and on its
+#: frame 0 alone (Suggest's before: FrameZero).
+MATCHES = ("best_of_five", "frame_0")
+
+
+class FrameZero:
+    """The photo index searched on each photo's one vector, a clip's frame 0 alone (PhotoIndex.vectors_by_photo):
+    Suggest's neighbours before a clip was matched on its best frame. Each photo once, in suggesting.best_frame's order,
+    its record read from the library (PhotoIndex.records)."""
+
+    def __init__(self, index, vectors):
+        self.index, self.ids = index, list(vectors)
+        matrix = np.array([held[0] for held in vectors.values()], dtype=np.float32)
+        self.matrix = matrix / np.linalg.norm(matrix, axis=1, keepdims=True)
+
+    def __getattr__(self, name):
+        return getattr(self.index, name)
+
+    def search(self, query_vector, k=15):
+        query = np.asarray(query_vector, dtype=np.float32)
+        likeness = self.matrix @ (query / np.linalg.norm(query))
+        k = min(k, len(self.ids))
+        top = np.argpartition(-likeness, k - 1)[:k]
+        nearest = suggesting.best_frame([(float(likeness[i]), self.ids[i]) for i in top], k)
+        found = {record["id"]: record for record in self.index.records([photo_id for _sim, photo_id in nearest])}
+        return [(sim, found[photo_id]) for sim, photo_id in nearest if photo_id in found]
+
+
+class Answered:
+    """The index Suggest is handed for one photo: its search answers `found`, the photo's neighbours searched once and
+    read at every cut of CLIP_CUTS."""
+
+    def __init__(self, index):
+        self.index, self.found = index, []
+
+    def __getattr__(self, name):
+        return getattr(self.index, name)
+
+    def search(self, _query_vector, k=15):
+        return self.found[:k]
+
+
+def clip_neighbours(index, model, size, seed, report):
+    """(d), read-only, no model: Suggest's neighbours of the photos of `index` (a PhotoIndex, loaded) as a clip is
+    matched on its best of five frames and on its frame 0 alone (MATCHES), held out by photo and by folder. The
+    queries: `size` photos with a tag that is not a person, drawn with `seed`, and every clip (a photo holding frames);
+    each searched by its own vector (a clip's frame 0, as Suggest embeds one). Kept: the likeness of each neighbour at
+    each rank, apart for clips and photos, and a clip's frame-0 likeness beside its best; at each of CLIP_CUTS the
+    neighbour slots kept and how many are clips, and the precision and recall of the tags Suggest offers from the
+    neighbours (`model`, suggester.neighbours_model: no word, no face looked for) against the query's own tags. Ids and
+    counts only."""
+    started = time.time()
+    vectors = index.vectors_by_photo()
+    clips = {photo_id for photo_id, held in vectors.items() if len(held) > 1}
+    records = {record["id"]: record for record in index.records() if record["id"] in vectors}
+    by_folder = collections.defaultdict(set)
+    for record in records.values():
+        by_folder[paths.key(os.path.dirname(record["path"]))].add(record["id"])
+    truths = {photo_id: own_tags(record, model.suggester.taxonomy, model.face_roots)
+              for photo_id, record in records.items()}
+    eligible = sorted(photo_id for photo_id in records if truths[photo_id] and photo_id not in clips)
+    queries = sorted(random.Random(seed).sample(eligible, min(size, len(eligible)))) + sorted(clips)
+    report("  %d photos with a vector, %d of them clips; %d photos with a tag not a person, %d drawn; %d clips with one"
+           % (len(records), len(clips), len(eligible), len(queries) - len(clips),
+              sum(1 for photo_id in clips if truths[photo_id])))
+    searches = {"best_of_five": LeavingOut(index), "frame_0": LeavingOut(FrameZero(index, vectors))}
+    answered = model.suggester.index = Answered(index)
+    model.suggester.faces = NoFaceLooks(model.suggester.faces)
+    unit = {photo_id: vectors[photo_id][0] / np.linalg.norm(vectors[photo_id][0]) for photo_id in clips}
+
+    def kinds():
+        return {"photo": collections.defaultdict(list), "clip": collections.defaultdict(list),
+                "clip_frame_0": collections.defaultdict(list)}
+    answer = {"photos": len(records), "clips": len(clips), "eligible": len(eligible), "queries": len(queries)}
+    for held_out in ("by_photo", "by_folder"):
+        found_here = answer[held_out] = {}
+        for match, leaving in searches.items():
+            ranks = {"photo": kinds(), "clip": kinds()}
+            slots = {cut: {"photo": [0, 0], "clip": [0, 0]} for cut in CLIP_CUTS}
+            offered = {cut: {"photo": ([], []), "clip": ([], [])} for cut in CLIP_CUTS}
+            for photo_id in queries:
+                record, asked = records[photo_id], "clip" if photo_id in clips else "photo"
+                leaving.left_out = (frozenset([photo_id]) if held_out == "by_photo"
+                                    else frozenset(by_folder[paths.key(os.path.dirname(record["path"]))]))
+                vector = vectors[photo_id][0]
+                query = vector / np.linalg.norm(vector)
+                found = leaving.search(vector, k=NEIGHBOURS)
+                for rank, (sim, neighbour) in enumerate(found, 1):
+                    kind = "clip" if neighbour["id"] in clips else "photo"
+                    ranks[asked][kind][rank].append(sim)
+                    if kind == "clip":
+                        ranks[asked]["clip_frame_0"][rank].append(float(query @ unit[neighbour["id"]]))
+                for cut in CLIP_CUTS:
+                    kept = [neighbour["id"] in clips for sim, neighbour in found if sim >= cut]
+                    slots[cut][asked][0] += len(kept)
+                    slots[cut][asked][1] += sum(kept)
+                if not truths[photo_id]:
+                    continue
+                answered.found = found
+                for cut in CLIP_CUTS:
+                    tags, _people, _caption = model.offered(model.suggester.suggest_for_photo(
+                        record["path"], vector, k=NEIGHBOURS, min_sim=cut, target_metadata=record))
+                    offered[cut][asked][0].append({tag["tag"] for tag in tags})
+                    offered[cut][asked][1].append(truths[photo_id])
+            found_here[match] = {
+                "likeness": {asked: {kind: {str(rank): sandbox.summary(values) for rank, values in sorted(by_rank.items())}
+                                     for kind, by_rank in by_kind.items()} for asked, by_kind in ranks.items()},
+                "cuts": {"%.2f" % cut: {asked: {"slots": slots[cut][asked][0], "clip_slots": slots[cut][asked][1],
+                                                "offered": tag_scores(*offered[cut][asked])}
+                                        for asked in ("photo", "clip")} for cut in CLIP_CUTS}}
+            report("  %s, %s: done, %.0f s" % (held_out, match, time.time() - started))
+    answer["seconds"] = time.time() - started
+    return answer
+
+
+def clips_table(found, report):
+    """The clips check's result `found` as Markdown: the likeness of the neighbours at each of RANKS (photos asked;
+    clips asked), and at each cut the share of the neighbour slots kept that are clips and the precision and recall of
+    the tags offered, under each of MATCHES, held out by folder and by photo."""
+    def number(value, form="%.3f"):
+        return "-" if value is None else form % value
+
+    def at(summary):
+        return "-" if not summary or not summary.get("n") else "%.3f (%.3f-%.3f, %d)" % (
+            summary["median"], summary["p10"], summary["p90"], summary["n"])
+    report("%d photos with a vector, %d of them clips; queries: %d (%d photos with a tag not a person drawn, every clip)."
+           % (found["photos"], found["clips"], found["queries"], found["queries"] - found["clips"]))
+    for held_out in ("by_folder", "by_photo"):
+        best, first = found[held_out]["best_of_five"], found[held_out]["frame_0"]
+        for asked in ("photo", "clip"):
+            report("")
+            report("Likeness of the neighbours, %s asked, held out %s: median (p10-p90, n)." % (
+                asked + "s", held_out.replace("by_", "by ")))
+            report("")
+            report("| Rank | Photos, best of five | Clips, best of five | The same clips, frame 0 | Clips, frame 0 search |")
+            report("|---|---|---|---|---|")
+            for rank in RANKS:
+                def of(result, kind):
+                    return result["likeness"][asked][kind].get(str(rank))
+                report("| %d | %s | %s | %s | %s |" % (rank, at(of(best, "photo")), at(of(best, "clip")),
+                                                       at(of(best, "clip_frame_0")), at(of(first, "clip"))))
+        for asked in ("photo", "clip"):
+            report("")
+            report("At each cut, %s asked, held out %s: the neighbour slots kept, the share that are clips, and the tags "
+                   "offered from the neighbours, precision / recall (offered)." % (asked + "s", held_out.replace("by_", "by ")))
+            report("")
+            report("| Cut | Slots, best of five | Clip share | P / R (n) | Slots, frame 0 | Clip share | P / R (n) |")
+            report("|---|---|---|---|---|---|---|")
+            for cut in CLIP_CUTS:
+                cells = []
+                for result in (best, first):
+                    point = result["cuts"]["%.2f" % cut][asked]
+                    tags = point["offered"]
+                    cells.append("%d | %s | %s / %s (%d)" % (
+                        point["slots"], number(point["clip_slots"] / point["slots"] if point["slots"] else None),
+                        number(tags["precision"]), number(tags["recall"]), tags["offered"]))
+                report("| %.2f%s | %s |" % (cut, " (Suggest's)" if cut == NEIGHBOUR_CUT else "", " | ".join(cells)))
+
+
+def clips_main(args, source, out):
+    """The `clips` check: on the copy of the library in --work (made once, work_copy), the library's own model's
+    vectors loaded, the neighbours measured (clip_neighbours) and written to --out, the tables printed. The copy is
+    removed at the end unless --keep-work."""
+    from tagpup.runtime import Runtime
+    from tagpup.services import search, suggester
+    if not args.work:
+        raise SystemExit("clips needs --work: a folder outside the repository for the copy of the library.")
+    work = claim_work_folder(os.path.abspath(args.work), source, os.path.abspath(out))
+    target, _placed = work_copy(source, work)
+    sandbox.enter(work)
+    library, runtime = Library(target), Runtime()
+    index = search.PhotoIndex(target, runtime.model_key(library))
+    try:
+        if not index.load():
+            raise SystemExit("The copy of the library did not load: nothing was measured.")
+        model = suggester.neighbours_model(index, runtime.faces(library))
+        found = clip_neighbours(index, model, args.sample, args.seed, print)
+    finally:
+        index.close()
+    found["model_key"] = index.model
+    at = time.strftime("%Y%m%dT%H%M%S")
+    path = os.path.join(out, "holdout-clips-%s.json" % at)
+    write_json(path, found)
+    print("written %s" % path)
+    clips_table(found, print)
+    if not args.keep_work:
+        print("work folder %s" % remove_work(work))
+
+
 #: Written in the work folder when this program makes it: the folder is deleted at the end only if it holds this.
 WORK_MARKER = "made-by-measure_pipeline_holdouts"
 
@@ -762,16 +981,16 @@ def models_main(args, source, library, name, out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("check", choices=("faces", "vectors", "models", "table"))
+    parser.add_argument("check", choices=("faces", "vectors", "models", "table", "clips"))
     parser.add_argument("--source", required=True, help="the library, opened read-only and never written")
     parser.add_argument("--out", required=True, help="the folder for the JSON, outside the repository")
-    parser.add_argument("--sample", type=int, default=200, help="vectors: photos; models: held-out photos")
-    parser.add_argument("--work", help="models: the folder of the copy, kept between runs, outside the repository")
+    parser.add_argument("--sample", type=int, default=200, help="vectors: photos; models: held-out photos; clips: photos asked")
+    parser.add_argument("--work", help="models, clips: the folder of the copy, kept between runs, outside the repository")
     parser.add_argument("--candidates", nargs="+", default=list(CANDIDATES), help="models: model:weights:size")
     parser.add_argument("--timing", type=int, default=100, help="models: photos timed one at a time")
     parser.add_argument("--packages", help="models: a folder of packages the venv lacks (transformers)")
     parser.add_argument("--pool", type=int, help="models: photos each candidate embeds (a smoke run), not all")
-    parser.add_argument("--keep-work", action="store_true", help="models: keep the copy when every candidate is done")
+    parser.add_argument("--keep-work", action="store_true", help="models, clips: keep the copy when the run is done")
     parser.add_argument("--seed", type=int, default=20261016)
     args = parser.parse_args()
     out = sandbox.outside_the_repository(args.out)
@@ -794,6 +1013,9 @@ def main():
                         point["cut"], point["suggested"], "%.4f" % point["precision"] if point["precision"] else "-"))
     elif args.check == "models":
         models_main(args, source, library, name, out)
+        return
+    elif args.check == "clips":
+        clips_main(args, source, out)
         return
     else:
         print("census of %s (read-only)" % name)
