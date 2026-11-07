@@ -172,7 +172,9 @@ _SCENARIO_FILES = {
     "P11": "test_a_face_gets_one_nearest_person_everywhere",
     "V1": "test_library_views_scenarios",
     "V2": "test_library_search",
-    "V3": "test_analyse_only_looks_are_kept test_analyse_only_suggest test_suggest_then_apply_all",
+    # test_a_clip_is_matched_on_its_best_frame: Suggest's neighbours, a clip among them at its best frame (M2).
+    "V3": "test_analyse_only_looks_are_kept test_analyse_only_suggest test_suggest_then_apply_all "
+          "test_a_clip_is_matched_on_its_best_frame",
     "V4": "test_one_gpu_at_a_time test_one_gpu_jobs",
     "V5": "test_selection_scenarios",
     "V6": "test_models_released_when_idle",

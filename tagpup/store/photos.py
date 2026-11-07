@@ -372,6 +372,16 @@ def vectors(conn, model):
                         " WHERE e.model = ? ORDER BY e.photo_id", (model,)).fetchall()
 
 
+def frame_vectors(conn, model):
+    """(photo id, vector bytes) of each frame a clip keeps beside its vector under `model` (store.embeddings.FRAMES):
+    what PhotoIndex keeps in memory beside `vectors`, each frame by its clip's id. A statement of its own: a JOIN in
+    `vectors` would read the clip's frame 0 again with each of its frames. A SCAN of embedding_frames, in no order:
+    the table holds 4 rows a clip (8,708 on photo_index, 2026-11-07), and the search orders what it finds itself
+    (tagpup.core.suggesting.best_frame)."""
+    return conn.execute("SELECT f.photo_id, f.vector FROM embedding_frames f JOIN photos p ON p.id = f.photo_id"
+                        " WHERE f.model = ?", (model,)).fetchall()
+
+
 # What a clip (photos.kind 'video') is not given yet: one rule each, read from here and never spelled as a kind test
 # where it is used, since each changes with its own merge of the video plan (DECISIONS 2026-11-02).
 #: The kinds the index owes a CLIP vector (photo_fingerprints.owed, counts, checks.without_a_vector, photo_reembed): a
