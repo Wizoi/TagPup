@@ -2,7 +2,7 @@
 import { state } from './state.js';
 import { dialogOpen } from './common/dialog.js';
 import { imageZoomOpen } from './common/image-zoom.js';
-import { photoList, photoSearch } from './elements.js';
+import { mainVideo, photoList, photoSearch } from './elements.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { carryTagsForward, openLibraryPhoto, selectPhoto } from './photo.js';
 import { libraryStepTarget } from './library-source.js';
@@ -114,6 +114,15 @@ export function wireKeyboard() {
         // The navigator's trees and tabs, the sidebar's switch and the grid move by their own arrow keys; Ctrl+D and
         // Ctrl+Z above are everyone's, wherever the focus is.
         if (ownsItsKeys(document.activeElement)) return;
+
+        // The clip's player, focused, seeks on left/right by the browser's own 5 s (#2468); up/down still step.
+        if (mainVideo && document.activeElement === mainVideo && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+            if (mainVideo.readyState < 1) return;   // nothing loaded to seek in
+            e.preventDefault();
+            const to = mainVideo.currentTime + (e.key === 'ArrowRight' ? 5 : -5);
+            mainVideo.currentTime = Math.max(0, Math.min(to, mainVideo.duration || to));
+            return;
+        }
 
         e.preventDefault();
         stepPhoto(steps[e.key]);
