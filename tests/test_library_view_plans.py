@@ -100,6 +100,28 @@ class Plans(unittest.TestCase):
         found = self.plan_of(self.ids(store.Source(store.PERSON, "People/Wren Halloway")))
         self.assertIn("idx_photo_people_tag (tag_id=?)", "\n".join("\n".join(lines) for _statement, lines in found))
 
+    def test_the_clip_statement_of_a_folder_a_keyword_and_a_person_scans_no_photos_and_the_whole_library_is_a_known_scan(self):
+        """view_ids reads a source's clips with `SELECT p.id FROM <from_> WHERE (<where>) AND p.kind = ? ORDER BY p.id`."""
+        def clips(source):
+            found = self.plan_of(lambda conn: store.view_ids(conn, source, 200000))
+            return [(statement, lines) for statement, lines in found if "p.kind" in statement]
+
+        for name, source in (("folder", store.Source(store.FOLDER, self.folder, False)),
+                             ("folder tree", store.Source(store.FOLDER, self.top, True)),
+                             ("keyword", store.Source(store.KEYWORD, "Trips")),
+                             ("person", store.Source(store.PERSON, "People/Wren Halloway"))):
+            with self.subTest(source=name):
+                found = clips(source)
+                self.assertEqual(1, len(found), "one clip statement")
+                for statement, lines in found:
+                    self.assertFalse([line for line in lines if line in ("SCAN p", "SCAN photos")],
+                                     "a scan of photos: %s\n%s" % (statement, "\n".join(lines)))
+        # The whole-library view is a scan of photos, accepted: no index holds `kind` (a partial index
+        # `ON photos(id) WHERE kind = 'video'` would be a migration, the owner's call; finding on the pending list).
+        found = clips(store.Source(store.ALL))
+        self.assertEqual(1, len(found))
+        self.assertTrue([line for line in found[0][1] if line in ("SCAN p", "SCAN photos")], found[0][1])
+
     def test_id_plans_gives_each_statement_with_its_plan_for_the_measurement_script(self):
         conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
         try:
