@@ -409,6 +409,7 @@ export function newLibrary(spec) {
         notice: '',                   // something that went wrong beside the view: a refresh, a selection
         failure: null,                // { status } of the ids request that failed: a search's 400 is said by the box (search.js)
         ids: [], total: 0, complete: true,
+        videos: new Set(),            // the ids of the view's clips, as the server read them with its ids (#2569)
         loading: false, controller: null,
         cards: new Map(),             // id -> card, least recently used first
         tries: new Map(),             // id -> failed batches
@@ -459,6 +460,7 @@ export function loadLibraryIds(lib, refreshing = false) {
             lib.ids = Array.isArray(body.ids) ? body.ids : [];
             lib.total = Number.isFinite(body.total) ? body.total : lib.ids.length;
             lib.complete = body.complete !== false;
+            lib.videos = new Set(Array.isArray(body.videos) ? body.videos : []);
             lib.status = lib.ids.length === 0 ? 'empty' : 'ready';
             lib.message = lib.ids.length === 0 ? emptySentence(lib) : '';
             lib.notice = '';
@@ -489,6 +491,15 @@ export function forgetCards(lib) {
     lib.requested.clear();
     lib.cards.clear();
     lib.tries.clear();
+}
+
+/**
+ * The view's count by kind, `{ photos, videos }`: its clips are the ids the server answered as videos (GET /api/library/ids,
+ * read in its transaction with the list), less those dropped since; the rest of the total are photos. Counted on the server
+ * only (#2569).
+ */
+export function libraryKinds(lib) {
+    return { photos: Math.max(0, lib.total - lib.videos.size), videos: lib.videos.size };
 }
 
 // ---- The grid's source ----------------------------------------------------------------
@@ -668,6 +679,7 @@ export function dropPhotos(lib, ids) {
     for (const id of gone) {
         lib.cards.delete(id);
         lib.tries.delete(id);
+        lib.videos.delete(id);
     }
     forgetSelectedIds(gone);
     upper.updateSelectedThumbnailsCount();   // the selection is the view's total less the excluded: the count moved

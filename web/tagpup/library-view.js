@@ -25,7 +25,7 @@ import {
 import { setStatus } from './status.js';
 import { hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import {
-    openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
+    openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition, viewCountSaid
 } from './folder.js';
 import { clearSelection } from './selected.js';
 import { forgetSelectionFaces } from './selection-faces.js';
@@ -127,7 +127,7 @@ export function libraryChanged() {
     let total = '';
     if (lib.status === 'loading') total = 'Opening...';
     else if (lib.status === 'ready' || lib.status === 'empty') {
-        total = `${lib.total.toLocaleString()} ${lib.total === 1 ? 'photo' : 'photos'}`;
+        total = viewCountSaid(lib);
         if (!lib.complete) total += `, the first ${lib.ids.length.toLocaleString()} shown`;
     }
     libraryStripTotal.textContent = total;
@@ -146,7 +146,7 @@ export function libraryChanged() {
     btnLibraryRefresh.disabled = lib.invalid || lib.loading;
     upper.showSortOrder();
     folderViewTitle.textContent = lib.invalid ? 'Library view' : label;
-    folderViewStats.textContent = `${lib.total.toLocaleString()} photos`;
+    folderViewStats.textContent = viewCountSaid(lib);
     folderViewHeader.textContent = '';
     folderViewHeader.append(`\u{1F4C2} Library view${lib.invalid ? '' : ` — ${label}`}`);
     document.title = `${label} — TagPup`;

@@ -16,7 +16,7 @@ import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { baseOf, photoChangedOnDisk, photoRenamed, queueWriteOf, stampOf, takeStamp } from './edits.js';
-import { countSaid, renderFileList, visiblePhotos } from './folder.js';
+import { countSaid, renderFileList, viewCountSaid, visiblePhotos } from './folder.js';
 import { openLibraryPhoto, photoFileUrl, selectPhoto } from './photo.js';
 import { isVideo } from './media.js';
 import { createVGrid } from './vgrid.js';
@@ -75,7 +75,7 @@ export function showGridContextMenu(x, y, pathUnderCursor) {
     if (!gridContextMenu) return;
     const count = selectionCount();
     const total = state.library ? state.library.ids.length : state.folderPhotos.length;
-    const held = state.library ? `${total} in view` : `${countSaid(state.folderPhotos)} in folder`;
+    const held = state.library ? `${viewCountSaid(state.library)} in view` : `${countSaid(state.folderPhotos)} in folder`;
 
     gridContextMenu.querySelectorAll('[data-requires-selection]').forEach(el => {
         el.classList.toggle('disabled', count === 0);
