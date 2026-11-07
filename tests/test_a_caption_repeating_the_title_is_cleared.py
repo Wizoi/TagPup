@@ -186,6 +186,25 @@ class AShelfOfPhotos(CaptionSweep):
         self.assertEqual((TITLE, TITLE, TITLE), self.captions_of(self.same))
         self.assertEqual("Relay", field_of(self.more, "IPTC:Caption-Abstract"))
 
+    def test_each_line_reaches_a_redirected_log_as_it_is_said(self):
+        """The owner redirects an --apply's output to a log and reads it while it runs: a block-buffered stream lagged by
+        thousands of files (#2623). Each line is flushed as it is said."""
+        class Log(io.StringIO):
+            unflushed = 0
+
+            def write(self, text):
+                Log.unflushed += 1
+                return super().write(text)
+
+            def flush(self):
+                Log.unflushed = 0
+                return super().flush()
+        log = Log()
+        with contextlib.redirect_stdout(log):
+            clear_duplicate_captions.main(["--library", self.library.path])
+        self.assertIn("nothing was read or written", log.getvalue())
+        self.assertEqual(0, Log.unflushed, "the last line was left in the buffer")
+
     def test_a_file_another_program_changed_after_the_plan_is_a_conflict_left_as_it_is(self):
         def meanwhile(step):
             if step == "plan committed":

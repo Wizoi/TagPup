@@ -86,7 +86,12 @@ class Progress:
         raise KeyboardInterrupt
 
 
-def run(db_path, apply, out=print):
+def say(line):
+    """A line of the run's output, flushed: a log the output is redirected to is current while it runs (#2623)."""
+    print(line, flush=True)
+
+
+def run(db_path, apply, out=say):
     """Say what the sweep of `db_path` finds, or does with `apply`. Returns the exit code."""
     name = os.path.splitext(os.path.basename(db_path))[0]
     if not os.path.isfile(db_path):
