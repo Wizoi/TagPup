@@ -3,7 +3,8 @@ XMP in place (in_place.patch_clip) and never has ExifTool write it (on since the
 2026-11-07).
 
 What the owner lives through: a clip's card opens the photo panel and its tags are saved, or a selection of a day holding
-photos and clips is tagged. A keyword or title save is patched into its XMP, and a turn and a Date Taken stay refused. A clip the patch cannot place
+photos and clips is tagged. A keyword or title save is patched into its XMP (a Date Taken too, into its XMP dates:
+tests/test_a_clip_dated_through_the_journal.py); a turn, and a photo's EXIF date fields, stay refused. A clip the patch cannot place
 (a tail, two XMP boxes) is refused, ExifTool never asked to rewrite it; one whose share fails part-way through its read
 says it could not be read, never that it cannot be patched. A clip whose QuickTime Subject is a Microsoft Xtra value that
 is not text (14 live .mp4 clips, counted 2026-11-07) is indexed with no tags, and a tag save writes only the tags saved;
@@ -73,6 +74,7 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
     def test_a_journaled_tag_save_is_patched_into_its_xmp_and_nothing_else_is_written(self):
         path = self.clip("first.mp4")
         self.assert_refused(images.CLIP_NOT_EDITED, path, keywords(["Trips/Coast"]), journaled=False)
+        # A photo's Date Taken fields (EXIF's among them) and a turn are refused; a clip's are its XMP dates alone.
         for values in (fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]},
                        {**keywords(["Trips/Coast"]), **fields.date_taken_fields("2020:01:01 12:00:00")}):
             with self.subTest(sorted(values)[0]):
@@ -146,7 +148,7 @@ def read_as_before():
 class ALibraryHoldingAClip(unittest.TestCase):
     """A library holding a photo and a real ffmpeg clip, each row recorded by the indexer's own read
     (metadata.MetadataExtractor.batch_read), saved through the pages (Flask's test client, a home of its own). No test of its own: the scenarios of a clip in a library are its subclasses (here, test_a_clip_tag_undone,
-    test_a_clip_patch_cut_short)."""
+    test_a_clip_patch_cut_short, test_a_clip_dated_through_the_journal)."""
 
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
@@ -256,9 +258,9 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         return found
 
     def test_the_page_is_told_what_a_save_may_change_of_a_clip_and_of_a_photo(self):
-        # The panel offers a clip its tags, title and name alone; a photo all five (field_values.writes).
+        # The panel offers a clip its tags, title, name and Date Taken, never a turn; a photo all five (field_values.writes).
         ids = self.index(self.photo_path, self.clip_path)
-        photo, clip = ["tags", "title", "date", "rotate", "name"], ["tags", "title", "name"]
+        photo, clip = ["tags", "title", "date", "rotate", "name"], ["tags", "title", "name", "date"]
         self.assertEqual({"scan pier.jpg": photo, "scan jetty.mp4": clip, "panel pier.jpg": photo, "panel jetty.mp4": clip},
                          self.records(ids))
 
