@@ -1,13 +1,15 @@
-"""A clip in the library is not turned or dated by TagPup (F12): a turn and a Save carrying a Date Taken that name a
-clip leave its file byte for byte as it was, journal nothing for it, and say so in a plain sentence
-(tagpup.files.images.CLIP_NOT_EDITED). A clip is deleted as a photo is (DECISIONS 2026-11-08, A5, cut B). A tag or title save is patched into its XMP (field_values.writes,
-since DECISIONS 2026-11-07; the selections that tag photos and clips together: tests/test_a_clip_tagged_through_the_journal.py;
-a rename: tests/test_a_clip_renamed.py).
+"""A clip in the library is not turned by TagPup, nor moved by a Camera Time Shift (F12): a turn that names a clip leaves
+its file byte for byte as it was, journals nothing for it, and says so in a plain sentence
+(tagpup.files.images.CLIP_NOT_EDITED); a time shift over a folder of photos and clips moves the photos' dates and leaves
+each clip's file as it was. A clip is deleted as a photo is (DECISIONS 2026-11-08, A5, cut B). A tag, title or Date
+Taken save is patched into its XMP (field_values.writes, since DECISIONS 2026-11-07 and 2026-11-08, A5 (D) REVISED; the
+selections that tag photos and clips together: tests/test_a_clip_tagged_through_the_journal.py; a date:
+tests/test_a_clip_dated_through_the_journal.py; a rename: tests/test_a_clip_renamed.py).
 
 What the owner lives through: the library view lists clips beside photos (V1), so a selection of a day holds both, and a
-click on a clip's card opens the photo panel. ExifTool's write of a clip is a rewrite of the whole file -- gigabytes, over
-a share -- and the date the view shows is read from the clip's own QuickTime dates, which a Date Taken write does not
-change (DECISIONS 2026-11-02, items 1, 3 and 7).
+click on a clip's card opens the photo panel. A turn of a clip is ExifTool's rewrite of the whole file -- gigabytes, over
+a share (DECISIONS 2026-11-02, items 1 and 3); a time shift moves a camera's EXIF dates, which a clip does not hold
+(DECISIONS 2026-11-08, A5 (D) REVISED: the Camera Time Shift leaves clips out).
 
 The real ExifTool and a real one-second clip made by the machine's ffmpeg (as tests/test_a_clip_is_indexed_as_a_video.py
 makes them); rows as the indexer records a read (tests/view_library.py, which gives a .mov its kind 'video' as the indexer
@@ -119,11 +121,17 @@ class AClipBesideAPhoto(unittest.TestCase):
     def test_a_turn_is_refused_with_the_sentence_and_the_clip_is_not_written(self):
         self.assert_refused("photo/rotate", {"path": self.clip_path, "direction": "left"})
 
-    def test_a_save_carrying_date_taken_is_refused_whole(self):
-        # A keyword or caption save patches a clip's XMP (DECISIONS 2026-11-05, M7); a Date Taken is ExifTool's rewrite of
-        # the whole file, so a Save carrying one is refused, its tags with it.
-        self.assert_refused("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"],
-                                                    "date_taken": "2020:01:01 12:00:00"})
+    def test_a_time_shift_over_a_folder_moves_the_photos_date_and_leaves_the_clip_byte_for_byte(self):
+        reply = self.post("folder/time-shift", {"folder_path": self.folder, "camera_model": "All Cameras",
+                                                "shift_minutes": 30})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        body = reply.get_json()
+        self.assertEqual((True, 1, 1), (body["success"], body["updated_count"], body["requested_count"]),
+                         "the photo alone is shifted, and counted")
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            moved = et.get_tags([self.photo_path], tags=["EXIF:DateTimeOriginal"])[0]["EXIF:DateTimeOriginal"]
+        self.assertEqual("2024:07:04 10:30:00", moved, "the photo's date moved")
+        self.assert_clip_untouched()
 
 if __name__ == "__main__":
     unittest.main()

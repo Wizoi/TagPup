@@ -14,7 +14,7 @@ photos: a clip is a chunk of its own. Meanwhile the clip may be opened again, fr
 server, which alone knows which files a delete is working on, refuses a range of that clip (409, "This video is being
 deleted.") and plays every other, until the delete has ended, done or failed.
 
-A real one-second clip made by the machine's ffmpeg (as tests/test_a_clip_is_not_turned_or_dated.py makes it); rows as the
+A real one-second clip made by the machine's ffmpeg (as tests/test_a_clip_is_not_turned.py makes it); rows as the
 indexer records a read (tests/view_library.py, which gives a .mov its kind 'video'). The share is a folder of this test's
 home that the test says has no Recycle Bin, the Recycle Bin is stood in for (the copy is taken away), and the mirror is a
 folder of the home: nothing reaches the owner's Bin or Downloads. Flask's test client in a home of its own. Skipped, saying
