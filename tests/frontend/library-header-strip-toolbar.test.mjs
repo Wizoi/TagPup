@@ -412,6 +412,26 @@ describe("#674: Delete of a view's selection", () => {
     assert.ok(el(ctx, "panel-content").classList.contains("hidden"), "the panel closed onto the grid");
   });
 
+  test("while the delete is out, the clip opened again from the grid does not play; deleted, it never does", async (t) => {
+    let ids = range(40);
+    const ctx = await viewWithClipOpen(t, () => ids);
+    ctx.hold.bulkEdit = true;
+    await remove(ctx);
+    assert.equal(src(ctx), "", "stopped before the delete");
+    ctx.module("photo.js").openLibraryPhoto(7);      // another photo, then the clip again, as a click on its card does
+    await ctx.settle(80);
+    ctx.module("photo.js").openLibraryPhoto(CLIP);
+    await ctx.settle(80);
+    assert.equal(ctx.state.library.activeId, CLIP, "the clip is the one shown");
+    assert.equal(src(ctx), "", "but not played: the server would read a range of the file it is deleting");
+    assert.equal(el(ctx, "status-text").textContent, "This video is being deleted.");
+    ids = ids.filter((id) => ![2, CLIP].includes(id));
+    await ctx.release("bulkEdit");
+    await ctx.until(() => ctx.state.activePhotoPath === null);
+    await ctx.settle(80);
+    assert.equal(src(ctx), "", "deleted: nothing plays it");
+  });
+
   test("the delete refused (the selection changed), or the clip left by an error of its own: it plays again", async (t) => {
     const refused = await viewWithClipOpen(t, () => range(40));
     refused.server.first("/api/library/bulk-edit", { success: false, error: "The selection changed since you were asked: ask again." }, { status: 409 });

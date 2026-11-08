@@ -107,6 +107,21 @@ export function isIdSelected(id) {
     return lib.sel.mode === 'ids' ? lib.sel.ids.has(id) : !lib.sel.excluded.has(id);
 }
 
+/**
+ * The selection of a library view as it is now, as a test of an id that selecting afterwards does not change: what a bulk Delete
+ * sent, held while it is out (state.bulk.deleting). Outside a library view, a test that holds nothing.
+ */
+export function idSelectionNow() {
+    const lib = state.library;
+    if (!lib) return () => false;
+    if (lib.sel.mode === 'ids') {
+        const ids = new Set(lib.sel.ids);
+        return id => ids.has(id);
+    }
+    const excluded = new Set(lib.sel.excluded);
+    return id => !excluded.has(id);
+}
+
 /** Is this card's photo selected: by id in a library view, by path in a folder's. */
 export function isPhotoSelected(photo) {
     return state.library ? isIdSelected(photo.id) : isSelected(photo.path);

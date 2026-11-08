@@ -153,8 +153,9 @@ export const state = {
     // answer counts, `data` the answer.
     tally: { status: 'idle', key: '', asked: 0, timer: 0, controller: null, data: null, message: '' },
     // The bulk edit of the library's photos (bulk-run.js): `running` while its request is out, `asking` while an edit's question or
-    // placement dialog is open (a second click on Add does not ask again). The strip that shows it is web/common/batch-strip.js.
-    bulk: { running: false, asking: false },
+    // placement dialog is open (a second click on Add does not ask again), `deleting` while a Delete is out: the selection it sent
+    // (selected.js idSelectionNow), whose clips are not played (media.js). The strip that shows it is web/common/batch-strip.js.
+    bulk: { running: false, asking: false, deleting: null },
     // The photo write queue's entries, for its status (write-queue.js): each
     // { id, label, status: waiting | writing | done | failed, error, at, retry }.
     // batchTotal and batchSettled count the writes since the queue was last empty.

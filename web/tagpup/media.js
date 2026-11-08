@@ -44,9 +44,10 @@ export function showMedia(photo, pictureUrl) {
         mainImage.src = pictureUrl;
         return;
     }
-    if (state.deleting && samePath(state.deleting, photo.path)) {
-        // Its delete is out (photo.js deleteActivePhoto): a range read of it as the original is removed would make the remove
-        // fail, the copy in the Bin and the file there twice. Shown again by the delete's reply if it stayed.
+    if ((state.deleting && samePath(state.deleting, photo.path)) || (state.bulk.deleting && state.bulk.deleting(photo.id))) {
+        // Its delete is out (photo.js deleteActivePhoto, or a bulk Delete of a selection that holds it: bulk-edit.js): a range read
+        // of it as the original is removed would make the remove fail, the copy in the Bin and the file there twice. Shown again by
+        // the delete's reply if it stayed.
         stopVideo();
         mainImage.src = '';
         setStatus('ready', 'This video is being deleted.', { transient: false });
