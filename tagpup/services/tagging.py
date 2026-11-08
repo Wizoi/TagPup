@@ -65,8 +65,8 @@ def _differs_from_base(now, base):
 
 def _title_written(path, now, wanted):
     """The title fields a save of `path` writes, of `wanted` (fields.title_fields of the title saved): none when the file
-    holds its title only in a clip's QuickTime Title (fields.CLIP_TITLE; 2,017 photo_index clips, counted 2026-11-07)
-    and the save keeps that title, so a tag save of one makes no XMP copy of it; a title changed is written to XMP:Title
+    holds its title only in a clip's QuickTime Title (fields.CLIP_TITLE; 2,017 of the 2,018 photo_index clips holding
+    one, counted 2026-11-08) and the save keeps that title, so a tag save of one makes no XMP copy of it; a title changed is written to XMP:Title
     (the writer patches a clip's XMP alone), the QuickTime Title left as it was; a title cleared clears XMP:Title and a
     clip's QuickTime Title too, so no title comes back (DECISIONS 2026-11-08, #2652, #2657). `now` holds BASE_READ."""
     title = vocabulary.trimmed(wanted.get("XMP:Title") or "")
