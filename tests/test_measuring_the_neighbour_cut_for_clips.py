@@ -133,13 +133,34 @@ class ALibraryWithAClip(unittest.TestCase):
         self.assertFalse(os.path.exists(work), "the copy is removed when the run is done")
         written = [name for name in os.listdir(out) if name.startswith("holdout-clips-")]
         self.assertEqual(1, len(written))
+        self.assertTrue(written[0].startswith("holdout-clips-harbour-"), "the file names the library measured")
         with open(os.path.join(out, written[0]), encoding="utf-8") as handle:
             text = handle.read()
-        self.assertEqual(3, json.loads(text)["queries"])
+        self.assertEqual((3, "harbour"), (json.loads(text)["queries"], json.loads(text)["library"]))
         for secret in ("Quay", "Mole", "Ferry", "Dune", "Place", self.home.root):
             self.assertNotIn(secret, text)
             self.assertNotIn(secret, printed.getvalue().replace(work, "").replace(out, ""))
         self.assertIn("| 0.35 (Suggest's) |", printed.getvalue())
+
+
+    def test_a_work_folder_kept_from_another_library_is_refused_not_measured(self):
+        """#2642: a copy kept (--keep-work) from one library was measured, unlabelled, by a run naming another."""
+        work, out = tempfile.mkdtemp(prefix="clip_cut_work_"), tempfile.mkdtemp(prefix="clip_cut_out_")
+        self.addCleanup(shutil.rmtree, work, True)
+        self.addCleanup(shutil.rmtree, out, True)
+        shutil.rmtree(work)
+        other = self.home.library("lakeside.db")
+        shutil.copyfile(self.path, other)
+
+        def run(source):   # each run in the home it was started in: a run enters its work folder as its home
+            with mock.patch.dict(os.environ), mock.patch.object(Runtime, "faces", return_value=NoFaces()), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                holdouts.clips_main(Namespace(work=work, sample=10, seed=1, keep_work=True), os.path.abspath(source), out)
+        run(self.path)
+        with self.assertRaises(SystemExit) as refused:
+            run(other)
+        self.assertIn("holds a copy of another library", str(refused.exception))
+        self.assertEqual(1, len([name for name in os.listdir(out) if name.startswith("holdout-clips-")]))
 
 
 if __name__ == "__main__":
