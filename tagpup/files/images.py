@@ -243,10 +243,10 @@ def is_clip(path):
 
 #: Why a clip's file is not written: a write of its Date Taken, turn or name is ExifTool's rewrite of the whole file --
 #: gigabytes, over a share -- and the date the library shows is read from the clip's own QuickTime dates, which it does
-#: not change (DECISIONS 2026-11-02, items 1 and 3); its tags and title are patched into its XMP only while writing
-#: clips is on (field_values.CLIP_PATCH_IN_PLACE; DECISIONS 2026-11-05, M7). The one sentence of the refusal
+#: not change (DECISIONS 2026-11-02, items 1 and 3); its tags and title are patched into its XMP only by a journaled
+#: write, in a folder the library holds (field_values.CLIP_PATCH_IN_PLACE; DECISIONS 2026-11-05, M7). The one sentence of the refusal
 #: (tagpup.services.file_changes.leave_out_clips, field_values.write).
-CLIP_NOT_EDITED = ("TagPup writes only a video's tags and title, and only while writing videos is turned on; it does "
+CLIP_NOT_EDITED = ("TagPup writes only a video's tags and title, and only in a folder the library holds; it does "
                    "not change a video's Date Taken, turn or name: this video's file was left as it is.")
 
 #: Why a clip whose tags or caption are saved is not written, when writing clips is on (field_values.CLIP_PATCH_IN_PLACE):

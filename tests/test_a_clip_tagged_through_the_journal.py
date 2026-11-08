@@ -1,6 +1,6 @@
 """A clip's tags and caption saved through the journal (DECISIONS 2026-11-05, M7): field_values.write patches a clip's
 XMP in place (in_place.patch_clip) and never has ExifTool write it, and only while field_values.CLIP_PATCH_IN_PLACE is on
-(off by default, until the owner's trial on 20 copies).
+(on since the owner's trial on 20 copies, DECISIONS 2026-11-07; the owner's off switch).
 
 What the owner lives through: a clip's card opens the photo panel and its tags are saved, or a selection of a day holding
 photos and clips is tagged. With writing clips off, every write of a clip is refused with the sentence; on, a keyword or
@@ -74,10 +74,11 @@ class AClipWrittenByTheOneWriter(patched.FfmpegClips):
 
     def test_with_writing_clips_off_every_write_of_a_clip_is_refused_and_exiftool_never_writes_it(self):
         path = self.clip("clip.mov")
-        for values in (keywords(["Trips/Coast"]), fields.title_fields("Jetty at dusk"),
-                       fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]}):
-            with self.subTest(sorted(values)[0]):
-                self.assert_refused(images.CLIP_NOT_EDITED, path, values)
+        with writing_clips(False):
+            for values in (keywords(["Trips/Coast"]), fields.title_fields("Jetty at dusk"),
+                           fields.date_taken_fields("2020:01:01 12:00:00"), {fields.ORIENTATION: ["6"]}):
+                with self.subTest(sorted(values)[0]):
+                    self.assert_refused(images.CLIP_NOT_EDITED, path, values)
 
     def test_with_writing_clips_on_a_journaled_tag_save_is_patched_into_its_xmp_and_nothing_else_is_written(self):
         path = self.clip("first.mp4")

@@ -81,8 +81,9 @@ WRITE_OPTIONS = ("-m",)
 PATCH_IN_PLACE = True
 
 #: Whether a journaled keyword or caption save of a clip patches its XMP in place (in_place.patch_clip; DECISIONS
-#: 2026-11-05, M7). Off, every write of a clip is refused (images.CLIP_NOT_EDITED), until the owner's trial on 20 copies.
-CLIP_PATCH_IN_PLACE = False
+#: 2026-11-05, M7), on since the owner's trial on 20 copies came out clean (DECISIONS 2026-11-07, item 4). The owner's off
+#: switch: off, every write of a clip is refused (images.CLIP_NOT_EDITED).
+CLIP_PATCH_IN_PLACE = True
 
 #: Whether a patch's segments are TagPup's own writer's (segment_edits.new_header) rather than ExifTool's write into a copy
 #: of the header (_exiftool_header). Off until the owner turns it on (docs/PLAN_OWN_METADATA.md, verification bar 6).
