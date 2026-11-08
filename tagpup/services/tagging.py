@@ -63,14 +63,18 @@ def _differs_from_base(now, base):
             or _held_title(now) != vocabulary.trimmed(base.get("title") or ""))
 
 
-def _title_written(now, wanted):
-    """The title fields a save writes, of `wanted` (fields.title_fields of the title saved): none when the file holds its
-    title only in a clip's QuickTime Title (fields.CLIP_TITLE; 2,017 photo_index clips, counted 2026-11-07) and the save
-    keeps that title, so a tag save of one makes no XMP copy of it; a title changed or cleared is written to XMP:Title
-    (the writer patches a clip's XMP alone). `now` holds BASE_READ."""
+def _title_written(path, now, wanted):
+    """The title fields a save of `path` writes, of `wanted` (fields.title_fields of the title saved): none when the file
+    holds its title only in a clip's QuickTime Title (fields.CLIP_TITLE; 2,017 of the 2,018 photo_index clips holding
+    one, counted 2026-11-08) and the save keeps that title, so a tag save of one makes no XMP copy of it; a title changed is written to XMP:Title
+    (the writer patches a clip's XMP alone), the QuickTime Title left as it was; a title cleared clears XMP:Title and a
+    clip's QuickTime Title too, so no title comes back (DECISIONS 2026-11-08, #2652, #2657). `now` holds BASE_READ."""
+    title = vocabulary.trimmed(wanted.get("XMP:Title") or "")
     in_xmp = any(vocabulary.trimmed(held) for held in fields.field_values(now.get("XMP:Title")))
-    if not in_xmp and _holds_text(now, fields.CLIP_TITLE, vocabulary.trimmed(wanted.get("XMP:Title") or "")):
+    if not in_xmp and _holds_text(now, fields.CLIP_TITLE, title):
         return {name: value for name, value in wanted.items() if name not in fields.title_fields("")}
+    if not title and images.is_clip(path) and fields.field_values(now.get(fields.CLIP_TITLE)):
+        return {**wanted, fields.CLIP_TITLE: ""}
     return wanted
 
 
@@ -287,7 +291,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         tags = [t if t in held else vocabulary.normalize(t) for t in tags]
         flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
-        after.update(_title_written(now, wanted))
+        after.update(_title_written(photo_path, now, wanted))
         after.update(_caption_moved(photo_path, now))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:

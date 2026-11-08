@@ -15,6 +15,12 @@ clip with no XMP is given a box at its end and no byte it held changes (the outs
 test, never by the patch: DECISIONS 2026-11-03); a clip with a tail or two XMP boxes is not patched, nothing written and
 ExifTool not asked; one open in another program is refused at once, a sentence; one killed after its record is saved,
 part-way or after its last byte is told OLD, TORN (put back to its old bytes and size) or NEW by its bytes.
+
+A clip's QuickTime title (DECISIONS 2026-11-08; AClipsQuickTimeTitle, by hand, and AClipSavedInPlace, a real one): a
+clear frees its one title item in moov/udta/meta/ilst (four type bytes, `free`), whatever else the patch writes, and an
+undo gives it back to the one free box of that item list holding exactly its text, the clip byte for byte as before; two
+title items, one directly in udta (ffmpeg's .mov), none the walk finds (a title in an 'mdta' keys meta), a free box
+holding another text, and a give back to a clip holding a title already, are the rewrite's. A clear cut short is settled by its four bytes.
 """
 import io
 import json
@@ -79,6 +85,29 @@ OLD = packet(("Hiking",), 300)
 def mov(*in_udta):
     """A .mov's moov with udta holding `in_udta`, ended as QuickTime ends a udta (four zero bytes)."""
     return box(b"moov", MVHD + TRAK + box(b"udta", b"".join(in_udta) + bytes(4)))
+
+
+TITLE = "Slipway at dusk"
+
+
+def data_atom(text, kind=b"\0\0\0\1"):
+    """A title item's value: a `data` atom of type `kind` (UTF-8, 1, as every live title's is), locale 0, `text`."""
+    return box(b"data", kind + bytes(4) + text.encode("utf-8"))
+
+
+def title_item(text=TITLE):
+    return box(b"\xa9nam", data_atom(text))
+
+
+def meta(*items, handler=b"mdir", full=True):
+    """moov/udta/meta holding an hdlr of `handler` and an ilst of `items`: an MP4's (a full box's version and flags
+    first) or, `full` False, QuickTime's form (its children at once)."""
+    hdlr = box(b"hdlr", bytes(8) + handler + bytes(12) + b"\0")
+    return box(b"meta", (bytes(4) if full else b"") + hdlr + box(b"ilst", b"".join(items)))
+
+
+def titled_moov(*in_udta):
+    return box(b"moov", MVHD + TRAK + box(b"udta", b"".join(in_udta)))
 
 
 def kept(layout):
@@ -291,6 +320,76 @@ class APacketPlacedInAClip(unittest.TestCase):
             self.assertIsNone(clip_patch.patch(layout_of(data), sized(65537, words)))
         data = FTYP + MOOV + xmp_box(sized(65536)) + MDAT
         self.assertEqual(clip_patch.IN_PLACE, clip_patch.patch(layout_of(data), sized(65536, ("Lakes",))).how)
+
+
+class AClipsQuickTimeTitle(unittest.TestCase):
+    """A clear's and an undo's title ranges (clip_patch.patch's `title`) on clips built by hand."""
+
+    def cleared(self, data, packet):
+        """`data` with its title cleared (the packet None: the XMP as it is), its ranges in order and apart, every box
+        but the title item where it was; the bytes after."""
+        found = clip_patch.patch(layout_of(data), packet, "")
+        self.assertIsNotNone(found)
+        after = applied(data, found)
+        untitled = [each for each in kept(layout_of(data)) if each[0][-1] != containers.TITLE_ITEM]
+        self.assertEqual(untitled, kept(layout_of(after)))
+        return after
+
+    def given_back(self, data, title=TITLE):
+        """The undo's patch of `data` giving `title` back, its free boxes read as in_place reads them; None or bytes."""
+        layout = layout_of(data)
+        freed = tuple((one, data[one.payload:one.end]) for one in clip_patch.freed_titles(layout))
+        found = clip_patch.patch(layout, None, title, freed)
+        return None if found is None else applied(data, found)
+
+    def test_a_cleared_title_is_freed_and_its_undo_gives_it_back_byte_for_byte_in_each_shape(self):
+        free = box(b"free", bytes(400))
+        shapes = {
+            "an MP4's meta, moov first": FTYP + titled_moov(meta(title_item())) + MDAT,
+            "QuickTime's meta, moov last": FTYP + MDAT + titled_moov(meta(box(b"\xa9ART", data_atom("x")), title_item(),
+                                                                          full=False)),
+            "an XMP box with a free run after it, beside the title": FTYP + titled_moov(meta(title_item()))
+                                                                     + xmp_box(OLD) + free + MDAT,
+            "an XMP box ending the file": FTYP + MDAT + titled_moov(meta(title_item())) + xmp_box(OLD),
+        }
+        for name, data in shapes.items():
+            for packet in (None, sized(len(OLD) + 300, ("Lakes",))):
+                with self.subTest(name, packet=packet is not None):
+                    item = layout_of(data).title_item
+                    self.assertIsNotNone(item)
+                    cleared = self.cleared(data, packet)
+                    self.assertEqual(cleared[:item.offset + 4] + b"free", cleared[:item.offset + 8])
+                    self.assertEqual(((), None), (layout_of(cleared).titles, self.given_back(cleared, "Slipway")),
+                                     "no title left, and none given back of another text")
+                    back = self.given_back(cleared)
+                    self.assertEqual(data if packet is None else applied(data, clip_patch.patch(layout_of(data), packet)),
+                                     back)
+
+    def test_a_title_the_patch_does_not_understand_is_the_rewrites(self):
+        cleared = {
+            "two title items (1 live clip)": FTYP + titled_moov(meta(title_item(), title_item("Pier"))) + MDAT,
+            "a title directly in udta (ffmpeg's .mov)": FTYP + box(b"wide") + MDAT + mov(box(b"\xa9nam", b"x")),
+            "one in udta and one in the item list": FTYP + titled_moov(title_item(), meta(title_item())) + MDAT,
+            "a title in an 'mdta' meta (no live clip)": FTYP + titled_moov(meta(title_item(), handler=b"mdta")) + MDAT,
+            "a title the walk does not find: an 'mdta' keys meta in moov, its item numbered (no live clip)":
+                FTYP + box(b"moov", MVHD + TRAK + meta(box(b"\0\0\0\1", data_atom(TITLE)), handler=b"mdta")) + MDAT,
+        }
+        for name, data in cleared.items():
+            with self.subTest(name):
+                self.assertIsNone(clip_patch.patch(layout_of(data), None, ""))
+                self.assertIsNone(clip_patch.patch(layout_of(data), OLD, ""), "nor its XMP written without it")
+        freed = {
+            "a free box of another text": box(b"free", data_atom("Pier")),
+            "a free box of a text that is not UTF-8": box(b"free", data_atom(TITLE, b"\0\0\0\x15")),
+            "a free box of two data atoms": box(b"free", data_atom(TITLE) + data_atom(TITLE)),
+            "two free boxes of the text": box(b"free", data_atom(TITLE)) + box(b"free", data_atom(TITLE)),
+        }
+        for name, items in freed.items():
+            with self.subTest(name):
+                self.assertIsNone(self.given_back(FTYP + titled_moov(meta(items)) + MDAT))
+        held = FTYP + titled_moov(meta(box(b"free", data_atom(TITLE)), title_item("Pier"))) + MDAT
+        self.assertEqual((), clip_patch.freed_titles(layout_of(held)))
+        self.assertIsNone(self.given_back(held), "a title item there already: another program wrote one")
 
 
 class FfmpegClips(unittest.TestCase):
@@ -550,6 +649,48 @@ class AClipSavedInPlace(FfmpegClips):
         self.save(path, words)
         self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
         self.read_back(path, words)
+
+    def test_a_title_clear_killed_part_way_is_told_by_its_four_bytes_and_its_undo_gives_the_title_back(self):
+        path = os.path.join(self.folder, "titled.mp4")
+        processes.run([TOOLS.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "1",
+                       "-pix_fmt", "yuv420p", "-metadata", "title=" + TITLE, path], check=True, capture_output=True,
+                      timeout=60)
+        original = self.bytes_of(path)
+
+        def titled(title, saving=None):
+            with self.no_exiftool:
+                return in_place.patch_clip(path, lambda old: (old, ()),
+                                           saving or (lambda record, before: self.saved.append((record, before))),
+                                           title=title)
+
+        def killed_after_saving(record, before):
+            self.saved.append((record, before))
+            raise Crash("killed once its record was saved")
+
+        def torn(handle, changes):
+            (at, written), = changes
+            handle.seek(at)
+            handle.write(written[:2])
+            handle.flush()
+            raise Crash("killed half way")
+
+        with self.assertRaises(Crash):
+            titled("", killed_after_saving)
+        record, before = self.saved[-1]
+        self.assertEqual((1, 4), (len(record["ranges"]), record["ranges"][0]["len"]), "four bytes, no other")
+        self.assertEqual((original, in_place.OLD), (self.bytes_of(path), in_place.held(path, record, before)))
+        with mock.patch.object(in_place, "_write", torn), self.assertRaises(Crash):
+            titled("")
+        self.assertEqual(in_place.TORN, in_place.held(path, *self.saved[-1]))
+        in_place.put_back(path, *self.saved[-1])
+        self.assertEqual(original, self.bytes_of(path))
+        titled("")
+        self.assertEqual(in_place.NEW, in_place.held(path, *self.saved[-1]))
+        with ExifToolSession(executable=EXIFTOOL) as session:
+            self.assertIsNone(session.get_tags([path], tags=["QuickTime:Title"])[0].get("QuickTime:Title"))
+        titled(TITLE)
+        self.assertEqual((in_place.NEW, original), (in_place.held(path, *self.saved[-1]), self.bytes_of(path)),
+                         "the undo gives the title back, the clip as ffmpeg made it")
 
 
 if __name__ == "__main__":

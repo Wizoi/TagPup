@@ -11,7 +11,8 @@ cut short, a box that claims more than the file holds, or bytes that are no box 
     Video   the top-level boxes in order (moov and udta with their children), the XMP box wherever it is (a `uuid` box
             BE7ACFCB-97A9-42E8-9C71-999491E3AFAC at the top level, as ExifTool writes into an MP4 and as an append at
             the end leaves it; or `XMP_` inside moov's udta, as ExifTool writes into a .mov), the free/skip/wide boxes
-            beside a box (room a write may take), moov before or after mdat, and moof (a fragmented file).
+            beside a box (room a write may take), moov before or after mdat, moof (a fragmented file), and the clip's
+            QuickTime title item (moov/udta/meta/ilst/\xa9nam, `title_item`).
     Jpeg    the segments up to the first scan, each APP1 EXIF, APP1 XMP and APP13 Photoshop (IPTC) segment with its
             slack: the bytes a rewrite of the segment at its old length may use, as the in-place study defined them
             (DECISIONS 2026-11-02, "THE JPEG PATCH IS BUILT WITH THE VIDEOS"): XMP's whitespace between </x:xmpmeta>
@@ -27,8 +28,19 @@ XMP_UUID = bytes.fromhex("BE7ACFCB97A942E89C71999491E3AFAC")
 #: Boxes that hold nothing and may be taken by a write beside them.
 FREE_TYPES = frozenset({"free", "skip", "wide"})
 #: Boxes whose children are walked, and which of those children are walked in turn: where ExifTool puts a .mov's XMP
-#: (moov/udta/XMP_). No deeper: a box of garbage nested in itself is not followed down.
-CONTAINERS = {"moov": frozenset({"udta"}), "udta": frozenset()}
+#: (moov/udta/XMP_), and where a clip's QuickTime title is (moov/udta/meta/ilst/\xa9nam: every one of the 2,018
+#: photo_index clips holding one, counted 2026-11-08). No deeper: a box of garbage nested in itself is not followed down.
+CONTAINERS = {"moov": frozenset({"udta"}), "udta": frozenset({"meta"}), "meta": frozenset({"ilst"}),
+              "ilst": frozenset()}
+#: The box of a clip's QuickTime title (ExifTool's QuickTime:Title), an item of an ilst; QuickTime's older user data
+#: keeps one directly in udta.
+TITLE_ITEM = "\xa9nam"
+#: The handler (its hdlr's) of a meta box whose ilst holds items by their four-letter names, TITLE_ITEM among them; a
+#: 'mdta' meta's ilst holds numbered items its keys box names.
+ITEM_HANDLER = "mdir"
+#: The boxes a meta box written without a full box's version and flags (QuickTime's form) starts with; an MP4's meta
+#: has the 4 bytes first. ExifTool tells the two forms so.
+_META_CHILDREN = frozenset({"hdlr", "keys", "ilst", "mhdr"})
 #: What a MOV/MP4/M4V starts with: an ftyp box, or a skip box before it (2 of the 2,184 live .mov/.mp4/.m4v files,
 #: counted 2026-11-02; no other first box among them).
 FIRST_TYPES = frozenset({"ftyp", "skip"})
@@ -106,7 +118,8 @@ class Tail:
 class Box:
     """One ISO-BMFF box: `size` is the whole box, its header included; `header` is 8, 16 for a 64-bit size, and 16 more
     for a `uuid` box's usertype. `to_end` is a box stored with size 0 (it runs to the end of the file). `children` are
-    walked only as CONTAINERS says; `broken` is a container whose children do not fit in it."""
+    walked only as CONTAINERS says; `broken` is a container whose children do not fit in it. `handler`, a meta box's
+    handler type (ITEM_HANDLER), None for another box or a meta with no one hdlr."""
     type: str
     offset: int
     size: int
@@ -115,6 +128,7 @@ class Box:
     to_end: bool = False
     children: tuple = ()
     broken: bool = False
+    handler: str = None
 
     @property
     def end(self):
@@ -171,6 +185,38 @@ class Video:
     def xmp(self):
         """((path of box types, box), ...): every XMP box, top-level `uuid` and moov/udta/XMP_ alike, in file order."""
         return tuple(_xmp_boxes(self.boxes, ()))
+
+    def _in_udta(self, kind):
+        moov = self.moov
+        return tuple(child for udta in (moov.children if moov else ()) if udta.type == "udta"
+                     for child in udta.children if child.type == kind)
+
+    @property
+    def titles(self):
+        """Every QuickTime title item (TITLE_ITEM) under the first moov's udta, in file order: directly in it, or in the
+        ilst of a meta in it, whatever the meta's handler."""
+        listed = tuple(item for meta in self._in_udta("meta") for ilst in meta.children if ilst.type == "ilst"
+                       for item in ilst.children if item.type == TITLE_ITEM)
+        return tuple(sorted(self._in_udta(TITLE_ITEM) + listed, key=lambda box: box.offset))
+
+    @property
+    def item_list(self):
+        """The one ilst of a moov/udta/meta whose handler is ITEM_HANDLER, it and its meta walked whole; None for none,
+        for two, or for one whose boxes do not fit."""
+        found = [(meta, ilst) for meta in self._in_udta("meta") if meta.handler == ITEM_HANDLER
+                 for ilst in meta.children if ilst.type == "ilst"]
+        if len(found) != 1 or found[0][0].broken or found[0][1].broken:
+            return None
+        return found[0][1]
+
+    @property
+    def title_item(self):
+        """The clip's one QuickTime title item, in its item list (item_list); None for none, for two anywhere under
+        moov/udta (one clip of photo_index holds two, 2026-11-08), or for one elsewhere (directly in udta)."""
+        ilst, found = self.item_list, self.titles
+        if ilst is None or len(found) != 1 or found[0] not in ilst.children:
+            return None
+        return found[0]
 
     def slack_beside(self, box):
         """(free boxes just before `box`, free boxes just after it): the runs of free/skip/wide boxes that touch it among
@@ -324,10 +370,10 @@ def _read_video(handle, file_size):
         if offset + size > file_size:
             tail = Tail(offset, "truncated", claimed=size, type=kind)
             break
-        children, broken = (), False
+        children, broken, handler = (), False, None
         if kind in CONTAINERS:
-            children, broken = _children(handle, offset + header, offset + size, CONTAINERS[kind])
-        boxes.append(Box(kind, offset, size, header, uuid, to_end, children, broken))
+            children, broken, handler = _walked(handle, kind, offset + header, offset + size)
+        boxes.append(Box(kind, offset, size, header, uuid, to_end, children, broken, handler))
         offset += size
     if not boxes:
         return Unreadable("a MOV/MP4/M4V whose first box is not whole")
@@ -348,12 +394,26 @@ def _children(handle, start, end, walked):
         kind, size, length, uuid, to_end = header
         if offset + size > end:
             return tuple(found), True
-        children, broken = (), False
+        children, broken, handler = (), False, None
         if kind in walked:
-            children, broken = _children(handle, offset + length, offset + size, CONTAINERS[kind])
-        found.append(Box(kind, offset, size, length, uuid, to_end, children, broken))
+            children, broken, handler = _walked(handle, kind, offset + length, offset + size)
+        found.append(Box(kind, offset, size, length, uuid, to_end, children, broken, handler))
         offset += size
     return tuple(found), False
+
+
+def _walked(handle, kind, start, end):
+    """(the children of the container `kind` whose content runs from `start` to `end`, True when one does not fit, a
+    meta's handler or None). A meta's children follow the 4 bytes of a full box's version and flags in an MP4, and its
+    header at once in QuickTime's form: told by whether the bytes there begin a box a meta holds (_META_CHILDREN)."""
+    if kind == "meta" and end - start >= 8 and _read_at(handle, start + 4, 4).decode("latin-1") not in _META_CHILDREN:
+        start += 4
+    children, broken = _children(handle, start, end, CONTAINERS[kind])
+    handler = None
+    hdlr = [child for child in children if child.type == "hdlr"] if kind == "meta" else []
+    if len(hdlr) == 1 and hdlr[0].end - hdlr[0].payload >= 12:
+        handler = _box_type(_read_at(handle, hdlr[0].payload + 8, 4))
+    return children, broken, handler
 
 
 def _xmp_boxes(boxes, path):
