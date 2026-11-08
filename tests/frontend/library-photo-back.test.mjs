@@ -274,7 +274,7 @@ describe("what is asked, and what fails", () => {
   });
 
   test("a bulk Delete that took the open photo returns to the view as left, less the photos gone", async (t) => {
-    const ctx = await leftView(t, { onIds: () => ({ source: {}, total: IDS.length - 1, ids: IDS.filter((id) => id !== 7), complete: true }) });
+    const ctx = await leftView(t, { onIds: () => ({ source: {}, total: IDS.length - 1, ids: IDS.filter((id) => id !== 7), videos: [], complete: true }) });
     await open(ctx, ctx.left.photo);
     ctx.state.library.activeId = 7;
     await ctx.module("library-view.js").photosDeleted();

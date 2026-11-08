@@ -136,7 +136,7 @@ describe("counting what the selection carries", () => {
   });
 
   test("the whole library may be counted: more than a job takes is no limit to a tally", async (t) => {
-    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(300), onIds: () => ({ source: {}, total: 250000, ids: range(300), complete: false }) });
+    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(300), onIds: () => ({ source: {}, total: 250000, ids: range(300), videos: [], complete: false }) });
     ctx.bulk.tally = { total: 250000, tags: [{ tag: "Trips/Coast", count: 9 }], more_tags: 0, people: [], more_people: 0 };
     el(ctx, "btn-select-all-thumbnails").click();
     await ctx.settle(700);

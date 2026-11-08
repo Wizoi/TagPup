@@ -16,7 +16,7 @@ import { forgetSelectionFaces } from './selection-faces.js';
 import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
-import { libraryPosition } from './library-source.js';
+import { libraryKinds, libraryPosition } from './library-source.js';
 import { replaceAddress } from './history-entries.js';
 import { isVideo } from './media.js';
 
@@ -418,11 +418,20 @@ export function isPhotoTagged(photo) {
  * Smart Rename and Apply All, which count what they will do.
  */
 export function countSaid(records) {
-    const said = (n, one) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
     const videos = records.filter(isVideo).length;
-    const photos = records.length - videos;
+    return kindsSaid({ photos: records.length - videos, videos });
+}
+
+/** A count by kind, `{ photos, videos }`, as countSaid spells one: a folder's records, or a library view's (#2569). */
+export function kindsSaid({ photos, videos }) {
+    const said = (n, one) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
     if (!videos) return said(photos, 'photo');
     return photos ? `${said(photos, 'photo')}, ${said(videos, 'video')}` : said(videos, 'video');
+}
+
+/** The open library view's count, as the server counted it (libraryKinds): "9 photos, 3 videos". */
+export function viewCountSaid(lib) {
+    return kindsSaid(libraryKinds(lib));
 }
 
 /** How much of the loaded folder has been tagged. */
@@ -459,7 +468,7 @@ export function visiblePhotos() {
  */
 export function updateListStats(suffix) {
     if (state.library) {
-        listStats.textContent = `${state.library.total.toLocaleString()} photos in this view`;
+        listStats.textContent = `${viewCountSaid(state.library)} in this view`;
         return;
     }
     const { total, tagged, remaining } = taggedCounts();
@@ -616,8 +625,7 @@ export function openFolderView() {
     folderViewContent.classList.remove('hidden');
 
     // Populate Folder View details
-    folderViewStats.textContent = state.library
-        ? `${state.library.total.toLocaleString()} photos` : countSaid(state.folderPhotos);
+    folderViewStats.textContent = state.library ? viewCountSaid(state.library) : countSaid(state.folderPhotos);
     
     upper.renderThumbnails();
     upper.updateSelectedThumbnailsCount();

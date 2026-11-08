@@ -264,17 +264,20 @@ def order_of(text):
 # ---- The ids ---------------------------------------------------------------------------------------
 
 def ids(library, kind, value=None, recursive=False, cap=None, order=None):
-    """{"source", "order", "total", "ids", "complete"}: the whole ordered id list of a source, for a page that jumps to the
-    middle of it. At most `cap` ids (MAX_IDS); `total` is the source's, `complete` false
-    when the list was cut. One read of ids alone: no card, no BLOB."""
+    """{"source", "order", "total", "ids", "complete", "videos"}: the whole ordered id list of a source, for a page that
+    jumps to the middle of it. At most `cap` ids (MAX_IDS); `total` is the source's, `complete` false
+    when the list was cut. `videos` the ids of the source's clips, by id (store.view_ids): the view's count by kind is
+    their number and `total` less it, the page's to show, never to count (#2569). One transaction of ids alone: no
+    card, no BLOB."""
     source = source_of(library, kind, value, recursive)
     order = order_of(order)
     conn = _open(library)
     try:
-        found, total = store.all_ids(conn, source, MAX_IDS if cap is None else cap, order)
+        found, total, videos = store.view_ids(conn, source, MAX_IDS if cap is None else cap, order)
     finally:
         conn.close()
-    return {"source": described(source), "order": order, "total": total, "ids": found, "complete": len(found) == total}
+    return {"source": described(source), "order": order, "total": total, "ids": found, "complete": len(found) == total,
+            "videos": videos}
 
 
 def read_ids(text):

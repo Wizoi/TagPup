@@ -75,7 +75,7 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
   server.on("/api/library/ids", answer((url) => {
     ctx.idsAsked.push(url);
     if (onIds) return onIds(url);
-    return { source: {}, total: total ?? ids.length, ids, complete: true };
+    return { source: {}, total: total ?? ids.length, ids, videos: [], complete: true };
   }));
   server.on("/api/library/cards", answer((url) => {
     const asked = decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number);
@@ -557,10 +557,47 @@ describe("the details panel on a library photo", () => {
   });
 });
 
+describe("a view's count by kind", () => {
+  const CLIPS = [IDS[3], IDS[10], IDS[11]];
+  const said = (ctx) => ({
+    strip: ctx.stripText(),
+    stats: ctx.document.getElementById("folder-view-stats").textContent,
+    list: ctx.document.getElementById("list-stats").textContent,
+  });
+
+  test("the strip, the folder view and the list say photos and videos as the server counted them", async (t) => {
+    const ctx = await load(t, { onIds: () => ({ source: {}, total: N, ids: IDS, videos: CLIPS, complete: true }) });
+    const now = said(ctx);
+    assert.match(now.strip, /67,?997 photos, 3 videos/);
+    assert.match(now.stats, /^67,?997 photos, 3 videos$/);
+    assert.match(now.list, /^67,?997 photos, 3 videos in this view$/);
+  });
+
+  test("deleting a clip's card lowers the video count, not the photos'", async (t) => {
+    const ctx = await load(t, { onIds: () => ({ source: {}, total: N, ids: IDS, videos: CLIPS, complete: true }) });
+    ctx.cardById(IDS[3]).querySelector(".btn-thumbnail-detail").click();
+    await ctx.settle(60);
+    ctx.document.getElementById("btn-delete-photo").click();
+    await ctx.settle(80);
+    assert.equal(ctx.state.library.total, N - 1);
+    assert.match(ctx.stripText(), /67,?997 photos, 2 videos/);
+    assert.match(ctx.document.getElementById("folder-view-stats").textContent, /^67,?997 photos, 2 videos$/);
+  });
+
+  test("a view of clips only says only its videos", async (t) => {
+    const clips = IDS.slice(0, 4);
+    const ctx = await load(t, { onIds: () => ({ source: {}, total: 4, ids: clips, videos: clips, complete: true }) });
+    assert.match(ctx.stripText(), /4 videos/);
+    assert.doesNotMatch(ctx.stripText(), /photo/);
+    assert.equal(ctx.document.getElementById("folder-view-stats").textContent, "4 videos");
+    assert.equal(ctx.document.getElementById("list-stats").textContent, "4 videos in this view");
+  });
+});
+
 describe("a view that changes under the page", () => {
   test("photos added elsewhere leave the total as it was until Refresh view; then the place is kept", async (t) => {
     let ids = IDS.slice();
-    const ctx = await load(t, { onIds: () => ({ source: {}, total: ids.length, ids, complete: true }) });
+    const ctx = await load(t, { onIds: () => ({ source: {}, total: ids.length, ids, videos: [], complete: true }) });
     await ctx.scrollToIndex(30000);
     await ctx.settle();
     const near = IDS[30000];
@@ -593,7 +630,7 @@ describe("a view that changes under the page", () => {
     const replies = [];
     ctx.server.first("/api/library/ids", (url) => new Promise((resolve) => {
       const ids = url.includes("kind=year") ? firstIds : secondIds;
-      replies.push(() => resolve({ total: 200, ids, complete: true }));
+      replies.push(() => resolve({ total: 200, ids, videos: [], complete: true }));
     }));
     opened.openLibraryView({ kind: "year", value: "2020" });
     opened.openLibraryView({ kind: "month", value: "2021-05" });

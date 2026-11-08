@@ -6,6 +6,8 @@ skipped, the equal dates in id order in the order's direction, the undated after
 direction, with a reload in the middle, beside a second library, and at the cap. A clip among the photos of a folder is
 one more photo of the view: listed once in Date Taken order by a clip's own date rule, carded as a video, counted under
 its folder and its month by the navigator, found by its file name, and answered the placeholder thumbnail, not kept.
+Every view says how many of its photos are clips (#2569): `videos` beside `total`, the same where in the same read, a clip in
+two members of a union once, a view of clips alone, an empty one, and a cut list's clips the whole source's.
 V8: a view's cards, its ids and the page's cached scan are read again after the index, a rename, a bulk tag or the CLI
 wrote the library: the card says what the disk says, the keyword view lists what the write tagged, the folder scan is
 let go. The find route reads a path literally: `_` and `%` are not wildcards.
@@ -207,6 +209,73 @@ class AClipAmongThePhotosOfAFolder(Views):
         reply = self.get("/api/photo-thumb", query_string={"id": clip})
         self.assertEqual((200, "unreadable"), (reply.status_code, reply.headers["X-TagPup-Thumb"]))
         self.assertIn("no-cache", reply.headers["Cache-Control"], "a placeholder is not kept")
+
+
+class AViewCountsItsClips(Views):
+    """#2569: a view's line said "N photos" of a view holding clips; the page could not say them apart, as the reply had one
+    total. On the old code the reply has no `videos` and every test here fails."""
+
+    def setUp(self):
+        super().setUp()
+        self.vl.tree("People/" + WREN, face_root="People")
+        june = {"QuickTime:CreateDate": "2024:06:15 12:00:00"}
+        self.photos = [self.vl.photo("Coast", "dawn.jpg", "2024:06:14 10:00:00", tags=["Trips/Coast"]),
+                       self.vl.photo("Coast", "dusk.jpg", "2024:06:16 10:00:00", tags=["People/" + WREN]),
+                       self.vl.photo("Lake", "pier.jpg")]
+        self.swim = self.vl.photo("Coast", "Harbour Swim.mov", tags=["Trips/Coast", "People/" + WREN], fields=june)
+        self.ferry = self.vl.photo(os.path.join("Coast", "Day 2"), "Ferry.mp4", fields=june)
+        self.reel = self.vl.photo("Reels", "Reel.mov", fields=june)
+        self.clips = {self.swim, self.ferry, self.reel}
+        self.coast = os.path.join(self.vl.pictures, "Coast")
+
+    def counted(self, reply):
+        """(photos, clips) as the page shows them, after checking the reply against its own list."""
+        self.assertEqual(sorted(reply["videos"]), reply["videos"], "by id")
+        self.assertLessEqual(set(reply["videos"]), set(reply["ids"]) if reply["complete"] else self.clips)
+        if reply["complete"]:
+            self.assertEqual(reply["total"], len(reply["ids"]))
+            self.assertEqual(set(reply["videos"]), set(reply["ids"]) & self.clips, "the clips are the list's own")
+        return reply["total"] - len(reply["videos"]), len(reply["videos"])
+
+    def test_every_way_of_looking_says_its_photos_and_its_clips_apart(self):
+        member = lambda kind, value, recursive=False: {"kind": kind, "value": value, "recursive": recursive}  # noqa: E731
+        sources = (
+            (dict(kind="all"), (3, 3)),
+            (dict(kind="folder", folder=self.coast), (2, 1)),
+            (dict(kind="folder", folder=self.coast, recursive="1"), (2, 2)),
+            (dict(kind="keyword", value="Trips"), (1, 1)),
+            (dict(kind="keyword_only", value="Trips/Coast"), (1, 1)),
+            (dict(kind="person", value="People/" + WREN), (1, 1)),
+            (dict(kind="year", value="2024"), (2, 3)),
+            (dict(kind="month", value="2024-06"), (2, 3)),
+            (dict(kind="folder", folder=os.path.join(self.vl.pictures, "Reels")), (0, 1)),
+            (dict(kind="month", value="1999-01"), (0, 0)),
+            (dict(kind="search", value='{"words": "swim"}'), (0, 1)),
+        )
+        for query, wanted in sources:
+            for order in ("taken", "name-desc", "caption"):
+                with self.subTest(query=query, order=order):
+                    self.assertEqual(wanted, self.counted(self.ids(order=order, **query)))
+        # The clip is in both members of a union, and in the folder and the keyword of a search: once each.
+        union = [member("folder", self.coast), member("keyword", "Trips/Coast"), member("person", "People/" + WREN)]
+        reply = self.client.post("/library/api/library/ids", json={"kind": "any_of", "value": union}).get_json()
+        self.assertEqual((2, 1), self.counted(reply))
+        search = {"all_of": [member("folder", self.coast)], "any_of": [member("keyword", "Trips"), member("person", "People/" + WREN)]}
+        reply = self.client.post("/library/api/library/ids", json={"kind": "search", "value": search}).get_json()
+        self.assertEqual((2, 1), self.counted(reply), "the folder's photos tagged or naming someone: the swim once")
+        search["none_of"] = [member("person", "People/" + WREN)]
+        reply = self.client.post("/library/api/library/ids", json={"kind": "search", "value": search}).get_json()
+        self.assertEqual((1, 0), self.counted(reply), "less those naming the person: no clip is left")
+
+    def test_a_cut_list_counts_the_whole_source_and_a_new_clip_is_in_the_next_read(self):
+        with mock.patch.object(library_view, "MAX_IDS", 2):
+            cut = self.ids(kind="all")
+        self.assertEqual((2, False, 6), (len(cut["ids"]), cut["complete"], cut["total"]))
+        self.assertEqual(sorted(self.clips), cut["videos"], "the source's clips, not the head's")
+        late = self.vl.photo("Reels", "Late.mov")
+        self.clips.add(late)
+        self.assertEqual((3, 4), self.counted(self.ids(kind="all")), "the index added a clip: the next read counts it")
+        self.assertIn(late, self.ids(kind="all")["videos"])
 
 
 class FindingAPathLiterally(Views):

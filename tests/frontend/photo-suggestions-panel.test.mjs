@@ -205,7 +205,7 @@ async function openDuringARun(t, photo, status, { theirScan = theirs } = {}) {
     .on("/api/folder/membership", { photos_not_held: 0 })
     .on("/api/folder/scan", (url) => (url.includes("2021") ? theirScan() : ours))
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/library/ids", { source: {}, total: 0, ids: [], complete: true })
+    .on("/api/library/ids", { source: {}, total: 0, ids: [], videos: [], complete: true })
     .on("/api/folder/suggest-status", status);
   const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
   await openFolder(ctx, "D:/Library/2020");
