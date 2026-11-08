@@ -59,19 +59,19 @@ FULL = packet(
     description("dc", alt(b"dc:description", b"Picnic &amp; kites"), bag(b"dc:subject", b"Beach", b"Kites"),
                 alt(b"dc:title", b"Shore"), b"<dc:creator>", b" <rdf:Seq>", b"  <rdf:li>Jo Brannock</rdf:li>",
                 b" </rdf:Seq>", b"</dc:creator>"),
-    description("exif", b"<exif:DateTimeOriginal>2019:07:14 10:22:31</exif:DateTimeOriginal>",
+    description("exif", b"<exif:DateTimeOriginal>2019-07-14T10:22:31</exif:DateTimeOriginal>",
                 b"<exif:ExifVersion>0232</exif:ExifVersion>"),
     description("lr", bag(b"lr:hierarchicalSubject", b"Places/Beach", b"People/Ida Corwell")),
     description("photoshop", b"<photoshop:DateCreated>2019-07-14T10:22:31</photoshop:DateCreated>"),
     description("tiff", b"<tiff:Orientation>1</tiff:Orientation>"),
-    description("xmp", b"<xmp:CreateDate>2019:07:14 10:22:31</xmp:CreateDate>", b"<xmp:Rating>3</xmp:Rating>"),
+    description("xmp", b"<xmp:CreateDate>2019-07-14T10:22:31</xmp:CreateDate>", b"<xmp:Rating>3</xmp:Rating>"),
     description("xmpMM", b"<xmpMM:DocumentID>xmp.did:0a1b2c</xmpMM:DocumentID>",
                 b"<xmpMM:PreservedFileName>IMG_0001.JPG</xmpMM:PreservedFileName>"),
 )
 FULL_VALUES = {
     "dc:subject": ["Beach", "Kites"], "dc:description": "Picnic & kites", "dc:title": "Shore",
-    "lr:hierarchicalSubject": ["Places/Beach", "People/Ida Corwell"], "exif:DateTimeOriginal": "2019:07:14 10:22:31",
-    "xmp:CreateDate": "2019:07:14 10:22:31", "tiff:Orientation": "1", "xmpMM:DocumentID": "xmp.did:0a1b2c",
+    "lr:hierarchicalSubject": ["Places/Beach", "People/Ida Corwell"], "exif:DateTimeOriginal": "2019-07-14T10:22:31",
+    "xmp:CreateDate": "2019-07-14T10:22:31", "tiff:Orientation": "1", "xmpMM:DocumentID": "xmp.did:0a1b2c",
     "xmpMM:PreservedFileName": "IMG_0001.JPG",
 }
 OWNED_ELEMENT = re.compile(rb"\s*<(%s)(?:\s[^>]*)?>.*?</\1>" % b"|".join(re.escape(n) for n in OWNED), re.S)
@@ -103,7 +103,7 @@ class AnExifToolPacketReadAndWritten(unittest.TestCase):
         changes = {
             "dc:subject": ["Kites", "Dunes", "Beach"], "dc:description": "Kites over the dunes",
             "dc:title": "Dunes", "lr:hierarchicalSubject": ["Places/Dunes"],
-            "exif:DateTimeOriginal": "2019:07:15 08:00:00", "xmp:CreateDate": "2019:07:15 08:00:00",
+            "exif:DateTimeOriginal": "2019-07-15T08:00:00", "xmp:CreateDate": "2019-07-15T08:00:00",
             "tiff:Orientation": 6, "xmpMM:DocumentID": "xmp.did:ffee", "xmpMM:PreservedFileName": "IMG_0002.JPG",
         }
         result = self.edited(FULL, changes)
