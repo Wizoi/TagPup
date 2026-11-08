@@ -329,6 +329,7 @@ describe("#674: Delete of a view's selection", () => {
 
   test("some its drive's Bin would not keep: a second question names them, and OK alone starts the delete for good", async (t) => {
     const ctx = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
+    ctx.bulk.edit = { op: "delete", total: 3, changed: 3, for_good: 1 };
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
     assert.equal(ctx.questions.length, 2, "the delete was asked, then the warning");
@@ -340,6 +341,17 @@ describe("#674: Delete of a view's selection", () => {
     assert.deepEqual(plain(start.body.params), { token: "t-three-for-good", for_good: true },
       "the token of the question that warned, and the owner's OK");
     assert.match(stripSentence(ctx), /^Deleted 3 photos to the Recycle Bin, 1 of them for good;/);
+  });
+
+  test("the file the warning named was not removed (its delete failed): the strip says none went for good, from the reply", async (t) => {
+    const ctx = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
+    ctx.bulk.edit = { op: "delete", total: 3, changed: 2, for_good: 0, error_count: 1,
+      errors: [{ id: 5, name: "Harbour_Swim_Long.mp4", why: "The file is in use" }] };
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good", for_good: true });
+    assert.match(stripSentence(ctx), /^Deleted 2 photos to the Recycle Bin;/, "a write says what it changed, not what it asked");
+    assert.doesNotMatch(stripSentence(ctx), /for good/);
   });
 
   test("Cancel at the warning starts nothing; seven named five and counted the rest", async (t) => {

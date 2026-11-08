@@ -123,7 +123,7 @@ export async function runBulk({ op, selection, params, desc, picked }) {
     // A batch that stopped before its end (as asked, or ExifTool stopped answering) answers with its own sentence: N of M, and
     // the change in History, in place of the same error on each photo it left.
     const stopped = body.stopped;
-    const ended = stopped || endedSentence(doneWords(desc, body.changed || 0), body) + wider;
+    const ended = stopped || endedSentence(doneWords(desc, body.changed || 0, body.for_good || 0), body) + wider;
     const errors = body.error_count || 0;
     showEnded({ text: ended, problem: errors > 0, errors: stopped ? [] : body.errors, errorCount: stopped ? 0 : errors });
     setStatus(errors > 0 ? 'error' : 'ready', ended, { transient: false });

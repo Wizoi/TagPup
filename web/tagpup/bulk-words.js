@@ -32,22 +32,20 @@ export function describeTags({ op, add = [], remove = [] }) {
 }
 
 /** "Delete 3,412 photos", "Added Trips/Coast to 1 photo": the words of `desc` for `count` photos, `form` 'verb' or 'past'. */
-function phrase(desc, form, count) {
-    return [desc[form], desc.what, desc.prep, photosOf(count)].filter(Boolean).join(' ') + (desc.after || '');
+function phrase(desc, form, count, after = '') {
+    return [desc[form], desc.what, desc.prep, photosOf(count)].filter(Boolean).join(' ') + after;
 }
 
 /**
  * What a Delete of the selection is, in words (#674): `where` is the server's answer of where the files would go
- * (/api/library/selection/delete-check: `through_this_pc`, the photos in places with no Recycle Bin), `count` the photos.
+ * (/api/library/selection/delete-check: `through_this_pc`, the photos in places with no Recycle Bin), `count` the photos. How many
+ * went for good is the reply's (doneWords), never the question's: a file the warning named may have failed to go.
  */
 export function describeDelete(where, count) {
     const through = Math.min((where && where.through_this_pc) || 0, count);
-    const forGood = Math.min((where && where.for_good && where.for_good.count) || 0, count);
     const binned = !through ? ' to the Recycle Bin'
         : through >= count ? " through this PC's Recycle Bin" : ", those from places with no Recycle Bin through this PC's";
-    // A file deleted for good is never said to have gone to a Recycle Bin.
-    const after = !forGood ? binned : forGood >= count ? ' for good' : `${binned}, ${forGood.toLocaleString()} of them for good`;
-    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', after, throughThisPc: through, forGood };
+    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', binned, throughThisPc: through };
 }
 
 /** `2,345 MB`: bytes as the question says them, rounded up. */
@@ -114,7 +112,14 @@ export function confirmSentence(desc, count) {
         + 'History lists it as one change and can undo it.';
 }
 
-/** What an edit that is done says first: "Added Trips/Coast to 3 photos", "Deleted 2 photos to the Recycle Bin". */
-export function doneWords(desc, count) {
-    return phrase(desc, 'past', count);
+/**
+ * What an edit that is done says first: "Added Trips/Coast to 3 photos", "Deleted 2 photos to the Recycle Bin". `count` and, of a
+ * Delete, `forGood` are the server's reply (`changed`, `for_good`: the files really removed for good), what was done, not asked.
+ */
+export function doneWords(desc, count, forGood = 0) {
+    if (desc.op !== 'delete') return phrase(desc, 'past', count);
+    const gone = Math.min(forGood || 0, count);
+    // A file deleted for good is never said to have gone to a Recycle Bin.
+    const after = !gone ? desc.binned : gone >= count ? ' for good' : `${desc.binned}, ${gone.toLocaleString()} of them for good`;
+    return phrase(desc, 'past', count, after);
 }
