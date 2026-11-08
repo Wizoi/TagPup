@@ -43,15 +43,16 @@ def described(conn, folder_ids):
 def larger_than(conn, folder_ids, size, most_clip_bytes, most_named, ids=None, source=None, excluded=()):
     """([the ids of the photos and clips of the selection in `folder_ids` larger than `size` bytes -- photos.size, as the
     index last read them --], the stored paths of the first `most_named` of them by path): the files a Bin that keeps files
-    of up to `size` would not keep (tagpup.services.selection.deleted_for_good). A clip over `most_clip_bytes` is not
+    of up to `size` would not keep (tagpup.services.selection.deleted_for_good; a `size` of 0, a Bin set to delete at once,
+    keeps none, an empty file not either: recycle_bin.would_keep's rule). A clip over `most_clip_bytes` is not
     deleted: not among them. Two reads over the folders given, which are the few whose largest file is over `size`."""
     selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None or not folder_ids:
         return [], []
     marks = ",".join("?" * len(folder_ids))
     where = (" FROM photo_folder pf JOIN photos p ON p.id = pf.photo_id WHERE pf.folder_id IN (%s) AND pf.photo_id IN (%s)"
-             " AND p.size > ? AND (p.kind <> ? OR p.size <= ?)" % (marks, selected))
-    args = tuple(folder_ids) + tuple(params) + (size, library_view.VIDEO, most_clip_bytes)
+             " AND (? <= 0 OR p.size > ?) AND (p.kind <> ? OR p.size <= ?)" % (marks, selected))
+    args = tuple(folder_ids) + tuple(params) + (size, size, library_view.VIDEO, most_clip_bytes)
     found = [row[0] for row in conn.execute("SELECT DISTINCT p.id" + where, args)]
     named = [row[0] for row in conn.execute("SELECT DISTINCT p.path" + where + " ORDER BY p.path LIMIT ?", args + (most_named,))]
     return found, named

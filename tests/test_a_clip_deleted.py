@@ -350,6 +350,19 @@ class AFileOnALocalDrive(APhotoAndAClip):
         self.assertEqual((1, 0), (done["changed"], done["for_good"]), done["errors"])
         self.assertEqual(["jetty.mov", "pier.jpg"], self.binned(), "the photo went to its Bin")
 
+    def test_an_empty_file_on_a_drive_whose_bin_deletes_at_once_is_named_and_not_said_to_be_recycled(self):
+        # A Bin set to delete at once keeps nothing, an empty file not either: Windows would delete it and say it recycled it.
+        empty_path = os.path.join(self.folder, "rope.jpg")
+        open(empty_path, "wb").close()
+        empty = self.vl.photo("Harbour", "rope.jpg", at=empty_path)
+        self.assertEqual([(0,)], self.vl.rows("SELECT size FROM photos WHERE id = ?", empty), "the index has its size, 0")
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1024,0,1"}):
+            self.assertEqual({"count": 1, "names": ["rope.jpg"]}, self.asked(empty)["for_good"])
+            reply = self.post("photo/delete", {"path": empty_path})
+            self.assertEqual(["rope.jpg"], reply.get_json()["for_good"], reply.get_json())
+            self.assert_kept(empty_path, empty)
+        self.assertEqual([], self.binned(), "nothing was sent to a Bin that keeps nothing")
+
     def test_a_file_its_drives_bin_can_keep_goes_straight_there(self):
         self.assertEqual({"count": 0, "names": []}, self.asked(self.clip)["for_good"])
         reply = self.post("photo/delete", {"path": self.clip_path})

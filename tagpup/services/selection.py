@@ -213,7 +213,7 @@ def _for_good(conn, photo_ids, sizes, named, binless):
         kept = keeps[path]
         if kept is None:
             continue
-        if (sizes.get(folder_id) or (0, 0))[1] > kept:
+        if not recycle_bin.would_keep((sizes.get(folder_id) or (0, 0))[1], kept):
             not_kept[kept].append(folder_id)
     found, stored = set(), []
     for kept, folder_ids in not_kept.items():

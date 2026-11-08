@@ -459,6 +459,12 @@ def _keeps(mount):
     return 0 if nuke else capacity
 
 
+def would_keep(size, kept):
+    """Would a Bin that keeps files of up to `kept` bytes (keeps_up_to) keep a file of `size`: never one set to delete at once
+    (`kept` 0), an empty file not either. The one rule; store/selection_folders.larger_than is its SQL."""
+    return kept > 0 and size <= kept
+
+
 class NotKept(OSError):
     """A file the Recycle Bin of its drive would not keep (keeps_up_to), asked to be deleted without `for_good`: nothing
     was touched. The page names it and asks; confirmed, it is deleted for good."""
@@ -635,7 +641,7 @@ def delete_file(file_path, for_good=False):
     except OSError as e:
         raise OSError("Could not tell whether the Recycle Bin of its drive can keep it (%s). Nothing was deleted."
                       % (e.strerror or e)) from None
-    if size > kept:
+    if not would_keep(size, kept):
         if not for_good:
             raise NotKept(not_kept(source, kept))
         os.remove(source)
