@@ -8,7 +8,9 @@
  * edits its record's `writes` names (its title, people, keywords and name): Rotate and Date Taken are inert with a
  * sentence naming them, a photo stepped to after it has every control back, and a missing one has none (stale.js
  * applyPhotoStale). Its delete is live, as a photo's (DECISIONS 2026-11-08, A5, cut B): a clip playing is stopped before
- * the delete is sent, so the server holds no range of its file open, and shown again when the delete fails. Fictional
+ * the delete is sent, so the server holds no range of its file open, and shown again when the delete fails. A clip its
+ * drive's Recycle Bin would not keep is answered with its name and nothing deleted: the page warns, naming it, and sends
+ * `for_good` only on OK; on Cancel nothing is deleted and the clip plays again (DECISIONS 2026-11-08, 'FOR GOOD'). Fictional
  * names only.
  */
 import { test, describe, afterEach } from "node:test";
@@ -241,6 +243,68 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
     await ctx.settle(80);
     ctx.consoleErrors.length = 0;
     assert.ok(!el(ctx, "btn-delete-photo").hasAttribute("inert"), "answered: offered again");
+  });
+
+  const NOT_KEPT = "Beach_Day_Long_Take.mp4";
+  const REFUSED = "The Recycle Bin of its drive would not keep this file: it is deleted for good only once you confirm it.";
+
+  /**
+   * The delete's replies in turn, as the server sends them: the first a 400 naming the file its drive's Bin would not keep
+   * (tagpup_routes.photo_delete, `for_good: [name]`), the second the confirmed delete's. Each route answers once and goes.
+   */
+  function answersInTurn(ctx, replies) {
+    for (const [body, status] of [...replies].reverse()) {
+      const route = { match: "/api/photo/delete", status, headers: {} };
+      route.body = () => { ctx.server.routes.splice(ctx.server.routes.indexOf(route), 1); return body; };
+      ctx.server.routes.unshift(route);
+    }
+  }
+
+  function asked(ctx, answers) {
+    const questions = [];
+    ctx.window.confirm = (question) => { questions.push(question); return answers[questions.length - 1]; };
+    return questions;
+  }
+
+  test("a clip its drive's Bin would not keep: the warning names it, and OK alone sends the delete for good", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    answersInTurn(ctx, [
+      [{ success: false, error: REFUSED, for_good: [NOT_KEPT] }, 400],
+      [{ success: true, for_good: true, through_this_pc: false,
+        message: "Deleted for good, as you confirmed: the Recycle Bin of its drive would not keep it." }, 200],
+    ]);
+    const questions = asked(ctx, [true, true]);
+    ctx.window.alert = (said) => assert.fail(`nothing failed, yet the page said: ${said}`);
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(120);
+    assert.equal(questions.length, 2, "the delete was asked, then the warning");
+    assert.match(questions[1], /deleted for good, not moved to the Recycle Bin/);
+    assert.ok(questions[1].includes(NOT_KEPT), "the warning names the file");
+    assert.match(questions[1], /Cancel deletes nothing/);
+    const sent = deletes(ctx).map((c) => c.body);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].for_good, undefined, "the first delete does not say for good: nobody had confirmed it");
+    assert.equal(sent[1].for_good, true, "the second does, once OK was pressed");
+    assert.equal(sent[1].path, sent[0].path);
+    assert.equal(ctx.state.library.activeId, VIDEO + 1, "deleted: the next photo opens");
+    assert.ok(!ctx.state.library.ids.includes(VIDEO) || ctx.cardById(VIDEO) === null, "the clip has left the view");
+  });
+
+  test("Cancel at the warning deletes nothing: one delete sent, nothing said deleted, the clip plays again", async (t) => {
+    const ctx = await viewWithAVideo(t);
+    answersInTurn(ctx, [[{ success: false, error: REFUSED, for_good: [NOT_KEPT] }, 400]]);
+    const questions = asked(ctx, [true, false]);
+    ctx.window.alert = (said) => assert.fail(`a Cancel is not a failure, yet the page said: ${said}`);
+    await open(ctx, VIDEO);
+    click(ctx.window, el(ctx, "btn-delete-photo"));
+    await ctx.settle(120);
+    assert.equal(questions.length, 2, "the delete was asked, then the warning");
+    assert.equal(deletes(ctx).length, 1, "no second delete: the server was never told for good");
+    assert.equal(status(ctx), "Nothing was deleted.");
+    assert.equal(ctx.state.library.activeId, VIDEO, "the clip is still the one shown");
+    assertPlaying(ctx, VIDEO, "cancelled: the clip plays again");
+    assert.ok(!el(ctx, "btn-delete-photo").hasAttribute("inert"), "and its Delete is offered again");
   });
 });
 
