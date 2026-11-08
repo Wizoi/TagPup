@@ -310,6 +310,21 @@ class TheRealMigrations(unittest.TestCase):
             self.assertIn("integrity", names)
             self.assertTrue(any(name.startswith("rows kept") for name in names))
 
+    def test_the_app_before_each_one_keys_only_the_tables_its_library_has(self):
+        # `up_to` takes out of the journal's keys what a later migration made (migration_names.JOURNALED_SINCE, kept by
+        # hand): a keyed table a migration makes and the list forgets is keyed by the app before it, whose library lacks it.
+        home = own_home.for_test(self)
+        for version in range(schema.BASELINE, schema.LATEST + 1):
+            with self.subTest(version=version), migration_names.up_to(version):
+                path = home.library("at_%d.db" % version)
+                schema.ensure(path)
+                conn = db.connect(db.readonly_uri(path), uri=True)
+                try:
+                    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+                finally:
+                    conn.close()
+                self.assertEqual(set(), set(journal.KEYS) - tables)
+
     def test_a_migration_that_does_not_say_what_it_is_cannot_be_declared(self):
         with self.assertRaises(TypeError):
             schema.Migration(schema.LATEST + 1, "a step", lambda conn: None)
