@@ -4,7 +4,7 @@ The domain's charter is `.claude/agents/tagpup-owner-data.md` (its Scope, its co
 D9). This page states what the domain is today, each of the seven conditions of health (docs/OWNERS.md) with its evidence
 and date, and what is so by design. A condition not met is the domain's queue.
 
-## What the domain is (counted 2026-10-15; the table 2026-11-03 but its last two rows 2026-10-29; read-only)
+## What the domain is (the table and the unfinished work counted read-only 2026-11-08)
 
 What is in the library file, and whether it can be put back: how a file is opened and written (`store/db.py`), the schema
 and its one baseline at 32, the journal of row changes and its undo, the journal of photo-file changes, the derived tables
@@ -14,21 +14,23 @@ shows (Views, Integration).
 
 | | photo_index | kr-track | renton_parkrun |
 |---|---|---|---|
-| schema | 37 | 37 | 37 |
-| photos / faces | 59,523 / 183,084 | 2,065 / 12,664 | 1,309 / 3,315 |
-| changes / change_rows / change_files | 6,243 / 1,491,060 / 51,451 | 1,947 / 88,883 / 4,696 | 1,245 / 24,032 / 4,318 |
+| schema | 38 | 38 | 38 |
+| photos (of them clips) / faces | 61,797 (2,179) / 183,669 | 2,070 (5) / 12,664 | 1,309 (0) / 3,315 |
+| a clip's frames 1 to 4 (`embedding_frames`), photo-model keys | 8,708, 1 | 20, 1 | 0, 1 |
+| changes / change_rows / change_files | 6,340 / 1,500,284 / 95,369 | 1,948 / 88,883 / 4,696 | 1,247 / 24,032 / 4,319 |
 | changes made below 32 (row undo refused) | 715 | 316 | 1,210 |
-| roots / settings / job_runs | 1 / 11 / 323 | 1 / 10 / 112 | 1 / 10 / 96 |
+| roots / settings / job_runs | 1 / 11 / 436 | 1 / 10 / 243 | 1 / 10 / 174 |
 
-Unfinished work (2026-11-03): 0 `derived_pending`, 0 files `writing`, 0 patch records; 139 `conflict` files, all in
-photo_index (every other file `done`), none with a note the doctor counts (`file_journal.NOTES`), and no change of the
-index's bake kept (the doctor's last full report: 0 broken rules on all three, 2026-10-29). Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
+Unfinished work (2026-11-08): 0 `derived_pending`, 0 files `writing`, 0 patch records; 139 `conflict` files, all in
+photo_index (every other file `done`), none with a note the doctor counts (`file_journal.NOTES`) (the doctor's last full
+report: 0 broken rules on all three, 2026-10-29). Snapshots are 3 daily, 1 weekly and 1 monthly per library; the copies below schema 32 are
 listed "too old to restore". Migration 33 (each face's vector to `face_embeddings`, keyed by the face model; the drops of
 `faces_pending` and `idx_faces_name`; DECISIONS 2026-10-18, "MIGRATION 33 IS PULLED FORWARD") has run on all three
-(schema 33, counted 2026-10-18), and 34 to 36 after it (schema 36 on all three, counted read-only 2026-11-02). Migration 37
-(`photos.kind`, 'photo' in every row, and `change_files.patch` and `patch_before`; additive; DECISIONS 2026-11-02, "VIDEO:
-THE OWNERS' PLANS AND THE OWNER'S ANSWERS", 4) is the one in flight from its merge until the owner's server has run it on
-the three libraries (62,897 photos at 36, none with a video's extension, counted read-only 2026-11-02). What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md, section 10.
+(schema 33, counted 2026-10-18), and 34 to 38 after it: 37 (`photos.kind`, 'photo' in every row there was, and
+`change_files.patch` and `patch_before`; DECISIONS 2026-11-02, "VIDEO: THE OWNERS' PLANS AND THE OWNER'S ANSWERS", 4) and
+38 (`embedding_frames`; DECISIONS 2026-11-06, "MIGRATION 38") are additive. All three are at 38 (counted read-only
+2026-11-08): no migration is in flight. What an install needs (disk, one app first, no CLI index meanwhile): DATABASE.md,
+section 10.
 
 ## The contract other domains rely on
 
@@ -78,11 +80,10 @@ the three libraries (62,897 photos at 36, none with a video's extension, counted
 
 ## By design (each row closed `decided:`)
 
-- **#464, #1382**: no runner check of a migration's declared `touches`, nor of the AUTOINCREMENT counters. Both guard only a
-  migration above 32; the one there is, 33, is destructive (it claims no undo exemption) and rebuilds no AUTOINCREMENT
-  table (`DROP COLUMN` rewrites `faces` in place; `sqlite_sequence.faces` equals `MAX(faces.id)` in the three libraries (302,954, 10,241 and 3,329, counted 2026-10-18, read-only, at 32)). The rule instead: a migration branch carries, in its own branch, a check of
-  an additive step's `touches` if it claims the undo exemption, and a check that no `sqlite_sequence` counter goes down if it
-  rebuilds an AUTOINCREMENT table.
+- **#464, #1382**: no runner check of a migration's declared `touches`, nor of the AUTOINCREMENT counters. The rule instead:
+  `touches` is the tables whose rows a step may move (`schema.Migration`); a migration branch carries, in its own branch, a
+  check of an additive step's `touches` if it claims the undo exemption (names no table the journal keys), and a check
+  that no `sqlite_sequence` counter goes down if it rebuilds an AUTOINCREMENT table.
 - **#1375**: a library whose making failed holds only `schema_version`. The three libraries each have their 33 tables, and
   every entry that makes a library runs `ensure`, which makes it whole.
 - **#1088, #1277**: `faces_pending` and `idx_faces_name` go with migration 33. The `pruned` value of the `changes.status`

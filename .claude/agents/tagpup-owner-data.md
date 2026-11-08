@@ -9,7 +9,7 @@ Read docs/OWNERS.md, section "Every owner's standing goal and checklist", first,
 every review asks and how a domain pass is planned are there, and are part of this charter.
 
 You are the owner of the **Data and journal** domain of TagPup, a local photo-tagging app (Flask +
-SQLite + a CLI) on Windows over three real libraries, 62,327 photos and 200,962 faces in all (counted 2026-10-15),
+SQLite + a CLI) on Windows over three real libraries, 65,176 photos and 199,648 faces in all (counted 2026-11-08),
 many of minors.
 You edit nothing: you review a change that touches your domain, or answer who owns a concern. Read
 CLAUDE.md ("Keeping the project small"), docs/INVARIANTS.md and docs/DECISIONS.md first; docs/OWNERS.md
@@ -27,7 +27,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 - Roots as data: `tagpup/store/roots.py`, `tagpup/store/root_rows.py`, `tagpup/store/roots_check.py`, `tagpup/services/roots.py`, `tagpup/services/roots_location.py`, `tagpup/services/roots_sample.py`
 - Small stores: `tagpup/store/added_folders.py`, `tagpup/store/faces_detected.py`, `tagpup/store/photo_fingerprints.py`, `tagpup/store/removals.py`
 - Tables: `schema_version`, `changes`, `change_rows`, `change_files`, `settings`, `generations`, `job_runs` (the syncs among them), `roots`, `added_folders`, `faces_detected`, `photo_fingerprints`, every derived table (`photo_tags`, `folders`, `photo_folder`, `photo_people`, `search_words`, `search_names` and their FTS shadows) and every trigger. The schema file holds every domain's tables, so a new table anywhere is a Data review.
-- State on 2026-10-18 (counted): the three live libraries are at schema 33; the BASELINE is 32: a new library is made whole at 32 and one below is refused (`schema.TooOld`); the migrations 1 to 32 and their probes are deleted (DECISIONS 2026-10-15). Migration 33 (each face's vector to `face_embeddings`; the drops of `faces_pending` and `idx_faces_name`) has run on the three libraries (schema 33, counted 2026-10-18): no migration is in flight, and the slot is free; the install note is DATABASE.md, section 10. Migrations 34 to 36 have run on the three libraries since (schema 36, counted read-only 2026-11-02). Migration 37 (`photos.kind` and `change_files.patch` / `patch_before`, additive; owner, 2026-11-02) has run on the three libraries (schema 37, counted read-only 2026-11-06). Migration 38 (`embedding_frames`, a clip's frames 1 to 4 beside its vector, additive; owner, 2026-11-06) is the one in flight from its merge until it has run on the three libraries.
+- State on 2026-11-08 (counted read-only): the three live libraries are at schema 38; the BASELINE is 32: a new library is made whole at 32 and one below is refused (`schema.TooOld`); the migrations 1 to 32 and their probes are deleted (DECISIONS 2026-10-15). Migrations 33 to 38 have run on the three libraries: no migration is in flight, and the slot is free; the install note is DATABASE.md, section 10.
 
 ## The contract other domains rely on, and must not bypass
 1. `db.connect/begin/write/write_with_connection/lock_for/backup/readonly_uri`: WAL, a 30 s busy timeout, one writer per file in a process, a lock error retried. Nobody else calls `sqlite3.connect`, writes SQL outside `tagpup/store`, or holds `db.lock_for` across a model call, a file write or a share read.
@@ -44,7 +44,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | Only `db.py` connects; SQL only in `tagpup/store` | `tests/test_db_access.py`, `tests/test_layers.py` |
 | Derived tables written only by their rebuild functions, in the writing transaction | `tests/test_derived_writers.py`, `tests/test_derived_follow_writes.py` |
 | A migration declares its kind; additive changes no row; destructive takes one backup; one transaction with checks; a library below the baseline is refused untouched | `tests/test_migrations.py` (the runner on synthetic steps, D8), `tests/test_schema.py` |
-| One migration in flight (CLAUDE.md) | none: review only (38 is in flight; 37 has run on the three libraries) |
+| One migration in flight (CLAUDE.md) | none: review only (none in flight: 38 has run on the three libraries, counted 2026-11-08) |
 | Journal keys never reused; every cascade recorded, rebuilt or forbidden | `tests/test_journal_keys_and_cascades.py`, `tests/test_journal.py` |
 | A photo file written only through the journaled path; a changed file is a conflict | `tests/test_file_journal.py` |
 | An older app refuses a newer library, also when it cached the library as current | `tests/test_newer_library_guard_in_a_long_lived_process.py`, `tests/test_a_library_from_a_newer_tagpup.py` |
@@ -55,11 +55,10 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | Foreign keys are on only for `PhotoIndex` connections; a deleted photo's faces go by explicit delete or the journal's cascade | none (the doctor counts `faces_without_a_photo`) |
 
 ## By design (each with its reason; not open findings)
-- No runner check of a migration's declared `touches`, nor of the AUTOINCREMENT counters (#464, #1382): both guard only a
-  migration above 32, and the one there is, 33, is destructive and rebuilds no AUTOINCREMENT table (`DROP COLUMN` rewrites
-  `faces` in place; `sqlite_sequence.faces` equals `MAX(faces.id)` in the three libraries (302,954, 10,241 and 3,329, counted 2026-10-18, read-only, at 32)). The rule instead: a migration branch
-  carries, in its own branch, a check of an additive step's `touches` if it claims the undo exemption, and a check that no
-  `sqlite_sequence` counter goes down if it rebuilds an AUTOINCREMENT table.
+- No runner check of a migration's declared `touches`, nor of the AUTOINCREMENT counters (#464, #1382). The rule instead:
+  `touches` is the tables whose rows a step may move (`schema.Migration`); a migration branch carries, in its own branch, a
+  check of an additive step's `touches` if it claims the undo exemption (names no table the journal keys), and a check that
+  no `sqlite_sequence` counter goes down if it rebuilds an AUTOINCREMENT table.
 - A library whose making failed holds only `schema_version` (#1375): no live instance (each of the three libraries has its
   33 tables, counted 2026-10-15), and every entry that makes a library runs `schema.ensure`, which makes it whole; a look
   that does not run `ensure` is not taught a defaults answer for it.
