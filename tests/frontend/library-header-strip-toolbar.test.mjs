@@ -322,6 +322,46 @@ describe("#674: Delete of a view's selection", () => {
     assert.ok(!el(ctx, "folder-view-content").classList.contains("hidden"));
     assert.equal(ctx.photosAsked.filter((id) => id === 5).length, 1, "the deleted photo is not asked for again");
   });
+
+  // Files on a drive whose Recycle Bin would not keep them (DECISIONS 2026-11-08, 'FOR GOOD'): the delete-check counts them and
+  // names the first five (selection.where_deleted); the page warns, naming them, and starts with for_good only on OK.
+  const FOR_GOOD = (count, names) => ({ ...BIN, token: "t-three-for-good", for_good: { count, names } });
+
+  test("some its drive's Bin would not keep: a second question names them, and OK alone starts the delete for good", async (t) => {
+    const ctx = await view(t, 40, { where: FOR_GOOD(1, ["Harbour_Swim_Long.mp4"]) });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.equal(ctx.questions.length, 2, "the delete was asked, then the warning");
+    assert.match(ctx.questions[0], /^Delete 3 photos\?/);
+    assert.match(ctx.questions[1], /^This file would be deleted for good, not moved to the Recycle Bin/);
+    assert.ok(ctx.questions[1].includes("  Harbour_Swim_Long.mp4"), "the warning names the file");
+    assert.match(ctx.questions[1], /Cancel deletes nothing\.$/);
+    const [start] = calls(ctx, "/api/library/bulk-edit");
+    assert.deepEqual(plain(start.body.params), { token: "t-three-for-good", for_good: true },
+      "the token of the question that warned, and the owner's OK");
+    assert.match(stripSentence(ctx), /^Deleted 3 photos to the Recycle Bin, 1 of them for good;/);
+  });
+
+  test("Cancel at the warning starts nothing; seven named five and counted the rest", async (t) => {
+    const names = ["Clip_A.mp4", "Clip_B.mp4", "Clip_C.mp4", "Clip_D.mp4", "Clip_E.mp4"];
+    const ctx = await view(t, 40, { where: FOR_GOOD(7, names) });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    ctx.answer = (text) => !/deleted for good/.test(text);
+    await remove(ctx);
+    assert.equal(ctx.questions.length, 2);
+    assert.match(ctx.questions[1], /^These files would be deleted for good/);
+    for (const name of names) assert.ok(ctx.questions[1].includes(`  ${name}`), `${name} is named`);
+    assert.match(ctx.questions[1], /\n  and 2 more\n/);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 0, "nothing started: nothing deleted, to the Bin or for good");
+  });
+
+  test("none for good: one question, and the start does not say for good", async (t) => {
+    const ctx = await view(t, 40, { where: FOR_GOOD(0, []) });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.equal(ctx.questions.length, 1);
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three-for-good" });
+  });
 });
 
 describe("#691-#693: a Delete deletes exactly what its question named", () => {
