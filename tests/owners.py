@@ -143,7 +143,7 @@ _SCENARIO_FILES = {
         "test_an_index_reads_a_bake test_a_machine_without_a_card"
     ),
     "F12": (
-        "test_a_clip_is_indexed_as_a_video test_a_clip_is_not_edited_or_deleted test_a_clip_tagged_through_the_journal "
+        "test_a_clip_is_indexed_as_a_video test_a_clip_is_not_turned_dated_or_deleted test_a_clip_tagged_through_the_journal "
         "test_a_clip_tag_undone test_a_clip_patch_cut_short test_a_tag_tree_edit_of_a_tag_a_clip_holds "
         "test_a_clip_titled_in_quicktime test_a_clip_renamed"
     ),

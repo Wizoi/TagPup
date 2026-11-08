@@ -1,4 +1,4 @@
-"""A clip in the library has only its tags, title and name written by TagPup, and is never deleted (F12): a turn, a
+"""A clip in the library is not turned, dated or deleted by TagPup (F12): a turn, a
 Save carrying a Date Taken and a delete that name a clip leave its file byte for byte as it was, journal
 nothing for it, and say so in a plain sentence (tagpup.files.images.CLIP_NOT_EDITED, CLIP_NOT_DELETED); the photos named
 beside it are written or deleted as always. A tag or title save is patched into its XMP (field_values.writes,
