@@ -6,7 +6,10 @@ What the owner lives through: 2,017 photo_index clips carry a title only in thei
 A clip's card opens the photo panel showing that title, the owner adds a tag and saves: the save is not refused as
 changed on disk, the title stays in the QuickTime Title alone (no XMP copy of it is made), and the row says what a scan
 reads. A title typed over it goes into XMP:Title and is the title from then on, the QuickTime Title left as it was; a
-title cleared clears XMP:Title and frees the QuickTime Title, and the clip has no title anywhere.
+title cleared clears XMP:Title and frees the QuickTime Title, and the clip has no title anywhere; History's Undo of
+that clear gives the QuickTime Title back, the clip byte for byte as it was before the clear, its row as a scan reads it.
+A .mov holding its title in an item list (as the live ones do; ffmpeg's own .mov keeps it directly in udta, which a clear
+refuses as the rewrite's) is cleared and undone alike.
 
 A real one-second clip made by the machine's ffmpeg with a title (its QuickTime Title, as the live clips hold theirs),
 indexed by the indexer's own read, saved through the pages (tests/test_a_clip_tagged_through_the_
@@ -23,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_a_clip_tagged_through_the_journal import EXIFTOOL, TOOLS, ALibraryHoldingAClip  # noqa: E402
 
 from tagpup.core import processes  # noqa: E402
-from tagpup.files import metadata  # noqa: E402
+from tagpup.files import containers, metadata  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
 QUICKTIME_TITLE = "Slipway at dusk"
@@ -96,6 +99,61 @@ class AClipTitledInQuickTime(ALibraryHoldingAClip):
         self.assertEqual((None, None), self.titles(), "a cleared title clears XMP:Title and the QuickTime Title")
         self.assertEqual("", self.opened()["title"], "and the panel shows no title")
         self.assert_row_says_what_a_scan_reads()
+
+    def last_change(self):
+        return self.vl.rows("SELECT MAX(change_id) FROM change_files WHERE photo_id = ?", self.clip)[0][0]
+
+    def undone(self, change):
+        """History's Undo of `change` as the dialog sends it: its rehearsal, then the undo itself."""
+        rehearsal = self.post("history/%d/undo" % change, {})
+        self.assertEqual(200, rehearsal.status_code, rehearsal.data)
+        self.assertEqual([], rehearsal.get_json()["differences"], "the rehearsal says it can be put back")
+        reply = self.post("history/%d/undo" % change, {"apply": True})
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual((1, []), (reply.get_json()["changed"], reply.get_json()["errors"]))
+
+    def cleared_and_undone(self):
+        """Clear the clip's title from the panel, then Undo it from History: each step read back."""
+        record = self.opened()
+        before = self.read_bytes(self.clip_path)
+        reply = self.save(record, "", record["tags"])
+        self.assertEqual(200, reply.status_code, reply.data)
+        self.assertEqual((None, None), self.titles(), "the clear frees the QuickTime Title")
+        with open(self.clip_path, "rb") as handle:
+            self.assertEqual((), containers.read(handle).titles, "no title item is left")
+        self.assertEqual("", self.opened()["title"])
+        self.assert_row_says_what_a_scan_reads()
+        self.undone(self.last_change())
+        self.assertEqual((QUICKTIME_TITLE, None), self.titles(), "the undo gives the QuickTime Title back alone")
+        self.assertEqual(QUICKTIME_TITLE, self.opened()["title"])
+        self.assert_row_says_what_a_scan_reads()
+        return before
+
+    def test_a_cleared_title_undone_from_history_leaves_the_clip_byte_for_byte_as_before_the_clear(self):
+        record = self.opened()
+        reply = self.save(record, record["title"], ["Trips/Coast"])
+        self.assertEqual(200, reply.status_code, reply.data)
+        before = self.cleared_and_undone()
+        self.assertEqual(before, self.read_bytes(self.clip_path), "the clip is as it was before the clear")
+
+    def test_a_cleared_title_of_a_clip_with_no_xmp_is_undone_and_only_the_xmp_box_the_clear_appended_stays(self):
+        before = self.cleared_and_undone()
+        after = self.read_bytes(self.clip_path)
+        self.assertEqual(before, after[:len(before)], "every byte it held is as it was; the appended XMP box stays")
+
+    def test_a_movs_title_in_its_item_list_is_cleared_and_undone(self):
+        self.clip_path = os.path.join(self.folder, "slipway.mov")
+        made = processes.run([TOOLS.ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10",
+                              "-t", "1", "-pix_fmt", "yuv420p", self.clip_path], capture_output=True)
+        self.assertEqual(0, made.returncode, made.stderr)
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            et.set_tags([self.clip_path], tags={"ItemList:Title": QUICKTIME_TITLE}, params=["-overwrite_original"])
+        with open(self.clip_path, "rb") as handle:
+            self.assertIsNotNone(containers.read(handle).title_item, "the title in moov/udta/meta/ilst, as live")
+        self.clip, = self.index(self.clip_path)
+        before = self.cleared_and_undone()
+        after = self.read_bytes(self.clip_path)
+        self.assertEqual(before, after[:len(before)])
 
 
 if __name__ == "__main__":
