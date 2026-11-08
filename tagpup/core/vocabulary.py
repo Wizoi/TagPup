@@ -247,12 +247,16 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 #: none (DECISIONS 2026-11-03, XMP IS THE COPY THE INDEX READS): a keyword or caption save may patch XMP alone and
 #: leave IPTC holding what it held before (tagpup.core.fields.XMP_ONLY). A title's copies (TITLE_COPIES) are
 #: XMP:Title and IPTC:ObjectName (tagpup.core.fields.title_fields), a caption's (DESCRIPTION_COPIES) the Description.
-#: A clip's keywords may be in its QuickTime Subject (fields.CLIP_KEYWORDS), its title in its QuickTime Title
-#: (fields.CLIP_TITLE), which TagPup reads and never writes: each read as XMP's copy when XMP holds none (a clip's title
-#: is its XMP:Title, else its QuickTime Title: DECISIONS 2026-11-07, item 3). ExifTool answers it beside XMP's, and the
-#: bare "Subject" or "Title" is whichever it answered last (tagpup.files.metadata.structured), so a copy is read by the
-#: first of its names that holds a value (_read_copy), the prefixed names first.
-KEYWORD_COPIES = (("XMP:Subject", fields.CLIP_KEYWORDS, "Subject"), ("IPTC:Keywords", "Keywords"))
+#: A clip's title may be in its QuickTime Title (fields.CLIP_TITLE), which TagPup reads and never writes: read as XMP's
+#: copy when XMP holds none (a clip's title is its XMP:Title, else its QuickTime Title: DECISIONS 2026-11-07, item 3).
+#: ExifTool answers it beside XMP's, and the bare "Title" is whichever it answered last
+#: (tagpup.files.metadata.structured), so a copy is read by the first of its names that holds a value (_read_copy), the
+#: prefixed names first. A keyword is read by its group's name alone, XMP:Subject's or IPTC:Keywords': the bare
+#: "Subject" of a clip holding no XMP:Subject is its QuickTime Subject, a Microsoft Xtra entry that is not text on all
+#: 14 live clips holding one (a 32-byte value ExifTool answers as hex; no clip of the three libraries holds a text
+#: QuickTime keyword, counted 2026-11-07), and was read as a tag until the owner ruled it out (2026-11-07, #2662). Every
+#: row of the three libraries holding a bare keyword name holds its group's name beside it (counted 2026-11-07).
+KEYWORD_COPIES = (("XMP:Subject",), ("IPTC:Keywords",))
 TITLE_COPIES = (("XMP:Title", fields.CLIP_TITLE, "Title"), ("IPTC:ObjectName", "ObjectName"))
 DESCRIPTION_COPIES = (("XMP:Description", "Description"), ("IPTC:Caption-Abstract", "Caption-Abstract"))
 #: The title first, then the caption: the first a photo holds is its title as the page shows it (title_of). A photo
@@ -302,7 +306,7 @@ def _values(meta, fields):
 def _read_copy(meta, copies):
     """The values of one value held twice (KEYWORD_COPIES, a pair of CAPTION_COPIES): XMP's when it holds one, else
     IPTC's, each read by the first of its names that holds a value (a photo's bare name holds what its prefixed one
-    does; a clip's bare "Subject" may be its QuickTime copy, read only when XMP holds none). A field present but blank
+    does; a clip's bare "Title" may be its QuickTime copy, read only when XMP holds none). A field present but blank
     holds none."""
     for names in copies:
         for name in names:
