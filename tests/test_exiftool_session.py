@@ -27,6 +27,7 @@ from exiftool.exceptions import ExifToolExecuteError  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession, ExifToolTimeout  # noqa: E402
 
 
@@ -146,6 +147,55 @@ class TestAStalledCommandFailsLoudly(unittest.TestCase):
         outcome = _within(WATCHDOG, self.et, lambda: self.et.execute("-ver"))
         self.assertNotIn("hung", outcome)
         self.assertRegex(outcome.get("value", ""), r"^\d+\.\d+")
+
+
+#: A TagPup process that opens a session, prints its ExifTool's id and is killed hard (os._exit: Task Manager, a crash,
+#: the owner closing the console); with STALL, after a command that timed out, so the ExifTool it prints is the one the
+#: session started again by itself.
+_KILLED_WRITER = r'''
+import os, sys
+sys.path.insert(0, %r)
+from tagpup.files.exiftool_session import ExifToolSession, ExifToolTimeout
+et = ExifToolSession(executable=%r, timeout=45)
+et.execute("-ver")
+if %r:
+    et.timeout = 3
+    try:
+        et.execute("-j", "-")
+    except ExifToolTimeout:
+        pass
+    et.timeout = 45
+    et.execute("-ver")
+print(et._process.pid, flush=True)
+os._exit(3)
+'''
+
+
+@unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
+class TestAWriterKilledHardTakesItsExifToolWithIt(unittest.TestCase):
+    """A TagPup process killed hard left its ExifTool running, a process with no parent that nothing would end: three
+    were found on the owner's machine, the oldest two weeks old (#2660). The session's ExifTool ends with the process
+    that started it, the one it started again after a timeout too."""
+
+    def _killed_writer(self, stall):
+        child = processes.start([sys.executable, "-c", _KILLED_WRITER % (WORKSPACE_DIR, EXIFTOOL, stall)],
+                                stdout=-1, stderr=-1, text=True)
+        out, err = child.communicate(timeout=WATCHDOG)
+        self.assertEqual(child.returncode, 3, err)
+        pid = int(out.strip())
+        self.addCleanup(lambda: processes.is_alive(pid) and processes.kill_tree(pid))
+        deadline = time.monotonic() + 10
+        while processes.is_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.25)
+        return pid
+
+    def test_its_exiftool_ends_with_it(self):
+        self.assertFalse(processes.is_alive(self._killed_writer(stall=False)),
+                         "ExifTool outlived the TagPup process that started it")
+
+    def test_an_exiftool_started_again_after_a_timeout_ends_with_it(self):
+        self.assertFalse(processes.is_alive(self._killed_writer(stall=True)),
+                         "the ExifTool started again after a timeout outlived the TagPup process")
 
 
 class TestTheBatchReadersUseIt(unittest.TestCase):

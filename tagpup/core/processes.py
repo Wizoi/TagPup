@@ -17,9 +17,13 @@ taskkill.
 
 A child never gets a window of its own. A program that must show one -- Explorer, a
 dialog -- is a GUI program, which makes its own window regardless.
+
+A child outlives this process unless it is told not to: end_with_this_process(pid) for one
+that serves only this process (ExifTool).
 """
 import os
 import subprocess
+import threading
 
 #: Windows: a hidden console for the child, which its own children inherit. Not
 #: DETACHED_PROCESS, which gives none: the venv's python.exe is a launcher that starts
@@ -63,6 +67,86 @@ def kill_tree(pid, timeout=30):
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+
+
+#: Windows: this process's job object that ends its members when it closes (end_with_this_process), made at first use.
+_job = None
+_job_lock = threading.Lock()
+
+#: Windows: SetInformationJobObject's class of extended limits, its limit that ends every member when the job's last
+#: handle closes, and OpenProcess's rights that AssignProcessToJobObject needs.
+_EXTENDED_LIMIT_INFORMATION = 9
+_KILL_ON_JOB_CLOSE = 0x2000
+_SET_QUOTA_AND_TERMINATE = 0x0100 | 0x0001
+
+
+def end_with_this_process(pid):
+    """Have process `pid`, a child that serves only this process, end when this process ends, however it ends: killed
+    from Task Manager or by os._exit too, when nothing of this process runs to end it (#2660: an ExifTool left running
+    for two weeks by a writer killed hard). On Windows the child joins a job object of this process that ends its
+    members when the job's handle closes, which Windows does when this process ends; the child's own children join it
+    too. Raises OSError when Windows refuses. Elsewhere nothing: the one caller, ExifToolSession, has pyexiftool ask the
+    kernel to end ExifTool with its parent (PR_SET_PDEATHSIG). Never for a child meant to outlive this process: the
+    server's indexer, the launcher's hand-over."""
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    job = _the_job(kernel32)
+    handle = kernel32.OpenProcess(_SET_QUOTA_AND_TERMINATE, False, int(pid))
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not kernel32.AssignProcessToJobObject(job, handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _the_job(kernel32):
+    """This process's job that ends its members when it closes; its handle is never closed (nor inherited): Windows
+    closes it when this process ends."""
+    global _job
+    import ctypes
+    from ctypes import wintypes
+
+    with _job_lock:
+        if _job is not None:
+            return _job
+
+        class Basic(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class Extended(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", ctypes.c_uint64 * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+        kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise ctypes.WinError(ctypes.get_last_error())
+        limits = Extended()
+        limits.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(job, _EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits),
+                                                ctypes.sizeof(limits)):
+            error = ctypes.WinError(ctypes.get_last_error())
+            kernel32.CloseHandle(job)
+            raise error
+        _job = job
+        return _job
 
 
 def is_alive(pid):
