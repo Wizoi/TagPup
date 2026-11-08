@@ -70,7 +70,7 @@ def _title_written(now, wanted):
     (the writer patches a clip's XMP alone). `now` holds BASE_READ."""
     in_xmp = any(vocabulary.trimmed(held) for held in fields.field_values(now.get("XMP:Title")))
     if not in_xmp and _holds_text(now, fields.CLIP_TITLE, vocabulary.trimmed(wanted.get("XMP:Title") or "")):
-        return {}
+        return {name: value for name, value in wanted.items() if name not in fields.title_fields("")}
     return wanted
 
 
@@ -109,7 +109,7 @@ NO_DUPLICATE = "no caption field holds its title"
 
 def duplicate_captions(meta):
     """The DUPLICATE_FIELDS of `meta` (what a file holds, or a row's raw_metadata) holding the photo's own title exactly,
-    trimmed (vocabulary.own_title: XMP:Title, else IPTC:ObjectName); [] for a photo with no title of its own. A caption
+    trimmed (vocabulary.own_title: XMP:Title, else a clip's QuickTime Title, else IPTC:ObjectName); [] for a photo with no title of its own. A caption
     holding the title and more ("Relay at the lake" beside the title "Relay") is not one."""
     title = vocabulary.own_title(meta)
     return [field for field in DUPLICATE_FIELDS if _holds_text(meta, field, title)] if title else []

@@ -39,8 +39,8 @@ def preserved_name(meta):
 
 
 def caption_for_name(meta):
-    """The text a photo's new name carries: its title as the page shows it (vocabulary.title_of: XMP's Title, else
-    IPTC's ObjectName, else the description); "" for none."""
+    """The text a photo's new name carries: its title as the page shows it (vocabulary.title_of: XMP's Title, else a
+    clip's QuickTime Title, else IPTC's ObjectName, else the description); "" for none."""
     return vocabulary.title_of(meta)
 
 
