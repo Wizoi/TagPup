@@ -63,16 +63,8 @@ export function wireRenameAndTimeShift() {
             alert(`Select up to ${BULK_LIMIT.toLocaleString()} photos at a time.`);
             return;
         }
-        // What will be renamed: the selected photos. A clip is not renamed (images.CLIP_NOT_EDITED), and is said apart.
-        const chosen = selectedRecords();
-        const clips = chosen.filter(isVideo);
-        if (clips.length === chosen.length) {
-            alert('Smart Rename renames photos, and only videos are selected.');
-            return;
-        }
-        const asked = [`Are you sure you want to smart-rename the ${countSaid(chosen.filter(r => !isVideo(r)))} selected?`];
-        if (clips.length) asked.push(`A video is not renamed: the ${countSaid(clips)} selected keep their names.`);
-        if (!confirm(asked.join('\n\n'))) {
+        // What will be renamed: the selected photos and videos, numbered together (DECISIONS 2026-11-08, A5).
+        if (!confirm(`Are you sure you want to smart-rename the ${countSaid(selectedRecords())} selected?`)) {
             return;
         }
 

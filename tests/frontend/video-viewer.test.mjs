@@ -148,15 +148,15 @@ describe("a video's title and keywords are edited, nothing else of it", () => {
   const note = (ctx) => el(ctx, "photo-missing-note");
   const held = (ctx, id) => Boolean(el(ctx, id).closest("[inert]"));
   const LIVE = ["input-photo-title", "btn-save-title", "btn-edit-people", "input-add-person", "btn-add-person",
-    "btn-edit-tags", "input-add-tag", "btn-add-tag"];
-  const HELD = ["btn-edit-date-taken", "btn-rotate-left", "btn-rotate-right", "btn-delete-photo", "input-smart-rename-one"];
+    "btn-edit-tags", "input-add-tag", "btn-add-tag", "input-smart-rename-one"];
+  const HELD = ["btn-edit-date-taken", "btn-rotate-left", "btn-rotate-right", "btn-delete-photo"];
 
   function assertClip(ctx, what) {
     for (const id of LIVE) assert.equal(held(ctx, id), false, `${what}: ${id} is live`);
     for (const id of HELD) assert.equal(held(ctx, id), true, `${what}: ${id} is inert`);
     assert.ok(inert(ctx).every((node) => node.getAttribute("aria-disabled") === "true"), `${what}: and says so`);
     assert.equal(note(ctx).classList.contains("hidden"), false, `${what}: the sentence is shown`);
-    assert.equal(note(ctx).textContent, "This is a video: its date and turn are not edited here, and it is not renamed or deleted here.",
+    assert.equal(note(ctx).textContent, "This is a video: its date and turn are not edited here, and it is not deleted here.",
       `${what}: it names only what is not edited`);
   }
 

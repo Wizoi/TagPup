@@ -397,7 +397,7 @@ VECTOR_KINDS = ("photo", "video")
 #: faces merge (migration 39).
 FACE_KINDS = ("photo",)
 #: The kinds whose file a bake writes faces into (services.bake_after_index): never a clip (DECISIONS 2026-11-02,
-#: "THE OWNERS' PLANS", item 10; a clip's file is not written, services.file_changes.leave_out_clips).
+#: "THE OWNERS' PLANS", item 10; a clip's faces are no field its write may change, fields.CLIP_WRITES).
 BAKED_KINDS = ("photo",)
 #: The kinds a delete sends to the Recycle Bin, so whose bytes a delete copies through this PC
 #: (store.selection_folders.bytes_by_folder): not a clip yet (files.recycle_bin.not_deleted refuses one by its path).

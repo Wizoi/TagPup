@@ -4,7 +4,8 @@ The owner opens a photo, finds the grouping its name holds in the box beside the
 Rename: the photo keeps its number and takes the new grouping, its row follows the file, and History can undo it. A
 photo whose name holds no number takes the next after the highest the folder gives that grouping. A name another file
 holds is refused with a sentence and nothing is written (a folder's rename moves that file aside; one photo's does not).
-A second click, which the page sends behind the first under the photo's new name, changes nothing. A clip is refused.
+A second click, which the page sends behind the first under the photo's new name, changes nothing. (A clip:
+tests/test_a_clip_renamed.py.)
 (A share that does not answer: tests/test_a_share_asleep.py, the route among every folder refusal.) Real ExifTool on
 JPEGs made here; the rows are the indexer's (photo_rows.add_read). Run against the trunk before the route: each fails
 (404).
@@ -16,7 +17,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_stale_record_precondition as S  # noqa: E402
 
-from tagpup.files import images  # noqa: E402
 
 PRESERVED = "XMP-xmpMM:PreservedFileName"
 
@@ -102,15 +102,6 @@ class SmartRenameOfOnePhoto(S.Fresh):
         self.assertEqual(400, gone.status_code, "the old name, sent again, is not there any more")
         self.assertIn("is not in its folder any more", gone.get_json()["error"])
 
-    def test_a_clip_is_refused_with_its_sentence_and_left_as_it_was(self):
-        os.makedirs(self.folder, exist_ok=True)
-        clip = os.path.join(self.folder, "Regatta - 3.mp4")
-        with open(clip, "wb") as handle:
-            handle.write(b"\x00\x00\x00\x18ftypmp42 a clip")
-        reply = self.rename(clip, "Harbour")
-        self.assertEqual(400, reply.status_code, reply.data)
-        self.assertEqual(images.CLIP_NOT_EDITED, reply.get_json()["error"])
-        self.assertEqual(["Regatta - 3.mp4"], self.names())
 
 
 if __name__ == "__main__":

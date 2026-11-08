@@ -1,8 +1,9 @@
-"""A clip in the library has only its tags and title written by TagPup, and is never deleted (F12): a turn, a Save
-carrying a Date Taken, a Smart Rename and a delete that name a clip leave its file byte for byte as it was, journal
+"""A clip in the library is not turned, dated or deleted by TagPup (F12): a turn, a
+Save carrying a Date Taken and a delete that name a clip leave its file byte for byte as it was, journal
 nothing for it, and say so in a plain sentence (tagpup.files.images.CLIP_NOT_EDITED, CLIP_NOT_DELETED); the photos named
 beside it are written or deleted as always. A tag or title save is patched into its XMP (field_values.writes,
-since DECISIONS 2026-11-07; the selections that tag photos and clips together: tests/test_a_clip_tagged_through_the_journal.py).
+since DECISIONS 2026-11-07; the selections that tag photos and clips together: tests/test_a_clip_tagged_through_the_journal.py;
+a rename: tests/test_a_clip_renamed.py).
 
 What the owner lives through: the library view lists clips beside photos (V1), so a selection of a day holds both, and a
 click on a clip's card opens the photo panel. ExifTool's write of a clip is a rewrite of the whole file -- gigabytes, over
@@ -124,18 +125,6 @@ class AClipBesideAPhoto(unittest.TestCase):
         # the whole file, so a Save carrying one is refused, its tags with it.
         self.assert_refused("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"],
                                                     "date_taken": "2020:01:01 12:00:00"})
-
-    def test_a_smart_rename_naming_a_clip_renames_the_photo_and_names_the_clip(self):
-        reply = self.post("folder/rename-photos", {"folder_path": self.folder, "grouping": "Harbour",
-                                                   "photo_paths": [self.photo_path, self.clip_path]})
-        self.assertNotEqual(200, reply.status_code)
-        body = reply.get_json()
-        self.assertIn(images.CLIP_NOT_EDITED, body["error"])
-        self.assertEqual([paths.key(self.photo_path)], [paths.key(old) for old in body["updated_paths"]])
-        self.assertFalse(os.path.exists(self.photo_path), "the photo is renamed")
-        self.assertIn(paths.key(self.clip_path), [paths.key(record["path"]) for record in body["updated_photos"]],
-                      "the folder the page is answered still holds the clip (#2564)")
-        self.assert_clip_untouched()
 
     def test_a_delete_of_the_clip_is_refused_with_the_sentence_and_nothing_is_copied_or_removed(self):
         with mock.patch.object(recycle_bin, "delete_file") as deleted:

@@ -294,10 +294,14 @@ PRESENT, GONE, AWAY = "present", "gone", "away"
 AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
 
 
+#: The details key of a write's files its writer refused before a byte was written (write_fields).
+WRITER_REFUSED = "writer_refused"
+
+
 def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     """The paths of `photo_paths` that are not clips (images.is_clip), in order, and the clips a journaled write of
     `read`, the fields it reads of each file, may patch: one reading only the fields of what a clip's write may change
-    (field_values.writes: its tags and title; DECISIONS 2026-11-05, M7) and those its tags are
+    (field_values.writes: its tags, title and the name it had before its first rename; DECISIONS 2026-11-05, M7) and those its tags are
     read from (fields.TAG_SOURCE_FIELDS). Any other clip is not written (images.CLIP_NOT_EDITED): it is the write's error, with that sentence -- or, `unreadable="skip"` (a
     write over every photo of a camera or a folder that leaves out what it cannot write), skipped with it -- read for
     nothing, planned and journaled for nothing, and never the error that stops a write at its first
@@ -305,7 +309,7 @@ def leave_out_clips(result, photo_paths, unreadable="fail", read=None):
     refused whole. The one place of the refusal, asked by every writer of photo files before it reads one (write_fields,
     which gives `read`; file_only.write_fields, which does not: a clip of a folder the library does not hold has no
     journal to settle a patch a crash cut short) and a Smart Rename (tagpup.services.photos.smart_rename) before it keeps
-    a name; a save of a clip is refused before its rename."""
+    a name, which leaves out a clip of a folder the library does not hold; a save of a clip is refused before its rename."""
     photos = []
     for path in photo_paths:
         if images.is_clip(path) and not _clip_admitted(path, read):
@@ -598,6 +602,10 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             if row.read_only:
                 # Told apart, and an error all the same: a run that stops at its first error stops here too.
                 result.details.setdefault("read_only", []).append(path)
+            if isinstance(why, Refused):
+                # Told apart: its writer refused it before a byte was written (a clip not patchable, open in another
+                # program), which Smart Rename leaves out rather than stops at (services.photos._refused_clips).
+                result.details.setdefault(WRITER_REFUSED, []).append(path)
             if stop_at_first_error and not isinstance(why, Refused):
                 # A clip the writer refused (open in another program, not patchable, its last QuickTime keyword) is its
                 # own error, as a clip leave_out_clips refuses is: the photos after it are written.

@@ -218,18 +218,24 @@ XMP_ONLY = {
     "XMP:Description": tuple(field for field in caption_fields("") if not field.startswith("XMP:")),
 }
 
-#: What a journaled write may change of a photo, by name: its tags, its title, its Date Taken, its turn
-#: (tagpup.files.field_values.writes, which a page's record carries as `writes`).
-PHOTO_WRITES = ("tags", "title", "date", "rotate")
+#: Where a photo or clip keeps the name it had before Smart Rename first renamed it (tagpup.files.names, which reads it;
+#: tagpup.services.photos.preserve_names, which writes it before the first rename).
+PRESERVED_NAME = "XMP-xmpMM:PreservedFileName"
 
-#: What a journaled write may change of a clip (DECISIONS 2026-11-05, M7; on since DECISIONS 2026-11-07): its tags and title.
-#: A page writes no caption of it (DECISIONS 2026-11-06); a Date Taken, a turn and a rename of a clip are ExifTool's
-#: rewrite of the whole file, refused before they are planned.
-CLIP_WRITES = ("tags", "title")
+#: What a journaled write may change of a photo, by name: its tags, its title, its Date Taken, its turn, its name
+#: (tagpup.files.field_values.writes, which a page's record carries as `writes`).
+PHOTO_WRITES = ("tags", "title", "date", "rotate", "name")
+
+#: What a journaled write may change of a clip (DECISIONS 2026-11-05, M7; on since DECISIONS 2026-11-07): its tags, its
+#: title and its name (DECISIONS 2026-11-08, A5: a rename moves no byte, and the name it had before its first is kept in
+#: its XMP, PRESERVED_NAME, patched as its tags are). A page writes no caption of it (DECISIONS 2026-11-06); a Date Taken
+#: and a turn of a clip are ExifTool's rewrite of the whole file, refused before they are planned.
+CLIP_WRITES = ("tags", "title", "name")
 
 #: The fields each of CLIP_WRITES names: a clip's title is its title fields and its QuickTime Title (CLIP_TITLE), which
-#: a photo's write never names (title_fields is what ExifTool writes into a JPEG).
-_CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])), "title": frozenset(title_fields("")) | {CLIP_TITLE}}
+#: a photo's write never names (title_fields is what ExifTool writes into a JPEG); its name, the one it had before.
+_CLIP_WRITE_FIELDS = {"tags": frozenset(keyword_fields([], [])), "title": frozenset(title_fields("")) | {CLIP_TITLE},
+                      "name": frozenset({PRESERVED_NAME})}
 
 
 def fields_of(writes):
@@ -255,7 +261,7 @@ EDITED_AS = {
     "XMP:Title": (("xmp", "dc:title"),),
     "XMP:DateTimeOriginal": (("xmp", "exif:DateTimeOriginal"),),
     "XMP:CreateDate": (("xmp", "xmp:CreateDate"),),
-    "XMP-xmpMM:PreservedFileName": (("xmp", "xmpMM:PreservedFileName"),),
+    PRESERVED_NAME: (("xmp", "xmpMM:PreservedFileName"),),
     "EXIF:DateTimeOriginal": (("exif", "DateTimeOriginal"),),
     "EXIF:CreateDate": (("exif", "CreateDate"),),
     "EXIF:ImageDescription": (("exif", "ImageDescription"),),

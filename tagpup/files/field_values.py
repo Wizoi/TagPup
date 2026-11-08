@@ -324,8 +324,8 @@ def write(et, photo_path, values, saving=None, scratch_written=None, own_writer=
 
 
 def writes(path):
-    """What a journaled write may change of the file at `path`, by name: a photo's tags, title, Date Taken and turn
-    (fields.PHOTO_WRITES); a clip's tags and title (fields.CLIP_WRITES). The one
+    """What a journaled write may change of the file at `path`, by name: a photo's tags, title, Date Taken, turn and name
+    (fields.PHOTO_WRITES); a clip's tags, title and name (fields.CLIP_WRITES). The one
     statement of it: a page's record carries it (tagpup.services.photos.page_record), and the writer (clip_refused) and
     the journal (tagpup.services.file_changes.leave_out_clips) refuse what it leaves out. Whether a clip's folder is held
     is not said here: a clip of a folder the library does not hold is refused at its write (file_only), never in a record

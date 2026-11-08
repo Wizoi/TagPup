@@ -11,8 +11,9 @@ export const CACHE_TTL_MS = 30 * 60 * 1000;
 // all, or an older one) is not used: the folder is scanned again. Raise it whenever a record gains a field a page reads
 // (2: `camera`, which Shift Date Taken's list of cameras is made of: a record without it is "Unknown Camera"; 3: a
 // folder's clips, with `media` and a recorded clip's `id` and `thumb`: an older entry lists none of them; 4: `writes`, the
-// edits a photo's panel offers (stale.js): a record without it offers none).
-export const CACHE_VERSION = 4;
+// edits a photo's panel offers (stale.js): a record without it offers none; 5: `writes` naming "name", a photo's and a
+// clip's Smart Rename button: an older record holds it inert).
+export const CACHE_VERSION = 5;
 
 export function saveToLocalStorageCache() {
     if (!state.scannedFolder) return;

@@ -3,7 +3,7 @@ XMP in place (in_place.patch_clip) and never has ExifTool write it (on since the
 2026-11-07).
 
 What the owner lives through: a clip's card opens the photo panel and its tags are saved, or a selection of a day holding
-photos and clips is tagged. A keyword or title save is patched into its XMP, and a turn, a Date Taken and a rename stay refused. A clip the patch cannot place
+photos and clips is tagged. A keyword or title save is patched into its XMP, and a turn and a Date Taken stay refused. A clip the patch cannot place
 (a tail, two XMP boxes) is refused, ExifTool never asked to rewrite it; one whose share fails part-way through its read
 says it could not be read, never that it cannot be patched. A clip whose QuickTime Subject is a Microsoft Xtra value that
 is not text (14 live .mp4 clips, counted 2026-11-07) is indexed with no tags, and a tag save writes only the tags saved;
@@ -256,9 +256,9 @@ class AClipInTheLibrary(ALibraryHoldingAClip):
         return found
 
     def test_the_page_is_told_what_a_save_may_change_of_a_clip_and_of_a_photo(self):
-        # The panel offers a clip its tags and title alone; a photo all four (field_values.writes).
+        # The panel offers a clip its tags, title and name alone; a photo all five (field_values.writes).
         ids = self.index(self.photo_path, self.clip_path)
-        photo, clip = ["tags", "title", "date", "rotate"], ["tags", "title"]
+        photo, clip = ["tags", "title", "date", "rotate", "name"], ["tags", "title", "name"]
         self.assertEqual({"scan pier.jpg": photo, "scan jetty.mp4": clip, "panel pier.jpg": photo, "panel jetty.mp4": clip},
                          self.records(ids))
 

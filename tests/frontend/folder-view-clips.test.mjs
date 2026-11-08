@@ -133,15 +133,14 @@ describe("a folder's counts with clips in it", () => {
       "Nothing selected (2 photos, 2 videos in folder)");
   });
 
-  test("Smart Rename's confirmation counts the photos it renames and names the videos it leaves", async (t) => {
+  test("Smart Rename's confirmation counts the photos and the videos it renames together", async (t) => {
     const ctx = await folderWithClips(t);
     select(ctx, ["dawn.jpg", "dusk.jpg", "dusk.mp4"]);
     const asked = asking(ctx);
     ctx.document.getElementById("rename-grouping-input").value = "Lighthouse";
     ctx.document.getElementById("btn-apply-rename").click();
     assert.equal(asked.length, 1, "Smart Rename did not ask first");
-    assert.match(asked[0], /smart-rename the 2 photos selected\?/);
-    assert.match(asked[0], /the 1 video selected keep their names/);
+    assert.match(asked[0], /smart-rename the 2 photos, 1 video selected\?$/);
   });
 
   test("Smart Rename of photos alone says photos, with nothing of videos", async (t) => {
@@ -161,7 +160,7 @@ describe("a folder's counts with clips in it", () => {
     assert.match(asked[0], /^Auto-apply AI suggestions to the 1 photo selected\?/);
   });
 
-  test("with only videos selected, neither asks about 0 photos: each says there is no photo to work on", async (t) => {
+  test("with only videos selected, Smart Rename asks about the videos and Apply All says there is no photo", async (t) => {
     const ctx = await folderWithClips(t);
     select(ctx, ["dusk.mp4", "noon.mov"]);
     const asked = asking(ctx);
@@ -170,7 +169,8 @@ describe("a folder's counts with clips in it", () => {
     ctx.document.getElementById("rename-grouping-input").value = "Lighthouse";
     ctx.document.getElementById("btn-apply-rename").click();
     pageExports(ctx.window, "web/tagpup/suggestions.js").applyFolderSuggestionsLevel();
-    assert.deepEqual(asked, [], "asked about 0 photos");
-    assert.equal(told.length, 2, "each should say why it did nothing");
+    assert.equal(asked.length, 1, "Smart Rename asks first");
+    assert.match(asked[0], /smart-rename the 2 videos selected\?$/);
+    assert.equal(told.length, 1, "Apply All says why it did nothing");
   });
 });

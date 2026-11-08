@@ -43,7 +43,7 @@ from contextlib import closing, contextmanager
 
 from tagpup.core import byte_lock, dates, fields, paths, vocabulary
 from tagpup.core.result import Refused
-from tagpup.files import bake, containers, exiftool_session, field_values, names, shares
+from tagpup.files import bake, containers, exiftool_session, field_values, shares
 from tagpup.services import photos as photo_actions, roots as roots_service, segment_census, tagging
 from tagpup.store import db, inspection
 
@@ -87,7 +87,7 @@ KNOWN = frozenset({"XMP:XMP-x:XMPToolkit", "EXIF:IFD1:ThumbnailOffset", "IPTC:En
                    "IPTC:ApplicationRecordVersion"})
 #: What every operation's planner reads of a copy.
 READ = tuple(dict.fromkeys(tagging.SAVE_READ + tuple(fields.caption_fields("")) + dates.SHIFTED_FIELDS
-                           + (fields.ORIENTATION, names.PRESERVED_NAME)))
+                           + (fields.ORIENTATION, fields.PRESERVED_NAME)))
 #: A keyword and a person no photo holds (fictional), a caption and a name kept; each but the person holds letters
 #: outside ASCII (IPTC's character set, XMP's escaping, EXIF's UCS-2 XPComment and ASCII ImageDescription).
 KEYWORD, PERSON = "Shadow Check/Lantern Walk \u00e0 Br\u00e9z\u00e9", "Wren Halloway"
@@ -113,7 +113,7 @@ def _fixed(values):
 
 def _preserved(_library):
     """Smart Rename's planner (photos.preserve_names): the name kept, unless the photo keeps one already."""
-    return lambda _path, held: {} if held.get(names.PRESERVED_NAME) else {names.PRESERVED_NAME: PRESERVED}
+    return lambda _path, held: {} if held.get(fields.PRESERVED_NAME) else {fields.PRESERVED_NAME: PRESERVED}
 
 
 #: (name, planner(library) -> plan_one(path, held) answering a file_changes.Plan or a dict of values).
