@@ -1,7 +1,8 @@
-"""Sending a photo to the Windows Recycle Bin, where it can be restored from.
+"""Sending a photo or a clip to the Windows Recycle Bin, where it can be restored from.
 
-Only a photo FILE goes (problem): SHFileOperation with FOF_ALLOWUNDO takes a directory with
-everything in it as readily (2026-10-02, the Just-look review, #520).
+Only a photo or clip FILE goes (problem): SHFileOperation with FOF_ALLOWUNDO takes a directory with
+everything in it as readily (2026-10-02, the Just-look review, #520). A clip goes as a photo does, up to
+MOST_CLIP_BYTES; a larger one is refused (too_large).
 
 And only a file on a local fixed drive can be restored from the Bin. The Bin is per volume and
 there is none on a network share, a mapped network drive or a removable drive: SHFileOperation
@@ -61,27 +62,37 @@ def _long_path(path):
     return path
 
 
-def not_deleted(file_path):
-    """images.CLIP_NOT_DELETED when `file_path` names a clip (images.is_clip), else None: asked before anything is
-    stat'ed or copied, by problem() and by a bulk delete before it asks this PC for room for the copies
-    (tagpup.services.bulk_edit), so a clip's size is never counted in a copy that is never made."""
-    return images.CLIP_NOT_DELETED if images.is_clip(file_path) else None
+#: The largest clip TagPup deletes (DECISIONS 2026-11-08, A5, cut B): one up to 2 GiB goes through the Recycle Bin as a
+#: photo does -- from a share, a copy of the whole file through this PC, the share read twice to check it --, a larger one
+#: is refused (too_large). 2,168 of photo_index's 2,179 clips are within it, 11 over (counted 2026-11-08).
+MOST_CLIP_BYTES = 2 << 30
+
+#: Why a clip over MOST_CLIP_BYTES is not deleted, with its size and the limit.
+CLIP_TOO_LARGE = ("This video is %s, larger than the %s TagPup deletes through the Recycle Bin: it was not deleted, and "
+                  "its file was left where it is.")
+
+
+def too_large(file_path, size):
+    """CLIP_TOO_LARGE, said, when `file_path` names a clip (images.is_clip) of more than MOST_CLIP_BYTES at `size`
+    bytes; else None. Asked by problem() and by a bulk delete before it asks this PC for room for the copies
+    (tagpup.services.bulk_edit), so a clip that is not deleted is never counted in a copy that is never made."""
+    if not images.is_clip(file_path) or size <= MOST_CLIP_BYTES:
+        return None
+    return CLIP_TOO_LARGE % (_mb(size), _mb(MOST_CLIP_BYTES))
 
 
 def problem(file_path):
-    """Why `file_path` may not be sent to the Recycle Bin, or None: a clip (not_deleted), no existing regular file
-    (a folder, a path with a trailing separator, one that is not there) or no photo by its
-    extension. The path is judged by its LONG name: A4413~1.JPG may be holiday.jpgold (#530)."""
+    """Why `file_path` may not be sent to the Recycle Bin, or None: no existing regular file (a folder, a path with a
+    trailing separator, one that is not there), no photo or clip by its extension (images.is_media), or a clip over
+    MOST_CLIP_BYTES (too_large). The path is judged by its LONG name: A4413~1.JPG may be holiday.jpgold (#530)."""
     given = str(file_path or "")
-    if not_deleted(given):
-        return not_deleted(given)
     name = os.path.basename(given.rstrip("\\/")) or given
     if not given or given[-1] in "\\/" or not os.path.isfile(paths.stored(given)):
-        return "%s is not a file; only a photo file is deleted" % name
+        return "%s is not a file; only a photo or video file is deleted" % name
     long = _long_path(paths.stored(given))
-    if not os.path.isfile(long) or not images.is_photo(long):
-        return "%s is not a photo; only a photo file is deleted" % os.path.basename(long)
-    return None
+    if not os.path.isfile(long) or not images.is_media(long):
+        return "%s is not a photo or video; only a photo or video file is deleted" % os.path.basename(long)
+    return too_large(long, os.path.getsize(long))
 
 
 def _without_prefix(path):

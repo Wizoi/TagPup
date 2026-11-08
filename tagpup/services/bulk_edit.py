@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import recycle_bin, shares
+from tagpup.files import images, recycle_bin, shares
 from tagpup.services import batches, file_changes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -218,6 +218,13 @@ def _write(library, edit, ids, exiftool_path):
     return out
 
 
+def _known_size(path):
+    """The size of the file at `path` as file_changes.file_states just found it (shares.known_stamp), or 0 when it is not
+    known: the delete's own read of it (recycle_bin.problem) then judges it."""
+    stamp = shares.known_stamp(path)
+    return stamp[1] if stamp is not None else 0
+
+
 def _cannot_keep(present):
     """{photo id: why} of the photos that go through this PC, when this PC cannot keep their copies; {} when it can."""
     bins, through, largest = {}, [], 0
@@ -258,7 +265,9 @@ def _delete(library, edit, present, out):
     row kept (sync reports it); one refused, or not moved (any step of going through this PC that failed), is an error, the
     original and its row kept. Before the chunk copies anything through this PC, it asks whether this PC can keep the chunk's
     copies (recycle_bin.can_copy_here: the Bin fills during a long job, #703); if not, those photos are errors with the
-    sentence and nothing of them is touched; the others go on."""
+    sentence and nothing of them is touched; the others go on. A clip goes as a photo does, up to recycle_bin.MOST_CLIP_BYTES
+    (a larger one is its error, its size counted in no copy); the lock is let go of after each clip, as after each chunk
+    of photos, and a stop asked is taken there."""
     with file_changes.exclusively():
         # Where each file is (file_changes.file_states): one on a share that did not answer is its error, one gone missing.
         states = dict((paths.key(path), state) for path, state in file_changes.file_states([path for _id, path in present]))
@@ -266,14 +275,17 @@ def _delete(library, edit, present, out):
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
         out.skipped_missing += sum(1 for _id, path in present if states[paths.key(path)] == file_changes.GONE)
-        # A clip is never deleted (recycle_bin.not_deleted): its error, before this PC is asked for room for copies.
-        out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], recycle_bin.not_deleted(path))
-                          for photo_id, path in there if recycle_bin.not_deleted(path))
-        there = [(photo_id, path) for photo_id, path in there if not recycle_bin.not_deleted(path)]
+        # A clip over recycle_bin.MOST_CLIP_BYTES is not deleted: its error, before this PC is asked for room for copies.
+        large = {photo_id: recycle_bin.too_large(path, _known_size(path)) for photo_id, path in there if images.is_clip(path)}
+        out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], large[photo_id][:MOST_TEXT])
+                          for photo_id, path in there if large.get(photo_id))
+        there = [(photo_id, path) for photo_id, path in there if not large.get(photo_id)]
         refused = _cannot_keep(there)
         batch = batches.current()
         for n, (photo_id, path) in enumerate(there):
-            if n and n % batches.CHUNK == 0 and not file_changes.between_chunks(batch):
+            # A chunk of photos holds the lock; a clip is a chunk of itself (its copy through this PC can take minutes).
+            turn = n and (n % batches.CHUNK == 0 or images.is_clip(there[n - 1][1]))
+            if turn and not file_changes.between_chunks(batch):
                 out.errors.extend((left_id, os.path.basename(left)[:MOST_TEXT], "stopped as asked: not deleted")
                                   for left_id, left in there[n:])
                 break

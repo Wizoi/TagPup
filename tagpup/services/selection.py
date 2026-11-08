@@ -156,7 +156,7 @@ def where_deleted(library, selection):
     conn = library_view.opened(library)
     try:
         counted = store_folders.counts(conn, resolved.ids, None, ())
-        sizes = store_folders.bytes_by_folder(conn, resolved.ids, None, ())
+        sizes = store_folders.bytes_by_folder(conn, recycle_bin.MOST_CLIP_BYTES, resolved.ids, None, ())
         named = store_folders.described(conn, counted)
     finally:
         conn.close()

@@ -1,7 +1,6 @@
-"""A clip in the library is not turned, dated or deleted by TagPup (F12): a turn, a
-Save carrying a Date Taken and a delete that name a clip leave its file byte for byte as it was, journal
-nothing for it, and say so in a plain sentence (tagpup.files.images.CLIP_NOT_EDITED, CLIP_NOT_DELETED); the photos named
-beside it are written or deleted as always. A tag or title save is patched into its XMP (field_values.writes,
+"""A clip in the library is not turned or dated by TagPup (F12): a turn and a Save carrying a Date Taken that name a
+clip leave its file byte for byte as it was, journal nothing for it, and say so in a plain sentence
+(tagpup.files.images.CLIP_NOT_EDITED). A clip is deleted as a photo is (DECISIONS 2026-11-08, A5, cut B). A tag or title save is patched into its XMP (field_values.writes,
 since DECISIONS 2026-11-07; the selections that tag photos and clips together: tests/test_a_clip_tagged_through_the_journal.py;
 a rename: tests/test_a_clip_renamed.py).
 
@@ -28,7 +27,7 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
-from tagpup.files import images, recycle_bin  # noqa: E402
+from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -125,47 +124,6 @@ class AClipBesideAPhoto(unittest.TestCase):
         # the whole file, so a Save carrying one is refused, its tags with it.
         self.assert_refused("photo/save-metadata", {"path": self.clip_path, "tags": ["Trips/Coast"],
                                                     "date_taken": "2020:01:01 12:00:00"})
-
-    def test_a_delete_of_the_clip_is_refused_with_the_sentence_and_nothing_is_copied_or_removed(self):
-        with mock.patch.object(recycle_bin, "delete_file") as deleted:
-            reply = self.post("photo/delete", {"path": self.clip_path})
-        self.assertEqual(400, reply.status_code, reply.get_json())
-        self.assertIn(images.CLIP_NOT_DELETED, reply.get_json()["error"])
-        deleted.assert_not_called()
-        self.assert_clip_untouched()
-
-    def test_a_selection_deleted_through_this_pc_deletes_the_photo_and_never_copies_the_clip(self):
-        sent = []
-
-        def recycle(path):
-            sent.append(path)
-            os.remove(path)
-            return True
-
-        def reason(path):
-            # The photos' folder is a share, as far as the test says; this PC's mirror folder is not.
-            return recycle_bin.NETWORK if paths.key(path).startswith(paths.key(self.folder)) else None
-
-        with mock.patch.object(recycle_bin, "no_bin_reason", side_effect=reason), \
-                mock.patch.object(recycle_bin, "can_copy_here", return_value=None) as room, \
-                mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle), \
-                mock.patch.object(recycle_bin, "mirror_root", return_value=os.path.join(self.home.root, "Mirror")):
-            asked = self.post("library/selection/delete-check", {"selection": {"ids": [self.photo, self.clip]}}).get_json()
-            self.assertEqual(os.path.getsize(self.photo_path), asked["copy_bytes"],
-                             "the question counts the copies of the photos only: a clip is never copied")
-            reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": [self.photo, self.clip]},
-                                                    "params": {"token": asked["token"]}})
-            self.assertEqual(200, reply.status_code, reply.get_json())
-            done = reply.get_json()
-            sizes = [call.args[0] for call in room.call_args_list]
-        self.assertEqual((1, 1), (done["changed"], done["error_count"]), done["errors"])
-        self.assertEqual([(self.clip, images.CLIP_NOT_DELETED)], [(e["id"], e["why"]) for e in done["errors"]])
-        self.assertNotIn(paths.key(self.clip_path), [paths.key(path) for path in sent])
-        self.assertTrue(all(size < os.path.getsize(self.clip_path) for size in sizes),
-                        "this PC is asked for room for the photo's copy, never the clip's")
-        self.assertFalse(os.path.exists(self.photo_path), "the photo beside it is deleted")
-        self.assert_clip_untouched()
-
 
 if __name__ == "__main__":
     unittest.main()
