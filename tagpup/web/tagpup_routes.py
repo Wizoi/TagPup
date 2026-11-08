@@ -837,8 +837,9 @@ def video_file():
     tagpup.web.responses.ranged): 206 with at most VIDEO_SPAN bytes of a range (no range is the first), 416 for a range
     that cannot be answered. The URL carries the file's modified time (`v`), so the browser may keep the pieces a day,
     as a photo; Last-Modified is the file's. 404 for an id that is no video of the library or whose file is gone, 400 for a missing or non-numeric
-    one, 503 with Retry-After when the file cannot be reached just now (a share away). A stream that cannot go on (the
-    file changed, the share stopped answering) ends short, and the browser asks again. To this PC only (403)."""
+    one, 503 with Retry-After when the file cannot be reached just now (a share away), 409 "This video is being deleted."
+    while a delete of its file is under way (tagpup.files.recycle_bin.being_deleted). A stream that cannot go on (the
+    file changed, the share stopped answering, its delete began) ends short, and the browser asks again. To this PC only (403)."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
@@ -847,6 +848,8 @@ def video_file():
         return refusal
     try:
         video = photo_actions.video(library, photo_id)
+    except Conflict as why:
+        return responses.error(409, str(why))
     except (NotFound, paths.RootsError, Unavailable) as why:
         return _view_error(why)
     except Exception as e:

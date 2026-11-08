@@ -32,7 +32,13 @@ than the Bin is refused); the Bin's size is asked of Windows (SHQueryRecycleBinW
 on by what this process sends (`note_binned`), and asked again after BIN_FRESH. A copy whose path would be MAX_PATH or more is
 refused up front (SHFileOperation takes none). A Downloads folder under OneDrive is refused: a copy would be synced to the cloud
 before it was recycled. A `.partial` a crash left for the same name is taken away on the way in.
+
+A file is UNDER DELETE (`being_deleted`) from the first look `delete_file` takes at it to its last step, however that ends: a
+copy through this PC can take minutes, and a read of the original as it is removed makes the remove fail, the copy in the Bin
+and the file there twice. The server's reader of a file a range at a time (/api/video-file, tagpup.services.photos.video)
+refuses one meanwhile; the page cannot know which files a delete holds (a bulk Delete of a Select all names a source).
 """
+import contextlib
 import ctypes
 import hashlib
 import os
@@ -623,12 +629,45 @@ def recycle_through_this_pc(file_path, root=None):
     return target
 
 
+_under_delete_lock = threading.Lock()
+_under_delete = {}      # {paths.key of a file: how many deletes of it are under way (two pages may delete one file at once)}
+
+
+@contextlib.contextmanager
+def _deleting(file_path):
+    """`file_path` is under delete (being_deleted) for the length of the block, and released however the block ends."""
+    key = paths.key(file_path)
+    with _under_delete_lock:
+        _under_delete[key] = _under_delete.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        with _under_delete_lock:
+            _under_delete[key] -= 1
+            if not _under_delete[key]:
+                del _under_delete[key]
+
+
+def being_deleted(file_path):
+    """Is a delete of `file_path` under way in this process (delete_file, from its first look to its last step)? Only the server
+    deletes a photo or clip, so this process is the one that knows."""
+    key = paths.key(file_path)
+    with _under_delete_lock:
+        return key in _under_delete
+
+
 def delete_file(file_path, for_good=False):
     """Delete a photo or clip FILE the one way every delete of one takes (#694): to its own Recycle Bin, or -- where its place has none
     -- through this PC (recycle_through_this_pc). {"through_this_pc": bool, "reason": why its place has no Bin or None, "copy":
     where the copy was put, or None, "for_good": bool}. Raises ValueError (problem) or OSError with a sentence; the original is
     then still there. A file its own drive's Bin would not keep (keeps_up_to) is deleted for good only with `for_good` (the owner
-    was told and confirmed); without it, NotKept, nothing touched."""
+    was told and confirmed); without it, NotKept, nothing touched. The file is under delete (being_deleted) until this returns
+    or raises: the panel's delete and each of a bulk Delete's alike."""
+    with _deleting(file_path):
+        return _delete_file(file_path, for_good)
+
+
+def _delete_file(file_path, for_good):
     reason = no_bin_reason(file_path)
     if reason:
         return {"through_this_pc": True, "reason": reason, "copy": recycle_through_this_pc(file_path), "for_good": False}

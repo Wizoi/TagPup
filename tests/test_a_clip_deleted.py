@@ -10,7 +10,9 @@ names it, and it is deleted for good only when the owner confirmed that; a start
 What the owner lives through: a day in the library view holds photos and clips together, on a share (no Recycle Bin of its
 own); a Delete of the day asks first how much will be copied through this PC (the delete-check), then deletes them. A clip's
 copy can take minutes, so a bulk delete lets other writers in before and after each clip, as it does after each chunk of
-photos: a clip is a chunk of its own.
+photos: a clip is a chunk of its own. Meanwhile the clip may be opened again, from this page or another, in any view: the
+server, which alone knows which files a delete is working on, refuses a range of that clip (409, "This video is being
+deleted.") and plays every other, until the delete has ended, done or failed.
 
 A real one-second clip made by the machine's ffmpeg (as tests/test_a_clip_is_not_turned_or_dated.py makes it); rows as the
 indexer records a read (tests/view_library.py, which gives a .mov its kind 'video'). The share is a folder of this test's
@@ -35,6 +37,7 @@ from tagpup import config  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
 from tagpup.services import file_changes, thumbnails  # noqa: E402
+from tagpup.services import photos as photo_service  # noqa: E402
 from tagpup.store import db, embeddings  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -232,6 +235,83 @@ class AClipOnAShare(APhotoAndAClip):
         self.assertTrue(preceded, "a clip follows another file")
         for n in preceded:
             self.assertEqual("turn", kinds[n - 1], "the lock is let go of before %s, after the file ahead of it" % self.events[n][1])
+
+
+class AClipBeingDeleted(APhotoAndAClip):
+    """A delete of the clip is under way -- its copy through this PC is held part-way -- and the player asks for a range of it,
+    and of another clip, as a page does when either is opened (the asks are made from inside the held copy: no thread)."""
+
+    def setUp(self):
+        super().setUp()
+        self.other_path = os.path.join(self.folder, "slipway.mov")
+        shutil.copyfile(self.clip_path, self.other_path)
+        self.other = self.vl.photo("Harbour", "slipway.mov", at=self.other_path)
+        self.during = {}
+
+    def ranges(self):
+        return {name: self.client.get("/library/api/video-file", query_string={"id": photo_id}, headers={"Range": "bytes=0-99"})
+                for name, photo_id in (("clip", self.clip), ("other", self.other))}
+
+    def copy_asking(self, fail=False):
+        real = shutil.copy2
+
+        def copy2(source, target, *args, **kwargs):
+            if paths.key(source) == paths.key(self.clip_path):
+                self.during = self.ranges()
+                if fail:
+                    raise OSError(28, "There is not enough space on the disk")
+            return real(source, target, *args, **kwargs)
+        return mock.patch.object(recycle_bin.shutil, "copy2", side_effect=copy2)
+
+    def assert_refused_alone(self):
+        self.assertEqual({"clip", "other"}, set(self.during), "the player asked while the copy was held")
+        refused = self.during["clip"]
+        self.assertEqual(409, refused.status_code, refused.data[:300])
+        self.assertEqual("This video is being deleted.", refused.get_json()["error"])
+        self.assertEqual(206, self.during["other"].status_code, "another clip plays as always")
+
+    def test_a_clip_under_its_panel_delete_is_refused_alone_and_released_once_deleted(self):
+        with self.copy_asking():
+            reply = self.post("photo/delete", {"path": self.clip_path})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assert_refused_alone()
+        self.assert_gone(self.clip_path, self.clip)
+        self.assertFalse(recycle_bin.being_deleted(self.clip_path), "deleted: no longer under delete")
+        self.assertEqual(404, self.ranges()["clip"].status_code, "asked again: its file is not there, not 'being deleted'")
+
+    def test_a_clip_under_a_bulk_delete_is_refused_alone_and_plays_again_when_its_delete_fails(self):
+        with self.copy_asking(fail=True):
+            _asked, done = self.delete_all(self.photo, self.clip)
+        self.assert_refused_alone()
+        self.assertEqual((1, 1), (done["changed"], done["error_count"]), done["errors"])
+        self.assert_clip_untouched()
+        self.assertFalse(recycle_bin.being_deleted(self.clip_path), "failed: released as well")
+        after = self.ranges()
+        self.assertEqual((206, 206), (after["clip"].status_code, after["other"].status_code), "the clip plays again")
+
+    def test_a_range_already_streaming_when_the_delete_begins_sends_no_more_of_it(self):
+        # Another page was playing the clip: its answer is under way when the delete begins, and reads no piece after.
+        piece = 1024
+        patcher = mock.patch.object(photo_service, "VIDEO_READ", piece)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        streaming = self.client.get("/library/api/video-file", query_string={"id": self.clip}, headers={"Range": "bytes=0-"},
+                                    buffered=False)
+        self.assertEqual(206, streaming.status_code)
+        self.assertGreater(os.path.getsize(self.clip_path), 4 * piece, "the clip is several pieces long")
+        real, streamed = shutil.copy2, []
+
+        def copy2(source, target, *args, **kwargs):
+            streamed.append(b"".join(streaming.response))
+            return real(source, target, *args, **kwargs)
+
+        with mock.patch.object(recycle_bin.shutil, "copy2", side_effect=copy2):
+            reply = self.post("photo/delete", {"path": self.clip_path})
+        streaming.close()
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(1, len(streamed))
+        self.assertLessEqual(len(streamed[0]), piece, "at most the piece read before the delete began: none after it")
+        self.assert_gone(self.clip_path, self.clip)
 
 
 class AFileOnALocalDrive(APhotoAndAClip):
