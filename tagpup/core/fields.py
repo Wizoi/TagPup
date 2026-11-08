@@ -328,20 +328,22 @@ def date_taken_fields(date_taken, clip=False):
 #: The date field a write sets only where the file holds it already: a clip's XMP:CreateDate, which Adobe's tools wrote
 #: (41 photo_index clips, counted 2026-11-08), refreshed so it does not contradict the date saved, and made in no other
 #: (the owner's answer, DECISIONS 2026-11-08, A5 (D) REVISED).
-_WHERE_HELD = dates.CLIP_XMP_DATE_FIELDS[1]
+_WHERE_HELD = "XMP:CreateDate"
+assert _WHERE_HELD in dates.CLIP_XMP_DATE_FIELDS
 
 
 def held_dates(values, held):
     """`values` ({field: value} a write sets) without _WHERE_HELD when `held` (what the file holds, or a row's
-    raw_metadata) holds none: the one rule, a save's (tagpup.services.tagging) and its record's (record_date_taken)."""
+    raw_metadata) holds none: decided once, by a save from what the file holds (tagpup.services.tagging); the page's
+    record is told what that save wrote (record_dates), not left to decide it again."""
     return {field: value for field, value in values.items()
             if field != _WHERE_HELD or field_values(held.get(field))}
 
 
-def record_date_taken(raw_meta, date_taken, clip=False):
-    """Make `raw_meta` say what a Date Taken write just put in the file -- the fields
-    the scan reads, as record_keyword_fields does for keywords. Returns it."""
-    for field, value in held_dates(date_taken_fields(date_taken, clip), raw_meta).items():
+def record_dates(raw_meta, written):
+    """Make `raw_meta` say what a Date Taken write just put in the file -- `written`, {field: value} the save reports it
+    wrote -- the fields the scan reads, as record_keyword_fields does for keywords. Returns it."""
+    for field, value in written.items():
         if scan_reads(field):
             raw_meta[field] = value
     return raw_meta

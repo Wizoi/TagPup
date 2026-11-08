@@ -247,7 +247,9 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     not made from what the file holds. Not given at all is no check.
 
     details: `new_path`, `renamed`, `tags` as written, `flat` and `hierarchical` as
-    written, `change`, `base`, the tags and title the file holds after the write (the page's next `base`), and
+    written, `change`, `dates`, the date fields the write set ({field: value}; a clip's XMP:CreateDate only where it
+    held one, fields.held_dates), `taken`, the Date Taken saved as the library spells it (None when none was sent),
+    `base`, the tags and title the file holds after the write (the page's next `base`), and
     `index_warning` when the renamed photo's new name already had rows; `file_only` and `with_rows`, how many files (0 or 1) were written each way; `pictures_refused` when the write
     changed the picture's bytes and was made again (file_changes).
     """
@@ -292,6 +294,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
         after.update(fields.held_dates(_title_written(photo_path, now, wanted), now))
+        asked = fields.date_taken_fields(date_taken, clip=images.is_clip(photo_path)) if date_taken else ()
+        dates_written = {field: after[field] for field in asked if field in after}
         after.update(_caption_moved(photo_path, now))
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:
@@ -318,6 +322,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.details["pictures_refused"] = written.details["pictures_refused"]
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"],
+                              dates=dates_written, taken=fields.date_taken_value(date_taken) if date_taken else None,
                               base={"tags": _tags_held(after), "title": _held_title({**now, **after})})
         touched = 1 if (written.changed or renamed) else 0
         result.details.update({file_only.FILE_ONLY: touched if files_only else 0,

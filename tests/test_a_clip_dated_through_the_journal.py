@@ -33,6 +33,7 @@ from tagpup.core import processes  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.services import file_changes, journal, tagging  # noqa: E402
+from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import file_journal  # noqa: E402
 
 EXIFTOOL = tagged.EXIFTOOL
@@ -121,6 +122,7 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
 
         reply = self.save_date_from_the_panel(clip)
         self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(SAVED, reply.get_json()["taken"], "the reply spells the date saved, for the page to show")
         self.assertEqual({"XMP:DateTimeOriginal": SAVED, "XMP:CreateDate": None}, self.read(self.clip_path, XMP_DATES),
                          "XMP:DateTimeOriginal written; no xmp:CreateDate made in a clip that held none")
         self.assertEqual(quicktime, self.read(self.clip_path, QUICKTIME_DATES), "its QuickTime dates read as they were")
@@ -160,6 +162,27 @@ class AClipDatedThroughTheJournal(tagged.ALibraryHoldingAClip):
         self.assertEqual({"XMP:DateTimeOriginal": None, "XMP:CreateDate": ADOBES}, self.read(held, XMP_DATES),
                          "the undo gives the xmp:CreateDate its old value back, never wipes it")
         self.assertEqual(ADOBES, self.taken(clip), "and the row is dated by it again")
+
+    def test_the_page_record_is_told_what_the_save_wrote_not_left_to_decide_it_from_its_own_raw_metadata(self):
+        """A record whose raw_metadata lags the file (the file gained an Adobe xmp:CreateDate after the page scanned it)
+        says what the save wrote: the xmp:CreateDate refreshed, and the reply carries the date as the library spells it."""
+        held = os.path.join(self.folder, "slipway.mp4")
+        shutil.copyfile(self.clip_path, held)
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            et.set_tags([held], tags={"XMP:CreateDate": ADOBES}, params=["-overwrite_original"])
+        clip, = self.index(held)
+        lagging = {"raw_metadata": {"QuickTime:CreateDate": "2020:07:04 18:30:00"}, "tags": []}
+
+        result = tagging.save_photo(self.vl.library, held, "", [], SAVED_AS_THE_PAGE_SENDS, EXIFTOOL, "")
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual(SAVED, result.details["taken"])
+        photo_actions.record_written(self.vl.library, lagging, held, [], result.details["flat"],
+                                     result.details["hierarchical"], result.details["dates"])
+        self.assertEqual({"XMP:DateTimeOriginal": SAVED, "XMP:CreateDate": SAVED},
+                         {field: lagging["raw_metadata"].get(field) for field in XMP_DATES},
+                         "the record says what the file now holds")
+        self.assertEqual(self.read(held, XMP_DATES), {field: lagging["raw_metadata"].get(field) for field in XMP_DATES})
+        self.assertEqual(SAVED, self.taken(clip))
 
     def journaled_fields(self, photo_id):
         """The date fields the journal's record of `photo_id`'s one file names after the write."""
