@@ -84,18 +84,26 @@ def too_large(file_path, size):
     return CLIP_TOO_LARGE % (_mb(size), _mb(MOST_CLIP_BYTES))
 
 
-def problem(file_path):
-    """Why `file_path` may not be sent to the Recycle Bin, or None: no existing regular file (a folder, a path with a
-    trailing separator, one that is not there), no photo or clip by its extension (images.is_media), or a clip over
-    MOST_CLIP_BYTES (too_large). The path is judged by its LONG name: A4413~1.JPG may be holiday.jpgold (#530)."""
+def _judged(file_path):
+    """(why `file_path` is no photo or clip file, or None; its LONG name: A4413~1.JPG may be holiday.jpgold, #530)."""
     given = str(file_path or "")
     name = os.path.basename(given.rstrip("\\/")) or given
     if not given or given[-1] in "\\/" or not os.path.isfile(paths.stored(given)):
-        return "%s is not a file; only a photo or video file is deleted" % name
+        return "%s is not a file; only a photo or video file is deleted" % name, None
     long = _long_path(paths.stored(given))
     if not os.path.isfile(long) or not images.is_media(long):
-        return "%s is not a photo or video; only a photo or video file is deleted" % os.path.basename(long)
-    return too_large(long, os.path.getsize(long))
+        return "%s is not a photo or video; only a photo or video file is deleted" % os.path.basename(long), long
+    return None, long
+
+
+def problem(file_path):
+    """Why `file_path` may not be sent to the Recycle Bin, or None: no existing regular file (a folder, a path with a
+    trailing separator, one that is not there), no photo or clip by its extension (images.is_media), or a clip over
+    MOST_CLIP_BYTES (too_large: only a clip's size is asked). The path is judged by its LONG name (_judged)."""
+    why, long = _judged(file_path)
+    if why:
+        return why
+    return too_large(long, os.path.getsize(long)) if images.is_clip(long) else None
 
 
 def _without_prefix(path):
@@ -533,12 +541,15 @@ def recycle_through_this_pc(file_path, root=None):
     PC's Recycle Bin, then the original. Returns where the copy was put (so where Windows restores it). Raises ValueError for a
     path that is no photo or clip file (problem) and OSError, with a sentence, for any step that failed: the original is then left where it
     is (and, when only its own delete failed, is there twice: the error says so)."""
-    why = problem(file_path)
+    why, long = _judged(file_path)
     if why:
         raise ValueError(why)
     source = paths.stored(file_path)
     root = root or mirror_root()
     size = os.path.getsize(source)
+    why = too_large(long, size)
+    if why:
+        raise ValueError(why)
     refused = can_copy_here(size, size, root)
     if refused:
         raise OSError(refused)

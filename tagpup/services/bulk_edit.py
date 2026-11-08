@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import images, recycle_bin, shares
+from tagpup.files import images, recycle_bin
 from tagpup.services import batches, file_changes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -218,25 +218,19 @@ def _write(library, edit, ids, exiftool_path):
     return out
 
 
-def _known_size(path):
-    """The size of the file at `path` as file_changes.file_states just found it (shares.known_stamp), or 0 when it is not
-    known: the delete's own read of it (recycle_bin.problem) then judges it."""
-    stamp = shares.known_stamp(path)
-    return stamp[1] if stamp is not None else 0
-
-
-def _cannot_keep(present):
-    """{photo id: why} of the photos that go through this PC, when this PC cannot keep their copies; {} when it can."""
+def _cannot_keep(present, sizes):
+    """{photo id: why} of the photos that go through this PC, when this PC cannot keep their copies; {} when it can. `sizes`,
+    {paths.key(path): bytes}, is what file_changes.file_stamps found; a file whose size it did not find is judged by the
+    delete's own read of it."""
     bins, through, largest = {}, [], 0
     for photo_id, path in present:
         folder = paths.key(os.path.dirname(path))
         if folder not in bins:
             bins[folder] = recycle_bin.no_bin_reason(path)
         if bins[folder]:
-            stamp = shares.known_stamp(path)
-            if stamp is None:
+            size = sizes.get(paths.key(path))
+            if size is None:
                 continue
-            size = stamp[1]
             through.append((photo_id, size))
             largest = max(largest, size)
     if not through:
@@ -269,18 +263,22 @@ def _delete(library, edit, present, out):
     (a larger one is its error, its size counted in no copy); a clip is a chunk of its own: the lock is let go of before
     and after each clip, as after each chunk of photos, and a stop asked is taken there."""
     with file_changes.exclusively():
-        # Where each file is (file_changes.file_states): one on a share that did not answer is its error, one gone missing.
-        states = dict((paths.key(path), state) for path, state in file_changes.file_states([path for _id, path in present]))
+        # Where each file is, and its size, by one bounded stat of each (file_changes.file_stamps): one on a share that did
+        # not answer is its error, one gone missing.
+        stamps = file_changes.file_stamps([path for _id, path in present])
+        states = {paths.key(path): state for path, state, _stamp in stamps}
+        sizes = {paths.key(path): stamp[1] for path, _state, stamp in stamps if stamp is not None}
         there = [(photo_id, path) for photo_id, path in present if states[paths.key(path)] == file_changes.PRESENT]
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
                           for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
         out.skipped_missing += sum(1 for _id, path in present if states[paths.key(path)] == file_changes.GONE)
         # A clip over recycle_bin.MOST_CLIP_BYTES is not deleted: its error, before this PC is asked for room for copies.
-        large = {photo_id: recycle_bin.too_large(path, _known_size(path)) for photo_id, path in there if images.is_clip(path)}
+        large = {photo_id: recycle_bin.too_large(path, sizes.get(paths.key(path), 0))
+                 for photo_id, path in there if images.is_clip(path)}
         out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], large[photo_id][:MOST_TEXT])
                           for photo_id, path in there if large.get(photo_id))
         there = [(photo_id, path) for photo_id, path in there if not large.get(photo_id)]
-        refused = _cannot_keep(there)
+        refused = _cannot_keep(there, sizes)
         batch = batches.current()
         for n, (photo_id, path) in enumerate(there):
             # A chunk of photos holds the lock; a clip is a chunk of itself (its copy through this PC can take minutes).

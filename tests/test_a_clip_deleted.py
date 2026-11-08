@@ -32,7 +32,7 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
-from tagpup.files import recycle_bin  # noqa: E402
+from tagpup.files import recycle_bin, shares  # noqa: E402
 from tagpup.services import file_changes, thumbnails  # noqa: E402
 from tagpup.store import db, embeddings  # noqa: E402
 
@@ -131,6 +131,30 @@ class AClipOnAShare(APhotoAndAClip):
         self.assert_gone(self.clip_path, self.clip)
         [clip_copy] = [event for event in self.events if event[0] == "bin" and event[1] == "jetty.mov"]
         self.assertEqual(self.clip_bytes, clip_copy[2], "the clip's copy reached the Bin, whole")
+
+    def test_a_bulk_delete_looks_at_each_file_on_the_share_once_and_a_photo_is_not_weighed_as_a_clip(self):
+        # A look at a file on a share is a round trip; the size the delete needs is the one its first look found.
+        looked, real_stamp, real_size = [], shares.stamp_of, os.path.getsize
+
+        def stamp_of(path):
+            looked.append(os.path.basename(path))
+            return real_stamp(path)
+
+        def getsize(path):
+            looked.append(("size", os.path.basename(path)))
+            return real_size(path)
+
+        asked = self.asked(self.photo, self.clip)
+        with mock.patch.object(shares, "stamp_of", side_effect=stamp_of), \
+                mock.patch.object(recycle_bin.os.path, "getsize", side_effect=getsize):
+            reply = self.post("library/bulk-edit", {"op": "delete", "selection": {"ids": [self.photo, self.clip]},
+                                                    "params": {"token": asked["token"]}})
+        self.assertEqual((2, 0), (reply.get_json()["changed"], reply.get_json()["error_count"]), reply.get_json())
+        self.assertEqual(1, looked.count("pier.jpg"), looked)
+        self.assertEqual(1, looked.count("jetty.mov"), looked)
+        self.assertEqual(1, looked.count(("size", "pier.jpg")), "the photo's size, once, for its copy: %s" % looked)
+        # The clip is weighed by the delete's question of the file (photos.delete, recycle_bin.problem) and again for its copy.
+        self.assertEqual(2, looked.count(("size", "jetty.mov")), "the clip weighed, then its copy's size: %s" % looked)
 
     def test_a_clip_deleted_from_its_panel_takes_its_vector_frames_and_poster_with_it(self):
         db.write_with_connection(self.vl.path, lambda conn: embeddings.put_by_id(
