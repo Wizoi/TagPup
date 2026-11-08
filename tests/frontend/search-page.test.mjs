@@ -180,7 +180,7 @@ describe("words, Enter, and the address", () => {
       const body = ctx && ctx.server.lastBody("/api/library/ids");
       const asked = body && body.value && body.value.words;
       const ids = asked === "beach" ? [1, 2, 3] : asked === "sand" ? [7, 8] : [11, 12, 13];
-      return { source: {}, total: ids.length, ids, complete: true };
+      return { source: {}, total: ids.length, ids, videos: [], complete: true };
     };
     ctx = await loadViewPage(t, { search: "?view=all", onIds });
     await search(ctx, "beach");
@@ -203,7 +203,7 @@ describe("words, Enter, and the address", () => {
   });
 
   test("a search with no results says so, in the strip and the grid", async (t) => {
-    const ctx = await loadViewPage(t, { search: "?view=all", onIds: () => ({ source: {}, total: 0, ids: [], complete: true }) });
+    const ctx = await loadViewPage(t, { search: "?view=all", onIds: () => ({ source: {}, total: 0, ids: [], videos: [], complete: true }) });
     await search(ctx, "zeppelin");
     assert.equal(ctx.state.library.status, "empty");
     assert.match(ctx.stripText(), /Nothing in the library matches this search\./);
@@ -374,7 +374,7 @@ describe("the picker: the library's tags and people", () => {
     const value = { all_of: [{ kind: "keyword", value: "Trips/Pier" }, { kind: "person", value: "People/Family/Rowan Thackeray" }] };
     const ctx = await loadViewPage(t, {
       search: `?view=search&value=${encodeURIComponent(JSON.stringify(value))}`, navigator: NAVIGATOR(),
-      onIds: () => ({ source: {}, total: 0, ids: [], complete: true }),
+      onIds: () => ({ source: {}, total: 0, ids: [], videos: [], complete: true }),
     });
     await ctx.until(() => chips(ctx, "all_of").some((c) => c.classList.contains("library-search-chip-unknown")));
     const [pier, rowan] = chips(ctx, "all_of");

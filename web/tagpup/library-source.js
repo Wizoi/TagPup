@@ -460,7 +460,7 @@ export function loadLibraryIds(lib, refreshing = false) {
             lib.ids = Array.isArray(body.ids) ? body.ids : [];
             lib.total = Number.isFinite(body.total) ? body.total : lib.ids.length;
             lib.complete = body.complete !== false;
-            lib.videos = new Set(Array.isArray(body.videos) ? body.videos : []);
+            lib.videos = new Set(body.videos);
             lib.status = lib.ids.length === 0 ? 'empty' : 'ready';
             lib.message = lib.ids.length === 0 ? emptySentence(lib) : '';
             lib.notice = '';

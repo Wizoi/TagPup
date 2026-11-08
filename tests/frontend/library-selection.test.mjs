@@ -172,7 +172,7 @@ describe("what a request cannot carry is said before any request", () => {
   });
 
   test("more than 5,000 selected is refused with the limit", async (t) => {
-    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(300), onIds: () => ({ source: {}, total: 250000, ids: range(300), complete: false }) });
+    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(300), onIds: () => ({ source: {}, total: 250000, ids: range(300), videos: [], complete: false }) });
     ctx.document.getElementById("btn-select-all-thumbnails").click();
     const asked = ctx.module("selected.js").selectionRequest();
     assert.equal(asked.ok, false);
@@ -194,7 +194,7 @@ describe("the selection and the view", () => {
 
   test("a photo the refreshed view no longer holds is let go of the selection", async (t) => {
     let ids = range(400);
-    const ctx = await loadViewPage(t, { search: "?view=all", onIds: () => ({ source: {}, total: ids.length, ids, complete: true }) });
+    const ctx = await loadViewPage(t, { search: "?view=all", onIds: () => ({ source: {}, total: ids.length, ids, videos: [], complete: true }) });
     for (const id of [3, 4, 5]) click(ctx.window, ctx.cardById(id).querySelector(".thumbnail-checkbox"));
     ids = ids.filter((id) => id !== 4);
     click(ctx.window, ctx.document.getElementById("btn-library-refresh"));
@@ -204,7 +204,7 @@ describe("the selection and the view", () => {
 
   test("a Select all is the new total less what was left out after Refresh view, and after a photo is found deleted", async (t) => {
     let ids = range(400);
-    const ctx = await loadViewPage(t, { search: "?view=all", onIds: () => ({ source: {}, total: ids.length, ids, complete: true }),
+    const ctx = await loadViewPage(t, { search: "?view=all", onIds: () => ({ source: {}, total: ids.length, ids, videos: [], complete: true }),
       onCards: (asked) => ({ cards: asked.filter((id) => id !== 9).map((id) => ({ id, name: `IMG_${id}.jpg`, path: `D:\\x\\IMG_${id}.jpg`, taken: null, damaged: false, damage: null, thumb: `/t?id=${id}` })) }) });
     ctx.document.getElementById("btn-select-all-thumbnails").click();
     click(ctx.window, ctx.cardById(3).querySelector(".thumbnail-checkbox"));

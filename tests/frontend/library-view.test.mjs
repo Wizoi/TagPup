@@ -75,7 +75,7 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
   server.on("/api/library/ids", answer((url) => {
     ctx.idsAsked.push(url);
     if (onIds) return onIds(url);
-    return { source: {}, total: total ?? ids.length, ids, complete: true };
+    return { source: {}, total: total ?? ids.length, ids, videos: [], complete: true };
   }));
   server.on("/api/library/cards", answer((url) => {
     const asked = decodeURIComponent((url.match(/ids=([^&]+)/) || [])[1] || "").split(",").map(Number);
@@ -592,21 +592,12 @@ describe("a view's count by kind", () => {
     assert.equal(ctx.document.getElementById("folder-view-stats").textContent, "4 videos");
     assert.equal(ctx.document.getElementById("list-stats").textContent, "4 videos in this view");
   });
-
-  test("a reply without `videos` (an older server) says photos only", async (t) => {
-    const ctx = await load(t, { onIds: () => ({ source: {}, total: N, ids: IDS, complete: true }) });
-    const now = said(ctx);
-    assert.match(now.strip, /68,?000 photos/);
-    assert.doesNotMatch(now.strip, /video/);
-    assert.match(now.stats, /^68,?000 photos$/);
-    assert.match(now.list, /^68,?000 photos in this view$/);
-  });
 });
 
 describe("a view that changes under the page", () => {
   test("photos added elsewhere leave the total as it was until Refresh view; then the place is kept", async (t) => {
     let ids = IDS.slice();
-    const ctx = await load(t, { onIds: () => ({ source: {}, total: ids.length, ids, complete: true }) });
+    const ctx = await load(t, { onIds: () => ({ source: {}, total: ids.length, ids, videos: [], complete: true }) });
     await ctx.scrollToIndex(30000);
     await ctx.settle();
     const near = IDS[30000];
@@ -639,7 +630,7 @@ describe("a view that changes under the page", () => {
     const replies = [];
     ctx.server.first("/api/library/ids", (url) => new Promise((resolve) => {
       const ids = url.includes("kind=year") ? firstIds : secondIds;
-      replies.push(() => resolve({ total: 200, ids, complete: true }));
+      replies.push(() => resolve({ total: 200, ids, videos: [], complete: true }));
     }));
     opened.openLibraryView({ kind: "year", value: "2020" });
     opened.openLibraryView({ kind: "month", value: "2021-05" });

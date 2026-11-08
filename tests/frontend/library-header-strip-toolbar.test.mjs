@@ -256,7 +256,7 @@ describe("#674: Delete of a view's selection", () => {
   });
 
   test("more than 5,000 is said and nothing is asked of the server", async (t) => {
-    const ctx = await view(t, 300, { onIds: () => ({ source: {}, total: 5001, ids: range(300), complete: false }) });
+    const ctx = await view(t, 300, { onIds: () => ({ source: {}, total: 5001, ids: range(300), videos: [], complete: false }) });
     el(ctx, "btn-select-all-thumbnails").click();
     await remove(ctx);
     assert.equal(ctx.alerts[0], "Select up to 5,000 photos at a time (5,001 are selected).");
@@ -294,7 +294,7 @@ describe("#674: Delete of a view's selection", () => {
 
   test("when it ends the view's order is read again: the deleted leave the view, the count and the selection; the strip says so", async (t) => {
     let ids = range(40);
-    const ctx = await view(t, 40, { onIds: () => ({ source: {}, total: ids.length, ids, complete: true }) });
+    const ctx = await view(t, 40, { onIds: () => ({ source: {}, total: ids.length, ids, videos: [], complete: true }) });
     for (const id of [2, 5, 9]) pick(ctx, id);
     const asked = ctx.idsAsked.length;
     ids = ids.filter((id) => ![2, 5, 9].includes(id));   // the server has deleted them by the time it answers
@@ -308,7 +308,7 @@ describe("#674: Delete of a view's selection", () => {
 
   test("the photo open in the details panel was deleted: the panel closes onto the grid when the edit is done", async (t) => {
     let ids = range(40);
-    const ctx = await view(t, 40, { onIds: () => ({ source: {}, total: ids.length, ids, complete: true }), onPhoto: (id) => ({ photo: recordOf(id) }) });
+    const ctx = await view(t, 40, { onIds: () => ({ source: {}, total: ids.length, ids, videos: [], complete: true }), onPhoto: (id) => ({ photo: recordOf(id) }) });
     ctx.bulk.edit = { op: "delete", total: 1, changed: 1 };
     pick(ctx, 5);
     ctx.module("photo.js").openLibraryPhoto(5);

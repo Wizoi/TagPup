@@ -106,14 +106,17 @@ class Plans(unittest.TestCase):
             found = self.plan_of(lambda conn: store.view_ids(conn, source, 200000))
             return [(statement, lines) for statement, lines in found if "p.kind" in statement]
 
-        for name, source in (("folder", store.Source(store.FOLDER, self.folder, False)),
-                             ("folder tree", store.Source(store.FOLDER, self.top, True)),
-                             ("keyword", store.Source(store.KEYWORD, "Trips")),
-                             ("person", store.Source(store.PERSON, "People/Wren Halloway"))):
+        for name, source, index in (("folder", store.Source(store.FOLDER, self.folder, False), "idx_photo_folder_folder"),
+                                    ("folder tree", store.Source(store.FOLDER, self.top, True), "idx_photos_path_nocase"),
+                                    ("keyword", store.Source(store.KEYWORD, "Trips"), "idx_photo_tags_tag"),
+                                    ("person", store.Source(store.PERSON, "People/Wren Halloway"), "idx_photo_people_tag"),
+                                    ("year", store.Source(store.YEAR, 2016), "idx_photos_year"),
+                                    ("month", store.Source(store.MONTH, "2016-02"), "idx_photos_taken")):
             with self.subTest(source=name):
                 found = clips(source)
                 self.assertEqual(1, len(found), "one clip statement")
                 for statement, lines in found:
+                    self.assertIn(index, "\n".join(lines))
                     self.assertFalse([line for line in lines if line in ("SCAN p", "SCAN photos")],
                                      "a scan of photos: %s\n%s" % (statement, "\n".join(lines)))
         # The whole-library view is a scan of photos, accepted: no index holds `kind` (a partial index
